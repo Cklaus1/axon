@@ -628,7 +628,10 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     "contained",
     "corrigible",
     "sensitive",
-    "verify",
+    // `verify` is intentionally absent — the form `@[verify(expr)]` is parsed
+    // specially in `parse_item`, captured on `FnDef.verify`, and validated by
+    // `crate::verify::check_verify` (E1101). The bare form `@[verify]`
+    // (no predicate) is now treated as a generic unknown attribute (W0001).
     "ai",
     "layout",
     "temporal",
@@ -701,8 +704,11 @@ mod tests {
     #[test]
     fn known_attrs_present() {
         let set: std::collections::HashSet<&str> = DEFERRED_ATTRS.iter().copied().collect();
-        for expected in &["adaptive", "goal", "agent", "verify", "ai"] {
+        // `verify` is intentionally absent — it is now a checked attribute handled
+        // by `crate::verify::check_verify`, not a deferred one.
+        for expected in &["adaptive", "goal", "agent", "ai"] {
             assert!(set.contains(expected), "expected deferred attr `{expected}` not found");
         }
+        assert!(!set.contains("verify"), "`verify` should no longer be deferred");
     }
 }

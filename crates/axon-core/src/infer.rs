@@ -1737,6 +1737,7 @@ mod tests {
             body: Expr::Block(vec![Stmt::simple(lit_int(42))]),
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
         let program = Program {
@@ -1835,6 +1836,7 @@ mod tests {
             body: crate::ast::Expr::Ident("x".into()),
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
 
@@ -1853,6 +1855,7 @@ mod tests {
             body: call_expr,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
 
@@ -1885,6 +1888,7 @@ mod tests {
             body: crate::ast::Expr::Ident("x".into()),
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
 
@@ -1909,6 +1913,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
 
@@ -1965,6 +1970,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         };
 

@@ -24,6 +24,8 @@ pub mod doc;
 pub mod fmt;
 #[cfg(feature = "serde-json")]
 pub mod lsp;
+// ASI Layer-2
+pub mod verify;
 
 use std::collections::HashMap;
 
@@ -663,6 +665,30 @@ pub fn check_pipeline(
 
     // Capability checking (@[contained])
     for err in capabilities::check_capabilities(&program) {
+        let (line, col) = if !err.span.is_dummy() {
+            let (l, c) = source_map.line_col(err.span.start);
+            (l as u32, c as u32)
+        } else {
+            (0, 0)
+        };
+        let caret = if !err.span.is_dummy() {
+            source_map.render_caret(err.span)
+        } else {
+            String::new()
+        };
+        out.push(PipelineDiagnostic {
+            code: err.code.to_string(),
+            message: err.message.clone(),
+            file: file.to_string(),
+            line,
+            col,
+            severity: "error".into(),
+            caret,
+        });
+    }
+
+    // Verify checking (@[verify(...)])
+    for err in verify::check_verify(&program) {
         let (line, col) = if !err.span.is_dummy() {
             let (l, c) = source_map.line_col(err.span.start);
             (l as u32, c as u32)

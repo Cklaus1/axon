@@ -73,6 +73,10 @@ fn check_fixture(name: &str) -> Vec<String> {
     for err in axon_core::capabilities::check_capabilities(&program) {
         errors.push(format!("[{}] {}", err.code, err.message));
     }
+    // Verify checking (@[verify(...)])
+    for err in axon_core::verify::check_verify(&program) {
+        errors.push(format!("[{}] {}", err.code, err.message));
+    }
     errors
 }
 
@@ -1187,6 +1191,28 @@ fn contained_fail_never_fixture_emits_e0604() {
     assert!(
         errors.iter().any(|e| e.contains("E1004")),
         "contained_fail_never.ax should produce E1004, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+// ── Verify (@[verify(...)]) fixture tests ─────────────────────────────────────
+
+#[test]
+fn verify_pass_fixture_clean() {
+    let errors = check_fixture("verify_pass.ax");
+    assert!(
+        !errors.iter().any(|e| e.contains("E1101")),
+        "verify_pass.ax should NOT produce E1101, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn verify_fail_fixture_emits_e1101() {
+    let errors = check_fixture("verify_fail.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1101")),
+        "verify_fail.ax should produce E1101, got:\n{}",
         errors.join("\n")
     );
 }
