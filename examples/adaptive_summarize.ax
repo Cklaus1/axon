@@ -1,0 +1,15 @@
+// @[adaptive] demo: every call to `summarize` is logged to
+// ~/.cache/axon/provenance.jsonl so a downstream harness can replay or
+// score the LLM responses and tune the prompt.
+@[adaptive(metric: response_quality, target: 0.9)]
+fn summarize(text: str) -> str {
+    match ai_complete("Summarize in 1 sentence: {text}") {
+        Ok(s)  => s,
+        Err(_) => text,
+    }
+}
+
+fn main() {
+    let s = summarize("Axon is an AI-first systems language compiling via LLVM.")
+    println(s)
+}

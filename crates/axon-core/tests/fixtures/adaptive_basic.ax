@@ -1,0 +1,22 @@
+// Fixture: minimal @[adaptive] function — must parse and type-check
+// cleanly.  At codegen time the compiler injects __axon_provenance_log
+// calls at the prologue and at every return site.
+
+@[adaptive(metric: latency, target: 0.95)]
+fn double_it(x: i64) -> i64 {
+    x * 2
+}
+
+@[adaptive]
+fn echo_str(s: str) -> str {
+    s
+}
+
+fn main() {
+    let n = double_it(21)
+    println(to_str(n))
+    let s = echo_str("hello")
+    println(s)
+    // Also exercise goal_run so the new f64 builtin compiles end-to-end.
+    let _ = goal_run("double_it", 0.9, 8)
+}

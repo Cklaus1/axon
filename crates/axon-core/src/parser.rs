@@ -325,13 +325,51 @@ impl Parser {
         let mut args = Vec::new();
         if self.eat(&Token::LParen) {
             while !self.at(&Token::RParen) {
-                args.push(self.expect_ident()?);
+                args.push(self.parse_attr_arg()?);
                 self.eat(&Token::Comma);
             }
             self.expect(&Token::RParen)?;
         }
         self.expect(&Token::RBracket)?;
         Ok(Attr { name, args })
+    }
+
+    /// One attribute argument.  We accept any of:
+    ///   - bare identifier:  `maximize_throughput`
+    ///   - integer literal:  `42`
+    ///   - float literal:    `0.9`
+    ///   - string literal:   `"hello"`
+    ///   - key:value pair:   `metric: quality`, `target: 0.9`, `mode: "fast"`
+    /// Each is serialised back to a `String` so the AST's
+    /// `Attr.args: Vec<String>` field stays unchanged.
+    fn parse_attr_arg(&mut self) -> Result<String> {
+        let key = self.parse_attr_atom()?;
+        if self.eat(&Token::Colon) {
+            let val = self.parse_attr_atom()?;
+            Ok(format!("{key}: {val}"))
+        } else {
+            Ok(key)
+        }
+    }
+
+    fn parse_attr_atom(&mut self) -> Result<String> {
+        match self.peek() {
+            Some(Token::Ident(_)) => self.expect_ident(),
+            Some(Token::Int(n))   => { let v = *n; let _ = self.advance(); Ok(v.to_string()) }
+            Some(Token::Float(f)) => { let v = *f; let _ = self.advance(); Ok(format!("{v}")) }
+            Some(Token::Str(s))   => { let v = s.clone(); let _ = self.advance(); Ok(v) }
+            Some(Token::Minus)    => {
+                // Allow `-1` / `-0.25` as a single atom.
+                let _ = self.advance();
+                let inner = self.parse_attr_atom()?;
+                Ok(format!("-{inner}"))
+            }
+            Some(other) => Err(ParseError::Unexpected(
+                other.clone(),
+                "attribute argument (ident, number, string, or key:value)".into(),
+            )),
+            None => Err(ParseError::Eof),
+        }
     }
 
     // ── Functions ────────────────────────────────────────────────────────────

@@ -13,6 +13,9 @@ use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::{Arc, Condvar, Mutex};
 
+pub mod provenance;
+pub mod goal;
+
 // ── Channel ───────────────────────────────────────────────────────────────────
 
 struct Chan {
