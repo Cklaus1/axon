@@ -542,6 +542,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<str, str>",
         doc: "Send prompt to the Anthropic API (claude-sonnet-4-6) and return the reply. Returns Ok(reply) or Err(message). Requires ANTHROPIC_API_KEY env var.",
     },
+    BuiltinFn {
+        name: "goal_run",
+        params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
+        ret: "f64",
+        doc: "Run the @[goal] hill-climb optimizer for the function named `name` (v1: stub that records intent in the provenance log and returns `target`).",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────

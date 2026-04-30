@@ -1201,3 +1201,17 @@ fn ai_complete_fixture_type_checks_cleanly() {
         errors.join("\n")
     );
 }
+
+/// Phase 4 `@[adaptive]` + `goal_run`: minimal fixture that exercises the
+/// adaptive attribute (with both arg and no-arg forms) and the `goal_run`
+/// builtin.  Must parse + type-check cleanly.
+#[test]
+fn adaptive_basic_fixture_clean() {
+    let errors = check_fixture("adaptive_basic.ax");
+    assert!(
+        errors.is_empty(),
+        "adaptive_basic.ax produced unexpected errors:
+{}", errors.join("
+")
+    );
+}

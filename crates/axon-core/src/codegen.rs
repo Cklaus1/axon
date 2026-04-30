@@ -32,6 +32,13 @@ use crate::ast;
 use crate::ast::AxonType;
 use crate::types::Type;
 
+/// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
+/// `adaptive` annotation (regardless of its argument list).  Used by
+/// `emit_fn` to decide whether to inject `__axon_provenance_log` calls.
+fn has_adaptive_attr(attrs: &[ast::Attr]) -> bool {
+    attrs.iter().any(|a| a.name == "adaptive")
+}
+
 /// Extract a simple string name from an `AxonType` for impl-method name mangling.
 fn ast_type_simple_name(ty: &AxonType) -> String {
     match ty {
@@ -92,6 +99,10 @@ pub struct Codegen<'ctx> {
     /// fires for variables the resolver missed (e.g. names introduced by AST
     /// rewrites after `fill_captures` ran).
     current_lambda_env: Option<(PointerValue<'ctx>, StructType<'ctx>, HashMap<String, u32>)>,
+    /// Phase 4 `@[adaptive]`: when emitting a function carrying that attribute,
+    /// this holds the function name so `log_return_if_adaptive` can log
+    /// a "return" event before each early/tail return.
+    current_adaptive_fn: Option<String>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -120,6 +131,7 @@ impl<'ctx> Codegen<'ctx> {
             comptime_env: HashMap::new(),
             loop_stack: Vec::new(),
             current_lambda_env: None,
+            current_adaptive_fn: None,
         }
     }
 
@@ -3258,7 +3270,76 @@ impl<'ctx> Codegen<'ctx> {
             self.functions.insert("ai_complete".to_string(), fn_val);
         }
 
+        // ── Provenance log: __axon_provenance_log(name_ptr, name_len, payload_ptr, payload_len) ──
+        // Used by `@[adaptive]` injection at fn prologue / return sites.
+        // Not exposed as a user-visible builtin — only the codegen invokes it.
+        {
+            let prov_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into()],
+                false,
+            );
+            self.module.add_function("__axon_provenance_log", prov_ty, None);
+        }
 
+        // ── goal_run(name: str, target: f64, max_evals: i64) -> f64 ───────────
+        // Runtime: __axon_goal_run(fn_ptr, name_ptr, name_len, target, max_evals, *out_score)
+        // V1: stub that records intent in the provenance log and returns `target`.
+        {
+            let f64_ty = self.context.f64_type();
+            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+
+            let rt_ty = void_ty.fn_type(
+                &[
+                    i8_ptr.into(),    // fn_ptr (unused in v1)
+                    i8_ptr.into(),    // name_ptr
+                    i64_ty.into(),    // name_len
+                    f64_ty.into(),    // target
+                    i64_ty.into(),    // max_evals
+                    f64_ptr.into(),   // out_score
+                ],
+                false,
+            );
+            let rt_fn = self.module.add_function("__axon_goal_run", rt_ty, None);
+
+            let fn_ty = f64_ty.fn_type(
+                &[str_ty.into(), f64_ty.into(), i64_ty.into()],
+                false,
+            );
+            let fn_val = self.module.add_function("goal_run", fn_ty, None);
+
+            let entry_bb = self.context.append_basic_block(fn_val, "gr_entry");
+            let saved = self.builder.get_insert_block();
+            self.builder.position_at_end(entry_bb);
+
+            let name_str  = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let name_len  = self.builder.build_extract_value(name_str, 0, "gr_nlen").unwrap().into_int_value();
+            let name_ptr  = self.builder.build_extract_value(name_str, 1, "gr_nptr").unwrap().into_pointer_value();
+            let target    = fn_val.get_nth_param(1).unwrap().into_float_value();
+            let max_evals = fn_val.get_nth_param(2).unwrap().into_int_value();
+
+            let null_ptr  = i8_ptr.const_null();
+            let out_slot  = self.builder.build_alloca(f64_ty, "gr_out_score").unwrap();
+            self.builder.build_call(
+                rt_fn,
+                &[
+                    null_ptr.into(),
+                    name_ptr.into(),
+                    name_len.into(),
+                    target.into(),
+                    max_evals.into(),
+                    out_slot.into(),
+                ],
+                "",
+            ).unwrap();
+
+            let score = self.builder.build_load(f64_ty, out_slot, "gr_score").unwrap();
+            self.builder.build_return(Some(&score)).unwrap();
+
+            if let Some(b) = saved { self.builder.position_at_end(b); }
+            self.functions.insert("goal_run".to_string(), fn_val);
+            self.fn_return_types.insert("goal_run".to_string(), Type::F64);
+        }
     }
 
     /// Forward-declare every top-level function so mutual recursion resolves.
@@ -3650,6 +3731,15 @@ impl<'ctx> Codegen<'ctx> {
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_result_types = self.current_result_types.take();
+        let saved_adaptive = self.current_adaptive_fn.take();
+
+        // ── @[adaptive]: emit a "call" event at the prologue. ─────────────────
+        // Activates `current_adaptive_fn` so any subsequent build_return inside
+        // this function gets a "return" event injected before it.
+        if has_adaptive_attr(&f.attrs) {
+            self.current_adaptive_fn = Some(f.name.clone());
+            self.emit_provenance_log(&f.name, "call");
+        }
 
         // Determine return semantic type early (needed for current_result_types).
         let ret_sem = f
@@ -3687,10 +3777,12 @@ impl<'ctx> Codegen<'ctx> {
         {
             if f.name == "main" && matches!(ret_sem, Type::Unit) {
                 let zero = self.context.i32_type().const_int(0, false);
+                self.log_return_if_adaptive();
                 self.builder.build_return(Some(&zero)).unwrap();
             } else {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
+                        self.log_return_if_adaptive();
                         self.builder.build_return(Some(&v)).unwrap();
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
@@ -3698,12 +3790,15 @@ impl<'ctx> Codegen<'ctx> {
                         // emit a zero value of the appropriate type to keep IR valid.
                         if let Some(ret_llvm_ty) = self.llvm_type(&ret_sem) {
                             let zero_val = ret_llvm_ty.const_zero();
+                            self.log_return_if_adaptive();
                             self.builder.build_return(Some(&zero_val)).unwrap();
                         } else {
+                            self.log_return_if_adaptive();
                             self.builder.build_return(None).unwrap();
                         }
                     }
                     _ => {
+                        self.log_return_if_adaptive();
                         self.builder.build_return(None).unwrap();
                     }
                 }
@@ -3714,6 +3809,45 @@ impl<'ctx> Codegen<'ctx> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
+        self.current_adaptive_fn = saved_adaptive;
+    }
+
+    // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
+    /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
+    /// builder position.  Used at function prologues and immediately before
+    /// every `build_return` in adaptive functions.
+    fn emit_provenance_log(&mut self, fn_name: &str, event: &str) {
+        let prov_fn = match self.module.get_function("__axon_provenance_log") {
+            Some(f) => f,
+            None => return, // safety: declare_builtins should have added this
+        };
+        // Skip if the current basic block is already terminated.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let evt_g  = self.builder.build_global_string_ptr(event,   "prov_event").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+        let evt_len  = i64_ty.const_int(event.len()    as u64, false);
+        let _ = self.builder.build_call(
+            prov_fn,
+            &[
+                name_g.as_pointer_value().into(),
+                name_len.into(),
+                evt_g.as_pointer_value().into(),
+                evt_len.into(),
+            ],
+            "",
+        );
+    }
+
+    /// Emit a "return" provenance event if the current function carries
+    /// `@[adaptive]`.  Call this immediately before each `build_return`.
+    fn log_return_if_adaptive(&mut self) {
+        if let Some(fn_name) = self.current_adaptive_fn.clone() {
+            self.emit_provenance_log(&fn_name, "return");
+        }
     }
 
     // ── Expression emission ───────────────────────────────────────────────────
@@ -4169,12 +4303,15 @@ impl<'ctx> Codegen<'ctx> {
                 match maybe_val {
                     std::option::Option::Some(e) => {
                         if let Some(v) = self.emit_expr(e, fn_val) {
+                            self.log_return_if_adaptive();
                             self.builder.build_return(Some(&v)).unwrap();
                         } else {
+                            self.log_return_if_adaptive();
                             self.builder.build_return(None).unwrap();
                         }
                     }
                     std::option::Option::None => {
+                        self.log_return_if_adaptive();
                         self.builder.build_return(None).unwrap();
                     }
                 }
@@ -5489,6 +5626,7 @@ impl<'ctx> Codegen<'ctx> {
             // No type info: return the inner result as-is.
             result_val
         };
+        self.log_return_if_adaptive();
         self.builder.build_return(Some(&err_return_val)).unwrap();
 
         // --- Ok branch: extract the typed Ok payload using extract_result_payload.
