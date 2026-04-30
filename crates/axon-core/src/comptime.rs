@@ -374,6 +374,7 @@ fn expr_kind_name(e: &Expr) -> &'static str {
         Expr::Array(_)       => "array",
         Expr::StructLit { .. } => "struct_lit",
         Expr::While { .. }   => "while",
+        Expr::WhileLet { .. } => "while_let",
         Expr::Assign { .. }  => "assign",
         Expr::Break          => "break",
         Expr::Continue       => "continue",

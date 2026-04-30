@@ -1003,6 +1003,68 @@ fn phase55_mixed_comprehensive_fixture_parses_cleanly() {
     );
 }
 
+/// Verify that Phase 56 (`while let` patterns) parses and type-checks cleanly.
+#[test]
+fn phase56_while_let_fixture_parses_cleanly() {
+    let errors = check_fixture("phase56_while_let.ax");
+    assert!(
+        errors.is_empty(),
+        "phase56_while_let.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 57 (Uncertain<T> and Temporal<T> type-system extensions)
+/// parses and type-checks cleanly with no false-positive errors.
+#[test]
+fn phase57_uncertain_temporal_fixture_parses_cleanly() {
+    let errors = check_fixture("phase57_uncertain_temporal.ax");
+    assert!(
+        errors.is_empty(),
+        "phase57_uncertain_temporal.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 58 (advanced closure patterns: apply_n, closure factories
+/// make_adder/make_multiplier, closure chaining via compose2, and
+/// apply_and_accumulate higher-order function) parses and type-checks cleanly.
+#[test]
+fn phase58_advanced_closures_fixture_parses_cleanly() {
+    let errors = check_fixture("phase58_advanced_closures.ax");
+    assert!(
+        errors.is_empty(),
+        "phase58_advanced_closures.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 59 (nested generics: Box<T>/Tagged<T> generic structs,
+/// box_new/box_get generic functions, Box<Box<T>> nesting, wrap_and_unwrap)
+/// parses and type-checks cleanly.
+#[test]
+fn phase59_nested_generics_fixture_parses_cleanly() {
+    let errors = check_fixture("phase59_nested_generics.ax");
+    assert!(
+        errors.is_empty(),
+        "phase59_nested_generics.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 60 (string processing pipeline: word counting, palindrome
+/// check, str_repeat, str_slice helpers, and digit counting via char_at)
+/// parses and type-checks cleanly.
+#[test]
+fn phase60_string_processing_fixture_parses_cleanly() {
+    let errors = check_fixture("phase60_string_processing.ax");
+    assert!(
+        errors.is_empty(),
+        "phase60_string_processing.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── Error code detection tests ────────────────────────────────────────────────
 
 #[test]
@@ -1076,3 +1138,4 @@ fn error_e0309_bad_field_detected() {
         "expected E0309 or E0401 (bad field access), got: {:?}", errors
     );
 }
+

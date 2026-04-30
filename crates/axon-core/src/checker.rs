@@ -135,6 +135,8 @@ impl CheckError {
 fn type_contains_unresolved(ty: &Type) -> bool {
     match ty {
         Type::TypeParam(_) | Type::Unknown | Type::Var(_) | Type::Deferred(_) => true,
+        // Uncertain<T> and Temporal<T> are AI-typed — suppress false-positive E0306.
+        Type::Uncertain(_) | Type::Temporal(_) => true,
         Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner) => {
             type_contains_unresolved(inner)
         }
@@ -815,6 +817,12 @@ impl CheckCtx {
                     self.check_stmt(stmt, &format!("{node_path}.body_stmt_{i}"), scope);
                 }
             }
+            Expr::WhileLet { expr, body, .. } => {
+                self.check_expr(expr, &format!("{node_path}.while_let_expr"), scope);
+                for (i, stmt) in body.iter().enumerate() {
+                    self.check_stmt(stmt, &format!("{node_path}.while_let_body_{i}"), scope);
+                }
+            }
             Expr::For { var, start, end, body, .. } => {
                 self.check_expr(start, &format!("{node_path}.start"), scope);
                 self.check_expr(end, &format!("{node_path}.end"), scope);
@@ -1463,6 +1471,13 @@ impl CheckCtx {
                     self.check_axon_type(elem, &format!("{node_path}.elem_{i}"));
                 }
             }
+            AxonType::Union(members) => {
+                // Each branch of a union is independently checked; an unknown
+                // branch still triggers E0308 against that branch alone.
+                for (i, m) in members.iter().enumerate() {
+                    self.check_axon_type(m, &format!("{node_path}.union_{i}"));
+                }
+            }
         }
     }
 
@@ -1598,6 +1613,17 @@ impl CheckCtx {
             Expr::FmtStr { .. } => Type::Str,
             Expr::StructLit { name, .. } => {
                 // Resolve struct literal type by looking up struct fields.
+                // If the name contains "::" (e.g. "Expr::Lit"), it is an enum variant
+                // struct literal — the resulting type is the parent enum, not a struct.
+                // Without this, passing an enum variant literal as a function argument
+                // would either produce a spurious E0306 (if the enum name happened to
+                // appear in struct_fields) or silently skip the check (Type::Unknown).
+                if name.contains("::") {
+                    let enum_name = name.split("::").next().unwrap_or(name).to_string();
+                    if self.known_enums.contains(&enum_name) {
+                        return Type::Enum(enum_name);
+                    }
+                }
                 let base_name = name.split("::").next().unwrap_or(name);
                 if self.struct_fields.contains_key(base_name) {
                     Type::Struct(base_name.to_string())
@@ -1662,6 +1688,10 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
         AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
         AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
         AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(axon_type_to_type).collect()),
+        // Union types are not yet first-class in the semantic type system.
+        // Treat permissively as `Type::Unknown` to skip strict signature checks
+        // (E0306 etc.) for union-typed arguments.
+        AxonType::Union(_) => Type::Unknown,
     }
 }
 
@@ -1696,6 +1726,10 @@ fn axon_type_name(ty: &AxonType) -> String {
             let parts: Vec<String> = elems.iter().map(axon_type_name).collect();
             format!("({})", parts.join(", "))
         }
+        AxonType::Union(members) => {
+            let parts: Vec<String> = members.iter().map(axon_type_name).collect();
+            parts.join("|")
+        }
     }
 }
 
@@ -1711,6 +1745,11 @@ fn axon_type_display(ty: &AxonType) -> String {
 fn axon_types_compatible(a: &AxonType, b: &AxonType) -> bool {
     // A bare type parameter in the trait definition is compatible with anything.
     if matches!(a, AxonType::TypeParam(_)) || matches!(b, AxonType::TypeParam(_)) {
+        return true;
+    }
+    // Union types are permissive (TS-style) — treated as compatible with anything
+    // until the semantic type system supports proper union resolution.
+    if matches!(a, AxonType::Union(_)) || matches!(b, AxonType::Union(_)) {
         return true;
     }
     // "Self" placeholder in trait signatures is compatible with any concrete type.
@@ -1765,7 +1804,8 @@ fn closest_name<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
 mod tests {
     use super::*;
     use crate::ast::{
-        AxonType, BinOp, Expr, FnDef, Item, Literal, MatchArm, Pattern, Program, Stmt,
+        AxonType, BinOp, EnumDef, EnumVariant, Expr, FnDef, Item, Literal, MatchArm, Pattern,
+        Program, Stmt,
     };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -2903,5 +2943,70 @@ mod tests {
             "E0305 should carry the statement's span (was dummy)");
         assert_eq!(e0305.span.start, 15,
             "E0305 span should match the surrounding statement's start");
+    }
+
+    // ── R06: enum variant struct literal passed to enum-typed param → no E0306 ─
+
+    /// Passing `EnumName::Variant { field: val }` to a function that expects
+    /// `EnumName` must NOT produce a spurious E0306.
+    ///
+    /// Root cause: `resolve_expr_type` for `Expr::StructLit` must return
+    /// `Type::Enum(enum_name)` (not `Type::Unknown` or `Type::Struct(...)`)
+    /// when the literal name contains "::" and the prefix is a known enum.
+    #[test]
+    fn r06_enum_variant_struct_lit_no_false_positive() {
+        // Build a CheckCtx that knows about `eval(e: Expr) -> i64` and the
+        // enum `Expr` with variant `Lit`.
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "eval".to_string(),
+            FnSig { params: vec![Type::Enum("Expr".into())], ret: Type::I64 },
+        );
+        // CheckCtx needs no struct_fields for this test (Expr is an enum).
+        let mut ctx = mk_ctx(sigs); // mut needed by run_with_types
+
+        // Program:
+        //   enum Expr { Lit { value: i64 } }
+        //   fn caller() -> i64 { eval(Expr::Lit { value: 42 }) }
+        let enum_item = Item::EnumDef(EnumDef {
+            name: "Expr".into(),
+            generic_params: vec![],
+            variants: vec![EnumVariant {
+                name: "Lit".into(),
+                fields: vec![crate::ast::TypeField {
+                    name: "value".into(),
+                    ty: AxonType::Named("i64".into()),
+                }],
+            }],
+            span: crate::span::Span::dummy(),
+        });
+        let caller_fn = simple_fn(
+            "caller",
+            vec![],
+            Option::Some(AxonType::Named("i64".into())),
+            block(vec![
+                // eval(Expr::Lit { value: 42 })
+                Expr::Call {
+                    callee: Box::new(ident("eval")),
+                    args: vec![Expr::StructLit {
+                        name: "Expr::Lit".into(),
+                        fields: vec![("value".into(), lit_int(42))],
+                    }],
+                },
+            ]),
+        );
+        let program = make_program(vec![enum_item, caller_fn]);
+
+        // Stamp the call expression as i64 so R02/R07 don't interfere.
+        let mut expr_types = HashMap::new();
+        expr_types.insert("#fn_caller.body.stmt_0".to_string(), Type::I64);
+
+        let errors = run_with_types(&mut ctx, &program, expr_types);
+        let e0306_errors: Vec<_> = errors.iter().filter(|e| e.code == E0306).collect();
+        assert!(
+            e0306_errors.is_empty(),
+            "enum variant struct literal passed to enum-typed param should not produce E0306, \
+             got: {e0306_errors:?}"
+        );
     }
 }

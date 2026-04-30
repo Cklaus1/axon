@@ -67,6 +67,7 @@ pub enum Token {
     #[token("..")]  DotDot,
     #[token(".")]   Dot,
     #[token("@")]   At,
+    #[token("#")]   Hash,
     #[token("::")] ColonColon,
 
     // Delimiters

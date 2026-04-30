@@ -45,6 +45,7 @@ fn subst_type(ty: &AxonType, subst: &TypeSubst) -> AxonType {
         AxonType::Ref(inner)      => AxonType::Ref(Box::new(subst_type(inner, subst))),
         AxonType::DynTrait(name)  => AxonType::DynTrait(name.clone()),
         AxonType::Tuple(elems)    => AxonType::Tuple(elems.iter().map(|e| subst_type(e, subst)).collect()),
+        AxonType::Union(members)  => AxonType::Union(members.iter().map(|m| subst_type(m, subst)).collect()),
     }
 }
 
@@ -146,6 +147,12 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
             body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
         },
 
+        Expr::WhileLet { pattern, expr, body } => Expr::WhileLet {
+            pattern: pattern.clone(),
+            expr: Box::new(subst_expr(expr, subst)),
+            body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
+        },
+
         Expr::Lambda { params, body, captures } => Expr::Lambda {
             params: params.iter().map(|p| LambdaParam {
                 name: p.name.clone(),
@@ -207,6 +214,10 @@ pub fn mangle_type(ty: &AxonType) -> String {
         AxonType::Tuple(elems)  => {
             let parts: Vec<_> = elems.iter().map(mangle_type).collect();
             format!("Tuple__{}", parts.join("__"))
+        }
+        AxonType::Union(members) => {
+            let parts: Vec<_> = members.iter().map(mangle_type).collect();
+            format!("Union__{}", parts.join("__"))
         }
     }
 }
@@ -359,6 +370,10 @@ impl MonoContext {
                 self.collect_from_expr(cond);
                 for s in body { self.collect_from_expr(&s.expr); }
             }
+            Expr::WhileLet { expr, body, .. } => {
+                self.collect_from_expr(expr);
+                for s in body { self.collect_from_expr(&s.expr); }
+            }
             Expr::Assign { value, .. } => self.collect_from_expr(value),
             Expr::MethodCall { receiver, args, .. } => {
                 self.collect_from_expr(receiver);
@@ -488,6 +503,11 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         },
         Expr::While { cond, body } => Expr::While {
             cond: Box::new(rename_calls_expr(cond, rename)),
+            body: body.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect(),
+        },
+        Expr::WhileLet { pattern, expr, body } => Expr::WhileLet {
+            pattern: pattern.clone(),
+            expr: Box::new(rename_calls_expr(expr, rename)),
             body: body.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect(),
         },
         Expr::Lambda { params, body, captures } => Expr::Lambda {

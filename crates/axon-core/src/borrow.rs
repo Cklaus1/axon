@@ -318,6 +318,17 @@ impl OwnershipGraph {
                 }
                 self.pop_scope();
             }
+            Expr::WhileLet { expr, body, .. } => {
+                self.check_read(expr);
+                self.push_scope();
+                for stmt in body {
+                    if !stmt.span.is_dummy() {
+                        self.current_span = stmt.span;
+                    }
+                    self.check_expr(&stmt.expr);
+                }
+                self.pop_scope();
+            }
             Expr::For { start, end, body, .. } => {
                 self.check_read(start);
                 self.check_read(end);

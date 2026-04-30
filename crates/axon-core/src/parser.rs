@@ -260,7 +260,7 @@ impl Parser {
 
     fn parse_item(&mut self) -> Result<Item> {
         let mut attrs = Vec::new();
-        while self.at(&Token::At) {
+        while self.at(&Token::At) || self.at(&Token::Hash) {
             attrs.push(self.parse_attr()?);
         }
         let public = self.eat(&Token::Pub);
@@ -287,7 +287,10 @@ impl Parser {
     }
 
     fn parse_attr(&mut self) -> Result<Attr> {
-        self.expect(&Token::At)?;
+        // Accept both `@[attr]` (Axon-native) and `#[attr]` (Rust-style) syntax.
+        if !self.eat(&Token::At) {
+            self.expect(&Token::Hash)?;
+        }
         self.expect(&Token::LBracket)?;
         let name = self.expect_ident()?;
         let mut args = Vec::new();
@@ -388,13 +391,26 @@ impl Parser {
     // ── Types ────────────────────────────────────────────────────────────────
 
     fn parse_type(&mut self) -> Result<AxonType> {
+        let first = self.parse_type_atom()?;
+        // TypeScript-style union: `A|B|C`. Collect successive `| T` atoms.
+        if self.at(&Token::Pipe) {
+            let mut members = vec![first];
+            while self.eat(&Token::Pipe) {
+                members.push(self.parse_type_atom()?);
+            }
+            return Ok(AxonType::Union(members));
+        }
+        Ok(first)
+    }
+
+    fn parse_type_atom(&mut self) -> Result<AxonType> {
         // `dyn Trait` — trait object type
         if self.eat(&Token::Dyn) {
             let name = self.expect_ident()?;
             return Ok(AxonType::DynTrait(name));
         }
         if self.eat(&Token::Ampersand) {
-            return Ok(AxonType::Ref(Box::new(self.parse_type()?)));
+            return Ok(AxonType::Ref(Box::new(self.parse_type_atom()?)));
         }
         // Tuple type: `(T1, T2, ...)` or unit `()`.
         // Disambiguation: `(` followed by `)` → unit type `()`.
@@ -602,7 +618,7 @@ impl Parser {
         let mut methods = Vec::new();
         while !self.at(&Token::RBrace) {
             let mut attrs = Vec::new();
-            while self.at(&Token::At) { attrs.push(self.parse_attr()?); }
+            while self.at(&Token::At) || self.at(&Token::Hash) { attrs.push(self.parse_attr()?); }
             let public = self.eat(&Token::Pub);
             methods.push(self.parse_fn(public, attrs)?);
         }
@@ -684,6 +700,23 @@ impl Parser {
 
     fn parse_while(&mut self) -> Result<Expr> {
         self.expect(&Token::While)?;
+        // `while let <pattern> = <expr> { body }`
+        if self.eat(&Token::Let) {
+            let pattern = self.parse_pattern()?;
+            self.expect(&Token::Eq)?;
+            let expr = self.parse_logical()?;
+            self.expect(&Token::LBrace)?;
+            let mut body = Vec::new();
+            while !self.at(&Token::RBrace) {
+                let span = self.current_span();
+                let e = self.parse_expr()?;
+                self.eat(&Token::Semi);
+                body.push(Stmt { expr: e, span });
+            }
+            self.expect(&Token::RBrace)?;
+            return Ok(Expr::WhileLet { pattern, expr: Box::new(expr), body });
+        }
+        // `while <cond> { body }`
         let cond = self.parse_logical()?;
         self.expect(&Token::LBrace)?;
         let mut body = Vec::new();
@@ -1077,8 +1110,10 @@ impl Parser {
                 let mut params = Vec::new();
                 while !self.at(&Token::Pipe) {
                     let pname = self.expect_ident()?;
+                    // Use `parse_type_atom` (not `parse_type`) so the closing
+                    // `|` is not mis-parsed as a union-type continuation.
                     let ty = if self.eat(&Token::Colon) {
-                        Some(self.parse_type()?)
+                        Some(self.parse_type_atom()?)
                     } else { None };
                     params.push(LambdaParam { name: pname, ty });
                     if !self.eat(&Token::Comma) { break; }
@@ -1331,6 +1366,10 @@ fn axon_type_to_str(ty: &AxonType) -> String {
             let inner: Vec<String> = elems.iter().map(|e| axon_type_to_str(e)).collect();
             format!("({})", inner.join(", "))
         }
+        AxonType::Union(members) => {
+            let inner: Vec<String> = members.iter().map(|m| axon_type_to_str(m)).collect();
+            inner.join("|")
+        }
     }
 }
 
@@ -1488,6 +1527,17 @@ mod tests {
         let Item::FnDef(f) = &prog.items[0] else { panic!() };
         let Expr::Block(stmts) = &f.body else { panic!() };
         assert!(matches!(&stmts[1].expr, Expr::While { .. }));
+    }
+
+    #[test]
+    fn test_while_let_some() {
+        let prog = parse("fn f(){while let Some(x) = next() {x}}");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        assert!(
+            matches!(&stmts[0].expr, Expr::WhileLet { pattern: Pattern::Some(_), .. }),
+            "expected WhileLet with Some pattern, got {:?}", &stmts[0].expr
+        );
     }
 
     #[test]
@@ -1957,5 +2007,129 @@ mod tests {
             matches!(ret, AxonType::Named(n) if n == "()"),
             "unit type should be Named(\"()\"), got {ret:?}"
         );
+    }
+
+    // ── Attribute annotation tests ────────────────────────────────────────────
+
+    /// `@[test]` produces one attr with name "test" and no args.
+    #[test]
+    fn parse_attr_at_test() {
+        let prog = parse("@[test] fn test_ok() { 1 }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        assert_eq!(f.attrs.len(), 1, "expected one attribute");
+        assert_eq!(f.attrs[0].name, "test");
+        assert!(f.attrs[0].args.is_empty(), "test attr has no args");
+    }
+
+    /// `#[test]` (Rust-style hash sigil) produces the same attr as `@[test]`.
+    #[test]
+    fn parse_attr_hash_test() {
+        let prog = parse("#[test] fn test_hash() { 1 }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        assert_eq!(f.attrs.len(), 1, "expected one attribute");
+        assert_eq!(f.attrs[0].name, "test");
+        assert!(f.attrs[0].args.is_empty(), "test attr has no args");
+    }
+
+    /// `#[adaptive]` parses correctly with no args.
+    #[test]
+    fn parse_attr_hash_adaptive() {
+        let prog = parse("#[adaptive] fn smart_fn(x: i64) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        assert_eq!(f.attrs.len(), 1);
+        assert_eq!(f.attrs[0].name, "adaptive");
+        assert!(f.attrs[0].args.is_empty());
+    }
+
+    /// Multiple attributes on the same function — mix of `@[...]` and `#[...]`.
+    #[test]
+    fn parse_multiple_attrs_mixed_sigils() {
+        let prog = parse("@[goal] #[adaptive] fn mixed(x: i64) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        assert_eq!(f.attrs.len(), 2, "expected two attributes");
+        assert_eq!(f.attrs[0].name, "goal");
+        assert_eq!(f.attrs[1].name, "adaptive");
+    }
+
+    /// `#[goal(maximize_throughput)]` — attr with a single argument.
+    #[test]
+    fn parse_attr_hash_with_arg() {
+        let prog = parse("#[goal(maximize_throughput)] fn optimize(x: i64) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        assert_eq!(f.attrs.len(), 1);
+        assert_eq!(f.attrs[0].name, "goal");
+        assert_eq!(f.attrs[0].args, vec!["maximize_throughput"]);
+    }
+
+    // ── Union types (TypeScript-style `A|B|C`) ────────────────────────────────
+
+    /// Simple two-arm union as a parameter type.
+    #[test]
+    fn parse_union_param_two_members() {
+        let prog = parse("fn foo(x: i64|str) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let AxonType::Union(members) = &f.params[0].ty else {
+            panic!("expected Union, got {:?}", f.params[0].ty);
+        };
+        assert_eq!(members.len(), 2);
+        assert!(matches!(&members[0], AxonType::Named(n) if n == "i64"));
+        assert!(matches!(&members[1], AxonType::Named(n) if n == "str"));
+    }
+
+    /// Three-arm union as a parameter type.
+    #[test]
+    fn parse_union_param_three_members() {
+        let prog = parse("fn foo(x: i64|str|bool) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let AxonType::Union(members) = &f.params[0].ty else {
+            panic!("expected Union, got {:?}", f.params[0].ty);
+        };
+        assert_eq!(members.len(), 3);
+        assert!(matches!(&members[2], AxonType::Named(n) if n == "bool"));
+    }
+
+    /// Union nested as the `ok` branch of a `Result<...>` return type.
+    #[test]
+    fn parse_union_in_result_ok_branch() {
+        let prog = parse("fn foo(x: i64) -> Result<i64|str, Error> { Ok(x) }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let Some(AxonType::Result { ok, err }) = &f.return_type else {
+            panic!("expected Result return type");
+        };
+        let AxonType::Union(members) = ok.as_ref() else {
+            panic!("expected Union in ok branch, got {:?}", ok);
+        };
+        assert_eq!(members.len(), 2);
+        assert!(matches!(&members[0], AxonType::Named(n) if n == "i64"));
+        assert!(matches!(&members[1], AxonType::Named(n) if n == "str"));
+        assert!(matches!(err.as_ref(), AxonType::Named(n) if n == "Error"));
+    }
+
+    /// A bare type with no `|` should NOT be wrapped in a Union.
+    #[test]
+    fn parse_single_type_is_not_a_union() {
+        let prog = parse("fn foo(x: i64) -> i64 { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        assert!(matches!(&f.params[0].ty, AxonType::Named(n) if n == "i64"));
+        assert!(matches!(f.return_type.as_ref(), Some(AxonType::Named(n)) if n == "i64"));
+    }
+
+    /// Round-trip through the canonical formatter: `i64|str|bool`.
+    #[test]
+    fn parse_union_round_trip_via_fmt() {
+        let src = "fn foo(x: i64|str|bool) -> i64 { x }";
+        let prog = parse(src);
+        let formatted = crate::fmt::format_program(&prog);
+        assert!(
+            formatted.contains("i64|str|bool"),
+            "expected canonical form to contain `i64|str|bool`, got:\n{formatted}"
+        );
+        // Re-parse the formatted source and verify the Union shape survives.
+        let prog2 = parse(&formatted);
+        let Item::FnDef(f2) = &prog2.items[0] else { panic!("re-parse failed") };
+        let AxonType::Union(members) = &f2.params[0].ty else {
+            panic!("expected Union after round-trip, got {:?}", f2.params[0].ty);
+        };
+        assert_eq!(members.len(), 3);
     }
 }

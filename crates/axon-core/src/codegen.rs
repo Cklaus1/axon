@@ -4710,6 +4710,54 @@ impl<'ctx> Codegen<'ctx> {
                 Some(self.context.i64_type().const_zero().into())
             }
 
+            // ── While-let loop ───────────────────────────────────────────────
+            // `while let <pattern> = <expr> { body }` — compiled as:
+            //   loop { val = expr; if !pattern_matches(val) { break }; bind; body }
+            ast::Expr::WhileLet { pattern, expr, body } => {
+                let cond_bb = self.context.append_basic_block(fn_val, "wl.cond");
+                let body_bb = self.context.append_basic_block(fn_val, "wl.body");
+                let exit_bb = self.context.append_basic_block(fn_val, "wl.exit");
+
+                self.loop_stack.push((cond_bb, exit_bb));
+                self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+                // Evaluate the scrutinee and test the pattern.
+                self.builder.position_at_end(cond_bb);
+                let subject = match self.emit_expr(expr, fn_val) {
+                    Some(v) => v,
+                    None => {
+                        // Expression produced no value; treat as infinite loop.
+                        self.builder.build_unconditional_branch(body_bb).unwrap();
+                        self.loop_stack.pop();
+                        self.builder.position_at_end(exit_bb);
+                        return Some(self.context.i64_type().const_zero().into());
+                    }
+                };
+                let matches = self.emit_pattern_test(pattern, subject);
+                let cond_int = match matches {
+                    BasicValueEnum::IntValue(i) => i,
+                    _ => self.context.bool_type().const_int(1, false),
+                };
+                self.builder.build_conditional_branch(cond_int, body_bb, exit_bb).unwrap();
+
+                // Bind pattern variables and emit body.
+                self.builder.position_at_end(body_bb);
+                self.emit_pattern_bindings(pattern, subject);
+                for stmt in body {
+                    self.emit_expr(&stmt.expr, fn_val);
+                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                        break;
+                    }
+                }
+                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+                    self.builder.build_unconditional_branch(cond_bb).unwrap();
+                }
+
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                Some(self.context.i64_type().const_zero().into())
+            }
+
             // ── For-in range loop ─────────────────────────────────────────────
             // `for i in start..end { body }` or `start..=end` (inclusive).
             ast::Expr::For { var, start, end, body, inclusive } => {
@@ -6214,6 +6262,12 @@ impl<'ctx> Codegen<'ctx> {
             ast::AxonType::Ref(inner) => self.axon_type_to_semantic(inner),
             ast::AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             ast::AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
+            ast::AxonType::Tuple(elems) => Type::Tuple(
+                elems.iter().map(|e| self.axon_type_to_semantic(e)).collect(),
+            ),
+            // Union types are not yet first-class — fall back to Unknown so
+            // codegen does not assert a specific LLVM lowering.
+            ast::AxonType::Union(_) => Type::Unknown,
         }
     }
 

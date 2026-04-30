@@ -777,6 +777,15 @@ impl<'a> Resolver<'a> {
                 }
                 self.table.pop_scope();
             }
+            Expr::WhileLet { pattern, expr, body } => {
+                self.resolve_expr(expr);
+                self.table.push_scope();
+                self.resolve_pattern(pattern);
+                for stmt in body {
+                    self.resolve_stmt(stmt);
+                }
+                self.table.pop_scope();
+            }
             Expr::For { var, start, end, body, .. } => {
                 self.resolve_expr(start);
                 self.resolve_expr(end);
@@ -1068,6 +1077,12 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
                 fill_captures_expr(&mut stmt.expr, outer);
             }
         }
+        Expr::WhileLet { expr, body, .. } => {
+            fill_captures_expr(expr, outer);
+            for stmt in body {
+                fill_captures_expr(&mut stmt.expr, outer);
+            }
+        }
         Expr::For { start, end, body, .. } => {
             fill_captures_expr(start, outer);
             fill_captures_expr(end, outer);
@@ -1176,6 +1191,12 @@ fn collect_free_vars(
         Expr::Assign { value, .. } => collect_free_vars(value, bound, free),
         Expr::While { cond, body } => {
             collect_free_vars(cond, bound, free);
+            for stmt in body {
+                collect_free_vars(&stmt.expr, bound, free);
+            }
+        }
+        Expr::WhileLet { expr, body, .. } => {
+            collect_free_vars(expr, bound, free);
             for stmt in body {
                 collect_free_vars(&stmt.expr, bound, free);
             }

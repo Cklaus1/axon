@@ -157,6 +157,12 @@ fn parse_type_str(s: &str) -> Type {
     if let Some(inner) = strip_wrap(s, "Chan<", ">") {
         return Type::Chan(Box::new(parse_type_str(inner)));
     }
+    if let Some(inner) = strip_wrap(s, "Uncertain<", ">") {
+        return Type::Uncertain(Box::new(parse_type_str(inner)));
+    }
+    if let Some(inner) = strip_wrap(s, "Temporal<", ">") {
+        return Type::Temporal(Box::new(parse_type_str(inner)));
+    }
     Type::Deferred(s.to_string())
 }
 
@@ -286,8 +292,17 @@ impl InferCtx {
             AxonType::Option(inner) => Type::Option(Box::new(self.resolve_ast_type(inner))),
             AxonType::Slice(inner) => Type::Slice(Box::new(self.resolve_ast_type(inner))),
             AxonType::Chan(inner) => Type::Chan(Box::new(self.resolve_ast_type(inner))),
-            AxonType::Generic { base, .. } => {
-                // Phase 1: generics treated as deferred.
+            AxonType::Generic { base, args } => {
+                // Uncertain<T> and Temporal<T> are first-class in the type system.
+                if base == "Uncertain" {
+                    let inner = args.first().map(|a| self.resolve_ast_type(a)).unwrap_or(Type::Unknown);
+                    return Type::Uncertain(Box::new(inner));
+                }
+                if base == "Temporal" {
+                    let inner = args.first().map(|a| self.resolve_ast_type(a)).unwrap_or(Type::Unknown);
+                    return Type::Temporal(Box::new(inner));
+                }
+                // Phase 1: other generics treated as deferred.
                 Type::Deferred(base.clone())
             }
             AxonType::Fn { params, ret } => Type::Fn(
@@ -298,6 +313,10 @@ impl InferCtx {
             AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
             AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_ast_type(e)).collect()),
+            // Union types are not yet first-class in the semantic type system.
+            // Treat them permissively: resolve to `Type::Unknown` so unification
+            // does not assert a specific element type.
+            AxonType::Union(_) => Type::Unknown,
         }
     }
 
@@ -990,6 +1009,20 @@ impl InferCtx {
                 Type::Unit
             }
 
+            // ── While-let loop ────────────────────────────────────────────────
+            // `while let Some(x) = expr { body }` — expr is Option<T>,
+            // pattern binds T; loop evaluates as unit.
+            Expr::WhileLet { pattern, expr, body } => {
+                let expr_ty = self.infer_expr(expr, scope, ret_ty);
+                scope.push();
+                self.bind_pattern_with_subj(pattern, scope, Some(&expr_ty));
+                for stmt in body {
+                    self.infer_expr(&stmt.expr, scope, ret_ty);
+                }
+                scope.pop();
+                Type::Unit
+            }
+
             // ── For loop (range iteration) ───────────────────────────────────
             Expr::For { var, start, end, body, .. } => {
                 let start_ty = self.infer_expr(start, scope, ret_ty);
@@ -1340,6 +1373,20 @@ impl InferCtx {
             (Type::Chan(a), Type::Chan(b)) => {
                 self.unify(*a, *b, origin, subst);
             }
+            (Type::Uncertain(a), Type::Uncertain(b)) => {
+                self.unify(*a, *b, origin, subst);
+            }
+            (Type::Temporal(a), Type::Temporal(b)) => {
+                self.unify(*a, *b, origin, subst);
+            }
+            // Uncertain<T> is soft-compatible with T (AI soft typing: confidence implicit).
+            (Type::Uncertain(inner), other) | (other, Type::Uncertain(inner)) => {
+                self.unify(*inner, other, origin, subst);
+            }
+            // Temporal<T> is compatible with T for most operations.
+            (Type::Temporal(inner), other) | (other, Type::Temporal(inner)) => {
+                self.unify(*inner, other, origin, subst);
+            }
             (Type::Tuple(ts1), Type::Tuple(ts2)) if ts1.len() == ts2.len() => {
                 for (a, b) in ts1.into_iter().zip(ts2.into_iter()) {
                     self.unify(a, b, origin, subst);
@@ -1375,7 +1422,8 @@ impl InferCtx {
     fn occurs(&self, var: u32, ty: &Type) -> bool {
         match ty {
             Type::Var(n) => *n == var,
-            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner) => self.occurs(var, inner),
+            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner)
+            | Type::Uncertain(inner) | Type::Temporal(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {

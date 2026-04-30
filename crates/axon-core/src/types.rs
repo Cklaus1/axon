@@ -57,6 +57,10 @@ pub enum Type {
     DynTrait(String),
     /// A channel carrying values of type T: `chan<T>` — opaque handle ptr.
     Chan(Box<Type>),
+    /// An AI-uncertain value of type T with implicit confidence: `Uncertain<T>`.
+    Uncertain(Box<Type>),
+    /// A temporally-scoped value of type T with validity windows: `Temporal<T>`.
+    Temporal(Box<Type>),
 }
 
 impl Type {
@@ -200,6 +204,8 @@ impl Type {
             Type::TypeParam(n) => n.clone(),
             Type::DynTrait(n) => format!("dyn {n}"),
             Type::Chan(t) => format!("chan<{}>", t.display()),
+            Type::Uncertain(t) => format!("Uncertain<{}>", t.display()),
+            Type::Temporal(t) => format!("Temporal<{}>", t.display()),
         }
     }
 }
@@ -259,7 +265,8 @@ impl Substitution {
                     false
                 }
             }
-            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner) => self.occurs(var, inner),
+            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner)
+            | Type::Uncertain(inner) | Type::Temporal(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {
@@ -298,6 +305,8 @@ impl Substitution {
             ),
             Type::Slice(inner) => Type::Slice(Box::new(self.apply_inner(inner, visiting))),
             Type::Chan(inner) => Type::Chan(Box::new(self.apply_inner(inner, visiting))),
+            Type::Uncertain(inner) => Type::Uncertain(Box::new(self.apply_inner(inner, visiting))),
+            Type::Temporal(inner) => Type::Temporal(Box::new(self.apply_inner(inner, visiting))),
             Type::Tuple(ts) => {
                 Type::Tuple(ts.iter().map(|t| self.apply_inner(t, visiting)).collect())
             }

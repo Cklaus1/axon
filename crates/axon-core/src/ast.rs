@@ -162,6 +162,9 @@ pub enum AxonType {
     /// The unit type `()` is represented as `AxonType::Named("()")` to avoid
     /// ambiguity; `Tuple` always has at least two elements.
     Tuple(Vec<AxonType>),
+    /// TypeScript-style union type — `A|B|C`.
+    /// Always has at least two members; a single type is represented directly.
+    Union(Vec<AxonType>),
 }
 
 // ── Expressions ──────────────────────────────────────────────────────────────
@@ -209,6 +212,12 @@ pub enum Expr {
     StructLit { name: String, fields: Vec<(String, Expr)> },
     While {
         cond: Box<Expr>,
+        body: Vec<Stmt>,
+    },
+    /// `while let <pattern> = <expr> { body }` — loop until pattern fails to match.
+    WhileLet {
+        pattern: Pattern,
+        expr: Box<Expr>,
         body: Vec<Stmt>,
     },
     Assign { name: String, value: Box<Expr> },

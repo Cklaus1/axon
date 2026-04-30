@@ -1,0 +1,102 @@
+// Phase 58: Advanced closure patterns — apply_n, make_adder (closure factory),
+//           closure chaining, and higher-order apply with inline lambdas.
+
+// ── Apply a function n times ──────────────────────────────────────────────────
+
+fn apply_n(f: fn(i64) -> i64, x: i64, n: i64) -> i64 {
+    let result = x
+    let i = 0
+    while i < n {
+        result = f(result)
+        i = i + 1
+    }
+    result
+}
+
+fn test_apply_n() -> bool {
+    let double = (x: i64) => x * 2
+    apply_n(double, 1, 4) == 16
+}
+
+fn test_apply_n_inc() -> bool {
+    let inc = (x: i64) => x + 1
+    apply_n(inc, 0, 5) == 5
+}
+
+fn test_apply_n_zero() -> bool {
+    let double = (x: i64) => x * 2
+    apply_n(double, 7, 0) == 7
+}
+
+// ── Closure factory (make_adder) ─────────────────────────────────────────────
+
+fn make_adder(n: i64) -> fn(i64) -> i64 {
+    (x: i64) => x + n
+}
+
+fn make_multiplier(n: i64) -> fn(i64) -> i64 {
+    (x: i64) => x * n
+}
+
+fn test_make_adder() -> bool {
+    let add5 = make_adder(5)
+    add5(10) == 15 && add5(0) == 5 && add5(-3) == 2
+}
+
+fn test_make_multiplier() -> bool {
+    let times3 = make_multiplier(3)
+    times3(7) == 21 && times3(0) == 0
+}
+
+// ── Closure chaining (manual compose) ────────────────────────────────────────
+
+fn compose2(f: fn(i64) -> i64, g: fn(i64) -> i64, x: i64) -> i64 {
+    f(g(x))
+}
+
+fn test_closure_chain() -> bool {
+    let add1 = (x: i64) => x + 1
+    let mul2 = (x: i64) => x * 2
+    // compose2(mul2, add1, 3) = mul2(add1(3)) = mul2(4) = 8
+    compose2(mul2, add1, 3) == 8
+}
+
+fn test_closure_chain_reverse() -> bool {
+    let add1 = (x: i64) => x + 1
+    let mul2 = (x: i64) => x * 2
+    // compose2(add1, mul2, 3) = add1(mul2(3)) = add1(6) = 7
+    compose2(add1, mul2, 3) == 7
+}
+
+// ── Higher-order: apply_and_accumulate ───────────────────────────────────────
+
+fn apply_and_accumulate(f: fn(i64) -> i64, lo: i64, hi: i64) -> i64 {
+    let acc = 0
+    for i in lo..hi {
+        acc = acc + f(i)
+    }
+    acc
+}
+
+fn test_sum_of_squares() -> bool {
+    // sum of x*x for x in 1..4 = 1 + 4 + 9 = 14
+    apply_and_accumulate((x: i64) => x * x, 1, 4) == 14
+}
+
+fn test_sum_of_doubles() -> bool {
+    // sum of 2*x for x in 0..5 = 0+2+4+6+8 = 20
+    apply_and_accumulate((x: i64) => x * 2, 0, 5) == 20
+}
+
+fn main() -> i64 {
+    let s1 = if test_apply_n()              { 1 } else { 0 }
+    let s2 = if test_apply_n_inc()          { 1 } else { 0 }
+    let s3 = if test_apply_n_zero()         { 1 } else { 0 }
+    let s4 = if test_make_adder()           { 1 } else { 0 }
+    let s5 = if test_make_multiplier()      { 1 } else { 0 }
+    let s6 = if test_closure_chain()        { 1 } else { 0 }
+    let s7 = if test_closure_chain_reverse(){ 1 } else { 0 }
+    let s8 = if test_sum_of_squares()       { 1 } else { 0 }
+    let s9 = if test_sum_of_doubles()       { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

@@ -485,6 +485,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "str",
         doc: "Convert `n` to a string in the given base (2–36). Negative numbers are prefixed with '-'. Bases outside 2–36 return an empty string.",
     },
+    // ── Phase 57: Uncertain<T> / Temporal<T> builtins ────────────────────────
+    BuiltinFn {
+        name: "uncertain_confidence",
+        params: &[("confidence", "f64")],
+        ret: "()",
+        doc: "Record an implicit confidence level for the surrounding Uncertain<T> value (0.0–1.0). Used for AI-inferred values.",
+    },
+    BuiltinFn {
+        name: "temporal_now",
+        params: &[],
+        ret: "i64",
+        doc: "Return the current validity timestamp for Temporal<T> values (milliseconds since epoch).",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────

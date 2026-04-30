@@ -310,6 +310,12 @@ impl Formatter {
                 }
                 self.write(")");
             }
+            AxonType::Union(members) => {
+                for (i, m) in members.iter().enumerate() {
+                    if i > 0 { self.write("|"); }
+                    self.emit_axon_type(m);
+                }
+            }
         }
     }
 
@@ -453,6 +459,15 @@ impl Formatter {
             Expr::While { cond, body } => {
                 self.write("while ");
                 self.emit_expr(cond);
+                self.write(" ");
+                self.emit_block_body(&Expr::Block(body.clone()));
+            }
+
+            Expr::WhileLet { pattern, expr, body } => {
+                self.write("while let ");
+                self.emit_pattern(pattern);
+                self.write(" = ");
+                self.emit_expr(expr);
                 self.write(" ");
                 self.emit_block_body(&Expr::Block(body.clone()));
             }

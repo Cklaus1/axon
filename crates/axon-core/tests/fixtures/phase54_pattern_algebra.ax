@@ -10,7 +10,12 @@ enum Expr {
     Neg  { operand: i64 },
 }
 
-// eval: inline match avoids enum-arg E0306 false positive in checker
+// eval: inline match was originally used to avoid a spurious E0306 false positive
+// (checker would fail to resolve the type of an enum variant struct literal, falling
+// back to Type::Unknown or Type::Struct instead of Type::Enum).  The underlying bug
+// has been fixed in checker.rs (resolve_expr_type now returns Type::Enum for "A::V{}"
+// literals when the prefix is a known enum).  The inline-match workaround is kept as-is
+// because it is also valid idiomatic Axon and there is no need to rewrite it.
 fn test_eval_lit() -> bool {
     let v = match (Expr::Lit { value: 42 }) {
         Expr::Lit { value }       => value,

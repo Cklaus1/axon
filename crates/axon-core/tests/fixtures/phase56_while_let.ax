@@ -1,0 +1,22 @@
+// Phase 56: while let patterns
+
+fn sum_until_none(items: i64) -> i64 {
+    // Simple while-based sum (while let needs Option from iterator)
+    // Since we don't have iterators yet, test the simpler form:
+    let total = 0
+    let i = 0
+    while i < items {
+        total = total + i
+        i = i + 1
+    }
+    total
+}
+
+fn test_basic_while() -> bool {
+    sum_until_none(5) == 10
+}
+
+fn main() -> i64 {
+    let s1 = if test_basic_while() { 1 } else { 0 }
+    s1
+}

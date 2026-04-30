@@ -1,0 +1,132 @@
+// Phase 60: String processing pipeline — word counting, palindrome check,
+//           str_repeat, str_slice, and character-level scanning.
+
+// ── Word counting ─────────────────────────────────────────────────────────────
+// Count words by detecting transitions: non-space after space (or at start).
+
+fn count_words(s: str) -> i64 {
+    let n = 0
+    let in_word = false
+    for i in 0..str_len(s) {
+        let c = char_at(s, i)
+        let is_space = c == 32   // ASCII space
+        if is_space {
+            in_word = false
+        } else {
+            if !in_word {
+                n = n + 1
+                in_word = true
+            }
+        }
+    }
+    n
+}
+
+fn test_count_two_words() -> bool {
+    count_words("hello world") == 2
+}
+
+fn test_count_three_words() -> bool {
+    count_words("one two three") == 3
+}
+
+fn test_count_single_word() -> bool {
+    count_words("single") == 1
+}
+
+fn test_count_empty() -> bool {
+    count_words("") == 0
+}
+
+// ── Palindrome check ──────────────────────────────────────────────────────────
+
+fn palindrome(s: str) -> bool {
+    let n = str_len(s)
+    let ok = true
+    for i in 0..(n / 2) {
+        if char_at(s, i) != char_at(s, n - 1 - i) {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn test_palindrome_true() -> bool {
+    palindrome("racecar") && palindrome("level") && palindrome("abba")
+}
+
+fn test_palindrome_false() -> bool {
+    !palindrome("hello") && !palindrome("axon")
+}
+
+fn test_palindrome_single() -> bool {
+    palindrome("a") && palindrome("z")
+}
+
+// ── String repeat ─────────────────────────────────────────────────────────────
+
+fn test_repeat_ab() -> bool {
+    str_eq(str_repeat("ab", 3), "ababab")
+}
+
+fn test_repeat_zero() -> bool {
+    str_eq(str_repeat("x", 0), "")
+}
+
+fn test_repeat_once() -> bool {
+    str_eq(str_repeat("hello", 1), "hello")
+}
+
+// ── String slice ──────────────────────────────────────────────────────────────
+
+fn first_n(s: str, n: i64) -> str {
+    str_slice(s, 0, n)
+}
+
+fn drop_n(s: str, n: i64) -> str {
+    str_slice(s, n, str_len(s))
+}
+
+fn test_first_n() -> bool {
+    str_eq(first_n("hello world", 5), "hello")
+}
+
+fn test_drop_n() -> bool {
+    str_eq(drop_n("hello world", 6), "world")
+}
+
+// ── Digit counting in a string ────────────────────────────────────────────────
+
+fn count_digits(s: str) -> i64 {
+    let n = 0
+    for i in 0..str_len(s) {
+        let c = char_at(s, i)
+        if c >= 48 && c <= 57 {   // ASCII '0'..'9'
+            n = n + 1
+        }
+    }
+    n
+}
+
+fn test_count_digits() -> bool {
+    count_digits("abc123def45") == 5 &&
+    count_digits("no digits here") == 0 &&
+    count_digits("9") == 1
+}
+
+fn main() -> i64 {
+    let s1  = if test_count_two_words()   { 1 } else { 0 }
+    let s2  = if test_count_three_words() { 1 } else { 0 }
+    let s3  = if test_count_single_word() { 1 } else { 0 }
+    let s4  = if test_count_empty()       { 1 } else { 0 }
+    let s5  = if test_palindrome_true()   { 1 } else { 0 }
+    let s6  = if test_palindrome_false()  { 1 } else { 0 }
+    let s7  = if test_palindrome_single() { 1 } else { 0 }
+    let s8  = if test_repeat_ab()         { 1 } else { 0 }
+    let s9  = if test_repeat_zero()       { 1 } else { 0 }
+    let s10 = if test_repeat_once()       { 1 } else { 0 }
+    let s11 = if test_first_n()           { 1 } else { 0 }
+    let s12 = if test_drop_n()            { 1 } else { 0 }
+    let s13 = if test_count_digits()      { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12 + s13
+}

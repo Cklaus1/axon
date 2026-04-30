@@ -1,0 +1,15 @@
+enum Expr {
+    Lit { value: i64 }
+    Add { left: i64, right: i64 }
+}
+
+fn eval(e: Expr) -> i64 {
+    match e {
+        Expr::Lit { value } => value,
+        Expr::Add { left, right } => left + right,
+    }
+}
+
+fn main() -> i64 {
+    eval(Expr::Lit { value: 42 })
+}

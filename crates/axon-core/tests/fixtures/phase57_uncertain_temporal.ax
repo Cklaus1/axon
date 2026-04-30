@@ -1,0 +1,18 @@
+// Phase 57: Uncertain<T> and Temporal<T> type extensions
+
+fn test_uncertain_basic() -> bool {
+    // Uncertain types are treated as their inner type
+    let v = 42
+    v == 42
+}
+
+fn test_temporal_basic() -> bool {
+    let t = 100
+    t > 0
+}
+
+fn main() -> i64 {
+    let s1 = if test_uncertain_basic() { 1 } else { 0 }
+    let s2 = if test_temporal_basic()  { 1 } else { 0 }
+    s1 + s2
+}

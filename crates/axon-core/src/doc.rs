@@ -124,6 +124,10 @@ fn render_type(ty: &AxonType) -> String {
             let parts: Vec<_> = elems.iter().map(render_type).collect();
             format!("({})", parts.join(", "))
         }
+        AxonType::Union(members) => {
+            let parts: Vec<_> = members.iter().map(render_type).collect();
+            parts.join("|")
+        }
     }
 }
 
