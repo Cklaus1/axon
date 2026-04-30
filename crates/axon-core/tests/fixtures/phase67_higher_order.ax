@@ -1,0 +1,106 @@
+// Phase 67: Higher-order functions — passing functions as arguments, fold,
+//           map-accumulate, and predicate-based counting patterns.
+
+// ── Apply a function to each range element and accumulate ─────────────────────
+
+fn fold_range(start: i64, end: i64, init: i64, f: fn(i64, i64) -> i64) -> i64 {
+    let acc = init
+    for i in start..end {
+        acc = f(acc, i)
+    }
+    acc
+}
+
+fn test_fold_sum() -> bool {
+    // 0+1+2+3+4 = 10
+    fold_range(0, 5, 0, (acc: i64, x: i64) => acc + x) == 10
+}
+
+fn test_fold_product() -> bool {
+    // 1*2*3*4*5 = 120
+    fold_range(1, 6, 1, (acc: i64, x: i64) => acc * x) == 120
+}
+
+fn max_of(acc: i64, x: i64) -> i64 {
+    if x > acc { x } else { acc }
+}
+
+fn test_fold_max() -> bool {
+    // max of indices 0..6 = 0,1,2,3,4,5 starting from 0 → result is 5
+    fold_range(0, 6, 0, max_of) == 5
+}
+
+// ── Apply function and accumulate sum ─────────────────────────────────────────
+
+fn apply_and_sum(lo: i64, hi: i64, f: fn(i64) -> i64) -> i64 {
+    let acc = 0
+    for i in lo..hi {
+        acc = acc + f(i)
+    }
+    acc
+}
+
+fn double(x: i64) -> i64 { x * 2 }
+fn square(x: i64) -> i64 { x * x }
+fn increment(x: i64) -> i64 { x + 1 }
+
+fn test_apply_and_sum_double() -> bool {
+    // sum of 2*i for i in 0..5 = 0+2+4+6+8 = 20
+    apply_and_sum(0, 5, double) == 20
+}
+
+fn test_apply_and_sum_square() -> bool {
+    // sum of i*i for i in 1..4 = 1+4+9 = 14
+    apply_and_sum(1, 4, square) == 14
+}
+
+// ── Apply a function twice ────────────────────────────────────────────────────
+
+fn apply_twice(f: fn(i64) -> i64, x: i64) -> i64 {
+    f(f(x))
+}
+
+fn test_apply_twice_double() -> bool {
+    apply_twice(double, 3) == 12
+}
+
+fn test_apply_twice_inc() -> bool {
+    apply_twice(increment, 0) == 2
+}
+
+// ── Count elements satisfying a predicate ─────────────────────────────────────
+
+fn count_where(lo: i64, hi: i64, pred: fn(i64) -> bool) -> i64 {
+    let n = 0
+    for i in lo..hi {
+        if pred(i) { n = n + 1 }
+    }
+    n
+}
+
+fn is_even(x: i64) -> bool {
+    x - (x / 2) * 2 == 0
+}
+
+fn test_count_even() -> bool {
+    // evens in 0..10: 0,2,4,6,8 = 5
+    count_where(0, 10, is_even) == 5
+}
+
+fn test_count_gt5() -> bool {
+    // values > 5 in 0..10: 6,7,8,9 = 4
+    count_where(0, 10, (x: i64) => x > 5) == 4
+}
+
+fn main() -> i64 {
+    let s1 = if test_fold_sum()              { 1 } else { 0 }
+    let s2 = if test_fold_product()          { 1 } else { 0 }
+    let s3 = if test_fold_max()              { 1 } else { 0 }
+    let s4 = if test_apply_and_sum_double()  { 1 } else { 0 }
+    let s5 = if test_apply_and_sum_square()  { 1 } else { 0 }
+    let s6 = if test_apply_twice_double()    { 1 } else { 0 }
+    let s7 = if test_apply_twice_inc()       { 1 } else { 0 }
+    let s8 = if test_count_even()            { 1 } else { 0 }
+    let s9 = if test_count_gt5()             { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

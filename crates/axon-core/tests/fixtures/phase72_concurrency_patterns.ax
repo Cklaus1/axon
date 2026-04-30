@@ -1,0 +1,90 @@
+// Phase 72: Concurrency patterns — Chan<T>, spawn, select
+
+// ── Producer function using Chan<T> ──────────────────────────────────────────
+
+fn producer(ch: Chan<i64>, n: i64) {
+    let i = 0
+    while i < n {
+        ch.send(i * i)
+        i = i + 1
+    }
+}
+
+// ── Channel type checks ───────────────────────────────────────────────────────
+
+fn test_channel_types() -> bool {
+    let ch = Chan::new(16)
+    ch.send(42)
+    true
+}
+
+fn test_channel_send_recv() -> bool {
+    let ch = Chan::new(4)
+    ch.send(100)
+    true
+}
+
+// ── Spawn type checks ─────────────────────────────────────────────────────────
+
+fn test_spawn_types() -> bool {
+    let ch = Chan::new(8)
+    spawn { producer(ch, 3) }
+    true
+}
+
+fn test_spawn_inline() -> bool {
+    let ch = Chan::new(2)
+    spawn { ch.send(7) }
+    true
+}
+
+// ── Select as statement ───────────────────────────────────────────────────────
+
+fn test_select_stmt() -> bool {
+    let ch1 = Chan::new(1)
+    let ch2 = Chan::new(1)
+    ch1.send(10)
+    select {
+        ch1.recv() => { ch2.send(1) },
+        ch2.recv() => { ch1.send(2) },
+    }
+    true
+}
+
+// ── Pure computation: sum of squares ─────────────────────────────────────────
+
+fn sum_squares(n: i64) -> i64 {
+    let total = 0
+    let i = 0
+    while i < n {
+        total = total + i * i
+        i = i + 1
+    }
+    total
+}
+
+fn test_sum_squares() -> bool {
+    // 0^2 + 1^2 + 2^2 + 3^2 = 0 + 1 + 4 + 9 = 14
+    sum_squares(4) == 14 &&
+    sum_squares(0) == 0 &&
+    sum_squares(1) == 0
+}
+
+// ── Chan with generic constructor syntax ─────────────────────────────────────
+
+fn test_chan_generic_syntax() -> bool {
+    let ch = chan<i64>()
+    ch.send(55)
+    true
+}
+
+fn main() -> i64 {
+    let s1 = if test_channel_types()      { 1 } else { 0 }
+    let s2 = if test_channel_send_recv()  { 1 } else { 0 }
+    let s3 = if test_spawn_types()        { 1 } else { 0 }
+    let s4 = if test_spawn_inline()       { 1 } else { 0 }
+    let s5 = if test_select_stmt()        { 1 } else { 0 }
+    let s6 = if test_sum_squares()        { 1 } else { 0 }
+    let s7 = if test_chan_generic_syntax() { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

@@ -498,6 +498,43 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Return the current validity timestamp for Temporal<T> values (milliseconds since epoch).",
     },
+    // ── Phase 68: Bitwise operations ─────────────────────────────────────────
+    BuiltinFn {
+        name: "bit_and",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Bitwise AND of two i64 values (`a & b`).",
+    },
+    BuiltinFn {
+        name: "bit_or",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Bitwise OR of two i64 values (`a | b`).",
+    },
+    BuiltinFn {
+        name: "bit_xor",
+        params: &[("a", "i64"), ("b", "i64")],
+        ret: "i64",
+        doc: "Bitwise XOR of two i64 values (`a ^ b`).",
+    },
+    BuiltinFn {
+        name: "bit_not",
+        params: &[("n", "i64")],
+        ret: "i64",
+        doc: "Bitwise NOT (complement) of an i64 value (`~n`).",
+    },
+    BuiltinFn {
+        name: "shl",
+        params: &[("n", "i64"), ("shift", "i64")],
+        ret: "i64",
+        doc: "Left-shift `n` by `shift` bits (`n << shift`).",
+    },
+    BuiltinFn {
+        name: "shr",
+        params: &[("n", "i64"), ("shift", "i64")],
+        ret: "i64",
+        doc: "Arithmetic right-shift `n` by `shift` bits (`n >> shift`).",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────

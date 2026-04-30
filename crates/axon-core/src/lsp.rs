@@ -9,6 +9,7 @@
 //! - `hoverProvider`: function signatures and type names
 //! - `definitionProvider`: jump to top-level declarations
 //! - `diagnosticProvider`: error/warning squiggles via `publishDiagnostics`
+//! - `completionProvider`: identifier, keyword, field, and enum-variant completions
 //!
 //! ## Analysis strategy
 //! On every `didOpen` or `didChange` notification the full pipeline is re-run
@@ -32,6 +33,34 @@ pub struct LspDiagnostic {
     pub span: span::Span,
     /// 1 = error, 2 = warning, 3 = info
     pub severity: u8,
+}
+
+/// The kind of a completion item, mirroring the LSP `CompletionItemKind` values
+/// that are most relevant to Axon.
+#[derive(Debug, Clone, PartialEq)]
+pub enum CompletionKind {
+    /// A `fn` item or builtin function.
+    Function,
+    /// A local `let` binding or function parameter.
+    Variable,
+    /// A `type` (struct) or `enum` declaration.
+    Type,
+    /// A language keyword (`fn`, `let`, `if`, …).
+    Keyword,
+    /// A struct field (after `.`).
+    Field,
+    /// An enum variant (after `::`).
+    EnumVariant,
+}
+
+/// A single completion suggestion returned by [`compute_completions`].
+#[derive(Debug, Clone)]
+pub struct CompletionItem {
+    /// The text that will be inserted.
+    pub label: String,
+    pub kind: CompletionKind,
+    /// A short human-readable description (type signature, doc string, …).
+    pub detail: Option<String>,
 }
 
 // ── Analysis entry point (called from lib.rs) ─────────────────────────────────
@@ -256,6 +285,9 @@ pub fn run_lsp() {
                             "textDocumentSync": 1,
                             "hoverProvider": true,
                             "definitionProvider": true,
+                            "completionProvider": {
+                                "triggerCharacters": [".", ":"]
+                            },
                             "diagnosticProvider": {
                                 "interFileDependencies": false,
                                 "workspaceDiagnostics": false
@@ -374,6 +406,45 @@ pub fn run_lsp() {
                 );
             }
 
+            // ── Completion ────────────────────────────────────────────────
+            "textDocument/completion" => {
+                let uri = params["textDocument"]["uri"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
+                let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
+
+                let items_json: Vec<Value> = if let (Some(src), Some(res)) =
+                    (documents.get(&uri), last_result.get(&uri))
+                {
+                    let byte_offset =
+                        lsp_pos_to_byte_offset(src, line, character).unwrap_or(0);
+                    if let (Some(prog), Some(ctx)) = (&res.program, &res.infer_ctx) {
+                        compute_completions(prog, ctx, src, byte_offset)
+                            .into_iter()
+                            .map(completion_item_to_json)
+                            .collect()
+                    } else {
+                        vec![]
+                    }
+                } else {
+                    vec![]
+                };
+
+                send_message(
+                    &mut out,
+                    &json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": {
+                            "isIncomplete": false,
+                            "items": items_json
+                        }
+                    }),
+                );
+            }
+
             // ── Unknown / notification ─────────────────────────────────────
             _ => {
                 // Only respond to requests (which have an id), not notifications.
@@ -406,9 +477,19 @@ fn compute_hover_lsp(
     let byte_offset = lsp_pos_to_byte_offset(source, line, character)?;
     let word = word_at_offset(source, byte_offset)?;
 
-    // Function signature hover.
     if let Some(infer_ctx) = &result.infer_ctx {
         if let Some(sig) = infer_ctx.fn_sigs.get(&word) {
+            // Try to find the AST FnDef so we can show named parameters.
+            if let Some(program) = &result.program {
+                for item in &program.items {
+                    if let ast::Item::FnDef(fndef) = item {
+                        if fndef.name == word {
+                            return Some(format_fn_hover_with_params(fndef, sig));
+                        }
+                    }
+                }
+            }
+            // Fallback: show inferred types only (covers builtins).
             return Some(format_fn_hover(&word, sig));
         }
 
@@ -445,15 +526,30 @@ fn compute_hover_lsp(
 }
 
 fn format_fn_hover(name: &str, sig: &infer::FnSig) -> String {
-    let params: Vec<String> = sig
-        .params
-        .iter()
-        .map(|t| format_type(t))
-        .collect();
+    // Params without names — show only types (fallback used by hover on builtins).
+    let params: Vec<String> = sig.params.iter().map(|t| format_type(t)).collect();
     let ret = format_type(&sig.ret);
     format!(
         "```axon\nfn {}({}) -> {}\n```",
         name,
+        params.join(", "),
+        ret
+    )
+}
+
+/// Build a full `fn name(p1: T1, p2: T2) -> R` hover string using the AST
+/// `FnDef` (which carries param names) combined with inferred types.
+fn format_fn_hover_with_params(fndef: &ast::FnDef, sig: &infer::FnSig) -> String {
+    let params: Vec<String> = fndef
+        .params
+        .iter()
+        .zip(sig.params.iter())
+        .map(|(p, ty)| format!("{}: {}", p.name, format_type(ty)))
+        .collect();
+    let ret = format_type(&sig.ret);
+    format!(
+        "```axon\nfn {}({}) -> {}\n```",
+        fndef.name,
         params.join(", "),
         ret
     )
@@ -707,8 +803,16 @@ pub fn compute_hover(
 ) -> Option<String> {
     let word = word_at_offset(source, byte_offset)?;
 
-    // Function signature hover.
+    // Function signature hover — prefer named-parameter form from AST.
     if let Some(sig) = infer_ctx.fn_sigs.get(&word) {
+        for item in &program.items {
+            if let ast::Item::FnDef(fndef) = item {
+                if fndef.name == word {
+                    return Some(format_fn_hover_with_params(fndef, sig));
+                }
+            }
+        }
+        // Fallback: type-only form (covers builtins).
         return Some(format_fn_hover(&word, sig));
     }
 

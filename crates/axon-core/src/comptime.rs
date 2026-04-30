@@ -303,6 +303,14 @@ impl<'a> Evaluator<'a> {
             (BinOp::And, Bool(a), Bool(b)) => Ok(Bool(a && b)),
             (BinOp::Or,  Bool(a), Bool(b)) => Ok(Bool(a || b)),
 
+            (BinOp::BitAnd, Int(a), Int(b)) => Ok(Int(a & b)),
+            (BinOp::BitOr,  Int(a), Int(b)) => Ok(Int(a | b)),
+            (BinOp::BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
+            (BinOp::Shl, Int(a), Int(b)) =>
+                Ok(Int(a.checked_shl(b as u32).unwrap_or(0))),
+            (BinOp::Shr, Int(a), Int(b)) =>
+                Ok(Int(a.checked_shr(b as u32).unwrap_or(if a < 0 { -1 } else { 0 }))),
+
             (op, l, r) => Err(ComptimeError::NotEvaluable {
                 reason: format!("cannot apply {op:?} to {}/{}", l.type_name(), r.type_name()),
                 span: Span::dummy(),
@@ -313,9 +321,10 @@ impl<'a> Evaluator<'a> {
     fn eval_unary(&self, op: &UnaryOp, v: ComptimeVal) -> Result<ComptimeVal, ComptimeError> {
         use ComptimeVal::*;
         match (op, v) {
-            (UnaryOp::Neg, Int(n))   => Ok(Int(-n)),
-            (UnaryOp::Neg, Float(f)) => Ok(Float(-f)),
-            (UnaryOp::Not, Bool(b))  => Ok(Bool(!b)),
+            (UnaryOp::Neg, Int(n))    => Ok(Int(-n)),
+            (UnaryOp::Neg, Float(f))  => Ok(Float(-f)),
+            (UnaryOp::Not, Bool(b))   => Ok(Bool(!b)),
+            (UnaryOp::BitNot, Int(n)) => Ok(Int(!n)),
             (op, v) => Err(ComptimeError::NotEvaluable {
                 reason: format!("cannot apply {op:?} to {}", v.type_name()),
                 span: Span::dummy(),

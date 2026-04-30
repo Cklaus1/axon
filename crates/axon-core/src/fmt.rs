@@ -708,21 +708,32 @@ fn binop_str(op: &BinOp) -> &'static str {
         BinOp::Lt   => "<",  BinOp::Gt   => ">",
         BinOp::LtEq => "<=", BinOp::GtEq => ">=",
         BinOp::And  => "&&", BinOp::Or   => "||",
+        BinOp::BitAnd => "&",  BinOp::BitOr  => "|",  BinOp::BitXor => "^",
+        BinOp::Shl    => "<<", BinOp::Shr    => ">>",
     }
 }
 
 fn unaryop_str(op: &UnaryOp) -> &'static str {
-    match op { UnaryOp::Neg => "-", UnaryOp::Not => "!", UnaryOp::Ref => "&" }
+    match op {
+        UnaryOp::Neg    => "-",
+        UnaryOp::Not    => "!",
+        UnaryOp::Ref    => "&",
+        UnaryOp::BitNot => "~",
+    }
 }
 
 fn binop_prec(op: &BinOp) -> u8 {
     match op {
         BinOp::Or  => 1,
         BinOp::And => 2,
+        BinOp::BitOr  => 3,
+        BinOp::BitXor => 4,
+        BinOp::BitAnd => 5,
         BinOp::Eq | BinOp::NotEq |
-        BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => 3,
-        BinOp::Add | BinOp::Sub => 4,
-        BinOp::Mul | BinOp::Div | BinOp::Rem => 5,
+        BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => 6,
+        BinOp::Shl | BinOp::Shr => 7,
+        BinOp::Add | BinOp::Sub => 8,
+        BinOp::Mul | BinOp::Div | BinOp::Rem => 9,
     }
 }
 

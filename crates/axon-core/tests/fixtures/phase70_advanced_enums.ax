@@ -1,0 +1,67 @@
+// Phase 70: Advanced enum patterns — nested, multi-field, complex matching
+
+enum Shape {
+    Circle  { radius: i64 },
+    Rect    { width: i64, height: i64 },
+    Triangle{ base: i64, height: i64 },
+}
+
+fn area(s: Shape) -> i64 {
+    match s {
+        Shape::Circle { radius }         => radius * radius,
+        Shape::Rect { width, height }    => width * height,
+        Shape::Triangle { base, height } => base * height / 2,
+    }
+}
+
+fn perimeter_approx(s: Shape) -> i64 {
+    match s {
+        Shape::Circle { radius }         => 6 * radius,
+        Shape::Rect { width, height }    => 2 * width + 2 * height,
+        Shape::Triangle { base, height } => base + height + base,
+    }
+}
+
+fn test_area() -> bool {
+    area(Shape::Circle { radius: 5 }) == 25 &&
+    area(Shape::Rect { width: 4, height: 6 }) == 24 &&
+    area(Shape::Triangle { base: 10, height: 4 }) == 20
+}
+
+fn test_perimeter() -> bool {
+    perimeter_approx(Shape::Circle { radius: 3 }) == 18 &&
+    perimeter_approx(Shape::Rect { width: 3, height: 4 }) == 14
+}
+
+enum Expr2 {
+    Num  { n: i64 },
+    Add  { l: i64, r: i64 },
+    Mul  { l: i64, r: i64 },
+    Neg  { n: i64 },
+    Abs  { n: i64 },
+}
+
+fn eval2(e: Expr2) -> i64 {
+    match e {
+        Expr2::Num { n }    => n,
+        Expr2::Add { l, r } => l + r,
+        Expr2::Mul { l, r } => l * r,
+        Expr2::Neg { n }    => 0 - n,
+        Expr2::Abs { n }    => if n < 0 { 0 - n } else { n },
+    }
+}
+
+fn test_eval2() -> bool {
+    eval2(Expr2::Num { n: 7 })       == 7 &&
+    eval2(Expr2::Add { l: 3, r: 4 }) == 7 &&
+    eval2(Expr2::Mul { l: 3, r: 4 }) == 12 &&
+    eval2(Expr2::Neg { n: 5 })       == -5 &&
+    eval2(Expr2::Abs { n: -8 })      == 8
+}
+
+fn main() -> i64 {
+    let s1 = if test_area()      { 1 } else { 0 }
+    let s2 = if test_perimeter() { 1 } else { 0 }
+    let s3 = if test_eval2()     { 1 } else { 0 }
+    s1 + s2 + s3
+}

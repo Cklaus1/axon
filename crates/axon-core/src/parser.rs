@@ -115,6 +115,11 @@ pub struct Parser {
     /// guards on binary operators are suppressed so that multi-line expressions
     /// inside parentheses / brackets parse correctly.
     paren_depth: usize,
+    /// When parsing nested generic types like `Result<Option<i64>>`, the lexer
+    /// emits `Token::Shr` (`>>`) as a single token.  `expect_gt` splits it by
+    /// consuming the `Shr` token and setting this flag; the *next* `expect_gt`
+    /// call then succeeds without advancing the token stream.
+    shr_pending: bool,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,16 +137,16 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0 }
+        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0 }
+        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0 }
+        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false }
     }
 
     fn current_span(&self) -> Span {
@@ -180,6 +185,30 @@ impl Parser {
         } else {
             Err(ParseError::Unexpected(tok.clone(), format!("{expected:?}")))
         }
+    }
+
+    /// Expect a `>` token in a type context.  Handles the case where the lexer
+    /// has already consumed `>>` as a single `Token::Shr` (common in nested
+    /// generics like `Result<Option<i64>>`): the first call consumes `Shr` and
+    /// records that a second `>` is still owed; the next call consumes that
+    /// virtual `>` without advancing.
+    fn expect_gt(&mut self) -> Result<()> {
+        if self.shr_pending {
+            self.shr_pending = false;
+            return Ok(());
+        }
+        match self.peek() {
+            Some(Token::Gt)  => { self.pos += 1; Ok(()) }
+            Some(Token::Shr) => { self.pos += 1; self.shr_pending = true; Ok(()) }
+            Some(tok) => Err(ParseError::Unexpected(tok.clone(), "Gt".into())),
+            None      => Err(ParseError::Eof),
+        }
+    }
+
+    /// Returns `true` if the next token closes a generic argument list (`>` or
+    /// a pending half of a previously-split `>>` token).
+    fn at_gt(&self) -> bool {
+        self.shr_pending || matches!(self.peek(), Some(Token::Gt) | Some(Token::Shr))
     }
 
     fn eat(&mut self, tok: &Token) -> bool {
@@ -372,7 +401,7 @@ impl Parser {
         self.advance()?; // consume `<`
         let mut params = Vec::new();
         let mut bounds: Vec<(String, Vec<String>)> = Vec::new();
-        while !self.at(&Token::Gt) {
+        while !self.at_gt() {
             let name = self.expect_ident()?;
             if self.eat(&Token::Colon) {
                 let mut traits = vec![self.expect_ident()?];
@@ -384,7 +413,7 @@ impl Parser {
             params.push(name);
             if !self.eat(&Token::Comma) { break; }
         }
-        self.expect(&Token::Gt)?;
+        self.expect_gt()?;
         Ok((params, bounds))
     }
 
@@ -468,29 +497,29 @@ impl Parser {
                 let ok = self.parse_type()?;
                 self.expect(&Token::Comma)?;
                 let err = self.parse_type()?;
-                self.expect(&Token::Gt)?;
+                self.expect_gt()?;
                 Ok(AxonType::Result { ok: Box::new(ok), err: Box::new(err) })
             }
             "Option" => {
                 self.expect(&Token::Lt)?;
                 let inner = self.parse_type()?;
-                self.expect(&Token::Gt)?;
+                self.expect_gt()?;
                 Ok(AxonType::Option(Box::new(inner)))
             }
             "Chan" | "chan" => {
                 self.expect(&Token::Lt)?;
                 let inner = self.parse_type()?;
-                self.expect(&Token::Gt)?;
+                self.expect_gt()?;
                 Ok(AxonType::Chan(Box::new(inner)))
             }
             _ if self.at(&Token::Lt) => {
                 self.advance()?;
                 let mut args = Vec::new();
-                while !self.at(&Token::Gt) {
+                while !self.at_gt() {
                     args.push(self.parse_type()?);
                     if !self.eat(&Token::Comma) { break; }
                 }
-                self.expect(&Token::Gt)?;
+                self.expect_gt()?;
                 Ok(AxonType::Generic { base: name, args })
             }
             _ => Ok(AxonType::Named(name)),
@@ -609,9 +638,18 @@ impl Parser {
     fn parse_impl_block(&mut self) -> Result<ImplBlock> {
         let start = self.current_span().start;
         self.expect(&Token::Impl)?;
+        // `impl<T: Bound> Trait for Type<T>` — type parameters introduced by
+        // the impl come before the trait name (Rust-style). They are bound
+        // in both `Trait` and `Type`.
+        let (impl_params_pre, impl_bounds_pre) = self.parse_generic_params()?;
         let trait_name = self.expect_ident()?;
-        // Optional generic params on the impl: `impl Foo<T> for Bar`
-        let _impl_generic = self.parse_generic_params()?; // bounds on impl<T> discarded for now
+        // Legacy syntax: `impl Trait<T> for Type` — generic args after the
+        // trait name. We treat these the same as pre-name params for now.
+        let (impl_params_post, impl_bounds_post) = self.parse_generic_params()?;
+        let mut generic_params = impl_params_pre;
+        generic_params.extend(impl_params_post);
+        let mut generic_bounds = impl_bounds_pre;
+        generic_bounds.extend(impl_bounds_post);
         self.expect(&Token::For)?;
         let for_type = self.parse_type()?;
         self.expect(&Token::LBrace)?;
@@ -624,7 +662,14 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(ImplBlock { trait_name, for_type, methods, span: Span::new(start, end) })
+        Ok(ImplBlock {
+            trait_name,
+            for_type,
+            methods,
+            generic_params,
+            generic_bounds,
+            span: Span::new(start, end),
+        })
     }
 
     fn parse_mod(&mut self) -> Result<ModDecl> {
@@ -868,7 +913,7 @@ impl Parser {
         self.expect(&Token::Chan)?;
         self.expect(&Token::Lt)?;
         let elem_ty = self.parse_type()?;
-        self.expect(&Token::Gt)?;
+        self.expect_gt()?;
         self.expect(&Token::LParen)?;
         self.expect(&Token::RParen)?;
         // Encode the elem type in the callee name so infer can extract it.
@@ -886,7 +931,7 @@ impl Parser {
 
     /// Lowest-precedence binary layer: `&&` and `||`.
     fn parse_logical(&mut self) -> Result<Expr> {
-        let mut left = self.parse_comparison()?;
+        let mut left = self.parse_bitwise_or()?;
         loop {
             // ASI: an operator on a new line (outside parens) terminates the expression.
             if self.preceded_by_newline() { break; }
@@ -896,8 +941,52 @@ impl Parser {
                 _ => break,
             };
             self.advance()?;
-            let right = self.parse_comparison()?;
+            let right = self.parse_bitwise_or()?;
             left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// Bitwise OR: `a | b` (lower precedence than XOR).
+    fn parse_bitwise_or(&mut self) -> Result<Expr> {
+        let mut left = self.parse_bitwise_xor()?;
+        loop {
+            if self.preceded_by_newline() { break; }
+            // Token::Pipe (`|`) is also used for lambda params and match arms,
+            // but those contexts are fully consumed inside parse_primary/parse_match_arm
+            // before this layer is entered, so here it is always infix bitwise-OR.
+            if !matches!(self.peek(), Some(Token::Pipe)) { break; }
+            self.advance()?;
+            let right = self.parse_bitwise_xor()?;
+            left = Expr::BinOp { op: BinOp::BitOr, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// Bitwise XOR: `a ^ b`.
+    fn parse_bitwise_xor(&mut self) -> Result<Expr> {
+        let mut left = self.parse_bitwise_and()?;
+        loop {
+            if self.preceded_by_newline() { break; }
+            if !matches!(self.peek(), Some(Token::Caret)) { break; }
+            self.advance()?;
+            let right = self.parse_bitwise_and()?;
+            left = Expr::BinOp { op: BinOp::BitXor, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// Bitwise AND: `a & b` (higher precedence than XOR).
+    fn parse_bitwise_and(&mut self) -> Result<Expr> {
+        let mut left = self.parse_comparison()?;
+        loop {
+            if self.preceded_by_newline() { break; }
+            // Token::Ampersand (`&`) is also used as unary-ref in parse_primary;
+            // as an infix token here it is always bitwise AND.
+            if !matches!(self.peek(), Some(Token::Ampersand)) { break; }
+            self.advance()?;
+            let right = self.parse_comparison()?;
+            left = Expr::BinOp { op: BinOp::BitAnd, left: Box::new(left), right: Box::new(right) };
         }
         Ok(left)
     }
@@ -910,7 +999,7 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr> {
-        let mut left = self.parse_additive()?;
+        let mut left = self.parse_shift()?;
         // ASI: a comparison operator on a new line (outside parens) ends the expression.
         if self.preceded_by_newline() { return Ok(left); }
         let op = match self.peek() {
@@ -923,7 +1012,7 @@ impl Parser {
             _ => return Ok(left),
         };
         self.advance()?;
-        let right = self.parse_additive()?;
+        let right = self.parse_shift()?;
         // Reject chained comparisons: `1 < 2 < 3` is almost certainly a bug.
         if self.peek().map(Self::is_comparison_op).unwrap_or(false) {
             return Err(ParseError::Other(
@@ -931,6 +1020,23 @@ impl Parser {
             ));
         }
         left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        Ok(left)
+    }
+
+    /// Bit shifts: `a << b` and `a >> b`.
+    fn parse_shift(&mut self) -> Result<Expr> {
+        let mut left = self.parse_additive()?;
+        loop {
+            if self.preceded_by_newline() { break; }
+            let op = match self.peek() {
+                Some(Token::Shl) => BinOp::Shl,
+                Some(Token::Shr) => BinOp::Shr,
+                _ => break,
+            };
+            self.advance()?;
+            let right = self.parse_additive()?;
+            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        }
         Ok(left)
     }
 
@@ -1211,6 +1317,11 @@ impl Parser {
                 self.advance()?;
                 let operand = self.parse_postfix()?;
                 Ok(Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) })
+            }
+            Some(Token::Tilde) => {
+                self.advance()?;
+                let operand = self.parse_postfix()?;
+                Ok(Expr::UnaryOp { op: UnaryOp::BitNot, operand: Box::new(operand) })
             }
             Some(Token::SelfKw) => {
                 self.advance()?;
@@ -2131,5 +2242,126 @@ mod tests {
             panic!("expected Union after round-trip, got {:?}", f2.params[0].ty);
         };
         assert_eq!(members.len(), 3);
+    }
+
+    // ── String escape sequence tests ──────────────────────────────────────────
+
+    fn parse_str_literal(src: &str) -> String {
+        // Wrap in a fn so the parser is happy, then extract the Literal::Str value.
+        let wrapped = format!("fn f(){{ let x = {src} }}");
+        let prog = parse(&wrapped);
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Expr::Block(stmts) = &f.body else { panic!("not a Block") };
+        let Expr::Let { value, .. } = &stmts[0].expr else { panic!("not a Let") };
+        match value.as_ref() {
+            Expr::Literal(Literal::Str(s)) => s.clone(),
+            other => panic!("expected Literal::Str, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_string_escape_newline() {
+        // "hello\nworld" in source becomes a string with a real embedded newline.
+        let s = parse_str_literal(r#""hello\nworld""#);
+        assert_eq!(s, "hello\nworld", r"\n should become a real newline");
+        assert_eq!(s.len(), 11);
+    }
+
+    #[test]
+    fn parse_string_escape_tab() {
+        let s = parse_str_literal(r#""a\tb""#);
+        assert_eq!(s, "a\tb", r"\t should become a real tab");
+        assert_eq!(s.len(), 3);
+    }
+
+    #[test]
+    fn parse_string_escape_quote() {
+        let s = parse_str_literal(r#""say \"hi\"""#);
+        assert_eq!(s, r#"say "hi""#, r#"\" should become a double quote"#);
+    }
+
+    #[test]
+    fn parse_string_escape_backslash() {
+        let s = parse_str_literal(r#""path\\to\\file""#);
+        assert_eq!(s, r"path\to\file", r"\\ should become a single backslash");
+        // "path\to\file" = 4 + 1 + 2 + 1 + 4 = 12 bytes
+        assert_eq!(s.len(), 12);
+    }
+
+    #[test]
+    fn parse_string_no_escape() {
+        let s = parse_str_literal(r#""plain string""#);
+        assert_eq!(s, "plain string", "plain strings should be unchanged");
+    }
+
+    // ── Phase 4: trait bounds on generic parameters ──────────────────────────
+
+    /// `fn f<T: Display>(x: T) -> str` — single bound is recorded on the FnDef.
+    #[test]
+    fn parse_generic_fn_with_single_bound() {
+        let prog = parse("fn f<T: Display>(x: T) -> str { \"ok\" }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        assert_eq!(f.generic_params, vec!["T".to_string()]);
+        assert_eq!(
+            f.generic_bounds,
+            vec![("T".to_string(), vec!["Display".to_string()])],
+            "expected a single Display bound on T, got {:?}", f.generic_bounds
+        );
+    }
+
+    /// `fn f<T: Display + Clone>(x: T) -> T` — `+` separates multiple bounds.
+    #[test]
+    fn parse_generic_fn_with_multiple_bounds() {
+        let prog = parse("fn f<T: Display + Clone>(x: T) -> T { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        assert_eq!(f.generic_params, vec!["T".to_string()]);
+        assert_eq!(
+            f.generic_bounds,
+            vec![("T".to_string(), vec!["Display".to_string(), "Clone".to_string()])],
+            "expected Display + Clone bounds on T, got {:?}", f.generic_bounds
+        );
+    }
+
+    /// `type Wrapper<T: Clone> = { val: T }` — the parser accepts bounds on
+    /// generic struct definitions even though the AST currently discards them.
+    /// (We assert the param name parses; the bound is silently dropped today.)
+    #[test]
+    fn parse_generic_struct_with_bound() {
+        let prog = parse("type Wrapper<T: Clone> = { val: T }");
+        let Item::TypeDef(t) = &prog.items[0] else { panic!("not a TypeDef") };
+        assert_eq!(t.name, "Wrapper");
+        assert_eq!(t.generic_params, vec!["T".to_string()]);
+    }
+
+    /// `impl<T: Display> MyTrait for Wrapper` — type parameters and bounds on
+    /// the impl are now preserved on the AST (previously discarded).
+    #[test]
+    fn parse_impl_with_bound() {
+        let prog = parse("impl<T: Display> MyTrait for Wrapper { fn x(self) -> i64 { 0 } }");
+        let Item::ImplBlock(b) = &prog.items[0] else { panic!("not an ImplBlock") };
+        assert_eq!(b.trait_name, "MyTrait");
+        assert_eq!(b.generic_params, vec!["T".to_string()]);
+        assert_eq!(
+            b.generic_bounds,
+            vec![("T".to_string(), vec!["Display".to_string()])],
+            "expected Display bound on impl parameter T, got {:?}", b.generic_bounds
+        );
+    }
+
+    /// Two parameters, only one of which has a bound:
+    /// `fn f<T: Display, U>(x: T, y: U) -> T` — the bound is recorded only
+    /// for `T`. (`where`-clause grammar is not supported by the parser yet,
+    /// so this test exercises the closest analog of selectively-bounded
+    /// parameters.)
+    #[test]
+    fn parse_where_clause_if_applicable() {
+        let prog = parse("fn f<T: Display, U>(x: T, y: U) -> T { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        assert_eq!(f.generic_params, vec!["T".to_string(), "U".to_string()]);
+        assert_eq!(
+            f.generic_bounds,
+            vec![("T".to_string(), vec!["Display".to_string()])],
+            "only T should carry a bound, got {:?}", f.generic_bounds
+        );
     }
 }

@@ -1,0 +1,80 @@
+// Phase 64: let else statements — pattern-match or early-return.
+
+// ── Helper: safe integer division ────────────────────────────────────────────
+
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+// ── Tests using let-else with Ok pattern ──────────────────────────────────────
+
+fn test_let_else_ok() -> bool {
+    let Ok(v) = safe_div(10, 2) else { return false }
+    v == 5
+}
+
+fn test_let_else_ok_chain() -> bool {
+    let Ok(a) = safe_div(12, 3) else { return false }
+    let Ok(b) = safe_div(20, 4) else { return false }
+    a + b == 9
+}
+
+// ── Test: error case falls through to else body ───────────────────────────────
+
+fn test_let_else_diverges_on_err() -> bool {
+    // safe_div(10, 0) returns Err — the else body must execute and return false
+    let Ok(_v) = safe_div(10, 0) else { return true }
+    // If we reach here, the match succeeded (wrong)
+    false
+}
+
+// ── Tests using parse_int (returns Result<i64, str>) ──────────────────────────
+
+fn parse_or_default(s: str) -> i64 {
+    let Ok(n) = parse_int(s) else { return -1 }
+    n
+}
+
+fn test_parse_or_default_valid() -> bool {
+    parse_or_default("42") == 42
+}
+
+fn test_parse_or_default_invalid() -> bool {
+    parse_or_default("bad") == -1
+}
+
+fn test_parse_or_default_zero() -> bool {
+    parse_or_default("0") == 0
+}
+
+// ── Tests using let-else with Some pattern ────────────────────────────────────
+
+fn first_positive(a: i64, b: i64) -> Option<i64> {
+    if a > 0 { Some(a) } else if b > 0 { Some(b) } else { None }
+}
+
+fn test_let_else_some() -> bool {
+    let Some(v) = first_positive(3, 5) else { return false }
+    v == 3
+}
+
+fn test_let_else_none_diverges() -> bool {
+    let Some(_v) = first_positive(-1, -2) else { return true }
+    false
+}
+
+fn main() -> i64 {
+    let s1 = if test_let_else_ok()               { 1 } else { 0 }
+    let s2 = if test_let_else_ok_chain()         { 1 } else { 0 }
+    let s3 = if test_let_else_diverges_on_err()  { 1 } else { 0 }
+    let s4 = if test_parse_or_default_valid()    { 1 } else { 0 }
+    let s5 = if test_parse_or_default_invalid()  { 1 } else { 0 }
+    let s6 = if test_parse_or_default_zero()     { 1 } else { 0 }
+    let s7 = if test_let_else_some()             { 1 } else { 0 }
+    let s8 = if test_let_else_none_diverges()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

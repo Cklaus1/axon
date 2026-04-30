@@ -1,0 +1,101 @@
+// Phase 65: Arrays, slices, for-range iteration — array literals, indexing,
+//           range loops, and accumulation patterns.
+
+// ── Manual array sum via while loop ──────────────────────────────────────────
+
+fn sum_array_manual() -> i64 {
+    let arr = [10, 20, 30, 40, 50]
+    let total = 0
+    let i = 0
+    while i < 5 {
+        total = total + arr[i]
+        i = i + 1
+    }
+    total
+}
+
+fn test_sum_array() -> bool {
+    sum_array_manual() == 150
+}
+
+// ── Range sum via for loop ────────────────────────────────────────────────────
+
+fn sum_range(n: i64) -> i64 {
+    let total = 0
+    for i in 0..n {
+        total = total + i
+    }
+    total
+}
+
+fn test_sum_range() -> bool {
+    sum_range(5) == 10 &&
+    sum_range(10) == 45
+}
+
+// ── Sum of squares via for loop ───────────────────────────────────────────────
+
+fn build_squares() -> i64 {
+    let total = 0
+    for i in 1..6 {
+        total = total + i * i
+    }
+    total  // 1+4+9+16+25 = 55
+}
+
+fn test_squares() -> bool {
+    build_squares() == 55
+}
+
+// ── Array max via while loop ──────────────────────────────────────────────────
+
+fn array_max() -> i64 {
+    let arr = [3, 1, 4, 1, 5, 9, 2, 6]
+    let m = arr[0]
+    let i = 1
+    while i < 8 {
+        if arr[i] > m {
+            m = arr[i]
+        }
+        i = i + 1
+    }
+    m
+}
+
+fn test_array_max() -> bool {
+    array_max() == 9
+}
+
+// ── Array element access by index ─────────────────────────────────────────────
+
+fn array_element_access() -> bool {
+    let arr = [100, 200, 300, 400, 500]
+    arr[0] == 100 &&
+    arr[2] == 300 &&
+    arr[4] == 500
+}
+
+// ── Range with offset ─────────────────────────────────────────────────────────
+
+fn sum_range_offset(lo: i64, hi: i64) -> i64 {
+    let acc = 0
+    for i in lo..hi {
+        acc = acc + i
+    }
+    acc
+}
+
+fn test_range_offset() -> bool {
+    // 5+6+7+8+9 = 35
+    sum_range_offset(5, 10) == 35
+}
+
+fn main() -> i64 {
+    let s1 = if test_sum_array()         { 1 } else { 0 }
+    let s2 = if test_sum_range()         { 1 } else { 0 }
+    let s3 = if test_squares()           { 1 } else { 0 }
+    let s4 = if test_array_max()         { 1 } else { 0 }
+    let s5 = if array_element_access()   { 1 } else { 0 }
+    let s6 = if test_range_offset()      { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

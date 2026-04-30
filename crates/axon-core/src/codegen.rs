@@ -3759,6 +3759,15 @@ impl<'ctx> Codegen<'ctx> {
                         // for a future phase rather than emitted as a stub here.
                         Some(val)
                     }
+                    ast::UnaryOp::BitNot => match val {
+                        BasicValueEnum::IntValue(i) => {
+                            // LLVM `not` on an integer flips all bits — identical
+                            // to C's `~` operator.
+                            let r = self.builder.build_not(i, "bitnot").unwrap();
+                            Some(r.into())
+                        }
+                        _ => None,
+                    },
                 }
             }
 
@@ -5112,6 +5121,15 @@ impl<'ctx> Codegen<'ctx> {
                 },
                 ast::BinOp::And => self.builder.build_and(l, r, "and").unwrap().into(),
                 ast::BinOp::Or => self.builder.build_or(l, r, "or").unwrap().into(),
+                ast::BinOp::BitAnd => self.builder.build_and(l, r, "band").unwrap().into(),
+                ast::BinOp::BitOr  => self.builder.build_or(l, r, "bor").unwrap().into(),
+                ast::BinOp::BitXor => self.builder.build_xor(l, r, "bxor").unwrap().into(),
+                ast::BinOp::Shl => self.builder.build_left_shift(l, r, "shl").unwrap().into(),
+                ast::BinOp::Shr => if is_unsigned {
+                    self.builder.build_right_shift(l, r, false, "lshr").unwrap().into()
+                } else {
+                    self.builder.build_right_shift(l, r, true, "ashr").unwrap().into()
+                },
             },
 
             // Float arithmetic.
@@ -5166,6 +5184,11 @@ impl<'ctx> Codegen<'ctx> {
                         ast::BinOp::And => self.builder.build_and(li, ri, "fand").unwrap().into(),
                         _ => self.builder.build_or(li, ri, "for").unwrap().into(),
                     }
+                }
+                // Bitwise ops on floats are rejected by the type-checker; unreachable here.
+                ast::BinOp::BitAnd | ast::BinOp::BitOr | ast::BinOp::BitXor
+                | ast::BinOp::Shl  | ast::BinOp::Shr => {
+                    unreachable!("bitwise op on float — should have been rejected by the type checker")
                 }
             },
 

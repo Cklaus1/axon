@@ -1065,6 +1065,19 @@ fn phase60_string_processing_fixture_parses_cleanly() {
     );
 }
 
+/// Verify that Phase 75 (operator overloading via traits: Add/Neg traits with
+/// Vec2 and Complex impls, dispatched through explicit `.add()` / `.neg()`
+/// method calls) parses and type-checks cleanly.
+#[test]
+fn phase75_operator_overloading_fixture_parses_cleanly() {
+    let errors = check_fixture("phase75_operator_overloading.ax");
+    assert!(
+        errors.is_empty(),
+        "phase75_operator_overloading.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── Error code detection tests ────────────────────────────────────────────────
 
 #[test]

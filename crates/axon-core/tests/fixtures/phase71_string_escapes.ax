@@ -1,0 +1,39 @@
+// Phase 71: String escape sequences
+//
+// Verifies that the lexer correctly processes \n, \t, \\, and \" escape
+// sequences inside string literals.  str_len counts bytes (UTF-8), which
+// matches the byte-length assertions below.
+
+fn test_newline_escape() -> bool {
+    let s = "line1\nline2"
+    str_len(s) == 11
+}
+
+fn test_tab_escape() -> bool {
+    let s = "a\tb"
+    str_len(s) == 3
+}
+
+fn test_backslash_escape() -> bool {
+    let s = "a\\b"
+    str_len(s) == 3
+}
+
+fn test_quote_escape() -> bool {
+    let s = "say \"hi\""
+    str_contains(s, "hi")
+}
+
+fn test_no_escape() -> bool {
+    let s = "plain"
+    str_len(s) == 5
+}
+
+fn main() -> i64 {
+    let s1 = if test_newline_escape()   { 1 } else { 0 }
+    let s2 = if test_tab_escape()       { 1 } else { 0 }
+    let s3 = if test_backslash_escape() { 1 } else { 0 }
+    let s4 = if test_quote_escape()     { 1 } else { 0 }
+    let s5 = if test_no_escape()        { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5
+}

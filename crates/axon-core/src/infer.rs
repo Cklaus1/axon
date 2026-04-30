@@ -560,6 +560,12 @@ impl InferCtx {
                         self.constrain(rt, Type::Bool, "logical operand");
                         Type::Bool
                     }
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
+                    | BinOp::Shl  | BinOp::Shr => {
+                        self.constrain(lt.clone(), Type::I64, "bitwise operand");
+                        self.constrain(rt, Type::I64, "bitwise operand");
+                        Type::I64
+                    }
                 }
             }
 
@@ -578,6 +584,10 @@ impl InferCtx {
                         Type::Bool
                     }
                     UnaryOp::Ref => ty, // Phase 1: transparent
+                    UnaryOp::BitNot => {
+                        self.constrain(ty, Type::I64, "bitwise not operand");
+                        Type::I64
+                    }
                 }
             }
 
@@ -1724,6 +1734,8 @@ mod tests {
                 for_type: AxonType::Named("Rect".to_string()),
                 trait_name: String::new(),
                 methods: vec![method],
+                generic_params: vec![],
+                generic_bounds: vec![],
                 span: Span::dummy(),
             })],
         };

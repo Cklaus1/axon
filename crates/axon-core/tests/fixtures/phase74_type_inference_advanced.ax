@@ -1,0 +1,126 @@
+// Phase 74: Advanced type inference — let bindings, generics, closures,
+//           if-expression unification, and closure factory patterns.
+
+// ── Generic stack-like wrapper ────────────────────────────────────────────────
+
+type Stack<T> = { top: T, size: i64 }
+
+fn make_stack<T>(v: T) -> Stack<T> {
+    Stack { top: v, size: 1 }
+}
+
+fn stack_top<T>(s: Stack<T>) -> T {
+    s.top
+}
+
+fn test_stack_i64() -> bool {
+    let s = make_stack(42)
+    s.top == 42 && s.size == 1
+}
+
+fn test_stack_bool() -> bool {
+    let s = make_stack(true)
+    s.top && s.size == 1
+}
+
+fn test_stack_top_fn() -> bool {
+    let s = make_stack(99)
+    stack_top(s) == 99
+}
+
+fn test_stack_zero() -> bool {
+    let s = make_stack(0)
+    s.top == 0 && s.size == 1
+}
+
+// ── Closure type inference ────────────────────────────────────────────────────
+
+fn infer_from_closure() -> i64 {
+    let f = (x: i64) => x * x
+    f(7)
+}
+
+fn test_closure_type_infer() -> bool {
+    infer_from_closure() == 49
+}
+
+fn test_closure_inline() -> bool {
+    let square = (x: i64) => x * x
+    let cube   = (x: i64) => x * x * x
+    square(4) == 16 && cube(3) == 27
+}
+
+// ── Closure factory ───────────────────────────────────────────────────────────
+
+fn make_adder(n: i64) -> fn(i64) -> i64 {
+    (x: i64) => x + n
+}
+
+fn chain_calls(n: i64) -> i64 {
+    let double  = (x: i64) => x * 2
+    let add_ten = (x: i64) => x + 10
+    add_ten(double(n))
+}
+
+fn test_chain_inference() -> bool {
+    chain_calls(5) == 20 &&
+    chain_calls(0) == 10
+}
+
+fn test_make_adder() -> bool {
+    let add5 = make_adder(5)
+    add5(3) == 8 && add5(0) == 5
+}
+
+// ── If-expression type unification ───────────────────────────────────────────
+
+fn multi_return_type(flag: bool) -> i64 {
+    let v = if flag { 42 } else { 0 }
+    v
+}
+
+fn test_if_type_unification() -> bool {
+    multi_return_type(true) == 42 &&
+    multi_return_type(false) == 0
+}
+
+fn pick_larger(a: i64, b: i64) -> i64 {
+    if a > b { a } else { b }
+}
+
+fn test_if_infer_from_usage() -> bool {
+    pick_larger(3, 7) == 7 &&
+    pick_larger(10, 2) == 10 &&
+    pick_larger(5, 5) == 5
+}
+
+// ── Let binding inference chains ──────────────────────────────────────────────
+
+fn test_let_chain_infer() -> bool {
+    let a = 3
+    let b = a * 4
+    let c = b + a
+    c == 15
+}
+
+fn test_nested_let_infer() -> bool {
+    let x = 10
+    let y = if x > 5 { x * 2 } else { x }
+    y == 20
+}
+
+fn main() -> i64 {
+    let s1  = if test_stack_i64()           { 1 } else { 0 }
+    let s2  = if test_stack_bool()          { 1 } else { 0 }
+    let s3  = if test_stack_top_fn()        { 1 } else { 0 }
+    let s4  = if test_stack_zero()          { 1 } else { 0 }
+    let s5  = if test_closure_type_infer()  { 1 } else { 0 }
+    let s6  = if test_closure_inline()      { 1 } else { 0 }
+    let s7  = if test_chain_inference()     { 1 } else { 0 }
+    let s8  = if test_make_adder()          { 1 } else { 0 }
+    let s9  = if test_if_type_unification() { 1 } else { 0 }
+    let s10 = if test_if_infer_from_usage() { 1 } else { 0 }
+    let s11 = if test_let_chain_infer()     { 1 } else { 0 }
+    let s12 = if test_nested_let_infer()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

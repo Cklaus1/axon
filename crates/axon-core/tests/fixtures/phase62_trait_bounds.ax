@@ -1,0 +1,35 @@
+// Phase 62: Trait bounds in generics
+
+trait Describable {
+    fn describe(self) -> str
+}
+
+type Counter = { count: i64 }
+
+impl Describable for Counter {
+    fn describe(self: Counter) -> str {
+        to_str(self.count)
+    }
+}
+
+fn print_description<T: Describable>(item: T) -> str {
+    item.describe()
+}
+
+fn test_trait_bound_call() -> bool {
+    let c = Counter { count: 42 }
+    str_eq(print_description(c), "42")
+}
+
+fn identity_bounded<T: Describable>(x: T) -> T { x }
+
+fn test_identity_bounded() -> bool {
+    let c = Counter { count: 7 }
+    identity_bounded(c).count == 7
+}
+
+fn main() -> i64 {
+    let s1 = if test_trait_bound_call()    { 1 } else { 0 }
+    let s2 = if test_identity_bounded()    { 1 } else { 0 }
+    s1 + s2
+}

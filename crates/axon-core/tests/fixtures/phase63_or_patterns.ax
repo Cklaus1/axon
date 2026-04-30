@@ -1,0 +1,35 @@
+// Phase 63: Or-patterns in match arms
+
+fn classify(n: i64) -> str {
+    match n {
+        0 | 1 | 2 => "low",
+        3 | 4     => "mid",
+        _          => "high",
+    }
+}
+
+fn test_classify() -> bool {
+    str_eq(classify(0), "low") &&
+    str_eq(classify(2), "low") &&
+    str_eq(classify(3), "mid") &&
+    str_eq(classify(5), "high")
+}
+
+fn option_desc(v: Option<i64>) -> str {
+    match v {
+        Some(0) | None => "zero or none",
+        Some(x)        => to_str(x),
+    }
+}
+
+fn test_option_or() -> bool {
+    str_eq(option_desc(None),    "zero or none") &&
+    str_eq(option_desc(Some(0)), "zero or none") &&
+    str_eq(option_desc(Some(5)), "5")
+}
+
+fn main() -> i64 {
+    let s1 = if test_classify()  { 1 } else { 0 }
+    let s2 = if test_option_or() { 1 } else { 0 }
+    s1 + s2
+}

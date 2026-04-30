@@ -55,7 +55,25 @@ fn fn_signature(f: &FnDef) -> String {
     s.push_str(&f.name);
     if !f.generic_params.is_empty() {
         s.push('<');
-        s.push_str(&f.generic_params.join(", "));
+        // Build a map of bounds for quick lookup so we can render
+        // `<T: Display + Clone, U>` faithfully in generated docs.
+        let bounds_map: std::collections::HashMap<&str, &Vec<String>> = f
+            .generic_bounds
+            .iter()
+            .map(|(n, bs)| (n.as_str(), bs))
+            .collect();
+        let parts: Vec<String> = f
+            .generic_params
+            .iter()
+            .map(|p| {
+                if let Some(bs) = bounds_map.get(p.as_str()) {
+                    format!("{}: {}", p, bs.join(" + "))
+                } else {
+                    p.clone()
+                }
+            })
+            .collect();
+        s.push_str(&parts.join(", "));
         s.push('>');
     }
     s.push('(');

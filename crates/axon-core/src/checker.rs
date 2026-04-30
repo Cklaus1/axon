@@ -2552,6 +2552,8 @@ mod tests {
             trait_name: trait_name.to_string(),
             for_type,
             methods,
+            generic_params: vec![],
+            generic_bounds: vec![],
             span: crate::span::Span::dummy(),
         })
     }

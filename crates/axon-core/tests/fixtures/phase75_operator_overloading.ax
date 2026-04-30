@@ -1,0 +1,62 @@
+// Phase 75: Operator overloading via traits
+
+type Vec2 = { x: i64, y: i64 }
+
+trait Add {
+    fn add(self, rhs: Self) -> Self
+}
+
+impl Add for Vec2 {
+    fn add(self: Vec2, rhs: Vec2) -> Vec2 {
+        Vec2 { x: self.x + rhs.x, y: self.y + rhs.y }
+    }
+}
+
+trait Neg {
+    fn neg(self) -> Self
+}
+
+impl Neg for Vec2 {
+    fn neg(self: Vec2) -> Vec2 {
+        Vec2 { x: 0 - self.x, y: 0 - self.y }
+    }
+}
+
+fn vec2_add(a: Vec2, b: Vec2) -> Vec2 {
+    a.add(b)
+}
+
+fn test_vec2_add() -> bool {
+    let a = Vec2 { x: 1, y: 2 }
+    let b = Vec2 { x: 3, y: 4 }
+    let c = vec2_add(a, b)
+    c.x == 4 && c.y == 6
+}
+
+fn test_vec2_neg() -> bool {
+    let v = Vec2 { x: 5, y: -3 }
+    let n = v.neg()
+    n.x == -5 && n.y == 3
+}
+
+type Complex = { re: i64, im: i64 }
+
+impl Add for Complex {
+    fn add(self: Complex, rhs: Complex) -> Complex {
+        Complex { re: self.re + rhs.re, im: self.im + rhs.im }
+    }
+}
+
+fn test_complex_add() -> bool {
+    let a = Complex { re: 1, im: 2 }
+    let b = Complex { re: 3, im: -1 }
+    let c = a.add(b)
+    c.re == 4 && c.im == 1
+}
+
+fn main() -> i64 {
+    let s1 = if test_vec2_add()    { 1 } else { 0 }
+    let s2 = if test_vec2_neg()    { 1 } else { 0 }
+    let s3 = if test_complex_add() { 1 } else { 0 }
+    s1 + s2 + s3
+}

@@ -130,6 +130,15 @@ pub struct ImplBlock {
     /// The concrete type the trait is implemented for.
     pub for_type: AxonType,
     pub methods: Vec<FnDef>,
+    /// Phase 4: type parameters introduced by the impl block,
+    /// e.g. `impl<T> Display for Box<T>` → `["T"]`.
+    /// Empty for non-generic impls.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub generic_params: Vec<String>,
+    /// Phase 4: trait bounds on the impl's type parameters,
+    /// e.g. `impl<T: Clone> Display for Box<T>` → `[("T", ["Clone"])]`.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub generic_bounds: Vec<(String, Vec<String>)>,
     pub span: Span,
 }
 
@@ -331,10 +340,12 @@ pub enum BinOp {
     Add, Sub, Mul, Div, Rem,
     Eq, NotEq, Lt, Gt, LtEq, GtEq,
     And, Or,
+    BitAnd, BitOr, BitXor, Shl, Shr,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 pub enum UnaryOp {
     Neg, Not, Ref,
+    BitNot,
 }
