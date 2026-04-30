@@ -1,0 +1,6 @@
+fn main() {
+    let u = uncertain_new(42, 0.9)
+    if u.confidence > 0.8 {
+        println(to_str(u.value))
+    }
+}

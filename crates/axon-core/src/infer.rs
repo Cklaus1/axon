@@ -620,6 +620,15 @@ impl InferCtx {
                         } else {
                             (sig, HashMap::new())
                         };
+                        // ── Layer-1 ASI: confidence propagation note ─────────
+                        // When any argument has type `Uncertain<_>`, the call's
+                        // result confidence should logically be the product of the
+                        // input confidences (cf. PRD AI_Language_Plan.md §1360-).
+                        // Phase-1 leaves this informational; we do not enforce a
+                        // type-system rule yet (no monomorphisation over confidence).
+                        // A future pass can walk `args` for `Type::Uncertain(_)`
+                        // and emit runtime instrumentation to multiply confidences
+                        // at call boundaries.
                         // Fix #16: include function name and param index in
                         // the constraint origin for clearer error messages.
                         for (i, (arg, param_ty)) in

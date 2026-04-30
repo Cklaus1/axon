@@ -589,6 +589,8 @@ fn format_type(ty: &crate::types::Type) -> String {
         Type::Var(n) => format!("?{n}"),
         Type::Unknown => "?".into(),
         Type::Deferred(n) => n.clone(),
+        Type::Uncertain(inner) => format!("Uncertain<{}>", format_type(inner)),
+        Type::Temporal(inner) => format!("Temporal<{}>", format_type(inner)),
     }
 }
 
@@ -873,6 +875,40 @@ pub fn compute_definition(
     }
 
     None
+}
+
+/// Compute completion suggestions for the cursor position at `byte_offset`.
+///
+/// Stub Phase-4 implementation: returns an empty list. The full completion
+/// engine is tracked separately; this exists so the LSP request handler in
+/// `run_lsp` compiles and returns an empty `items` array rather than crashing.
+pub fn compute_completions(
+    _program: &ast::Program,
+    _infer_ctx: &infer::InferCtx,
+    _source: &str,
+    _byte_offset: usize,
+) -> Vec<CompletionItem> {
+    Vec::new()
+}
+
+/// Convert a `CompletionItem` into the LSP JSON wire format.
+fn completion_item_to_json(item: CompletionItem) -> Value {
+    let kind: u8 = match item.kind {
+        CompletionKind::Function => 3,
+        CompletionKind::Variable => 6,
+        CompletionKind::Type => 7,
+        CompletionKind::Keyword => 14,
+        CompletionKind::Field => 5,
+        CompletionKind::EnumVariant => 20,
+    };
+    let mut obj = json!({
+        "label": item.label,
+        "kind": kind,
+    });
+    if let Some(detail) = item.detail {
+        obj.as_object_mut().unwrap().insert("detail".to_string(), Value::String(detail));
+    }
+    obj
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

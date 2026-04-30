@@ -1,0 +1,7 @@
+fn main() {
+    let t = temporal_new(100, 86400000, 0.05)
+    let later = temporal_at(t, 86400000)
+    if temporal_is_valid(later) {
+        println(to_str(later.value))
+    }
+}

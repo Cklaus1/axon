@@ -1152,3 +1152,27 @@ fn error_e0309_bad_field_detected() {
     );
 }
 
+// ── Layer-1 ASI: Uncertain<T> / Temporal<T> ───────────────────────────────────
+
+#[test]
+fn uncertain_basic_fixture_clean() {
+    let errors = check_fixture("uncertain_basic.ax");
+    // The fixture guards `.value` with a `.confidence` check, so W0701 must
+    // NOT fire and no other diagnostics may be emitted.
+    assert!(
+        errors.is_empty(),
+        "uncertain_basic.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn temporal_basic_fixture_clean() {
+    let errors = check_fixture("temporal_basic.ax");
+    assert!(
+        errors.is_empty(),
+        "temporal_basic.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
