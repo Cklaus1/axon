@@ -44,6 +44,7 @@ fn subst_type(ty: &AxonType, subst: &TypeSubst) -> AxonType {
         },
         AxonType::Ref(inner)      => AxonType::Ref(Box::new(subst_type(inner, subst))),
         AxonType::DynTrait(name)  => AxonType::DynTrait(name.clone()),
+        AxonType::Tuple(elems)    => AxonType::Tuple(elems.iter().map(|e| subst_type(e, subst)).collect()),
     }
 }
 
@@ -114,10 +115,11 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
         Expr::None    => Expr::None,
         Expr::Break   => Expr::Break,
         Expr::Continue => Expr::Continue,
-        Expr::For { var, start, end, body } => Expr::For {
+        Expr::For { var, start, end, body, inclusive } => Expr::For {
             var: var.clone(),
             start: Box::new(subst_expr(start, subst)),
             end: Box::new(subst_expr(end, subst)),
+            inclusive: *inclusive,
             body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
         },
         Expr::Literal(_) | Expr::Ident(_) => expr.clone(),
@@ -202,6 +204,10 @@ pub fn mangle_type(ty: &AxonType) -> String {
         }
         AxonType::Ref(t)        => format!("Ref__{}", mangle_type(t)),
         AxonType::DynTrait(n)   => format!("dyn__{}", n),
+        AxonType::Tuple(elems)  => {
+            let parts: Vec<_> = elems.iter().map(mangle_type).collect();
+            format!("Tuple__{}", parts.join("__"))
+        }
     }
 }
 
@@ -507,10 +513,11 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
                 crate::ast::FmtPart::Expr(e) => crate::ast::FmtPart::Expr(Box::new(rename_calls_expr(e, rename))),
             }).collect(),
         },
-        Expr::For { var, start, end, body } => Expr::For {
+        Expr::For { var, start, end, body, inclusive } => Expr::For {
             var: var.clone(),
             start: Box::new(rename_calls_expr(start, rename)),
             end: Box::new(rename_calls_expr(end, rename)),
+            inclusive: *inclusive,
             body: body.iter().map(|s| Stmt {
                 expr: rename_calls_expr(&s.expr, rename),
                 span: s.span,

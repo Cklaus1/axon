@@ -158,6 +158,10 @@ pub enum AxonType {
     DynTrait(String),
     /// Phase 3: bare type parameter name inside a generic definition — `T`, `A`, `B`
     TypeParam(String),
+    /// Anonymous tuple type — `(T1, T2, T3)`.
+    /// The unit type `()` is represented as `AxonType::Named("()")` to avoid
+    /// ambiguity; `Tuple` always has at least two elements.
+    Tuple(Vec<AxonType>),
 }
 
 // ── Expressions ──────────────────────────────────────────────────────────────
@@ -213,10 +217,13 @@ pub enum Expr {
     /// Jump to the condition-check of the nearest enclosing `while` loop.
     Continue,
     /// `for <var> in <start>..<end> { body }` — integer range loop.
+    /// `inclusive` is true when the syntax is `start..=end` (closed range).
     For {
         var: String,
         start: Box<Expr>,
         end: Box<Expr>,
+        /// `false` → `start..end` (exclusive), `true` → `start..=end` (inclusive).
+        inclusive: bool,
         body: Vec<Stmt>,
     },
 }

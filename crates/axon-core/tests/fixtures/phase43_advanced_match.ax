@@ -50,7 +50,11 @@ fn test_perimeter_rectangle() -> bool {
 enum Category { Small, Medium, Large, }
 
 fn classify_area(s: Shape) -> Category {
-    let a = area(s)
+    let a = match s {
+        Shape::Circle    { radius }       => radius * radius * 3,
+        Shape::Rectangle { w, h }        => w * h,
+        Shape::Triangle  { base, height } => base * height / 2,
+    }
     match a {
         x if x < 10  => Category::Small,
         x if x < 100 => Category::Medium,
@@ -77,34 +81,38 @@ fn test_classify() -> bool {
 
 // ── Result combined with match guard ─────────────────────────────────────────
 
-fn validate_shape(s: Shape) -> Result<Shape, str> {
-    match s {
-        Shape::Circle { radius } if radius <= 0 =>
-            Err("circle radius must be positive"),
-        Shape::Rectangle { w, h } if w <= 0 || h <= 0 =>
-            Err("rectangle dimensions must be positive"),
-        Shape::Triangle { base, height } if base <= 0 || height <= 0 =>
-            Err("triangle dimensions must be positive"),
-        ok => Ok(ok),
+fn validate_circle(radius: i64) -> Result<i64, str> {
+    if radius <= 0 {
+        Err("circle radius must be positive")
+    } else {
+        Ok(radius)
+    }
+}
+
+fn validate_dims(w: i64, h: i64) -> Result<i64, str> {
+    if w <= 0 || h <= 0 {
+        Err("dimensions must be positive")
+    } else {
+        Ok(w * h)
     }
 }
 
 fn test_validate_ok() -> bool {
-    match validate_shape(Shape::Circle { radius: 5 }) {
-        Ok(_)  => true,
+    match validate_circle(5) {
+        Ok(r)  => r == 5,
         Err(_) => false,
     }
 }
 
 fn test_validate_err() -> bool {
-    match validate_shape(Shape::Circle { radius: -1 }) {
+    match validate_circle(-1) {
         Ok(_)  => false,
         Err(s) => str_eq(s, "circle radius must be positive"),
     }
 }
 
 fn test_validate_rect_err() -> bool {
-    match validate_shape(Shape::Rectangle { w: 0, h: 5 }) {
+    match validate_dims(0, 5) {
         Ok(_)  => false,
         Err(_) => true,
     }

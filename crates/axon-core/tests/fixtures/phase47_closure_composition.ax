@@ -1,0 +1,110 @@
+// Phase 47: Closure composition — compose, pipe, partial application patterns
+//           using closures with arrow and pipe syntax.
+
+// ── Apply a function twice ────────────────────────────────────────────────────
+
+fn apply_twice(f: fn(i64) -> i64, x: i64) -> i64 {
+    f(f(x))
+}
+
+fn test_apply_twice_double() -> bool {
+    let double = (x: i64) => x * 2
+    apply_twice(double, 3) == 12   // 3 -> 6 -> 12
+}
+
+fn test_apply_twice_inc() -> bool {
+    let inc = (x: i64) => x + 1
+    apply_twice(inc, 10) == 12
+}
+
+// ── Compose two functions: compose(f, g)(x) = f(g(x)) ───────────────────────
+
+fn compose(f: fn(i64) -> i64, g: fn(i64) -> i64, x: i64) -> i64 {
+    f(g(x))
+}
+
+fn test_compose_double_inc() -> bool {
+    let double = (x: i64) => x * 2
+    let inc    = (x: i64) => x + 1
+    // compose(double, inc, 5) = double(inc(5)) = double(6) = 12
+    compose(double, inc, 5) == 12
+}
+
+fn test_compose_inc_double() -> bool {
+    let double = (x: i64) => x * 2
+    let inc    = (x: i64) => x + 1
+    // compose(inc, double, 5) = inc(double(5)) = inc(10) = 11
+    compose(inc, double, 5) == 11
+}
+
+// ── Pipeline: apply a sequence of transforms ──────────────────────────────────
+
+fn pipe3(x: i64, f: fn(i64) -> i64, g: fn(i64) -> i64, h: fn(i64) -> i64) -> i64 {
+    h(g(f(x)))
+}
+
+fn test_pipe3() -> bool {
+    let add5   = (x: i64) => x + 5
+    let double = (x: i64) => x * 2
+    let negate = (x: i64) => 0 - x
+    // pipe3(3, add5, double, negate) = negate(double(add5(3)))
+    // = negate(double(8)) = negate(16) = -16
+    pipe3(3, add5, double, negate) == 0 - 16
+}
+
+// ── Partial application (baked-in argument) ───────────────────────────────────
+
+fn adder(n: i64) -> fn(i64) -> i64 {
+    (x: i64) => x + n
+}
+
+fn multiplier(n: i64) -> fn(i64) -> i64 {
+    (x: i64) => x * n
+}
+
+fn test_adder() -> bool {
+    let add10 = adder(10)
+    add10(5) == 15 && add10(0) == 10 && add10(-3) == 7
+}
+
+fn test_multiplier() -> bool {
+    let times3 = multiplier(3)
+    times3(7) == 21 && times3(0) == 0 && times3(-2) == -6
+}
+
+// ── Count values satisfying a predicate ───────────────────────────────────────
+
+fn count_where(lo: i64, hi: i64, pred: fn(i64) -> bool) -> i64 {
+    let n = 0
+    for i in lo..hi {
+        if pred(i) { n = n + 1 }
+    }
+    n
+}
+
+fn is_even(x: i64) -> bool {
+    x - (x / 2) * 2 == 0
+}
+
+fn test_count_where_even() -> bool {
+    // evens in 0..10: 0,2,4,6,8 = 5
+    count_where(0, 10, is_even) == 5
+}
+
+fn test_count_where_gt5() -> bool {
+    // values > 5 in 0..10: 6,7,8,9 = 4
+    count_where(0, 10, (x: i64) => x > 5) == 4
+}
+
+fn main() -> i64 {
+    let s1 = if test_apply_twice_double()  { 1 } else { 0 }
+    let s2 = if test_apply_twice_inc()     { 1 } else { 0 }
+    let s3 = if test_compose_double_inc()  { 1 } else { 0 }
+    let s4 = if test_compose_inc_double()  { 1 } else { 0 }
+    let s5 = if test_pipe3()              { 1 } else { 0 }
+    let s6 = if test_adder()              { 1 } else { 0 }
+    let s7 = if test_multiplier()         { 1 } else { 0 }
+    let s8 = if test_count_where_even()   { 1 } else { 0 }
+    let s9 = if test_count_where_gt5()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

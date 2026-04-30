@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check-and-test:
+    name: Check & Test (no LLVM)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      # Cache cargo registry + compiled deps.
+      # Key includes the OS, Rust toolchain hash, and Cargo.lock so the cache
+      # is invalidated whenever dependencies change.
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # Fast type-check — the codegen feature requires LLVM 17 which is not
+      # available on the GitHub-hosted runner, so we skip it here.
+      - name: cargo check (no codegen)
+        run: cargo check --no-default-features -p axon-core
+
+      # Run the full unit + integration test suite.  Anything that lives
+      # outside the codegen feature gate is exercised here, which covers
+      # the lexer, parser, type-checker, and interpreter/evaluator.
+      - name: cargo test (no codegen)
+        run: cargo test --no-default-features -p axon-core
+
+      # Format check — fails the build if any file needs reformatting.
+      - name: cargo fmt check
+        run: cargo fmt -p axon-core -- --check
+
+      # Lint — only flag things that are also blocked by RUSTFLAGS=-D warnings.
+      - name: cargo clippy (no codegen)
+        run: cargo clippy --no-default-features -p axon-core -- -D warnings

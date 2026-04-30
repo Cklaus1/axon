@@ -1,0 +1,108 @@
+// Phase 49: Numeric formatting — to_str, sign prefix, zero padding simulation,
+//           integer rendering and float representation.
+
+// ── Basic integer to string ───────────────────────────────────────────────────
+
+fn test_to_str_basic() -> bool {
+    str_eq(to_str(0),   "0")  &&
+    str_eq(to_str(42),  "42") &&
+    str_eq(to_str(-7),  "-7")
+}
+
+// ── Sign-prefixed rendering ───────────────────────────────────────────────────
+
+fn signed_str(n: i64) -> str {
+    if n > 0 {
+        axon_concat("+", to_str(n))
+    } else {
+        to_str(n)      // negative already includes "-"; zero renders "0"
+    }
+}
+
+fn test_signed_str() -> bool {
+    str_eq(signed_str(5),  "+5")  &&
+    str_eq(signed_str(-3), "-3")  &&
+    str_eq(signed_str(0),  "0")
+}
+
+// ── Digit count (length of decimal representation) ───────────────────────────
+
+fn digit_count(n: i64) -> i64 {
+    let s = to_str(abs_i64(n))
+    str_len(s)
+}
+
+fn test_digit_count() -> bool {
+    digit_count(0)    == 1 &&
+    digit_count(9)    == 1 &&
+    digit_count(10)   == 2 &&
+    digit_count(999)  == 3 &&
+    digit_count(-42)  == 2
+}
+
+// ── Leading-zero padding (fixed width 4) ─────────────────────────────────────
+
+fn pad_zeros(n: i64, width: i64) -> str {
+    let s   = to_str(abs_i64(n))
+    let len = str_len(s)
+    let pad = if len < width { str_repeat("0", width - len) } else { "" }
+    axon_concat(pad, s)
+}
+
+fn test_pad_zeros() -> bool {
+    str_eq(pad_zeros(7, 4),    "0007") &&
+    str_eq(pad_zeros(42, 4),   "0042") &&
+    str_eq(pad_zeros(1234, 4), "1234") &&
+    str_eq(pad_zeros(9999, 4), "9999")
+}
+
+// ── Float to string (to_str_f64) ─────────────────────────────────────────────
+
+fn test_to_str_f64() -> bool {
+    // Just verify it produces a non-empty string for known values
+    let s = to_str_f64(3.14)
+    str_len(s) > 0
+}
+
+// ── Parse and round-trip ──────────────────────────────────────────────────────
+
+fn round_trip(n: i64) -> bool {
+    let s = to_str(n)
+    match parse_int(s) {
+        Ok(v)  => v == n,
+        Err(_) => false,
+    }
+}
+
+fn test_round_trip_positive() -> bool {
+    round_trip(42) && round_trip(1000) && round_trip(0)
+}
+
+fn test_round_trip_negative() -> bool {
+    round_trip(-1) && round_trip(-999)
+}
+
+// ── Comptime width constant ───────────────────────────────────────────────────
+
+let DISPLAY_WIDTH = comptime { 6 }
+
+fn padded_display(n: i64) -> str {
+    pad_zeros(n, DISPLAY_WIDTH)
+}
+
+fn test_padded_display() -> bool {
+    str_eq(padded_display(1),    "000001") &&
+    str_eq(padded_display(12345), "012345")
+}
+
+fn main() -> i64 {
+    let s1 = if test_to_str_basic()       { 1 } else { 0 }
+    let s2 = if test_signed_str()         { 1 } else { 0 }
+    let s3 = if test_digit_count()        { 1 } else { 0 }
+    let s4 = if test_pad_zeros()          { 1 } else { 0 }
+    let s5 = if test_to_str_f64()         { 1 } else { 0 }
+    let s6 = if test_round_trip_positive(){ 1 } else { 0 }
+    let s7 = if test_round_trip_negative(){ 1 } else { 0 }
+    let s8 = if test_padded_display()     { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

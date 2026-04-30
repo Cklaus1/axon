@@ -226,6 +226,11 @@ pub struct CheckCtx {
     /// Per-function generic bounds: fn_name → Vec<(param_name, trait_names)>.
     /// Built from `FnDef.generic_bounds` during `check_program` for E0504.
     fn_bounds: HashMap<String, Vec<(String, Vec<String>)>>,
+    /// Span of the statement (or sub-expression) currently being checked.
+    /// Updated at every `Stmt` boundary inside `check_expr` so that diagnostics
+    /// emitted from deeper visits carry source-location info even when the
+    /// individual `Expr` variant has no span field of its own.
+    current_span: crate::span::Span,
 }
 
 impl CheckCtx {
@@ -247,6 +252,7 @@ impl CheckCtx {
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
             fn_bounds: HashMap::new(),
+            current_span: crate::span::Span::dummy(),
         }
     }
 
@@ -498,6 +504,12 @@ impl CheckCtx {
             &mut self.current_generic_params,
             f.generic_params.iter().cloned().collect(),
         );
+        // Seed `current_span` from the function header so any diagnostic raised
+        // before we descend into the body is at least pointed at the function.
+        let prev_span = self.current_span;
+        if !f.span.is_dummy() {
+            self.current_span = f.span;
+        }
 
         // R08: validate parameter type annotations.
         for param in &f.params {
@@ -532,6 +544,7 @@ impl CheckCtx {
 
         self.current_ret_ty = prev_ret;
         self.current_generic_params = prev_generics;
+        self.current_span = prev_span;
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -544,6 +557,11 @@ impl CheckCtx {
         node_path: &str,
         scope: &mut HashMap<String, Type>,
     ) {
+        // Track the statement span so deeply-nested errors can attach a
+        // useful source location (rustc-style `file:line:col`).
+        if !stmt.span.is_dummy() {
+            self.current_span = stmt.span;
+        }
         self.check_expr(&stmt.expr, node_path, scope);
     }
 
@@ -667,6 +685,7 @@ impl CheckCtx {
             Expr::Question(inner) => {
                 // R03: `?` is only valid inside a Result-returning function.
                 let file = self.file.clone();
+                let span = self.current_span;
                 match &self.current_ret_ty {
                     Option::Some(ret) if ret.is_result() => {}
                     Option::Some(ret) => {
@@ -674,21 +693,29 @@ impl CheckCtx {
                         self.errors.push(
                             CheckError::new(
                                 E0303,
-                                "? operator used in function that does not return Result",
+                                format!(
+                                    "the `?` operator can only be used in a function that returns `Result`, \
+                                     but the enclosing function returns `{ret_display}`"
+                                ),
                             )
                             .node(node_path)
                             .at(&file, 0, 0)
+                            .with_span(span)
                             .expected("Result<T, E>")
                             .found(ret_display)
-                            .fix("change function return type to Result<T, E> or handle the error with match"),
+                            .fix("change the function's return type to `Result<T, E>`, or handle the error with `match`"),
                         );
                     }
                     Option::None => {
                         self.errors.push(
-                            CheckError::new(E0303, "? operator used outside of a function")
+                            CheckError::new(
+                                E0303,
+                                "the `?` operator was used outside of a function",
+                            )
                                 .node(node_path)
                                 .at(&file, 0, 0)
-                                .fix("change function return type to Result<T, E> or handle the error with match"),
+                                .with_span(span)
+                                .fix("only use `?` inside a function that returns `Result<T, E>`"),
                         );
                     }
                 }
@@ -788,7 +815,7 @@ impl CheckCtx {
                     self.check_stmt(stmt, &format!("{node_path}.body_stmt_{i}"), scope);
                 }
             }
-            Expr::For { var, start, end, body } => {
+            Expr::For { var, start, end, body, .. } => {
                 self.check_expr(start, &format!("{node_path}.start"), scope);
                 self.check_expr(end, &format!("{node_path}.end"), scope);
                 let mut inner = scope.clone();
@@ -848,14 +875,22 @@ impl CheckCtx {
                 let ty = self.resolve_expr_type(expr, node_path, scope);
                 if ty.is_result() && !ty.is_deferred() {
                     let file = self.file.clone();
+                    let span = self.current_span;
+                    let ty_disp = ty.display();
                     self.errors.push(
                         CheckError::new(
                             E0302,
-                            "Result<T,E> return value ignored — use ? or match",
+                            format!(
+                                "the `{ty_disp}` returned by this call must be used — \
+                                 unhandled errors are silently dropped",
+                            ),
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
-                        .fix("add ? to propagate, or match result { Ok(v) => v, Err(e) => ... }"),
+                        .with_span(span)
+                        .found(ty_disp)
+                        .fix("add `?` to propagate the error, or wrap the call in \
+                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`"),
                     );
                 }
             }
@@ -873,11 +908,28 @@ impl CheckCtx {
         }
         if ty.is_option() {
             let file = self.file.clone();
+            let span = self.current_span;
+            let inner = match ty {
+                Type::Option(inner) => inner.display(),
+                _ => "T".to_string(),
+            };
             self.errors.push(
-                CheckError::new(E0301, "Option<T> used directly as T without unwrapping")
+                CheckError::new(
+                    E0301,
+                    format!(
+                        "value of type `Option<{inner}>` cannot be used directly — \
+                         the `Some`/`None` cases must be handled first",
+                    ),
+                )
                     .node(node_path)
                     .at(&file, 0, 0)
-                    .fix("use x.unwrap_or(default) or match x { Some(v) => v, None => default }"),
+                    .with_span(span)
+                    .expected(inner.clone())
+                    .found(format!("Option<{inner}>"))
+                    .fix(format!(
+                        "use `x.unwrap_or(default)` or `match x {{ Some(v) => v, None => default }}` \
+                         to obtain a `{inner}`"
+                    )),
             );
         }
     }
@@ -928,20 +980,39 @@ impl CheckCtx {
         // R05 — argument count.
         if args.len() != sig.params.len() {
             let file = self.file.clone();
+            let span = self.current_span;
+            let expected_n = sig.params.len();
+            let got_n = args.len();
+            // Spell out the expected signature so the user sees what's missing.
+            let sig_render = if expected_n == 0 {
+                format!("`{name}()`")
+            } else {
+                let params: Vec<String> =
+                    sig.params.iter().map(|p| p.display()).collect();
+                format!("`{name}({})`", params.join(", "))
+            };
+            let hint = if got_n < expected_n {
+                let missing = expected_n - got_n;
+                format!("you supplied {got_n}; supply {missing} more (signature: {sig_render})")
+            } else {
+                let extra = got_n - expected_n;
+                format!("you supplied {got_n}; remove {extra} (signature: {sig_render})")
+            };
             self.errors.push(
                 CheckError::new(
                     E0305,
                     format!(
-                        "fn `{name}` expected {} argument{}, got {}",
-                        sig.params.len(),
-                        if sig.params.len() == 1 { "" } else { "s" },
-                        args.len()
+                        "function `{name}` takes {expected_n} argument{} but {got_n} {} supplied",
+                        if expected_n == 1 { "" } else { "s" },
+                        if got_n == 1 { "was" } else { "were" },
                     ),
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
-                .expected(sig.params.len().to_string())
-                .found(args.len().to_string()),
+                .with_span(span)
+                .expected(expected_n.to_string())
+                .found(got_n.to_string())
+                .fix(hint),
             );
             // Continue so R06 can fire on the arguments we do have.
         }
@@ -970,20 +1041,28 @@ impl CheckCtx {
             if let Type::Option(inner) = &arg_ty {
                 if **inner == *param_ty {
                     let file = self.file.clone();
+                    let span = self.current_span;
                     self.errors.push(
                         CheckError::new(
                             E0301,
                             format!(
-                                "arg {i} has type Option<{}> but {name} expects {}",
-                                inner.display(),
-                                param_ty.display()
+                                "argument {i} of `{name}` has type `Option<{inner_disp}>`, but \
+                                 the parameter expects `{param_disp}` — the `Option` must be \
+                                 unwrapped first",
+                                inner_disp = inner.display(),
+                                param_disp = param_ty.display(),
                             ),
                         )
                         .node(&arg_path)
                         .at(&file, 0, 0)
+                        .with_span(span)
                         .expected(param_ty.display())
                         .found(arg_ty.display())
-                        .fix("use x.unwrap_or(default) or match x { Some(v) => v, None => default }"),
+                        .fix(format!(
+                            "use `arg.unwrap_or(default)` or `match arg {{ Some(v) => v, None => default }}` \
+                             to obtain a `{}`",
+                            param_ty.display()
+                        )),
                     );
                     continue;
                 }
@@ -1009,20 +1088,40 @@ impl CheckCtx {
             };
             if arg_ty != *param_ty && !is_integer_widening(&arg_ty, param_ty) && !dyn_coercion_ok {
                 let file = self.file.clone();
+                let span = self.current_span;
+                let expected_disp = param_ty.display();
+                let found_disp = arg_ty.display();
+                // Be specific when the mismatch is a common conversion the user
+                // can fix in-place (e.g. integer narrowing, str ↔ String, etc.).
+                let hint = if is_integer_widening(param_ty, &arg_ty) {
+                    format!(
+                        "argument is `{found_disp}` but parameter is `{expected_disp}`; \
+                         narrow with `as {expected_disp}` (truncation may occur)"
+                    )
+                } else if matches!(arg_ty, Type::I64 | Type::I32 | Type::I16 | Type::I8)
+                    && matches!(param_ty, Type::F64 | Type::F32)
+                {
+                    format!("convert with `as {expected_disp}` to widen the integer to a float")
+                } else {
+                    format!(
+                        "expected `{expected_disp}`, found `{found_disp}` — \
+                         change the argument's type or cast with `as {expected_disp}` if compatible"
+                    )
+                };
                 self.errors.push(
                     CheckError::new(
                         E0306,
                         format!(
-                            "fn `{name}` arg {i} expects {}, got {}",
-                            param_ty.display(),
-                            arg_ty.display()
+                            "argument {i} of `{name}` has the wrong type: \
+                             expected `{expected_disp}`, found `{found_disp}`",
                         ),
                     )
                     .node(&arg_path)
                     .at(&file, 0, 0)
-                    .expected(param_ty.display())
-                    .found(arg_ty.display())
-                    .fix(format!("cast with 'as {}' if types are compatible", param_ty.display())),
+                    .with_span(span)
+                    .expected(expected_disp.clone())
+                    .found(found_disp.clone())
+                    .fix(hint),
                 );
             }
         }
@@ -1259,20 +1358,40 @@ impl CheckCtx {
 
         if *val_ty != ret_ty {
             let file = self.file.clone();
+            let span = self.current_span;
+            let expected = ret_ty.display();
+            let found = val_ty.display();
+            // Tailor the suggestion to common shapes: returning a value where
+            // `()`/`Unit` is expected, or a bare T where Result<T,_> is expected.
+            let hint = match (&ret_ty, val_ty) {
+                (Type::Result(ok, _), v) if &**ok == v => {
+                    format!("wrap the value with `Ok(...)` to return `{expected}`")
+                }
+                (Type::Option(inner), v) if &**inner == v => {
+                    format!("wrap the value with `Some(...)` to return `{expected}`")
+                }
+                (Type::Unit, _) => {
+                    "the function returns `()`; remove the trailing expression \
+                     or end the block with `;`".to_string()
+                }
+                _ => format!(
+                    "the function declares `-> {expected}`, but the body produces `{found}` — \
+                     adjust the final expression (or change the declared return type)"
+                ),
+            };
             self.errors.push(
                 CheckError::new(
                     E0307,
-                    format!("expected {}, found {}", ret_ty.display(), val_ty.display()),
+                    format!(
+                        "return type mismatch: expected `{expected}`, found `{found}`",
+                    ),
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
-                .expected(ret_ty.display())
-                .found(val_ty.display())
-                .fix(format!(
-                    "expected {} but found {}; adjust the return expression",
-                    ret_ty.display(),
-                    val_ty.display()
-                )),
+                .with_span(span)
+                .expected(expected)
+                .found(found)
+                .fix(hint),
             );
         }
     }
@@ -1339,6 +1458,11 @@ impl CheckCtx {
                 self.check_axon_type(ret, &format!("{node_path}.ret"));
             }
             AxonType::TypeParam(_) | AxonType::DynTrait(_) => {}
+            AxonType::Tuple(elems) => {
+                for (i, elem) in elems.iter().enumerate() {
+                    self.check_axon_type(elem, &format!("{node_path}.elem_{i}"));
+                }
+            }
         }
     }
 
@@ -1537,6 +1661,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
         AxonType::Ref(inner) => axon_type_to_type(inner),
         AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
         AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
+        AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(axon_type_to_type).collect()),
     }
 }
 
@@ -1567,6 +1692,10 @@ fn axon_type_name(ty: &AxonType) -> String {
         AxonType::Ref(inner) => format!("&{}", axon_type_name(inner)),
         AxonType::DynTrait(n) => format!("dyn {n}"),
         AxonType::TypeParam(n) => n.clone(),
+        AxonType::Tuple(elems) => {
+            let parts: Vec<String> = elems.iter().map(axon_type_name).collect();
+            format!("({})", parts.join(", "))
+        }
     }
 }
 
@@ -2571,5 +2700,208 @@ mod tests {
             .filter(|e| e.code == E0501 || e.code == E0502 || e.code == E0503)
             .collect();
         assert!(trait_errors.is_empty(), "valid impl should not produce trait errors, got: {trait_errors:?}");
+    }
+
+    // ── Diagnostic-quality tests (improved messages) ─────────────────────────
+    //
+    // These tests pin the substrings of the rewritten user-facing messages so
+    // future refactors don't silently regress diagnostic clarity.
+
+    /// Helper: build a `Stmt` with a non-dummy span so the checker can attach
+    /// source location info to errors raised inside it.
+    fn stmt_with_span(expr: Expr, span: crate::span::Span) -> Stmt {
+        Stmt { expr, span }
+    }
+
+    #[test]
+    fn e0305_message_names_function_and_signature() {
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "two_arg".to_string(),
+            FnSig { params: vec![Type::I32, Type::Bool], ret: Type::I32 },
+        );
+        let mut ctx = mk_ctx(sigs);
+
+        let program = make_program(vec![simple_fn(
+            "caller",
+            vec![],
+            Option::Some(AxonType::Named("i32".into())),
+            block(vec![Expr::Call {
+                callee: Box::new(ident("two_arg")),
+                args: vec![lit_int(1)],
+            }]),
+        )]);
+
+        let errors = run(&mut ctx, &program);
+        let e0305 = errors.iter().find(|e| e.code == E0305)
+            .expect("expected E0305");
+        // New message: "function `two_arg` takes 2 arguments but 1 was supplied"
+        assert!(e0305.message.contains("`two_arg`"),
+            "E0305 message should name the function: {}", e0305.message);
+        assert!(e0305.message.contains("2 arguments"),
+            "E0305 message should state expected arity: {}", e0305.message);
+        assert!(e0305.message.contains("1 was supplied"),
+            "E0305 message should state observed arity: {}", e0305.message);
+        // Fix should spell out the signature.
+        let fix = e0305.fix.as_deref().unwrap_or("");
+        assert!(fix.contains("two_arg") && fix.contains("i32") && fix.contains("bool"),
+            "E0305 fix should render the expected signature: {fix}");
+    }
+
+    #[test]
+    fn e0306_message_names_arg_index_and_types() {
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "wants_bool".to_string(),
+            FnSig { params: vec![Type::Bool], ret: Type::Unit },
+        );
+        let mut ctx = mk_ctx(sigs);
+
+        let program = make_program(vec![simple_fn(
+            "caller",
+            vec![],
+            Option::Some(AxonType::Named("()".into())),
+            block(vec![
+                Expr::Call {
+                    callee: Box::new(ident("wants_bool")),
+                    args: vec![lit_int(42)],
+                },
+                Expr::Literal(Literal::Bool(true)),
+            ]),
+        )]);
+
+        let mut expr_types = HashMap::new();
+        expr_types.insert("#fn_caller.body.stmt_0".to_string(), Type::Unit);
+        expr_types.insert("#fn_caller.body.stmt_1".to_string(), Type::Unit);
+
+        let errors = run_with_types(&mut ctx, &program, expr_types);
+        let e0306 = errors.iter().find(|e| e.code == E0306)
+            .expect("expected E0306");
+        assert!(e0306.message.contains("argument 0"),
+            "E0306 message should pinpoint argument index: {}", e0306.message);
+        assert!(e0306.message.contains("`wants_bool`"),
+            "E0306 message should name the function: {}", e0306.message);
+        assert!(e0306.message.contains("expected `bool`"),
+            "E0306 message should spell expected: {}", e0306.message);
+        assert!(e0306.message.contains("found `i64`"),
+            "E0306 message should spell found: {}", e0306.message);
+    }
+
+    #[test]
+    fn e0307_return_mismatch_suggests_ok_wrap() {
+        let mut ctx = mk_ctx(HashMap::new());
+
+        // fn f() -> Result<i32, str> { 42 } — should suggest `Ok(...)`.
+        let program = make_program(vec![simple_fn(
+            "f",
+            vec![],
+            Option::Some(AxonType::Result {
+                ok: Box::new(AxonType::Named("i32".into())),
+                err: Box::new(AxonType::Named("str".into())),
+            }),
+            block(vec![lit_int(0)]),
+        )]);
+
+        let mut expr_types = HashMap::new();
+        expr_types.insert("#fn_f.body.stmt_0".to_string(), Type::I32);
+
+        let errors = run_with_types(&mut ctx, &program, expr_types);
+        let e0307 = errors.iter().find(|e| e.code == E0307)
+            .expect("expected E0307");
+        assert!(e0307.message.contains("return type mismatch"),
+            "E0307 should phrase the message clearly: {}", e0307.message);
+        let fix = e0307.fix.as_deref().unwrap_or("");
+        assert!(fix.contains("Ok("),
+            "E0307 fix should suggest `Ok(...)` wrapping: {fix}");
+    }
+
+    #[test]
+    fn e0303_message_mentions_result_and_actual_return_type() {
+        let mut ctx = mk_ctx(HashMap::new());
+
+        // fn f() -> i32 { x? }
+        let program = make_program(vec![simple_fn(
+            "f",
+            vec![],
+            Option::Some(AxonType::Named("i32".into())),
+            block(vec![Expr::Question(Box::new(ident("x")))]),
+        )]);
+
+        let errors = run(&mut ctx, &program);
+        let e0303 = errors.iter().find(|e| e.code == E0303)
+            .expect("expected E0303");
+        assert!(e0303.message.contains("`?`"),
+            "E0303 should mention the `?` operator: {}", e0303.message);
+        assert!(e0303.message.contains("Result"),
+            "E0303 should mention Result: {}", e0303.message);
+        let fix = e0303.fix.as_deref().unwrap_or("");
+        assert!(fix.contains("Result") || fix.contains("match"),
+            "E0303 fix should guide the user: {fix}");
+    }
+
+    #[test]
+    fn e0301_message_names_inner_type() {
+        // R01 via BinOp: Option<i32> + i32 — checker emits E0301 with the
+        // wrapped type spelt out.
+        let mut ctx = mk_ctx(HashMap::new());
+
+        let program = make_program(vec![simple_fn(
+            "f",
+            vec![param("x", AxonType::Option(Box::new(AxonType::Named("i32".into()))))],
+            Option::Some(AxonType::Named("i32".into())),
+            block(vec![Expr::BinOp {
+                op: BinOp::Add,
+                left: Box::new(ident("x")),
+                right: Box::new(lit_int(1)),
+            }]),
+        )]);
+
+        let mut expr_types = HashMap::new();
+        expr_types.insert("#fn_f.body.stmt_0.left".to_string(),
+            Type::Option(Box::new(Type::I32)));
+        expr_types.insert("#fn_f.body.stmt_0".to_string(), Type::I32);
+
+        let errors = run_with_types(&mut ctx, &program, expr_types);
+        let e0301 = errors.iter().find(|e| e.code == E0301)
+            .expect("expected E0301");
+        assert!(e0301.message.contains("Option<i32>"),
+            "E0301 should spell out Option<inner>: {}", e0301.message);
+        let fix = e0301.fix.as_deref().unwrap_or("");
+        assert!(fix.contains("unwrap_or") || fix.contains("match"),
+            "E0301 fix should suggest unwrap or match: {fix}");
+    }
+
+    #[test]
+    fn span_propagates_to_e0305_when_stmt_has_span() {
+        // When the enclosing Stmt carries a non-dummy span, the checker should
+        // attach it to the diagnostic so lib.rs can render `file:line:col`.
+        let mut sigs = HashMap::new();
+        sigs.insert(
+            "two_arg".to_string(),
+            FnSig { params: vec![Type::I32, Type::I32], ret: Type::I32 },
+        );
+        let mut ctx = mk_ctx(sigs);
+
+        // Build a block where the call statement has a real span.
+        let call_expr = Expr::Call {
+            callee: Box::new(ident("two_arg")),
+            args: vec![lit_int(1)],
+        };
+        let body = Expr::Block(vec![stmt_with_span(call_expr, crate::span::Span::new(15, 28))]);
+
+        let program = make_program(vec![simple_fn(
+            "caller",
+            vec![],
+            Option::Some(AxonType::Named("i32".into())),
+            body,
+        )]);
+
+        let errors = run(&mut ctx, &program);
+        let e0305 = errors.iter().find(|e| e.code == E0305)
+            .expect("expected E0305");
+        assert!(!e0305.span.is_dummy(),
+            "E0305 should carry the statement's span (was dummy)");
+        assert_eq!(e0305.span.start, 15,
+            "E0305 span should match the surrounding statement's start");
     }
 }

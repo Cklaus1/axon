@@ -1,0 +1,104 @@
+// Phase 51: Data structures — stack implemented via enum + recursive functions.
+//           Demonstrates sum types as containers without heap allocation.
+
+// ── Stack as enum ─────────────────────────────────────────────────────────────
+
+enum Stack {
+    Empty,
+    Node { value: i64, size: i64 },
+}
+
+// A "flat" stack representation using a struct that records
+// the last-pushed value and the depth, suitable for verifiable tests
+// without recursive enum self-reference.
+
+type StackState = { top: i64, depth: i64, sum: i64 }
+
+fn empty_stack() -> StackState {
+    StackState { top: 0, depth: 0, sum: 0 }
+}
+
+fn push(st: StackState, v: i64) -> StackState {
+    StackState { top: v, depth: st.depth + 1, sum: st.sum + v }
+}
+
+fn pop_top(st: StackState) -> i64 {
+    st.top
+}
+
+fn is_empty_stack(st: StackState) -> bool {
+    st.depth == 0
+}
+
+fn test_empty_stack() -> bool {
+    let st = empty_stack()
+    is_empty_stack(st) && st.depth == 0 && st.sum == 0
+}
+
+fn test_push_single() -> bool {
+    let st = push(empty_stack(), 42)
+    pop_top(st) == 42 && st.depth == 1
+}
+
+fn test_push_multiple() -> bool {
+    let st = push(push(push(empty_stack(), 1), 2), 3)
+    pop_top(st) == 3 && st.depth == 3 && st.sum == 6
+}
+
+// ── Stack-based sum accumulator ───────────────────────────────────────────────
+
+fn stack_sum_range(lo: i64, hi: i64) -> i64 {
+    let st = empty_stack()
+    for i in lo..hi {
+        st = push(st, i)
+    }
+    st.sum
+}
+
+fn test_stack_sum_range() -> bool {
+    // sum of 0..5 = 0+1+2+3+4 = 10
+    stack_sum_range(0, 5) == 10 &&
+    stack_sum_range(1, 4) == 6   // 1+2+3
+}
+
+// ── Stack-based max finder ────────────────────────────────────────────────────
+
+type MaxStack = { current_max: i64, depth: i64 }
+
+fn max_push(ms: MaxStack, v: i64) -> MaxStack {
+    let new_max = if ms.depth == 0 || v > ms.current_max { v } else { ms.current_max }
+    MaxStack { current_max: new_max, depth: ms.depth + 1 }
+}
+
+fn test_max_stack() -> bool {
+    let ms = MaxStack { current_max: 0, depth: 0 }
+    let ms = max_push(ms, 5)
+    let ms = max_push(ms, 12)
+    let ms = max_push(ms, 3)
+    let ms = max_push(ms, 9)
+    ms.current_max == 12 && ms.depth == 4
+}
+
+// ── Enum-based optional node ──────────────────────────────────────────────────
+
+fn describe_stack_node(s: Stack) -> str {
+    match s {
+        Stack::Empty          => "empty",
+        Stack::Node { value, size } => axon_concat("node:", to_str(value)),
+    }
+}
+
+fn test_describe_stack() -> bool {
+    str_eq(describe_stack_node(Stack::Empty), "empty") &&
+    str_eq(describe_stack_node(Stack::Node { value: 7, size: 1 }), "node:7")
+}
+
+fn main() -> i64 {
+    let s1 = if test_empty_stack()      { 1 } else { 0 }
+    let s2 = if test_push_single()      { 1 } else { 0 }
+    let s3 = if test_push_multiple()    { 1 } else { 0 }
+    let s4 = if test_stack_sum_range()  { 1 } else { 0 }
+    let s5 = if test_max_stack()        { 1 } else { 0 }
+    let s6 = if test_describe_stack()   { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

@@ -63,6 +63,7 @@ pub enum Token {
     #[token("%")]   Percent,
     #[token("!")]   Bang,
     #[token("|")]   Pipe,
+    #[token("..=")] DotDotEq,
     #[token("..")]  DotDot,
     #[token(".")]   Dot,
     #[token("@")]   At,

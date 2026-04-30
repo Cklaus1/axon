@@ -1,0 +1,108 @@
+// closures_demo.ax — lambdas and higher-order functions in Axon
+//
+// Phase 2 introduced arrow-lambda syntax.  Full closure captures (closures
+// that mutate variables from the enclosing scope) are coming in Phase 3.
+// This file demonstrates what works today:
+//
+//   • Arrow lambda syntax: (params) => expr
+//   • Lambdas stored in let bindings
+//   • Passing lambdas to higher-order functions
+//   • Returning lambdas from functions
+//   • Function composition helpers
+
+// --- Storing a lambda in a variable ---
+
+fn demo_basic_lambdas() {
+    let double  = (x: i64) => x * 2
+    let square  = (x: i64) => x * x
+    let negate  = (x: i64) => 0 - x
+
+    println("double(7)  = {to_str(double(7))}")
+    println("square(7)  = {to_str(square(7))}")
+    println("negate(7)  = {to_str(negate(7))}")
+}
+
+// --- Higher-order functions ---
+
+// Apply f to every element in an implicit range [0, n) and print the result.
+fn for_each_index(n: i64, f: (i64) -> i64) {
+    let i = 0
+    while i < n {
+        println("  [{to_str(i)}] => {to_str(f(i))}")
+        i = i + 1
+    }
+}
+
+// map_print applies f to each element of a 3-element array and prints it.
+// (Axon arrays are fixed-size; generic map is Phase 3.)
+fn map3_print(label: str, a: [i64; 3], f: (i64) -> i64) {
+    println("{label}:")
+    let i = 0
+    while i < 3 {
+        println("  {to_str(a[i])} => {to_str(f(a[i]))}")
+        i = i + 1
+    }
+}
+
+// reduce folds a 3-element array with a binary lambda.
+fn reduce3(a: [i64; 3], init: i64, f: (i64, i64) -> i64) -> i64 {
+    let acc = init
+    let i = 0
+    while i < 3 {
+        acc = f(acc, a[i])
+        i = i + 1
+    }
+    acc
+}
+
+// --- Returning a lambda from a function ---
+
+// Returns a lambda that adds `n` to its argument.
+fn make_adder(n: i64) -> (i64) -> i64 {
+    (x: i64) => x + n
+}
+
+// Returns a lambda that multiplies its argument by `factor`.
+fn make_multiplier(factor: i64) -> (i64) -> i64 {
+    (x: i64) => x * factor
+}
+
+fn main() -> i64 {
+    println("=== Basic lambdas ===")
+    demo_basic_lambdas()
+
+    println("")
+    println("=== for_each_index: squares of 0..5 ===")
+    for_each_index(6, (i: i64) => i * i)
+
+    println("")
+    println("=== map3_print ===")
+    let nums = [3, 5, 7]
+    map3_print("double", nums, (x: i64) => x * 2)
+    map3_print("square", nums, (x: i64) => x * x)
+
+    println("")
+    println("=== reduce3: sum and product ===")
+    let sum  = reduce3(nums, 0, (acc: i64, x: i64) => acc + x)
+    let prod = reduce3(nums, 1, (acc: i64, x: i64) => acc * x)
+    println("sum     = {to_str(sum)}")    // 15
+    println("product = {to_str(prod)}")   // 105
+
+    println("")
+    println("=== make_adder / make_multiplier ===")
+    let add10  = make_adder(10)
+    let triple = make_multiplier(3)
+    println("add10(5)  = {to_str(add10(5))}")    // 15
+    println("triple(7) = {to_str(triple(7))}")   // 21
+
+    // Compose: triple then add10
+    let i = 0
+    println("compose triple+add10 on [1..5]:")
+    while i < 5 {
+        let v = i + 1
+        println("  {to_str(v)} => {to_str(add10(triple(v)))}")
+        i = i + 1
+    }
+
+    0
+}

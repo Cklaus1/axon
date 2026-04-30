@@ -1,0 +1,98 @@
+// traits_demo.ax — polymorphic dispatch via enum ADTs
+//
+// Axon's trait system is specced for Phase 3.  Until then, the idiomatic way
+// to model "objects that share an interface" is an enum whose variants carry
+// the concrete data, plus a dispatch function for each operation.
+//
+// Key concepts shown here:
+//   • Enum variants with named struct fields
+//   • Pattern-matching dispatch that looks like virtual method calls
+//   • Struct types used as the data payload of enum variants
+//   • Composing operations (perimeter, area) in terms of the same shape enum
+
+// --- Shape type ---
+
+enum Shape {
+    Circle { radius: f64 },
+    Rect   { width: f64, height: f64 },
+    Triangle { base: f64, height: f64 },
+}
+
+// "Method" dispatch — equivalent to a trait's area() method
+fn area(s: Shape) -> f64 {
+    match s {
+        Shape::Circle   { radius }        => radius * radius        // π omitted for simplicity
+        Shape::Rect     { width, height } => width * height
+        Shape::Triangle { base, height }  => base * height / 2.0
+    }
+}
+
+// A second "method" — perimeter / circumference
+fn perimeter(s: Shape) -> f64 {
+    match s {
+        Shape::Circle   { radius }        => 2.0 * radius           // 2πr, π=1 for demo
+        Shape::Rect     { width, height } => 2.0 * (width + height)
+        Shape::Triangle { base, height }  => {
+            // Assume right triangle: hypotenuse via integer approximation
+            let hyp = isqrt_f64(base * base + height * height)
+            base + height + hyp
+        }
+    }
+}
+
+// Human-readable name for each variant
+fn name(s: Shape) -> str {
+    match s {
+        Shape::Circle   { radius: _ }           => "Circle"
+        Shape::Rect     { width: _, height: _ } => "Rect"
+        Shape::Triangle { base: _, height: _ }  => "Triangle"
+    }
+}
+
+// --- A second "trait": Describable ---
+// describe() gives a one-line summary, composing name/area/perimeter
+
+fn describe(s: Shape) {
+    println("{name(s)}: area={to_str_f64(area(s))}  perimeter={to_str_f64(perimeter(s))}")
+}
+
+// --- Utility: integer square root for f64 (Newton, 30 iterations) ---
+fn isqrt_f64(n: f64) -> f64 {
+    if n <= 0.0 {
+        0.0
+    } else {
+        let x = n
+        let i = 0
+        while i < 30 {
+            x = (x + n / x) / 2.0
+            i = i + 1
+        }
+        x
+    }
+}
+
+fn main() -> i64 {
+    let c = Shape::Circle   { radius: 5.0 }
+    let r = Shape::Rect     { width: 4.0, height: 6.0 }
+    let t = Shape::Triangle { base: 3.0, height: 4.0 }
+
+    describe(c)
+    describe(r)
+    describe(t)
+
+    // Polymorphic: store shapes in an array and iterate
+    println("")
+    println("=== Sorted by area (manual) ===")
+    let shapes = [
+        Shape::Circle   { radius: 1.0 },
+        Shape::Rect     { width: 2.0, height: 3.0 },
+        Shape::Triangle { base: 10.0, height: 5.0 },
+    ]
+    let i = 0
+    while i < 3 {
+        describe(shapes[i])
+        i = i + 1
+    }
+
+    0
+}

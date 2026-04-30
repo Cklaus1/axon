@@ -880,6 +880,129 @@ fn phase45_comprehensive_v2_fixture_parses_cleanly() {
     );
 }
 
+// ── Phase 46–55: Feature coverage fixtures ───────────────────────────────────
+
+/// Verify that Phase 46 (multiple trait impls across Circle/Rectangle/Triangle,
+/// Describable + Measurable + Scalable traits) parses and type-checks cleanly.
+#[test]
+fn phase46_trait_objects_fixture_parses_cleanly() {
+    let errors = check_fixture("phase46_trait_objects.ax");
+    assert!(
+        errors.is_empty(),
+        "phase46_trait_objects.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 47 (closure composition, pipe, partial application,
+/// apply_twice, compose, adder/multiplier factories, count_where) parses cleanly.
+#[test]
+fn phase47_closure_composition_fixture_parses_cleanly() {
+    let errors = check_fixture("phase47_closure_composition.ax");
+    assert!(
+        errors.is_empty(),
+        "phase47_closure_composition.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 48 (string builder: join, repeat, trim, replace, case
+/// conversion, kv_pair, csv_row, contains, slice) parses and type-checks cleanly.
+#[test]
+fn phase48_string_builder_fixture_parses_cleanly() {
+    let errors = check_fixture("phase48_string_builder.ax");
+    assert!(
+        errors.is_empty(),
+        "phase48_string_builder.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 49 (numeric formatting: to_str, signed_str, digit_count,
+/// zero-padding, round-trip parse, comptime display width) parses cleanly.
+#[test]
+fn phase49_numeric_format_fixture_parses_cleanly() {
+    let errors = check_fixture("phase49_numeric_format.ax");
+    assert!(
+        errors.is_empty(),
+        "phase49_numeric_format.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 50 (error recovery: deep ? chains, Result map/or,
+/// option flattening, safe_div, parse_and_div) parses and type-checks cleanly.
+#[test]
+fn phase50_error_recovery_fixture_parses_cleanly() {
+    let errors = check_fixture("phase50_error_recovery.ax");
+    assert!(
+        errors.is_empty(),
+        "phase50_error_recovery.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 51 (data structures: enum Stack, StackState push/pop,
+/// MaxStack accumulator, describe_stack_node) parses and type-checks cleanly.
+#[test]
+fn phase51_data_structures_fixture_parses_cleanly() {
+    let errors = check_fixture("phase51_data_structures.ax");
+    assert!(
+        errors.is_empty(),
+        "phase51_data_structures.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 52 (sorting: bubble sort and insertion sort on Arr5 struct,
+/// get5/set5 helpers, is_sorted5 predicate) parses and type-checks cleanly.
+#[test]
+fn phase52_sorting_fixture_parses_cleanly() {
+    let errors = check_fixture("phase52_sorting.ax");
+    assert!(
+        errors.is_empty(),
+        "phase52_sorting.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 53 (recursive math: Tower of Hanoi moves, binomial/Pascal,
+/// Catalan numbers, power-of-two, iterative Fibonacci) parses cleanly.
+#[test]
+fn phase53_recursive_math_fixture_parses_cleanly() {
+    let errors = check_fixture("phase53_recursive_math.ax");
+    assert!(
+        errors.is_empty(),
+        "phase53_recursive_math.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 54 (pattern algebra: Expr enum eval, Sign classification
+/// with guards, nested Range/Window structs, classify_range) parses cleanly.
+#[test]
+fn phase54_pattern_algebra_fixture_parses_cleanly() {
+    let errors = check_fixture("phase54_pattern_algebra.ax");
+    assert!(
+        errors.is_empty(),
+        "phase54_pattern_algebra.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 55 (mixed comprehensive: generics + traits + closures +
+/// Result error handling + comptime — full parse/validate/transform pipeline)
+/// parses and type-checks cleanly.
+#[test]
+fn phase55_mixed_comprehensive_fixture_parses_cleanly() {
+    let errors = check_fixture("phase55_mixed_comprehensive.ax");
+    assert!(
+        errors.is_empty(),
+        "phase55_mixed_comprehensive.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── Error code detection tests ────────────────────────────────────────────────
 
 #[test]

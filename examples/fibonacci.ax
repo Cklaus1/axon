@@ -1,0 +1,70 @@
+// fibonacci.ax — Fibonacci numbers in Axon
+//
+// Key concepts shown here:
+//   • Recursive functions (memoisation through recompute — simple and correct)
+//   • Iterative approach with mutable locals and while loops
+//   • Using lambdas as local higher-order helpers (Phase 2 lambdas)
+//   • String interpolation and to_str for formatted output
+
+// Recursive Fibonacci — clean but exponential (fine for small n)
+fn fib_rec(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        fib_rec(n - 1) + fib_rec(n - 2)
+    }
+}
+
+// Iterative Fibonacci — O(n) time, O(1) space
+fn fib(n: i64) -> i64 {
+    if n <= 1 {
+        n
+    } else {
+        let a = 0
+        let b = 1
+        let i = 2
+        while i <= n {
+            let tmp = a + b
+            a = b
+            b = tmp
+            i = i + 1
+        }
+        b
+    }
+}
+
+// Higher-order: apply a function to every index in [0, count)
+// and print "label(i) = result"
+fn print_sequence(label: str, count: i64, f: (i64) -> i64) {
+    let i = 0
+    while i < count {
+        println("{label}({to_str(i)}) = {to_str(f(i))}")
+        i = i + 1
+    }
+}
+
+fn main() -> i64 {
+    println("=== Iterative Fibonacci ===")
+    print_sequence("fib", 10, (n: i64) => fib(n))
+
+    println("")
+    println("=== Recursive Fibonacci (small n) ===")
+    print_sequence("fib_rec", 10, (n: i64) => fib_rec(n))
+
+    println("")
+    println("=== Verify they agree ===")
+    let i = 0
+    let ok = true
+    while i < 15 {
+        if fib(i) != fib_rec(i) {
+            println("MISMATCH at n={to_str(i)}")
+            ok = false
+        }
+        i = i + 1
+    }
+    if ok {
+        println("All values match for n in [0, 14]")
+    }
+
+    0
+}

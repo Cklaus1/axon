@@ -1,0 +1,67 @@
+// calculator.ax — enum-based expression evaluator
+//
+// Key concepts shown here:
+//   • Enums with named fields (algebraic data types)
+//   • Pattern matching with struct-like destructuring
+//   • Recursive evaluation over a tree type
+//   • Result<T,E> for runtime errors (divide by zero)
+
+enum Expr {
+    Num { value: i64 },
+    Add { left: i64, right: i64 },
+    Sub { left: i64, right: i64 },
+    Mul { left: i64, right: i64 },
+    Div { left: i64, right: i64 },
+    Neg { inner: i64 },
+}
+
+// Evaluate an Expr, returning Ok(result) or Err(message).
+fn eval(expr: Expr) -> Result<i64, str> {
+    match expr {
+        Expr::Num { value }       => Ok(value)
+        Expr::Neg { inner }       => Ok(0 - inner)
+        Expr::Add { left, right } => Ok(left + right)
+        Expr::Sub { left, right } => Ok(left - right)
+        Expr::Mul { left, right } => Ok(left * right)
+        Expr::Div { left, right } => {
+            if right == 0 {
+                Err("division by zero")
+            } else {
+                Ok(left / right)
+            }
+        }
+    }
+}
+
+// Render an Expr as a human-readable string.
+fn show(expr: Expr) -> str {
+    match expr {
+        Expr::Num { value }       => to_str(value)
+        Expr::Neg { inner }       => "-({to_str(inner)})"
+        Expr::Add { left, right } => "{to_str(left)} + {to_str(right)}"
+        Expr::Sub { left, right } => "{to_str(left)} - {to_str(right)}"
+        Expr::Mul { left, right } => "{to_str(left)} * {to_str(right)}"
+        Expr::Div { left, right } => "{to_str(left)} / {to_str(right)}"
+    }
+}
+
+// Print one expression and its result.
+fn run(expr: Expr) {
+    let s = show(expr)
+    let r = eval(expr)
+    match r {
+        Ok(v)  => println("{s} = {to_str(v)}")
+        Err(e) => println("{s} => error: {e}")
+    }
+}
+
+fn main() -> i64 {
+    run(Expr::Num { value: 42 })
+    run(Expr::Neg { inner: 7 })
+    run(Expr::Add { left: 10, right: 32 })
+    run(Expr::Sub { left: 100, right: 58 })
+    run(Expr::Mul { left: 6,  right: 7 })
+    run(Expr::Div { left: 84, right: 2 })
+    run(Expr::Div { left: 1,  right: 0 })   // => error: division by zero
+    0
+}

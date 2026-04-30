@@ -120,6 +120,10 @@ fn render_type(ty: &AxonType) -> String {
             format!("fn({ps}) -> {}", render_type(ret))
         }
         AxonType::Ref(inner) => format!("&{}", render_type(inner)),
+        AxonType::Tuple(elems) => {
+            let parts: Vec<_> = elems.iter().map(render_type).collect();
+            format!("({})", parts.join(", "))
+        }
     }
 }
 

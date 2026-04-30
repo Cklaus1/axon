@@ -3,15 +3,18 @@
 // ── Find first even in range ──────────────────────────────────────────────────
 
 fn find_first_even(start: i64, end: i64) -> Option<i64> {
-    let result = None
-    let found = false
+    let sentinel = -9999999
+    let found_val = sentinel
     for i in start..end {
-        if !found && i - (i / 2) * 2 == 0 {
-            result = Some(i)
-            found = true
+        if found_val == sentinel && i - (i / 2) * 2 == 0 {
+            found_val = i
         }
     }
-    result
+    if found_val == sentinel {
+        None
+    } else {
+        Some(found_val)
+    }
 }
 
 fn test_find_first_even_found() -> bool {

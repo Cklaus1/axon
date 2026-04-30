@@ -1,0 +1,126 @@
+// Phase 53: Recursive math — Tower of Hanoi move count, Pascal's triangle row,
+//           Catalan numbers, and power-of-two checks.
+
+// ── Tower of Hanoi — number of moves ────────────────────────────────────────
+// Minimum moves for n discs = 2^n - 1
+
+fn hanoi_moves(n: i64) -> i64 {
+    if n <= 0 { 0 }
+    else { 2 * hanoi_moves(n - 1) + 1 }
+}
+
+fn test_hanoi_moves() -> bool {
+    hanoi_moves(0) == 0  &&
+    hanoi_moves(1) == 1  &&
+    hanoi_moves(2) == 3  &&
+    hanoi_moves(3) == 7  &&
+    hanoi_moves(4) == 15
+}
+
+// ── Pascal's triangle: binomial coefficient C(n, k) ──────────────────────────
+
+fn binom(n: i64, k: i64) -> i64 {
+    if k == 0 || k == n { 1 }
+    else { binom(n - 1, k - 1) + binom(n - 1, k) }
+}
+
+fn test_binom_base() -> bool {
+    binom(0, 0) == 1 &&
+    binom(5, 0) == 1 &&
+    binom(5, 5) == 1
+}
+
+fn test_binom_values() -> bool {
+    binom(4, 2) == 6  &&
+    binom(5, 2) == 10 &&
+    binom(6, 3) == 20
+}
+
+fn test_pascal_row5() -> bool {
+    // Row 5: 1 5 10 10 5 1
+    binom(5, 0) == 1  &&
+    binom(5, 1) == 5  &&
+    binom(5, 2) == 10 &&
+    binom(5, 3) == 10 &&
+    binom(5, 4) == 5  &&
+    binom(5, 5) == 1
+}
+
+// ── Catalan numbers: C(n) = C(2n,n) / (n+1) ────────────────────────────────
+
+fn catalan(n: i64) -> i64 {
+    binom(2 * n, n) / (n + 1)
+}
+
+fn test_catalan() -> bool {
+    // Catalan: 1, 1, 2, 5, 14, 42, ...
+    catalan(0) == 1  &&
+    catalan(1) == 1  &&
+    catalan(2) == 2  &&
+    catalan(3) == 5  &&
+    catalan(4) == 14 &&
+    catalan(5) == 42
+}
+
+// ── Power of two check ────────────────────────────────────────────────────────
+
+fn is_power_of_two(n: i64) -> bool {
+    if n <= 0 { false }
+    else {
+        let x = n
+        let result = true
+        for _ in 0..63 {
+            if x > 1 {
+                if x - (x / 2) * 2 != 0 { result = false }
+                x = x / 2
+            }
+        }
+        result
+    }
+}
+
+fn test_is_power_of_two() -> bool {
+    is_power_of_two(1)  &&
+    is_power_of_two(2)  &&
+    is_power_of_two(4)  &&
+    is_power_of_two(16) &&
+    !is_power_of_two(3) &&
+    !is_power_of_two(6) &&
+    !is_power_of_two(0)
+}
+
+// ── Fibonacci (iterative) ──────────────────────────────────────────────────────
+
+fn fib(n: i64) -> i64 {
+    if n <= 0 { 0 }
+    else if n == 1 { 1 }
+    else {
+        let a = 0
+        let b = 1
+        for _ in 2..(n + 1) {
+            let tmp = a + b
+            a = b
+            b = tmp
+        }
+        b
+    }
+}
+
+fn test_fib() -> bool {
+    fib(0) == 0  &&
+    fib(1) == 1  &&
+    fib(5) == 5  &&
+    fib(6) == 8  &&
+    fib(10) == 55
+}
+
+fn main() -> i64 {
+    let s1 = if test_hanoi_moves()     { 1 } else { 0 }
+    let s2 = if test_binom_base()      { 1 } else { 0 }
+    let s3 = if test_binom_values()    { 1 } else { 0 }
+    let s4 = if test_pascal_row5()     { 1 } else { 0 }
+    let s5 = if test_catalan()         { 1 } else { 0 }
+    let s6 = if test_is_power_of_two() { 1 } else { 0 }
+    let s7 = if test_fib()             { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

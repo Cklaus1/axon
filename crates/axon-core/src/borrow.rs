@@ -14,11 +14,23 @@ use crate::types::Type;
 
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum BorrowError {
-    #[error("borrow[E0601]: use of moved value '{name}'")]
+    #[error(
+        "borrow[E0601]: use of moved value `{name}` — \
+         the value was moved out earlier and is no longer accessible. \
+         hint: use `ref` to borrow without moving, or clone the value before the move"
+    )]
     UseAfterMove { name: String, span: Span },
-    #[error("borrow[E0602]: cannot move '{name}': value is currently borrowed")]
+    #[error(
+        "borrow[E0602]: cannot move out of `{name}` — \
+         the value is currently borrowed by an outstanding `ref` binding. \
+         hint: drop the borrow (let it go out of scope) before moving the value"
+    )]
     MoveBorrowed { name: String, span: Span },
-    #[error("borrow[E0603]: '{name}' borrowed here, move attempted at use site")]
+    #[error(
+        "borrow[E0603]: conflict on `{name}` — value is borrowed here but a move was \
+         attempted at the use site. hint: re-borrow with `ref` or restructure to avoid \
+         overlapping the borrow with the move"
+    )]
     BorrowConflict { name: String, span: Span },
 }
 

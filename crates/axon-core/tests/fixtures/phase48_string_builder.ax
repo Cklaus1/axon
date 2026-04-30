@@ -1,0 +1,108 @@
+// Phase 48: String building — concat/repeat/replace/trim chains,
+//           building formatted output from parts.
+
+// ── Basic concat chain ────────────────────────────────────────────────────────
+
+fn join2(a: str, sep: str, b: str) -> str {
+    axon_concat(axon_concat(a, sep), b)
+}
+
+fn join3(a: str, sep: str, b: str, c: str) -> str {
+    axon_concat(join2(a, sep, b), axon_concat(sep, c))
+}
+
+fn test_join2() -> bool {
+    str_eq(join2("hello", " ", "world"), "hello world")
+}
+
+fn test_join3() -> bool {
+    str_eq(join3("a", "-", "b", "c"), "a-b-c")
+}
+
+// ── Repeat and trim ───────────────────────────────────────────────────────────
+
+fn test_repeat() -> bool {
+    str_eq(str_repeat("ab", 3), "ababab") &&
+    str_eq(str_repeat("x", 1), "x")      &&
+    str_eq(str_repeat("!", 0), "")
+}
+
+fn test_trim() -> bool {
+    str_eq(str_trim("  hello  "), "hello") &&
+    str_eq(str_trim("no spaces"), "no spaces")
+}
+
+// ── Replace ───────────────────────────────────────────────────────────────────
+
+fn test_replace() -> bool {
+    let result = str_replace("hello world", "world", "axon")
+    str_eq(result, "hello axon")
+}
+
+fn test_replace_missing() -> bool {
+    let result = str_replace("hello", "xyz", "abc")
+    str_eq(result, "hello")
+}
+
+// ── Case conversion chains ────────────────────────────────────────────────────
+
+fn test_to_upper() -> bool {
+    str_eq(str_to_upper("hello"), "HELLO") &&
+    str_eq(str_to_upper("axon"), "AXON")
+}
+
+fn test_to_lower() -> bool {
+    str_eq(str_to_lower("HELLO"), "hello") &&
+    str_eq(str_to_lower("AXON"), "axon")
+}
+
+// ── Build a labeled key=value string ─────────────────────────────────────────
+
+fn kv_pair(key: str, val: i64) -> str {
+    axon_concat(axon_concat(key, "="), to_str(val))
+}
+
+fn test_kv_pair() -> bool {
+    str_eq(kv_pair("x", 42), "x=42") &&
+    str_eq(kv_pair("count", 0), "count=0")
+}
+
+// ── Build a simple CSV row ─────────────────────────────────────────────────────
+
+fn csv_row(a: i64, b: i64, c: i64) -> str {
+    join3(to_str(a), ",", to_str(b), to_str(c))
+}
+
+fn test_csv_row() -> bool {
+    str_eq(csv_row(1, 2, 3), "1,2,3") &&
+    str_eq(csv_row(10, 20, 30), "10,20,30")
+}
+
+// ── String contains + slice ───────────────────────────────────────────────────
+
+fn test_contains() -> bool {
+    str_contains("hello world", "world") &&
+    str_contains("hello world", "hello") &&
+    !str_contains("hello world", "xyz")
+}
+
+fn test_slice() -> bool {
+    str_eq(str_slice("hello world", 0, 5), "hello") &&
+    str_eq(str_slice("hello world", 6, 11), "world")
+}
+
+fn main() -> i64 {
+    let s1  = if test_join2()          { 1 } else { 0 }
+    let s2  = if test_join3()          { 1 } else { 0 }
+    let s3  = if test_repeat()         { 1 } else { 0 }
+    let s4  = if test_trim()           { 1 } else { 0 }
+    let s5  = if test_replace()        { 1 } else { 0 }
+    let s6  = if test_replace_missing(){ 1 } else { 0 }
+    let s7  = if test_to_upper()       { 1 } else { 0 }
+    let s8  = if test_to_lower()       { 1 } else { 0 }
+    let s9  = if test_kv_pair()        { 1 } else { 0 }
+    let s10 = if test_csv_row()        { 1 } else { 0 }
+    let s11 = if test_contains()       { 1 } else { 0 }
+    let s12 = if test_slice()          { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

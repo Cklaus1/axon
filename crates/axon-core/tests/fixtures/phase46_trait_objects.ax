@@ -1,0 +1,119 @@
+// Phase 46: Trait objects — multiple trait impls across different types,
+//           calling trait methods polymorphically, mix of struct types.
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+type Circle   = { radius: i64 }
+type Rectangle = { width: i64, height: i64 }
+type Triangle  = { base: i64, height: i64 }
+
+// ── Trait: Describable ────────────────────────────────────────────────────────
+
+trait Describable {
+    fn describe(self) -> str
+}
+
+impl Describable for Circle {
+    fn describe(self: Circle) -> str { "circle" }
+}
+
+impl Describable for Rectangle {
+    fn describe(self: Rectangle) -> str { "rectangle" }
+}
+
+impl Describable for Triangle {
+    fn describe(self: Triangle) -> str { "triangle" }
+}
+
+fn test_describable() -> bool {
+    let c = Circle { radius: 5 }
+    let r = Rectangle { width: 3, height: 4 }
+    let t = Triangle { base: 6, height: 8 }
+    str_eq(c.describe(), "circle") &&
+    str_eq(r.describe(), "rectangle") &&
+    str_eq(t.describe(), "triangle")
+}
+
+// ── Trait: Measurable ─────────────────────────────────────────────────────────
+
+trait Measurable {
+    fn area(self) -> i64
+    fn perimeter(self) -> i64
+}
+
+impl Measurable for Circle {
+    fn area(self: Circle)      -> i64 { self.radius * self.radius * 3 }
+    fn perimeter(self: Circle) -> i64 { self.radius * 6 }
+}
+
+impl Measurable for Rectangle {
+    fn area(self: Rectangle)      -> i64 { self.width * self.height }
+    fn perimeter(self: Rectangle) -> i64 { (self.width + self.height) * 2 }
+}
+
+impl Measurable for Triangle {
+    fn area(self: Triangle)      -> i64 { self.base * self.height / 2 }
+    fn perimeter(self: Triangle) -> i64 { self.base * 3 }   // equilateral approx
+}
+
+fn test_measurable_circle() -> bool {
+    let c = Circle { radius: 4 }
+    c.area() == 48 && c.perimeter() == 24
+}
+
+fn test_measurable_rectangle() -> bool {
+    let r = Rectangle { width: 5, height: 6 }
+    r.area() == 30 && r.perimeter() == 22
+}
+
+fn test_measurable_triangle() -> bool {
+    let t = Triangle { base: 8, height: 6 }
+    t.area() == 24 && t.perimeter() == 24
+}
+
+// ── Trait: Scalable ───────────────────────────────────────────────────────────
+
+trait Scalable {
+    fn scale_area(self, factor: i64) -> i64
+}
+
+impl Scalable for Circle {
+    fn scale_area(self: Circle, factor: i64) -> i64 {
+        self.area() * factor * factor
+    }
+}
+
+impl Scalable for Rectangle {
+    fn scale_area(self: Rectangle, factor: i64) -> i64 {
+        self.area() * factor * factor
+    }
+}
+
+fn test_scalable() -> bool {
+    let c = Circle { radius: 2 }
+    let r = Rectangle { width: 3, height: 4 }
+    c.scale_area(2) == 48 &&   // area=12, factor=2 -> 12*4=48
+    r.scale_area(3) == 108     // area=12, factor=3 -> 12*9=108
+}
+
+// ── Helper: larger shape by area ─────────────────────────────────────────────
+
+fn larger_area(a: i64, b: i64) -> i64 {
+    if a >= b { a } else { b }
+}
+
+fn test_larger_area() -> bool {
+    let c = Circle { radius: 3 }         // area = 27
+    let r = Rectangle { width: 4, height: 8 } // area = 32
+    larger_area(c.area(), r.area()) == 32
+}
+
+fn main() -> i64 {
+    let s1 = if test_describable()         { 1 } else { 0 }
+    let s2 = if test_measurable_circle()   { 1 } else { 0 }
+    let s3 = if test_measurable_rectangle(){ 1 } else { 0 }
+    let s4 = if test_measurable_triangle() { 1 } else { 0 }
+    let s5 = if test_scalable()            { 1 } else { 0 }
+    let s6 = if test_larger_area()         { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

@@ -1,3 +1,16 @@
-fn main() {
-    println("Hello, Axon!")
+// hello.ax — the classic first program in Axon
+//
+// Key concepts shown here:
+//   • fn with an explicit return type
+//   • string interpolation with {expr} inside a string literal
+//   • println for output; the entry point returns i64 (0 = success)
+
+fn greet(name: str) -> str {
+    "Hello, {name}!"
+}
+
+fn main() -> i64 {
+    let msg = greet("Axon")
+    println(msg)
+    0
 }

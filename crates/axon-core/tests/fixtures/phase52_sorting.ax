@@ -1,0 +1,121 @@
+// Phase 52: Sorting — bubble sort and insertion sort on small fixed-size
+//           collections represented as structs with named slots.
+
+// ── Fixed-size 5-element collection ──────────────────────────────────────────
+
+type Arr5 = { a0: i64, a1: i64, a2: i64, a3: i64, a4: i64 }
+
+fn get5(arr: Arr5, i: i64) -> i64 {
+    match i {
+        0 => arr.a0,
+        1 => arr.a1,
+        2 => arr.a2,
+        3 => arr.a3,
+        _ => arr.a4,
+    }
+}
+
+fn set5(arr: Arr5, i: i64, v: i64) -> Arr5 {
+    match i {
+        0 => Arr5 { a0: v, a1: arr.a1, a2: arr.a2, a3: arr.a3, a4: arr.a4 },
+        1 => Arr5 { a0: arr.a0, a1: v, a2: arr.a2, a3: arr.a3, a4: arr.a4 },
+        2 => Arr5 { a0: arr.a0, a1: arr.a1, a2: v, a3: arr.a3, a4: arr.a4 },
+        3 => Arr5 { a0: arr.a0, a1: arr.a1, a2: arr.a2, a3: v, a4: arr.a4 },
+        _ => Arr5 { a0: arr.a0, a1: arr.a1, a2: arr.a2, a3: arr.a3, a4: v },
+    }
+}
+
+fn is_sorted5(arr: Arr5) -> bool {
+    arr.a0 <= arr.a1 &&
+    arr.a1 <= arr.a2 &&
+    arr.a2 <= arr.a3 &&
+    arr.a3 <= arr.a4
+}
+
+// ── Bubble sort pass ──────────────────────────────────────────────────────────
+
+fn bubble_pass(arr: Arr5) -> Arr5 {
+    // One full pass of adjacent swaps
+    let n = 5
+    for i in 0..(n - 1) {
+        let vi = get5(arr, i)
+        let vj = get5(arr, i + 1)
+        if vi > vj {
+            arr = set5(arr, i, vj)
+            arr = set5(arr, i + 1, vi)
+        }
+    }
+    arr
+}
+
+fn bubble_sort5(arr: Arr5) -> Arr5 {
+    // 4 passes guaranteed to sort 5 elements
+    arr = bubble_pass(arr)
+    arr = bubble_pass(arr)
+    arr = bubble_pass(arr)
+    arr = bubble_pass(arr)
+    arr
+}
+
+fn test_bubble_sort_basic() -> bool {
+    let arr = Arr5 { a0: 5, a1: 3, a2: 1, a3: 4, a4: 2 }
+    let sorted = bubble_sort5(arr)
+    sorted.a0 == 1 && sorted.a1 == 2 && sorted.a2 == 3 &&
+    sorted.a3 == 4 && sorted.a4 == 5
+}
+
+fn test_bubble_sort_already_sorted() -> bool {
+    let arr = Arr5 { a0: 1, a1: 2, a2: 3, a3: 4, a4: 5 }
+    let sorted = bubble_sort5(arr)
+    is_sorted5(sorted)
+}
+
+fn test_bubble_sort_reversed() -> bool {
+    let arr = Arr5 { a0: 5, a1: 4, a2: 3, a3: 2, a4: 1 }
+    let sorted = bubble_sort5(arr)
+    sorted.a0 == 1 && sorted.a4 == 5 && is_sorted5(sorted)
+}
+
+// ── Insertion sort ────────────────────────────────────────────────────────────
+// Insert element at position i into the sorted prefix [0..i)
+
+fn insertion_sort5(arr: Arr5) -> Arr5 {
+    // Process positions 1..4
+    let i = 1
+    for _ in 0..4 {
+        let key = get5(arr, i)
+        let j = i - 1
+        // Shift elements > key one position right
+        for _ in 0..5 {
+            if j >= 0 && get5(arr, j) > key {
+                arr = set5(arr, j + 1, get5(arr, j))
+                j = j - 1
+            }
+        }
+        arr = set5(arr, j + 1, key)
+        i = i + 1
+    }
+    arr
+}
+
+fn test_insertion_sort_basic() -> bool {
+    let arr = Arr5 { a0: 4, a1: 2, a2: 5, a3: 1, a4: 3 }
+    let sorted = insertion_sort5(arr)
+    sorted.a0 == 1 && sorted.a1 == 2 && sorted.a2 == 3 &&
+    sorted.a3 == 4 && sorted.a4 == 5
+}
+
+fn test_insertion_sort_equal_elements() -> bool {
+    let arr = Arr5 { a0: 3, a1: 3, a2: 1, a3: 3, a4: 1 }
+    let sorted = insertion_sort5(arr)
+    sorted.a0 == 1 && sorted.a1 == 1 && is_sorted5(sorted)
+}
+
+fn main() -> i64 {
+    let s1 = if test_bubble_sort_basic()          { 1 } else { 0 }
+    let s2 = if test_bubble_sort_already_sorted() { 1 } else { 0 }
+    let s3 = if test_bubble_sort_reversed()       { 1 } else { 0 }
+    let s4 = if test_insertion_sort_basic()       { 1 } else { 0 }
+    let s5 = if test_insertion_sort_equal_elements(){ 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5
+}

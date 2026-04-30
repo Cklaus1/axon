@@ -396,6 +396,34 @@ impl Parser {
         if self.eat(&Token::Ampersand) {
             return Ok(AxonType::Ref(Box::new(self.parse_type()?)));
         }
+        // Tuple type: `(T1, T2, ...)` or unit `()`.
+        // Disambiguation: `(` followed by `)` → unit type `()`.
+        //                 `(` followed by a type → tuple (must have ≥1 comma).
+        if self.at(&Token::LParen) {
+            // Check for `()` unit type first.
+            if matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {
+                self.advance()?; // consume `(`
+                self.advance()?; // consume `)`
+                return Ok(AxonType::Named("()".to_string()));
+            }
+            // Parse `(T, T, ...)` tuple type — requires at least one comma.
+            self.advance()?; // consume `(`
+            let first = self.parse_type()?;
+            if self.eat(&Token::Comma) {
+                // We have a real tuple.
+                let mut elems = vec![first];
+                while !self.at(&Token::RParen) {
+                    elems.push(self.parse_type()?);
+                    if !self.eat(&Token::Comma) { break; }
+                }
+                self.expect(&Token::RParen)?;
+                return Ok(AxonType::Tuple(elems));
+            } else {
+                // Parenthesised type — just a grouping `(T)`.
+                self.expect(&Token::RParen)?;
+                return Ok(first);
+            }
+        }
         if self.eat(&Token::LBracket) {
             let inner = self.parse_type()?;
             self.expect(&Token::RBracket)?;
@@ -669,13 +697,19 @@ impl Parser {
         Ok(Expr::While { cond: Box::new(cond), body })
     }
 
-    /// Parse `for <ident> in <start>..<end> { body }`.
+    /// Parse `for <ident> in <start>..<end> { body }` or
+    /// `for <ident> in <start>..=<end> { body }` (inclusive range).
     fn parse_for(&mut self) -> Result<Expr> {
         self.expect(&Token::For)?;
         let var = self.expect_ident()?;
         self.expect(&Token::In)?;
         let start = self.parse_logical()?;
-        self.expect(&Token::DotDot)?;
+        let inclusive = if self.eat(&Token::DotDotEq) {
+            true
+        } else {
+            self.expect(&Token::DotDot)?;
+            false
+        };
         let end = self.parse_logical()?;
         self.expect(&Token::LBrace)?;
         let mut body = Vec::new();
@@ -686,7 +720,7 @@ impl Parser {
             body.push(Stmt { expr, span });
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::For { var, start: Box::new(start), end: Box::new(end), body })
+        Ok(Expr::For { var, start: Box::new(start), end: Box::new(end), inclusive, body })
     }
 
     fn parse_assign(&mut self) -> Result<Expr> {
@@ -1160,6 +1194,43 @@ impl Parser {
                 self.advance()?;
                 Ok(Pattern::Wildcard)
             }
+            // Tuple pattern: `(p1, p2, ...)` or unit pattern `()`.
+            Some(Token::LParen) => {
+                self.advance()?; // consume `(`
+                // `()` — unit / empty tuple pattern.
+                if self.eat(&Token::RParen) {
+                    return Ok(Pattern::Tuple(Vec::new()));
+                }
+                let first = self.parse_pattern()?;
+                if self.eat(&Token::Comma) {
+                    let mut pats = vec![first];
+                    while !self.at(&Token::RParen) {
+                        pats.push(self.parse_pattern()?);
+                        if !self.eat(&Token::Comma) { break; }
+                    }
+                    self.expect(&Token::RParen)?;
+                    Ok(Pattern::Tuple(pats))
+                } else {
+                    // Parenthesised pattern — just grouping, no tuple.
+                    self.expect(&Token::RParen)?;
+                    Ok(first)
+                }
+            }
+            Some(Token::True) => { self.advance()?; Ok(Pattern::Literal(Literal::Bool(true))) }
+            Some(Token::False) => { self.advance()?; Ok(Pattern::Literal(Literal::Bool(false))) }
+            // Negative integer literal pattern: `-` INT_LIT
+            Some(Token::Minus) => {
+                self.advance()?; // consume `-`
+                let tok = self.advance()?.clone();
+                if let Token::Int(n) = tok {
+                    Ok(Pattern::Literal(Literal::Int(-n)))
+                } else {
+                    Err(ParseError::Unexpected(
+                        tok,
+                        "integer literal after `-` in pattern".into(),
+                    ))
+                }
+            }
             Some(Token::None) => { self.advance()?; Ok(Pattern::None) }
             Some(Token::Some) => {
                 self.advance()?;
@@ -1256,6 +1327,10 @@ fn axon_type_to_str(ty: &AxonType) -> String {
         }
         AxonType::DynTrait(name) => format!("dyn {name}"),
         AxonType::TypeParam(name) => name.clone(),
+        AxonType::Tuple(elems) => {
+            let inner: Vec<String> = elems.iter().map(|e| axon_type_to_str(e)).collect();
+            format!("({})", inner.join(", "))
+        }
     }
 }
 
@@ -1680,5 +1755,207 @@ mod tests {
         let Expr::Array(elems) = value.as_ref() else { panic!("expected array") };
         assert_eq!(elems.len(), 1, "array should have one element (1+2)");
         assert!(matches!(&elems[0], Expr::BinOp { op: BinOp::Add, .. }));
+    }
+
+    // ── New grammar additions ─────────────────────────────────────────────────
+
+    /// `for i in 0..=10 { ... }` — inclusive range
+    ///
+    /// Axon snippet:
+    /// ```axon
+    /// fn sum_to(n: i64) -> i64 {
+    ///     let acc = 0
+    ///     for i in 0..=n { acc = acc + i }
+    ///     acc
+    /// }
+    /// ```
+    #[test]
+    fn parse_inclusive_range_for() {
+        let src = "fn f() { for i in 0..=10 { let x = i } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::For { inclusive, .. } = &stmts[0].expr else {
+            panic!("expected For, got {:?}", stmts[0].expr)
+        };
+        assert!(*inclusive, "..= should set inclusive=true");
+    }
+
+    /// `for i in 0..10 { ... }` — exclusive range (existing, still works)
+    #[test]
+    fn parse_exclusive_range_for() {
+        let src = "fn f() { for i in 0..10 { let x = i } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::For { inclusive, .. } = &stmts[0].expr else { panic!() };
+        assert!(!inclusive, ".. should set inclusive=false");
+    }
+
+    /// Boolean patterns in match arms.
+    ///
+    /// Axon snippet:
+    /// ```axon
+    /// fn describe(b: bool) -> str {
+    ///     match b {
+    ///         true  => "yes",
+    ///         false => "no",
+    ///     }
+    /// }
+    /// ```
+    #[test]
+    fn parse_bool_pattern_in_match() {
+        let src = r#"fn f(b: bool) -> str { match b { true => "yes", false => "no" } }"#;
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        assert_eq!(arms.len(), 2);
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Literal(Literal::Bool(true))),
+            "first arm should be true pattern"
+        );
+        assert!(
+            matches!(&arms[1].pattern, Pattern::Literal(Literal::Bool(false))),
+            "second arm should be false pattern"
+        );
+    }
+
+    /// Negative integer literal patterns in match arms.
+    ///
+    /// Axon snippet:
+    /// ```axon
+    /// fn sign(n: i64) -> i64 {
+    ///     match n {
+    ///         -1 => -1,
+    ///         0  =>  0,
+    ///         1  =>  1,
+    ///         _  =>  2,
+    ///     }
+    /// }
+    /// ```
+    #[test]
+    fn parse_negative_int_pattern_in_match() {
+        let src = "fn f(n: i64) -> i64 { match n { -1 => 0, 0 => 1, _ => 2 } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        assert_eq!(arms.len(), 3);
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Literal(Literal::Int(-1))),
+            "first arm should be -1 pattern"
+        );
+        assert!(
+            matches!(&arms[1].pattern, Pattern::Literal(Literal::Int(0))),
+            "second arm should be 0 pattern"
+        );
+        assert!(matches!(&arms[2].pattern, Pattern::Wildcard));
+    }
+
+    // ── Tuple patterns ────────────────────────────────────────────────────────
+
+    /// Tuple pattern `(a, b)` in a match arm.
+    ///
+    /// Axon snippet:
+    /// ```axon
+    /// fn swap(pair: (i64, i64)) -> (i64, i64) {
+    ///     match pair {
+    ///         (x, y) => (y, x),
+    ///     }
+    /// }
+    /// ```
+    #[test]
+    fn parse_tuple_pattern_two_elems() {
+        let src = "fn f(p: (i64, i64)) { match p { (a, b) => a } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        assert_eq!(arms.len(), 1);
+        let Pattern::Tuple(pats) = &arms[0].pattern else {
+            panic!("expected Tuple pattern, got {:?}", arms[0].pattern)
+        };
+        assert_eq!(pats.len(), 2);
+        assert!(matches!(&pats[0], Pattern::Ident(n) if n == "a"));
+        assert!(matches!(&pats[1], Pattern::Ident(n) if n == "b"));
+    }
+
+    /// Nested tuple pattern `(a, (b, c))` — verifies recursion.
+    #[test]
+    fn parse_tuple_pattern_nested() {
+        let src = "fn f() { match p { (a, (b, c)) => a } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        let Pattern::Tuple(pats) = &arms[0].pattern else { panic!("expected outer Tuple") };
+        assert_eq!(pats.len(), 2);
+        // Second element should be an inner tuple (b, c).
+        assert!(matches!(&pats[1], Pattern::Tuple(inner) if inner.len() == 2));
+    }
+
+    /// Parenthesised pattern (single element, no comma) is NOT a tuple.
+    #[test]
+    fn parse_paren_pattern_not_tuple() {
+        let src = "fn f() { match x { (v) => v } }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        // A single-element paren group should lower to the inner pattern, not a Tuple.
+        assert!(
+            matches!(&arms[0].pattern, Pattern::Ident(_)),
+            "single-element paren group should not be a Tuple, got {:?}", arms[0].pattern
+        );
+    }
+
+    // ── Tuple type syntax ─────────────────────────────────────────────────────
+
+    /// `(i64, bool)` as a return-type annotation produces `AxonType::Tuple`.
+    ///
+    /// Axon snippet:
+    /// ```axon
+    /// fn divide(a: i64, b: i64) -> (i64, i64) {
+    ///     (a / b, a % b)
+    /// }
+    /// ```
+    #[test]
+    fn parse_tuple_type_return() {
+        let src = "fn f(a: i64, b: i64) -> (i64, bool) { a }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Some(ret) = &f.return_type else { panic!("no return type") };
+        let AxonType::Tuple(elems) = ret else {
+            panic!("expected Tuple return type, got {ret:?}")
+        };
+        assert_eq!(elems.len(), 2);
+        assert!(matches!(&elems[0], AxonType::Named(n) if n == "i64"));
+        assert!(matches!(&elems[1], AxonType::Named(n) if n == "bool"));
+    }
+
+    /// `(i64, i64, str)` — three-element tuple type in a param annotation.
+    #[test]
+    fn parse_tuple_type_three_elems() {
+        let src = "fn f(t: (i64, i64, str)) { t }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let AxonType::Tuple(elems) = &f.params[0].ty else {
+            panic!("expected Tuple param type, got {:?}", f.params[0].ty)
+        };
+        assert_eq!(elems.len(), 3);
+    }
+
+    /// `()` unit type is still parsed as `AxonType::Named("()")`, not a `Tuple`.
+    #[test]
+    fn parse_unit_type_not_tuple() {
+        let src = "fn f() -> () { 0 }";
+        let prog = parse(src);
+        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Some(ret) = &f.return_type else { panic!("no return type") };
+        assert!(
+            matches!(ret, AxonType::Named(n) if n == "()"),
+            "unit type should be Named(\"()\"), got {ret:?}"
+        );
     }
 }

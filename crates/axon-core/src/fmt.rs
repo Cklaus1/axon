@@ -302,6 +302,14 @@ impl Formatter {
             AxonType::Ref(inner) => {
                 self.write("&"); self.emit_axon_type(inner);
             }
+            AxonType::Tuple(elems) => {
+                self.write("(");
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 { self.write(", "); }
+                    self.emit_axon_type(e);
+                }
+                self.write(")");
+            }
         }
     }
 
@@ -534,12 +542,12 @@ impl Formatter {
             Expr::None => self.write("None"),
             Expr::Break => self.write("break"),
             Expr::Continue => self.write("continue"),
-            Expr::For { var, start, end, body } => {
+            Expr::For { var, start, end, body, inclusive } => {
                 self.write("for ");
                 self.write(var);
                 self.write(" in ");
                 self.emit_expr(start);
-                self.write("..");
+                self.write(if *inclusive { "..=" } else { ".." });
                 self.emit_expr(end);
                 self.write(" ");
                 self.emit_block_body(&Expr::Block(body.clone()));

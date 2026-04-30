@@ -288,6 +288,10 @@ struct Resolver<'a> {
     errors: Vec<Diagnostic>,
     warnings: Vec<Diagnostic>,
     infos: Vec<Diagnostic>,
+    /// Span of the statement currently being resolved.  The `Expr` enum has no
+    /// per-variant span field, so we track the enclosing statement's span and
+    /// attach it to undefined-name / shadowing diagnostics.
+    current_span: crate::span::Span,
 }
 
 impl<'a> Resolver<'a> {
@@ -298,6 +302,7 @@ impl<'a> Resolver<'a> {
             errors: Vec::new(),
             warnings: Vec::new(),
             infos: Vec::new(),
+            current_span: crate::span::Span::dummy(),
         }
     }
 
@@ -343,11 +348,16 @@ impl<'a> Resolver<'a> {
                                 Diagnostic::error(
                                     E0002,
                                     format!(
-                                        "name `{}` is defined more than once in this module",
+                                        "the name `{}` is defined more than once in this module",
                                         f.name
                                     ),
                                 )
-                                .with_file(self.file),
+                                .with_file(self.file)
+                                .with_span(f.span)
+                                .with_fix(format!(
+                                    "rename one of the `{}` definitions, or remove the duplicate",
+                                    f.name
+                                )),
                             );
                         }
                     }
@@ -362,11 +372,16 @@ impl<'a> Resolver<'a> {
                                 Diagnostic::error(
                                     E0002,
                                     format!(
-                                        "name `{}` is defined more than once in this module",
+                                        "the type `{}` is defined more than once in this module",
                                         t.name
                                     ),
                                 )
-                                .with_file(self.file),
+                                .with_file(self.file)
+                                .with_span(t.span)
+                                .with_fix(format!(
+                                    "rename one of the `{}` types, or remove the duplicate",
+                                    t.name
+                                )),
                             );
                         }
                     }
@@ -381,11 +396,16 @@ impl<'a> Resolver<'a> {
                                 Diagnostic::error(
                                     E0002,
                                     format!(
-                                        "name `{}` is defined more than once in this module",
+                                        "the enum `{}` is defined more than once in this module",
                                         e.name
                                     ),
                                 )
-                                .with_file(self.file),
+                                .with_file(self.file)
+                                .with_span(e.span)
+                                .with_fix(format!(
+                                    "rename one of the `{}` enums, or remove the duplicate",
+                                    e.name
+                                )),
                             );
                         }
                     }
@@ -463,6 +483,12 @@ impl<'a> Resolver<'a> {
     fn resolve_fn(&mut self, f: &FnDef) {
         // Validate attributes before entering the function body.
         self.validate_attrs(f);
+
+        // Default the span to the function header so that any diagnostic raised
+        // before we descend into a statement is at least pointed at the fn.
+        if !f.span.is_dummy() {
+            self.current_span = f.span;
+        }
 
         self.table.push_scope();
 
@@ -621,9 +647,16 @@ impl<'a> Resolver<'a> {
                         E0001,
                         format!("cannot find name `{name}` in this scope"),
                     )
-                    .with_file(self.file);
+                    .with_file(self.file)
+                    .with_span(self.current_span);
                     if let Some(s) = suggestion {
-                        d = d.with_fix(format!("did you mean `{s}`?"));
+                        d = d.with_fix(format!(
+                            "a name with a similar spelling exists — did you mean `{s}`?"
+                        ));
+                    } else {
+                        d = d.with_fix(format!(
+                            "introduce `{name}` with `let {name} = …`, or import it from a module"
+                        ));
                     }
                     self.emit_error(d);
                 }
@@ -744,7 +777,7 @@ impl<'a> Resolver<'a> {
                 }
                 self.table.pop_scope();
             }
-            Expr::For { var, start, end, body } => {
+            Expr::For { var, start, end, body, .. } => {
                 self.resolve_expr(start);
                 self.resolve_expr(end);
                 self.table.push_scope();
@@ -765,11 +798,20 @@ impl<'a> Resolver<'a> {
                         let suggestion = self.table.suggest(name);
                         let mut d = Diagnostic::error(
                             E0001,
-                            format!("cannot find name `{name}` in this scope"),
+                            format!(
+                                "cannot assign to `{name}` — no such variable is in scope"
+                            ),
                         )
-                        .with_file(self.file);
+                        .with_file(self.file)
+                        .with_span(self.current_span);
                         if let Some(s) = suggestion {
-                            d = d.with_fix(format!("did you mean `{s}`?"));
+                            d = d.with_fix(format!(
+                                "a similarly-named binding is in scope — did you mean `{s}`?"
+                            ));
+                        } else {
+                            d = d.with_fix(format!(
+                                "introduce `{name}` first with `let {name} = …`"
+                            ));
                         }
                         self.emit_error(d);
                     }
@@ -785,10 +827,15 @@ impl<'a> Resolver<'a> {
                         self.emit_error(
                             Diagnostic::error(
                                 E0001,
-                                format!("cannot assign to {kind} name `{name}`"),
+                                format!(
+                                    "cannot assign to {kind} name `{name}` — only mutable local \
+                                     bindings can be reassigned"
+                                ),
                             )
                             .with_file(self.file)
-                            .with_fix("use a `let` binding instead or rename the variable".to_string()),
+                            .with_span(self.current_span)
+                            .with_fix("introduce a fresh `let` binding with a different name, \
+                                       or rename the local you intended to assign to".to_string()),
                         );
                     }
                     Some(_) => {} // Symbol::Local — valid assignment target
@@ -811,6 +858,11 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_stmt(&mut self, stmt: &Stmt) {
+        // Track the source span of the enclosing statement so that resolution
+        // errors raised on its inner expressions carry a useful location.
+        if !stmt.span.is_dummy() {
+            self.current_span = stmt.span;
+        }
         self.resolve_expr(&stmt.expr);
     }
 
@@ -851,11 +903,16 @@ impl<'a> Resolver<'a> {
                     let suggestion = self.table.suggest(name);
                     let mut d = Diagnostic::error(
                         E0001,
-                        format!("cannot find type `{name}` in this scope"),
+                        format!(
+                            "cannot find type or enum variant `{name}` in this scope"
+                        ),
                     )
-                    .with_file(self.file);
+                    .with_file(self.file)
+                    .with_span(self.current_span);
                     if let Some(s) = suggestion {
-                        d = d.with_fix(format!("did you mean `{s}`?"));
+                        d = d.with_fix(format!(
+                            "a similarly-named type is in scope — did you mean `{s}`?"
+                        ));
                     }
                     self.emit_error(d);
                 }
@@ -1123,7 +1180,7 @@ fn collect_free_vars(
                 collect_free_vars(&stmt.expr, bound, free);
             }
         }
-        Expr::For { start, end, body, var } => {
+        Expr::For { start, end, body, var, .. } => {
             collect_free_vars(start, bound, free);
             collect_free_vars(end, bound, free);
             let mut for_bound = bound.clone();

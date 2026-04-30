@@ -1,0 +1,79 @@
+// error_handling.ax — idiomatic Result / Option usage in Axon
+//
+// Key concepts shown here:
+//   • Result<T, E>: Ok / Err construction and exhaustive match
+//   • ? propagation — unwraps Ok or returns Err early from the enclosing fn
+//   • Chained operations that stay on the "happy path" until something fails
+//   • Helper functions that accept and forward errors cleanly
+
+// Parse a string into a positive integer.
+// Returns Err if the string is not numeric or the value is not > 0.
+fn parse_positive(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?          // ? propagates Err("parse error") automatically
+    if n <= 0 {
+        Err("expected a positive number, got {s}")
+    } else {
+        Ok(n)
+    }
+}
+
+// Integer square-root approximation (Newton's method, 20 iterations).
+fn isqrt(n: i64) -> Result<i64, str> {
+    if n < 0 {
+        Err("cannot take square root of a negative number: {to_str(n)}")
+    } else if n == 0 {
+        Ok(0)
+    } else {
+        let x = n
+        let i = 0
+        while i < 20 {
+            x = (x + n / x) / 2
+            i = i + 1
+        }
+        Ok(x)
+    }
+}
+
+// Parse a string → validate positive → compute integer square root.
+// Each step can fail; ? short-circuits on the first error.
+fn sqrt_of_string(s: str) -> Result<i64, str> {
+    let n = parse_positive(s)?
+    isqrt(n)
+}
+
+// Safe division — avoids a panic on divide-by-zero.
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+// Print a labelled Result<i64, str> line.
+fn show(label: str, r: Result<i64, str>) {
+    match r {
+        Ok(v)  => println("{label} => Ok({to_str(v)})")
+        Err(e) => println("{label} => Err({e})")
+    }
+}
+
+fn main() -> i64 {
+    // sqrt_of_string chains parse_positive and isqrt
+    show("sqrt(\"144\")", sqrt_of_string("144"))    // Ok(12)
+    show("sqrt(\"9\")",   sqrt_of_string("9"))       // Ok(3)
+    show("sqrt(\"2\")",   sqrt_of_string("2"))       // Ok(1)  (truncated)
+
+    // Error cases propagated by ?
+    show("sqrt(\"-5\")",  sqrt_of_string("-5"))      // Err: not positive
+    show("sqrt(\"0\")",   sqrt_of_string("0"))       // Err: not positive
+    show("sqrt(\"abc\")", sqrt_of_string("abc"))     // Err: not numeric
+
+    println("")
+
+    // Direct safe_div usage
+    show("100 / 4", safe_div(100, 4))    // Ok(25)
+    show("1   / 0", safe_div(1,   0))    // Err: division by zero
+
+    0
+}

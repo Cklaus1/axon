@@ -21,7 +21,7 @@ use inkwell::module::Module;
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
 };
-use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum};
+use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
 use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue, InstructionOpcode};
 use inkwell::AddressSpace;
 use inkwell::IntPredicate;
@@ -83,6 +83,15 @@ pub struct Codegen<'ctx> {
     comptime_env: HashMap<String, crate::comptime::ComptimeVal>,
     /// Stack of (continue_target, break_target) for the enclosing while loops.
     loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)>,
+    /// Current lambda's closure environment, set when emitting a lambda body.
+    /// Tuple of (env_ptr, env_struct_ty, capture_index_map).
+    /// When set, `Ident` lookups that miss `self.locals` fall back to loading
+    /// the captured value from the env struct via GEP. This is a defensive
+    /// safety net — the primary capture path binds field pointers directly
+    /// into `self.locals` (see `Expr::Lambda` handler), so this fallback only
+    /// fires for variables the resolver missed (e.g. names introduced by AST
+    /// rewrites after `fill_captures` ran).
+    current_lambda_env: Option<(PointerValue<'ctx>, StructType<'ctx>, HashMap<String, u32>)>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -110,6 +119,7 @@ impl<'ctx> Codegen<'ctx> {
             vtable_thunk_types: HashMap::new(),
             comptime_env: HashMap::new(),
             loop_stack: Vec::new(),
+            current_lambda_env: None,
         }
     }
 
@@ -2949,6 +2959,227 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
 
+
+        // ── Phase 10: str_count(s: str, needle: str) -> i64 ─────────────────
+        // Count non-overlapping occurrences of needle in s.
+        // Algorithm: walk s with strstr, advance past each match by needle_len.
+        // Returns 0 when needle is empty or not found.
+        //
+        // CFG:
+        //   entry     → early_ret (needle_len == 0)
+        //             → loop     (needle_len > 0)
+        //   loop      → found    (strstr != null)
+        //             → done     (strstr == null)
+        //   found     → loop
+        //   early_ret : return 0
+        //   done      : return count
+        //
+        // Allocas are placed in entry_bb (before the branch) so they dominate
+        // all successors, keeping the IR valid even without mem2reg.
+        {
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
+            let fn_val = self.module.add_function("str_count", fn_ty, None);
+
+            let entry_bb     = self.context.append_basic_block(fn_val, "sc_entry");
+            let early_ret_bb = self.context.append_basic_block(fn_val, "sc_early_ret");
+            let loop_bb      = self.context.append_basic_block(fn_val, "sc_loop");
+            let found_bb     = self.context.append_basic_block(fn_val, "sc_found");
+            let done_bb      = self.context.append_basic_block(fn_val, "sc_done");
+            let saved = self.builder.get_insert_block();
+
+            // ── entry: extract fields, place allocas, then branch ───────────
+            self.builder.position_at_end(entry_bb);
+            let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
+            let s_ptr      = self.builder.build_extract_value(s, 1, "sc_sptr").unwrap().into_pointer_value();
+            let needle_len = self.builder.build_extract_value(needle, 0, "sc_nlen").unwrap().into_int_value();
+            let needle_ptr = self.builder.build_extract_value(needle, 1, "sc_nptr").unwrap().into_pointer_value();
+            let zero = i64_ty.const_zero();
+
+            // Allocas here so they dominate all successors (including done_bb).
+            let cur_slot   = self.builder.build_alloca(i8_ptr, "sc_cur").unwrap();
+            let count_slot = self.builder.build_alloca(i64_ty, "sc_cnt").unwrap();
+            self.builder.build_store(cur_slot, s_ptr).unwrap();
+            self.builder.build_store(count_slot, zero).unwrap();
+
+            let strstr_fn = self.module.get_function("strstr").unwrap_or_else(|| {
+                let t = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+                self.module.add_function("strstr", t, None)
+            });
+
+            let needle_empty = self.builder.build_int_compare(
+                inkwell::IntPredicate::EQ, needle_len, zero, "sc_nempty",
+            ).unwrap();
+            self.builder.build_conditional_branch(needle_empty, early_ret_bb, loop_bb).unwrap();
+
+            // ── early_ret: return 0 for empty needle ─────────────────────────
+            self.builder.position_at_end(early_ret_bb);
+            self.builder.build_return(Some(&zero)).unwrap();
+
+            // ── loop: cur = strstr(cur, needle); branch on null ──────────────
+            self.builder.position_at_end(loop_bb);
+            let cur = self.builder.build_load(i8_ptr, cur_slot, "sc_cur_v").unwrap().into_pointer_value();
+            let found_ptr = self.builder.build_call(
+                strstr_fn, &[cur.into(), needle_ptr.into()], "sc_fp",
+            ).unwrap().try_as_basic_value().left().unwrap().into_pointer_value();
+            let found_int = self.builder.build_ptr_to_int(found_ptr, i64_ty, "sc_fpi").unwrap();
+            let null_int  = self.builder.build_ptr_to_int(i8_ptr.const_null(), i64_ty, "sc_ni").unwrap();
+            let is_found = self.builder.build_int_compare(
+                inkwell::IntPredicate::NE, found_int, null_int, "sc_isf",
+            ).unwrap();
+            self.builder.build_conditional_branch(is_found, found_bb, done_bb).unwrap();
+
+            // ── found: count++, advance cursor past the match ────────────────
+            self.builder.position_at_end(found_bb);
+            let cnt = self.builder.build_load(i64_ty, count_slot, "sc_cnt_v").unwrap().into_int_value();
+            let cnt1 = self.builder.build_int_add(cnt, i64_ty.const_int(1, false), "sc_cnt1").unwrap();
+            self.builder.build_store(count_slot, cnt1).unwrap();
+            let next = unsafe {
+                self.builder.build_gep(self.context.i8_type(), found_ptr, &[needle_len], "sc_next").unwrap()
+            };
+            self.builder.build_store(cur_slot, next).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            // ── done: return accumulated count ───────────────────────────────
+            self.builder.position_at_end(done_bb);
+            let final_count = self.builder.build_load(i64_ty, count_slot, "sc_final").unwrap().into_int_value();
+            self.builder.build_return(Some(&final_count)).unwrap();
+
+            if let Some(b) = saved { self.builder.position_at_end(b); }
+            self.functions.insert("str_count".to_string(), fn_val);
+            self.fn_return_types.insert("str_count".to_string(), Type::I64);
+        }
+
+
+        // ── Phase 10: str_reverse(s: str) -> str ─────────────────────────────
+        // Returns a malloc'd copy of s with bytes in reverse order.
+        {
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let fn_ty = str_ty.fn_type(&[str_ty.into()], false);
+            let fn_val = self.module.add_function("str_reverse", fn_ty, None);
+
+            let entry_bb = self.context.append_basic_block(fn_val, "srev_entry");
+            let loop_bb  = self.context.append_basic_block(fn_val, "srev_loop");
+            let body_bb  = self.context.append_basic_block(fn_val, "srev_body");
+            let done_bb  = self.context.append_basic_block(fn_val, "srev_done");
+            let saved = self.builder.get_insert_block();
+
+            self.builder.position_at_end(entry_bb);
+            let s     = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let s_len = self.builder.build_extract_value(s, 0, "srev_len").unwrap().into_int_value();
+            let s_ptr = self.builder.build_extract_value(s, 1, "srev_ptr").unwrap().into_pointer_value();
+
+            let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+                let ft = i8_ptr.fn_type(&[i64_ty.into()], false);
+                self.module.add_function("malloc", ft, None)
+            });
+            // alloc s_len + 1 bytes
+            let alloc_sz = self.builder.build_int_add(s_len, i64_ty.const_int(1, false), "srev_az").unwrap();
+            let buf = self.builder.build_call(malloc_fn, &[alloc_sz.into()], "srev_buf").unwrap()
+                .try_as_basic_value().left().unwrap().into_pointer_value();
+
+            // i = 0; loop while i < s_len
+            let zero = i64_ty.const_zero();
+            let i_slot = self.builder.build_alloca(i64_ty, "srev_i").unwrap();
+            self.builder.build_store(i_slot, zero).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            self.builder.position_at_end(loop_bb);
+            let i_val = self.builder.build_load(i64_ty, i_slot, "srev_iv").unwrap().into_int_value();
+            let in_range = self.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, s_len, "srev_ir").unwrap();
+            self.builder.build_conditional_branch(in_range, body_bb, done_bb).unwrap();
+
+            // body: buf[i] = s_ptr[s_len - 1 - i]; i++
+            self.builder.position_at_end(body_bb);
+            let src_idx = self.builder.build_int_sub(
+                self.builder.build_int_sub(s_len, i64_ty.const_int(1, false), "srev_sm1").unwrap(),
+                i_val,
+                "srev_si",
+            ).unwrap();
+            let src_byte_ptr = unsafe {
+                self.builder.build_gep(self.context.i8_type(), s_ptr, &[src_idx], "srev_sbp").unwrap()
+            };
+            let byte = self.builder.build_load(self.context.i8_type(), src_byte_ptr, "srev_b").unwrap();
+            let dst_byte_ptr = unsafe {
+                self.builder.build_gep(self.context.i8_type(), buf, &[i_val], "srev_dbp").unwrap()
+            };
+            self.builder.build_store(dst_byte_ptr, byte).unwrap();
+            let next_i = self.builder.build_int_add(i_val, i64_ty.const_int(1, false), "srev_ni").unwrap();
+            self.builder.build_store(i_slot, next_i).unwrap();
+            self.builder.build_unconditional_branch(loop_bb).unwrap();
+
+            // done: null-terminate and return
+            self.builder.position_at_end(done_bb);
+            let null_pos = unsafe { self.builder.build_gep(self.context.i8_type(), buf, &[s_len], "srev_np").unwrap() };
+            self.builder.build_store(null_pos, self.context.i8_type().const_zero()).unwrap();
+            let mut result = str_ty.const_zero();
+            result = self.builder.build_insert_value(result, s_len, 0, "srev_r0").unwrap().into_struct_value();
+            result = self.builder.build_insert_value(result, buf, 1, "srev_r1").unwrap().into_struct_value();
+            self.builder.build_return(Some(&result)).unwrap();
+
+            if let Some(b) = saved { self.builder.position_at_end(b); }
+            self.functions.insert("str_reverse".to_string(), fn_val);
+            self.fn_return_types.insert("str_reverse".to_string(), Type::Str);
+        }
+
+
+        // ── Phase 10: i64_to_str_radix(n: i64, base: i64) -> str ─────────────
+        // Convert n to string in given base (2-36). Negative n gets '-' prefix.
+        // Delegates to __axon_i64_to_str_radix in the runtime via out-params.
+        {
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+
+            // Runtime: void __axon_i64_to_str_radix(i64 n, i64 base, i64* out_len, i8** out_ptr)
+            let void_ty = self.context.void_type();
+            let rt_fn_ty = void_ty.fn_type(
+                &[i64_ty.into(), i64_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false,
+            );
+            let rt_fn = self.module.get_function("__axon_i64_to_str_radix").unwrap_or_else(|| {
+                self.module.add_function("__axon_i64_to_str_radix", rt_fn_ty, None)
+            });
+
+            let fn_ty = str_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+            let fn_val = self.module.add_function("i64_to_str_radix", fn_ty, None);
+            let bb = self.context.append_basic_block(fn_val, "entry");
+            let saved = self.builder.get_insert_block();
+            self.builder.position_at_end(bb);
+
+            let n    = fn_val.get_nth_param(0).unwrap().into_int_value();
+            let base = fn_val.get_nth_param(1).unwrap().into_int_value();
+
+            // Stack slots for out-params.
+            let out_len_slot = self.builder.build_alloca(i64_ty, "radix_olen").unwrap();
+            let out_ptr_slot = self.builder.build_alloca(i8_ptr, "radix_optr").unwrap();
+            // Cast *i8* → i8** for the runtime call.
+            let out_ptr_slot_cast = self.builder.build_pointer_cast(
+                out_ptr_slot, i8_ptr_ptr, "radix_ptrptr",
+            ).unwrap();
+
+            self.builder.build_call(rt_fn, &[
+                n.into(),
+                base.into(),
+                out_len_slot.into(),
+                out_ptr_slot_cast.into(),
+            ], "radix_call").unwrap();
+
+            let out_len = self.builder.build_load(i64_ty, out_len_slot, "radix_len").unwrap().into_int_value();
+            let out_ptr = self.builder.build_load(i8_ptr, out_ptr_slot, "radix_ptr").unwrap().into_pointer_value();
+
+            let mut result = str_ty.const_zero();
+            result = self.builder.build_insert_value(result, out_len, 0, "radix_r0").unwrap().into_struct_value();
+            result = self.builder.build_insert_value(result, out_ptr, 1, "radix_r1").unwrap().into_struct_value();
+            self.builder.build_return(Some(&result)).unwrap();
+
+            if let Some(b) = saved { self.builder.position_at_end(b); }
+            self.functions.insert("i64_to_str_radix".to_string(), fn_val);
+            self.fn_return_types.insert("i64_to_str_radix".to_string(), Type::Str);
+        }
+
+
     }
 
     /// Forward-declare every top-level function so mutual recursion resolves.
@@ -3433,14 +3664,31 @@ impl<'ctx> Codegen<'ctx> {
                     let ptr: PointerValue = fn_v.as_global_value().as_pointer_value();
                     return Some(ptr.into());
                 }
-                // Variable not in scope — this typically means a lambda tried to
-                // capture an outer variable, which is not yet supported.
+                // Closure-env fallback: if we're emitting a lambda body and the
+                // resolver listed `name` as a capture, load it from the env
+                // struct via GEP. The primary path (see Lambda handler) already
+                // binds capture field-pointers into `self.locals`; this is a
+                // safety net for resolver gaps and AST rewrites that introduce
+                // new identifiers after `fill_captures` ran.
+                let env_lookup: Option<(PointerValue<'ctx>, StructType<'ctx>, u32)> =
+                    self.current_lambda_env.as_ref().and_then(|(env_ptr, env_ty, idx_map)| {
+                        idx_map.get(name).map(|&idx| (*env_ptr, *env_ty, idx))
+                    });
+                if let Some((env_ptr, env_ty, idx)) = env_lookup {
+                    let field_ptr = self.builder
+                        .build_struct_gep(env_ty, env_ptr, idx, name)
+                        .unwrap();
+                    let i64_ty = self.context.i64_type();
+                    let val = self.builder
+                        .build_load(i64_ty, field_ptr, name)
+                        .unwrap();
+                    return Some(val);
+                }
+                // Genuinely unknown identifier — emit a diagnostic and return
+                // None so the caller can decide whether to recover or abort.
                 eprintln!(
-                    "codegen error: identifier '{}' not found in current scope. \
-                     If this is inside a lambda, closures with captures are not yet \
-                     supported (Phase 3): lambda captures outer variable '{}': \
-                     closures with captures not yet supported (Phase 3)",
-                    name, name
+                    "codegen error [E0701]: identifier '{}' not found in current scope",
+                    name
                 );
                 None
             }
@@ -3503,7 +3751,12 @@ impl<'ctx> Codegen<'ctx> {
                         _ => None,
                     },
                     ast::UnaryOp::Ref => {
-                        // Phase 1: just return the value (full ref semantics later).
+                        // Reference is currently a no-op at the LLVM level: all
+                        // values are passed by value (i64-wide) and the borrow
+                        // checker enforces aliasing rules at the AST level.
+                        // True address-taking requires a re-design of the local
+                        // ABI (alloca-everywhere or escape analysis) — tracked
+                        // for a future phase rather than emitted as a stub here.
                         Some(val)
                     }
                 }
@@ -4208,6 +4461,7 @@ impl<'ctx> Codegen<'ctx> {
                 let saved_ip = self.builder.get_insert_block();
                 let saved_locals = std::mem::take(&mut self.locals);
                 let saved_local_types = std::mem::take(&mut self.local_types);
+                let saved_lambda_env = self.current_lambda_env.take();
 
                 self.builder.position_at_end(entry_bb);
 
@@ -4217,14 +4471,20 @@ impl<'ctx> Codegen<'ctx> {
                 // Bind captured variables directly to their env struct field pointers.
                 // Using the field pointer as the "alloca" means stores inside the lambda
                 // persist across calls (required for mutable closures like make_counter).
+                let mut capture_idx_map: HashMap<String, u32> = HashMap::new();
                 if n_captures > 0 {
                     for (idx, (cap_name, _)) in captures.iter().enumerate() {
                         let field_ptr = self.builder
                             .build_struct_gep(env_struct_ty, env_ptr_arg, idx as u32, cap_name)
                             .unwrap();
                         self.locals.insert(cap_name.clone(), (field_ptr, i64_ty.into()));
+                        capture_idx_map.insert(cap_name.clone(), idx as u32);
                     }
                 }
+
+                // Publish the env context so nested `Ident` lookups can fall back
+                // to loading captures via GEP if the resolver missed them.
+                self.current_lambda_env = Some((env_ptr_arg, env_struct_ty, capture_idx_map));
 
                 // Bind explicit parameters (offset by 1 for env_ptr).
                 for (i, p) in params.iter().enumerate() {
@@ -4246,6 +4506,7 @@ impl<'ctx> Codegen<'ctx> {
                 // Restore caller's state.
                 self.locals = saved_locals;
                 self.local_types = saved_local_types;
+                self.current_lambda_env = saved_lambda_env;
                 if let Some(b) = saved_ip { self.builder.position_at_end(b); }
                 self.functions.insert(lambda_name.clone(), lambda_fn);
 
@@ -4450,8 +4711,8 @@ impl<'ctx> Codegen<'ctx> {
             }
 
             // ── For-in range loop ─────────────────────────────────────────────
-            // `for i in start..end { body }` desugared to a while-style loop.
-            ast::Expr::For { var, start, end, body } => {
+            // `for i in start..end { body }` or `start..=end` (inclusive).
+            ast::Expr::For { var, start, end, body, inclusive } => {
                 let i64_ty = self.context.i64_type();
 
                 // Evaluate start and end once before the loop.
@@ -4480,11 +4741,12 @@ impl<'ctx> Codegen<'ctx> {
                 // Jump to condition.
                 self.builder.build_unconditional_branch(cond_bb).unwrap();
 
-                // Condition: i < end
+                // Condition: i < end  (exclusive)  or  i <= end  (inclusive)
                 self.builder.position_at_end(cond_bb);
                 let cur = self.builder.build_load(i64_ty, var_ptr, "for.i").unwrap().into_int_value();
+                let pred = if *inclusive { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::SLT };
                 let cmp = self.builder.build_int_compare(
-                    inkwell::IntPredicate::SLT, cur, end_val, "for.cmp").unwrap();
+                    pred, cur, end_val, "for.cmp").unwrap();
                 self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
 
                 // Body.

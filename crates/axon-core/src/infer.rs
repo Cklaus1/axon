@@ -297,6 +297,7 @@ impl InferCtx {
             AxonType::Ref(inner) => self.resolve_ast_type(inner), // Phase 1: ref transparent
             AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
+            AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_ast_type(e)).collect()),
         }
     }
 
@@ -456,9 +457,36 @@ impl InferCtx {
                 }
                 let var = self.fresh();
                 let span = self.current_stmt_span;
+                // Build a "did you mean" suggestion by scanning visible names
+                // (scope frames + module bindings + fn signatures).
+                let suggestion = {
+                    let mut best: Option<(usize, String)> = None;
+                    let candidates = scope
+                        .frames
+                        .iter()
+                        .flat_map(|f| f.keys().cloned())
+                        .chain(self.module_bindings.keys().cloned())
+                        .chain(self.fn_sigs.keys().cloned());
+                    for cand in candidates {
+                        let d = crate::error::levenshtein(name, &cand);
+                        if d <= 2 {
+                            let take = match &best {
+                                None => true,
+                                Some((b, _)) => d < *b,
+                            };
+                            if take {
+                                best = Some((d, cand));
+                            }
+                        }
+                    }
+                    best.map(|(_, s)| s)
+                };
+                let mut msg = format!("cannot find value `{name}` in scope");
+                if let Some(s) = &suggestion {
+                    msg.push_str(&format!(" — did you mean `{s}`?"));
+                }
                 self.errors.push(
-                    InferError::new(E0101, format!("cannot find value `{name}` in scope"))
-                        .with_span(span),
+                    InferError::new(E0101, msg).with_span(span),
                 );
                 var
             }
@@ -829,10 +857,19 @@ impl InferCtx {
                         );
                     } else if !declared.is_empty() {
                         // Unknown field name (only report if we know the struct).
-                        self.errors.push(InferError::new(
-                            E0101,
-                            format!("struct `{name}` has no field `{fname}`"),
-                        ));
+                        let known: Vec<String> =
+                            declared.iter().map(|(n, _)| n.clone()).collect();
+                        let span = self.current_stmt_span;
+                        self.errors.push(
+                            InferError::new(
+                                E0101,
+                                format!(
+                                    "struct `{name}` has no field `{fname}` (known fields: {})",
+                                    known.join(", ")
+                                ),
+                            )
+                            .with_span(span),
+                        );
                     }
                 }
 
@@ -840,10 +877,16 @@ impl InferCtx {
                 if !declared.is_empty() {
                     for (dname, _) in &declared {
                         if !provided.contains(dname) {
-                            self.errors.push(InferError::new(
-                                E0101,
-                                format!("struct `{name}` is missing field `{dname}`"),
-                            ));
+                            let span = self.current_stmt_span;
+                            self.errors.push(
+                                InferError::new(
+                                    E0101,
+                                    format!(
+                                        "struct `{name}` literal is missing required field `{dname}`",
+                                    ),
+                                )
+                                .with_span(span),
+                            );
                         }
                     }
                 }
@@ -866,10 +909,18 @@ impl InferCtx {
                                     field_ty.clone()
                                 }
                             } else {
-                                self.errors.push(InferError::new(
-                                    E0101,
-                                    format!("struct `{name}` has no field `{field}`"),
-                                ));
+                                let known: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                                let span = self.current_stmt_span;
+                                self.errors.push(
+                                    InferError::new(
+                                        E0101,
+                                        format!(
+                                            "struct `{name}` has no field `{field}` (known fields: {})",
+                                            known.join(", ")
+                                        ),
+                                    )
+                                    .with_span(span),
+                                );
                                 self.fresh()
                             }
                         } else {
@@ -940,7 +991,7 @@ impl InferCtx {
             }
 
             // ── For loop (range iteration) ───────────────────────────────────
-            Expr::For { var, start, end, body } => {
+            Expr::For { var, start, end, body, .. } => {
                 let start_ty = self.infer_expr(start, scope, ret_ty);
                 let end_ty   = self.infer_expr(end,   scope, ret_ty);
                 self.constrain(start_ty, Type::I64, "for range start");
@@ -1240,20 +1291,36 @@ impl InferCtx {
             // Bind a type variable.
             (Type::Var(n), t) => {
                 if self.occurs(n, &t) {
-                    self.errors.push(InferError::new(
-                        E0102,
-                        format!("infinite type: ?{n} would contain itself"),
-                    ));
+                    let span = self.current_stmt_span;
+                    self.errors.push(
+                        InferError::new(
+                            E0102,
+                            format!(
+                                "cannot construct infinite type: type variable `?{n}` would \
+                                 recursively contain itself in `{}`",
+                                t.display()
+                            ),
+                        )
+                        .with_span(span),
+                    );
                     return;
                 }
                 subst.insert(n, t);
             }
             (t, Type::Var(n)) => {
                 if self.occurs(n, &t) {
-                    self.errors.push(InferError::new(
-                        E0102,
-                        format!("infinite type: ?{n} would contain itself"),
-                    ));
+                    let span = self.current_stmt_span;
+                    self.errors.push(
+                        InferError::new(
+                            E0102,
+                            format!(
+                                "cannot construct infinite type: type variable `?{n}` would \
+                                 recursively contain itself in `{}`",
+                                t.display()
+                            ),
+                        )
+                        .with_span(span),
+                    );
                     return;
                 }
                 subst.insert(n, t);

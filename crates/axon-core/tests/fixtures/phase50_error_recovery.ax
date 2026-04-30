@@ -1,0 +1,139 @@
+// Phase 50: Error recovery — deep ? chains, Result combinators,
+//           option flattening, and graceful fallback patterns.
+
+// ── Basic Result helpers ──────────────────────────────────────────────────────
+
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 { Err("division by zero") } else { Ok(a / b) }
+}
+
+fn test_safe_div_ok() -> bool {
+    match safe_div(10, 2) {
+        Ok(v)  => v == 5,
+        Err(_) => false,
+    }
+}
+
+fn test_safe_div_err() -> bool {
+    match safe_div(10, 0) {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "division by zero"),
+    }
+}
+
+// ── Deep ? chain: parse → divide → check sign ────────────────────────────────
+
+fn parse_and_div(num_s: str, den_s: str) -> Result<i64, str> {
+    let n = parse_int(num_s)?
+    let d = parse_int(den_s)?
+    safe_div(n, d)
+}
+
+fn test_deep_chain_ok() -> bool {
+    match parse_and_div("20", "4") {
+        Ok(v)  => v == 5,
+        Err(_) => false,
+    }
+}
+
+fn test_deep_chain_parse_err() -> bool {
+    match parse_and_div("abc", "4") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn test_deep_chain_div_err() -> bool {
+    match parse_and_div("20", "0") {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "division by zero"),
+    }
+}
+
+// ── Result map: transform success value ───────────────────────────────────────
+
+fn result_map(r: Result<i64, str>, f: fn(i64) -> i64) -> Result<i64, str> {
+    match r {
+        Ok(v)  => Ok(f(v)),
+        Err(e) => Err(e),
+    }
+}
+
+fn test_result_map_ok() -> bool {
+    let r = result_map(Ok(5), (x: i64) => x * 10)
+    match r {
+        Ok(v)  => v == 50,
+        Err(_) => false,
+    }
+}
+
+fn test_result_map_err() -> bool {
+    let r = result_map(Err("oops"), (x: i64) => x * 10)
+    match r {
+        Ok(_)  => false,
+        Err(e) => str_eq(e, "oops"),
+    }
+}
+
+// ── Result unwrap_or ──────────────────────────────────────────────────────────
+
+fn result_or(r: Result<i64, str>, default: i64) -> i64 {
+    match r {
+        Ok(v)  => v,
+        Err(_) => default,
+    }
+}
+
+fn test_result_or_ok() -> bool {
+    result_or(safe_div(9, 3), 0) == 3
+}
+
+fn test_result_or_err() -> bool {
+    result_or(safe_div(9, 0), 99) == 99
+}
+
+// ── Option flattening: Option<Option<T>> → Option<T> ─────────────────────────
+
+fn option_flatten(opt: Option<Option<i64>>) -> Option<i64> {
+    match opt {
+        Some(inner) => inner,
+        None        => None,
+    }
+}
+
+fn test_flatten_some_some() -> bool {
+    match option_flatten(Some(Some(42))) {
+        Some(v) => v == 42,
+        None    => false,
+    }
+}
+
+fn test_flatten_some_none() -> bool {
+    match option_flatten(Some(None)) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+fn test_flatten_none() -> bool {
+    match option_flatten(None) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1  = if test_safe_div_ok()          { 1 } else { 0 }
+    let s2  = if test_safe_div_err()         { 1 } else { 0 }
+    let s3  = if test_deep_chain_ok()        { 1 } else { 0 }
+    let s4  = if test_deep_chain_parse_err() { 1 } else { 0 }
+    let s5  = if test_deep_chain_div_err()   { 1 } else { 0 }
+    let s6  = if test_result_map_ok()        { 1 } else { 0 }
+    let s7  = if test_result_map_err()       { 1 } else { 0 }
+    let s8  = if test_result_or_ok()         { 1 } else { 0 }
+    let s9  = if test_result_or_err()        { 1 } else { 0 }
+    let s10 = if test_flatten_some_some()    { 1 } else { 0 }
+    let s11 = if test_flatten_some_none()    { 1 } else { 0 }
+    let s12 = if test_flatten_none()         { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

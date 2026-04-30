@@ -325,6 +325,75 @@ pub extern "C" fn __axon_now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+// ── Phase 10: i64_to_str_radix ────────────────────────────────────────────────
+
+/// Convert `n` to a string in the given `base` (2–36).
+///
+/// Negative numbers get a `'-'` prefix.  Bases outside [2, 36] produce an
+/// empty string.  The caller owns the returned buffer (heap-allocated with
+/// `std::alloc`); it is never freed by the runtime (no GC in Phase 1–10).
+///
+/// Out-params: `*out_len` receives the byte length; `*out_ptr` receives the
+/// pointer to the first byte of a NUL-terminated buffer.
+#[no_mangle]
+pub extern "C" fn __axon_i64_to_str_radix(
+    n: i64,
+    base: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    // Validate base.
+    if !(2..=36).contains(&base) {
+        // Return empty string.
+        let buf = unsafe { libc_malloc(1) };
+        unsafe { *buf = 0 };
+        unsafe { *out_len = 0; *out_ptr = buf; }
+        return;
+    }
+    let base = base as u64;
+
+    // Handle sign.
+    let negative = n < 0;
+    // Use u64 to avoid overflow on i64::MIN.
+    let mut value: u64 = if negative {
+        (n as i128).unsigned_abs() as u64
+    } else {
+        n as u64
+    };
+
+    // Build digits in reverse into a fixed-size stack buffer.
+    // Max digits: base-2 gives 64 digits; +1 for sign; +1 for NUL = 66.
+    let mut tmp = [0u8; 66];
+    let mut pos = 66usize;
+
+    // NUL terminator at the very end.
+    pos -= 1;
+    tmp[pos] = 0;
+
+    // Digits.
+    loop {
+        pos -= 1;
+        let digit = (value % base) as u8;
+        tmp[pos] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+        value /= base;
+        if value == 0 { break; }
+    }
+
+    // Sign.
+    if negative {
+        pos -= 1;
+        tmp[pos] = b'-';
+    }
+
+    let len = 65 - pos; // excludes the NUL at index 65
+    let buf = unsafe { libc_malloc(len + 1) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(tmp.as_ptr().add(pos), buf, len + 1);
+        *out_len = len as i64;
+        *out_ptr = buf;
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 unsafe fn libc_malloc(size: usize) -> *mut u8 {

@@ -465,6 +465,26 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "f64",
         doc: "Round `x` to the nearest integer, ties away from zero.",
     },
+    // ── Phase 10: Additional string utilities ────────────────────────────────
+    BuiltinFn {
+        name: "str_count",
+        params: &[("s", "str"), ("needle", "str")],
+        ret: "i64",
+        doc: "Return the number of non-overlapping occurrences of `needle` in `s`. Returns 0 if `needle` is empty or not found.",
+    },
+    BuiltinFn {
+        name: "str_reverse",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Return a copy of `s` with its bytes in reverse order.",
+    },
+    // ── Phase 10: Additional conversion utilities ────────────────────────────
+    BuiltinFn {
+        name: "i64_to_str_radix",
+        params: &[("n", "i64"), ("base", "i64")],
+        ret: "str",
+        doc: "Convert `n` to a string in the given base (2–36). Negative numbers are prefixed with '-'. Bases outside 2–36 return an empty string.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────

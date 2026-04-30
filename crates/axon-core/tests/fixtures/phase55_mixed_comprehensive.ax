@@ -1,0 +1,150 @@
+// Phase 55: Mixed comprehensive — generics + traits + closures + error handling
+//           + comptime. A mini data-pipeline: parse → validate → transform → report.
+
+// ── Comptime constants ────────────────────────────────────────────────────────
+
+let MIN_VALUE = comptime { 0 }
+let MAX_VALUE = comptime { 1000 }
+let SCALE     = comptime { 10 }
+
+fn test_comptime_values() -> bool {
+    MIN_VALUE == 0 && MAX_VALUE == 1000 && SCALE == 10
+}
+
+// ── Generic identity and swap ─────────────────────────────────────────────────
+
+fn identity<T>(x: T) -> T { x }
+type Pair<A, B> = { first: A, second: B }
+fn swap_pair<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+    Pair { first: p.second, second: p.first }
+}
+
+fn test_identity_i64() -> bool {
+    identity(42) == 42
+}
+
+fn test_swap_pair() -> bool {
+    let p = Pair { first: 7, second: 3 }
+    let s = swap_pair(p)
+    s.first == 3 && s.second == 7
+}
+
+// ── Trait: Validatable ────────────────────────────────────────────────────────
+
+type Measurement = { raw: i64, label: str }
+
+trait Validatable {
+    fn is_valid(self) -> bool
+}
+
+impl Validatable for Measurement {
+    fn is_valid(self: Measurement) -> bool {
+        self.raw >= MIN_VALUE && self.raw <= MAX_VALUE
+    }
+}
+
+fn test_measurement_valid() -> bool {
+    let m = Measurement { raw: 500, label: "temp" }
+    m.is_valid()
+}
+
+fn test_measurement_invalid_lo() -> bool {
+    let m = Measurement { raw: -1, label: "temp" }
+    !m.is_valid()
+}
+
+fn test_measurement_invalid_hi() -> bool {
+    let m = Measurement { raw: 1001, label: "temp" }
+    !m.is_valid()
+}
+
+// ── Error handling: parse and validate ───────────────────────────────────────
+
+fn parse_measurement(s: str, label: str) -> Result<Measurement, str> {
+    let raw = parse_int(s)?
+    let m = Measurement { raw: raw, label: label }
+    if !m.is_valid() {
+        Err(axon_concat("out of range: ", to_str(raw)))
+    } else {
+        Ok(m)
+    }
+}
+
+fn test_parse_ok() -> bool {
+    match parse_measurement("250", "pressure") {
+        Ok(m)  => m.raw == 250,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_bad_int() -> bool {
+    match parse_measurement("abc", "x") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn test_parse_out_of_range() -> bool {
+    match parse_measurement("9999", "x") {
+        Ok(_)  => false,
+        Err(e) => str_contains(e, "out of range"),
+    }
+}
+
+// ── Closure: transform measurement value ─────────────────────────────────────
+
+fn apply_transform(m: Measurement, f: fn(i64) -> i64) -> Measurement {
+    Measurement { raw: f(m.raw), label: m.label }
+}
+
+fn test_scale_measurement() -> bool {
+    let m = Measurement { raw: 5, label: "x" }
+    let scaled = apply_transform(m, (v: i64) => v * SCALE)
+    scaled.raw == 50
+}
+
+// ── Pipeline: parse → validate → scale → report ──────────────────────────────
+
+fn pipeline(raw_str: str) -> Result<str, str> {
+    let m = parse_measurement(raw_str, "pipeline")?
+    let scaled = apply_transform(m, (v: i64) => v * SCALE)
+    Ok(axon_concat("result=", to_str(scaled.raw)))
+}
+
+fn test_pipeline_ok() -> bool {
+    match pipeline("7") {
+        Ok(s)  => str_eq(s, "result=70"),
+        Err(_) => false,
+    }
+}
+
+fn test_pipeline_err_parse() -> bool {
+    match pipeline("bad") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn test_pipeline_err_range() -> bool {
+    match pipeline("5000") {
+        Ok(_)  => false,
+        Err(e) => str_contains(e, "out of range"),
+    }
+}
+
+fn main() -> i64 {
+    let s1  = if test_comptime_values()       { 1 } else { 0 }
+    let s2  = if test_identity_i64()          { 1 } else { 0 }
+    let s3  = if test_swap_pair()             { 1 } else { 0 }
+    let s4  = if test_measurement_valid()     { 1 } else { 0 }
+    let s5  = if test_measurement_invalid_lo(){ 1 } else { 0 }
+    let s6  = if test_measurement_invalid_hi(){ 1 } else { 0 }
+    let s7  = if test_parse_ok()              { 1 } else { 0 }
+    let s8  = if test_parse_bad_int()         { 1 } else { 0 }
+    let s9  = if test_parse_out_of_range()    { 1 } else { 0 }
+    let s10 = if test_scale_measurement()     { 1 } else { 0 }
+    let s11 = if test_pipeline_ok()           { 1 } else { 0 }
+    let s12 = if test_pipeline_err_parse()    { 1 } else { 0 }
+    let s13 = if test_pipeline_err_range()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12 + s13
+}
