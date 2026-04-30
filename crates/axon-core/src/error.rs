@@ -79,6 +79,8 @@ pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
+// Layer-1 ASI warnings
+pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 
 // Info codes
 pub const I0001: &str = "I0001"; // deferred attribute (AI annotations)
@@ -215,7 +217,7 @@ mod tests {
             E0801, E0802, E0803,
             E0901, E0902, E0903, E0904, E0905, E0906,
             E1001, E1002, E1003, E1004,
-            W0001, W0002,
+            W0001, W0002, W0701,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();

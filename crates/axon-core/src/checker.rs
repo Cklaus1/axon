@@ -91,6 +91,18 @@ impl CheckError {
         }
     }
 
+    pub fn warning(code: &'static str, message: impl Into<String>) -> Self {
+        let mut e = Self::new(code, message);
+        e.severity = Severity::Warning;
+        e
+    }
+
+    pub fn info(code: &'static str, message: impl Into<String>) -> Self {
+        let mut e = Self::new(code, message);
+        e.severity = Severity::Info;
+        e
+    }
+
     pub fn at(mut self, file: impl Into<String>, line: u32, col: u32) -> Self {
         self.file = file.into();
         self.line = line;
@@ -233,6 +245,10 @@ pub struct CheckCtx {
     /// emitted from deeper visits carry source-location info even when the
     /// individual `Expr` variant has no span field of its own.
     current_span: crate::span::Span,
+    /// Layer-1 ASI: identifiers in the current fn body whose `.confidence`
+    /// field is accessed somewhere. Populated on entry to `check_fn` via a
+    /// pre-walk, then read in `Expr::FieldAccess` to suppress W0701.
+    confidence_observed: HashSet<String>,
 }
 
 impl CheckCtx {
@@ -255,6 +271,7 @@ impl CheckCtx {
             impl_table: HashMap::new(),
             fn_bounds: HashMap::new(),
             current_span: crate::span::Span::dummy(),
+            confidence_observed: HashSet::new(),
         }
     }
 
@@ -542,11 +559,134 @@ impl CheckCtx {
             scope.insert(param.name.clone(), axon_type_to_type(&param.ty));
         }
 
+        // Layer-1 ASI: pre-walk the body to collect identifier names whose
+        // `.confidence` field is accessed somewhere. This drives the W0701
+        // heuristic raised in `Expr::FieldAccess` for `.value` accesses.
+        let prev_observed = std::mem::take(&mut self.confidence_observed);
+        Self::collect_confidence_observed(&f.body, &mut self.confidence_observed);
+
         self.check_expr(&f.body, &format!("{fn_path}.body"), &mut scope);
 
+        self.confidence_observed = prev_observed;
         self.current_ret_ty = prev_ret;
         self.current_generic_params = prev_generics;
         self.current_span = prev_span;
+    }
+
+    /// Pre-walk an expression tree, recording every identifier name `x` where
+    /// `x.confidence` (or a chained `x.foo.confidence`) is read. Conservative —
+    /// false positives on collisions across scopes are acceptable for W0701.
+    fn collect_confidence_observed(expr: &Expr, out: &mut HashSet<String>) {
+        match expr {
+            Expr::FieldAccess { receiver, field } => {
+                if field == "confidence" {
+                    if let Expr::Ident(name) = receiver.as_ref() {
+                        out.insert(name.clone());
+                    }
+                }
+                Self::collect_confidence_observed(receiver, out);
+            }
+            Expr::Block(stmts) => {
+                for s in stmts {
+                    Self::collect_confidence_observed(&s.expr, out);
+                }
+            }
+            Expr::If { cond, then, else_ } => {
+                Self::collect_confidence_observed(cond, out);
+                Self::collect_confidence_observed(then, out);
+                if let Some(e) = else_ {
+                    Self::collect_confidence_observed(e, out);
+                }
+            }
+            Expr::Match { subject, arms } => {
+                Self::collect_confidence_observed(subject, out);
+                for arm in arms {
+                    Self::collect_confidence_observed(&arm.body, out);
+                }
+            }
+            Expr::Call { callee, args } => {
+                Self::collect_confidence_observed(callee, out);
+                for a in args {
+                    Self::collect_confidence_observed(a, out);
+                }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                Self::collect_confidence_observed(receiver, out);
+                for a in args {
+                    Self::collect_confidence_observed(a, out);
+                }
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_confidence_observed(left, out);
+                Self::collect_confidence_observed(right, out);
+            }
+            Expr::UnaryOp { operand, .. } => Self::collect_confidence_observed(operand, out),
+            Expr::While { cond, body } => {
+                Self::collect_confidence_observed(cond, out);
+                for s in body {
+                    Self::collect_confidence_observed(&s.expr, out);
+                }
+            }
+            Expr::WhileLet { expr, body, .. } => {
+                Self::collect_confidence_observed(expr, out);
+                for s in body {
+                    Self::collect_confidence_observed(&s.expr, out);
+                }
+            }
+            Expr::For { start, end, body, .. } => {
+                Self::collect_confidence_observed(start, out);
+                Self::collect_confidence_observed(end, out);
+                for s in body {
+                    Self::collect_confidence_observed(&s.expr, out);
+                }
+            }
+            Expr::Index { receiver, index } => {
+                Self::collect_confidence_observed(receiver, out);
+                Self::collect_confidence_observed(index, out);
+            }
+            Expr::Spawn(inner) | Expr::Comptime(inner) => {
+                Self::collect_confidence_observed(inner, out);
+            }
+            Expr::Lambda { body, .. } => Self::collect_confidence_observed(body, out),
+            Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
+                Self::collect_confidence_observed(inner, out);
+            }
+            Expr::FmtStr { parts } => {
+                for part in parts {
+                    if let crate::ast::FmtPart::Expr(e) = part {
+                        Self::collect_confidence_observed(e, out);
+                    }
+                }
+            }
+            Expr::Array(elems) => {
+                for e in elems {
+                    Self::collect_confidence_observed(e, out);
+                }
+            }
+            Expr::StructLit { fields, .. } => {
+                for (_n, e) in fields {
+                    Self::collect_confidence_observed(e, out);
+                }
+            }
+            Expr::Select(arms) => {
+                for arm in arms {
+                    Self::collect_confidence_observed(&arm.recv, out);
+                    Self::collect_confidence_observed(&arm.body, out);
+                }
+            }
+            Expr::Question(inner) => Self::collect_confidence_observed(inner, out),
+            Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+                Self::collect_confidence_observed(value, out);
+            }
+            Expr::Assign { value, .. } => Self::collect_confidence_observed(value, out),
+            Expr::Return(opt) => {
+                if let Some(e) = opt {
+                    Self::collect_confidence_observed(e, out);
+                }
+            }
+            // Leaf / no-receiver variants
+            _ => {}
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -775,6 +915,31 @@ impl CheckCtx {
                 // R11
                 let recv_ty = self.resolve_expr_type(receiver, &recv_path, scope);
                 self.check_field_access(&recv_ty, field, node_path);
+
+                // ── W0701: uncertainty discarded ───────────────────────────
+                // If `.value` is read on an `Uncertain<T>` and the enclosing
+                // function never inspects the same identifier's `.confidence`,
+                // emit a Layer-1 informational warning. Heuristic — suppression
+                // is identifier-name-keyed, so chained / aliased forms may
+                // false-positive (acceptable per spec).
+                if field == "value" && matches!(recv_ty, Type::Uncertain(_)) {
+                    if let Expr::Ident(name) = receiver.as_ref() {
+                        if !self.confidence_observed.contains(name) {
+                            let file = self.file.clone();
+                            self.errors.push(
+                                CheckError::warning(
+                                    crate::error::W0701,
+                                    format!(
+                                        "uncertainty discarded: '{name}.value' read without checking '{name}.confidence' in this function",
+                                    ),
+                                )
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .fix("guard with `if {ident}.confidence > THRESHOLD {{ ... }}` before reading `.value`"),
+                            );
+                        }
+                    }
+                }
             }
 
             // ── Index ────────────────────────────────────────────────────────
@@ -1488,6 +1653,46 @@ impl CheckCtx {
     fn check_field_access(&mut self, recv_ty: &Type, field: &str, node_path: &str) {
         if recv_ty.is_deferred() {
             return; // R12
+        }
+
+        // Layer-1 ASI: Uncertain<T> / Temporal<T> have a fixed virtual field set.
+        match recv_ty {
+            Type::Uncertain(_) => {
+                if !matches!(field, "value" | "confidence" | "source_tag") {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0401,
+                            format!("Uncertain<T> has no field '{field}'"),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .found(field)
+                        .fix("Uncertain<T> fields: value, confidence, source_tag"),
+                    );
+                }
+                return;
+            }
+            Type::Temporal(_) => {
+                if !matches!(
+                    field,
+                    "value" | "confidence" | "horizon_ms" | "decay" | "valid_until_ms"
+                ) {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0401,
+                            format!("Temporal<T> has no field '{field}'"),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .found(field)
+                        .fix("Temporal<T> fields: value, confidence, horizon_ms, decay, valid_until_ms"),
+                    );
+                }
+                return;
+            }
+            _ => {}
         }
 
         match recv_ty {

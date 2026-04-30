@@ -498,6 +498,39 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Return the current validity timestamp for Temporal<T> values (milliseconds since epoch).",
     },
+    // ── Layer-1 ASI: Uncertain<i64> constructors ─────────────────────────────
+    // V1 monomorphisation on i64 — see PRD AI_Language_Plan.md lines 1360-1467.
+    BuiltinFn {
+        name: "uncertain_new",
+        params: &[("value", "i64"), ("confidence", "f64")],
+        ret: "Uncertain<i64>",
+        doc: "Construct an `Uncertain<i64>` with an explicit confidence in [0.0, 1.0].",
+    },
+    BuiltinFn {
+        name: "uncertain_deterministic",
+        params: &[("value", "i64")],
+        ret: "Uncertain<i64>",
+        doc: "Construct an `Uncertain<i64>` with confidence = 1.0 (deterministic value).",
+    },
+    // ── Layer-1 ASI: Temporal<i64> constructors and queries ──────────────────
+    BuiltinFn {
+        name: "temporal_new",
+        params: &[("value", "i64"), ("horizon_ms", "i64"), ("decay", "f64")],
+        ret: "Temporal<i64>",
+        doc: "Construct a `Temporal<i64>` with a validity horizon (ms) and decay rate per day.",
+    },
+    BuiltinFn {
+        name: "temporal_at",
+        params: &[("t", "Temporal<i64>"), ("offset_ms", "i64")],
+        ret: "Temporal<i64>",
+        doc: "Project `t` forward by `offset_ms` milliseconds, decaying confidence as c * (1 - decay)^(offset_ms / 86_400_000).",
+    },
+    BuiltinFn {
+        name: "temporal_is_valid",
+        params: &[("t", "Temporal<i64>")],
+        ret: "bool",
+        doc: "Return true if `__axon_now_ms()` is still within the temporal value's validity window.",
+    },
     // ── Phase 68: Bitwise operations ─────────────────────────────────────────
     BuiltinFn {
         name: "bit_and",

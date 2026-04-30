@@ -244,8 +244,41 @@ impl<'ctx> Codegen<'ctx> {
             Type::Chan(_) => {
                 Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
             }
-            // Uncertain<T> and Temporal<T> → defer to inner type
-            Type::Uncertain(inner) | Type::Temporal(inner) => self.llvm_type(inner),
+            // Uncertain<T> → struct { T value, f64 confidence, i64 source_tag }
+            // V1 simplification: omits `alternatives` and `interval` slots from
+            // the full PRD (AI_Language_Plan.md lines 1360-1410). Layer-1 only.
+            Type::Uncertain(inner) => {
+                let inner_llvm = self.llvm_type(inner)?;
+                let f64_ty = self.context.f64_type();
+                let i64_ty = self.context.i64_type();
+                Some(
+                    self.context
+                        .struct_type(&[inner_llvm, f64_ty.into(), i64_ty.into()], false)
+                        .into(),
+                )
+            }
+            // Temporal<T> → struct { T value, f64 confidence, i64 horizon_ms,
+            //                        f64 decay, i64 valid_until_ms }
+            // V1 monomorphisation on T = i64 / f64 (PRD lines 1411-1467).
+            Type::Temporal(inner) => {
+                let inner_llvm = self.llvm_type(inner)?;
+                let f64_ty = self.context.f64_type();
+                let i64_ty = self.context.i64_type();
+                Some(
+                    self.context
+                        .struct_type(
+                            &[
+                                inner_llvm,
+                                f64_ty.into(),
+                                i64_ty.into(),
+                                f64_ty.into(),
+                                i64_ty.into(),
+                            ],
+                            false,
+                        )
+                        .into(),
+                )
+            }
         }
     }
 
@@ -269,6 +302,16 @@ impl<'ctx> Codegen<'ctx> {
             ),
             Type::Struct(_) | Type::Enum(_) => Some(8), // conservative
             Type::Unit => Some(0),
+            // Uncertain<T> = T value + f64 confidence + i64 source_tag → 24 bytes for T = i64
+            Type::Uncertain(inner) => {
+                let inner_size = self.llvm_sizeof(inner).unwrap_or(8);
+                Some(inner_size + 8 + 8)
+            }
+            // Temporal<T> = T value + f64 confidence + i64 horizon + f64 decay + i64 valid_until
+            Type::Temporal(inner) => {
+                let inner_size = self.llvm_sizeof(inner).unwrap_or(8);
+                Some(inner_size + 8 + 8 + 8 + 8)
+            }
             _ => None,
         }
     }
@@ -1189,6 +1232,264 @@ impl<'ctx> Codegen<'ctx> {
             let now_fn = self.module.add_function("__axon_now_ms", now_ty, None);
             self.functions.insert("now_ms".to_string(), now_fn);
             self.fn_return_types.insert("now_ms".to_string(), Type::I64);
+        }
+
+        // ── Layer-1 ASI: Uncertain<i64> / Temporal<i64> builtins ───────────────
+        // V1 monomorphisation on i64 (PRD AI_Language_Plan.md lines 1360-1467).
+        // Layouts:
+        //   Uncertain<i64> = { i64 value, f64 confidence, i64 source_tag }
+        //   Temporal<i64>  = { i64 value, f64 confidence, i64 horizon_ms,
+        //                      f64 decay, i64 valid_until_ms }
+        {
+            let i64_ty = self.context.i64_type();
+            let f64_ty = self.context.f64_type();
+            let unc_ty = self.context
+                .struct_type(&[i64_ty.into(), f64_ty.into(), i64_ty.into()], false);
+            let tmp_ty = self.context.struct_type(
+                &[
+                    i64_ty.into(),
+                    f64_ty.into(),
+                    i64_ty.into(),
+                    f64_ty.into(),
+                    i64_ty.into(),
+                ],
+                false,
+            );
+
+            let saved = self.builder.get_insert_block();
+
+            // uncertain_new(value: i64, confidence: f64) -> Uncertain<i64>
+            {
+                let fn_ty = unc_ty.fn_type(&[i64_ty.into(), f64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_new", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_int_value();
+                let c = fn_val.get_nth_param(1).unwrap().into_float_value();
+                let mut sv = unc_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "u_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, c, 1, "u_conf").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, i64_ty.const_zero(), 2, "u_src")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("uncertain_new".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("uncertain_new".to_string(), Type::Uncertain(Box::new(Type::I64)));
+            }
+
+            // uncertain_deterministic(value: i64) -> Uncertain<i64> (confidence = 1.0)
+            {
+                let fn_ty = unc_ty.fn_type(&[i64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_deterministic", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_int_value();
+                let one = f64_ty.const_float(1.0);
+                let mut sv = unc_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "ud_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, one, 1, "ud_conf").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, i64_ty.const_zero(), 2, "ud_src")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("uncertain_deterministic".to_string(), fn_val);
+                self.fn_return_types.insert(
+                    "uncertain_deterministic".to_string(),
+                    Type::Uncertain(Box::new(Type::I64)),
+                );
+            }
+
+            // temporal_new(value: i64, horizon_ms: i64, decay: f64) -> Temporal<i64>
+            // valid_until_ms = __axon_now_ms() + horizon_ms; confidence starts at 1.0.
+            {
+                let now_fn = self
+                    .module
+                    .get_function("__axon_now_ms")
+                    .unwrap_or_else(|| {
+                        let now_ty = i64_ty.fn_type(&[], false);
+                        self.module.add_function("__axon_now_ms", now_ty, None)
+                    });
+                let fn_ty = tmp_ty.fn_type(&[i64_ty.into(), i64_ty.into(), f64_ty.into()], false);
+                let fn_val = self.module.add_function("temporal_new", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_int_value();
+                let horizon = fn_val.get_nth_param(1).unwrap().into_int_value();
+                let decay = fn_val.get_nth_param(2).unwrap().into_float_value();
+                let now = self
+                    .builder
+                    .build_call(now_fn, &[], "tn_now")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_int_value();
+                let valid_until = self
+                    .builder
+                    .build_int_add(now, horizon, "tn_valid_until")
+                    .unwrap();
+                let one = f64_ty.const_float(1.0);
+                let mut sv = tmp_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "tn_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, one, 1, "tn_conf").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, horizon, 2, "tn_hor").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, decay, 3, "tn_decay").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, valid_until, 4, "tn_vu")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("temporal_new".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("temporal_new".to_string(), Type::Temporal(Box::new(Type::I64)));
+            }
+
+            // temporal_at(t: Temporal<i64>, offset_ms: i64) -> Temporal<i64>
+            // Recompute confidence as c * (1 - decay)^(offset_ms / 86_400_000).
+            // Implementation: linear approximation — c_new = c * max(0, 1 - decay * days)
+            // where days = offset_ms / 86_400_000.0. This avoids pulling in pow().
+            // valid_until_ms is shifted by offset_ms.
+            {
+                let fn_ty = tmp_ty.fn_type(&[tmp_ty.into(), i64_ty.into()], false);
+                let fn_val = self.module.add_function("temporal_at", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let t = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let offset_ms = fn_val.get_nth_param(1).unwrap().into_int_value();
+                let conf = self
+                    .builder
+                    .build_extract_value(t, 1, "ta_conf")
+                    .unwrap()
+                    .into_float_value();
+                let decay = self
+                    .builder
+                    .build_extract_value(t, 3, "ta_decay")
+                    .unwrap()
+                    .into_float_value();
+                let valid_until = self
+                    .builder
+                    .build_extract_value(t, 4, "ta_vu")
+                    .unwrap()
+                    .into_int_value();
+                // days = (f64) offset_ms / 86_400_000.0
+                let offset_f = self
+                    .builder
+                    .build_signed_int_to_float(offset_ms, f64_ty, "ta_offf")
+                    .unwrap();
+                let day_ms = f64_ty.const_float(86_400_000.0);
+                let days = self.builder.build_float_div(offset_f, day_ms, "ta_days").unwrap();
+                // factor = max(0, 1 - decay * days)
+                let one = f64_ty.const_float(1.0);
+                let zero = f64_ty.const_float(0.0);
+                let dd = self.builder.build_float_mul(decay, days, "ta_dd").unwrap();
+                let one_minus = self.builder.build_float_sub(one, dd, "ta_1md").unwrap();
+                let is_neg = self
+                    .builder
+                    .build_float_compare(inkwell::FloatPredicate::OLT, one_minus, zero, "ta_neg")
+                    .unwrap();
+                let factor = self
+                    .builder
+                    .build_select(is_neg, zero, one_minus, "ta_factor")
+                    .unwrap()
+                    .into_float_value();
+                let new_conf = self.builder.build_float_mul(conf, factor, "ta_nc").unwrap();
+                let new_valid = self
+                    .builder
+                    .build_int_add(valid_until, offset_ms, "ta_nvu")
+                    .unwrap();
+                // Build new struct, preserving value/horizon/decay.
+                let mut sv = t;
+                sv = self.builder.build_insert_value(sv, new_conf, 1, "ta_iconf").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, new_valid, 4, "ta_ivu").unwrap().into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("temporal_at".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("temporal_at".to_string(), Type::Temporal(Box::new(Type::I64)));
+            }
+
+            // temporal_is_valid(t: Temporal<i64>) -> bool
+            // Returns __axon_now_ms() <= valid_until_ms.
+            {
+                let now_fn = self
+                    .module
+                    .get_function("__axon_now_ms")
+                    .unwrap_or_else(|| {
+                        let now_ty = i64_ty.fn_type(&[], false);
+                        self.module.add_function("__axon_now_ms", now_ty, None)
+                    });
+                let bool_ty = self.context.bool_type();
+                let fn_ty = bool_ty.fn_type(&[tmp_ty.into()], false);
+                let fn_val = self.module.add_function("temporal_is_valid", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let t = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let valid_until = self
+                    .builder
+                    .build_extract_value(t, 4, "tiv_vu")
+                    .unwrap()
+                    .into_int_value();
+                let now = self
+                    .builder
+                    .build_call(now_fn, &[], "tiv_now")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_int_value();
+                let cmp = self
+                    .builder
+                    .build_int_compare(IntPredicate::SLE, now, valid_until, "tiv_cmp")
+                    .unwrap();
+                self.builder.build_return(Some(&cmp)).unwrap();
+                self.functions.insert("temporal_is_valid".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("temporal_is_valid".to_string(), Type::Bool);
+            }
+
+            // Stub bodies for the legacy `uncertain_confidence` / `temporal_now`
+            // helpers, so callers compile even when they predate the new API.
+            // uncertain_confidence(confidence: f64) -> () (no-op)
+            if self.module.get_function("uncertain_confidence").is_none() {
+                let fn_ty = self.context.void_type().fn_type(&[f64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_confidence", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                self.builder.build_return(None).unwrap();
+                self.functions.insert("uncertain_confidence".to_string(), fn_val);
+                self.fn_return_types.insert("uncertain_confidence".to_string(), Type::Unit);
+            }
+            // temporal_now() -> i64 (delegates to __axon_now_ms)
+            if self.module.get_function("temporal_now").is_none() {
+                let now_fn = self
+                    .module
+                    .get_function("__axon_now_ms")
+                    .unwrap_or_else(|| {
+                        let now_ty = i64_ty.fn_type(&[], false);
+                        self.module.add_function("__axon_now_ms", now_ty, None)
+                    });
+                let fn_ty = i64_ty.fn_type(&[], false);
+                let fn_val = self.module.add_function("temporal_now", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let n = self
+                    .builder
+                    .build_call(now_fn, &[], "tnow")
+                    .unwrap()
+                    .try_as_basic_value()
+                    .left()
+                    .unwrap()
+                    .into_int_value();
+                self.builder.build_return(Some(&n)).unwrap();
+                self.functions.insert("temporal_now".to_string(), fn_val);
+                self.fn_return_types.insert("temporal_now".to_string(), Type::I64);
+            }
+
+            if let Some(b) = saved {
+                self.builder.position_at_end(b);
+            }
         }
 
         // ── Phase 4: read_line() -> str ────────────────────────────────────────
@@ -4506,6 +4807,40 @@ impl<'ctx> Codegen<'ctx> {
 
             // ── Field access: receiver.field ──────────────────────────────────
             ast::Expr::FieldAccess { receiver, field } => {
+                // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
+                // a direct GEP on the inferred struct shape (no named LLVM struct).
+                let recv_ty = self.sem_type_of_expr(receiver);
+                if let Some(Type::Uncertain(_)) | Some(Type::Temporal(_)) = recv_ty.clone() {
+                    let ty = recv_ty.unwrap();
+                    let idx_opt: Option<u32> = match (&ty, field.as_str()) {
+                        (Type::Uncertain(_), "value") => Some(0),
+                        (Type::Uncertain(_), "confidence") => Some(1),
+                        (Type::Uncertain(_), "source_tag") => Some(2),
+                        (Type::Temporal(_), "value") => Some(0),
+                        (Type::Temporal(_), "confidence") => Some(1),
+                        (Type::Temporal(_), "horizon_ms") => Some(2),
+                        (Type::Temporal(_), "decay") => Some(3),
+                        (Type::Temporal(_), "valid_until_ms") => Some(4),
+                        _ => None,
+                    };
+                    if let (Some(idx), Some(struct_be)) = (idx_opt, self.llvm_type(&ty)) {
+                        if let BasicTypeEnum::StructType(struct_ty) = struct_be {
+                            let recv_val = self.emit_expr(receiver, fn_val)?;
+                            let recv_alloca = self.builder
+                                .build_alloca(struct_ty, "asi_recv_tmp")
+                                .unwrap();
+                            self.builder.build_store(recv_alloca, recv_val).unwrap();
+                            let fptr = self.builder
+                                .build_struct_gep(struct_ty, recv_alloca, idx, field)
+                                .unwrap();
+                            if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
+                                let fval = self.builder.build_load(fty, fptr, field).unwrap();
+                                return Some(fval);
+                            }
+                        }
+                    }
+                }
+
                 // Determine the struct name from the receiver's semantic type.
                 // Handle both bare Ident receivers and chained FieldAccess receivers.
                 let struct_name = self.sem_type_of_expr(receiver).and_then(|ty| {
@@ -6496,8 +6831,22 @@ impl<'ctx> Codegen<'ctx> {
                 Type::Chan(Box::new(self.axon_type_to_semantic(inner)))
             }
             ast::AxonType::Generic { base, args } => {
-                // Generic types not yet resolved — use Deferred.
-                let _ = args;
+                // Layer-1 ASI types are first-class generics in the type system.
+                if base == "Uncertain" {
+                    let inner = args
+                        .first()
+                        .map(|a| self.axon_type_to_semantic(a))
+                        .unwrap_or(Type::I64);
+                    return Type::Uncertain(Box::new(inner));
+                }
+                if base == "Temporal" {
+                    let inner = args
+                        .first()
+                        .map(|a| self.axon_type_to_semantic(a))
+                        .unwrap_or(Type::I64);
+                    return Type::Temporal(Box::new(inner));
+                }
+                // Other generic types not yet resolved — use Deferred.
                 Type::Deferred(base.clone())
             }
             ast::AxonType::Fn { params, ret } => Type::Fn(
