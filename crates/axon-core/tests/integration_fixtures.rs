@@ -1152,3 +1152,14 @@ fn error_e0309_bad_field_detected() {
     );
 }
 
+
+#[test]
+fn ai_complete_fixture_type_checks_cleanly() {
+    let errors = check_fixture("ai_complete.ax");
+    assert!(
+        errors.is_empty(),
+        "ai_complete.ax produced unexpected errors:
+{}", errors.join("
+")
+    );
+}

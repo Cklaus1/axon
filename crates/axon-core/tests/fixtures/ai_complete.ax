@@ -1,0 +1,14 @@
+// Fixture: ai_complete builtin -- parse and type-check only.
+// Do not run (requires ANTHROPIC_API_KEY).
+
+fn greet(topic: str) -> Result<str, str> {
+    let reply = ai_complete(topic)?
+    Ok(reply)
+}
+
+fn main() {
+    match ai_complete("Say hello in exactly one word.") {
+        Ok(reply) => println(reply)
+        Err(e) => eprintln(e)
+    }
+}

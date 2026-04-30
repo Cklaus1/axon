@@ -232,6 +232,8 @@ impl<'ctx> Codegen<'ctx> {
             Type::Chan(_) => {
                 Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
             }
+            // Uncertain<T> and Temporal<T> → defer to inner type
+            Type::Uncertain(inner) | Type::Temporal(inner) => self.llvm_type(inner),
         }
     }
 
@@ -1051,6 +1053,8 @@ impl<'ctx> Codegen<'ctx> {
             Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
         self.fn_return_types.insert("write_file".to_string(),
             Type::Result(Box::new(Type::Unit), Box::new(Type::Str)));
+        self.fn_return_types.insert("ai_complete".to_string(),
+            Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
 
         // ── Phase 3 math builtins (backed by C libm via LLVM intrinsics) ───
         {
@@ -3177,6 +3181,81 @@ impl<'ctx> Codegen<'ctx> {
             if let Some(b) = saved { self.builder.position_at_end(b); }
             self.functions.insert("i64_to_str_radix".to_string(), fn_val);
             self.fn_return_types.insert("i64_to_str_radix".to_string(), Type::Str);
+        }
+
+        // ── AI: ai_complete(prompt: str) -> Result<str, str> ─────────────────────
+        // Runtime: __axon_ai_complete(prompt_ptr, prompt_len, out_len: *i64, out_ptr: **u8)
+        // Same out-param ABI as __axon_read_file: out_len<0 on error.
+        {
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let i8_arr16_ty = self.context.i8_type().array_type(16);
+            let result_ty = self.context.struct_type(&[bool_ty.into(), i8_arr16_ty.into()], false);
+
+            let rt_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false,
+            );
+            let rt_fn = self.module.add_function("__axon_ai_complete", rt_ty, None);
+
+            let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
+            let fn_val = self.module.add_function("ai_complete", fn_ty, None);
+
+            let entry_bb = self.context.append_basic_block(fn_val, "aic_entry");
+            let ok_bb    = self.context.append_basic_block(fn_val, "aic_ok");
+            let err_bb   = self.context.append_basic_block(fn_val, "aic_err");
+            let saved = self.builder.get_insert_block();
+            self.builder.position_at_end(entry_bb);
+
+            let prompt_str   = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let prompt_len   = self.builder.build_extract_value(prompt_str, 0, "aic_plen").unwrap().into_int_value();
+            let prompt_ptr_v = self.builder.build_extract_value(prompt_str, 1, "aic_pptr").unwrap().into_pointer_value();
+
+            let out_len_slot = self.builder.build_alloca(i64_ty, "aic_out_len").unwrap();
+            let out_ptr_slot = self.builder.build_alloca(i8_ptr, "aic_out_ptr").unwrap();
+            let out_ptr_cast = self.builder.build_pointer_cast(out_ptr_slot, i8_ptr_ptr, "aic_ptrptr").unwrap();
+            self.builder.build_call(rt_fn, &[prompt_ptr_v.into(), prompt_len.into(), out_len_slot.into(), out_ptr_cast.into()], "").unwrap();
+
+            let out_len = self.builder.build_load(i64_ty, out_len_slot, "aic_len").unwrap().into_int_value();
+            let out_ptr = self.builder.build_load(i8_ptr, out_ptr_slot, "aic_ptr").unwrap().into_pointer_value();
+            let zero_i64 = i64_ty.const_int(0, false);
+            let is_ok = self.builder.build_int_compare(inkwell::IntPredicate::SGE, out_len, zero_i64, "aic_is_ok").unwrap();
+            self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).unwrap();
+
+            // ok_bb: { tag=1, payload=str{out_len, out_ptr} }
+            self.builder.position_at_end(ok_bb);
+            let ok_alloca = self.builder.build_alloca(result_ty, "aic_ok_slot").unwrap();
+            let tag_ptr_ok = self.builder.build_struct_gep(result_ty, ok_alloca, 0, "aic_tag_ok").unwrap();
+            self.builder.build_store(tag_ptr_ok, bool_ty.const_int(1, false)).unwrap();
+            let payload_ok = self.builder.build_struct_gep(result_ty, ok_alloca, 1, "aic_pay_ok").unwrap();
+            let str_ok_ptr = self.builder.build_pointer_cast(payload_ok, str_ty.ptr_type(inkwell::AddressSpace::default()), "aic_str_ok_ptr").unwrap();
+            let str_ok_slot = self.builder.build_alloca(str_ty, "aic_str_ok").unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(str_ty, str_ok_slot, 0, "").unwrap(), out_len).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(str_ty, str_ok_slot, 1, "").unwrap(), out_ptr).unwrap();
+            let str_ok_val = self.builder.build_load(str_ty, str_ok_slot, "aic_str_ok_val").unwrap();
+            self.builder.build_store(str_ok_ptr, str_ok_val).unwrap();
+            let ok_val = self.builder.build_load(result_ty, ok_alloca, "aic_ok_val").unwrap();
+            self.builder.build_return(Some(&ok_val)).unwrap();
+
+            // err_bb: negate len, { tag=0, payload=str{|len|, out_ptr} }
+            self.builder.position_at_end(err_bb);
+            let actual_len = self.builder.build_int_neg(out_len, "aic_actual_len").unwrap();
+            let err_alloca = self.builder.build_alloca(result_ty, "aic_err_slot").unwrap();
+            let tag_ptr_err = self.builder.build_struct_gep(result_ty, err_alloca, 0, "aic_tag_err").unwrap();
+            self.builder.build_store(tag_ptr_err, bool_ty.const_int(0, false)).unwrap();
+            let payload_err = self.builder.build_struct_gep(result_ty, err_alloca, 1, "aic_pay_err").unwrap();
+            let str_err_ptr = self.builder.build_pointer_cast(payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "aic_str_err_ptr").unwrap();
+            let str_err_slot = self.builder.build_alloca(str_ty, "aic_str_err").unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 0, "").unwrap(), actual_len).unwrap();
+            self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 1, "").unwrap(), out_ptr).unwrap();
+            let str_err_val = self.builder.build_load(str_ty, str_err_slot, "aic_str_err_val").unwrap();
+            self.builder.build_store(str_err_ptr, str_err_val).unwrap();
+            let err_val = self.builder.build_load(result_ty, err_alloca, "aic_err_val").unwrap();
+            self.builder.build_return(Some(&err_val)).unwrap();
+
+            if let Some(b) = saved { self.builder.position_at_end(b); }
+            self.functions.insert("ai_complete".to_string(), fn_val);
         }
 
 
@@ -6110,6 +6189,8 @@ fn emit_object_and_link(
 
     // Build axon-rt static library so channel/spawn builtins are available.
     let rt_lib = build_axon_rt(release);
+    // Build axon-ai static library so ai_complete is available.
+    let ai_lib = build_axon_ai(release);
 
     // Determine linker: prefer the cross.toml override, else probe the host.
     let linker_override = target_triple.and_then(read_cross_linker);
@@ -6124,6 +6205,9 @@ fn emit_object_and_link(
 
     let mut link_args: Vec<&str> = vec![&obj_path, "-o", output_path, "-lpthread"];
     if let Some(ref lib) = rt_lib {
+        link_args.push(lib.as_str());
+    }
+    if let Some(ref lib) = ai_lib {
         link_args.push(lib.as_str());
     }
 
@@ -6454,6 +6538,50 @@ fn build_axon_rt(release: bool) -> Option<String> {
     } else {
         None
     }
+}
+
+// ── axon-ai build helper ────────────────────────────────────────────────────────────────────────────
+
+/// Build `axon-ai` as a static library and return the path to `libaxon_ai.a`.
+///
+/// Silently returns `None` if cargo is not found or the build fails, so that
+/// the linker step still attempts to proceed (ai_complete will be a missing
+/// symbol only when actually called).
+fn build_axon_ai(release: bool) -> Option<String> {
+    let cargo = std::env::var("CARGO").ok().unwrap_or_else(|| "cargo".into());
+    let profile = if release { "release" } else { "debug" };
+
+    // Locate the workspace root relative to this binary.
+    let manifest = std::env::var("CARGO_MANIFEST_DIR")
+        .map(|d| format!("{d}/../../../Cargo.toml"))
+        .unwrap_or_else(|_| "Cargo.toml".into());
+
+    let status = Command::new(&cargo)
+        .args(["build", "-p", "axon-ai", "--manifest-path", &manifest])
+        .args(if release { &["--release"][..] } else { &[][..] })
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .ok()?;
+
+    if !status.success() {
+        return None;
+    }
+
+    // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
+    let target_dir = std::env::var("CARGO_TARGET_DIR")
+        .unwrap_or_else(|_| {
+            std::env::var("CARGO_MANIFEST_DIR")
+                .map(|d| format!("{d}/../../../target"))
+                .unwrap_or_else(|_| "target".into())
+        });
+
+    let lib_path = format!("{target_dir}/{profile}/libaxon_ai.a");
+    if std::path::Path::new(&lib_path).exists() {
+        Some(lib_path)
+    } else {
+        None
+}
 }
 
 // ── Test result ───────────────────────────────────────────────────────────────
