@@ -1237,6 +1237,19 @@ fn adaptive_basic_fixture_clean() {
     );
 }
 
+#[test]
+fn goal_run_optimizer_fixture_clean() {
+    // Fixture exercises @[adaptive] + Layer-2 goal_run lowering: the function
+    // calling goal_run("measured", 50.0, 100) should type-check and the
+    // attribute parser should accept @[adaptive(metric: latency, target: 0.95)].
+    let errors = check_fixture("goal_run_optimizer.ax");
+    assert!(
+        errors.is_empty(),
+        "goal_run_optimizer.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── Layer-1 ASI: Uncertain<T> / Temporal<T> ───────────────────────────────────
 
 #[test]

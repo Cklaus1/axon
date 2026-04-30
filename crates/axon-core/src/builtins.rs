@@ -586,7 +586,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "goal_run",
         params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
         ret: "f64",
-        doc: "Run the @[goal] hill-climb optimizer for the function named `name` (v1: stub that records intent in the provenance log and returns `target`).",
+        doc: "Read the provenance log for the @[adaptive] function named `name` and return the best observed score (the recorded return value closest to `target`). Returns `target` when no records exist. `max_evals` caps the number of recent records consulted (≤0 = no cap).",
     },
 ];
 
