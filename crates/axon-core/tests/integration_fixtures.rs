@@ -69,6 +69,10 @@ fn check_fixture(name: &str) -> Vec<String> {
             _ => {}
         }
     }
+    // Capability checking (@[contained])
+    for err in axon_core::capabilities::check_capabilities(&program) {
+        errors.push(format!("[{}] {}", err.code, err.message));
+    }
     errors
 }
 
@@ -1152,3 +1156,40 @@ fn error_e0309_bad_field_detected() {
     );
 }
 
+
+// ── Capability (@[contained]) fixture tests ────────────────────────────────────
+
+#[test]
+fn contained_pass_fixture_clean() {
+    let errors = check_fixture("contained_pass.ax");
+    // Filter to only capability errors (E1001-E1004) and any parse/type errors.
+    // Info diagnostics (I0001) are acceptable; borrow/type errors signal fixture issues.
+    let hard_errors: Vec<_> = errors.iter()
+        .filter(|e| !e.contains("I0001") && !e.contains("[W"))
+        .collect();
+    assert!(
+        hard_errors.is_empty(),
+        "contained_pass.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn contained_fail_fs_fixture_emits_e0601() {
+    let errors = check_fixture("contained_fail_fs.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1001")),
+        "contained_fail_fs.ax should produce E1001, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn contained_fail_never_fixture_emits_e0604() {
+    let errors = check_fixture("contained_fail_never.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1004")),
+        "contained_fail_never.ax should produce E1004, got:\n{}",
+        errors.join("\n")
+    );
+}

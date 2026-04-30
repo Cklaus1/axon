@@ -1727,6 +1727,7 @@ mod tests {
             return_type: Some(AxonType::Named("i64".to_string())),
             body: Expr::Block(vec![Stmt::simple(lit_int(42))]),
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
         let program = Program {
@@ -1824,6 +1825,7 @@ mod tests {
             return_type: Some(AxonType::TypeParam("T".into())),
             body: crate::ast::Expr::Ident("x".into()),
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
 
@@ -1841,6 +1843,7 @@ mod tests {
             return_type: Some(AxonType::Named("i64".into())),
             body: call_expr,
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
 
@@ -1872,6 +1875,7 @@ mod tests {
             return_type: Some(AxonType::TypeParam("T".into())),
             body: crate::ast::Expr::Ident("x".into()),
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
 
@@ -1895,6 +1899,7 @@ mod tests {
             return_type: Some(AxonType::Named("i64".into())),
             body,
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
 
@@ -1950,6 +1955,7 @@ mod tests {
             return_type: Some(AxonType::Named("str".into())),
             body,
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         };
 

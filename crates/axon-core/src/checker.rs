@@ -1829,6 +1829,7 @@ mod tests {
             return_type,
             body,
             attrs: vec![],
+            contained: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -2510,6 +2511,7 @@ mod tests {
             return_type: Some(AxonType::Named("T".into())),
             body,
             attrs: vec![],
+            contained: None,
             span: crate::span::Span::dummy(),
         });
         let program = make_program(vec![fndef]);
@@ -2568,6 +2570,7 @@ mod tests {
             return_type: ret,
             body: lit_int(0),
             attrs: vec![],
+            contained: None,
             span: crate::span::Span::dummy(),
         }
     }

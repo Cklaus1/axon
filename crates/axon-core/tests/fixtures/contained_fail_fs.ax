@@ -1,0 +1,20 @@
+// contained_fail_fs.ax
+// @[contained] only declares fs: [read("./data/")].
+// The body calls write_file("/etc/passwd", "x") which is NOT in the allowlist.
+// Expect: E1001
+
+@[contained(
+    fs: [read("./data/")],
+    exec: none
+)]
+fn bad_write() -> i64 {
+    let result = write_file("/etc/passwd", "x")
+    match result {
+        Ok(_) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn main() -> i64 {
+    bad_write()
+}

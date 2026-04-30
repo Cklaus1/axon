@@ -402,6 +402,7 @@ mod tests {
             return_type: None,
             body,
             attrs: vec![],
+            contained: None,
             span: Span::dummy(),
         }
     }
