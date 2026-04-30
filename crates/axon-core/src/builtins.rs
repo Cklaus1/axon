@@ -535,6 +535,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Arithmetic right-shift `n` by `shift` bits (`n >> shift`).",
     },
+    // ── AI builtins ──────────────────────────────────────────────────────────────
+    BuiltinFn {
+        name: "ai_complete",
+        params: &[("prompt", "str")],
+        ret: "Result<str, str>",
+        doc: "Send prompt to the Anthropic API (claude-sonnet-4-6) and return the reply. Returns Ok(reply) or Err(message). Requires ANTHROPIC_API_KEY env var.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────

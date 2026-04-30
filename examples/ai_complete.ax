@@ -1,0 +1,6 @@
+fn main() {
+    match ai_complete("Say hello in exactly one word.") {
+        Ok(reply) => println(reply)
+        Err(e) => eprintln(e)
+    }
+}

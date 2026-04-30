@@ -589,7 +589,67 @@ fn format_type(ty: &crate::types::Type) -> String {
         Type::Var(n) => format!("?{n}"),
         Type::Unknown => "?".into(),
         Type::Deferred(n) => n.clone(),
+        Type::Uncertain(inner) => format!("Uncertain<{}>", format_type(inner)),
+        Type::Temporal(inner) => format!("Temporal<{}>", format_type(inner)),
     }
+}
+
+// ── Completions ──────────────────────────────────────────────────────────────────
+
+/// Compute completion items at the given byte offset in `source`.
+///
+/// This is a basic implementation that returns all known function names.
+fn compute_completions(
+    _prog: &crate::ast::Program,
+    ctx: &crate::infer::InferCtx,
+    _source: &str,
+    _byte_offset: usize,
+) -> Vec<CompletionItem> {
+    let mut items: Vec<CompletionItem> = ctx.fn_sigs.keys().map(|name| {
+        let sig = ctx.fn_sigs.get(name).unwrap();
+        let detail = {
+            use crate::types::Type;
+            fn fmt(ty: &Type) -> String {
+                match ty {
+                    Type::I64 => "i64".into(),
+                    Type::F64 => "f64".into(),
+                    Type::Str => "str".into(),
+                    Type::Bool => "bool".into(),
+                    Type::Unit => "()".into(),
+                    _ => format!("{:?}", ty),
+                }
+            }
+            let params: Vec<String> = sig.params.iter().map(fmt).collect();
+            Some(format!("fn {}({}) -> {}", name, params.join(", "), fmt(&sig.ret)))
+        };
+        CompletionItem {
+            label: name.clone(),
+            kind: CompletionKind::Function,
+            detail,
+        }
+    }).collect();
+    items.sort_by(|a, b| a.label.cmp(&b.label));
+    items
+}
+
+/// Convert a `CompletionItem` to a JSON value for the LSP protocol.
+fn completion_item_to_json(item: CompletionItem) -> serde_json::Value {
+    let kind_num: u32 = match item.kind {
+        CompletionKind::Function => 3,
+        CompletionKind::Variable => 6,
+        CompletionKind::Type => 7,
+        CompletionKind::Field => 5,
+        CompletionKind::EnumVariant => 20,
+        CompletionKind::Keyword => 14,
+    };
+    let mut obj = serde_json::json!({
+        "label": item.label,
+        "kind": kind_num,
+    });
+    if let Some(detail) = item.detail {
+        obj["detail"] = serde_json::Value::String(detail);
+    }
+    obj
 }
 
 // ── Go-to-definition ──────────────────────────────────────────────────────────

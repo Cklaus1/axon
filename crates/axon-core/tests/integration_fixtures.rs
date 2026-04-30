@@ -1162,8 +1162,6 @@ fn error_e0309_bad_field_detected() {
 #[test]
 fn contained_pass_fixture_clean() {
     let errors = check_fixture("contained_pass.ax");
-    // Filter to only capability errors (E1001-E1004) and any parse/type errors.
-    // Info diagnostics (I0001) are acceptable; borrow/type errors signal fixture issues.
     let hard_errors: Vec<_> = errors.iter()
         .filter(|e| !e.contains("I0001") && !e.contains("[W"))
         .collect();
@@ -1190,6 +1188,16 @@ fn contained_fail_never_fixture_emits_e0604() {
     assert!(
         errors.iter().any(|e| e.contains("E1004")),
         "contained_fail_never.ax should produce E1004, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn ai_complete_fixture_type_checks_cleanly() {
+    let errors = check_fixture("ai_complete.ax");
+    assert!(
+        errors.is_empty(),
+        "ai_complete.ax produced unexpected errors:\n{}",
         errors.join("\n")
     );
 }
