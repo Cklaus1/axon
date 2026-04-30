@@ -1302,6 +1302,33 @@ impl<'ctx> Codegen<'ctx> {
                 );
             }
 
+            // uncertain_new_f64(value: f64, confidence: f64) -> Uncertain<f64>
+            // Layer-2 ASI: f64 variant of uncertain_new for floating-point
+            // Uncertain<T> values. Layout is { f64 value, f64 confidence,
+            // i64 source_tag } — same shape as Uncertain<i64> with an f64
+            // value slot.
+            {
+                let unc_f64_ty = self.context
+                    .struct_type(&[f64_ty.into(), f64_ty.into(), i64_ty.into()], false);
+                let fn_ty = unc_f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_new_f64", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_float_value();
+                let c = fn_val.get_nth_param(1).unwrap().into_float_value();
+                let mut sv = unc_f64_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "uf_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, c, 1, "uf_conf").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, i64_ty.const_zero(), 2, "uf_src")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("uncertain_new_f64".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("uncertain_new_f64".to_string(), Type::Uncertain(Box::new(Type::F64)));
+            }
+
             // temporal_new(value: i64, horizon_ms: i64, decay: f64) -> Temporal<i64>
             // valid_until_ms = __axon_now_ms() + horizon_ms; confidence starts at 1.0.
             {
@@ -4233,12 +4260,19 @@ impl<'ctx> Codegen<'ctx> {
 
             // ── Binary operation ─────────────────────────────────────────────
             ast::Expr::BinOp { op, left, right } => {
+                // Layer-2 ASI: if either operand is `Uncertain<T>`, route through
+                // the dedicated emitter that propagates `min(c1, c2)` confidence.
+                let lt_sem = self.infer_expr_sem_type(left);
+                let rt_sem = self.infer_expr_sem_type(right);
+                let is_unc = |t: &Option<Type>| matches!(t, Some(Type::Uncertain(_)));
+                if is_unc(&lt_sem) || is_unc(&rt_sem) {
+                    return self.emit_binop_uncertain(op, left, right, &lt_sem, &rt_sem, fn_val);
+                }
                 let lhs = self.emit_expr(left, fn_val)?;
                 let rhs = self.emit_expr(right, fn_val)?;
                 // Prefer the semantic type from inference (distinguishes u32/u64
                 // from i32/i64) then fall back to the LLVM-level value hint.
-                let ty = self.infer_expr_sem_type(left)
-                    .unwrap_or_else(|| self.value_type_hint(&lhs));
+                let ty = lt_sem.unwrap_or_else(|| self.value_type_hint(&lhs));
                 Some(self.emit_binop(op, lhs, rhs, &ty))
             }
 
@@ -5774,6 +5808,119 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    // ── Uncertain<T> binary operation emission ───────────────────────────────
+    //
+    // Layer-2 ASI: when one or both operands of a BinOp are `Uncertain<T>`, the
+    // result is `Uncertain<T'>` where T' is T for arithmetic and bool for
+    // comparisons / logical ops. Confidence is propagated as `min(c_lhs, c_rhs)`.
+    //
+    // V1 design choice: even multiplication uses `min` rather than `c1 * c2`.
+    // Multiplicative confidence (joint probability) is more accurate when
+    // operands are independent, but it conflates correctness with independence
+    // assumptions. Layer-3 will revisit with a proper combinator API once we
+    // have provenance tracking. The simple `min` rule keeps confidence
+    // monotonically non-increasing through any chain of operations.
+    fn emit_binop_uncertain(
+        &mut self,
+        op: &ast::BinOp,
+        left: &ast::Expr,
+        right: &ast::Expr,
+        lt_sem: &Option<Type>,
+        rt_sem: &Option<Type>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let lhs = self.emit_expr(left, fn_val)?;
+        let rhs = self.emit_expr(right, fn_val)?;
+        let f64_ty = self.context.f64_type();
+        let i64_ty = self.context.i64_type();
+        let one_conf = f64_ty.const_float(1.0);
+
+        // Extract (value, confidence) from a side that may or may not be Uncertain.
+        // For non-Uncertain sides, confidence defaults to 1.0.
+        let extract = |this: &Self,
+                       val: BasicValueEnum<'ctx>,
+                       sem: &Option<Type>|
+         -> Option<(BasicValueEnum<'ctx>, inkwell::values::FloatValue<'ctx>)> {
+            if let Some(Type::Uncertain(_)) = sem {
+                if let BasicValueEnum::StructValue(sv) = val {
+                    let v = this
+                        .builder
+                        .build_extract_value(sv, 0, "unc_v")
+                        .ok()?;
+                    let c = this
+                        .builder
+                        .build_extract_value(sv, 1, "unc_c")
+                        .ok()?
+                        .into_float_value();
+                    return Some((v, c));
+                }
+                None
+            } else {
+                Some((val, one_conf))
+            }
+        };
+
+        let (l_val, l_conf) = extract(self, lhs, lt_sem)?;
+        let (r_val, r_conf) = extract(self, rhs, rt_sem)?;
+
+        // min(l_conf, r_conf): select the smaller of the two via OLT compare.
+        let cmp = self
+            .builder
+            .build_float_compare(FloatPredicate::OLT, l_conf, r_conf, "uconf_lt")
+            .ok()?;
+        let new_conf = self
+            .builder
+            .build_select(cmp, l_conf, r_conf, "uconf_min")
+            .ok()?
+            .into_float_value();
+
+        // Determine the inner T from whichever side is Uncertain.
+        let inner_ty: Type = match (lt_sem, rt_sem) {
+            (Some(Type::Uncertain(t)), _) => *t.clone(),
+            (_, Some(Type::Uncertain(t))) => *t.clone(),
+            _ => Type::I64,
+        };
+
+        // Compute the operation on the underlying values. Reuses `emit_binop`
+        // so we get the standard integer/float lowering paths.
+        let op_result = self.emit_binop(op, l_val, r_val, &inner_ty);
+
+        // Determine the result struct type. For arithmetic ops the result
+        // matches the inner T; for comparisons/logical it is bool.
+        let is_cmp = matches!(
+            op,
+            ast::BinOp::Eq | ast::BinOp::NotEq
+                | ast::BinOp::Lt | ast::BinOp::Gt
+                | ast::BinOp::LtEq | ast::BinOp::GtEq
+                | ast::BinOp::And | ast::BinOp::Or
+        );
+        let result_inner_ty = if is_cmp { Type::Bool } else { inner_ty.clone() };
+        let result_inner_llvm = self.llvm_type(&result_inner_ty)?;
+        let result_struct_ty = self.context.struct_type(
+            &[result_inner_llvm, f64_ty.into(), i64_ty.into()],
+            false,
+        );
+
+        // Build { value, confidence, source_tag = 0 }.
+        let mut sv = result_struct_ty.get_undef();
+        sv = self
+            .builder
+            .build_insert_value(sv, op_result, 0, "unc_iv")
+            .ok()?
+            .into_struct_value();
+        sv = self
+            .builder
+            .build_insert_value(sv, new_conf, 1, "unc_ic")
+            .ok()?
+            .into_struct_value();
+        sv = self
+            .builder
+            .build_insert_value(sv, i64_ty.const_zero(), 2, "unc_is")
+            .ok()?
+            .into_struct_value();
+        Some(sv.into())
+    }
+
     // ── Option emission ────────────────────────────────────────────────────────
 
     fn emit_option(
@@ -6939,6 +7086,66 @@ impl<'ctx> Codegen<'ctx> {
             }
             ast::Expr::If { then, .. } => self.infer_expr_sem_type(then),
             ast::Expr::FmtStr { .. } => Some(Type::Str),
+            // Layer-2 ASI: BinOp with an Uncertain<T> operand produces Uncertain<T>;
+            // comparisons over Uncertain produce Uncertain<bool>. This enables
+            // chained `let x = a + b; let y = x * c` to track Uncertain typing in
+            // local_types, which `emit_binop_uncertain` relies on for layout.
+            ast::Expr::BinOp { op, left, right } => {
+                let lt = self.infer_expr_sem_type(left);
+                let rt = self.infer_expr_sem_type(right);
+                let is_unc = |t: &Option<Type>| matches!(t, Some(Type::Uncertain(_)));
+                let unc_inner = |t: &Option<Type>| -> Option<Type> {
+                    match t {
+                        Some(Type::Uncertain(inner)) => Some(*inner.clone()),
+                        _ => None,
+                    }
+                };
+                match op {
+                    ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul
+                    | ast::BinOp::Div | ast::BinOp::Rem => {
+                        if is_unc(&lt) || is_unc(&rt) {
+                            let inner = unc_inner(&lt).or_else(|| unc_inner(&rt))
+                                .unwrap_or(Type::I64);
+                            Some(Type::Uncertain(Box::new(inner)))
+                        } else {
+                            lt.or(rt)
+                        }
+                    }
+                    ast::BinOp::Eq | ast::BinOp::NotEq
+                    | ast::BinOp::Lt | ast::BinOp::Gt
+                    | ast::BinOp::LtEq | ast::BinOp::GtEq => {
+                        if is_unc(&lt) || is_unc(&rt) {
+                            Some(Type::Uncertain(Box::new(Type::Bool)))
+                        } else {
+                            Some(Type::Bool)
+                        }
+                    }
+                    ast::BinOp::And | ast::BinOp::Or => {
+                        if is_unc(&lt) || is_unc(&rt) {
+                            Some(Type::Uncertain(Box::new(Type::Bool)))
+                        } else {
+                            Some(Type::Bool)
+                        }
+                    }
+                    _ => Some(Type::I64),
+                }
+            }
+            // Field access on Uncertain<T> / Temporal<T>: `.value` → T, `.confidence` → f64.
+            ast::Expr::FieldAccess { receiver, field } => {
+                let recv_ty = self.infer_expr_sem_type(receiver)
+                    .or_else(|| self.sem_type_of_expr(receiver));
+                match (recv_ty, field.as_str()) {
+                    (Some(Type::Uncertain(inner)), "value") => Some(*inner),
+                    (Some(Type::Temporal(inner)), "value") => Some(*inner),
+                    (Some(Type::Uncertain(_)), "confidence")
+                    | (Some(Type::Temporal(_)), "confidence")
+                    | (Some(Type::Temporal(_)), "decay") => Some(Type::F64),
+                    (Some(Type::Uncertain(_)), "source_tag")
+                    | (Some(Type::Temporal(_)), "horizon_ms")
+                    | (Some(Type::Temporal(_)), "valid_until_ms") => Some(Type::I64),
+                    _ => None,
+                }
+            }
             _ => None,
         }
     }

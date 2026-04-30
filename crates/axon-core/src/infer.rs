@@ -537,6 +537,17 @@ impl InferCtx {
             Expr::BinOp { op, left, right } => {
                 let lt = self.infer_expr(left, scope, ret_ty);
                 let rt = self.infer_expr(right, scope, ret_ty);
+                // Layer-2 ASI propagation: if either operand is `Uncertain<T>`,
+                // the result is Uncertain. The bare T is treated as having
+                // confidence 1.0 conceptually; soft unification in `unify`
+                // already accepts Uncertain<T> on either side of T constraints.
+                let is_unc = |t: &Type| matches!(t, Type::Uncertain(_));
+                let unc_inner = |t: &Type| -> Option<Type> {
+                    match t {
+                        Type::Uncertain(inner) => Some(*inner.clone()),
+                        _ => None,
+                    }
+                };
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                         self.constrain(lt.clone(), rt.clone(), "arithmetic operands");
@@ -545,20 +556,45 @@ impl InferCtx {
                         // with I64/F64/other numeric vars, but produce a
                         // mismatch if a concrete non-numeric type is present.
                         // The checker (Fix #4b) performs the definitive check.
-                        lt
+                        if is_unc(&lt) || is_unc(&rt) {
+                            // Pick the inner type from whichever side is Uncertain.
+                            let inner = unc_inner(&lt).or_else(|| unc_inner(&rt))
+                                .unwrap_or(Type::I64);
+                            Type::Uncertain(Box::new(inner))
+                        } else {
+                            lt
+                        }
                     }
                     BinOp::Eq | BinOp::NotEq => {
-                        self.constrain(lt, rt, "equality operands");
-                        Type::Bool
+                        self.constrain(lt.clone(), rt.clone(), "equality operands");
+                        if is_unc(&lt) || is_unc(&rt) {
+                            Type::Uncertain(Box::new(Type::Bool))
+                        } else {
+                            Type::Bool
+                        }
                     }
                     BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                        self.constrain(lt, rt, "comparison operands");
-                        Type::Bool
+                        self.constrain(lt.clone(), rt.clone(), "comparison operands");
+                        if is_unc(&lt) || is_unc(&rt) {
+                            Type::Uncertain(Box::new(Type::Bool))
+                        } else {
+                            Type::Bool
+                        }
                     }
                     BinOp::And | BinOp::Or => {
-                        self.constrain(lt, Type::Bool, "logical operand");
-                        self.constrain(rt, Type::Bool, "logical operand");
-                        Type::Bool
+                        // For Uncertain<bool> operands, do not constrain to plain
+                        // bool — soft unification handles the inner unification.
+                        if !is_unc(&lt) {
+                            self.constrain(lt.clone(), Type::Bool, "logical operand");
+                        }
+                        if !is_unc(&rt) {
+                            self.constrain(rt.clone(), Type::Bool, "logical operand");
+                        }
+                        if is_unc(&lt) || is_unc(&rt) {
+                            Type::Uncertain(Box::new(Type::Bool))
+                        } else {
+                            Type::Bool
+                        }
                     }
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
                     | BinOp::Shl  | BinOp::Shr => {

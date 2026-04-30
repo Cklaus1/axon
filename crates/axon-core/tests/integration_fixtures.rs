@@ -1232,3 +1232,32 @@ fn temporal_basic_fixture_clean() {
         errors.join("\n")
     );
 }
+
+#[test]
+fn uncertain_propagation_fixture_runs() {
+    // Layer-2 ASI: arithmetic and comparison propagation over Uncertain<i64>.
+    // The fixture exercises every BinOp class with Uncertain operands. We
+    // assert that the full check pipeline (resolve + infer + check + borrow)
+    // produces no diagnostics — i.e. that the type system accepts the
+    // propagated `Uncertain<T>` and `Uncertain<bool>` results. Running the
+    // produced binary requires inkwell codegen (~25–30 min); other Layer-1
+    // ASI fixtures (`uncertain_basic`, `temporal_basic`) use the same
+    // check-only pattern, so we follow suit.
+    let errors = check_fixture("uncertain_propagation.ax");
+    assert!(
+        errors.is_empty(),
+        "uncertain_propagation.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn uncertain_propagation_f64_fixture_clean() {
+    // Layer-2 ASI: arithmetic and comparison propagation over Uncertain<f64>.
+    let errors = check_fixture("uncertain_propagation_f64.ax");
+    assert!(
+        errors.is_empty(),
+        "uncertain_propagation_f64.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
