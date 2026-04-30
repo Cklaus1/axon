@@ -3572,8 +3572,9 @@ impl<'ctx> Codegen<'ctx> {
         }
 
         // ── Provenance log: __axon_provenance_log(name_ptr, name_len, payload_ptr, payload_len) ──
-        // Used by `@[adaptive]` injection at fn prologue / return sites.
-        // Not exposed as a user-visible builtin — only the codegen invokes it.
+        // Used by `@[adaptive]` injection at fn prologue / return sites for the
+        // string-event flavour ("call" / "return").  Not exposed as a user-
+        // visible builtin — only the codegen invokes it.
         {
             let prov_ty = void_ty.fn_type(
                 &[i8_ptr.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into()],
@@ -3582,9 +3583,36 @@ impl<'ctx> Codegen<'ctx> {
             self.module.add_function("__axon_provenance_log", prov_ty, None);
         }
 
+        // ── Layer-2 typed-return provenance: ──────────────────────────────────
+        //   __axon_provenance_log_ret_i64(name_ptr, name_len, ret: i64)
+        //   __axon_provenance_log_ret_f64(name_ptr, name_len, ret: f64)
+        //
+        // Codegen calls one of these immediately before `build_return` inside
+        // an `@[adaptive]` function whose return value is i64/f64.  Records the
+        // return value into the runtime's in-memory provenance store so
+        // `__axon_goal_run` can compute a best-observed score.
+        {
+            let f64_ty = self.context.f64_type();
+            let prov_i64_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i64_ty.into()],
+                false,
+            );
+            self.module.add_function("__axon_provenance_log_ret_i64", prov_i64_ty, None);
+
+            let prov_f64_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), f64_ty.into()],
+                false,
+            );
+            self.module.add_function("__axon_provenance_log_ret_f64", prov_f64_ty, None);
+        }
+
         // ── goal_run(name: str, target: f64, max_evals: i64) -> f64 ───────────
         // Runtime: __axon_goal_run(fn_ptr, name_ptr, name_len, target, max_evals, *out_score)
-        // V1: stub that records intent in the provenance log and returns `target`.
+        // Layer-2: reads the in-memory provenance store populated by
+        // __axon_provenance_log_ret_{i64,f64} from any @[adaptive] function
+        // returns and writes the *best observed score* (closest to `target`)
+        // into `*out_score`.  Falls back to `target` when no records exist
+        // (preserves Layer-1 stub behaviour for adaptive_basic.ax and similar).
         {
             let f64_ty = self.context.f64_type();
             let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
@@ -4078,12 +4106,13 @@ impl<'ctx> Codegen<'ctx> {
         {
             if f.name == "main" && matches!(ret_sem, Type::Unit) {
                 let zero = self.context.i32_type().const_int(0, false);
+                // main() returning 0 isn't an interesting score; use the legacy event log.
                 self.log_return_if_adaptive();
                 self.builder.build_return(Some(&zero)).unwrap();
             } else {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
-                        self.log_return_if_adaptive();
+                        self.log_return_if_adaptive_val(v);
                         self.builder.build_return(Some(&v)).unwrap();
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
@@ -4091,7 +4120,7 @@ impl<'ctx> Codegen<'ctx> {
                         // emit a zero value of the appropriate type to keep IR valid.
                         if let Some(ret_llvm_ty) = self.llvm_type(&ret_sem) {
                             let zero_val = ret_llvm_ty.const_zero();
-                            self.log_return_if_adaptive();
+                            self.log_return_if_adaptive_val(zero_val);
                             self.builder.build_return(Some(&zero_val)).unwrap();
                         } else {
                             self.log_return_if_adaptive();
@@ -4143,11 +4172,65 @@ impl<'ctx> Codegen<'ctx> {
         );
     }
 
+    /// Layer-2: emit a typed-return provenance event for an `@[adaptive]`
+    /// function.  If the return value's LLVM type is `i64`, calls
+    /// `__axon_provenance_log_ret_i64`; if it's `f64`, calls
+    /// `__axon_provenance_log_ret_f64`.  For any other return type (str,
+    /// struct, enum, etc.) we still emit the legacy `"return"` string event so
+    /// the on-disk JSONL stays complete.
+    fn emit_provenance_log_ret(&mut self, fn_name: &str, ret_val: BasicValueEnum<'ctx>) {
+        // Skip if the current basic block is already terminated.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let f64_ty = self.context.f64_type();
+        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+
+        match ret_val {
+            BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
+                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_i64") {
+                    let _ = self.builder.build_call(
+                        rt,
+                        &[name_g.as_pointer_value().into(), name_len.into(), iv.into()],
+                        "",
+                    );
+                    return;
+                }
+            }
+            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => {
+                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_f64") {
+                    let _ = self.builder.build_call(
+                        rt,
+                        &[name_g.as_pointer_value().into(), name_len.into(), fv.into()],
+                        "",
+                    );
+                    return;
+                }
+            }
+            _ => {}
+        }
+        // Fallback: legacy event-style log.
+        self.emit_provenance_log(fn_name, "return");
+    }
+
     /// Emit a "return" provenance event if the current function carries
-    /// `@[adaptive]`.  Call this immediately before each `build_return`.
+    /// `@[adaptive]`.  Call this immediately before each `build_return` whose
+    /// return value is *not* known to be i64/f64 (or which has no value).
     fn log_return_if_adaptive(&mut self) {
         if let Some(fn_name) = self.current_adaptive_fn.clone() {
             self.emit_provenance_log(&fn_name, "return");
+        }
+    }
+
+    /// Layer-2 variant: emit a typed-return event if the current function
+    /// carries `@[adaptive]`.  Pass the value being returned so the runtime
+    /// can score it.  Call this *instead* of `log_return_if_adaptive()` at
+    /// every `build_return(Some(&v))` site.
+    fn log_return_if_adaptive_val(&mut self, ret_val: BasicValueEnum<'ctx>) {
+        if let Some(fn_name) = self.current_adaptive_fn.clone() {
+            self.emit_provenance_log_ret(&fn_name, ret_val);
         }
     }
 
@@ -4604,7 +4687,7 @@ impl<'ctx> Codegen<'ctx> {
                 match maybe_val {
                     std::option::Option::Some(e) => {
                         if let Some(v) = self.emit_expr(e, fn_val) {
-                            self.log_return_if_adaptive();
+                            self.log_return_if_adaptive_val(v);
                             self.builder.build_return(Some(&v)).unwrap();
                         } else {
                             self.log_return_if_adaptive();

@@ -1,18 +1,83 @@
 //! Provenance logger for `@[adaptive]` functions.
 //!
-//! Each invocation appends one JSON line to `~/.cache/axon/provenance.jsonl`
-//! recording the function name, an event ("call" / "return"), a free-form
-//! payload string, and a timestamp (RFC3339-ish, derived from
-//! `SystemTime::now()`).
+//! Each invocation of an `@[adaptive]` function appends one JSON line to
+//! `~/.cache/axon/provenance.jsonl` (or `$XDG_CACHE_HOME/axon/...`) recording
+//! the function name, an event tag (`"call"` / `"return"` / `"event"`), an
+//! optional payload string, and a timestamp.  In addition to the on-disk log,
+//! the runtime keeps an in-memory `Mutex<Vec<Record>>` of return-value
+//! observations so `__axon_goal_run` can compute a best observed score
+//! without re-parsing the JSONL file.
 //!
-//! The implementation is intentionally best-effort: any filesystem error
-//! (missing $HOME, permission denied, full disk, etc.) is silently swallowed
-//! so we never panic in user code.
+//! ABI symbols exported here:
+//! * `__axon_provenance_log(fn_name, payload)` — original Layer-1 entry point.
+//!   Used by codegen at adaptive prologue / return sites with `"call"` /
+//!   `"return"` payloads.  Backward-compatible: nothing about the on-disk
+//!   format has changed.
+//! * `__axon_provenance_log_ret_i64(fn_name, ret)` — Layer-2 addition.  Codegen
+//!   calls this immediately before `build_return` in an `@[adaptive]` function
+//!   whose return type is `i64`.  Records the return value into the in-memory
+//!   log AND appends a JSON line with `"event":"return","score":<f64>`.
+//! * `__axon_provenance_log_ret_f64(fn_name, ret)` — same, for `f64` returns.
+//!
+//! Reading the in-memory log:
+//! * `provenance_records_for(name)` — Rust-side helper returning a snapshot of
+//!   all records whose `fn_name` matches `name`.  Consumed by
+//!   [`crate::goal::__axon_goal_run`].
+//!
+//! All filesystem errors are silently swallowed — this logger must never panic
+//! in user code.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+// ── In-memory record store ────────────────────────────────────────────────────
+
+/// A single recorded execution of an `@[adaptive]` function's return site.
+///
+/// Stored in a process-global `Mutex<Vec<Record>>`.  Read by `goal_run` to
+/// compute a best observed score without re-parsing the JSONL log.
+#[derive(Debug, Clone)]
+pub struct Record {
+    pub fn_name: String,
+    /// Recorded return value, normalised to `f64` for scoring purposes.
+    /// Integer returns are widened via `n as f64`.
+    pub score: f64,
+    /// Wall-clock timestamp when the record was captured (ms since epoch).
+    pub ts_ms: u64,
+}
+
+fn store() -> &'static Mutex<Vec<Record>> {
+    use std::sync::OnceLock;
+    static STORE: OnceLock<Mutex<Vec<Record>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+/// Return a snapshot of all records whose `fn_name` exactly matches `name`.
+///
+/// The returned vector is independent of the global store; callers may iterate
+/// freely without holding the global lock.
+pub fn provenance_records_for(name: &str) -> Vec<Record> {
+    let guard = match store().lock() {
+        Ok(g)  => g,
+        Err(p) => p.into_inner(), // recover from poisoning rather than panic
+    };
+    guard.iter().filter(|r| r.fn_name == name).cloned().collect()
+}
+
+fn record(fn_name: &str, score: f64) {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    if let Ok(mut g) = store().lock() {
+        g.push(Record { fn_name: fn_name.to_string(), score, ts_ms: ts });
+    }
+}
+
+// ── ABI: original event-style log (Layer 1) ───────────────────────────────────
 
 /// Append one provenance event to `~/.cache/axon/provenance.jsonl`.
 ///
@@ -31,8 +96,47 @@ pub extern "C" fn __axon_provenance_log(
     // payload is encoded as len=0 and a possibly-null pointer.
     let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
     let payload = slice_to_str(payload_ptr, payload_len);
-    let _ = log_event(fn_name, payload);
+    let _ = log_event(fn_name, payload, None);
 }
+
+// ── ABI: Layer-2 typed-return log ─────────────────────────────────────────────
+
+/// Layer-2 entry point: log an `i64` return value from an adaptive function.
+///
+/// Records into the in-memory store AND appends a JSON line with
+/// `"event":"return","score":<f64>`.  Codegen emits a call to this symbol
+/// immediately before `build_return` whenever the enclosing function is
+/// `@[adaptive]` and returns a value whose LLVM type is `i64`.
+#[no_mangle]
+pub extern "C" fn __axon_provenance_log_ret_i64(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    ret: i64,
+) {
+    let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
+    if !fn_name.is_empty() {
+        record(fn_name, ret as f64);
+    }
+    let payload = format!("ret_i64={}", ret);
+    let _ = log_event(fn_name, &payload, Some(ret as f64));
+}
+
+/// Layer-2 entry point: log an `f64` return value from an adaptive function.
+#[no_mangle]
+pub extern "C" fn __axon_provenance_log_ret_f64(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    ret: f64,
+) {
+    let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
+    if !fn_name.is_empty() {
+        record(fn_name, ret);
+    }
+    let payload = format!("ret_f64={}", ret);
+    let _ = log_event(fn_name, &payload, Some(ret));
+}
+
+// ── Internals ─────────────────────────────────────────────────────────────────
 
 fn slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
     if ptr.is_null() || len <= 0 {
@@ -48,7 +152,11 @@ fn slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
 /// (treated as the event tag) or a serialised payload produced by the user.
 /// For v1 we always treat the first 16 bytes-or-less as the event tag if it
 /// matches `call`/`return`; otherwise it is recorded as a generic payload.
-fn log_event(fn_name: &str, payload: &str) -> std::io::Result<()> {
+///
+/// `score` is an optional numeric score that, when present, is included in the
+/// JSON line as `"score":<f64>` so external tooling can read it without
+/// re-parsing the payload.
+fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Result<()> {
     let dir = provenance_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir")
     })?;
@@ -66,13 +174,23 @@ fn log_event(fn_name: &str, payload: &str) -> std::io::Result<()> {
         .unwrap_or(0);
 
     // Hand-rolled JSON to avoid pulling serde_json into axon-rt.
-    let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":{ev_q},\"payload\":{pl_q}}}\n",
-        ts    = ts,
-        fn_q  = json_quote(fn_name),
-        ev_q  = json_quote(event),
-        pl_q  = json_quote(body),
-    );
+    let line = match score {
+        Some(s) => format!(
+            "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":{ev_q},\"payload\":{pl_q},\"score\":{s}}}\n",
+            ts    = ts,
+            fn_q  = json_quote(fn_name),
+            ev_q  = json_quote(event),
+            pl_q  = json_quote(body),
+            s     = format_f64(s),
+        ),
+        None => format!(
+            "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":{ev_q},\"payload\":{pl_q}}}\n",
+            ts    = ts,
+            fn_q  = json_quote(fn_name),
+            ev_q  = json_quote(event),
+            pl_q  = json_quote(body),
+        ),
+    };
 
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     f.write_all(line.as_bytes())?;
@@ -88,6 +206,15 @@ fn provenance_dir() -> Option<PathBuf> {
     }
     let home = std::env::var("HOME").ok()?;
     Some(PathBuf::from(home).join(".cache").join("axon"))
+}
+
+fn format_f64(x: f64) -> String {
+    // JSON cannot encode NaN/Inf; coerce to 0 to keep the file parseable.
+    if x.is_finite() {
+        format!("{}", x)
+    } else {
+        "0".to_string()
+    }
 }
 
 fn json_quote(s: &str) -> String {
@@ -116,21 +243,29 @@ mod tests {
 
     #[test]
     fn log_event_writes_line() {
-        // Redirect to a tempdir.
+        // Redirect to a per-test tempdir.  XDG_CACHE_HOME is process-global,
+        // so other parallel tests that also call log_event() will end up
+        // writing to whichever value is set last.  We therefore filter the
+        // resulting file for our own unique fn-name rather than asserting
+        // line count.
         let tmp = std::env::temp_dir().join(format!("axon-prov-test-{}", std::process::id()));
         std::env::set_var("XDG_CACHE_HOME", &tmp);
         let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(&tmp).unwrap();
 
-        log_event("test_fn", "call").unwrap();
-        log_event("test_fn", "return").unwrap();
+        let unique = format!("logtest_fn_{}", std::process::id());
+        log_event(&unique, "call", None).unwrap();
+        log_event(&unique, "return", None).unwrap();
 
         let path = tmp.join("axon").join("provenance.jsonl");
         let content = fs::read_to_string(&path).unwrap();
-        let lines: Vec<&str> = content.lines().collect();
-        assert_eq!(lines.len(), 2);
-        assert!(lines[0].contains("\"fn\":\"test_fn\""));
-        assert!(lines[0].contains("\"event\":\"call\""));
-        assert!(lines[1].contains("\"event\":\"return\""));
+        let mine: Vec<&str> = content
+            .lines()
+            .filter(|l| l.contains(&format!("\"fn\":\"{unique}\"")))
+            .collect();
+        assert_eq!(mine.len(), 2, "expected 2 of our lines, got {}", mine.len());
+        assert!(mine[0].contains("\"event\":\"call\""));
+        assert!(mine[1].contains("\"event\":\"return\""));
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -145,5 +280,51 @@ mod tests {
     fn json_quote_escapes_specials() {
         assert_eq!(json_quote("a\"b"),  "\"a\\\"b\"");
         assert_eq!(json_quote("a\nb"),  "\"a\\nb\"");
+    }
+
+    #[test]
+    fn ret_i64_records_into_store() {
+        // Use a per-test unique name so parallel tests don't interfere with
+        // the global store.  The store is process-global; clearing it in one
+        // test would race with the others.
+        let name = b"prov_test_ret_i64_fn";
+        __axon_provenance_log_ret_i64(name.as_ptr(), name.len() as i64, 42);
+        __axon_provenance_log_ret_i64(name.as_ptr(), name.len() as i64, 17);
+        let recs = provenance_records_for("prov_test_ret_i64_fn");
+        assert!(recs.len() >= 2, "expected ≥2 records, got {}", recs.len());
+        // Find the values we just inserted.
+        assert!(recs.iter().any(|r| (r.score - 42.0).abs() < 1e-9));
+        assert!(recs.iter().any(|r| (r.score - 17.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn ret_f64_records_into_store() {
+        let name = b"prov_test_ret_f64_fn";
+        __axon_provenance_log_ret_f64(name.as_ptr(), name.len() as i64, 0.85);
+        __axon_provenance_log_ret_f64(name.as_ptr(), name.len() as i64, 0.92);
+        let recs = provenance_records_for("prov_test_ret_f64_fn");
+        assert!(recs.len() >= 2, "expected ≥2 records, got {}", recs.len());
+        assert!(recs.iter().any(|r| (r.score - 0.85).abs() < 1e-9));
+        assert!(recs.iter().any(|r| (r.score - 0.92).abs() < 1e-9));
+    }
+
+    #[test]
+    fn records_filter_by_name() {
+        let a = b"prov_test_filter_a";
+        let b = b"prov_test_filter_b";
+        __axon_provenance_log_ret_i64(a.as_ptr(), a.len() as i64, 1);
+        __axon_provenance_log_ret_i64(b.as_ptr(), b.len() as i64, 2);
+        __axon_provenance_log_ret_i64(a.as_ptr(), a.len() as i64, 3);
+        let foo = provenance_records_for("prov_test_filter_a");
+        let bar = provenance_records_for("prov_test_filter_b");
+        assert_eq!(foo.len(), 2);
+        assert_eq!(bar.len(), 1);
+    }
+
+    #[test]
+    fn ret_i64_with_null_name_does_not_panic() {
+        // Defence-in-depth — codegen should never pass null, but if it did we
+        // must not panic because that would tear down user code.
+        __axon_provenance_log_ret_i64(std::ptr::null(), 0, 99);
     }
 }

@@ -1,0 +1,26 @@
+// Fixture: Layer-2 @[adaptive] + goal_run end-to-end check.
+//
+// `measured` is tagged @[adaptive], so codegen injects calls to
+// __axon_provenance_log_ret_i64 at every return site, populating the
+// runtime's in-memory provenance store.  After three invocations the store
+// holds {20, 40, 60} for "measured".
+//
+// goal_run("measured", 50.0, 100) then walks the store and returns the score
+// closest to the target (50.0):
+//   |20-50| = 30
+//   |40-50| = 10  ← winner (ties broken by earliest-record)
+//   |60-50| = 10
+// Expected best ≈ 40.0.
+
+@[adaptive(metric: latency, target: 0.95)]
+fn measured(x: i64) -> i64 {
+    x * 2
+}
+
+fn main() {
+    let _ = measured(10)
+    let _ = measured(20)
+    let _ = measured(30)
+    let best = goal_run("measured", 50.0, 100)
+    println(to_str_f64(best))
+}
