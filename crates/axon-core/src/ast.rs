@@ -43,6 +43,8 @@ pub struct FnDef {
     pub attrs: Vec<Attr>,
     /// Phase 4 capability: parsed `@[contained(...)]` spec, if present.
     pub contained: Option<ContainedSpec>,
+    /// ASI Layer-2: parsed `@[verify(expr)]` predicate, if present.
+    pub verify: Option<VerifySpec>,
     pub span: Span,
 }
 
@@ -366,6 +368,20 @@ pub struct ContainedSpec {
     pub exec_allowed: bool,
     /// Hard-deny rules that override the allowlists above.
     pub never: Vec<NeverClause>,
+    pub span: Span,
+}
+
+/// ASI Layer-2: the parsed content of `@[verify(expr)]` on a function.
+///
+/// v1 supports the form `@[verify(confidence OP literal_f64)]` where `confidence`
+/// is a magic identifier referring to the minimum confidence reachable at any
+/// return site of the annotated function's body.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub struct VerifySpec {
+    /// The parsed predicate expression (e.g. `confidence >= 0.8`).
+    pub predicate: Box<Expr>,
+    /// Source location of the `@[verify(...)]` annotation, used to point E1101.
     pub span: Span,
 }
 

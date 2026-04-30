@@ -1,0 +1,14 @@
+// verify_fail.ax
+// @[verify(confidence >= 0.8)] is NOT satisfied: the body returns
+// uncertain_new(_, 0.5) — confidence is 0.5 < 0.8.
+// Expected: E1101 emitted at the @[verify(...)] annotation.
+
+@[verify(confidence >= 0.8)]
+fn risky() -> Uncertain<i64> {
+    uncertain_new(42, 0.5)
+}
+
+fn main() {
+    let r = risky()
+    println(to_str(r.value))
+}

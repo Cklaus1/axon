@@ -2035,6 +2035,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -2717,6 +2718,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         });
         let program = make_program(vec![fndef]);
@@ -2776,6 +2778,7 @@ mod tests {
             body: lit_int(0),
             attrs: vec![],
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         }
     }

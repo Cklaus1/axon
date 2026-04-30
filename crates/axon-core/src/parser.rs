@@ -290,6 +290,7 @@ impl Parser {
     fn parse_item(&mut self) -> Result<Item> {
         let mut attrs = Vec::new();
         let mut contained_spec: Option<ContainedSpec> = None;
+        let mut verify_spec: Option<VerifySpec> = None;
         while self.at(&Token::At) || self.at(&Token::Hash) {
             // Peek ahead: @[ contained ( ... ) ] — parse specially.
             if self.is_contained_attr() {
@@ -300,6 +301,21 @@ impl Parser {
                 let spec = self.parse_contained_spec()?;
                 self.expect(&Token::RBracket)?;
                 contained_spec = Some(spec);
+            } else if self.is_verify_attr() {
+                // Consume @[ or #[
+                let span_start = self.current_span().start;
+                if !self.eat(&Token::At) { self.eat(&Token::Hash); }
+                self.expect(&Token::LBracket)?;
+                let _name = self.expect_ident()?; // "verify"
+                self.expect(&Token::LParen)?;
+                let predicate = self.parse_expr()?;
+                self.expect(&Token::RParen)?;
+                self.expect(&Token::RBracket)?;
+                let span_end = self.current_span().end;
+                verify_spec = Some(VerifySpec {
+                    predicate: Box::new(predicate),
+                    span: Span::new(span_start, span_end),
+                });
             } else {
                 attrs.push(self.parse_attr()?);
             }
@@ -309,6 +325,7 @@ impl Parser {
             Some(Token::Fn)    => {
                 let mut fndef = self.parse_fn(public, attrs)?;
                 fndef.contained = contained_spec;
+                fndef.verify = verify_spec;
                 Ok(Item::FnDef(fndef))
             }
             Some(Token::Type)  => Ok(Item::TypeDef(self.parse_type_def()?)),
@@ -346,6 +363,25 @@ impl Parser {
         }
         // Token at sigil_pos+2 should be `Ident("contained")`
         matches!(self.tokens.get(sigil_pos + 2), Some(Token::Ident(s)) if s == "contained")
+    }
+
+    /// Peek ahead to detect `@[verify(` or `#[verify(`.
+    /// Returns true only when `verify` is followed by `(` so that the bare
+    /// `@[verify]` deferred-attr form (no expression) still falls through to the
+    /// generic `parse_attr` path.
+    fn is_verify_attr(&self) -> bool {
+        let sigil_pos = self.pos;
+        match self.tokens.get(sigil_pos) {
+            Some(Token::At) | Some(Token::Hash) => {}
+            _ => return false,
+        }
+        if !matches!(self.tokens.get(sigil_pos + 1), Some(Token::LBracket)) {
+            return false;
+        }
+        if !matches!(self.tokens.get(sigil_pos + 2), Some(Token::Ident(s)) if s == "verify") {
+            return false;
+        }
+        matches!(self.tokens.get(sigil_pos + 3), Some(Token::LParen))
     }
 
     /// Parse the body of `@[contained(...)]` starting after the `contained` identifier
@@ -545,7 +581,7 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let end = self.current_span().end;
-        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, span: Span::new(start, end) })
+        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, verify: None, span: Span::new(start, end) })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {

@@ -76,6 +76,9 @@ pub const E1002: &str = "E1002"; // @[contained] clause is malformed
 pub const E1003: &str = "E1003"; // capability path is not parseable
 pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 
+// Verify errors (ASI Layer-2: @[verify])
+pub const E1101: &str = "E1101"; // verify bound not satisfied
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -217,6 +220,7 @@ mod tests {
             E0801, E0802, E0803,
             E0901, E0902, E0903, E0904, E0905, E0906,
             E1001, E1002, E1003, E1004,
+            E1101,
             W0001, W0002, W0701,
             I0001,
         ];

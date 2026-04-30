@@ -186,6 +186,7 @@ fn subst_fn(fndef: &FnDef, subst: &TypeSubst) -> FnDef {
         body: subst_expr(&fndef.body, subst),
         attrs: fndef.attrs.clone(),
         contained: fndef.contained.clone(),
+        verify: fndef.verify.clone(),
         span: fndef.span,
     }
 }

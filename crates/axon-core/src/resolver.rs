@@ -1293,6 +1293,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1315,6 +1316,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1336,6 +1338,7 @@ mod tests {
                 })
                 .collect(),
             contained: None,
+            verify: None,
             span: crate::span::Span::dummy(),
         })
     }

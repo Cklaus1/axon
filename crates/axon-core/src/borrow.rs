@@ -403,6 +403,7 @@ mod tests {
             body,
             attrs: vec![],
             contained: None,
+            verify: None,
             span: Span::dummy(),
         }
     }

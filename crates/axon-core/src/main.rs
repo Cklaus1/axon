@@ -905,6 +905,7 @@ fn run_single_test_as_subprocess(
         body: Expr::Block(vec![Stmt::simple(call_test)]),
         attrs: vec![],
         contained: None,
+        verify: None,
         span: axon_core::span::Span::dummy(),
     };
     items.push(Item::FnDef(main_fn));
