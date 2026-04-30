@@ -289,12 +289,28 @@ impl Parser {
 
     fn parse_item(&mut self) -> Result<Item> {
         let mut attrs = Vec::new();
+        let mut contained_spec: Option<ContainedSpec> = None;
         while self.at(&Token::At) || self.at(&Token::Hash) {
-            attrs.push(self.parse_attr()?);
+            // Peek ahead: @[ contained ( ... ) ] — parse specially.
+            if self.is_contained_attr() {
+                // Consume @[ or #[
+                if !self.eat(&Token::At) { self.eat(&Token::Hash); }
+                self.expect(&Token::LBracket)?;
+                let _name = self.expect_ident()?; // "contained"
+                let spec = self.parse_contained_spec()?;
+                self.expect(&Token::RBracket)?;
+                contained_spec = Some(spec);
+            } else {
+                attrs.push(self.parse_attr()?);
+            }
         }
         let public = self.eat(&Token::Pub);
         match self.peek() {
-            Some(Token::Fn)    => Ok(Item::FnDef(self.parse_fn(public, attrs)?)),
+            Some(Token::Fn)    => {
+                let mut fndef = self.parse_fn(public, attrs)?;
+                fndef.contained = contained_spec;
+                Ok(Item::FnDef(fndef))
+            }
             Some(Token::Type)  => Ok(Item::TypeDef(self.parse_type_def()?)),
             Some(Token::Enum)  => Ok(Item::EnumDef(self.parse_enum_def()?)),
             Some(Token::Mod)   => Ok(Item::ModDecl(self.parse_mod()?)),
@@ -312,6 +328,146 @@ impl Parser {
             }
             Some(tok) => Err(ParseError::Unexpected(tok.clone(), "item (fn/type/enum/mod/use/trait/impl/let)".into())),
             None => Err(ParseError::Eof),
+        }
+    }
+
+    /// Peek ahead to detect `@[contained` or `#[contained`.
+    /// Returns true if the next tokens form the start of a contained attribute.
+    fn is_contained_attr(&self) -> bool {
+        let sigil_pos = self.pos;
+        // Token at sigil_pos should be `@` or `#`
+        match self.tokens.get(sigil_pos) {
+            Some(Token::At) | Some(Token::Hash) => {}
+            _ => return false,
+        }
+        // Token at sigil_pos+1 should be `[`
+        if !matches!(self.tokens.get(sigil_pos + 1), Some(Token::LBracket)) {
+            return false;
+        }
+        // Token at sigil_pos+2 should be `Ident("contained")`
+        matches!(self.tokens.get(sigil_pos + 2), Some(Token::Ident(s)) if s == "contained")
+    }
+
+    /// Parse the body of `@[contained(...)]` starting after the `contained` identifier
+    /// has been consumed. Reads `( clauses )` and builds a `ContainedSpec`.
+    ///
+    /// Grammar (from PRD §1629–1634):
+    ///   contained = "(" clause* ")"
+    ///   clause    = "fs"   ":" "[" fs_item* "]"
+    ///             | "net"  ":" "[" net_item* "]"
+    ///             | "exec" ":" "none"
+    ///             | "never" ":" "[" never_item* "]"
+    ///   fs_item   = ("read" | "write") "(" str_lit ")" ","?
+    ///   net_item  = str_lit ","?
+    ///   never_item = ("read" | "write" | "net") "(" str_lit ")" ","?
+    ///              | ("exec" | "spawn") ","?
+    fn parse_contained_spec(&mut self) -> Result<ContainedSpec> {
+        use crate::ast::{ContainedSpec, NeverClause};
+        let span_start = self.current_span().start;
+        let mut spec = ContainedSpec {
+            fs_read: Vec::new(),
+            fs_write: Vec::new(),
+            net_allow: Vec::new(),
+            exec_allowed: false,
+            never: Vec::new(),
+            span: crate::span::Span::dummy(),
+        };
+
+        if !self.at(&Token::LParen) {
+            // No args — @[contained] with no clauses: allow nothing.
+            let span = crate::span::Span::new(span_start, self.current_span().end);
+            spec.span = span;
+            return Ok(spec);
+        }
+        self.expect(&Token::LParen)?;
+
+        // Parse comma-separated clauses until `)`
+        while !self.at(&Token::RParen) {
+            // Each clause starts with a keyword ident
+            let key = self.expect_ident()?;
+            match key.as_str() {
+                "fs" => {
+                    self.expect(&Token::Colon)?;
+                    self.expect(&Token::LBracket)?;
+                    while !self.at(&Token::RBracket) {
+                        let op = self.expect_ident()?;
+                        self.expect(&Token::LParen)?;
+                        let path = self.expect_str()?;
+                        self.expect(&Token::RParen)?;
+                        match op.as_str() {
+                            "read"  => spec.fs_read.push(path),
+                            "write" => spec.fs_write.push(path),
+                            _ => return Err(ParseError::Other(format!(
+                                "unknown fs clause `{op}`, expected `read` or `write`"
+                            ))),
+                        }
+                        self.eat(&Token::Comma);
+                    }
+                    self.expect(&Token::RBracket)?;
+                }
+                "net" => {
+                    self.expect(&Token::Colon)?;
+                    self.expect(&Token::LBracket)?;
+                    while !self.at(&Token::RBracket) {
+                        let host = self.expect_str()?;
+                        spec.net_allow.push(host);
+                        self.eat(&Token::Comma);
+                    }
+                    self.expect(&Token::RBracket)?;
+                }
+                "exec" => {
+                    self.expect(&Token::Colon)?;
+                    let val = self.expect_ident()?;
+                    if val != "none" {
+                        spec.exec_allowed = true;
+                    }
+                }
+                "never" => {
+                    self.expect(&Token::Colon)?;
+                    self.expect(&Token::LBracket)?;
+                    while !self.at(&Token::RBracket) {
+                        let op = self.expect_ident()?;
+                        match op.as_str() {
+                            "exec"  => spec.never.push(NeverClause::Exec),
+                            "spawn" => spec.never.push(NeverClause::Spawn),
+                            "read" | "write" | "net" => {
+                                self.expect(&Token::LParen)?;
+                                let path = self.expect_str()?;
+                                self.expect(&Token::RParen)?;
+                                match op.as_str() {
+                                    "read"  => spec.never.push(NeverClause::Read(path)),
+                                    "write" => spec.never.push(NeverClause::Write(path)),
+                                    "net"   => spec.never.push(NeverClause::Net(path)),
+                                    _ => unreachable!(),
+                                }
+                            }
+                            _ => return Err(ParseError::Other(format!(
+                                "unknown never clause `{op}`"
+                            ))),
+                        }
+                        self.eat(&Token::Comma);
+                    }
+                    self.expect(&Token::RBracket)?;
+                }
+                _ => {
+                    return Err(ParseError::Other(format!(
+                        "@[contained] unknown clause `{key}`, expected fs/net/exec/never"
+                    )));
+                }
+            }
+            self.eat(&Token::Comma);
+        }
+        self.expect(&Token::RParen)?;
+        let span = crate::span::Span::new(span_start, self.current_span().end);
+        spec.span = span;
+        Ok(spec)
+    }
+
+    /// Consume a string literal token, returning the string value.
+    fn expect_str(&mut self) -> Result<String> {
+        match self.advance()? {
+            Token::Str(s) => Ok(s.clone()),
+            tok => Err(ParseError::Unexpected(tok.clone(), "string literal".into())),
         }
     }
 
@@ -351,7 +507,7 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let end = self.current_span().end;
-        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, span: Span::new(start, end) })
+        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, span: Span::new(start, end) })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {

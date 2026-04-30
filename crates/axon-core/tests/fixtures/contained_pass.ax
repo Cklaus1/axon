@@ -1,0 +1,19 @@
+// contained_pass.ax
+// @[contained] declares fs: [read("./data/")] and the body only calls
+// read_file with a path under that prefix. No errors expected.
+
+@[contained(
+    fs: [read("./data/")],
+    exec: none
+)]
+fn load_data() -> i64 {
+    let result = read_file("./data/x.txt")
+    match result {
+        Ok(contents) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn main() -> i64 {
+    load_data()
+}

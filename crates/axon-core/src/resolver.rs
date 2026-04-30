@@ -1292,6 +1292,7 @@ mod tests {
             return_type: None,
             body,
             attrs: vec![],
+            contained: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1313,6 +1314,7 @@ mod tests {
             return_type: None,
             body,
             attrs: vec![],
+            contained: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1333,6 +1335,7 @@ mod tests {
                     args: vec![],
                 })
                 .collect(),
+            contained: None,
             span: crate::span::Span::dummy(),
         })
     }

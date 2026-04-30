@@ -70,6 +70,12 @@ pub const E0904: &str = "E0904"; // --target triple not supported by this LLVM b
 pub const E0905: &str = "E0905"; // cross-compilation needs sysroot (cross.toml missing)
 pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler version
 
+// Capability permission errors (Phase 4: @[contained])
+pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
+pub const E1002: &str = "E1002"; // @[contained] clause is malformed
+pub const E1003: &str = "E1003"; // capability path is not parseable
+pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -208,6 +214,7 @@ mod tests {
             E0701, E0702, E0703,
             E0801, E0802, E0803,
             E0901, E0902, E0903, E0904, E0905, E0906,
+            E1001, E1002, E1003, E1004,
             W0001, W0002,
             I0001,
         ];

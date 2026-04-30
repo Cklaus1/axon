@@ -41,6 +41,8 @@ pub struct FnDef {
     pub return_type: Option<AxonType>,
     pub body: Expr,
     pub attrs: Vec<Attr>,
+    /// Phase 4 capability: parsed `@[contained(...)]` spec, if present.
+    pub contained: Option<ContainedSpec>,
     pub span: Span,
 }
 
@@ -330,6 +332,41 @@ pub enum Literal {
     Float(f64),
     Str(String),
     Bool(bool),
+}
+
+// ── Capability permissions (Phase 4: @[contained]) ────────────────────────────
+
+/// A single `never:` clause item inside `@[contained(...)]`.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub enum NeverClause {
+    /// `read("<path>")` inside `never:`
+    Read(String),
+    /// `write("<path>")` inside `never:`
+    Write(String),
+    /// `net("<host>")` inside `never:`
+    Net(String),
+    /// bare `exec` inside `never:`
+    Exec,
+    /// bare `spawn` inside `never:`
+    Spawn,
+}
+
+/// The parsed content of `@[contained(...)]` on a function.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub struct ContainedSpec {
+    /// Path prefixes allowed for `read_file` calls.
+    pub fs_read: Vec<String>,
+    /// Path prefixes allowed for `write_file` calls.
+    pub fs_write: Vec<String>,
+    /// Host globs allowed for network calls.
+    pub net_allow: Vec<String>,
+    /// Whether `exec` / subprocess calls are permitted.
+    pub exec_allowed: bool,
+    /// Hard-deny rules that override the allowlists above.
+    pub never: Vec<NeverClause>,
+    pub span: Span,
 }
 
 // ── Operators ────────────────────────────────────────────────────────────────

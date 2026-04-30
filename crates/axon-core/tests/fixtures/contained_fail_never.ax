@@ -1,0 +1,20 @@
+// contained_fail_never.ax
+// @[contained] has never: [read("/etc/")] — a hard-deny rule.
+// The body calls read_file("/etc/shadow") which hits the never clause.
+// Expect: E1004
+
+@[contained(
+    fs: [read("/"), read("/etc/")],
+    never: [read("/etc/")]
+)]
+fn unsafe_read() -> i64 {
+    let result = read_file("/etc/shadow")
+    match result {
+        Ok(contents) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn main() -> i64 {
+    unsafe_read()
+}
