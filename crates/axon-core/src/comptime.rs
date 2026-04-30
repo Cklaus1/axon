@@ -105,6 +105,10 @@ impl<'a> Evaluator<'a> {
 
             Expr::Call { callee, args } => {
                 if let Expr::Ident(name) = callee.as_ref() {
+                    // Try a built-in first.
+                    if let Some(v) = self.eval_builtin(name, args)? {
+                        return Ok(v);
+                    }
                     if let Some(fndef) = self.fns.get(name) {
                         return self.eval_fn_call(fndef, args);
                     }
@@ -115,10 +119,143 @@ impl<'a> Evaluator<'a> {
                 })
             }
 
+            Expr::If { cond, then, else_ } => {
+                let c = self.eval(cond)?;
+                match c {
+                    ComptimeVal::Bool(true) => self.eval(then),
+                    ComptimeVal::Bool(false) => match else_ {
+                        Some(e) => self.eval(e),
+                        None => Err(ComptimeError::NotEvaluable {
+                            reason: "if-without-else in comptime returning a value".into(),
+                            span: Span::dummy(),
+                        }),
+                    },
+                    other => Err(ComptimeError::NotEvaluable {
+                        reason: format!("if-condition must be bool, got {}", other.type_name()),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+
             other => Err(ComptimeError::NotEvaluable {
                 reason: format!("{}", expr_kind_name(other)),
                 span: Span::dummy(),
             }),
+        }
+    }
+
+    /// Evaluate a built-in function call.  Returns:
+    ///   - `Ok(Some(val))` — built-in matched and produced a value.
+    ///   - `Ok(None)`      — name is not a built-in; caller should try user fns.
+    ///   - `Err(_)`        — built-in matched but evaluation failed.
+    fn eval_builtin(
+        &self,
+        name: &str,
+        args: &[Expr],
+    ) -> Result<Option<ComptimeVal>, ComptimeError> {
+        let arity_err = |expected: usize| ComptimeError::NotEvaluable {
+            reason: format!("{name} expects {expected} args, got {}", args.len()),
+            span: Span::dummy(),
+        };
+        match name {
+            "str_len" => {
+                if args.len() != 1 { return Err(arity_err(1)); }
+                match self.eval(&args[0])? {
+                    ComptimeVal::Str(s) => Ok(Some(ComptimeVal::Int(s.len() as i64))),
+                    other => Err(ComptimeError::NotEvaluable {
+                        reason: format!("str_len expects str, got {}", other.type_name()),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "str_concat" => {
+                if args.len() != 2 { return Err(arity_err(2)); }
+                let a = self.eval(&args[0])?;
+                let b = self.eval(&args[1])?;
+                match (a, b) {
+                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) =>
+                        Ok(Some(ComptimeVal::Str(s1 + &s2))),
+                    (a, b) => Err(ComptimeError::NotEvaluable {
+                        reason: format!(
+                            "str_concat expects two strs, got {}/{}",
+                            a.type_name(), b.type_name()
+                        ),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "str_eq" => {
+                if args.len() != 2 { return Err(arity_err(2)); }
+                let a = self.eval(&args[0])?;
+                let b = self.eval(&args[1])?;
+                match (a, b) {
+                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) =>
+                        Ok(Some(ComptimeVal::Bool(s1 == s2))),
+                    (a, b) => Err(ComptimeError::NotEvaluable {
+                        reason: format!(
+                            "str_eq expects two strs, got {}/{}",
+                            a.type_name(), b.type_name()
+                        ),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "min_i64" => {
+                if args.len() != 2 { return Err(arity_err(2)); }
+                let a = self.eval(&args[0])?;
+                let b = self.eval(&args[1])?;
+                match (a, b) {
+                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) =>
+                        Ok(Some(ComptimeVal::Int(x.min(y)))),
+                    (a, b) => Err(ComptimeError::NotEvaluable {
+                        reason: format!(
+                            "min_i64 expects two i64s, got {}/{}",
+                            a.type_name(), b.type_name()
+                        ),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "max_i64" => {
+                if args.len() != 2 { return Err(arity_err(2)); }
+                let a = self.eval(&args[0])?;
+                let b = self.eval(&args[1])?;
+                match (a, b) {
+                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) =>
+                        Ok(Some(ComptimeVal::Int(x.max(y)))),
+                    (a, b) => Err(ComptimeError::NotEvaluable {
+                        reason: format!(
+                            "max_i64 expects two i64s, got {}/{}",
+                            a.type_name(), b.type_name()
+                        ),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "abs_i64" => {
+                if args.len() != 1 { return Err(arity_err(1)); }
+                match self.eval(&args[0])? {
+                    ComptimeVal::Int(n) => n
+                        .checked_abs()
+                        .map(|v| Some(ComptimeVal::Int(v)))
+                        .ok_or(ComptimeError::Overflow { span: Span::dummy() }),
+                    other => Err(ComptimeError::NotEvaluable {
+                        reason: format!("abs_i64 expects i64, got {}", other.type_name()),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            "i64_to_str" => {
+                if args.len() != 1 { return Err(arity_err(1)); }
+                match self.eval(&args[0])? {
+                    ComptimeVal::Int(n) => Ok(Some(ComptimeVal::Str(n.to_string()))),
+                    other => Err(ComptimeError::NotEvaluable {
+                        reason: format!("i64_to_str expects i64, got {}", other.type_name()),
+                        span: Span::dummy(),
+                    }),
+                }
+            }
+            _ => Ok(None),
         }
     }
 
@@ -298,6 +435,166 @@ mod tests {
         assert!(matches!(
             Evaluator::new(&fns).eval(&e),
             Err(ComptimeError::DivByZero { .. })
+        ));
+    }
+
+    #[test]
+    fn test_bool_and_false() {
+        let e = Expr::BinOp {
+            op: BinOp::And,
+            left: Box::new(Expr::Literal(Literal::Bool(true))),
+            right: Box::new(Expr::Literal(Literal::Bool(false))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Bool(false));
+    }
+
+    #[test]
+    fn test_bool_or_true() {
+        let e = Expr::BinOp {
+            op: BinOp::Or,
+            left: Box::new(Expr::Literal(Literal::Bool(false))),
+            right: Box::new(Expr::Literal(Literal::Bool(true))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Bool(true));
+    }
+
+    #[test]
+    fn test_not_bool() {
+        let e = Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Not,
+            operand: Box::new(Expr::Literal(Literal::Bool(true))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Bool(false));
+    }
+
+    #[test]
+    fn test_if_true_branch() {
+        let e = Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(true))),
+            then: Box::new(Expr::Literal(Literal::Int(10))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(20)))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(10));
+    }
+
+    #[test]
+    fn test_if_false_branch() {
+        let e = Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(false))),
+            then: Box::new(Expr::Literal(Literal::Int(10))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(20)))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(20));
+    }
+
+    #[test]
+    fn test_if_with_computed_cond() {
+        // if (3 < 5) { 1 } else { 2 } -> 1
+        let e = Expr::If {
+            cond: Box::new(Expr::BinOp {
+                op: BinOp::Lt,
+                left: Box::new(Expr::Literal(Literal::Int(3))),
+                right: Box::new(Expr::Literal(Literal::Int(5))),
+            }),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(1));
+    }
+
+    #[test]
+    fn test_str_len_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("str_len".to_string())),
+            args: vec![Expr::Literal(Literal::Str("hello".to_string()))],
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(5));
+    }
+
+    #[test]
+    fn test_str_concat_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("str_concat".to_string())),
+            args: vec![
+                Expr::Literal(Literal::Str("foo".to_string())),
+                Expr::Literal(Literal::Str("bar".to_string())),
+            ],
+        };
+        assert_eq!(eval(e), ComptimeVal::Str("foobar".to_string()));
+    }
+
+    #[test]
+    fn test_str_eq_builtin() {
+        let e_eq = Expr::Call {
+            callee: Box::new(Expr::Ident("str_eq".to_string())),
+            args: vec![
+                Expr::Literal(Literal::Str("abc".to_string())),
+                Expr::Literal(Literal::Str("abc".to_string())),
+            ],
+        };
+        assert_eq!(eval(e_eq), ComptimeVal::Bool(true));
+        let e_neq = Expr::Call {
+            callee: Box::new(Expr::Ident("str_eq".to_string())),
+            args: vec![
+                Expr::Literal(Literal::Str("abc".to_string())),
+                Expr::Literal(Literal::Str("xyz".to_string())),
+            ],
+        };
+        assert_eq!(eval(e_neq), ComptimeVal::Bool(false));
+    }
+
+    #[test]
+    fn test_min_i64_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("min_i64".to_string())),
+            args: vec![
+                Expr::Literal(Literal::Int(3)),
+                Expr::Literal(Literal::Int(7)),
+            ],
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(3));
+    }
+
+    #[test]
+    fn test_max_i64_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("max_i64".to_string())),
+            args: vec![
+                Expr::Literal(Literal::Int(3)),
+                Expr::Literal(Literal::Int(7)),
+            ],
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(7));
+    }
+
+    #[test]
+    fn test_abs_i64_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("abs_i64".to_string())),
+            args: vec![Expr::Literal(Literal::Int(-42))],
+        };
+        assert_eq!(eval(e), ComptimeVal::Int(42));
+    }
+
+    #[test]
+    fn test_i64_to_str_builtin() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("i64_to_str".to_string())),
+            args: vec![Expr::Literal(Literal::Int(123))],
+        };
+        assert_eq!(eval(e), ComptimeVal::Str("123".to_string()));
+    }
+
+    #[test]
+    fn test_builtin_arity_error() {
+        let e = Expr::Call {
+            callee: Box::new(Expr::Ident("str_len".to_string())),
+            args: vec![],
+        };
+        let fns = HashMap::new();
+        assert!(matches!(
+            Evaluator::new(&fns).eval(&e),
+            Err(ComptimeError::NotEvaluable { .. })
         ));
     }
 }

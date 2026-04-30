@@ -1,0 +1,5 @@
+type Point = { x: i64, y: i64 }
+fn get_z(p: Point) -> i64 {
+    p.z
+}
+fn main() -> i64 { 0 }

@@ -1,0 +1,121 @@
+// Phase 40: Struct-based algorithms — Range and Stats structs, overlap detection,
+//           and iterative statistics computation.
+
+// ── Range struct ─────────────────────────────────────────────────────────────
+
+type Range = { lo: i64, hi: i64 }
+
+fn make_range(lo: i64, hi: i64) -> Range {
+    Range { lo: lo, hi: hi }
+}
+
+fn range_contains(r: Range, n: i64) -> bool {
+    n >= r.lo && n < r.hi
+}
+
+fn range_length(r: Range) -> i64 {
+    if r.hi > r.lo { r.hi - r.lo } else { 0 }
+}
+
+fn range_overlap(a: Range, b: Range) -> bool {
+    a.lo < b.hi && b.lo < a.hi
+}
+
+fn test_range_contains() -> bool {
+    let r = make_range(5, 10)
+    range_contains(r, 5)  &&
+    range_contains(r, 9)  &&
+    !range_contains(r, 10) &&
+    !range_contains(r, 4)
+}
+
+fn test_range_length() -> bool {
+    range_length(make_range(0, 10)) == 10 &&
+    range_length(make_range(5, 5))  == 0  &&
+    range_length(make_range(3, 7))  == 4
+}
+
+fn test_range_overlap() -> bool {
+    // [0,5) and [3,8) overlap
+    range_overlap(make_range(0, 5), make_range(3, 8)) &&
+    // [0,5) and [5,10) do NOT overlap (exclusive hi)
+    !range_overlap(make_range(0, 5), make_range(5, 10)) &&
+    // [0,3) and [7,10) do not overlap
+    !range_overlap(make_range(0, 3), make_range(7, 10))
+}
+
+// ── Stats struct ──────────────────────────────────────────────────────────────
+
+type Stats = { min_val: i64, max_val: i64, sum: i64, count: i64 }
+
+fn stats_from_range(lo: i64, hi: i64) -> Stats {
+    let s = 0
+    let mn = lo
+    let mx = lo
+    let cnt = 0
+    for i in lo..hi {
+        s = s + i
+        if i < mn { mn = i }
+        if i > mx { mx = i }
+        cnt = cnt + 1
+    }
+    Stats { min_val: mn, max_val: mx, sum: s, count: cnt }
+}
+
+fn stats_mean_times_count(st: Stats) -> i64 {
+    // Return sum (= mean * count) to avoid float division
+    st.sum
+}
+
+fn test_stats_basic() -> bool {
+    let st = stats_from_range(1, 6)   // 1,2,3,4,5
+    st.min_val == 1 &&
+    st.max_val == 5 &&
+    st.sum     == 15 &&
+    st.count   == 5
+}
+
+fn test_stats_single() -> bool {
+    let st = stats_from_range(7, 8)   // just 7
+    st.min_val == 7 &&
+    st.max_val == 7 &&
+    st.sum     == 7 &&
+    st.count   == 1
+}
+
+fn test_stats_empty() -> bool {
+    // empty range: lo == hi, loop body never runs; count == 0
+    let st = stats_from_range(3, 3)
+    st.count == 0
+}
+
+// ── Nested struct: BoundingRange ──────────────────────────────────────────────
+
+type BoundingRange = { inner: Range, outer: Range }
+
+fn is_contained(br: BoundingRange) -> bool {
+    br.inner.lo >= br.outer.lo && br.inner.hi <= br.outer.hi
+}
+
+fn test_bounding_range() -> bool {
+    let br = BoundingRange {
+        inner: Range { lo: 3, hi: 7 },
+        outer: Range { lo: 0, hi: 10 },
+    }
+    is_contained(br) &&
+    !is_contained(BoundingRange {
+        inner: Range { lo: 8, hi: 12 },
+        outer: Range { lo: 0, hi: 10 },
+    })
+}
+
+fn main() -> i64 {
+    let s1 = if test_range_contains()   { 1 } else { 0 }
+    let s2 = if test_range_length()     { 1 } else { 0 }
+    let s3 = if test_range_overlap()    { 1 } else { 0 }
+    let s4 = if test_stats_basic()      { 1 } else { 0 }
+    let s5 = if test_stats_single()     { 1 } else { 0 }
+    let s6 = if test_stats_empty()      { 1 } else { 0 }
+    let s7 = if test_bounding_range()   { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

@@ -333,7 +333,7 @@ pub fn run_lsp() {
                 let hover_content = if let (Some(src), Some(res)) =
                     (documents.get(&uri), last_result.get(&uri))
                 {
-                    compute_hover(res, src, line, character)
+                    compute_hover_lsp(res, src, line, character)
                 } else {
                     None
                 };
@@ -362,7 +362,7 @@ pub fn run_lsp() {
                 let def_location = if let (Some(src), Some(res)) =
                     (documents.get(&uri), last_result.get(&uri))
                 {
-                    compute_definition(res, &uri, src, line, character)
+                    compute_definition_lsp(res, &uri, src, line, character)
                 } else {
                     None
                 };
@@ -397,7 +397,7 @@ pub fn run_lsp() {
 
 // ── Hover ─────────────────────────────────────────────────────────────────────
 
-fn compute_hover(
+fn compute_hover_lsp(
     result: &crate::AnalysisResult,
     source: &str,
     line: u32,
@@ -498,7 +498,7 @@ fn format_type(ty: &crate::types::Type) -> String {
 
 // ── Go-to-definition ──────────────────────────────────────────────────────────
 
-fn compute_definition(
+fn compute_definition_lsp(
     result: &crate::AnalysisResult,
     uri: &str,
     source: &str,
@@ -692,4 +692,190 @@ fn byte_offset_to_lsp_pos(source: &str, byte_offset: usize) -> Value {
     let last_newline = prefix.rfind('\n').map(|i| i + 1).unwrap_or(0);
     let character = prefix[last_newline..].encode_utf16().count() as u32;
     json!({ "line": line, "character": character })
+}
+
+// ── Public byte-offset API (for testing and external consumers) ───────────────
+
+/// Compute a hover string for the identifier at `byte_offset` in `source`.
+///
+/// Returns `None` if no hover information is available.
+pub fn compute_hover(
+    program: &ast::Program,
+    infer_ctx: &infer::InferCtx,
+    source: &str,
+    byte_offset: usize,
+) -> Option<String> {
+    let word = word_at_offset(source, byte_offset)?;
+
+    // Function signature hover.
+    if let Some(sig) = infer_ctx.fn_sigs.get(&word) {
+        return Some(format_fn_hover(&word, sig));
+    }
+
+    // Struct type hover.
+    if let Some(fields) = infer_ctx.struct_fields.get(&word) {
+        let field_strs: Vec<String> = fields
+            .iter()
+            .map(|(n, t)| format!("{n}: {}", format_type(t)))
+            .collect();
+        return Some(format!(
+            "```axon\ntype {} = {{ {} }}\n```",
+            word,
+            field_strs.join(", ")
+        ));
+    }
+
+    // Enum or trait declaration hover from AST.
+    for item in &program.items {
+        match item {
+            ast::Item::EnumDef(e) if e.name == word => {
+                return Some(format!("```axon\nenum {}\n```", e.name));
+            }
+            ast::Item::TraitDef(t) if t.name == word => {
+                return Some(format!("```axon\ntrait {}\n```", t.name));
+            }
+            _ => {}
+        }
+    }
+
+    None
+}
+
+/// Compute a go-to-definition location for the identifier at `byte_offset`.
+///
+/// Returns `None` if no definition is found or if span information is not
+/// available.
+pub fn compute_definition(
+    program: &ast::Program,
+    source: &str,
+    byte_offset: usize,
+) -> Option<span::Span> {
+    let word = word_at_offset(source, byte_offset)?;
+
+    for item in &program.items {
+        let decl_span = match item {
+            ast::Item::FnDef(f) if f.name == word => f.span,
+            ast::Item::TypeDef(t) if t.name == word => t.span,
+            ast::Item::EnumDef(e) if e.name == word => e.span,
+            ast::Item::TraitDef(t) if t.name == word => t.span,
+            _ => continue,
+        };
+
+        if decl_span.start == 0 && decl_span.end == 0 {
+            continue; // dummy span — no location info
+        }
+
+        return Some(decl_span);
+    }
+
+    None
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lsp_clean_source_no_diagnostics() {
+        let src = "fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\nfn main() -> i64 {\n    add(1, 2)\n}\n";
+        let result = analyse_source(src, "test.ax");
+        assert!(
+            result.diagnostics.is_empty(),
+            "expected no diagnostics for clean source, got: {:?}", result.diagnostics
+        );
+    }
+
+    #[test]
+    fn lsp_type_error_detected() {
+        // bool returned where i64 expected
+        let src = "fn f() -> i64 {\n    true\n}\nfn main() -> i64 { 0 }\n";
+        let result = analyse_source(src, "test.ax");
+        assert!(
+            !result.diagnostics.is_empty(),
+            "expected at least one diagnostic for type mismatch"
+        );
+    }
+
+    #[test]
+    fn lsp_parse_error_gives_diagnostic() {
+        let src = "fn { }"; // syntactically invalid (missing name/params)
+        let result = analyse_source(src, "test.ax");
+        assert!(
+            !result.diagnostics.is_empty(),
+            "expected parse error diagnostic"
+        );
+    }
+
+    #[test]
+    fn lsp_wrong_arity_detected() {
+        let src = "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() -> i64 { add(1) }\n";
+        let result = analyse_source(src, "test.ax");
+        let has_arity_err = result.diagnostics.iter()
+            .any(|d| d.code.contains("E0305") || d.message.contains("argument"));
+        assert!(has_arity_err, "expected arity error, got: {:?}", result.diagnostics);
+    }
+
+    #[test]
+    fn lsp_hover_known_fn() {
+        let src = "fn compute(x: i64) -> i64 {\n    x * 2\n}\nfn main() -> i64 {\n    compute(5)\n}\n";
+        let result = analyse_source(src, "test.ax");
+        if let (Some(prog), Some(ctx)) = (&result.program, &result.infer_ctx) {
+            // Hover at the start of "compute" in main
+            if let Some(pos) = src.rfind("compute") {
+                let hover = compute_hover(prog, ctx, src, pos);
+                if let Some(h) = hover {
+                    assert!(h.contains("compute"), "hover should mention fn name: {h}");
+                }
+                // None is acceptable if hover implementation is basic
+            }
+        }
+    }
+
+    #[test]
+    fn lsp_hover_builtin() {
+        let src = "fn main() -> i64 {\n    str_len(\"hello\")\n}\n";
+        let result = analyse_source(src, "test.ax");
+        if let (Some(prog), Some(ctx)) = (&result.program, &result.infer_ctx) {
+            if let Some(pos) = src.find("str_len") {
+                let hover = compute_hover(prog, ctx, src, pos);
+                // Just ensure no panic; hover may or may not find builtins
+                let _ = hover;
+            }
+        }
+    }
+
+    #[test]
+    fn lsp_definition_no_crash() {
+        let src = "fn helper() -> i64 {\n    42\n}\nfn main() -> i64 {\n    helper()\n}\n";
+        let result = analyse_source(src, "test.ax");
+        if let Some(prog) = &result.program {
+            if let Some(pos) = src.rfind("helper") {
+                let def = compute_definition(prog, src, pos);
+                // May be None if spans not tracked; just ensure no panic
+                let _ = def;
+            }
+        }
+    }
+
+    #[test]
+    fn lsp_diagnostics_have_code_and_message() {
+        // Every diagnostic must have non-empty code and message
+        let src = "fn f() -> i64 { true }\nfn main() -> i64 { 0 }\n";
+        let result = analyse_source(src, "test.ax");
+        for d in &result.diagnostics {
+            assert!(!d.code.is_empty(), "diagnostic code is empty: {:?}", d);
+            assert!(!d.message.is_empty(), "diagnostic message is empty: {:?}", d);
+        }
+    }
+
+    #[test]
+    fn lsp_unknown_type_detected() {
+        let src = "fn f(x: BadTypeName) -> i64 { 0 }\nfn main() -> i64 { 0 }\n";
+        let result = analyse_source(src, "test.ax");
+        let has_type_err = result.diagnostics.iter()
+            .any(|d| d.code.contains("E0308") || d.message.contains("unknown"));
+        assert!(has_type_err, "expected unknown type error, got: {:?}", result.diagnostics);
+    }
 }

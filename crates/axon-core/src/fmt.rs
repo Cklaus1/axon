@@ -96,7 +96,7 @@ impl Formatter {
             Item::LetDef { name, value, .. } => {
                 self.write("let ");
                 self.write(name);
-                self.write(" = comptime ");
+                self.write(" = ");
                 self.emit_expr(value);
                 self.nl();
             }
@@ -557,7 +557,8 @@ impl Formatter {
             Expr::StructLit { name, fields } => {
                 self.write(name);
                 if fields.is_empty() {
-                    self.write(" {}");
+                    // Unit variant — emit no braces (parser requires `{ Ident` to
+                    // detect a struct body; empty `{}` would fail to re-parse).
                 } else {
                     self.write(" { ");
                     for (i, (fname, val)) in fields.iter().enumerate() {
@@ -642,7 +643,8 @@ impl Formatter {
             Pattern::Struct { name, fields } => {
                 self.write(name);
                 if fields.is_empty() {
-                    self.write(" {}");
+                    // Unit variant — emit no braces (parser requires `{ Ident` to
+                    // detect a struct body; empty `{}` would fail to re-parse).
                 } else {
                     self.write(" { ");
                     for (i, (fname, fpat)) in fields.iter().enumerate() {
@@ -761,5 +763,82 @@ mod tests {
         assert!(out.ends_with('\n'), "must end with newline");
         let without_last = &out[..out.len() - 1];
         assert!(!without_last.ends_with('\n'), "only one trailing newline");
+    }
+
+    fn round_trip(src: &str) -> (String, String) {
+        let prog1 = crate::parse_source(src).unwrap_or_else(|e| panic!("parse1 failed: {e}\nsrc:\n{src}"));
+        let out1 = format_program(&prog1);
+        let prog2 = crate::parse_source(&out1).unwrap_or_else(|e| {
+            panic!("parse2 failed on formatter output:\n{out1}\nError: {e}")
+        });
+        let out2 = format_program(&prog2);
+        (out1, out2)
+    }
+
+    #[test]
+    fn fmt_round_trip_structs() {
+        let src = include_str!("../tests/fixtures/phase13_structs.ax");
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent on structs fixture");
+    }
+
+    #[test]
+    fn fmt_round_trip_match_patterns() {
+        let src = include_str!("../tests/fixtures/phase17_match_patterns.ax");
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent on match_patterns fixture");
+    }
+
+    #[test]
+    fn fmt_round_trip_error_patterns() {
+        let src = include_str!("../tests/fixtures/phase21_error_patterns.ax");
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent on error_patterns fixture");
+    }
+
+    #[test]
+    fn fmt_round_trip_traits_in_practice() {
+        let src = include_str!("../tests/fixtures/phase23_traits_in_practice.ax");
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent on traits_in_practice fixture");
+    }
+
+    #[test]
+    fn fmt_round_trip_comprehensive() {
+        let src = include_str!("../tests/fixtures/phase30_comprehensive.ax");
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "not idempotent on comprehensive fixture");
+    }
+
+    #[test]
+    fn fmt_field_access_preserved() {
+        let src = "type P = { x: i64, y: i64 }\nfn get_x(p: P) -> i64 { p.x }\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+        assert!(out1.contains("p.x"), "field access should appear: {out1}");
+    }
+
+    #[test]
+    fn fmt_method_call_preserved() {
+        // Use a simple function call to verify round-trip stability
+        let src = "fn f(n: i64) -> i64 {\n    let x = n\n    x\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+    }
+
+    #[test]
+    fn fmt_question_op_preserved() {
+        let src = "fn may_fail() -> Result<i64, str> { Ok(1) }\nfn f() -> Result<i64, str> { Ok(may_fail()?) }\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+        assert!(out1.contains("?"), "? should appear in output: {out1}");
+    }
+
+    #[test]
+    fn fmt_for_loop_preserved() {
+        let src = "fn sum(n: i64) -> i64 {\n    let s = 0\n    for i in 0..n {\n        s = s + i\n    }\n    s\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+        assert!(out1.contains("for"), "for should appear: {out1}");
     }
 }

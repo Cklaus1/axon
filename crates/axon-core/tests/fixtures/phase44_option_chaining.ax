@@ -1,0 +1,156 @@
+// Phase 44: Option chaining — find, map, flatmap (and_then), unwrap patterns.
+
+// ── Find first even in range ──────────────────────────────────────────────────
+
+fn find_first_even(start: i64, end: i64) -> Option<i64> {
+    let result = None
+    let found = false
+    for i in start..end {
+        if !found && i - (i / 2) * 2 == 0 {
+            result = Some(i)
+            found = true
+        }
+    }
+    result
+}
+
+fn test_find_first_even_found() -> bool {
+    match find_first_even(1, 10) {
+        Some(v) => v == 2,
+        None    => false,
+    }
+}
+
+fn test_find_first_even_start_even() -> bool {
+    match find_first_even(4, 10) {
+        Some(v) => v == 4,
+        None    => false,
+    }
+}
+
+fn test_find_first_even_none() -> bool {
+    // Only 1 element and it's odd
+    match find_first_even(1, 2) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+fn test_find_first_even_empty() -> bool {
+    match find_first_even(5, 5) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+// ── Option map (double the value) ────────────────────────────────────────────
+
+fn option_map_double(opt: Option<i64>) -> Option<i64> {
+    match opt {
+        Some(v) => Some(v * 2),
+        None    => None,
+    }
+}
+
+fn test_option_map_some() -> bool {
+    match option_map_double(Some(21)) {
+        Some(v) => v == 42,
+        None    => false,
+    }
+}
+
+fn test_option_map_none() -> bool {
+    match option_map_double(None) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+// ── Option and_then (flatmap) ─────────────────────────────────────────────────
+
+fn option_and_then(opt: Option<i64>, f: fn(i64) -> Option<i64>) -> Option<i64> {
+    match opt {
+        Some(v) => f(v),
+        None    => None,
+    }
+}
+
+fn safe_halve(n: i64) -> Option<i64> {
+    if n - (n / 2) * 2 == 0 {
+        Some(n / 2)
+    } else {
+        None
+    }
+}
+
+fn test_and_then_some() -> bool {
+    // 8 is even, safe_halve(8) = Some(4)
+    match option_and_then(Some(8), safe_halve) {
+        Some(v) => v == 4,
+        None    => false,
+    }
+}
+
+fn test_and_then_inner_none() -> bool {
+    // 7 is odd, safe_halve(7) = None
+    match option_and_then(Some(7), safe_halve) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+fn test_and_then_outer_none() -> bool {
+    match option_and_then(None, safe_halve) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+// ── Option unwrap-or ──────────────────────────────────────────────────────────
+
+fn option_or(opt: Option<i64>, default: i64) -> i64 {
+    match opt {
+        Some(v) => v,
+        None    => default,
+    }
+}
+
+fn test_option_or_some() -> bool {
+    option_or(Some(42), 0) == 42
+}
+
+fn test_option_or_none() -> bool {
+    option_or(None, 99) == 99
+}
+
+// ── Option chaining: find, double, halve ─────────────────────────────────────
+
+fn find_double_halve(start: i64, end: i64) -> Option<i64> {
+    let found = find_first_even(start, end)
+    let doubled = option_map_double(found)
+    option_and_then(doubled, safe_halve)
+}
+
+fn test_full_chain() -> bool {
+    // find_first_even(1,10)=2, double=4, halve=2
+    match find_double_halve(1, 10) {
+        Some(v) => v == 2,
+        None    => false,
+    }
+}
+
+fn main() -> i64 {
+    let s1  = if test_find_first_even_found()      { 1 } else { 0 }
+    let s2  = if test_find_first_even_start_even() { 1 } else { 0 }
+    let s3  = if test_find_first_even_none()       { 1 } else { 0 }
+    let s4  = if test_find_first_even_empty()      { 1 } else { 0 }
+    let s5  = if test_option_map_some()            { 1 } else { 0 }
+    let s6  = if test_option_map_none()            { 1 } else { 0 }
+    let s7  = if test_and_then_some()              { 1 } else { 0 }
+    let s8  = if test_and_then_inner_none()        { 1 } else { 0 }
+    let s9  = if test_and_then_outer_none()        { 1 } else { 0 }
+    let s10 = if test_option_or_some()             { 1 } else { 0 }
+    let s11 = if test_option_or_none()             { 1 } else { 0 }
+    let s12 = if test_full_chain()                 { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

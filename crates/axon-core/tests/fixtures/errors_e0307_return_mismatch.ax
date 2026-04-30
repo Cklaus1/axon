@@ -1,0 +1,4 @@
+fn should_be_int() -> i64 {
+    true
+}
+fn main() -> i64 { 0 }

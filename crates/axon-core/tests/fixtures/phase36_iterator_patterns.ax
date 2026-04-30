@@ -1,0 +1,112 @@
+// Phase 36: Iterator patterns — higher-order functions over ranges.
+//           apply_and_sum, count_matching, sum_range using fn parameters.
+
+// ── Simple range sum ─────────────────────────────────────────────────────────
+
+fn sum_range(start: i64, end: i64) -> i64 {
+    let total = 0
+    for i in start..end {
+        total = total + i
+    }
+    total
+}
+
+fn test_sum_range() -> bool {
+    // 1+2+3+4 = 10
+    sum_range(1, 5) == 10 &&
+    sum_range(0, 1) == 0  &&
+    sum_range(5, 5) == 0
+}
+
+// ── Apply function to each index and sum results ─────────────────────────────
+
+fn apply_and_sum(f: fn(i64) -> i64, start: i64, end: i64) -> i64 {
+    let total = 0
+    for i in start..end {
+        total = total + f(i)
+    }
+    total
+}
+
+fn double(n: i64) -> i64 {
+    n * 2
+}
+
+fn square(n: i64) -> i64 {
+    n * n
+}
+
+fn test_apply_sum_double() -> bool {
+    // double(0)+double(1)+double(2)+double(3)+double(4) = 0+2+4+6+8 = 20
+    apply_and_sum(double, 0, 5) == 20
+}
+
+fn test_apply_sum_square() -> bool {
+    // 0+1+4+9+16 = 30
+    apply_and_sum(square, 0, 5) == 30
+}
+
+fn test_apply_sum_lambda() -> bool {
+    // (i+1) for i in 0..4 = 1+2+3+4 = 10
+    apply_and_sum((i) => i + 1, 0, 4) == 10
+}
+
+// ── Count elements matching a predicate ──────────────────────────────────────
+
+fn count_matching(pred: fn(i64) -> bool, start: i64, end: i64) -> i64 {
+    let count = 0
+    for i in start..end {
+        if pred(i) { count = count + 1 }
+    }
+    count
+}
+
+fn is_even(n: i64) -> bool {
+    n - (n / 2) * 2 == 0
+}
+
+fn is_positive(n: i64) -> bool {
+    n > 0
+}
+
+fn test_count_even() -> bool {
+    // Even numbers in 0..10: 0,2,4,6,8 = 5
+    count_matching(is_even, 0, 10) == 5
+}
+
+fn test_count_positive() -> bool {
+    // Positive in -2..4: 1,2,3 = 3
+    count_matching(is_positive, -2, 4) == 3
+}
+
+fn test_count_with_lambda() -> bool {
+    // Multiples of 3 in 0..12: 0,3,6,9 = 4
+    count_matching((x) => x - (x / 3) * 3 == 0, 0, 12) == 4
+}
+
+// ── Apply + count composition ─────────────────────────────────────────────────
+
+fn sum_if(pred: fn(i64) -> bool, start: i64, end: i64) -> i64 {
+    let total = 0
+    for i in start..end {
+        if pred(i) { total = total + i }
+    }
+    total
+}
+
+fn test_sum_if_even() -> bool {
+    // Even numbers in 1..9: 2+4+6+8 = 20
+    sum_if(is_even, 1, 9) == 20
+}
+
+fn main() -> i64 {
+    let s1 = if test_sum_range()         { 1 } else { 0 }
+    let s2 = if test_apply_sum_double()  { 1 } else { 0 }
+    let s3 = if test_apply_sum_square()  { 1 } else { 0 }
+    let s4 = if test_apply_sum_lambda()  { 1 } else { 0 }
+    let s5 = if test_count_even()        { 1 } else { 0 }
+    let s6 = if test_count_positive()    { 1 } else { 0 }
+    let s7 = if test_count_with_lambda() { 1 } else { 0 }
+    let s8 = if test_sum_if_even()       { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

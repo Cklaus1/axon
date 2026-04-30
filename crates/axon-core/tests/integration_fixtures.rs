@@ -755,3 +755,201 @@ fn phase35_nested_types_fixture_parses_cleanly() {
         errors.join("\n")
     );
 }
+
+// ── Phase 36-45: New fixture tests ───────────────────────────────────────────
+
+/// Verify that Phase 36 iterator patterns (sum_range, apply_and_sum,
+/// count_matching with higher-order functions) parse and type-check without errors.
+#[test]
+fn phase36_iterator_patterns_fixture_parses_cleanly() {
+    let errors = check_fixture("phase36_iterator_patterns.ax");
+    assert!(
+        errors.is_empty(),
+        "phase36_iterator_patterns.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 37 error chaining (deep Result propagation with ?,
+/// parse-validate-compute pipelines) parses and type-checks without errors.
+#[test]
+fn phase37_error_chaining_fixture_parses_cleanly() {
+    let errors = check_fixture("phase37_error_chaining.ax");
+    assert!(
+        errors.is_empty(),
+        "phase37_error_chaining.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 38 string processing (char_at, count_char, str_reverse,
+/// palindrome check, digit counting) parses and type-checks without errors.
+#[test]
+fn phase38_string_processing_fixture_parses_cleanly() {
+    let errors = check_fixture("phase38_string_processing.ax");
+    assert!(
+        errors.is_empty(),
+        "phase38_string_processing.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 39 math algorithms (GCD, LCM, digit extraction,
+/// perfect square, integer exponentiation) parse and type-check without errors.
+#[test]
+fn phase39_math_algorithms_fixture_parses_cleanly() {
+    let errors = check_fixture("phase39_math_algorithms.ax");
+    assert!(
+        errors.is_empty(),
+        "phase39_math_algorithms.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 40 struct algorithms (Range/Stats structs, overlap
+/// detection, iterative statistics) parse and type-check without errors.
+#[test]
+fn phase40_struct_algorithms_fixture_parses_cleanly() {
+    let errors = check_fixture("phase40_struct_algorithms.ax");
+    assert!(
+        errors.is_empty(),
+        "phase40_struct_algorithms.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 41 bit operations (is_power_of_two, count_set_bits,
+/// get/set/clear/toggle bit via arithmetic) parse and type-check without errors.
+#[test]
+fn phase41_bit_operations_fixture_parses_cleanly() {
+    let errors = check_fixture("phase41_bit_operations.ax");
+    assert!(
+        errors.is_empty(),
+        "phase41_bit_operations.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 42 sorting checks (min3/max3/median3, is_sorted3,
+/// clamp_range, sort3 struct, distance) parse and type-check without errors.
+#[test]
+fn phase42_sorting_checks_fixture_parses_cleanly() {
+    let errors = check_fixture("phase42_sorting_checks.ax");
+    assert!(
+        errors.is_empty(),
+        "phase42_sorting_checks.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 43 advanced match (Shape enum with struct payloads,
+/// match guards, nested match, validate_shape pipeline) parses and type-checks
+/// without errors.
+#[test]
+fn phase43_advanced_match_fixture_parses_cleanly() {
+    let errors = check_fixture("phase43_advanced_match.ax");
+    assert!(
+        errors.is_empty(),
+        "phase43_advanced_match.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 44 option chaining (find_first_even, option_map_double,
+/// option_and_then/flatmap, option_or/unwrap) parses and type-checks without errors.
+#[test]
+fn phase44_option_chaining_fixture_parses_cleanly() {
+    let errors = check_fixture("phase44_option_chaining.ax");
+    assert!(
+        errors.is_empty(),
+        "phase44_option_chaining.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Verify that Phase 45 comprehensive v2 (Sample struct, Scorable trait,
+/// parse_sample, best_sample, aggregate, string formatting) parses and
+/// type-checks without errors.
+#[test]
+fn phase45_comprehensive_v2_fixture_parses_cleanly() {
+    let errors = check_fixture("phase45_comprehensive_v2.ax");
+    assert!(
+        errors.is_empty(),
+        "phase45_comprehensive_v2.ax should have no errors, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+// ── Error code detection tests ────────────────────────────────────────────────
+
+#[test]
+fn error_e0301_option_not_unwrapped_detected() {
+    let errors = check_fixture("errors_e0301_option_not_unwrapped.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0301")),
+        "expected E0301 (option used without unwrap), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0302_result_ignored_detected() {
+    let errors = check_fixture("errors_e0302_result_ignored.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0302")),
+        "expected E0302 (result ignored), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0303_question_in_non_result_detected() {
+    let errors = check_fixture("errors_e0303_question_in_non_result.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0303")),
+        "expected E0303 (? in non-result fn), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0305_wrong_arity_detected() {
+    let errors = check_fixture("errors_e0305_wrong_arity.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0305")),
+        "expected E0305 (wrong arg count), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0306_wrong_type_detected() {
+    let errors = check_fixture("errors_e0306_wrong_type.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0306")),
+        "expected E0306 (wrong arg type), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0307_return_mismatch_detected() {
+    let errors = check_fixture("errors_e0307_return_mismatch.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0307") || e.contains("E0102")),
+        "expected E0307 or E0102 (return type mismatch), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0308_unknown_type_detected() {
+    let errors = check_fixture("errors_e0308_unknown_type.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0308")),
+        "expected E0308 (unknown type), got: {:?}", errors
+    );
+}
+
+#[test]
+fn error_e0309_bad_field_detected() {
+    let errors = check_fixture("errors_e0309_bad_field.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E0309") || e.contains("E0401")),
+        "expected E0309 or E0401 (bad field access), got: {:?}", errors
+    );
+}

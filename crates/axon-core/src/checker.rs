@@ -932,8 +932,9 @@ impl CheckCtx {
                 CheckError::new(
                     E0305,
                     format!(
-                        "fn {name} expects {} args, got {}",
+                        "fn `{name}` expected {} argument{}, got {}",
                         sig.params.len(),
+                        if sig.params.len() == 1 { "" } else { "s" },
                         args.len()
                     ),
                 )
@@ -1268,8 +1269,9 @@ impl CheckCtx {
                 .expected(ret_ty.display())
                 .found(val_ty.display())
                 .fix(format!(
-                    "ensure the expression evaluates to {}",
-                    ret_ty.display()
+                    "expected {} but found {}; adjust the return expression",
+                    ret_ty.display(),
+                    val_ty.display()
                 )),
             );
         }

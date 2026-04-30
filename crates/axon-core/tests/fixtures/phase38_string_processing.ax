@@ -1,0 +1,131 @@
+// Phase 38: String processing — char_at iteration, ASCII operations,
+//           building strings via str_repeat and str_concat patterns.
+
+// ── Count occurrences of a character (by ASCII code) ─────────────────────────
+
+fn count_char(s: str, target: i64) -> i64 {
+    let count = 0
+    for i in 0..str_len(s) {
+        if char_at(s, i) == target {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn test_count_char() -> bool {
+    // 'l' = 108; "hello world" has 3 l's
+    count_char("hello world", 108) == 3 &&
+    // 'o' = 111; "hello world" has 2 o's
+    count_char("hello world", 111) == 2 &&
+    // 'z' = 122; not in string
+    count_char("hello world", 122) == 0
+}
+
+// ── Uppercase check ───────────────────────────────────────────────────────────
+
+fn is_uppercase_char(c: i64) -> bool {
+    c >= 65 && c <= 90
+}
+
+fn test_is_uppercase() -> bool {
+    is_uppercase_char(65)  &&   // 'A'
+    is_uppercase_char(90)  &&   // 'Z'
+    !is_uppercase_char(97) &&   // 'a'
+    !is_uppercase_char(48)      // '0'
+}
+
+fn count_uppercase(s: str) -> i64 {
+    let count = 0
+    for i in 0..str_len(s) {
+        if is_uppercase_char(char_at(s, i)) {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn test_count_uppercase() -> bool {
+    count_uppercase("Hello World") == 2 &&
+    count_uppercase("ALL CAPS")   == 8 &&
+    count_uppercase("lowercase")  == 0
+}
+
+// ── String reversal via char_at ───────────────────────────────────────────────
+
+fn str_reverse(s: str) -> str {
+    let n = str_len(s)
+    let result = ""
+    for i in 0..n {
+        let c = char_at(s, n - 1 - i)
+        // Build a one-character string by slicing, then concat
+        let cs = str_slice(s, n - 1 - i, n - i)
+        result = axon_concat(result, cs)
+    }
+    result
+}
+
+fn test_str_reverse() -> bool {
+    str_eq(str_reverse("hello"), "olleh") &&
+    str_eq(str_reverse("abc"),   "cba")   &&
+    str_eq(str_reverse("a"),     "a")     &&
+    str_eq(str_reverse(""),      "")
+}
+
+// ── Check if string is a palindrome ──────────────────────────────────────────
+
+fn is_palindrome(s: str) -> bool {
+    let n = str_len(s)
+    let ok = true
+    for i in 0..(n / 2) {
+        if char_at(s, i) != char_at(s, n - 1 - i) {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn test_palindrome() -> bool {
+    is_palindrome("racecar") &&
+    is_palindrome("abba")    &&
+    !is_palindrome("hello")  &&
+    is_palindrome("a")
+}
+
+// ── Count digits in a string ──────────────────────────────────────────────────
+
+fn count_digits(s: str) -> i64 {
+    let count = 0
+    for i in 0..str_len(s) {
+        let c = char_at(s, i)
+        if c >= 48 && c <= 57 {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn test_count_digits() -> bool {
+    count_digits("abc123def456") == 6 &&
+    count_digits("no digits")   == 0  &&
+    count_digits("007")         == 3
+}
+
+// ── Build repeated pattern string ────────────────────────────────────────────
+
+fn test_str_repeat_builtin() -> bool {
+    str_eq(str_repeat("ab", 3), "ababab") &&
+    str_eq(str_repeat("x", 5), "xxxxx")   &&
+    str_eq(str_repeat("hi", 0), "")
+}
+
+fn main() -> i64 {
+    let s1 = if test_count_char()       { 1 } else { 0 }
+    let s2 = if test_is_uppercase()     { 1 } else { 0 }
+    let s3 = if test_count_uppercase()  { 1 } else { 0 }
+    let s4 = if test_str_reverse()      { 1 } else { 0 }
+    let s5 = if test_palindrome()       { 1 } else { 0 }
+    let s6 = if test_count_digits()     { 1 } else { 0 }
+    let s7 = if test_str_repeat_builtin() { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

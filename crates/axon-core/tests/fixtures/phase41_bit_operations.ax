@@ -1,0 +1,136 @@
+// Phase 41: Bit operations — implemented via arithmetic since Axon exposes
+//           no bitwise builtins directly.  Uses pow_i64 for bit masks.
+
+// ── Is power of two ───────────────────────────────────────────────────────────
+// A positive number n is a power of two iff exactly one bit is set.
+// We detect this by checking that n is positive and n & (n-1) == 0.
+// Since no bitwise AND exists, we use: n % (n-1+1) trick won't work for 1.
+// Instead, use: check that n == 2^k for some k by repeated halving.
+
+fn is_power_of_two(n: i64) -> bool {
+    if n <= 0 { return false }
+    let x = n
+    while x > 1 {
+        if x - (x / 2) * 2 != 0 {
+            return false
+        }
+        x = x / 2
+    }
+    true
+}
+
+fn test_is_power_of_two() -> bool {
+    is_power_of_two(1)   &&
+    is_power_of_two(2)   &&
+    is_power_of_two(4)   &&
+    is_power_of_two(16)  &&
+    is_power_of_two(64)  &&
+    !is_power_of_two(0)  &&
+    !is_power_of_two(3)  &&
+    !is_power_of_two(6)  &&
+    !is_power_of_two(-4)
+}
+
+// ── Count set bits (popcount) ─────────────────────────────────────────────────
+// For each bit position, check if that bit is 1 using:
+//   (n / 2^pos) % 2 == 1
+
+fn get_bit(n: i64, pos: i64) -> i64 {
+    let mask = pow_i64(2, pos)
+    (n / mask) - (n / mask / 2) * 2
+}
+
+fn count_set_bits(n: i64) -> i64 {
+    if n <= 0 { return 0 }
+    let x = n
+    let count = 0
+    while x > 0 {
+        count = count + x - (x / 2) * 2
+        x = x / 2
+    }
+    count
+}
+
+fn test_count_set_bits() -> bool {
+    count_set_bits(0)  == 0 &&   // 0b0000 = 0 bits
+    count_set_bits(1)  == 1 &&   // 0b0001 = 1 bit
+    count_set_bits(7)  == 3 &&   // 0b0111 = 3 bits
+    count_set_bits(8)  == 1 &&   // 0b1000 = 1 bit
+    count_set_bits(15) == 4      // 0b1111 = 4 bits
+}
+
+// ── Get bit at position ───────────────────────────────────────────────────────
+
+fn test_get_bit() -> bool {
+    // 6 = 0b110
+    get_bit(6, 0) == 0 &&   // bit 0 = 0
+    get_bit(6, 1) == 1 &&   // bit 1 = 1
+    get_bit(6, 2) == 1 &&   // bit 2 = 1
+    get_bit(6, 3) == 0      // bit 3 = 0
+}
+
+// ── Set bit at position ───────────────────────────────────────────────────────
+// set_bit(n, pos): ensure bit pos is 1
+// If the bit is already 1, no change; if 0, add 2^pos
+
+fn set_bit(n: i64, pos: i64) -> i64 {
+    let mask = pow_i64(2, pos)
+    let current = get_bit(n, pos)
+    if current == 0 {
+        n + mask
+    } else {
+        n
+    }
+}
+
+fn test_set_bit() -> bool {
+    set_bit(4, 0) == 5 &&   // 100 | 001 = 101 = 5
+    set_bit(4, 2) == 4 &&   // bit 2 already set
+    set_bit(0, 3) == 8      // 0 | 1000 = 8
+}
+
+// ── Clear bit at position ─────────────────────────────────────────────────────
+// clear_bit(n, pos): ensure bit pos is 0
+// If the bit is 1, subtract 2^pos; if 0, no change
+
+fn clear_bit(n: i64, pos: i64) -> i64 {
+    let mask = pow_i64(2, pos)
+    let current = get_bit(n, pos)
+    if current == 1 {
+        n - mask
+    } else {
+        n
+    }
+}
+
+fn test_clear_bit() -> bool {
+    clear_bit(7, 0) == 6 &&   // 111 -> 110
+    clear_bit(7, 1) == 5 &&   // 111 -> 101
+    clear_bit(4, 0) == 4      // bit 0 already clear
+}
+
+// ── Toggle bit ────────────────────────────────────────────────────────────────
+
+fn toggle_bit(n: i64, pos: i64) -> i64 {
+    if get_bit(n, pos) == 1 {
+        clear_bit(n, pos)
+    } else {
+        set_bit(n, pos)
+    }
+}
+
+fn test_toggle_bit() -> bool {
+    toggle_bit(5, 0) == 4 &&   // 101 -> 100
+    toggle_bit(4, 0) == 5 &&   // 100 -> 101
+    toggle_bit(0, 3) == 8      // 0 -> 1000
+}
+
+fn main() -> i64 {
+    let s1 = if test_is_power_of_two() { 1 } else { 0 }
+    let s2 = if test_count_set_bits()  { 1 } else { 0 }
+    let s3 = if test_get_bit()         { 1 } else { 0 }
+    let s4 = if test_set_bit()         { 1 } else { 0 }
+    let s5 = if test_clear_bit()       { 1 } else { 0 }
+    let s6 = if test_toggle_bit()      { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

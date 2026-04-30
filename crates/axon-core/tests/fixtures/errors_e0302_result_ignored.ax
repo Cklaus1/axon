@@ -1,0 +1,5 @@
+fn may_fail() -> Result<i64, str> { Ok(42) }
+fn main() -> i64 {
+    may_fail()
+    0
+}

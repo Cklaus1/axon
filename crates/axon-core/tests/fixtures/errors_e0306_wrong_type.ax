@@ -1,0 +1,4 @@
+fn takes_int(n: i64) -> i64 { n }
+fn main() -> i64 {
+    takes_int("hello")
+}

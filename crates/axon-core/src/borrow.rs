@@ -426,4 +426,119 @@ mod tests {
         let errs = check_fn(&fndef, types);
         assert!(errs.is_empty(), "Copy type should not be moved: {errs:?}");
     }
+
+    // ── Negative tests: clean programs should not raise borrow errors ────────
+
+    #[test]
+    fn test_clean_let_no_errors() {
+        // let x = 42; x + 1  — i64 Copy, no moves
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Let {
+                name: "x".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Int(42))),
+            }),
+            Stmt::simple(Expr::BinOp {
+                op: crate::ast::BinOp::Add,
+                left: Box::new(Expr::Ident("x".into())),
+                right: Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let errs = check_fn(&fndef, HashMap::new());
+        assert!(errs.is_empty(), "Clean let-binding should produce no errors: {errs:?}");
+    }
+
+    #[test]
+    fn test_own_binding_then_consume_no_error() {
+        // own s = "hello"; own b = s  — s moved into b exactly once, no use after
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Own {
+                name: "s".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
+            }),
+            Stmt::simple(Expr::Own {
+                name: "b".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("s".into(), Type::Str);
+        let errs = check_fn(&fndef, types);
+        assert!(errs.is_empty(), "Single move should not raise an error: {errs:?}");
+    }
+
+    #[test]
+    fn test_ref_binding_no_error() {
+        // own s = "hello"; ref r = s  — borrow without move
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Own {
+                name: "s".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
+            }),
+            Stmt::simple(Expr::RefBind {
+                name: "r".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("s".into(), Type::Str);
+        let errs = check_fn(&fndef, types);
+        assert!(errs.is_empty(), "ref-binding alone should produce no errors: {errs:?}");
+    }
+
+    #[test]
+    fn test_move_while_borrowed() {
+        // own s = "hello"; ref r = s; own b = s  — moving while borrowed → E0602
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Own {
+                name: "s".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
+            }),
+            Stmt::simple(Expr::RefBind {
+                name: "r".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+            Stmt::simple(Expr::Own {
+                name: "b".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("s".into(), Type::Str);
+        let errs = check_fn(&fndef, types);
+        assert!(
+            errs.iter().any(|e| matches!(e, BorrowError::MoveBorrowed { .. })),
+            "expected E0602 MoveBorrowed, got {errs:?}",
+        );
+    }
+
+    #[test]
+    fn test_copy_used_repeatedly_no_error() {
+        // let a = 1; a; a; a  — i64 is Copy, multiple uses fine
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Let {
+                name: "a".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
+            }),
+            Stmt::simple(Expr::Ident("a".into())),
+            Stmt::simple(Expr::Ident("a".into())),
+            Stmt::simple(Expr::Ident("a".into())),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("a".into(), Type::I64);
+        let errs = check_fn(&fndef, types);
+        assert!(errs.is_empty(), "Copy type can be reused: {errs:?}");
+    }
+
+    #[test]
+    fn test_empty_function_no_error() {
+        // fn test() {}  — empty body, no errors
+        let fndef = make_fn(Expr::Block(vec![]));
+        let errs = check_fn(&fndef, HashMap::new());
+        assert!(errs.is_empty(), "Empty function should produce no errors: {errs:?}");
+    }
 }

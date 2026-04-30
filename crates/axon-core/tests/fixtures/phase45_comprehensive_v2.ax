@@ -1,0 +1,155 @@
+// Phase 45: Comprehensive v2 — mini statistics calculator combining structs,
+//           traits, Result error handling, string operations, and math builtins.
+
+// ── Data model ────────────────────────────────────────────────────────────────
+
+type Sample = { value: i64, weight: i64 }
+
+fn weighted_sum(s: Sample) -> i64 {
+    s.value * s.weight
+}
+
+fn test_weighted_sum() -> bool {
+    let s = Sample { value: 7, weight: 3 }
+    weighted_sum(s) == 21
+}
+
+// ── Parse a Sample from strings ───────────────────────────────────────────────
+
+fn parse_sample(v_str: str, w_str: str) -> Result<Sample, str> {
+    let v = parse_int(v_str)?
+    let w = parse_int(w_str)?
+    if w <= 0 {
+        Err("weight must be positive")
+    } else {
+        Ok(Sample { value: v, weight: w })
+    }
+}
+
+fn test_parse_sample_ok() -> bool {
+    match parse_sample("10", "2") {
+        Ok(s)  => s.value == 10 && s.weight == 2,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_sample_err_weight() -> bool {
+    match parse_sample("5", "0") {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "weight must be positive"),
+    }
+}
+
+fn test_parse_sample_err_bad_value() -> bool {
+    match parse_sample("not_a_number", "1") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Trait: Scorable ───────────────────────────────────────────────────────────
+
+trait Scorable {
+    fn score(self) -> i64
+}
+
+impl Scorable for Sample {
+    fn score(self: Sample) -> i64 { weighted_sum(self) }
+}
+
+fn test_scorable_trait() -> bool {
+    let s = Sample { value: 5, weight: 4 }
+    s.score() == 20
+}
+
+// ── Best sample selection ─────────────────────────────────────────────────────
+
+fn best_sample(a: Sample, b: Sample) -> Sample {
+    if weighted_sum(a) >= weighted_sum(b) { a } else { b }
+}
+
+fn test_best_sample() -> bool {
+    let a = Sample { value: 10, weight: 1 }  // score 10
+    let b = Sample { value: 3, weight: 5 }   // score 15
+    let winner = best_sample(a, b)
+    winner.value == 3 && winner.weight == 5
+}
+
+fn test_best_sample_tie() -> bool {
+    let a = Sample { value: 6, weight: 2 }   // score 12
+    let b = Sample { value: 4, weight: 3 }   // score 12
+    let winner = best_sample(a, b)
+    // tie: a wins (>=)
+    winner.value == 6 && winner.weight == 2
+}
+
+// ── Aggregate stats over a range of synthetic samples ────────────────────────
+
+type Aggregate = { total_score: i64, count: i64, max_score: i64 }
+
+fn aggregate_range(lo: i64, hi: i64) -> Aggregate {
+    // Synthetic samples: value=i, weight=(i mod 5)+1
+    let total = 0
+    let cnt = 0
+    let mx = 0
+    for i in lo..hi {
+        let w = i - (i / 5) * 5 + 1
+        let sc = i * w
+        total = total + sc
+        if sc > mx { mx = sc }
+        cnt = cnt + 1
+    }
+    Aggregate { total_score: total, count: cnt, max_score: mx }
+}
+
+fn test_aggregate_basic() -> bool {
+    // i=1: w=2, sc=2; i=2: w=3, sc=6; i=3: w=4, sc=12
+    let ag = aggregate_range(1, 4)
+    ag.count == 3 && ag.total_score == 20 && ag.max_score == 12
+}
+
+// ── String formatting of results ──────────────────────────────────────────────
+
+fn sample_summary(s: Sample) -> str {
+    let score_str = to_str(weighted_sum(s))
+    axon_concat("score=", score_str)
+}
+
+fn test_sample_summary() -> bool {
+    let s = Sample { value: 7, weight: 3 }
+    str_eq(sample_summary(s), "score=21")
+}
+
+// ── Error recovery pattern ────────────────────────────────────────────────────
+
+fn parse_sample_or_default(v_str: str, w_str: str) -> Sample {
+    match parse_sample(v_str, w_str) {
+        Ok(s)  => s,
+        Err(_) => Sample { value: 0, weight: 1 },
+    }
+}
+
+fn test_parse_or_default_ok() -> bool {
+    let s = parse_sample_or_default("8", "2")
+    s.value == 8 && s.weight == 2
+}
+
+fn test_parse_or_default_err() -> bool {
+    let s = parse_sample_or_default("bad", "1")
+    s.value == 0 && s.weight == 1
+}
+
+fn main() -> i64 {
+    let s1  = if test_weighted_sum()             { 1 } else { 0 }
+    let s2  = if test_parse_sample_ok()          { 1 } else { 0 }
+    let s3  = if test_parse_sample_err_weight()  { 1 } else { 0 }
+    let s4  = if test_parse_sample_err_bad_value(){ 1 } else { 0 }
+    let s5  = if test_scorable_trait()           { 1 } else { 0 }
+    let s6  = if test_best_sample()              { 1 } else { 0 }
+    let s7  = if test_best_sample_tie()          { 1 } else { 0 }
+    let s8  = if test_aggregate_basic()          { 1 } else { 0 }
+    let s9  = if test_sample_summary()           { 1 } else { 0 }
+    let s10 = if test_parse_or_default_ok()      { 1 } else { 0 }
+    let s11 = if test_parse_or_default_err()     { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11
+}

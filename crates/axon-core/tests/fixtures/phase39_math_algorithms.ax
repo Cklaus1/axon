@@ -1,0 +1,123 @@
+// Phase 39: Math algorithms — GCD, LCM, digit manipulation, number theory.
+//           Uses recursive GCD (Euclidean), iterative digit extraction.
+
+// ── GCD (recursive Euclidean) ─────────────────────────────────────────────────
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 { a }
+    else { gcd(b, a - (a / b) * b) }
+}
+
+fn test_gcd() -> bool {
+    gcd(12, 8)   == 4  &&
+    gcd(100, 75) == 25 &&
+    gcd(7, 13)   == 1  &&
+    gcd(0, 5)    == 5  &&
+    gcd(5, 0)    == 5
+}
+
+// ── LCM (via GCD) ─────────────────────────────────────────────────────────────
+
+fn lcm(a: i64, b: i64) -> i64 {
+    let g = gcd(a, b)
+    if g == 0 { 0 } else { (a / g) * b }
+}
+
+fn test_lcm() -> bool {
+    lcm(4, 6)   == 12 &&
+    lcm(7, 13)  == 91 &&
+    lcm(12, 18) == 36 &&
+    lcm(0, 5)   == 0
+}
+
+// ── Sum of digits ─────────────────────────────────────────────────────────────
+
+fn sum_digits(n: i64) -> i64 {
+    let x = abs_i64(n)
+    let total = 0
+    while x > 0 {
+        total = total + x - (x / 10) * 10
+        x = x / 10
+    }
+    total
+}
+
+fn test_sum_digits() -> bool {
+    sum_digits(123)   == 6  &&
+    sum_digits(9999)  == 36 &&
+    sum_digits(100)   == 1  &&
+    sum_digits(0)     == 0
+}
+
+// ── Digit count ───────────────────────────────────────────────────────────────
+
+fn digit_count(n: i64) -> i64 {
+    if n == 0 { return 1 }
+    let x = abs_i64(n)
+    let count = 0
+    while x > 0 {
+        count = count + 1
+        x = x / 10
+    }
+    count
+}
+
+fn test_digit_count() -> bool {
+    digit_count(0)      == 1 &&
+    digit_count(5)      == 1 &&
+    digit_count(42)     == 2 &&
+    digit_count(1000)   == 4 &&
+    digit_count(-999)   == 3
+}
+
+// ── Integer power ─────────────────────────────────────────────────────────────
+
+fn ipow(base: i64, exp: i64) -> i64 {
+    let result = 1
+    let b = base
+    let e = exp
+    while e > 0 {
+        if e - (e / 2) * 2 == 1 {
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    result
+}
+
+fn test_ipow() -> bool {
+    ipow(2, 10) == 1024 &&
+    ipow(3, 4)  == 81   &&
+    ipow(5, 0)  == 1    &&
+    ipow(1, 100) == 1
+}
+
+// ── Is perfect square ─────────────────────────────────────────────────────────
+
+fn is_perfect_square(n: i64) -> bool {
+    if n < 0 { return false }
+    let root = f64_to_i64(sqrt_f64(i64_to_f64(n)))
+    root * root == n
+}
+
+fn test_perfect_square() -> bool {
+    is_perfect_square(0)   &&
+    is_perfect_square(1)   &&
+    is_perfect_square(4)   &&
+    is_perfect_square(25)  &&
+    is_perfect_square(100) &&
+    !is_perfect_square(2)  &&
+    !is_perfect_square(26) &&
+    !is_perfect_square(-4)
+}
+
+fn main() -> i64 {
+    let s1 = if test_gcd()            { 1 } else { 0 }
+    let s2 = if test_lcm()            { 1 } else { 0 }
+    let s3 = if test_sum_digits()     { 1 } else { 0 }
+    let s4 = if test_digit_count()    { 1 } else { 0 }
+    let s5 = if test_ipow()           { 1 } else { 0 }
+    let s6 = if test_perfect_square() { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

@@ -1,0 +1,140 @@
+// Phase 37: Error chaining — deep Result propagation with ? operator,
+//           parse-validate-compute pipelines, and multi-step error recovery.
+
+// ── Parse and validate positive ──────────────────────────────────────────────
+
+fn parse_positive(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?
+    if n <= 0 {
+        Err("expected positive integer")
+    } else {
+        Ok(n)
+    }
+}
+
+fn test_parse_positive_ok() -> bool {
+    match parse_positive("42") {
+        Ok(n)  => n == 42,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_positive_err_zero() -> bool {
+    match parse_positive("0") {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "expected positive integer"),
+    }
+}
+
+fn test_parse_positive_err_negative() -> bool {
+    match parse_positive("-5") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn test_parse_positive_err_nan() -> bool {
+    match parse_positive("abc") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Safe integer square root ─────────────────────────────────────────────────
+
+fn safe_sqrt_int(n: i64) -> Result<i64, str> {
+    if n < 0 {
+        Err("cannot take sqrt of negative number")
+    } else {
+        Ok(f64_to_i64(sqrt_f64(i64_to_f64(n))))
+    }
+}
+
+fn test_safe_sqrt_ok() -> bool {
+    match safe_sqrt_int(25) {
+        Ok(v)  => v == 5,
+        Err(_) => false,
+    }
+}
+
+fn test_safe_sqrt_zero() -> bool {
+    match safe_sqrt_int(0) {
+        Ok(v)  => v == 0,
+        Err(_) => false,
+    }
+}
+
+fn test_safe_sqrt_err() -> bool {
+    match safe_sqrt_int(-4) {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Chained computation: parse -> validate -> sqrt ───────────────────────────
+
+fn compute_chain(s: str) -> Result<i64, str> {
+    let n = parse_positive(s)?
+    let root = safe_sqrt_int(n)?
+    Ok(root)
+}
+
+fn test_chain_ok() -> bool {
+    // parse "100" -> 100 -> sqrt -> 10
+    match compute_chain("100") {
+        Ok(v)  => v == 10,
+        Err(_) => false,
+    }
+}
+
+fn test_chain_err_parse() -> bool {
+    match compute_chain("not_a_number") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn test_chain_err_zero() -> bool {
+    match compute_chain("0") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Two-argument chained pipeline ─────────────────────────────────────────────
+
+fn parse_and_add(a: str, b: str) -> Result<i64, str> {
+    let x = parse_positive(a)?
+    let y = parse_positive(b)?
+    Ok(x + y)
+}
+
+fn test_add_ok() -> bool {
+    match parse_and_add("3", "7") {
+        Ok(v)  => v == 10,
+        Err(_) => false,
+    }
+}
+
+fn test_add_err_second() -> bool {
+    match parse_and_add("5", "bad") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1  = if test_parse_positive_ok()       { 1 } else { 0 }
+    let s2  = if test_parse_positive_err_zero() { 1 } else { 0 }
+    let s3  = if test_parse_positive_err_negative() { 1 } else { 0 }
+    let s4  = if test_parse_positive_err_nan()  { 1 } else { 0 }
+    let s5  = if test_safe_sqrt_ok()            { 1 } else { 0 }
+    let s6  = if test_safe_sqrt_zero()          { 1 } else { 0 }
+    let s7  = if test_safe_sqrt_err()           { 1 } else { 0 }
+    let s8  = if test_chain_ok()               { 1 } else { 0 }
+    let s9  = if test_chain_err_parse()        { 1 } else { 0 }
+    let s10 = if test_chain_err_zero()         { 1 } else { 0 }
+    let s11 = if test_add_ok()                 { 1 } else { 0 }
+    let s12 = if test_add_err_second()         { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

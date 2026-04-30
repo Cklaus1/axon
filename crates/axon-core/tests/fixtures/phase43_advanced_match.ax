@@ -1,0 +1,124 @@
+// Phase 43: Advanced match — enum types with struct payloads, match guards,
+//           nested match expressions, and multi-variant dispatch.
+
+// ── Shape enum ───────────────────────────────────────────────────────────────
+
+enum Shape {
+    Circle    { radius: i64 },
+    Rectangle { w: i64, h: i64 },
+    Triangle  { base: i64, height: i64 },
+}
+
+fn area(s: Shape) -> i64 {
+    match s {
+        Shape::Circle    { radius }       => radius * radius * 3,
+        Shape::Rectangle { w, h }        => w * h,
+        Shape::Triangle  { base, height } => base * height / 2,
+    }
+}
+
+fn perimeter(s: Shape) -> i64 {
+    match s {
+        Shape::Circle    { radius }   => radius * 6,      // 2 * pi * r, pi≈3
+        Shape::Rectangle { w, h }    => (w + h) * 2,
+        Shape::Triangle  { base, height } => base + height + base, // simplified
+    }
+}
+
+fn test_area_circle() -> bool {
+    area(Shape::Circle { radius: 5 }) == 75    // 5*5*3
+}
+
+fn test_area_rectangle() -> bool {
+    area(Shape::Rectangle { w: 4, h: 6 }) == 24
+}
+
+fn test_area_triangle() -> bool {
+    area(Shape::Triangle { base: 8, height: 6 }) == 24
+}
+
+fn test_perimeter_circle() -> bool {
+    perimeter(Shape::Circle { radius: 10 }) == 60
+}
+
+fn test_perimeter_rectangle() -> bool {
+    perimeter(Shape::Rectangle { w: 3, h: 7 }) == 20
+}
+
+// ── Category enum ─────────────────────────────────────────────────────────────
+
+enum Category { Small, Medium, Large, }
+
+fn classify_area(s: Shape) -> Category {
+    let a = area(s)
+    match a {
+        x if x < 10  => Category::Small,
+        x if x < 100 => Category::Medium,
+        _             => Category::Large,
+    }
+}
+
+fn category_label(c: Category) -> str {
+    match c {
+        Category::Small  => "small",
+        Category::Medium => "medium",
+        Category::Large  => "large",
+    }
+}
+
+fn test_classify() -> bool {
+    let c1 = classify_area(Shape::Circle { radius: 1 })    // area=3 -> small
+    let c2 = classify_area(Shape::Rectangle { w: 4, h: 6 })// area=24 -> medium
+    let c3 = classify_area(Shape::Circle { radius: 10 })   // area=300 -> large
+    str_eq(category_label(c1), "small")  &&
+    str_eq(category_label(c2), "medium") &&
+    str_eq(category_label(c3), "large")
+}
+
+// ── Result combined with match guard ─────────────────────────────────────────
+
+fn validate_shape(s: Shape) -> Result<Shape, str> {
+    match s {
+        Shape::Circle { radius } if radius <= 0 =>
+            Err("circle radius must be positive"),
+        Shape::Rectangle { w, h } if w <= 0 || h <= 0 =>
+            Err("rectangle dimensions must be positive"),
+        Shape::Triangle { base, height } if base <= 0 || height <= 0 =>
+            Err("triangle dimensions must be positive"),
+        ok => Ok(ok),
+    }
+}
+
+fn test_validate_ok() -> bool {
+    match validate_shape(Shape::Circle { radius: 5 }) {
+        Ok(_)  => true,
+        Err(_) => false,
+    }
+}
+
+fn test_validate_err() -> bool {
+    match validate_shape(Shape::Circle { radius: -1 }) {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "circle radius must be positive"),
+    }
+}
+
+fn test_validate_rect_err() -> bool {
+    match validate_shape(Shape::Rectangle { w: 0, h: 5 }) {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1 = if test_area_circle()        { 1 } else { 0 }
+    let s2 = if test_area_rectangle()     { 1 } else { 0 }
+    let s3 = if test_area_triangle()      { 1 } else { 0 }
+    let s4 = if test_perimeter_circle()   { 1 } else { 0 }
+    let s5 = if test_perimeter_rectangle(){ 1 } else { 0 }
+    let s6 = if test_classify()           { 1 } else { 0 }
+    let s7 = if test_validate_ok()        { 1 } else { 0 }
+    let s8 = if test_validate_err()       { 1 } else { 0 }
+    let s9 = if test_validate_rect_err()  { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}
