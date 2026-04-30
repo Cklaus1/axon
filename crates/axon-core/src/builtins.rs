@@ -512,6 +512,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Uncertain<i64>",
         doc: "Construct an `Uncertain<i64>` with confidence = 1.0 (deterministic value).",
     },
+    // Layer-2 ASI: f64 variant to allow float Uncertain arithmetic.
+    BuiltinFn {
+        name: "uncertain_new_f64",
+        params: &[("value", "f64"), ("confidence", "f64")],
+        ret: "Uncertain<f64>",
+        doc: "Construct an `Uncertain<f64>` with an explicit confidence in [0.0, 1.0].",
+    },
     // ── Layer-1 ASI: Temporal<i64> constructors and queries ──────────────────
     BuiltinFn {
         name: "temporal_new",

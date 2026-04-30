@@ -1,0 +1,13 @@
+// Layer-2 ASI: Uncertain<T> arithmetic and comparison propagation.
+// `min(c1, c2)` is the V1 confidence rule for all binops.
+fn main() {
+    let a = uncertain_new(5, 0.9)
+    let b = a + 3                        // Uncertain<i64>, val=8, conf=0.9
+    let c = a + uncertain_new(2, 0.7)    // val=7, conf=0.7
+    let d = a * 2                        // val=10, conf=0.9
+    let e = a == uncertain_new(5, 0.8)   // Uncertain<bool>, val=true, conf=0.8
+    if b.confidence > 0.85 { println(to_str(b.value)) }
+    if c.confidence > 0.6  { println(to_str(c.value)) }
+    if d.confidence > 0.85 { println(to_str(d.value)) }
+    if e.value && e.confidence > 0.7 { println("equal") }
+}
