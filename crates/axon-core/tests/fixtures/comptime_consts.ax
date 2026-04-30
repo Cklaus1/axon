@@ -1,0 +1,23 @@
+// Integration test: comptime constants
+// Verifies that comptime { expr } is evaluated at compile time and emitted as LLVM constants.
+
+// Module-level comptime bindings (cross-referenced).
+let KB = comptime { 1024 }
+let MB = comptime { KB * 1024 }
+
+fn main() {
+    // Arithmetic folds to a constant i64.
+    let max_buf = comptime { 1024 * 64 }
+    assert(max_buf == 65536)
+
+    // Boolean comptime expression.
+    let is_debug = comptime { 1 == 1 }
+    assert(is_debug == true)
+
+    // Nested comptime.
+    let n = comptime { comptime { 7 + 3 } * 2 }
+    assert(n == 20)
+
+    // Module-level comptime binding used inside a function.
+    assert(MB == 1048576)
+}

@@ -1,0 +1,87 @@
+// Phase 31: Ownership annotations — own/ref bindings and explicit ownership
+//           transfer patterns.
+
+// ── own bindings (explicit move semantics) ───────────────────────────────────
+
+fn test_own_basic() -> bool {
+    own x = 42
+    own y = x + 1
+    y == 43
+}
+
+fn test_own_struct() -> bool {
+    own a = 10
+    own b = 20
+    own sum = a + b
+    sum == 30
+}
+
+// ── ref bindings (borrowing) ──────────────────────────────────────────────────
+
+fn test_ref_read() -> bool {
+    let n = 100
+    ref r = n
+    r == 100
+}
+
+fn test_ref_arithmetic() -> bool {
+    let base = 50
+    ref view = base
+    let doubled = view * 2
+    doubled == 100
+}
+
+// ── Mixed let/own in same scope ───────────────────────────────────────────────
+
+fn test_mixed_bindings() -> bool {
+    let a = 1
+    own b = 2
+    let c = a + b
+    c == 3
+}
+
+// ── own in function returning owned value ─────────────────────────────────────
+
+fn make_owned(x: i64) -> i64 {
+    own result = x * x
+    result
+}
+
+fn test_make_owned() -> bool {
+    make_owned(7) == 49
+}
+
+// ── ref in conditional expressions ────────────────────────────────────────────
+
+fn test_ref_in_if() -> bool {
+    let threshold = 10
+    ref t = threshold
+    let value = 15
+    if value > t { true } else { false }
+}
+
+// ── own accumulator in loop ───────────────────────────────────────────────────
+
+fn sum_with_own(n: i64) -> i64 {
+    own total = 0
+    for i in 0..n {
+        total = total + i
+    }
+    total
+}
+
+fn test_own_loop() -> bool {
+    sum_with_own(10) == 45   // 0+1+...+9 = 45
+}
+
+fn main() -> i64 {
+    let s1 = if test_own_basic()       { 1 } else { 0 }
+    let s2 = if test_own_struct()      { 1 } else { 0 }
+    let s3 = if test_ref_read()        { 1 } else { 0 }
+    let s4 = if test_ref_arithmetic()  { 1 } else { 0 }
+    let s5 = if test_mixed_bindings()  { 1 } else { 0 }
+    let s6 = if test_make_owned()      { 1 } else { 0 }
+    let s7 = if test_ref_in_if()       { 1 } else { 0 }
+    let s8 = if test_own_loop()        { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

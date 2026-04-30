@@ -1,0 +1,86 @@
+@[test]
+fn test_to_str() {
+    assert_eq(len(to_str(0)), 1)
+    assert_eq(len(to_str(42)), 2)
+    assert_eq(len(to_str(-1)), 2)
+    assert_eq(len(to_str(100)), 3)
+}
+
+@[test]
+fn test_abs() {
+    // abs_i32 returns i32; widening allows passing to assert_eq(i64,i64)
+    assert_eq(abs_i32(-5), 5)
+    assert_eq(abs_i32(5), 5)
+    assert_eq(abs_i32(0), 0)
+}
+
+@[test]
+fn test_min_max() {
+    assert_eq(min_i32(3, 7), 3)
+    assert_eq(min_i32(7, 3), 3)
+    assert_eq(max_i32(3, 7), 7)
+    assert_eq(max_i32(7, 3), 7)
+    assert_eq(min_i32(5, 5), 5)
+    assert_eq(max_i32(5, 5), 5)
+}
+
+@[test]
+fn test_parse_int_ok() {
+    let r = parse_int("42")
+    match r {
+        Ok(n) => assert_eq(n, 42)
+        Err(e) => assert(false)
+    }
+}
+
+@[test]
+fn test_parse_int_negative() {
+    let r = parse_int("-100")
+    match r {
+        Ok(n) => assert_eq(n, -100)
+        Err(e) => assert(false)
+    }
+}
+
+@[test]
+fn test_parse_int_err() {
+    let r = parse_int("not_a_number")
+    match r {
+        Ok(n) => assert(false)
+        Err(e) => assert(true)
+    }
+}
+
+@[test]
+fn test_len() {
+    assert_eq(len(""), 0)
+    assert_eq(len("a"), 1)
+    assert_eq(len("hello"), 5)
+}
+
+@[test]
+fn test_modulo() {
+    assert_eq(10 % 3, 1)
+    assert_eq(9 % 3, 0)
+    assert_eq(7 % 2, 1)
+}
+
+@[test]
+fn test_logical_and() {
+    assert(true && true)
+    assert(!(false && true))
+    assert(!(true && false))
+    assert(!(false && false))
+}
+
+@[test]
+fn test_logical_or() {
+    assert(true || true)
+    assert(true || false)
+    assert(false || true)
+    assert(!(false || false))
+}
+
+fn main() {
+    println("run with: axon test examples/stdlib_tests.ax")
+}

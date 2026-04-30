@@ -1,0 +1,25 @@
+fn is_adult(age: i64) -> bool {
+    age >= 18
+}
+
+fn is_senior(age: i64) -> bool {
+    age >= 65
+}
+
+fn main() {
+    let age = 30
+
+    if is_adult(age) && !is_senior(age) {
+        println("working age")
+    }
+
+    let x = 5
+    let y = 10
+    if x > 3 && y < 20 {
+        println("both true")
+    }
+
+    if x > 100 || y > 5 {
+        println("at least one true")
+    }
+}

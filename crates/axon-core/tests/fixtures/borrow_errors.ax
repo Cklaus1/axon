@@ -1,0 +1,18 @@
+// Integration test: borrow checker — these patterns must produce errors.
+// i64/bool are Copy types; structs are move types in Axon.
+
+type Box = { val: i64 }
+
+// USE-AFTER-MOVE: moving a struct binding then reading it.
+fn use_after_move() {
+    let b = Box { val: 1 }
+    let a = b        // moves b (Box is a move type)
+    let c = b        // ERROR E0601: use of moved value 'b'
+}
+
+// MOVE-WHILE-BORROWED: moving while a RefBind is live.
+fn move_while_borrowed() {
+    let b = Box { val: 2 }
+    ref r = b        // borrow b
+    let a = b        // ERROR E0602: cannot move 'b': currently borrowed
+}

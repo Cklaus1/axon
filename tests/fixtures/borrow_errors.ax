@@ -1,0 +1,16 @@
+// Integration test: borrow checker — these patterns must produce errors.
+// Each section demonstrates an ownership violation that the borrow checker catches.
+
+// USE-AFTER-MOVE: moving `v` into a function then using it.
+fn use_after_move() {
+    let v = 42
+    let a = v     // move
+    let b = v     // ERROR: use after move
+}
+
+// MOVE-WHILE-BORROWED: moving while a borrow is live.
+fn move_while_borrowed() {
+    let v = 100
+    let r = &v    // borrow
+    let a = v     // ERROR: move while borrowed
+}

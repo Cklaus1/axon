@@ -1,0 +1,126 @@
+// Phase 34: Float operations — f64 literals, conversions, math builtins,
+//           and i64/f64 interop.
+
+// ── i64 ↔ f64 conversions ─────────────────────────────────────────────────────
+
+fn test_i64_to_f64() -> bool {
+    let x = i64_to_f64(5)
+    f64_to_i64(x) == 5
+}
+
+fn test_f64_to_i64_truncates() -> bool {
+    // 3.9 truncates toward zero → 3
+    f64_to_i64(3.9) == 3
+}
+
+fn test_f64_to_i64_negative() -> bool {
+    // -3.9 truncates toward zero → -3
+    f64_to_i64(-3.9) == -3
+}
+
+// ── floor / ceil ──────────────────────────────────────────────────────────────
+
+fn test_floor() -> bool {
+    f64_to_i64(floor(3.7)) == 3 &&
+    f64_to_i64(floor(-3.7)) == -4
+}
+
+fn test_ceil() -> bool {
+    f64_to_i64(ceil(3.2)) == 4 &&
+    f64_to_i64(ceil(-3.2)) == -3
+}
+
+// ── abs_f64 ───────────────────────────────────────────────────────────────────
+
+fn test_abs_f64() -> bool {
+    let a = abs_f64(-5.5)
+    let b = abs_f64(5.5)
+    // Both should equal 5.5; compare as i64 after scaling
+    f64_to_i64(a * 10.0) == 55 && f64_to_i64(b * 10.0) == 55
+}
+
+// ── min_f64 / max_f64 ────────────────────────────────────────────────────────
+
+fn test_min_f64() -> bool {
+    let m = min_f64(1.5, 2.5)
+    f64_to_i64(m * 10.0) == 15
+}
+
+fn test_max_f64() -> bool {
+    let m = max_f64(1.5, 2.5)
+    f64_to_i64(m * 10.0) == 25
+}
+
+// ── to_str_f64 ────────────────────────────────────────────────────────────────
+
+fn test_to_str_f64() -> bool {
+    let s = to_str_f64(3.14)
+    str_contains(s, "3.14")
+}
+
+// ── parse_float ───────────────────────────────────────────────────────────────
+
+fn test_parse_float_ok() -> bool {
+    match parse_float("2.5") {
+        Ok(v)  => f64_to_i64(v * 10.0) == 25,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_float_err() -> bool {
+    match parse_float("not_a_float") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── pow ───────────────────────────────────────────────────────────────────────
+
+fn test_pow() -> bool {
+    // 2^10 = 1024
+    let result = pow(2.0, 10.0)
+    f64_to_i64(result) == 1024
+}
+
+// ── sqrt ──────────────────────────────────────────────────────────────────────
+
+fn test_sqrt() -> bool {
+    // sqrt(25.0) = 5.0
+    let result = sqrt(25.0)
+    f64_to_i64(result) == 5
+}
+
+// ── Mixed integer/float computation ──────────────────────────────────────────
+
+fn compute_average(sum: i64, count: i64) -> i64 {
+    if count == 0 { 0 }
+    else {
+        let sf = i64_to_f64(sum)
+        let cf = i64_to_f64(count)
+        f64_to_i64(sf / cf)
+    }
+}
+
+fn test_average() -> bool {
+    compute_average(45, 10) == 4 &&   // 45/10 = 4.5, truncated to 4
+    compute_average(0, 5) == 0 &&
+    compute_average(10, 0) == 0       // division by zero guard
+}
+
+fn main() -> i64 {
+    let s1  = if test_i64_to_f64()         { 1 } else { 0 }
+    let s2  = if test_f64_to_i64_truncates(){ 1 } else { 0 }
+    let s3  = if test_f64_to_i64_negative() { 1 } else { 0 }
+    let s4  = if test_floor()              { 1 } else { 0 }
+    let s5  = if test_ceil()               { 1 } else { 0 }
+    let s6  = if test_abs_f64()            { 1 } else { 0 }
+    let s7  = if test_min_f64()            { 1 } else { 0 }
+    let s8  = if test_max_f64()            { 1 } else { 0 }
+    let s9  = if test_to_str_f64()         { 1 } else { 0 }
+    let s10 = if test_parse_float_ok()     { 1 } else { 0 }
+    let s11 = if test_parse_float_err()    { 1 } else { 0 }
+    let s12 = if test_pow()                { 1 } else { 0 }
+    let s13 = if test_sqrt()               { 1 } else { 0 }
+    let s14 = if test_average()            { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12 + s13 + s14
+}

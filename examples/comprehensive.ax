@@ -1,0 +1,53 @@
+type Vec2 = { x: f64, y: f64 }
+
+fn dot(a: Vec2, b: Vec2) -> f64 {
+    a.x * b.x + a.y * b.y
+}
+
+fn magnitude_sq(v: Vec2) -> f64 {
+    dot(v, v)
+}
+
+fn is_unit(v: Vec2) -> bool {
+    let msq = magnitude_sq(v)
+    msq > 0.99 && msq < 1.01
+}
+
+fn sum_to(n: i64) -> i64 {
+    let acc = 0
+    let i = 1
+    while i <= n {
+        acc = acc + i
+        i = i + 1
+    }
+    acc
+}
+
+fn collatz(n: i64) -> i64 {
+    let steps = 0
+    let x = n
+    while x != 1 {
+        if x % 2 == 0 {
+            x = x / 2
+        } else {
+            x = x * 3 + 1
+        }
+        steps = steps + 1
+    }
+    steps
+}
+
+fn main() {
+    let v = Vec2 { x: 1.0, y: 0.0 }
+    println(to_str_f64(magnitude_sq(v)))
+
+    println(to_str(sum_to(10)))
+    println(to_str(sum_to(100)))
+
+    println(to_str(collatz(27)))
+    println(to_str(collatz(6)))
+
+    let name = "Axon"
+    let version = 2
+    println("language: {name} v{to_str(version)}")
+}

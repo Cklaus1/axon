@@ -1,0 +1,17 @@
+// Fixture: trait bound satisfaction (E0504)
+// show<T: Display>(x) called with a type that doesn't implement Display.
+
+trait Display {
+    fn display(self: Display) -> str
+}
+
+type Point = { x: i64, y: i64 }
+
+// Point does NOT implement Display — calling show(p) should produce E0504.
+fn show<T: Display>(x: T) -> str { "todo" }
+
+fn main() -> i64 {
+    let p = Point { x: 1, y: 2 }
+    show(p)
+    0
+}

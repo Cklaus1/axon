@@ -1,0 +1,13 @@
+// Integration test: Chan<T> + spawn
+// Verifies Chan<T> lowers to an opaque pointer and spawn wires up the closure ABI.
+
+fn producer(ch: Chan<i64>) {
+    ch.send(42)
+}
+
+fn main() {
+    let ch: Chan<i64> = Chan::new()
+    spawn producer(ch)
+    let val = ch.recv()
+    assert(val == 42)
+}

@@ -1,0 +1,147 @@
+// Phase 20: State machines — enum-driven state transitions and accumulators.
+
+// ── Simple traffic-light state machine ──────────────────────────────────────
+
+enum Light { Red, Yellow, Green, }
+
+fn next_light(l: Light) -> Light {
+    match l {
+        Light::Red    => Light::Green,
+        Light::Green  => Light::Yellow,
+        Light::Yellow => Light::Red,
+    }
+}
+
+fn light_duration(l: Light) -> i64 {
+    match l {
+        Light::Red    => 30,
+        Light::Yellow => 5,
+        Light::Green  => 25,
+    }
+}
+
+fn test_light_cycle() -> bool {
+    let s = Light::Red
+    s = next_light(s)   // Green
+    s = next_light(s)   // Yellow
+    s = next_light(s)   // Red
+    match s {
+        Light::Red => true,
+        _          => false,
+    }
+}
+
+fn test_light_durations() -> bool {
+    light_duration(Light::Red)    == 30 &&
+    light_duration(Light::Green)  == 25 &&
+    light_duration(Light::Yellow) == 5
+}
+
+// ── Lexer-like tokeniser state machine ──────────────────────────────────────
+
+enum ScanState { Start, InNumber, InWord, Done, }
+
+fn is_digit(c: i64) -> bool {
+    c >= 48 && c <= 57   // '0'..'9'
+}
+
+fn is_alpha(c: i64) -> bool {
+    (c >= 65 && c <= 90) || (c >= 97 && c <= 122)  // A-Z, a-z
+}
+
+// Count how many digit-runs (sequences of consecutive digits) appear in s.
+fn count_digit_runs(s: str) -> i64 {
+    let state = ScanState::Start
+    let runs = 0
+    for i in 0..str_len(s) {
+        let c = char_at(s, i)
+        state = match state {
+            ScanState::Start => {
+                if is_digit(c) {
+                    runs = runs + 1
+                    ScanState::InNumber
+                } else {
+                    ScanState::Start
+                }
+            },
+            ScanState::InNumber => {
+                if is_digit(c) { ScanState::InNumber } else { ScanState::Start }
+            },
+            ScanState::InWord => ScanState::Start,
+            ScanState::Done   => ScanState::Done,
+        }
+    }
+    runs
+}
+
+fn test_digit_runs() -> bool {
+    count_digit_runs("abc123def456")    == 2 &&
+    count_digit_runs("no digits here")  == 0 &&
+    count_digit_runs("1")               == 1 &&
+    count_digit_runs("12 34 56")        == 3
+}
+
+// ── Accumulator pattern: running stats ──────────────────────────────────────
+
+type Stats = { count: i64, sum: i64, min: i64, max: i64 }
+
+fn stats_new(first: i64) -> Stats {
+    Stats { count: 1, sum: first, min: first, max: first }
+}
+
+fn stats_add(s: Stats, v: i64) -> Stats {
+    Stats {
+        count: s.count + 1,
+        sum:   s.sum + v,
+        min:   min_i64(s.min, v),
+        max:   max_i64(s.max, v),
+    }
+}
+
+fn stats_mean(s: Stats) -> i64 {
+    if s.count == 0 { 0 } else { s.sum / s.count }
+}
+
+fn test_stats() -> bool {
+    let s = stats_new(10)
+    s = stats_add(s, 20)
+    s = stats_add(s, 5)
+    s = stats_add(s, 15)
+    // count=4, sum=50, min=5, max=20, mean=12
+    s.count == 4  &&
+    s.sum   == 50 &&
+    s.min   == 5  &&
+    s.max   == 20 &&
+    stats_mean(s) == 12
+}
+
+// ── Closure-based event dispatcher ──────────────────────────────────────────
+
+fn make_threshold_guard(lo: i64, hi: i64) -> fn(i64) -> bool {
+    (x) => x >= lo && x <= hi
+}
+
+fn count_in_range(lo: i64, hi: i64, start: i64, end: i64) -> i64 {
+    let guard = make_threshold_guard(lo, hi)
+    let count = 0
+    for i in start..end {
+        if guard(i) {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn test_threshold_guard() -> bool {
+    // Values in [3, 7) within 0..10 are 3,4,5,6 = 4 values
+    count_in_range(3, 6, 0, 10) == 4
+}
+
+fn main() -> i64 {
+    let s1 = if test_light_cycle()      { 1 } else { 0 }
+    let s2 = if test_light_durations()  { 1 } else { 0 }
+    let s3 = if test_digit_runs()       { 1 } else { 0 }
+    let s4 = if test_stats()            { 1 } else { 0 }
+    let s5 = if test_threshold_guard()  { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5
+}

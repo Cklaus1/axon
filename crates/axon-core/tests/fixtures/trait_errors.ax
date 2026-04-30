@@ -1,0 +1,27 @@
+// Fixture: trait validation errors (E0501, E0502, E0503)
+// This file deliberately contains three trait-impl errors.
+
+trait Greet {
+    fn hello(self: Greet, name: str) -> str
+    fn farewell(self: Greet) -> str
+}
+
+// E0501: implements a trait that doesn't exist
+impl NonExistent for Foo {
+    fn hello(self: Foo, name: str) -> str { "hi" }
+}
+
+// E0502: missing `farewell` method
+impl Greet for Bar {
+    fn hello(self: Bar, name: str) -> str { "hello" }
+}
+
+// E0503: wrong parameter count for `hello`
+impl Greet for Baz {
+    fn hello(self: Baz) -> str { "hello" }
+    fn farewell(self: Baz) -> str { "bye" }
+}
+
+type Foo = { x: i64 }
+type Bar = { y: i64 }
+type Baz = { z: i64 }

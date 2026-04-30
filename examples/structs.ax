@@ -1,0 +1,13 @@
+type Point = { x: f64, y: f64 }
+
+fn distance(a: Point, b: Point) -> f64 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    dx * dx + dy * dy
+}
+
+fn main() {
+    let a = Point { x: 1.0, y: 2.0 }
+    let b = Point { x: 4.0, y: 6.0 }
+    println(to_str_f64(distance(a, b)))
+}

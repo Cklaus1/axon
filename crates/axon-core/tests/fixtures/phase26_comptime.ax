@@ -1,0 +1,84 @@
+// Phase 26: Comptime expressions — compile-time evaluation of constants,
+//           sizes, bitfields, and conditional compilation flags.
+
+// ── Module-level comptime constants ──────────────────────────────────────────
+
+let BITS_PER_BYTE = comptime { 8 }
+let MAX_U8        = comptime { 255 }
+let MAX_I8        = comptime { 127 }
+let PAGE_SIZE     = comptime { 4096 }
+let CACHE_LINE    = comptime { 64 }
+let PAGES_PER_MB  = comptime { 1048576 / PAGE_SIZE }
+
+// ── Functions using comptime constants ───────────────────────────────────────
+
+fn test_module_constants() -> bool {
+    BITS_PER_BYTE == 8  &&
+    MAX_U8        == 255 &&
+    MAX_I8        == 127 &&
+    PAGE_SIZE     == 4096 &&
+    CACHE_LINE    == 64  &&
+    PAGES_PER_MB  == 256
+}
+
+// ── Local comptime constants ──────────────────────────────────────────────────
+
+fn test_local_comptime() -> bool {
+    let n_bits = comptime { 16 }
+    let max_val = comptime { (1 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2 * 2) - 1 }
+    let half    = comptime { max_val / 2 }
+    n_bits == 16 && max_val == 65535 && half == 32767
+}
+
+// ── Comptime boolean flags ────────────────────────────────────────────────────
+
+fn test_comptime_bool() -> bool {
+    let always_true  = comptime { 1 == 1 }
+    let always_false = comptime { 0 == 1 }
+    let combined     = comptime { 2 + 3 == 5 }
+    always_true && !always_false && combined
+}
+
+// ── Comptime as function size parameter ───────────────────────────────────────
+
+fn count_up_to_comptime() -> i64 {
+    let limit = comptime { 10 }
+    let sum = 0
+    for i in 0..limit {
+        sum = sum + i
+    }
+    sum
+}
+
+fn test_comptime_loop_bound() -> bool {
+    // sum 0..10 = 0+1+...+9 = 45
+    count_up_to_comptime() == 45
+}
+
+// ── Comptime arithmetic precision ────────────────────────────────────────────
+
+fn test_comptime_arithmetic() -> bool {
+    let a = comptime { 1000 * 1000 }         // 1_000_000
+    let b = comptime { a * 1000 }            // 1_000_000_000
+    let c = comptime { b + a }               // 1_001_000_000
+    let d = comptime { c / 1000 }            // 1_001_000
+    a == 1000000 && b == 1000000000 && c == 1001000000 && d == 1001000
+}
+
+// ── Nested comptime ───────────────────────────────────────────────────────────
+
+fn test_nested_comptime() -> bool {
+    let inner = comptime { 3 + 4 }
+    let outer = comptime { inner * inner }
+    inner == 7 && outer == 49
+}
+
+fn main() -> i64 {
+    let s1 = if test_module_constants()    { 1 } else { 0 }
+    let s2 = if test_local_comptime()      { 1 } else { 0 }
+    let s3 = if test_comptime_bool()       { 1 } else { 0 }
+    let s4 = if test_comptime_loop_bound() { 1 } else { 0 }
+    let s5 = if test_comptime_arithmetic() { 1 } else { 0 }
+    let s6 = if test_nested_comptime()     { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

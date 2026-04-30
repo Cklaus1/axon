@@ -1,0 +1,10 @@
+// Integration test: channels verification checklist (spec §Verification/channels.ax).
+// Tests chan<T>() syntax, ch.clone(), spawn { body }, ch.recv().
+
+fn main() {
+    let ch = chan<i64>()
+    let ch2 = ch.clone()
+    spawn { ch2.send(7) }
+    let v = ch.recv()
+    assert_eq(v, 7)
+}

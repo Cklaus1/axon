@@ -1,0 +1,32 @@
+// Traits fixture: tests that trait defs and impl blocks type-check without errors.
+
+trait Greet {
+    fn greet(self) -> str
+}
+
+type Dog = { name: str }
+type Cat = { name: str }
+
+impl Greet for Dog {
+    fn greet(self: Dog) -> str {
+        "woof"
+    }
+}
+
+impl Greet for Cat {
+    fn greet(self: Cat) -> str {
+        "meow"
+    }
+}
+
+fn announce(g: dyn Greet) {
+    println(g.greet())
+}
+
+fn main() -> i64 {
+    let d = Dog { name: "Rex" }
+    let c = Cat { name: "Luna" }
+    announce(d)
+    announce(c)
+    0
+}

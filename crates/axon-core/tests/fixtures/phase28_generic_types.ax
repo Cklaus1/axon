@@ -1,0 +1,144 @@
+// Phase 28: Generic types — generic structs, multi-param functions, generic
+//           composition, and Option/Result generics in practice.
+
+// ── Generic struct ────────────────────────────────────────────────────────────
+
+type Pair<A, B> = { first: A, second: B }
+type Triple<A, B, C> = { fst: A, snd: B, trd: C }
+
+fn pair_first<A, B>(p: Pair<A, B>) -> A { p.first }
+fn pair_second<A, B>(p: Pair<A, B>) -> B { p.second }
+
+fn test_pair_basic() -> bool {
+    let p = Pair { first: 10, second: "hello" }
+    p.first == 10
+}
+
+fn test_triple_basic() -> bool {
+    let t = Triple { fst: 1, snd: true, trd: 99 }
+    t.fst == 1 && t.trd == 99
+}
+
+// ── Generic functions ─────────────────────────────────────────────────────────
+
+fn identity<T>(x: T) -> T { x }
+fn constant<A, B>(a: A, b: B) -> A { a }
+fn flip_apply<A, B>(f: fn(A) -> B, x: A) -> B { f(x) }
+
+fn test_identity() -> bool {
+    identity(42) == 42
+}
+
+fn test_constant() -> bool {
+    constant(7, "ignored") == 7
+}
+
+fn test_flip_apply() -> bool {
+    let double = (x: i64) => x * 2
+    flip_apply(double, 21) == 42
+}
+
+// ── Option generics ───────────────────────────────────────────────────────────
+
+fn first_some<T>(a: Option<T>, b: Option<T>) -> Option<T> {
+    match a {
+        Some(v) => Some(v),
+        None    => b,
+    }
+}
+
+fn option_map_i64(o: Option<i64>, f: fn(i64) -> i64) -> Option<i64> {
+    match o {
+        Some(v) => Some(f(v)),
+        None    => None,
+    }
+}
+
+fn test_first_some() -> bool {
+    // Pass None and Some(42) directly so type T=i64 is inferred from Some(42).
+    match first_some(None, Some(42)) {
+        Some(v) => v == 42,
+        None    => false,
+    }
+}
+
+fn test_option_map() -> bool {
+    let o = Some(5)
+    let doubled = option_map_i64(o, (x) => x * 2)
+    match doubled {
+        Some(v) => v == 10,
+        None    => false,
+    }
+}
+
+// ── Result generics ───────────────────────────────────────────────────────────
+
+fn result_or<T>(r: Result<T, str>, default: T) -> T {
+    match r {
+        Ok(v)  => v,
+        Err(_) => default,
+    }
+}
+
+fn result_map_i64(r: Result<i64, str>, f: fn(i64) -> i64) -> Result<i64, str> {
+    match r {
+        Ok(v)  => Ok(f(v)),
+        Err(e) => Err(e),
+    }
+}
+
+fn test_result_or() -> bool {
+    result_or(Ok(99), 0) == 99 && result_or(Err("bad"), 0) == 0
+}
+
+fn test_result_map() -> bool {
+    let r = Ok(6)
+    let tripled = result_map_i64(r, (x) => x * 3)
+    match tripled {
+        Ok(v)  => v == 18,
+        Err(_) => false,
+    }
+}
+
+// ── Generic Option/Result composition ────────────────────────────────────────
+
+fn safe_div_opt(a: i64, b: i64) -> Option<i64> {
+    if b == 0 { None } else { Some(a / b) }
+}
+
+fn chain_div(x: i64, y: i64, z: i64) -> Option<i64> {
+    match safe_div_opt(x, y) {
+        None    => None,
+        Some(q) => safe_div_opt(q, z),
+    }
+}
+
+fn test_chain_div() -> bool {
+    // 100 / 5 / 4 = 5
+    match chain_div(100, 5, 4) {
+        Some(v) => v == 5,
+        None    => false,
+    }
+}
+
+fn test_chain_div_zero() -> bool {
+    match chain_div(100, 0, 4) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1 = if test_pair_basic()    { 1 } else { 0 }
+    let s2 = if test_triple_basic()  { 1 } else { 0 }
+    let s3 = if test_identity()      { 1 } else { 0 }
+    let s4 = if test_constant()      { 1 } else { 0 }
+    let s5 = if test_flip_apply()    { 1 } else { 0 }
+    let s6 = if test_first_some()    { 1 } else { 0 }
+    let s7 = if test_option_map()    { 1 } else { 0 }
+    let s8 = if test_result_or()     { 1 } else { 0 }
+    let s9 = if test_result_map()    { 1 } else { 0 }
+    let s10 = if test_chain_div()    { 1 } else { 0 }
+    let s11 = if test_chain_div_zero(){ 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11
+}

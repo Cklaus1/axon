@@ -1,0 +1,71 @@
+// Classic algorithms as an Axon integration test
+
+fn gcd(a: i64, b: i64) -> i64 {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
+    }
+}
+
+fn lcm(a: i64, b: i64) -> i64 {
+    a / gcd(a, b) * b
+}
+
+fn is_prime(n: i64) -> bool {
+    if n < 2 {
+        false
+    } else {
+        let i = 2
+        let result = true
+        while i * i <= n {
+            if n % i == 0 {
+                result = false
+            }
+            i = i + 1
+        }
+        result
+    }
+}
+
+fn collatz_steps(n: i64) -> i64 {
+    let steps = 0
+    let x = n
+    while x != 1 {
+        if x % 2 == 0 {
+            x = x / 2
+        } else {
+            x = x * 3 + 1
+        }
+        steps = steps + 1
+    }
+    steps
+}
+
+fn pow_i64(base: i64, exp: i64) -> i64 {
+    let result = 1
+    let i = 0
+    while i < exp {
+        result = result * base
+        i = i + 1
+    }
+    result
+}
+
+fn main() {
+    println(to_str(gcd(48, 18)))        // 6
+    println(to_str(lcm(4, 6)))          // 12
+    println(to_str(collatz_steps(27)))  // 111
+    println(to_str(pow_i64(2, 10)))     // 1024
+
+    // first 10 primes
+    let count = 0
+    let n = 2
+    while count < 10 {
+        if is_prime(n) {
+            println(to_str(n))
+            count = count + 1
+        }
+        n = n + 1
+    }
+}

@@ -1,0 +1,13 @@
+// Multi-file fixture part 2: main program.
+// Uses functions defined in multifile_math.ax.
+// These two files are intended to be merged via merge_programs().
+
+fn main() -> i64 {
+    let s = square(5)
+    let c = cube(3)
+    let ss = sum_squares(3, 4)
+    assert_eq(s, 25)
+    assert_eq(c, 27)
+    assert_eq(ss, 25)
+    0
+}

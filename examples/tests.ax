@@ -1,0 +1,13 @@
+fn add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+@[test]
+fn test_add_positive() {
+    assert(add(2, 3) == 5)
+}
+
+@[test]
+fn test_add_zero() {
+    assert(add(0, 42) == 42)
+}

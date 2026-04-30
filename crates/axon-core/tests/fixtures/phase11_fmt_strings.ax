@@ -1,0 +1,36 @@
+// Phase 11: Format strings — "hello {name}" interpolation.
+// FmtStr lowers to axon_concat calls in codegen.
+
+fn greet(name: str) -> str {
+    "Hello, {name}!"
+}
+
+fn describe_number(n: i64) -> str {
+    "The number is {n}."
+}
+
+fn concat_parts(a: str, b: str) -> str {
+    "{a} and {b}"
+}
+
+fn test_simple_interp() -> bool {
+    let s = greet("World");
+    str_eq(s, "Hello, World!")
+}
+
+fn test_number_interp() -> bool {
+    let s = describe_number(42);
+    str_contains(s, "42")
+}
+
+fn test_two_vars() -> bool {
+    let s = concat_parts("foo", "bar");
+    str_contains(s, "foo") && str_contains(s, "bar")
+}
+
+fn main() -> i64 {
+    let s1 = if test_simple_interp()  { 1 } else { 0 };
+    let s2 = if test_number_interp()  { 1 } else { 0 };
+    let s3 = if test_two_vars()       { 1 } else { 0 };
+    s1 + s2 + s3
+}

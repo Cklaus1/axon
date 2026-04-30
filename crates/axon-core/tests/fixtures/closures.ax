@@ -1,0 +1,41 @@
+// Integration test: closures with captures.
+// Verifies that lambda expressions capture outer bindings correctly
+// and that the resolver fills the captures list.
+
+fn make_adder(n: i64) -> fn(i64) -> i64 {
+    (x) => x + n
+}
+
+fn apply(f: fn(i64) -> i64, v: i64) -> i64 {
+    f(v)
+}
+
+// Mutable closure: captured variable is mutated across calls.
+// This is the spec §3 make_counter pattern.
+fn make_counter(start: i64) -> fn() -> i64 {
+    let n = start
+    () => {
+        let v = n
+        n = n + 1
+        v
+    }
+}
+
+fn main() {
+    let add5 = make_adder(5)
+    let result = apply(add5, 3)
+    assert(result == 8)
+
+    // Closure that captures multiple values.
+    let a = 10
+    let b = 20
+    let summer = (x) => x + a + b
+    assert(summer(0) == 30)
+    assert(summer(5) == 35)
+
+    // Mutable counter closure — each call should return a different value.
+    let c = make_counter(0)
+    assert_eq(c(), 0)
+    assert_eq(c(), 1)
+    assert_eq(c(), 2)
+}

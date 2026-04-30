@@ -1,0 +1,6 @@
+fn main() {
+    let arr = [10, 20, 30]
+    println(to_str(arr[0]))
+    println(to_str(arr[1]))
+    println(to_str(arr[2]))
+}

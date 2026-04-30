@@ -1,0 +1,25 @@
+// Integration test: closures with captures
+// Verifies closure ABI Phase 4 — captured values are heap-allocated in an env struct.
+
+fn make_adder(x: i64) -> fn(i64) -> i64 {
+    let adder = |y| x + y
+    adder
+}
+
+fn make_counter() -> fn() -> i64 {
+    let count = 0
+    let inc = || {
+        count + 1
+    }
+    inc
+}
+
+fn main() {
+    let add5 = make_adder(5)
+    let result = add5(3)
+    assert(result == 8)
+
+    let counter = make_counter()
+    let n = counter()
+    assert(n == 1)
+}

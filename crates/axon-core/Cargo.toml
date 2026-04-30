@@ -1,0 +1,30 @@
+[package]
+name = "axon-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "axon"
+path = "src/main.rs"
+required-features = ["codegen", "serde-json"]
+
+[lib]
+name = "axon_core"
+path = "src/lib.rs"
+
+[features]
+default = ["codegen", "serde-json"]
+codegen = ["dep:inkwell"]
+serde-json = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+logos = { workspace = true }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
+clap = { workspace = true }
+thiserror = { workspace = true }
+inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
+which = "6"
+sha2  = "0.10"

@@ -1,0 +1,75 @@
+// Phase 12: Coverage fixture — exercises builtins not tested in prior fixtures.
+
+// to_str / to_str_f64
+fn test_to_str() -> bool {
+    let s = to_str(42);
+    str_eq(s, "42")
+}
+
+fn test_to_str_f64() -> bool {
+    let s = to_str_f64(3.14);
+    str_starts_with(s, "3.14")
+}
+
+// parse_int
+fn test_parse_int_ok() -> bool {
+    let r = parse_int("123");
+    match r {
+        Ok(n) => n == 123,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_int_err() -> bool {
+    let r = parse_int("abc");
+    match r {
+        Ok(_) => false,
+        Err(_) => true,
+    }
+}
+
+// assert_eq_str / assert_eq_f64 (these should not panic)
+fn test_assert_eq_str() -> bool {
+    assert_eq_str("hello", "hello");
+    true
+}
+
+fn test_assert_eq_f64() -> bool {
+    assert_eq_f64(1.0, 1.0);
+    true
+}
+
+// char_at — returns the Unicode codepoint of the byte at position i
+fn test_char_at() -> bool {
+    let c = char_at("hello", 0);
+    c == 104   // 'h' == 104
+}
+
+// str_len of empty string
+fn test_str_len_empty() -> bool {
+    str_len("") == 0
+}
+
+// str_contains empty needle
+fn test_str_contains_empty() -> bool {
+    str_contains("hello", "")
+}
+
+// clamp with equal bounds (edge case)
+fn test_clamp_equal_bounds() -> bool {
+    clamp_i64(5, 3, 3) == 3
+}
+
+fn main() -> i64 {
+    let s1 = if test_to_str()            { 1 } else { 0 };
+    let s2 = if test_to_str_f64()        { 1 } else { 0 };
+    let s3 = if test_parse_int_ok()      { 1 } else { 0 };
+    let s4 = if test_parse_int_err()     { 1 } else { 0 };
+    let s5 = if test_assert_eq_str()     { 1 } else { 0 };
+    let s6 = if test_assert_eq_f64()     { 1 } else { 0 };
+    let s7 = if test_char_at()           { 1 } else { 0 };
+    let s8 = if test_str_len_empty()     { 1 } else { 0 };
+    let s9 = if test_str_contains_empty(){ 1 } else { 0 };
+    let s10 = if test_clamp_equal_bounds(){ 1 } else { 0 };
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10
+}

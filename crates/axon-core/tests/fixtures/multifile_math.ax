@@ -1,0 +1,14 @@
+// Multi-file fixture part 1: math utilities.
+// This file is merged with multifile_main.ax in the merge_programs integration test.
+
+fn square(n: i64) -> i64 {
+    n * n
+}
+
+fn cube(n: i64) -> i64 {
+    n * n * n
+}
+
+fn sum_squares(a: i64, b: i64) -> i64 {
+    square(a) + square(b)
+}

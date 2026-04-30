@@ -1,0 +1,73 @@
+// Phase 8: for-in range loop fixture
+
+// Sum 0+1+2+3+4 = 10
+fn test_for_sum() -> bool {
+    let acc = 0;
+    for i in 0..5 {
+        acc = acc + i;
+    }
+    acc == 10
+}
+
+// Count iterations
+fn test_for_count() -> bool {
+    let n = 0;
+    for _ in 0..7 {
+        n = n + 1;
+    }
+    n == 7
+}
+
+// Empty range (start == end) produces zero iterations
+fn test_for_empty() -> bool {
+    let n = 0;
+    for i in 5..5 {
+        n = n + 1;
+    }
+    n == 0
+}
+
+// Nested for loops: multiply
+fn test_for_nested() -> bool {
+    let total = 0;
+    for i in 0..3 {
+        for j in 0..3 {
+            total = total + 1;
+        }
+    }
+    total == 9
+}
+
+// break exits the loop early
+fn test_for_break() -> bool {
+    let found = 0;
+    for i in 0..100 {
+        if i == 5 {
+            found = i;
+            break
+        }
+    }
+    found == 5
+}
+
+// continue skips the rest of the body
+fn test_for_continue() -> bool {
+    let sum = 0;
+    for i in 0..10 {
+        if i == 5 {
+            continue
+        }
+        sum = sum + 1;
+    }
+    sum == 9
+}
+
+fn main() -> i64 {
+    let s1 = if test_for_sum()      { 1 } else { 0 };
+    let s2 = if test_for_count()    { 1 } else { 0 };
+    let s3 = if test_for_empty()    { 1 } else { 0 };
+    let s4 = if test_for_nested()   { 1 } else { 0 };
+    let s5 = if test_for_break()    { 1 } else { 0 };
+    let s6 = if test_for_continue() { 1 } else { 0 };
+    s1 + s2 + s3 + s4 + s5 + s6
+}

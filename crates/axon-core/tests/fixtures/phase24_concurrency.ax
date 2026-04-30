@@ -1,0 +1,97 @@
+// Phase 24: Concurrency — channels, spawn, and select patterns.
+// These fixtures verify parse + type-check; runtime execution requires axon-rt.
+
+// ── Basic channel ping-pong ───────────────────────────────────────────────────
+
+fn producer(ch: Chan<i64>, n: i64) {
+    for i in 0..n {
+        ch.send(i)
+    }
+}
+
+fn consumer(ch: Chan<i64>, n: i64) -> i64 {
+    let sum = 0
+    for _ in 0..n {
+        sum = sum + ch.recv()
+    }
+    sum
+}
+
+// Static type-check: fn that creates channels and spawns.
+fn test_channel_types_check() -> bool {
+    let ch = Chan::new(16)
+    let ch2 = ch.clone()
+    spawn { producer(ch, 5) }
+    let total = consumer(ch2, 5)
+    total == 10   // 0+1+2+3+4
+}
+
+// ── Pipeline: source → transform → sink ──────────────────────────────────────
+
+fn double_stage(input: Chan<i64>, output: Chan<i64>, n: i64) {
+    for _ in 0..n {
+        let v = input.recv()
+        output.send(v * 2)
+    }
+}
+
+fn test_pipeline_types_check() -> bool {
+    let src  = Chan::new(8)
+    let dst  = Chan::new(8)
+    let s2   = src.clone()
+    let d2   = dst.clone()
+    spawn { producer(s2, 4) }
+    spawn { double_stage(src, dst, 4) }
+    let result = consumer(d2, 4)
+    result == 12   // (0+1+2+3)*2 = 12
+}
+
+// ── Select: first ready channel ───────────────────────────────────────────────
+
+fn test_select_types_check() -> bool {
+    let a = Chan::new(1)
+    let b = Chan::new(1)
+    let a2 = a.clone()
+    let b2 = b.clone()
+    spawn { a2.send(42) }
+    spawn { b2.send(99) }
+    select {
+        a.recv() => assert(true),
+        b.recv() => assert(true),
+    }
+    true
+}
+
+// ── Fan-out / fan-in ─────────────────────────────────────────────────────────
+
+fn square_worker(input: Chan<i64>, output: Chan<i64>) {
+    let v = input.recv()
+    output.send(v * v)
+}
+
+fn test_fan_out_types_check() -> bool {
+    let work    = Chan::new(4)
+    let results = Chan::new(4)
+    let w1 = work.clone()
+    let r1 = results.clone()
+    let w2 = work.clone()
+    let r2 = results.clone()
+    let w3 = work.clone()
+    let r3 = results.clone()
+    spawn { square_worker(w1, r1) }
+    spawn { square_worker(w2, r2) }
+    spawn { square_worker(w3, r3) }
+    work.send(2)
+    work.send(3)
+    work.send(4)
+    let total = results.recv() + results.recv() + results.recv()
+    total == 4 + 9 + 16
+}
+
+fn main() -> i64 {
+    let s1 = if test_channel_types_check()  { 1 } else { 0 }
+    let s2 = if test_pipeline_types_check() { 1 } else { 0 }
+    let s3 = if test_select_types_check()   { 1 } else { 0 }
+    let s4 = if test_fan_out_types_check()  { 1 } else { 0 }
+    s1 + s2 + s3 + s4
+}

@@ -1,0 +1,119 @@
+// Phase 33: Math builtins — min_i64, max_i64, clamp_i64, abs_i64, and their
+//           composition in useful algorithms.
+
+// ── abs_i64 ───────────────────────────────────────────────────────────────────
+
+fn test_abs_i64() -> bool {
+    abs_i64(5) == 5 &&
+    abs_i64(-5) == 5 &&
+    abs_i64(0) == 0 &&
+    abs_i64(-1000) == 1000
+}
+
+// ── min_i64 / max_i64 ────────────────────────────────────────────────────────
+
+fn test_min_i64() -> bool {
+    min_i64(3, 5) == 3 &&
+    min_i64(5, 3) == 3 &&
+    min_i64(4, 4) == 4 &&
+    min_i64(-1, 1) == -1
+}
+
+fn test_max_i64() -> bool {
+    max_i64(3, 5) == 5 &&
+    max_i64(5, 3) == 5 &&
+    max_i64(4, 4) == 4 &&
+    max_i64(-1, 1) == 1
+}
+
+// ── clamp_i64 ─────────────────────────────────────────────────────────────────
+
+fn test_clamp_i64() -> bool {
+    clamp_i64(5, 0, 10) == 5 &&    // within range
+    clamp_i64(-3, 0, 10) == 0 &&   // below min
+    clamp_i64(15, 0, 10) == 10 &&  // above max
+    clamp_i64(0, 0, 0) == 0        // degenerate range
+}
+
+// ── Algorithm: min of a range ────────────────────────────────────────────────
+
+fn range_min(lo: i64, hi: i64, f: fn(i64) -> i64) -> i64 {
+    let result = f(lo)
+    for i in lo..hi {
+        result = min_i64(result, f(i))
+    }
+    result
+}
+
+fn test_range_min() -> bool {
+    // f(i) = (i - 5)^2, min at i=5 where f(5)=0
+    let min_val = range_min(0, 11, (i) => (i - 5) * (i - 5))
+    min_val == 0
+}
+
+fn range_max(lo: i64, hi: i64, f: fn(i64) -> i64) -> i64 {
+    let result = f(lo)
+    for i in lo..hi {
+        result = max_i64(result, f(i))
+    }
+    result
+}
+
+fn test_range_max() -> bool {
+    // f(i) = i for i in 0..10, max is 9
+    range_max(0, 10, (i) => i) == 9
+}
+
+// ── Distance / span using abs ─────────────────────────────────────────────────
+
+fn distance(a: i64, b: i64) -> i64 {
+    abs_i64(a - b)
+}
+
+fn test_distance() -> bool {
+    distance(3, 7) == 4 &&
+    distance(7, 3) == 4 &&
+    distance(-5, 5) == 10 &&
+    distance(0, 0) == 0
+}
+
+// ── Clamp to valid index ──────────────────────────────────────────────────────
+
+fn safe_index(idx: i64, len: i64) -> i64 {
+    clamp_i64(idx, 0, len - 1)
+}
+
+fn test_safe_index() -> bool {
+    safe_index(3, 10) == 3 &&
+    safe_index(-1, 10) == 0 &&
+    safe_index(99, 10) == 9
+}
+
+// ── min/max composition: median of three ────────────────────────────────────
+
+fn median3(a: i64, b: i64, c: i64) -> i64 {
+    // max(min(a,b), min(max(a,b), c))
+    let lo = min_i64(a, b)
+    let hi = max_i64(a, b)
+    max_i64(lo, min_i64(hi, c))
+}
+
+fn test_median3() -> bool {
+    median3(1, 2, 3) == 2 &&
+    median3(3, 1, 2) == 2 &&
+    median3(5, 5, 5) == 5 &&
+    median3(10, 1, 7) == 7
+}
+
+fn main() -> i64 {
+    let s1 = if test_abs_i64()    { 1 } else { 0 }
+    let s2 = if test_min_i64()    { 1 } else { 0 }
+    let s3 = if test_max_i64()    { 1 } else { 0 }
+    let s4 = if test_clamp_i64()  { 1 } else { 0 }
+    let s5 = if test_range_min()  { 1 } else { 0 }
+    let s6 = if test_range_max()  { 1 } else { 0 }
+    let s7 = if test_distance()   { 1 } else { 0 }
+    let s8 = if test_safe_index() { 1 } else { 0 }
+    let s9 = if test_median3()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

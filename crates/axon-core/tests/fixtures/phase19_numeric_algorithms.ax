@@ -1,0 +1,127 @@
+// Phase 19: Numeric algorithms — GCD, prime testing, Fibonacci, integer sequences.
+
+// Greatest common divisor (Euclidean algorithm — iterative).
+fn gcd(a: i64, b: i64) -> i64 {
+    let x = abs_i64(a)
+    let y = abs_i64(b)
+    while y != 0 {
+        let t = y
+        y = x - (x / y) * y   // x mod y without % operator
+        x = t
+    }
+    x
+}
+
+fn test_gcd() -> bool {
+    gcd(12, 8)  == 4  &&
+    gcd(100, 75) == 25 &&
+    gcd(7, 13)  == 1  &&
+    gcd(0, 5)   == 5
+}
+
+// Least common multiple.
+fn lcm(a: i64, b: i64) -> i64 {
+    let g = gcd(a, b)
+    if g == 0 { 0 } else { (a / g) * b }
+}
+
+fn test_lcm() -> bool {
+    lcm(4, 6)  == 12 &&
+    lcm(7, 13) == 91 &&
+    lcm(0, 5)  == 0
+}
+
+// Naive prime test.
+fn is_prime(n: i64) -> bool {
+    if n < 2 { return false }
+    if n == 2 { return true }
+    // check divisibility up to sqrt(n)
+    let i = 2
+    let prime = true
+    while i * i <= n {
+        if n - (n / i) * i == 0 {   // n mod i == 0
+            prime = false
+        }
+        i = i + 1
+    }
+    prime
+}
+
+fn test_is_prime() -> bool {
+    is_prime(2)  &&
+    is_prime(3)  &&
+    is_prime(17) &&
+    !is_prime(1) &&
+    !is_prime(4) &&
+    !is_prime(100)
+}
+
+// Count primes up to n (sieve-free, O(n√n)).
+fn count_primes_up_to(n: i64) -> i64 {
+    let count = 0
+    for k in 2..(n + 1) {
+        if is_prime(k) {
+            count = count + 1
+        }
+    }
+    count
+}
+
+fn test_count_primes() -> bool {
+    // Primes ≤ 20: 2,3,5,7,11,13,17,19 = 8
+    count_primes_up_to(20) == 8
+}
+
+// Fibonacci (iterative) — no recursion to avoid exponential blowup.
+fn fib_iter(n: i64) -> i64 {
+    if n <= 0 { return 0 }
+    if n == 1 { return 1 }
+    let a = 0
+    let b = 1
+    for _ in 2..(n + 1) {
+        let tmp = a + b
+        a = b
+        b = tmp
+    }
+    b
+}
+
+fn test_fib() -> bool {
+    fib_iter(0)  == 0  &&
+    fib_iter(1)  == 1  &&
+    fib_iter(2)  == 1  &&
+    fib_iter(10) == 55 &&
+    fib_iter(15) == 610
+}
+
+// Integer exponentiation by squaring.
+fn ipow(base: i64, exp: i64) -> i64 {
+    let result = 1
+    let b = base
+    let e = exp
+    while e > 0 {
+        if e - (e / 2) * 2 == 1 {  // e is odd
+            result = result * b
+        }
+        b = b * b
+        e = e / 2
+    }
+    result
+}
+
+fn test_ipow() -> bool {
+    ipow(2, 10) == 1024 &&
+    ipow(3, 4)  == 81   &&
+    ipow(5, 0)  == 1    &&
+    ipow(1, 100) == 1
+}
+
+fn main() -> i64 {
+    let s1 = if test_gcd()           { 1 } else { 0 }
+    let s2 = if test_lcm()           { 1 } else { 0 }
+    let s3 = if test_is_prime()      { 1 } else { 0 }
+    let s4 = if test_count_primes()  { 1 } else { 0 }
+    let s5 = if test_fib()           { 1 } else { 0 }
+    let s6 = if test_ipow()          { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

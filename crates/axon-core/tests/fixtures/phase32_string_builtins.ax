@@ -1,0 +1,113 @@
+// Phase 32: Extended string builtins — str_slice, str_replace, str_repeat,
+//           str_to_upper, str_to_lower, str_trim, str_index_of, str_pad.
+
+// ── Case conversion ───────────────────────────────────────────────────────────
+
+fn test_to_upper() -> bool {
+    str_eq(str_to_upper("hello"), "HELLO")
+}
+
+fn test_to_lower() -> bool {
+    str_eq(str_to_lower("WORLD"), "world")
+}
+
+fn test_round_trip_case() -> bool {
+    let s = "Hello World"
+    str_eq(str_to_lower(str_to_upper(s)), "hello world")
+}
+
+// ── Trim ──────────────────────────────────────────────────────────────────────
+
+fn test_trim() -> bool {
+    str_eq(str_trim("  hello  "), "hello")
+}
+
+fn test_trim_start() -> bool {
+    str_eq(str_trim_start("  hi"), "hi")
+}
+
+fn test_trim_end() -> bool {
+    str_eq(str_trim_end("hi  "), "hi")
+}
+
+// ── Replace ───────────────────────────────────────────────────────────────────
+
+fn test_replace() -> bool {
+    str_eq(str_replace("foo bar foo", "foo", "baz"), "baz bar baz")
+}
+
+fn test_replace_no_match() -> bool {
+    str_eq(str_replace("hello", "xyz", "abc"), "hello")
+}
+
+// ── Repeat ───────────────────────────────────────────────────────────────────
+
+fn test_repeat() -> bool {
+    str_eq(str_repeat("ab", 3), "ababab")
+}
+
+fn test_repeat_once() -> bool {
+    str_eq(str_repeat("x", 1), "x")
+}
+
+// ── Slice ─────────────────────────────────────────────────────────────────────
+
+fn test_slice_basic() -> bool {
+    str_eq(str_slice("hello world", 6, 11), "world")
+}
+
+fn test_slice_prefix() -> bool {
+    str_eq(str_slice("abcdef", 0, 3), "abc")
+}
+
+// ── Index of ─────────────────────────────────────────────────────────────────
+
+fn test_index_of_found() -> bool {
+    str_index_of("hello world", "world") == 6
+}
+
+fn test_index_of_not_found() -> bool {
+    str_index_of("hello", "xyz") == -1
+}
+
+// ── Pad ──────────────────────────────────────────────────────────────────────
+
+fn test_pad_start() -> bool {
+    str_eq(str_pad_start("42", 5, "0"), "00042")
+}
+
+fn test_pad_end() -> bool {
+    str_eq(str_pad_end("hi", 5, "."), "hi...")
+}
+
+// ── to_str conversions ───────────────────────────────────────────────────────
+
+fn test_to_str_bool() -> bool {
+    str_eq(to_str_bool(true), "true") && str_eq(to_str_bool(false), "false")
+}
+
+fn test_to_str_int() -> bool {
+    str_eq(to_str(42), "42") && str_eq(to_str(0), "0")
+}
+
+fn main() -> i64 {
+    let s1  = if test_to_upper()          { 1 } else { 0 }
+    let s2  = if test_to_lower()          { 1 } else { 0 }
+    let s3  = if test_round_trip_case()   { 1 } else { 0 }
+    let s4  = if test_trim()              { 1 } else { 0 }
+    let s5  = if test_trim_start()        { 1 } else { 0 }
+    let s6  = if test_trim_end()          { 1 } else { 0 }
+    let s7  = if test_replace()           { 1 } else { 0 }
+    let s8  = if test_replace_no_match()  { 1 } else { 0 }
+    let s9  = if test_repeat()            { 1 } else { 0 }
+    let s10 = if test_repeat_once()       { 1 } else { 0 }
+    let s11 = if test_slice_basic()       { 1 } else { 0 }
+    let s12 = if test_slice_prefix()      { 1 } else { 0 }
+    let s13 = if test_index_of_found()    { 1 } else { 0 }
+    let s14 = if test_index_of_not_found(){ 1 } else { 0 }
+    let s15 = if test_pad_start()         { 1 } else { 0 }
+    let s16 = if test_pad_end()           { 1 } else { 0 }
+    let s17 = if test_to_str_bool()       { 1 } else { 0 }
+    let s18 = if test_to_str_int()        { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12 + s13 + s14 + s15 + s16 + s17 + s18
+}

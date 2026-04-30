@@ -1,0 +1,19 @@
+fn main() {
+    let r1 = parse_int("42")
+    match r1 {
+        Ok(n) => println(to_str(n))
+        Err(e) => println("error")
+    }
+
+    let r2 = parse_int("not_a_number")
+    match r2 {
+        Ok(n) => println("unexpected ok")
+        Err(e) => println("correctly failed")
+    }
+
+    let r3 = parse_int("-100")
+    match r3 {
+        Ok(n) => println(to_str(n))
+        Err(e) => println("error")
+    }
+}

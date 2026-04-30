@@ -1,0 +1,66 @@
+// Phase 14: `?` operator — Result and Option propagation.
+
+// Safe division: returns Err if divisor is zero.
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+// Chain of ? operations.
+fn compute(a: i64, b: i64, c: i64) -> Result<i64, str> {
+    let x = safe_div(a, b)?;
+    let y = safe_div(x, c)?;
+    Ok(y)
+}
+
+fn test_question_ok() -> bool {
+    let r = compute(100, 5, 4);
+    match r {
+        Ok(n) => n == 5,
+        Err(_) => false,
+    }
+}
+
+fn test_question_propagates_err() -> bool {
+    let r = compute(100, 0, 4);
+    match r {
+        Ok(_) => false,
+        Err(msg) => str_eq(msg, "division by zero"),
+    }
+}
+
+// Option propagation
+fn find_char(s: str, pos: i64) -> Option<i64> {
+    if pos < 0 {
+        None
+    } else {
+        Some(char_at(s, pos))
+    }
+}
+
+fn test_option_some() -> bool {
+    let r = find_char("hello", 0);
+    match r {
+        Some(c) => c == 104,
+        None => false,
+    }
+}
+
+fn test_option_none() -> bool {
+    let r = find_char("hello", -1);
+    match r {
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1 = if test_question_ok()               { 1 } else { 0 };
+    let s2 = if test_question_propagates_err()   { 1 } else { 0 };
+    let s3 = if test_option_some()               { 1 } else { 0 };
+    let s4 = if test_option_none()               { 1 } else { 0 };
+    s1 + s2 + s3 + s4
+}

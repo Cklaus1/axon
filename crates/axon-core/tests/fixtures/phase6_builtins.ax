@@ -1,0 +1,83 @@
+// Smoke-test for Phase 6 builtins and break/continue.
+// Must parse and type-check without errors.
+
+fn test_break() -> i64 {
+    let i = 0;
+    while i < 10 {
+        if i == 5 {
+            break
+        }
+        i = i + 1
+    }
+    i
+}
+
+fn test_continue() -> i64 {
+    let i = 0
+    let sum = 0
+    while i < 10 {
+        i = i + 1
+        if i % 2 == 0 {
+            continue
+        }
+        sum = sum + i
+    }
+    sum
+}
+
+fn test_str_to_upper() -> bool {
+    let s = str_to_upper("hello")
+    str_eq(s, "HELLO")
+}
+
+fn test_str_to_lower() -> bool {
+    let s = str_to_lower("WORLD")
+    str_eq(s, "world")
+}
+
+fn test_str_trim() -> bool {
+    let s = str_trim("  hello  ")
+    str_eq(s, "hello")
+}
+
+fn test_str_trim_start() -> bool {
+    let s = str_trim_start("  hello")
+    str_eq(s, "hello")
+}
+
+fn test_str_trim_end() -> bool {
+    let s = str_trim_end("hello  ")
+    str_eq(s, "hello")
+}
+
+fn test_str_repeat() -> bool {
+    let s = str_repeat("ab", 3)
+    str_eq(s, "ababab")
+}
+
+fn test_str_replace() -> bool {
+    let s = str_replace("hello world", "world", "axon")
+    str_eq(s, "hello axon")
+}
+
+fn test_env_var() -> i64 {
+    let result = env_var("PATH")
+    match result {
+        Ok(_) => 1,
+        Err(_) => 0,
+    }
+}
+
+fn main() -> i64 {
+    let s1 = test_break()
+    let s2 = test_continue()
+    let s3 = if test_str_to_upper() { 1 } else { 0 }
+    let s4 = if test_str_to_lower() { 1 } else { 0 }
+    let s5 = if test_str_trim() { 1 } else { 0 }
+    let s6 = if test_str_trim_start() { 1 } else { 0 }
+    let s7 = if test_str_trim_end() { 1 } else { 0 }
+    let s8 = if test_str_repeat() { 1 } else { 0 }
+    let s9 = if test_str_replace() { 1 } else { 0 }
+    let s10 = test_env_var()
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10
+}

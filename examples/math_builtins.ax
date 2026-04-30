@@ -1,0 +1,8 @@
+fn main() {
+    println(to_str(abs_i32(-42)))
+    println(to_str(abs_i32(42)))
+    println(to_str_f64(abs_f64(-3.14)))
+    println(to_str(min_i32(10, 20)))
+    println(to_str(max_i32(10, 20)))
+    println(to_str(min_i32(-5, 5)))
+}

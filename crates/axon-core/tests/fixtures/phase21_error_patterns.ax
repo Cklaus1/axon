@@ -1,0 +1,137 @@
+// Phase 21: Error handling patterns — Result/Option chaining, recovery,
+//           and practical parse-and-validate pipelines.
+
+// ── Parse-and-validate pipeline ─────────────────────────────────────────────
+
+// Parse a non-negative integer from a string, returning Err for negatives.
+fn parse_natural(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?
+    if n < 0 {
+        Err("expected non-negative integer")
+    } else {
+        Ok(n)
+    }
+}
+
+fn test_parse_natural_ok() -> bool {
+    let r = parse_natural("42")
+    match r {
+        Ok(n)  => n == 42,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_natural_err_negative() -> bool {
+    let r = parse_natural("-5")
+    match r {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "expected non-negative integer"),
+    }
+}
+
+fn test_parse_natural_err_not_int() -> bool {
+    let r = parse_natural("abc")
+    match r {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Option chaining ─────────────────────────────────────────────────────────
+
+fn first_nonzero(a: i64, b: i64, c: i64) -> Option<i64> {
+    if a != 0 { Some(a) }
+    else if b != 0 { Some(b) }
+    else if c != 0 { Some(c) }
+    else { None }
+}
+
+fn test_first_nonzero() -> bool {
+    let r1 = first_nonzero(0, 0, 7)
+    let r2 = first_nonzero(5, 0, 0)
+    let r3 = first_nonzero(0, 0, 0)
+    let ok1 = match r1 { Some(v) => v == 7, None => false }
+    let ok2 = match r2 { Some(v) => v == 5, None => false }
+    let ok3 = match r3 { Some(_) => false,  None => true  }
+    ok1 && ok2 && ok3
+}
+
+// ── Option unwrap-or pattern ─────────────────────────────────────────────────
+
+fn option_or(o: Option<i64>, default: i64) -> i64 {
+    match o {
+        Some(v) => v,
+        None    => default,
+    }
+}
+
+fn test_option_or() -> bool {
+    option_or(Some(42), 0) == 42 &&
+    option_or(None, 99)    == 99
+}
+
+// ── Result map (manual, since no stdlib map) ────────────────────────────────
+
+fn result_map_double(r: Result<i64, str>) -> Result<i64, str> {
+    match r {
+        Ok(v)  => Ok(v * 2),
+        Err(s) => Err(s),
+    }
+}
+
+fn test_result_map() -> bool {
+    let ok_r  = result_map_double(Ok(21))
+    let err_r = result_map_double(Err("fail"))
+    let ok_v  = match ok_r  { Ok(v) => v == 42, Err(_) => false }
+    let err_v = match err_r { Ok(_) => false, Err(s) => str_eq(s, "fail") }
+    ok_v && err_v
+}
+
+// ── Chained ? in a computation pipeline ─────────────────────────────────────
+
+fn parse_ratio(num_str: str, den_str: str) -> Result<i64, str> {
+    let num = parse_natural(num_str)?
+    let den = parse_natural(den_str)?
+    if den == 0 {
+        Err("denominator cannot be zero")
+    } else {
+        Ok(num / den)
+    }
+}
+
+fn test_ratio_ok() -> bool {
+    let r = parse_ratio("100", "4")
+    match r {
+        Ok(v)  => v == 25,
+        Err(_) => false,
+    }
+}
+
+fn test_ratio_err_zero_den() -> bool {
+    let r = parse_ratio("100", "0")
+    match r {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "denominator cannot be zero"),
+    }
+}
+
+fn test_ratio_err_bad_input() -> bool {
+    let r = parse_ratio("not_a_number", "4")
+    match r {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+fn main() -> i64 {
+    let s1 = if test_parse_natural_ok()           { 1 } else { 0 }
+    let s2 = if test_parse_natural_err_negative()  { 1 } else { 0 }
+    let s3 = if test_parse_natural_err_not_int()   { 1 } else { 0 }
+    let s4 = if test_first_nonzero()               { 1 } else { 0 }
+    let s5 = if test_option_or()                   { 1 } else { 0 }
+    let s6 = if test_result_map()                  { 1 } else { 0 }
+    let s7 = if test_ratio_ok()                    { 1 } else { 0 }
+    let s8 = if test_ratio_err_zero_den()          { 1 } else { 0 }
+    let s9 = if test_ratio_err_bad_input()         { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

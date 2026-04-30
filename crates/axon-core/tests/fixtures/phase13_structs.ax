@@ -1,0 +1,59 @@
+// Phase 13: Struct literals, field access, and method patterns.
+
+type Point = { x: i64, y: i64 }
+type Rect = { top_left: Point, width: i64, height: i64 }
+
+fn make_point(x: i64, y: i64) -> Point {
+    Point { x: x, y: y }
+}
+
+fn point_sum(p: Point) -> i64 {
+    p.x + p.y
+}
+
+fn rect_area(r: Rect) -> i64 {
+    r.width * r.height
+}
+
+fn test_struct_literal() -> bool {
+    let p = make_point(3, 4);
+    p.x == 3 && p.y == 4
+}
+
+fn test_field_access() -> bool {
+    let p = Point { x: 10, y: 20 };
+    point_sum(p) == 30
+}
+
+fn test_nested_struct() -> bool {
+    let r = Rect {
+        top_left: Point { x: 0, y: 0 },
+        width: 5,
+        height: 8,
+    };
+    rect_area(r) == 40
+}
+
+// Enum with payload — struct-like variant
+enum Shape { Circle { radius: i64 }, Square { side: i64 }, }
+
+fn area_approx(s: Shape) -> i64 {
+    match s {
+        Shape::Circle { radius } => radius * radius * 3,
+        Shape::Square { side } => side * side,
+    }
+}
+
+fn test_enum_struct_match() -> bool {
+    let c = Shape::Circle { radius: 5 };
+    let sq = Shape::Square { side: 4 };
+    area_approx(c) == 75 && area_approx(sq) == 16
+}
+
+fn main() -> i64 {
+    let s1 = if test_struct_literal()    { 1 } else { 0 };
+    let s2 = if test_field_access()      { 1 } else { 0 };
+    let s3 = if test_nested_struct()     { 1 } else { 0 };
+    let s4 = if test_enum_struct_match() { 1 } else { 0 };
+    s1 + s2 + s3 + s4
+}

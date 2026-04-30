@@ -1,0 +1,447 @@
+(*
+  Axon Language Grammar — v0.2
+  File extension: .ax
+  Dense by default. Braces not whitespace. Types inferred. No null. No exceptions.
+
+  Notation:
+    ::=          production rule
+    |            alternative
+    ( ... )      grouping
+    [ ... ]      optional (0 or 1)
+    { ... }      repetition (0 or more)
+    'keyword'    terminal keyword
+    UPPER_CASE   lexical token (defined in §1)
+    (* ... *)    comment
+*)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §1  Lexical Tokens
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+(*
+  Whitespace (spaces, tabs, newlines), line comments (`// …`), and block
+  comments (`/* … */`) are skipped between every token and are not mentioned
+  further in the grammar.
+
+  Block comment syntax:
+    '/*' any-characters-including-newlines '*/'
+  Block comments do not nest. A `/*` inside a block comment does not start a
+  new comment; only the first `*/` closes the comment.
+*)
+
+INT_LIT    ::= DIGIT { DIGIT } ;
+FLOAT_LIT  ::= DIGIT { DIGIT } '.' { DIGIT } [ ('e' | 'E') ['+' | '-'] DIGIT { DIGIT } ] ;
+
+(*
+  FLOAT_LIT examples:
+    3.14       plain decimal float
+    1.0e10     scientific notation (positive exponent)
+    2.5E-3     scientific notation (negative exponent)
+    1.         trailing-dot form (digits after dot are optional)
+  The exponent part [eE][+-]?[0-9]+ is optional; a plain decimal float with no
+  exponent is still valid. At least one digit must precede the '.'.
+*)
+
+(*
+  STR_RAW is the raw bytes of a string literal as recognised by the lexer.
+  Within a STR_RAW the character sequences `{expr}` are treated as
+  interpolation points at the parser level (see §6.10).
+
+  Recognised escape sequences inside string literals:
+    \\   backslash
+    \"   double quote
+    \n   newline (U+000A)
+    \t   horizontal tab (U+0009)
+    \r   carriage return (U+000D)
+    \0   null byte (U+0000)
+  Any other backslash sequence is a lexer error.
+*)
+STR_RAW    ::= '"' { CHAR_OR_ESCAPE } '"' ;
+
+IDENT      ::= LETTER { LETTER | DIGIT | '_' } ;
+(*
+  IDENT must not be a reserved keyword:
+    fn  let  own  ref  type  enum  mod  use  match  spawn  select  comptime
+    if  else  while  return  Ok  Err  Some  None  true  false  pub
+*)
+
+LETTER     ::= 'a' .. 'z' | 'A' .. 'Z' | '_' ;
+DIGIT      ::= '0' .. '9' ;
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §2  Program Structure
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+program    ::= { item } ;
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §3  Items (top-level declarations)
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+item       ::= { attr } [ 'pub' ] item_kind ;
+
+item_kind  ::= fn_def
+             | type_def
+             | enum_def
+             | mod_decl
+             | use_decl
+             ;
+
+(* ── 3.1  Attributes ─────────────────────────────────────────────────────── *)
+
+(*
+  Attributes appear before items (functions, type defs, enum defs, etc.).
+  Examples:
+    @[test]
+    @[test(should_fail)]
+    @[adaptive]
+*)
+attr       ::= '@' '[' IDENT [ '(' attr_arg_list ')' ] ']' ;
+attr_arg_list ::= IDENT { ',' IDENT } ;
+
+(* ── 3.2  Function definitions ───────────────────────────────────────────── *)
+
+fn_def     ::= 'fn' IDENT '(' [ param_list ] ')' [ '->' type ] block ;
+
+param_list ::= param { ',' param } ;
+param      ::= IDENT ':' type ;
+
+(* ── 3.3  Type definitions (structs) ─────────────────────────────────────── *)
+
+(*
+  Syntax:  type Name = { field: Type, … }
+*)
+type_def   ::= 'type' IDENT '=' '{' { type_field [ ',' ] } '}' ;
+type_field ::= IDENT ':' type ;
+
+(* ── 3.4  Enum definitions ───────────────────────────────────────────────── *)
+
+enum_def   ::= 'enum' IDENT '{' { enum_variant [ ',' ] } '}' ;
+enum_variant ::= IDENT [ '{' { type_field [ ',' ] } '}' ] ;
+
+(* ── 3.5  Module declaration ─────────────────────────────────────────────── *)
+
+mod_decl   ::= 'mod' IDENT ;
+
+(* ── 3.6  Use declaration ────────────────────────────────────────────────── *)
+
+(*
+  Path segments are separated by `.`.
+  An optional brace group imports multiple names from the final segment.
+  Examples:
+    use server
+    use server.listen
+    use server.{listen, Router}
+*)
+use_decl   ::= 'use' IDENT { '.' IDENT } [ '.' '{' IDENT { ',' IDENT } '}' ] ;
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §4  Types
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+type       ::= '&' type                                     (* reference type          *)
+             | '[' type ']'                                 (* slice type              *)
+             | 'Result' '<' type ',' type '>'               (* result type             *)
+             | 'Option' '<' type '>'                        (* option type             *)
+             | 'Chan'   '<' type '>'                        (* channel type            *)
+             | IDENT '<' type { ',' type } '>'              (* generic named type      *)
+             | IDENT                                        (* named type (incl. primitives) *)
+             ;
+
+(*
+  Built-in primitive named types (all map to AxonType::Named):
+    i64  i32  f64  bool  str  ()
+  The unit type `()` is written as the two-character sequence '(' ')'.
+  Function types (AxonType::Fn) exist in the AST but are not yet surface syntax.
+*)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §5  Expressions — Precedence Table (lowest → highest)
+   ══════════════════════════════════════════════════════════════════════════════
+
+  Level  Associativity  Operators / forms
+  ─────  ─────────────  ────────────────────────────────────────────────────────
+    1    (statements)   let / own / ref  bindings, return, assign
+    2    left           && ||                   (logical)
+    3    left           == != < > <= >=         (comparison)
+    4    left           + -                     (additive)
+    5    left           * / %                   (multiplicative; % added Phase 2)
+    6    left           ? . () []               (postfix)
+    7    (prefix)       & - !                   (unary)
+    8    (atoms)        literals, ident, block, if, match, while, …
+
+  && and || were added in Phase 2 (logical level above comparison).
+  % modulo was added in Phase 2 (alongside * and /).
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §6  Expressions
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+expr       ::= let_bind
+             | own_bind
+             | ref_bind
+             | return_expr
+             | assign_expr
+             | while_expr
+             | match_expr
+             | if_expr
+             | spawn_expr
+             | select_expr
+             | comptime_expr
+             | logical          (* lowest-precedence value expression — includes && || and below *)
+             ;
+
+(* ── 6.1  Binding statements ─────────────────────────────────────────────── *)
+
+(*
+  Ownership-annotated bindings.  All three introduce a new name into scope.
+    let  — immutable (copy/move semantics determined by type)
+    own  — explicit move / owned binding
+    ref  — shared reference binding
+*)
+let_bind   ::= 'let' IDENT '=' expr ;
+own_bind   ::= 'own' IDENT '=' expr ;
+ref_bind   ::= 'ref' IDENT '=' expr ;
+
+(* ── 6.2  Assignment rebinding ───────────────────────────────────────────── *)
+
+(*
+  Rebind an already-declared name.  Not a new declaration.
+  Disambiguated from `==` comparison by requiring a single `=`
+  that is not immediately followed by another `=`.
+*)
+assign_expr ::= IDENT '=' expr ;
+
+(* ── 6.3  Return ─────────────────────────────────────────────────────────── *)
+
+return_expr ::= 'return' [ expr ] ;
+
+(* ── 6.4  While loop ────────────────────────────────────────────────────── *)
+
+while_expr ::= 'while' comparison '{' { stmt } '}' ;
+
+(* ── 6.5  Match expression ───────────────────────────────────────────────── *)
+
+match_expr ::= 'match' comparison '{' { match_arm [ ',' ] } '}' ;
+match_arm  ::= pattern [ 'if' comparison ] '=>' expr ;
+
+(* ── 6.6  If / else expression ───────────────────────────────────────────── *)
+
+if_expr    ::= 'if' comparison block [ 'else' ( if_expr | block ) ] ;
+
+(* ── 6.7  Concurrency forms ─────────────────────────────────────────────── *)
+
+spawn_expr    ::= 'spawn' block ;
+select_expr   ::= 'select' '{' { select_arm [ ',' ] } '}' ;
+select_arm    ::= comparison '=>' expr ;
+comptime_expr ::= 'comptime' block ;
+
+(* ── 6.8  Binary operator expressions (precedence climbing) ─────────────── *)
+
+(*
+  Precedence table (lowest → highest, updated for Phase 2/3 operators):
+
+  Level  Associativity  Operators / forms
+  ─────  ─────────────  ────────────────────────────────────────────────────────
+    1    (statements)   let / own / ref bindings, return, assign
+    2    left           && ||                   (logical)
+    3    left           == != < > <= >=         (comparison)
+    4    left           + -                     (additive)
+    5    left           * / %                   (multiplicative)
+    6    left           ? . () []               (postfix)
+    7    (prefix)       & - !                   (unary)
+    8    (atoms)        literals, ident, block, if, match, while, …
+*)
+
+logical        ::= comparison { log_op comparison } ;
+log_op         ::= '&&' | '||' ;
+
+comparison     ::= additive { cmp_op additive } ;
+cmp_op         ::= '==' | '!=' | '<' | '>' | '<=' | '>=' ;
+
+additive       ::= multiplicative { add_op multiplicative } ;
+add_op         ::= '+' | '-' ;
+
+multiplicative ::= postfix { mul_op postfix } ;
+mul_op         ::= '*' | '/' | '%' ;
+
+(* ── 6.9  Postfix expressions ────────────────────────────────────────────── *)
+
+(*
+  All postfix operators are left-associative and bind tighter than any
+  binary infix operator.
+*)
+postfix    ::= unary { postfix_op } ;
+postfix_op ::= '?'                              (* error propagation       *)
+             | '.' IDENT '(' arg_list ')'       (* method call             *)
+             | '.' IDENT                        (* field access            *)
+             | '(' arg_list ')'                 (* function call           *)
+             | '[' expr ']'                     (* index                   *)
+             ;
+
+(* ── 6.10  Unary / prefix expressions ───────────────────────────────────── *)
+
+(*
+  Unary operators are parsed in `parse_primary` (tightest binding).
+*)
+unary      ::= '&' unary                        (* reference-of            *)
+             | '-' unary                        (* arithmetic negation     *)
+             | '!' unary                        (* logical negation        *)
+             | primary
+             ;
+
+(* ── 6.11  Primary expressions ──────────────────────────────────────────── *)
+
+(*
+  `primary` covers all atomic and bracketed expression forms.
+*)
+primary    ::= block
+             | '(' expr ')'
+             | INT_LIT
+             | FLOAT_LIT
+             | str_expr
+             | 'true'
+             | 'false'
+             | 'None'
+             | 'Ok'  '(' expr ')'
+             | 'Err' '(' expr ')'
+             | 'Some' '(' expr ')'
+             | array_expr
+             | struct_lit
+             | enum_ctor
+             | IDENT
+             ;
+
+(* ── 6.12  String / interpolated-string expression ─────────────────────── *)
+
+(*
+  A string literal is lexed as a single STR_RAW token.  The parser then
+  inspects the contents for `{...}` segments.
+
+  If the raw string contains no `{` characters it lowers to:
+    Literal::Str
+
+  If it contains one or more `{...}` segments it lowers to:
+    FmtStr { parts: [FmtPart::Lit, FmtPart::Expr, …] }
+
+  Interpolation expressions inside `{...}` are restricted to:
+    ident                     — bare identifier
+    ident '(' IDENT ')'       — single-argument call (for format conversions)
+
+  Examples:
+    "hello"          → Literal::Str("hello")
+    "hello {name}!"  → FmtStr { parts: [Lit("hello "), Expr(Ident("name")), Lit("!")] }
+    "{to_str(n)} items" → FmtStr with Expr(Call(to_str, [n]))
+*)
+str_expr   ::= STR_RAW ;         (* parser inspects for `{…}` interpolation *)
+
+fmt_part   ::= IDENT                (* bare identifier interpolation  *)
+             | IDENT '(' IDENT ')'  (* single-arg call interpolation  *)
+             ;
+
+(* ── 6.13  Array literal ────────────────────────────────────────────────── *)
+
+array_expr ::= '[' [ expr { ',' expr } ] ']' ;
+
+(* ── 6.14  Struct literal ───────────────────────────────────────────────── *)
+
+(*
+  Syntax:  TypeName { field: expr, … }
+  Disambiguated from a block by requiring `IDENT ':'` (but not `IDENT '::'`)
+  immediately after the opening brace.
+*)
+struct_lit ::= IDENT '{' struct_field_list '}' ;
+struct_field_list ::= struct_field { ',' struct_field } ;
+struct_field      ::= IDENT ':' expr ;
+
+(* ── 6.15  Enum variant constructor ─────────────────────────────────────── *)
+
+(*
+  Syntax:  EnumName '::' VariantName [ '{' enum_ctor_field_list '}' ]
+  `::` is two consecutive `:` tokens (no dedicated double-colon token).
+  Fields support a shorthand form where `field` alone means `field: field`.
+  Unit variants have no brace body.
+
+  Examples:
+    Shape::Point
+    Shape::Circle { radius: 1.0 }
+    Shape::Rect { w, h }            (* shorthand *)
+*)
+enum_ctor  ::= IDENT '::' IDENT [ '{' enum_ctor_field_list '}' ] ;
+enum_ctor_field_list ::= enum_ctor_field { ',' enum_ctor_field } ;
+enum_ctor_field      ::= IDENT [ ':' expr ] ;   (* omit `:` for shorthand *)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §7  Blocks and Statements
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+block      ::= '{' { stmt } '}' ;
+stmt       ::= expr [ ';' ] ;
+
+(*
+  Semicolons are optional statement separators inside a block.
+  The last expression in a block is its value (no mandatory semicolon).
+*)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §8  Argument Lists
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+arg_list   ::= [ expr { ',' expr } ] ;
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §9  Patterns
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+pattern    ::= '_'                                          (* wildcard            *)
+             | 'None'                                       (* Option::None        *)
+             | 'Some' '(' pattern ')'                       (* Option::Some        *)
+             | 'Ok'   '(' pattern ')'                       (* Result::Ok          *)
+             | 'Err'  '(' pattern ')'                       (* Result::Err         *)
+             | INT_LIT                                      (* integer literal     *)
+             | STR_RAW                                      (* string literal      *)
+             | enum_variant_pat                             (* Enum::Variant { … } *)
+             | IDENT                                        (* binding / named     *)
+             ;
+
+(*
+  Enum variant pattern: Enum '::' Variant [ '{' pat_field_list '}' ]
+  Shorthand `{ field }` binds the field value to a variable of the same name.
+  Unit variant patterns have no brace body.
+
+  Examples:
+    Shape::Point
+    Shape::Circle { radius }        (* shorthand: binds `radius` *)
+    Shape::Rect { w: width, h: _ }
+*)
+enum_variant_pat  ::= IDENT '::' IDENT [ '{' pat_field_list '}' ] ;
+pat_field_list    ::= pat_field { ',' pat_field } ;
+pat_field         ::= IDENT [ ':' pattern ] ;   (* omit `:` for shorthand binding *)
+
+
+(* ══════════════════════════════════════════════════════════════════════════════
+   §10  Literals (summary)
+   ══════════════════════════════════════════════════════════════════════════════ *)
+
+(*
+  INT_LIT   ::= one or more decimal digits                       e.g. 42
+  FLOAT_LIT ::= decimal digits '.' decimal digits                e.g. 3.14
+  STR_RAW   ::= '"' … '"'  (may contain {expr} interpolation)   e.g. "hi {name}"
+  BOOL_LIT  ::= 'true' | 'false'
+  UNIT      ::= '(' ')'                                          the unit value ()
+
+  UNIT is currently parsed as a grouped expression `( expr )` where the inner
+  expression is absent; in practice the unit value is represented as an empty
+  block or by the Named type "()" and does not appear as a standalone literal
+  in the current parser.
+*)

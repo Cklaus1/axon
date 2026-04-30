@@ -1,0 +1,175 @@
+// Phase 25: Integration — recursive enum AST + evaluator + error handling.
+//
+// A pure expression language (no environment needed) that combines:
+// recursive enums, struct payloads, match guards, Result, ? operator,
+// closures, for loops, and string formatting.
+
+// ── Expression AST ────────────────────────────────────────────────────────────
+
+enum BinOp { Add, Sub, Mul, Div, Mod, }
+
+enum Expr {
+    Lit  { n: i64 },
+    Bin  { op: BinOp, lhs: Expr, rhs: Expr },
+    Neg  { inner: Expr },
+    Abs  { inner: Expr },
+    IfZ  { cond: Expr, zero: Expr, nonzero: Expr },
+}
+
+// ── Evaluator ────────────────────────────────────────────────────────────────
+
+fn apply_op(op: BinOp, a: i64, b: i64) -> Result<i64, str> {
+    match op {
+        BinOp::Add => Ok(a + b),
+        BinOp::Sub => Ok(a - b),
+        BinOp::Mul => Ok(a * b),
+        BinOp::Div => {
+            if b == 0 { Err("division by zero") }
+            else { Ok(a / b) }
+        },
+        BinOp::Mod => {
+            if b == 0 { Err("modulo by zero") }
+            else { Ok(a - (a / b) * b) }
+        },
+    }
+}
+
+fn eval(e: Expr) -> Result<i64, str> {
+    match e {
+        Expr::Lit { n }          => Ok(n),
+        Expr::Neg { inner }      => {
+            let v = eval(inner)?
+            Ok(-v)
+        },
+        Expr::Abs { inner }      => {
+            let v = eval(inner)?
+            Ok(abs_i64(v))
+        },
+        Expr::Bin { op, lhs, rhs } => {
+            let a = eval(lhs)?
+            let b = eval(rhs)?
+            apply_op(op, a, b)
+        },
+        Expr::IfZ { cond, zero, nonzero } => {
+            let c = eval(cond)?
+            if c == 0 { eval(zero) } else { eval(nonzero) }
+        },
+    }
+}
+
+// ── Helper: unwrap Result or return default ───────────────────────────────────
+
+fn result_value(r: Result<i64, str>, default: i64) -> i64 {
+    match r {
+        Ok(v)  => v,
+        Err(_) => default,
+    }
+}
+
+fn result_is_err(r: Result<i64, str>) -> bool {
+    match r { Ok(_) => false, Err(_) => true }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+fn test_literal() -> bool {
+    result_value(eval(Expr::Lit { n: 42 }), 0) == 42
+}
+
+fn test_neg() -> bool {
+    let e = Expr::Neg { inner: Expr::Lit { n: 5 } }
+    result_value(eval(e), 0) == -5
+}
+
+fn test_abs() -> bool {
+    let e = Expr::Abs { inner: Expr::Neg { inner: Expr::Lit { n: 7 } } }
+    result_value(eval(e), 0) == 7
+}
+
+fn test_add() -> bool {
+    let e = Expr::Bin {
+        op: BinOp::Add,
+        lhs: Expr::Lit { n: 3 },
+        rhs: Expr::Lit { n: 4 },
+    }
+    result_value(eval(e), 0) == 7
+}
+
+fn test_nested_arithmetic() -> bool {
+    // (2 + 3) * (10 - 4) = 5 * 6 = 30
+    let lhs = Expr::Bin { op: BinOp::Add, lhs: Expr::Lit { n: 2 }, rhs: Expr::Lit { n: 3 } }
+    let rhs = Expr::Bin { op: BinOp::Sub, lhs: Expr::Lit { n: 10 }, rhs: Expr::Lit { n: 4 } }
+    let e = Expr::Bin { op: BinOp::Mul, lhs: lhs, rhs: rhs }
+    result_value(eval(e), 0) == 30
+}
+
+fn test_div_by_zero() -> bool {
+    let e = Expr::Bin {
+        op: BinOp::Div,
+        lhs: Expr::Lit { n: 10 },
+        rhs: Expr::Lit { n: 0 },
+    }
+    result_is_err(eval(e))
+}
+
+fn test_mod() -> bool {
+    let e = Expr::Bin {
+        op: BinOp::Mod,
+        lhs: Expr::Lit { n: 17 },
+        rhs: Expr::Lit { n: 5 },
+    }
+    result_value(eval(e), 0) == 2
+}
+
+fn test_ifz_zero_branch() -> bool {
+    // ifz(0, 99, 1) => 99
+    let e = Expr::IfZ {
+        cond:    Expr::Lit { n: 0 },
+        zero:    Expr::Lit { n: 99 },
+        nonzero: Expr::Lit { n: 1 },
+    }
+    result_value(eval(e), 0) == 99
+}
+
+fn test_ifz_nonzero_branch() -> bool {
+    // ifz(5, 99, 42) => 42
+    let e = Expr::IfZ {
+        cond:    Expr::Lit { n: 5 },
+        zero:    Expr::Lit { n: 99 },
+        nonzero: Expr::Lit { n: 42 },
+    }
+    result_value(eval(e), 0) == 42
+}
+
+// ── Batch evaluation using a for loop and closures ────────────────────────────
+
+fn count_errors(tests: fn(i64) -> Result<i64, str>, lo: i64, hi: i64) -> i64 {
+    let errs = 0
+    for i in lo..hi {
+        let r = tests(i)
+        if result_is_err(r) {
+            errs = errs + 1
+        }
+    }
+    errs
+}
+
+fn test_count_no_errors() -> bool {
+    // All of 0..5 / 1 are ok
+    let n = count_errors(|i| Ok(i), 0, 5)
+    n == 0
+}
+
+fn main() -> i64 {
+    let s1 = if test_literal()           { 1 } else { 0 }
+    let s2 = if test_neg()               { 1 } else { 0 }
+    let s3 = if test_abs()               { 1 } else { 0 }
+    let s4 = if test_add()               { 1 } else { 0 }
+    let s5 = if test_nested_arithmetic() { 1 } else { 0 }
+    let s6 = if test_div_by_zero()       { 1 } else { 0 }
+    let s7 = if test_mod()               { 1 } else { 0 }
+    let s8 = if test_ifz_zero_branch()   { 1 } else { 0 }
+    let s9 = if test_ifz_nonzero_branch(){ 1 } else { 0 }
+    let s10 = if test_count_no_errors()  { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10
+}

@@ -1,0 +1,15 @@
+fn main() {
+    let a = 10
+    let b = 3
+    let rem = a % b
+    println(to_str(rem))
+
+    let x = true
+    let y = false
+    let and_result = x && y
+    let or_result = x || y
+    println(if and_result { "true" } else { "false" })
+    println(if or_result { "true" } else { "false" })
+
+    println("hello\nworld")
+}

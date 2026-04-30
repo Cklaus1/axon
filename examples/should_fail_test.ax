@@ -1,0 +1,25 @@
+// Example: @[test(should_fail)] tests
+//
+// A test marked with @[test(should_fail)] is expected to fail (exit non-zero).
+// The test runner inverts the pass/fail semantics: the test PASSES if the
+// function panics/asserts-fails, and FAILS if it exits cleanly.
+
+fn always_fails() {
+    assert(1 == 2)
+}
+
+fn always_passes() {
+    assert(1 == 1)
+}
+
+// This test is expected to fail (assert fires) — so it passes under should_fail.
+@[test(should_fail)]
+fn test_expected_failure() {
+    always_fails()
+}
+
+// Normal test — expected to pass.
+@[test]
+fn test_normal_pass() {
+    always_passes()
+}

@@ -1,0 +1,15 @@
+fn safe_div(a: i64, b: i64) -> Result<i64, str> {
+    if b == 0 {
+        Err("division by zero")
+    } else {
+        Ok(a / b)
+    }
+}
+
+fn main() {
+    let x = safe_div(10, 2)
+    match x {
+        Ok(v) => println(to_str(v))
+        Err(e) => eprintln(e)
+    }
+}

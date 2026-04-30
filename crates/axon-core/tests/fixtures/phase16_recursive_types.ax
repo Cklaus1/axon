@@ -1,0 +1,116 @@
+// Phase 16: Recursive types — linked lists and trees via enums.
+
+// Singly-linked list of i64 values.
+enum List { Nil, Cons { head: i64, tail: List }, }
+
+fn list_len(l: List) -> i64 {
+    match l {
+        List::Nil => 0,
+        List::Cons { head: _, tail } => 1 + list_len(tail),
+    }
+}
+
+fn list_sum(l: List) -> i64 {
+    match l {
+        List::Nil => 0,
+        List::Cons { head, tail } => head + list_sum(tail),
+    }
+}
+
+fn list_head(l: List) -> Option<i64> {
+    match l {
+        List::Nil => None,
+        List::Cons { head, tail: _ } => Some(head),
+    }
+}
+
+fn test_list_empty() -> bool {
+    list_len(List::Nil) == 0
+}
+
+fn test_list_len() -> bool {
+    let xs = List::Cons { head: 1, tail: List::Cons { head: 2, tail: List::Cons { head: 3, tail: List::Nil } } }
+    list_len(xs) == 3
+}
+
+fn test_list_sum() -> bool {
+    let xs = List::Cons { head: 10, tail: List::Cons { head: 20, tail: List::Cons { head: 30, tail: List::Nil } } }
+    list_sum(xs) == 60
+}
+
+fn test_list_head_some() -> bool {
+    let xs = List::Cons { head: 42, tail: List::Nil }
+    match list_head(xs) {
+        Some(v) => v == 42,
+        None    => false,
+    }
+}
+
+fn test_list_head_none() -> bool {
+    match list_head(List::Nil) {
+        Some(_) => false,
+        None    => true,
+    }
+}
+
+// Binary tree of i64 values.
+enum Tree { Leaf, Node { val: i64, left: Tree, right: Tree }, }
+
+fn tree_sum(t: Tree) -> i64 {
+    match t {
+        Tree::Leaf => 0,
+        Tree::Node { val, left, right } => val + tree_sum(left) + tree_sum(right),
+    }
+}
+
+fn tree_height(t: Tree) -> i64 {
+    match t {
+        Tree::Leaf => 0,
+        Tree::Node { val: _, left, right } => {
+            let lh = tree_height(left)
+            let rh = tree_height(right)
+            1 + max_i64(lh, rh)
+        },
+    }
+}
+
+fn test_tree_sum() -> bool {
+    //       5
+    //      / \
+    //     3   4
+    let t = Tree::Node {
+        val: 5,
+        left:  Tree::Node { val: 3, left: Tree::Leaf, right: Tree::Leaf },
+        right: Tree::Node { val: 4, left: Tree::Leaf, right: Tree::Leaf },
+    }
+    tree_sum(t) == 12
+}
+
+fn test_tree_height() -> bool {
+    //       1
+    //      /
+    //     2
+    //    /
+    //   3
+    let t = Tree::Node {
+        val: 1,
+        left: Tree::Node {
+            val: 2,
+            left: Tree::Node { val: 3, left: Tree::Leaf, right: Tree::Leaf },
+            right: Tree::Leaf,
+        },
+        right: Tree::Leaf,
+    }
+    tree_height(t) == 3
+}
+
+fn main() -> i64 {
+    let s1 = if test_list_empty()     { 1 } else { 0 }
+    let s2 = if test_list_len()       { 1 } else { 0 }
+    let s3 = if test_list_sum()       { 1 } else { 0 }
+    let s4 = if test_list_head_some() { 1 } else { 0 }
+    let s5 = if test_list_head_none() { 1 } else { 0 }
+    let s6 = if test_tree_sum()       { 1 } else { 0 }
+    let s7 = if test_tree_height()    { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

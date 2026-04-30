@@ -1,0 +1,145 @@
+// Phase 35: Nested types — Option<Result<...>>, Result<Option<...>>,
+//           deeply nested enum payloads, and complex type unification.
+
+// ── Option<Result<i64, str>> ──────────────────────────────────────────────────
+
+fn safe_parse(s: str) -> Option<Result<i64, str>> {
+    if str_len(s) == 0 { None }
+    else { Some(parse_int(s)) }
+}
+
+fn test_opt_result_some_ok() -> bool {
+    match safe_parse("42") {
+        Some(Ok(n))  => n == 42,
+        _            => false,
+    }
+}
+
+fn test_opt_result_some_err() -> bool {
+    match safe_parse("abc") {
+        Some(Err(_)) => true,
+        _            => false,
+    }
+}
+
+fn test_opt_result_none() -> bool {
+    match safe_parse("") {
+        None => true,
+        _    => false,
+    }
+}
+
+// ── Result<Option<i64>, str> ──────────────────────────────────────────────────
+
+fn maybe_positive(n: i64) -> Result<Option<i64>, str> {
+    if n < -1000 { Err("too small") }
+    else if n <= 0 { Ok(None) }
+    else { Ok(Some(n)) }
+}
+
+fn test_result_opt_ok_some() -> bool {
+    match maybe_positive(5) {
+        Ok(Some(v)) => v == 5,
+        _           => false,
+    }
+}
+
+fn test_result_opt_ok_none() -> bool {
+    match maybe_positive(0) {
+        Ok(None) => true,
+        _        => false,
+    }
+}
+
+fn test_result_opt_err() -> bool {
+    match maybe_positive(-9999) {
+        Err(_) => true,
+        _      => false,
+    }
+}
+
+// ── Deeply nested enum payloads ───────────────────────────────────────────────
+
+type Inner = { val: i64 }
+type Middle = { data: Inner, tag: str }
+type Outer = { content: Middle, count: i64 }
+
+fn make_nested(v: i64) -> Outer {
+    Outer {
+        content: Middle {
+            data: Inner { val: v },
+            tag: "test",
+        },
+        count: 1,
+    }
+}
+
+fn test_nested_structs() -> bool {
+    let o = make_nested(42)
+    o.content.data.val == 42 && str_eq(o.content.tag, "test") && o.count == 1
+}
+
+// ── Option-of-Option flattening ────────────────────────────────────────────
+
+fn flatten_opt(oo: Option<Option<i64>>) -> Option<i64> {
+    match oo {
+        None         => None,
+        Some(None)   => None,
+        Some(Some(v)) => Some(v),
+    }
+}
+
+fn test_flatten_none() -> bool {
+    match flatten_opt(None) {
+        None => true,
+        _    => false,
+    }
+}
+
+fn test_flatten_some_none() -> bool {
+    match flatten_opt(Some(None)) {
+        None => true,
+        _    => false,
+    }
+}
+
+fn test_flatten_some_some() -> bool {
+    match flatten_opt(Some(Some(7))) {
+        Some(v) => v == 7,
+        None    => false,
+    }
+}
+
+// ── Chain of Option operations ────────────────────────────────────────────────
+
+fn first_valid(a: Option<i64>, b: Option<i64>, c: Option<i64>) -> Option<i64> {
+    match a {
+        Some(v) => Some(v),
+        None    => match b {
+            Some(v) => Some(v),
+            None    => c,
+        },
+    }
+}
+
+fn test_first_valid() -> bool {
+    match first_valid(None, None, Some(99)) {
+        Some(v) => v == 99,
+        None    => false,
+    }
+}
+
+fn main() -> i64 {
+    let s1  = if test_opt_result_some_ok()  { 1 } else { 0 }
+    let s2  = if test_opt_result_some_err() { 1 } else { 0 }
+    let s3  = if test_opt_result_none()     { 1 } else { 0 }
+    let s4  = if test_result_opt_ok_some()  { 1 } else { 0 }
+    let s5  = if test_result_opt_ok_none()  { 1 } else { 0 }
+    let s6  = if test_result_opt_err()      { 1 } else { 0 }
+    let s7  = if test_nested_structs()      { 1 } else { 0 }
+    let s8  = if test_flatten_none()        { 1 } else { 0 }
+    let s9  = if test_flatten_some_none()   { 1 } else { 0 }
+    let s10 = if test_flatten_some_some()   { 1 } else { 0 }
+    let s11 = if test_first_valid()         { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11
+}

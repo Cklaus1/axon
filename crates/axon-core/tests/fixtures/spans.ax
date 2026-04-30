@@ -1,0 +1,10 @@
+// Integration test: span-threaded diagnostics.
+// This file INTENTIONALLY has an error — accessing a nonexistent field.
+// The test verifies that E0401 is produced with a non-zero line/col.
+
+type Point = { x: f64, y: f64 }
+
+fn main() {
+    let p = Point { x: 1.0, y: 2.0 }
+    println(p.z)
+}

@@ -1,0 +1,12 @@
+[package]
+name = "axon-rt"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib"]  # Link into axon binaries as a native static lib.
+name = "axon_rt"
+
+[dependencies]

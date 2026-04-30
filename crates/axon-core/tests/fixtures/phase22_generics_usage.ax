@@ -1,0 +1,126 @@
+// Phase 22: Generics — polymorphic functions and generic struct types.
+
+// ── Generic Pair ─────────────────────────────────────────────────────────────
+
+type Pair<A, B> = { first: A, second: B }
+
+fn pair_swap<A, B>(p: Pair<A, B>) -> Pair<B, A> {
+    Pair { first: p.second, second: p.first }
+}
+
+fn test_pair_i64() -> bool {
+    let p = Pair { first: 10, second: 20 }
+    let q = pair_swap(p)
+    q.first == 20 && q.second == 10
+}
+
+fn test_pair_str() -> bool {
+    let p = Pair { first: "hello", second: "world" }
+    let q = pair_swap(p)
+    str_eq(q.first, "world") && str_eq(q.second, "hello")
+}
+
+// ── Generic identity and constant functions ───────────────────────────────────
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn always<A, B>(a: A, _b: B) -> A {
+    a
+}
+
+fn test_identity() -> bool {
+    identity(42) == 42 && identity(true)
+}
+
+fn test_always() -> bool {
+    always(99, "ignored") == 99
+}
+
+// ── Generic Option helpers ────────────────────────────────────────────────────
+
+fn is_some<T>(o: Option<T>) -> bool {
+    match o {
+        Some(_) => true,
+        None    => false,
+    }
+}
+
+fn is_none<T>(o: Option<T>) -> bool {
+    !is_some(o)
+}
+
+fn test_is_some_none() -> bool {
+    is_some(Some(42)) && is_none(None) && !is_some(None) && !is_none(Some(0))
+}
+
+// ── Generic Result helper ─────────────────────────────────────────────────────
+
+fn is_ok<T>(r: Result<T, str>) -> bool {
+    match r {
+        Ok(_)  => true,
+        Err(_) => false,
+    }
+}
+
+fn is_err<T>(r: Result<T, str>) -> bool {
+    !is_ok(r)
+}
+
+fn test_is_ok_err() -> bool {
+    is_ok(Ok(1))       &&
+    is_err(Err("oops")) &&
+    !is_ok(Err("bad"))  &&
+    !is_err(Ok(0))
+}
+
+// ── Generic min/max on i64 (using i64-native builtins) ───────────────────────
+
+fn clamp_range(v: i64, lo: i64, hi: i64) -> i64 {
+    min_i64(max_i64(v, lo), hi)
+}
+
+fn test_clamp_range() -> bool {
+    clamp_range(5, 0, 10)   == 5  &&
+    clamp_range(-1, 0, 10)  == 0  &&
+    clamp_range(15, 0, 10)  == 10
+}
+
+// ── Pair of Options ───────────────────────────────────────────────────────────
+
+fn zip_options(a: Option<i64>, b: Option<i64>) -> Option<Pair<i64, i64>> {
+    match a {
+        None => None,
+        Some(va) => match b {
+            None    => None,
+            Some(vb) => Some(Pair { first: va, second: vb }),
+        },
+    }
+}
+
+fn test_zip_options() -> bool {
+    let some_pair = zip_options(Some(1), Some(2))
+    let none_pair = zip_options(Some(1), None)
+    let ok = match some_pair {
+        Some(p) => p.first == 1 && p.second == 2,
+        None    => false,
+    }
+    let nope = match none_pair {
+        Some(_) => false,
+        None    => true,
+    }
+    ok && nope
+}
+
+fn main() -> i64 {
+    let s1 = if test_pair_i64()      { 1 } else { 0 }
+    let s2 = if test_pair_str()      { 1 } else { 0 }
+    let s3 = if test_identity()      { 1 } else { 0 }
+    let s4 = if test_always()        { 1 } else { 0 }
+    let s5 = if test_is_some_none()  { 1 } else { 0 }
+    let s6 = if test_is_ok_err()     { 1 } else { 0 }
+    let s7 = if test_clamp_range()   { 1 } else { 0 }
+    let s8 = if test_zip_options()   { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

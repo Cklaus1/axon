@@ -1,0 +1,21 @@
+/target/
+Cargo.lock
+*.o
+*.a
+*.so
+*.dylib
+
+# Compiled axon binaries (from axon build)
+axon_out_*
+/tmp/axon_*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

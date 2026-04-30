@@ -1,0 +1,132 @@
+// Phase 23: Traits in practice — polymorphic dispatch via trait vtables.
+
+// ── Printable trait ───────────────────────────────────────────────────────────
+
+trait Printable {
+    fn to_display(self) -> str
+}
+
+type Vec2 = { x: i64, y: i64 }
+type Vec3 = { x: i64, y: i64, z: i64 }
+
+impl Printable for Vec2 {
+    fn to_display(self: Vec2) -> str {
+        let xs = to_str(self.x)
+        let ys = to_str(self.y)
+        axon_concat(axon_concat(axon_concat("(", xs), ", "), axon_concat(ys, ")"))
+    }
+}
+
+impl Printable for Vec3 {
+    fn to_display(self: Vec3) -> str {
+        let xs = to_str(self.x)
+        let ys = to_str(self.y)
+        let zs = to_str(self.z)
+        axon_concat(
+            axon_concat(axon_concat(axon_concat("(", xs), ", "), axon_concat(ys, ", ")),
+            axon_concat(zs, ")")
+        )
+    }
+}
+
+fn test_vec2_display() -> bool {
+    let v = Vec2 { x: 3, y: 4 }
+    str_eq(v.to_display(), "(3, 4)")
+}
+
+fn test_vec3_display() -> bool {
+    let v = Vec3 { x: 1, y: 2, z: 3 }
+    str_eq(v.to_display(), "(1, 2, 3)")
+}
+
+// ── Comparable trait ─────────────────────────────────────────────────────────
+
+trait Comparable {
+    fn cmp(self, other: Self) -> i64   // -1, 0, +1
+}
+
+type Score = { value: i64, name: str }
+
+impl Comparable for Score {
+    fn cmp(self: Score, other: Score) -> i64 {
+        if self.value < other.value      { -1 }
+        else if self.value > other.value {  1 }
+        else                             {  0 }
+    }
+}
+
+impl Comparable for Vec2 {
+    fn cmp(self: Vec2, other: Vec2) -> i64 {
+        let sa = self.x * self.x + self.y * self.y
+        let sb = other.x * other.x + other.y * other.y
+        if sa < sb { -1 } else if sa > sb { 1 } else { 0 }
+    }
+}
+
+fn test_score_cmp() -> bool {
+    let a = Score { value: 10, name: "alice" }
+    let b = Score { value: 20, name: "bob" }
+    let c = Score { value: 10, name: "carol" }
+    a.cmp(b) == -1 &&
+    b.cmp(a) ==  1 &&
+    a.cmp(c) ==  0
+}
+
+fn test_vec2_cmp() -> bool {
+    let u = Vec2 { x: 3, y: 4 }   // mag² = 25
+    let v = Vec2 { x: 1, y: 1 }   // mag² = 2
+    u.cmp(v) == 1 && v.cmp(u) == -1
+}
+
+// ── Scalable trait ────────────────────────────────────────────────────────────
+
+trait Scalable {
+    fn scale(self, factor: i64) -> Self
+}
+
+impl Scalable for Vec2 {
+    fn scale(self: Vec2, factor: i64) -> Vec2 {
+        Vec2 { x: self.x * factor, y: self.y * factor }
+    }
+}
+
+impl Scalable for Vec3 {
+    fn scale(self: Vec3, factor: i64) -> Vec3 {
+        Vec3 { x: self.x * factor, y: self.y * factor, z: self.z * factor }
+    }
+}
+
+fn test_scale_vec2() -> bool {
+    let v = Vec2 { x: 2, y: 3 }
+    let s = v.scale(4)
+    s.x == 8 && s.y == 12
+}
+
+fn test_scale_vec3() -> bool {
+    let v = Vec3 { x: 1, y: 2, z: 3 }
+    let s = v.scale(10)
+    s.x == 10 && s.y == 20 && s.z == 30
+}
+
+// ── dyn dispatch via announce ─────────────────────────────────────────────────
+
+fn announce(p: dyn Printable) -> str {
+    p.to_display()
+}
+
+fn test_dyn_dispatch() -> bool {
+    let v2 = Vec2 { x: 5, y: 6 }
+    let v3 = Vec3 { x: 7, y: 8, z: 9 }
+    str_eq(announce(v2), "(5, 6)") && str_eq(announce(v3), "(7, 8, 9)")
+}
+
+fn main() -> i64 {
+    let s1 = if test_vec2_display()  { 1 } else { 0 }
+    let s2 = if test_vec3_display()  { 1 } else { 0 }
+    let s3 = if test_score_cmp()     { 1 } else { 0 }
+    let s4 = if test_vec2_cmp()      { 1 } else { 0 }
+    let s5 = if test_scale_vec2()    { 1 } else { 0 }
+    let s6 = if test_scale_vec3()    { 1 } else { 0 }
+    let s7 = if test_dyn_dispatch()  { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

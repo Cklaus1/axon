@@ -1,0 +1,187 @@
+// Phase 30: Comprehensive integration — combines structs, traits, generics,
+//           closures, error handling, string ops, math, and comptime.
+//           (Avoids enum types to stay within confirmed parser support.)
+
+// ── Data model (struct-only types) ───────────────────────────────────────────
+
+type Point = { x: i64, y: i64 }
+type Rect  = { x: i64, y: i64, width: i64, height: i64 }
+type Circle = { cx: i64, cy: i64, radius: i64 }
+
+// ── Geometry helpers ──────────────────────────────────────────────────────────
+
+fn abs_val(n: i64) -> i64 {
+    if n < 0 { 0 - n } else { n }
+}
+
+fn rect_area(r: Rect) -> i64 {
+    r.width * r.height
+}
+
+fn rect_perimeter(r: Rect) -> i64 {
+    (r.width + r.height) * 2
+}
+
+fn circle_area_approx(c: Circle) -> i64 {
+    c.radius * c.radius * 3   // π ≈ 3
+}
+
+fn point_distance_sq(a: Point, b: Point) -> i64 {
+    let dx = a.x - b.x
+    let dy = a.y - b.y
+    dx * dx + dy * dy
+}
+
+fn test_geometry() -> bool {
+    let r = Rect { x: 0, y: 0, width: 4, height: 6 }
+    let c = Circle { cx: 0, cy: 0, radius: 5 }
+    let p1 = Point { x: 0, y: 0 }
+    let p2 = Point { x: 3, y: 4 }
+    rect_area(r) == 24 &&
+    rect_perimeter(r) == 20 &&
+    circle_area_approx(c) == 75 &&
+    point_distance_sq(p1, p2) == 25
+}
+
+// ── Traits: Named, Measurable ─────────────────────────────────────────────────
+
+trait Named {
+    fn name(self) -> str
+}
+
+trait Measurable {
+    fn area(self) -> i64
+}
+
+impl Named for Point {
+    fn name(self: Point) -> str { "point" }
+}
+
+impl Named for Rect {
+    fn name(self: Rect) -> str { "rect" }
+}
+
+impl Measurable for Rect {
+    fn area(self: Rect) -> i64 { self.width * self.height }
+}
+
+impl Measurable for Circle {
+    fn area(self: Circle) -> i64 { self.radius * self.radius * 3 }
+}
+
+fn test_traits() -> bool {
+    let p = Point { x: 1, y: 2 }
+    let r = Rect { x: 0, y: 0, width: 3, height: 4 }
+    let c = Circle { cx: 0, cy: 0, radius: 5 }
+    str_eq(p.name(), "point") &&
+    str_eq(r.name(), "rect") &&
+    r.area() == 12 &&
+    c.area() == 75
+}
+
+// ── Error handling with Result and ? ────────────────────────────────────────
+
+fn parse_coord(s: str) -> Result<i64, str> {
+    let n = parse_int(s)?
+    if n < -1000 || n > 1000 {
+        Err("coordinate out of range")
+    } else {
+        Ok(n)
+    }
+}
+
+fn parse_point(xs: str, ys: str) -> Result<Point, str> {
+    let x = parse_coord(xs)?
+    let y = parse_coord(ys)?
+    Ok(Point { x: x, y: y })
+}
+
+fn test_parse_point() -> bool {
+    match parse_point("3", "4") {
+        Ok(p)  => p.x == 3 && p.y == 4,
+        Err(_) => false,
+    }
+}
+
+fn test_parse_point_error() -> bool {
+    match parse_point("not_a_number", "0") {
+        Ok(_)  => false,
+        Err(_) => true,
+    }
+}
+
+// ── Comptime constants ────────────────────────────────────────────────────────
+
+let MAX_SHAPES = comptime { 16 }
+let PI_APPROX  = comptime { 3 }
+
+fn test_comptime_constants() -> bool {
+    MAX_SHAPES == 16 && PI_APPROX == 3
+}
+
+// ── Closures and higher-order ─────────────────────────────────────────────────
+
+fn count_matching(lo: i64, hi: i64, pred: fn(i64) -> bool) -> i64 {
+    let count = 0
+    for i in lo..hi {
+        if pred(i) { count = count + 1 }
+    }
+    count
+}
+
+fn test_count_matching() -> bool {
+    // Count multiples of 3 in 0..15: 0,3,6,9,12 = 5
+    let n = count_matching(0, 15, (x) => x - (x / 3) * 3 == 0)
+    n == 5
+}
+
+// ── String builtins ───────────────────────────────────────────────────────────
+
+fn test_string_ops() -> bool {
+    let s = str_to_upper("hello")
+    str_eq(s, "HELLO") &&
+    str_len("hello") == 5 &&
+    str_contains("hello world", "world")
+}
+
+// ── Math builtins ─────────────────────────────────────────────────────────────
+
+fn test_math_ops() -> bool {
+    min_i64(3, 7) == 3 &&
+    max_i64(3, 7) == 7 &&
+    abs_i64(-42) == 42 &&
+    clamp_i64(15, 0, 10) == 10
+}
+
+// ── Nested struct usage ───────────────────────────────────────────────────────
+
+type BoundingBox = { top_left: Point, bottom_right: Point }
+
+fn bbox_width(bb: BoundingBox) -> i64 {
+    abs_val(bb.bottom_right.x - bb.top_left.x)
+}
+
+fn bbox_height(bb: BoundingBox) -> i64 {
+    abs_val(bb.bottom_right.y - bb.top_left.y)
+}
+
+fn test_nested_struct() -> bool {
+    let bb = BoundingBox {
+        top_left:     Point { x: 1, y: 2 },
+        bottom_right: Point { x: 5, y: 7 },
+    }
+    bbox_width(bb) == 4 && bbox_height(bb) == 5
+}
+
+fn main() -> i64 {
+    let s1 = if test_geometry()          { 1 } else { 0 }
+    let s2 = if test_traits()            { 1 } else { 0 }
+    let s3 = if test_parse_point()       { 1 } else { 0 }
+    let s4 = if test_parse_point_error() { 1 } else { 0 }
+    let s5 = if test_comptime_constants(){ 1 } else { 0 }
+    let s6 = if test_count_matching()    { 1 } else { 0 }
+    let s7 = if test_string_ops()        { 1 } else { 0 }
+    let s8 = if test_math_ops()          { 1 } else { 0 }
+    let s9 = if test_nested_struct()     { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9
+}

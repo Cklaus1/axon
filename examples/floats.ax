@@ -1,0 +1,14 @@
+fn main() {
+    let a = 1.5e2
+    let b = 2.5e1
+    let c = a + b
+    println(to_str_f64(c))
+
+    let pi = 3.14159
+    let r = 5.0
+    let area = pi * r * r
+    println(to_str_f64(area))
+
+    let small = 1.0e-3
+    println(to_str_f64(small))
+}

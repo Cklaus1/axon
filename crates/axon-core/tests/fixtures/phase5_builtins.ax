@@ -1,0 +1,83 @@
+// Smoke-test for Phase 5 string, conversion, and math builtins.
+// Must parse and type-check without errors.
+
+fn test_str_eq() -> bool {
+    let a = "hello";
+    let b = "hello";
+    str_eq(a, b)
+}
+
+fn test_str_eq_operator() -> bool {
+    let a = "hello";
+    let b = "hello";
+    let c = "world";
+    if a == b { true } else { false }
+}
+
+fn test_str_contains() -> bool {
+    let s = "hello world";
+    str_contains(s, "world")
+}
+
+fn test_str_starts_with() -> bool {
+    let s = "hello world";
+    str_starts_with(s, "hello")
+}
+
+fn test_str_ends_with() -> bool {
+    let s = "hello world";
+    str_ends_with(s, "world")
+}
+
+fn test_parse_float() -> i64 {
+    let result = parse_float("3.14");
+    match result {
+        Ok(n) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn test_str_slice() -> bool {
+    let s = "hello world";
+    let sub = str_slice(s, 6, 11);
+    str_eq(sub, "world")
+}
+
+fn test_str_index_of() -> i64 {
+    str_index_of("hello world", "world")
+}
+
+fn test_char_at() -> i64 {
+    char_at("hello", 0)
+}
+
+fn test_to_str_bool() -> bool {
+    let t = to_str_bool(true);
+    str_eq(t, "true")
+}
+
+fn test_abs_i64() -> i64 {
+    abs_i64(-42)
+}
+
+fn test_min_max_i64() -> i64 {
+    let a = min_i64(3, 7);
+    let b = max_i64(3, 7);
+    a + b
+}
+
+fn main() -> i64 {
+    let s1 = if test_str_eq() { 1 } else { 0 };
+    let s2 = if test_str_contains() { 1 } else { 0 };
+    let s3 = if test_str_starts_with() { 1 } else { 0 };
+    let s4 = if test_str_ends_with() { 1 } else { 0 };
+    let s5 = test_parse_float();
+    let s6 = test_abs_i64();
+    let s7 = test_min_max_i64();
+    let s8 = if test_str_eq_operator() { 1 } else { 0 };
+    let s9 = if test_str_slice() { 1 } else { 0 };
+    let s10 = test_str_index_of();
+    let s11 = test_char_at();
+    let s12 = if test_to_str_bool() { 1 } else { 0 };
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8 + s9 + s10 + s11 + s12
+}

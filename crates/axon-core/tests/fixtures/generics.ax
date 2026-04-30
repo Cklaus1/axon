@@ -1,0 +1,28 @@
+// Generics fixture: tests that generic functions and structs type-check without errors.
+
+fn identity<T>(x: T) -> T {
+    x
+}
+
+fn first<A, B>(a: A, b: B) -> A {
+    a
+}
+
+fn double_apply<T>(f: fn(T) -> T, x: T) -> T {
+    f(x)
+}
+
+// Generic struct with two type parameters (spec §1 verification fixture).
+type Pair<A, B> = { first: A, second: B }
+
+fn main() -> i64 {
+    let n = identity(42)
+    let s = identity("hello")
+    let k = first(99, "ignored")
+
+    // Generic struct instantiation.
+    let p = Pair { first: 1, second: 2 }
+    assert_eq(p.first, 1)
+
+    n
+}

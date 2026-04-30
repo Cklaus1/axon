@@ -1,0 +1,110 @@
+// Phase 18: String algorithms — exercising char_at, str_len, str_slice,
+//           str_contains, str_index_of, and for-loops over string indices.
+
+// Count occurrences of a character (as i64 code) in a string.
+fn count_char(s: str, c: i64) -> i64 {
+    let n = 0
+    for i in 0..str_len(s) {
+        if char_at(s, i) == c {
+            n = n + 1
+        }
+    }
+    n
+}
+
+fn test_count_char() -> bool {
+    // 'l' = 108; "hello world" has 3 l's
+    count_char("hello world", 108) == 3
+}
+
+// Check if string is a palindrome using char_at.
+fn is_palindrome(s: str) -> bool {
+    let n = str_len(s)
+    let ok = true
+    for i in 0..(n / 2) {
+        if char_at(s, i) != char_at(s, n - 1 - i) {
+            ok = false
+        }
+    }
+    ok
+}
+
+fn test_palindrome_true() -> bool {
+    is_palindrome("racecar") && is_palindrome("abba") && is_palindrome("a")
+}
+
+fn test_palindrome_false() -> bool {
+    !is_palindrome("hello") && !is_palindrome("axon")
+}
+
+// Sum of all digit characters in a string.
+fn digit_sum(s: str) -> i64 {
+    let total = 0
+    for i in 0..str_len(s) {
+        let c = char_at(s, i)
+        // ASCII digits: '0'=48 .. '9'=57
+        if c >= 48 && c <= 57 {
+            total = total + (c - 48)
+        }
+    }
+    total
+}
+
+fn test_digit_sum() -> bool {
+    digit_sum("a1b2c3") == 6 &&
+    digit_sum("000")    == 0 &&
+    digit_sum("abc")    == 0
+}
+
+// Find the index of first occurrence of a character, or -1 if not found.
+fn find_char(s: str, c: i64) -> i64 {
+    let result = -1
+    let found = false
+    for i in 0..str_len(s) {
+        if !found && char_at(s, i) == c {
+            result = i
+            found = true
+        }
+    }
+    result
+}
+
+fn test_find_char() -> bool {
+    // 'e' = 101
+    find_char("hello", 101) == 1 &&
+    find_char("hello", 122) == -1
+}
+
+// Compute a simple hash of a string (sum of codepoints * position).
+fn str_hash(s: str) -> i64 {
+    let h = 0
+    for i in 0..str_len(s) {
+        h = h + char_at(s, i) * (i + 1)
+    }
+    h
+}
+
+fn test_str_hash_nonzero() -> bool {
+    // "abc": a=97*1 + b=98*2 + c=99*3 = 97 + 196 + 297 = 590
+    str_hash("abc") == 590
+}
+
+// Use str_contains and str_starts_with / str_ends_with.
+fn test_str_builtins_combo() -> bool {
+    let s = "hello, world"
+    str_contains(s, "world")       &&
+    str_starts_with(s, "hello")    &&
+    str_ends_with(s, "world")      &&
+    !str_contains(s, "axon")
+}
+
+fn main() -> i64 {
+    let s1 = if test_count_char()         { 1 } else { 0 }
+    let s2 = if test_palindrome_true()    { 1 } else { 0 }
+    let s3 = if test_palindrome_false()   { 1 } else { 0 }
+    let s4 = if test_digit_sum()          { 1 } else { 0 }
+    let s5 = if test_find_char()          { 1 } else { 0 }
+    let s6 = if test_str_hash_nonzero()   { 1 } else { 0 }
+    let s7 = if test_str_builtins_combo() { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7
+}

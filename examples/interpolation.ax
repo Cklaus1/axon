@@ -1,0 +1,6 @@
+fn main() {
+    let name = "world"
+    let n = 42
+    println("hello {name}")
+    println("the answer is {to_str(n)}")
+}

@@ -1,0 +1,22 @@
+// Integration test: select statement across multiple channels.
+// Verifies that select { ch1.recv() => body, ch2.recv() => body } parses
+// and resolves without errors.
+
+fn producer_a(ch: Chan<i64>) {
+    ch.send(1)
+}
+
+fn producer_b(ch: Chan<i64>) {
+    ch.send(2)
+}
+
+fn main() {
+    let ch1 = Chan::new(1)
+    let ch2 = Chan::new(1)
+    spawn { producer_a(ch1) }
+    spawn { producer_b(ch2) }
+    select {
+        ch1.recv() => assert(true)
+        ch2.recv() => assert(true)
+    }
+}

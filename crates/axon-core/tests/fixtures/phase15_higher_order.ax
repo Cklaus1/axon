@@ -1,0 +1,98 @@
+// Phase 15: Higher-order functions — lambdas as first-class values.
+
+// A function that takes another function and applies it to x.
+fn apply(f: fn(i64) -> i64, x: i64) -> i64 {
+    f(x)
+}
+
+// A function that applies f twice.
+fn apply_twice(f: fn(i64) -> i64, x: i64) -> i64 {
+    f(f(x))
+}
+
+// Compose two functions: compose(f, g)(x) == f(g(x))
+fn compose(f: fn(i64) -> i64, g: fn(i64) -> i64, x: i64) -> i64 {
+    f(g(x))
+}
+
+fn test_apply_double() -> bool {
+    let double = |x| x * 2
+    apply(double, 5) == 10
+}
+
+fn test_apply_square() -> bool {
+    let square = |x| x * x
+    apply(square, 4) == 16
+}
+
+fn test_apply_twice_double() -> bool {
+    let double = |x| x * 2
+    apply_twice(double, 3) == 12
+}
+
+fn test_compose() -> bool {
+    let add1  = |x| x + 1
+    let times3 = |x| x * 3
+    // compose(add1, times3, 4) == add1(times3(4)) == 13
+    compose(add1, times3, 4) == 13
+}
+
+// Closure capturing an outer variable.
+fn make_adder(n: i64) -> fn(i64) -> i64 {
+    (x) => x + n
+}
+
+fn test_make_adder() -> bool {
+    let add5 = make_adder(5)
+    add5(3) == 8 && add5(0) == 5
+}
+
+// Counter via mutable closure capture.
+fn make_counter() -> fn() -> i64 {
+    let n = 0
+    () => {
+        n = n + 1
+        n
+    }
+}
+
+fn test_counter() -> bool {
+    let c = make_counter()
+    let a = c()
+    let b = c()
+    let d = c()
+    a == 1 && b == 2 && d == 3
+}
+
+// Simulated fold using for loop and a closure accumulator.
+fn fold_range(lo: i64, hi: i64, init: i64, f: fn(i64, i64) -> i64) -> i64 {
+    let acc = init
+    for i in lo..hi {
+        acc = f(acc, i)
+    }
+    acc
+}
+
+fn test_fold_sum() -> bool {
+    // sum 0..5 = 0+1+2+3+4 = 10
+    let r = fold_range(0, 5, 0, |acc, x| acc + x)
+    r == 10
+}
+
+fn test_fold_product() -> bool {
+    // product 1..6 = 1*2*3*4*5 = 120
+    let r = fold_range(1, 6, 1, |acc, x| acc * x)
+    r == 120
+}
+
+fn main() -> i64 {
+    let s1 = if test_apply_double()      { 1 } else { 0 }
+    let s2 = if test_apply_square()      { 1 } else { 0 }
+    let s3 = if test_apply_twice_double(){ 1 } else { 0 }
+    let s4 = if test_compose()           { 1 } else { 0 }
+    let s5 = if test_make_adder()        { 1 } else { 0 }
+    let s6 = if test_counter()           { 1 } else { 0 }
+    let s7 = if test_fold_sum()          { 1 } else { 0 }
+    let s8 = if test_fold_product()      { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6 + s7 + s8
+}

@@ -1,0 +1,116 @@
+// Phase 17: Advanced match patterns — guards, nested enums, exhaustive coverage.
+
+enum Color { Red, Green, Blue, Custom { r: i64, g: i64, b: i64 }, }
+
+fn color_to_code(c: Color) -> i64 {
+    match c {
+        Color::Red   => 16711680,
+        Color::Green => 65280,
+        Color::Blue  => 255,
+        Color::Custom { r, g, b } => r * 65536 + g * 256 + b,
+    }
+}
+
+fn test_color_named() -> bool {
+    color_to_code(Color::Red)   == 16711680 &&
+    color_to_code(Color::Green) == 65280 &&
+    color_to_code(Color::Blue)  == 255
+}
+
+fn test_color_custom() -> bool {
+    let c = Color::Custom { r: 1, g: 2, b: 3 }
+    color_to_code(c) == 1 * 65536 + 2 * 256 + 3
+}
+
+// Match with guard clauses.
+fn classify(n: i64) -> str {
+    match n {
+        x if x < 0   => "negative",
+        x if x == 0  => "zero",
+        x if x < 10  => "small",
+        _             => "large",
+    }
+}
+
+fn test_guards() -> bool {
+    str_eq(classify(-5),  "negative") &&
+    str_eq(classify(0),   "zero")     &&
+    str_eq(classify(7),   "small")    &&
+    str_eq(classify(100), "large")
+}
+
+// Nested Option pattern.
+fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
+    match opt {
+        Some(v) => v,
+        None    => default,
+    }
+}
+
+fn double_option(opt: Option<i64>) -> Option<i64> {
+    match opt {
+        Some(v) => Some(v * 2),
+        None    => None,
+    }
+}
+
+fn test_nested_option() -> bool {
+    let a = double_option(Some(5))
+    let b = double_option(None)
+    unwrap_or(a, 0) == 10 && unwrap_or(b, 99) == 99
+}
+
+// Nested Result pattern.
+fn safe_sqrt(x: f64) -> Result<f64, str> {
+    if x < 0.0 {
+        Err("negative input")
+    } else {
+        Ok(sqrt_f64(x))
+    }
+}
+
+fn test_result_ok_err() -> bool {
+    let ok_r  = safe_sqrt(4.0)
+    let err_r = safe_sqrt(-1.0)
+    let ok_v = match ok_r {
+        Ok(v)  => v == 2.0,
+        Err(_) => false,
+    }
+    let err_v = match err_r {
+        Ok(_)  => false,
+        Err(s) => str_eq(s, "negative input"),
+    }
+    ok_v && err_v
+}
+
+// Chained match on enum with struct payload.
+enum Expr { Num { val: i64 }, Add { lhs: Expr, rhs: Expr }, Neg { inner: Expr }, }
+
+fn eval(e: Expr) -> i64 {
+    match e {
+        Expr::Num { val }        => val,
+        Expr::Add { lhs, rhs }  => eval(lhs) + eval(rhs),
+        Expr::Neg { inner }     => -eval(inner),
+    }
+}
+
+fn test_expr_eval() -> bool {
+    // -(3 + 4) = -7
+    let e = Expr::Neg {
+        inner: Expr::Add {
+            lhs: Expr::Num { val: 3 },
+            rhs: Expr::Num { val: 4 },
+        },
+    }
+    eval(e) == -7
+}
+
+fn main() -> i64 {
+    let s1 = if test_color_named()   { 1 } else { 0 }
+    let s2 = if test_color_custom()  { 1 } else { 0 }
+    let s3 = if test_guards()        { 1 } else { 0 }
+    let s4 = if test_nested_option() { 1 } else { 0 }
+    let s5 = if test_result_ok_err() { 1 } else { 0 }
+    let s6 = if test_expr_eval()     { 1 } else { 0 }
+    s1 + s2 + s3 + s4 + s5 + s6
+}

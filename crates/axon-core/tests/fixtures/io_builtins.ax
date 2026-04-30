@@ -1,0 +1,33 @@
+// Smoke-test for Phase 4 I/O and time builtins.
+// This fixture must parse and type-check without errors.
+
+fn demo_write() -> i64 {
+    let content = "hello from axon";
+    let result = write_file("/tmp/axon_test_write.txt", content);
+    match result {
+        Ok(_) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn demo_read() -> i64 {
+    let result = read_file("/tmp/axon_test_write.txt");
+    match result {
+        Ok(contents) => 1,
+        Err(msg) => 0,
+    }
+}
+
+fn demo_time() -> i64 {
+    let t = now_ms();
+    sleep_ms(1);
+    let t2 = now_ms();
+    if t2 > t { 1 } else { 0 }
+}
+
+fn main() -> i64 {
+    let w = demo_write();
+    let r = demo_read();
+    let t = demo_time();
+    w + r + t
+}

@@ -1,0 +1,60 @@
+// Phase 10: @[test] attribute — unit tests embedded in source.
+// Each @[test] function is run by the JIT test runner.
+// These functions verify correctness of Phase 8 and 9 builtins.
+
+@[test]
+fn test_for_range_sum() {
+    let acc = 0;
+    for i in 1..6 {
+        acc = acc + i;
+    }
+    assert_eq(acc, 15)
+}
+
+@[test]
+fn test_for_nested_count() {
+    let count = 0;
+    for i in 0..4 {
+        for j in 0..4 {
+            count = count + 1;
+        }
+    }
+    assert_eq(count, 16)
+}
+
+@[test]
+fn test_i64_to_f64_roundtrip() {
+    let x = i64_to_f64(100);
+    let n = f64_to_i64(x);
+    assert_eq(n, 100)
+}
+
+@[test]
+fn test_abs_values() {
+    assert_eq(abs_i64(-42), 42);
+    assert_eq(abs_i64(42),  42);
+    assert_eq(abs_i64(0),    0)
+}
+
+@[test]
+fn test_sign() {
+    assert_eq(sign_i64(-99), -1);
+    assert_eq(sign_i64(0),    0);
+    assert_eq(sign_i64(1),    1)
+}
+
+@[test]
+fn test_pow_i64_correctness() {
+    assert_eq(pow_i64(2, 0),  1);
+    assert_eq(pow_i64(2, 8),  256);
+    assert_eq(pow_i64(10, 3), 1000)
+}
+
+@[test]
+fn test_clamp_i64_correctness() {
+    assert_eq(clamp_i64(5,  0, 10), 5);
+    assert_eq(clamp_i64(-1, 0, 10), 0);
+    assert_eq(clamp_i64(20, 0, 10), 10)
+}
+
+fn main() -> i64 { 0 }

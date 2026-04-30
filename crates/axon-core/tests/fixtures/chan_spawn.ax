@@ -1,0 +1,21 @@
+// Integration test: Chan<T> + spawn
+// Verifies Chan<T> lowers to an opaque pointer and spawn wires up the closure ABI.
+// Supports both chan<T>() syntax and Chan::new(n) forms.
+
+fn producer(ch: Chan<i64>) {
+    ch.send(42)
+}
+
+fn main() {
+    // Classic Chan::new syntax
+    let ch = Chan::new(16)
+    spawn { producer(ch) }
+    let val = ch.recv()
+    assert(val == 42)
+
+    // New chan<T>() syntax (Phase 3)
+    let ch2 = chan<i64>()
+    spawn { ch2.send(99) }
+    let val2 = ch2.recv()
+    assert(val2 == 99)
+}
