@@ -15,6 +15,7 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub mod provenance;
 pub mod goal;
+pub mod adaptive_registry;
 
 // ── Channel ───────────────────────────────────────────────────────────────────
 

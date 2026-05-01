@@ -103,6 +103,14 @@ pub struct Codegen<'ctx> {
     /// this holds the function name so `log_return_if_adaptive` can log
     /// a "return" event before each early/tail return.
     current_adaptive_fn: Option<String>,
+    /// ASI Layer-3: names of `@[adaptive] fn(i64) -> i64` functions that
+    /// should be registered with the runtime adaptive registry at module
+    /// startup.  Populated lazily when each FnDef is declared; consumed in
+    /// `emit_fn` for `main` to emit one `__axon_register_adaptive` call per
+    /// entry.  v1 narrowing: only `(i64) -> i64` is eligible; other
+    /// signatures (multi-arg, f64 input, str input, …) silently fall
+    /// through and rely on the Layer-2 retrospective `goal_run` path.
+    adaptive_registry_targets: Vec<String>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -132,6 +140,7 @@ impl<'ctx> Codegen<'ctx> {
             loop_stack: Vec::new(),
             current_lambda_env: None,
             current_adaptive_fn: None,
+            adaptive_registry_targets: Vec::new(),
         }
     }
 
@@ -3633,6 +3642,22 @@ impl<'ctx> Codegen<'ctx> {
             self.module.add_function("__axon_provenance_log_ret_f64", prov_f64_ty, None);
         }
 
+        // ── ASI Layer-3: adaptive registry registration ───────────────────────
+        //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
+        //
+        // Called from `main`'s prologue once per `@[adaptive] fn(i64) -> i64`
+        // so the runtime can call those functions back during goal_run
+        // hill-climb.  v1 narrowing: only single-i64-arg, i64-return adaptive
+        // fns get registered; all other adaptive fns silently fall through
+        // and use the Layer-2 retrospective path.
+        {
+            let reg_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i8_ptr.into()],
+                false,
+            );
+            self.module.add_function("__axon_register_adaptive", reg_ty, None);
+        }
+
         // ── goal_run(name: str, target: f64, max_evals: i64) -> f64 ───────────
         // Runtime: __axon_goal_run(fn_ptr, name_ptr, name_len, target, max_evals, *out_score)
         // Layer-2: reads the in-memory provenance store populated by
@@ -3924,6 +3949,30 @@ impl<'ctx> Codegen<'ctx> {
             self.fndefs.insert(name.clone(), f.clone());
         }
 
+        // ── ASI Layer-3: collect eligible adaptive fns for registry init. ─────
+        // v1 narrowing: only `@[adaptive] fn(i64) -> i64` is eligible for
+        // live hill-climb.  Anything else (multi-arg, f64 input, str input,
+        // non-i64 return) is silently skipped here; goal_run will fall back
+        // to the Layer-2 retrospective best-observed path for those.
+        self.adaptive_registry_targets.clear();
+        for (mangled, f) in &fn_work {
+            if !has_adaptive_attr(&f.attrs) { continue; }
+            if f.params.len() != 1 { continue; }
+            let p_sem = self.axon_type_to_semantic(&f.params[0].ty);
+            if !matches!(p_sem, Type::I64) { continue; }
+            let r_sem = f
+                .return_type
+                .as_ref()
+                .map(|t| self.axon_type_to_semantic(t))
+                .unwrap_or(Type::Unit);
+            if !matches!(r_sem, Type::I64) { continue; }
+            // Use the (mangled) name so we register the actual LLVM symbol.
+            // For top-level fns this equals f.name; for impl methods it's
+            // `Type__method`.  v1 doesn't expect impl methods to carry
+            // @[adaptive] but if they do the registration is still valid.
+            self.adaptive_registry_targets.push(mangled.clone());
+        }
+
         // Evaluate module-level comptime let bindings (in source order so that
         // later bindings can reference earlier ones).
         for item in &program.items {
@@ -4097,6 +4146,15 @@ impl<'ctx> Codegen<'ctx> {
             self.emit_provenance_log(&f.name, "call");
         }
 
+        // ── ASI Layer-3: in `main`'s prologue, register each eligible
+        // `@[adaptive] fn(i64) -> i64` with the runtime adaptive registry.
+        // The runtime then knows how to call them back during goal_run
+        // hill-climb.  No-op when the target list is empty, so non-AI
+        // programs pay nothing.
+        if f.name == "main" {
+            self.emit_adaptive_registry_init();
+        }
+
         // Determine return semantic type early (needed for current_result_types).
         let ret_sem = f
             .return_type
@@ -4258,6 +4316,54 @@ impl<'ctx> Codegen<'ctx> {
     fn log_return_if_adaptive_val(&mut self, ret_val: BasicValueEnum<'ctx>) {
         if let Some(fn_name) = self.current_adaptive_fn.clone() {
             self.emit_provenance_log_ret(&fn_name, ret_val);
+        }
+    }
+
+    /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
+    /// call per eligible adaptive function (`@[adaptive] fn(i64) -> i64`).
+    /// Called from main's prologue.  No-op when no eligible functions exist
+    /// (no runtime cost for non-AI programs).  Eligibility was decided in
+    /// `emit_program` and recorded in `self.adaptive_registry_targets`.
+    fn emit_adaptive_registry_init(&mut self) {
+        if self.adaptive_registry_targets.is_empty() {
+            return;
+        }
+        let reg_fn = match self.module.get_function("__axon_register_adaptive") {
+            Some(f) => f,
+            None => return,
+        };
+        // Skip if the current basic block is already terminated (defensive).
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let targets = self.adaptive_registry_targets.clone();
+        for name in &targets {
+            let target_fn = match self.functions.get(name).copied() {
+                Some(f) => f,
+                None => continue,
+            };
+            let name_g = self
+                .builder
+                .build_global_string_ptr(name, "adapt_reg_name")
+                .unwrap();
+            let name_len = i64_ty.const_int(name.len() as u64, false);
+            // Cast the user fn's pointer to i8* for the C ABI.
+            let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
+            let cast_ptr = self
+                .builder
+                .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
+                .unwrap();
+            let _ = self.builder.build_call(
+                reg_fn,
+                &[
+                    name_g.as_pointer_value().into(),
+                    name_len.into(),
+                    cast_ptr.into(),
+                ],
+                "",
+            );
         }
     }
 
