@@ -519,6 +519,26 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Uncertain<f64>",
         doc: "Construct an `Uncertain<f64>` with an explicit confidence in [0.0, 1.0].",
     },
+    // ── Layer-3.6 ASI: Runtime-classified Uncertain constructors ─────────────
+    // Like `uncertain_new`/`uncertain_new_f64`, but the static @[verify]
+    // checker classifies the result as a `Runtime` source rather than `Known`
+    // — predicate evaluation defers to the codegen-injected runtime check
+    // (`__axon_verify_panic`).  Use these when confidence comes from runtime
+    // data (sensors, configs, computations) rather than literal compile-time
+    // constants.  source_tag = 2 distinguishes them from user-constructed
+    // (tag 0) and AI-sourced (tag 1) values.
+    BuiltinFn {
+        name: "uncertain_dyn_i64",
+        params: &[("value", "i64"), ("confidence", "f64")],
+        ret: "Uncertain<i64>",
+        doc: "Construct an `Uncertain<i64>` from a runtime confidence value. Unlike `uncertain_new`, the static @[verify] checker classifies this as a Runtime source rather than Known — predicate decisions defer to the runtime check (__axon_verify_panic). Use this when confidence comes from runtime data (sensors, configs, computations) rather than literals.",
+    },
+    BuiltinFn {
+        name: "uncertain_dyn_f64",
+        params: &[("value", "f64"), ("confidence", "f64")],
+        ret: "Uncertain<f64>",
+        doc: "Same as uncertain_dyn_i64 but value is f64.",
+    },
     // ── Layer-1 ASI: Temporal<i64> constructors and queries ──────────────────
     BuiltinFn {
         name: "temporal_new",

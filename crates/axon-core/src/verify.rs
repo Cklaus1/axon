@@ -501,7 +501,16 @@ impl<'a> Analyzer<'a> {
             // Runtime sources: the LLM reports a confidence at runtime that
             // `__axon_verify_panic` (Layer 3.5) will gate.  Static analysis
             // stays silent and defers to the runtime check.
-            "ai_extract_uncertain_i64" | "ai_extract_uncertain_f64" => Confidence::Runtime,
+            //
+            // `uncertain_dyn_{i64,f64}` (Layer 3.6) are user-visible
+            // constructors that mirror `uncertain_new`, but classify as
+            // Runtime so that callers building Uncertains from non-literal
+            // confidence (sensors, configs, computations) get the same
+            // defer-to-runtime treatment AI sources do.
+            "ai_extract_uncertain_i64"
+            | "ai_extract_uncertain_f64"
+            | "uncertain_dyn_i64"
+            | "uncertain_dyn_f64" => Confidence::Runtime,
             // Inter-procedural: another verify-annotated function.
             other => match self.fn_bounds.get(other) {
                 Some(b) => Confidence::Known(*b),
@@ -668,6 +677,51 @@ mod tests {
         assert!(
             errors.is_empty(),
             "AI runtime source should be silent at compile time, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn uncertain_dyn_i64_classifies_as_runtime() {
+        // fn dyn_i64() @[verify(confidence >= 0.8)] { uncertain_dyn_i64(42, 0.5) }
+        // Even though the literal 0.5 is below 0.8, the static checker MUST
+        // stay silent: `uncertain_dyn_i64` is a Runtime source — predicate
+        // decisions defer to `__axon_verify_panic`.
+        let body = Expr::Block(vec![Stmt::simple(call(
+            "uncertain_dyn_i64",
+            vec![lit_i(42), lit_f(0.5)],
+        ))]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("dyn_i64", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let errors = check_verify(&prog);
+        assert!(
+            errors.is_empty(),
+            "uncertain_dyn_i64 should be Runtime → silent at compile time, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn uncertain_dyn_f64_classifies_as_runtime() {
+        // f64 variant — same lattice classification as the i64 form.
+        let body = Expr::Block(vec![Stmt::simple(call(
+            "uncertain_dyn_f64",
+            vec![lit_f(3.14), lit_f(0.5)],
+        ))]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("dyn_f64", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let errors = check_verify(&prog);
+        assert!(
+            errors.is_empty(),
+            "uncertain_dyn_f64 should be Runtime → silent at compile time, got: {errors:?}",
         );
     }
 
