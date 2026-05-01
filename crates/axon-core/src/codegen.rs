@@ -1346,6 +1346,57 @@ impl<'ctx> Codegen<'ctx> {
                     .insert("uncertain_new_f64".to_string(), Type::Uncertain(Box::new(Type::F64)));
             }
 
+            // uncertain_dyn_i64(value: i64, confidence: f64) -> Uncertain<i64>
+            // Layer-3.6 ASI: identical lowering to `uncertain_new`, but stamps
+            // source_tag = 2 to mark the value as Runtime-classified for the
+            // static @[verify] lattice (verify::confidence_of_call).  The
+            // static checker treats this source as `Confidence::Runtime` and
+            // defers entirely to `__axon_verify_panic` (the runtime check
+            // injected by `emit_verify_check_if_needed` at every return site).
+            {
+                let fn_ty = unc_ty.fn_type(&[i64_ty.into(), f64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_dyn_i64", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_int_value();
+                let c = fn_val.get_nth_param(1).unwrap().into_float_value();
+                let mut sv = unc_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "udy_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, c, 1, "udy_conf").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, i64_ty.const_int(2, false), 2, "udy_src")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("uncertain_dyn_i64".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("uncertain_dyn_i64".to_string(), Type::Uncertain(Box::new(Type::I64)));
+            }
+
+            // uncertain_dyn_f64(value: f64, confidence: f64) -> Uncertain<f64>
+            // f64 variant of uncertain_dyn_i64.  source_tag = 2 (Runtime).
+            {
+                let unc_f64_ty = self.context
+                    .struct_type(&[f64_ty.into(), f64_ty.into(), i64_ty.into()], false);
+                let fn_ty = unc_f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+                let fn_val = self.module.add_function("uncertain_dyn_f64", fn_ty, None);
+                let bb = self.context.append_basic_block(fn_val, "entry");
+                self.builder.position_at_end(bb);
+                let v = fn_val.get_nth_param(0).unwrap().into_float_value();
+                let c = fn_val.get_nth_param(1).unwrap().into_float_value();
+                let mut sv = unc_f64_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, v, 0, "udyf_val").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, c, 1, "udyf_conf").unwrap().into_struct_value();
+                sv = self.builder
+                    .build_insert_value(sv, i64_ty.const_int(2, false), 2, "udyf_src")
+                    .unwrap()
+                    .into_struct_value();
+                self.builder.build_return(Some(&sv)).unwrap();
+                self.functions.insert("uncertain_dyn_f64".to_string(), fn_val);
+                self.fn_return_types
+                    .insert("uncertain_dyn_f64".to_string(), Type::Uncertain(Box::new(Type::F64)));
+            }
+
             // temporal_new(value: i64, horizon_ms: i64, decay: f64) -> Temporal<i64>
             // valid_until_ms = __axon_now_ms() + horizon_ms; confidence starts at 1.0.
             {

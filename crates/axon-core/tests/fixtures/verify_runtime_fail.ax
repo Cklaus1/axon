@@ -1,0 +1,31 @@
+// verify_runtime_fail.ax
+// ASI Layer-3.6: end-to-end test of `__axon_verify_panic`.
+//
+// Static checker:
+//   `uncertain_dyn_i64` is classified as a Runtime source by the
+//   verify lattice (see verify::confidence_of_call), so the static
+//   pass MUST stay silent — no E1101 emitted, even though the
+//   literal confidence 0.5 is statically below the bound 0.8.
+//
+// Runtime:
+//   `emit_verify_check_if_needed` injects a check at every return
+//   site of a `@[verify]`-armed function.  The actual confidence
+//   (0.5) fails `confidence >= 0.8`, so `__axon_verify_panic` fires:
+//   stderr gets `axon: verify violation in 'produces_low_confidence':
+//   confidence >= 0.8 failed (actual=0.5)` and the process aborts.
+//
+// Wrapped in `@[test(should_fail)]` so `axon test` runs the test in
+// a subprocess; the runtime abort counts as a passing should_fail.
+
+@[verify(confidence >= 0.8)]
+fn produces_low_confidence() -> Uncertain<i64> {
+    uncertain_dyn_i64(42, 0.5)
+}
+
+@[test(should_fail)]
+fn runtime_verify_panics() {
+    let _ = produces_low_confidence()
+    // Unreachable — produces_low_confidence aborts before returning.
+}
+
+fn main() {}

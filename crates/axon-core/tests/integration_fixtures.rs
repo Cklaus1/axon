@@ -1248,6 +1248,25 @@ fn verify_ai_source_fixture_clean() {
 }
 
 #[test]
+fn verify_runtime_fail_fixture_static_silent() {
+    // ASI Layer-3.6: `uncertain_dyn_i64` is a Runtime-classified source.
+    // The fixture's `@[verify(confidence >= 0.8)]` predicate is statically
+    // unsatisfiable for the literal 0.5, but the lattice resolves to
+    // `Runtime` and the static checker MUST stay silent — predicate
+    // enforcement is the runtime hook's job (__axon_verify_panic).
+    //
+    // The end-to-end runtime-fail behaviour itself is exercised by
+    // `verify_runtime_panic_fires_on_violation` (codegen feature, below).
+    let errors = check_fixture("verify_runtime_fail.ax");
+    assert!(
+        !errors.iter().any(|e| e.contains("E1101")),
+        "verify_runtime_fail.ax should NOT produce E1101 \
+         (uncertain_dyn_i64 is Runtime, deferred to runtime check), got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn ai_complete_fixture_type_checks_cleanly() {
     let errors = check_fixture("ai_complete.ax");
     assert!(
@@ -1356,5 +1375,70 @@ fn uncertain_propagation_f64_fixture_clean() {
         errors.is_empty(),
         "uncertain_propagation_f64.ax produced unexpected errors:\n{}",
         errors.join("\n")
+    );
+}
+
+// ── End-to-end runtime-fail test (requires codegen feature) ───────────────────
+
+/// ASI Layer-3.6: end-to-end test of `__axon_verify_panic`.
+///
+/// Compiles `verify_runtime_fail.ax` via the `axon` binary in `test` mode and
+/// asserts that:
+///   1. `axon test` exits successfully (the should_fail subprocess panicked
+///      as expected, which means the test passed).
+///   2. The runtime panic message — written to the inner subprocess's stderr
+///      and forwarded to `axon test`'s stderr — appears somewhere in the
+///      parent's combined stderr.  Concretely we check for `"verify violation"`
+///      (the literal phrase from `format_verify_panic` in axon-rt) and the
+///      function name `produces_low_confidence` as a defensive cross-check.
+///
+/// Why this is gated on the codegen feature: it requires a real `axon` binary,
+/// which only builds when `codegen` (the `inkwell` LLVM backend) is enabled.
+/// For no-default-features test runs, the static-silence half of the contract
+/// is covered by `verify_runtime_fail_fixture_static_silent` above.
+#[cfg(feature = "codegen")]
+#[test]
+fn verify_runtime_panic_fires_on_violation() {
+    use std::process::Command;
+
+    let axon_bin = env!("CARGO_BIN_EXE_axon");
+    let fixture = fixtures_dir().join("verify_runtime_fail.ax");
+
+    // Run the test as a single-job sequential run so the fixture's one
+    // should_fail test is exercised deterministically.  `--jobs 1` keeps
+    // stderr ordering predictable.
+    let out = Command::new(axon_bin)
+        .args(["test", "--jobs", "1"])
+        .arg(&fixture)
+        .output()
+        .expect("failed to spawn axon binary");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The should_fail test must pass (i.e. the subprocess aborted).
+    assert!(
+        out.status.success(),
+        "`axon test` should exit 0 (should_fail test passed via runtime abort).\n\
+         exit: {:?}\nstdout:\n{}\nstderr:\n{}",
+        out.status.code(),
+        stdout,
+        stderr,
+    );
+
+    // The runtime panic message must surface in the parent's stderr.
+    // `__axon_verify_panic` writes via `eprintln!` and the inner subprocess's
+    // stderr is inherited by `axon test`, which is in turn inherited by us.
+    assert!(
+        stderr.contains("verify violation"),
+        "expected 'verify violation' in stderr, got:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
+    );
+    assert!(
+        stderr.contains("produces_low_confidence"),
+        "expected offending fn name in stderr, got:\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr,
     );
 }
