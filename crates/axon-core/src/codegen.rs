@@ -3607,6 +3607,264 @@ impl<'ctx> Codegen<'ctx> {
             self.functions.insert("ai_complete".to_string(), fn_val);
         }
 
+        // ── ASI Layer-3: ai_extract_uncertain_i64 / ai_extract_uncertain_f64 ───
+        // Structured-output extraction via Anthropic tool-use.
+        //
+        //   ai_extract_uncertain_i64(prompt: str) -> Result<Uncertain<i64>, str>
+        //   ai_extract_uncertain_f64(prompt: str) -> Result<Uncertain<f64>, str>
+        //
+        // Runtime ABI (defined in axon-ai/src/lib.rs):
+        //   i32 __axon_ai_extract_uncertain_i64(
+        //       prompt_ptr, prompt_len,
+        //       out_value: *i64, out_confidence: *f64,
+        //       out_err_len: *i64, out_err_ptr: **u8) -> 0 ok | 1 err
+        //   i32 __axon_ai_extract_uncertain_f64(
+        //       prompt_ptr, prompt_len,
+        //       out_value: *f64, out_confidence: *f64,
+        //       out_err_len: *i64, out_err_ptr: **u8) -> 0 ok | 1 err
+        //
+        // Result layout: Uncertain<T> is 24 bytes (T+f64+i64), str is 16 bytes,
+        // so the payload union is sized to 24 bytes here (vs 16 for ai_complete).
+        // source_tag = 1 (`from AI`); 0 is reserved for user-constructed.
+        {
+            let f64_ty = self.context.f64_type();
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            // Payload is sized to fit Uncertain<i64/f64> (24 bytes); err = str fits in 16.
+            let i8_arr24_ty = self.context.i8_type().array_type(24);
+            let result_unc_i64_ty = self.context.struct_type(
+                &[bool_ty.into(), i8_arr24_ty.into()],
+                false,
+            );
+            let result_unc_f64_ty = result_unc_i64_ty;
+            let unc_i64_ty = self.context.struct_type(
+                &[i64_ty.into(), f64_ty.into(), i64_ty.into()],
+                false,
+            );
+            let unc_f64_ty = self.context.struct_type(
+                &[f64_ty.into(), f64_ty.into(), i64_ty.into()],
+                false,
+            );
+
+            // Common runtime extern signature factory.
+            let make_rt_ty = |val_ptr: inkwell::types::PointerType<'ctx>| {
+                i32_ty.fn_type(
+                    &[
+                        i8_ptr.into(),       // prompt_ptr
+                        i64_ty.into(),       // prompt_len
+                        val_ptr.into(),      // out_value (*i64 or *f64)
+                        f64_ptr.into(),      // out_confidence
+                        i64_ptr.into(),      // out_err_len
+                        i8_ptr_ptr.into(),   // out_err_ptr
+                    ],
+                    false,
+                )
+            };
+
+            // ── ai_extract_uncertain_i64 ──
+            {
+                let rt_fn = self.module.add_function(
+                    "__axon_ai_extract_uncertain_i64",
+                    make_rt_ty(i64_ptr),
+                    None,
+                );
+
+                let fn_ty = result_unc_i64_ty.fn_type(&[str_ty.into()], false);
+                let fn_val = self.module.add_function("ai_extract_uncertain_i64", fn_ty, None);
+
+                let entry_bb = self.context.append_basic_block(fn_val, "aei_entry");
+                let ok_bb    = self.context.append_basic_block(fn_val, "aei_ok");
+                let err_bb   = self.context.append_basic_block(fn_val, "aei_err");
+                let saved = self.builder.get_insert_block();
+                self.builder.position_at_end(entry_bb);
+
+                let prompt_str   = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let prompt_len   = self.builder.build_extract_value(prompt_str, 0, "aei_plen").unwrap().into_int_value();
+                let prompt_ptr_v = self.builder.build_extract_value(prompt_str, 1, "aei_pptr").unwrap().into_pointer_value();
+
+                let out_val_slot   = self.builder.build_alloca(i64_ty, "aei_out_val").unwrap();
+                let out_conf_slot  = self.builder.build_alloca(f64_ty, "aei_out_conf").unwrap();
+                let out_err_len_slot = self.builder.build_alloca(i64_ty, "aei_out_err_len").unwrap();
+                let out_err_ptr_slot = self.builder.build_alloca(i8_ptr, "aei_out_err_ptr").unwrap();
+                let out_err_ptr_cast = self.builder
+                    .build_pointer_cast(out_err_ptr_slot, i8_ptr_ptr, "aei_eptrptr")
+                    .unwrap();
+
+                let rc_call = self.builder.build_call(
+                    rt_fn,
+                    &[
+                        prompt_ptr_v.into(),
+                        prompt_len.into(),
+                        out_val_slot.into(),
+                        out_conf_slot.into(),
+                        out_err_len_slot.into(),
+                        out_err_ptr_cast.into(),
+                    ],
+                    "aei_rc",
+                ).unwrap();
+                let rc = rc_call.try_as_basic_value().left().unwrap().into_int_value();
+                let zero_i32 = i32_ty.const_int(0, false);
+                let is_ok = self.builder
+                    .build_int_compare(IntPredicate::EQ, rc, zero_i32, "aei_is_ok")
+                    .unwrap();
+                self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).unwrap();
+
+                // ok_bb: build Uncertain<i64> { value, confidence, source_tag=1 }
+                // and wrap in Result::Ok.
+                self.builder.position_at_end(ok_bb);
+                let val = self.builder.build_load(i64_ty, out_val_slot, "aei_val").unwrap().into_int_value();
+                let conf = self.builder.build_load(f64_ty, out_conf_slot, "aei_conf").unwrap().into_float_value();
+                let mut unc_sv = unc_i64_ty.get_undef();
+                unc_sv = self.builder.build_insert_value(unc_sv, val,  0, "aei_unc_v").unwrap().into_struct_value();
+                unc_sv = self.builder.build_insert_value(unc_sv, conf, 1, "aei_unc_c").unwrap().into_struct_value();
+                unc_sv = self.builder
+                    .build_insert_value(unc_sv, i64_ty.const_int(1, false), 2, "aei_unc_s")
+                    .unwrap()
+                    .into_struct_value();
+                let ok_alloca = self.builder.build_alloca(result_unc_i64_ty, "aei_ok_slot").unwrap();
+                let tag_ptr_ok = self.builder.build_struct_gep(result_unc_i64_ty, ok_alloca, 0, "aei_tag_ok").unwrap();
+                self.builder.build_store(tag_ptr_ok, bool_ty.const_int(1, false)).unwrap();
+                let payload_ok = self.builder.build_struct_gep(result_unc_i64_ty, ok_alloca, 1, "aei_pay_ok").unwrap();
+                let unc_payload_ptr = self.builder
+                    .build_pointer_cast(payload_ok, unc_i64_ty.ptr_type(inkwell::AddressSpace::default()), "aei_unc_pp")
+                    .unwrap();
+                self.builder.build_store(unc_payload_ptr, unc_sv).unwrap();
+                let ok_val = self.builder.build_load(result_unc_i64_ty, ok_alloca, "aei_ok_val").unwrap();
+                self.builder.build_return(Some(&ok_val)).unwrap();
+
+                // err_bb: read err_len/err_ptr, build str payload, wrap Result::Err.
+                self.builder.position_at_end(err_bb);
+                let err_len = self.builder.build_load(i64_ty, out_err_len_slot, "aei_elen").unwrap().into_int_value();
+                let err_ptr = self.builder.build_load(i8_ptr, out_err_ptr_slot, "aei_eptr").unwrap().into_pointer_value();
+                let err_alloca = self.builder.build_alloca(result_unc_i64_ty, "aei_err_slot").unwrap();
+                let tag_ptr_err = self.builder.build_struct_gep(result_unc_i64_ty, err_alloca, 0, "aei_tag_err").unwrap();
+                self.builder.build_store(tag_ptr_err, bool_ty.const_int(0, false)).unwrap();
+                let payload_err = self.builder.build_struct_gep(result_unc_i64_ty, err_alloca, 1, "aei_pay_err").unwrap();
+                let str_err_ptr = self.builder
+                    .build_pointer_cast(payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "aei_str_err_pp")
+                    .unwrap();
+                let str_err_slot = self.builder.build_alloca(str_ty, "aei_str_err").unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 0, "").unwrap(), err_len).unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 1, "").unwrap(), err_ptr).unwrap();
+                let str_err_val = self.builder.build_load(str_ty, str_err_slot, "aei_str_err_val").unwrap();
+                self.builder.build_store(str_err_ptr, str_err_val).unwrap();
+                let err_val = self.builder.build_load(result_unc_i64_ty, err_alloca, "aei_err_val").unwrap();
+                self.builder.build_return(Some(&err_val)).unwrap();
+
+                if let Some(b) = saved { self.builder.position_at_end(b); }
+                self.functions.insert("ai_extract_uncertain_i64".to_string(), fn_val);
+                self.fn_return_types.insert(
+                    "ai_extract_uncertain_i64".to_string(),
+                    Type::Result(
+                        Box::new(Type::Uncertain(Box::new(Type::I64))),
+                        Box::new(Type::Str),
+                    ),
+                );
+            }
+
+            // ── ai_extract_uncertain_f64 ──
+            {
+                let rt_fn = self.module.add_function(
+                    "__axon_ai_extract_uncertain_f64",
+                    make_rt_ty(f64_ptr),
+                    None,
+                );
+
+                let fn_ty = result_unc_f64_ty.fn_type(&[str_ty.into()], false);
+                let fn_val = self.module.add_function("ai_extract_uncertain_f64", fn_ty, None);
+
+                let entry_bb = self.context.append_basic_block(fn_val, "aef_entry");
+                let ok_bb    = self.context.append_basic_block(fn_val, "aef_ok");
+                let err_bb   = self.context.append_basic_block(fn_val, "aef_err");
+                let saved = self.builder.get_insert_block();
+                self.builder.position_at_end(entry_bb);
+
+                let prompt_str   = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let prompt_len   = self.builder.build_extract_value(prompt_str, 0, "aef_plen").unwrap().into_int_value();
+                let prompt_ptr_v = self.builder.build_extract_value(prompt_str, 1, "aef_pptr").unwrap().into_pointer_value();
+
+                let out_val_slot   = self.builder.build_alloca(f64_ty, "aef_out_val").unwrap();
+                let out_conf_slot  = self.builder.build_alloca(f64_ty, "aef_out_conf").unwrap();
+                let out_err_len_slot = self.builder.build_alloca(i64_ty, "aef_out_err_len").unwrap();
+                let out_err_ptr_slot = self.builder.build_alloca(i8_ptr, "aef_out_err_ptr").unwrap();
+                let out_err_ptr_cast = self.builder
+                    .build_pointer_cast(out_err_ptr_slot, i8_ptr_ptr, "aef_eptrptr")
+                    .unwrap();
+
+                let rc_call = self.builder.build_call(
+                    rt_fn,
+                    &[
+                        prompt_ptr_v.into(),
+                        prompt_len.into(),
+                        out_val_slot.into(),
+                        out_conf_slot.into(),
+                        out_err_len_slot.into(),
+                        out_err_ptr_cast.into(),
+                    ],
+                    "aef_rc",
+                ).unwrap();
+                let rc = rc_call.try_as_basic_value().left().unwrap().into_int_value();
+                let zero_i32 = i32_ty.const_int(0, false);
+                let is_ok = self.builder
+                    .build_int_compare(IntPredicate::EQ, rc, zero_i32, "aef_is_ok")
+                    .unwrap();
+                self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).unwrap();
+
+                // ok_bb
+                self.builder.position_at_end(ok_bb);
+                let val = self.builder.build_load(f64_ty, out_val_slot, "aef_val").unwrap().into_float_value();
+                let conf = self.builder.build_load(f64_ty, out_conf_slot, "aef_conf").unwrap().into_float_value();
+                let mut unc_sv = unc_f64_ty.get_undef();
+                unc_sv = self.builder.build_insert_value(unc_sv, val,  0, "aef_unc_v").unwrap().into_struct_value();
+                unc_sv = self.builder.build_insert_value(unc_sv, conf, 1, "aef_unc_c").unwrap().into_struct_value();
+                unc_sv = self.builder
+                    .build_insert_value(unc_sv, i64_ty.const_int(1, false), 2, "aef_unc_s")
+                    .unwrap()
+                    .into_struct_value();
+                let ok_alloca = self.builder.build_alloca(result_unc_f64_ty, "aef_ok_slot").unwrap();
+                let tag_ptr_ok = self.builder.build_struct_gep(result_unc_f64_ty, ok_alloca, 0, "aef_tag_ok").unwrap();
+                self.builder.build_store(tag_ptr_ok, bool_ty.const_int(1, false)).unwrap();
+                let payload_ok = self.builder.build_struct_gep(result_unc_f64_ty, ok_alloca, 1, "aef_pay_ok").unwrap();
+                let unc_payload_ptr = self.builder
+                    .build_pointer_cast(payload_ok, unc_f64_ty.ptr_type(inkwell::AddressSpace::default()), "aef_unc_pp")
+                    .unwrap();
+                self.builder.build_store(unc_payload_ptr, unc_sv).unwrap();
+                let ok_val = self.builder.build_load(result_unc_f64_ty, ok_alloca, "aef_ok_val").unwrap();
+                self.builder.build_return(Some(&ok_val)).unwrap();
+
+                // err_bb
+                self.builder.position_at_end(err_bb);
+                let err_len = self.builder.build_load(i64_ty, out_err_len_slot, "aef_elen").unwrap().into_int_value();
+                let err_ptr = self.builder.build_load(i8_ptr, out_err_ptr_slot, "aef_eptr").unwrap().into_pointer_value();
+                let err_alloca = self.builder.build_alloca(result_unc_f64_ty, "aef_err_slot").unwrap();
+                let tag_ptr_err = self.builder.build_struct_gep(result_unc_f64_ty, err_alloca, 0, "aef_tag_err").unwrap();
+                self.builder.build_store(tag_ptr_err, bool_ty.const_int(0, false)).unwrap();
+                let payload_err = self.builder.build_struct_gep(result_unc_f64_ty, err_alloca, 1, "aef_pay_err").unwrap();
+                let str_err_ptr = self.builder
+                    .build_pointer_cast(payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "aef_str_err_pp")
+                    .unwrap();
+                let str_err_slot = self.builder.build_alloca(str_ty, "aef_str_err").unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 0, "").unwrap(), err_len).unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 1, "").unwrap(), err_ptr).unwrap();
+                let str_err_val = self.builder.build_load(str_ty, str_err_slot, "aef_str_err_val").unwrap();
+                self.builder.build_store(str_err_ptr, str_err_val).unwrap();
+                let err_val = self.builder.build_load(result_unc_f64_ty, err_alloca, "aef_err_val").unwrap();
+                self.builder.build_return(Some(&err_val)).unwrap();
+
+                if let Some(b) = saved { self.builder.position_at_end(b); }
+                self.functions.insert("ai_extract_uncertain_f64".to_string(), fn_val);
+                self.fn_return_types.insert(
+                    "ai_extract_uncertain_f64".to_string(),
+                    Type::Result(
+                        Box::new(Type::Uncertain(Box::new(Type::F64))),
+                        Box::new(Type::Str),
+                    ),
+                );
+            }
+        }
+
         // ── Provenance log: __axon_provenance_log(name_ptr, name_len, payload_ptr, payload_len) ──
         // Used by `@[adaptive]` injection at fn prologue / return sites for the
         // string-event flavour ("call" / "return").  Not exposed as a user-

@@ -51,7 +51,11 @@ fn classify_call(name: &str) -> Option<IoKind> {
         "read_file"                             => Some(IoKind::FsRead),
         "write_file"                            => Some(IoKind::FsWrite),
         // Future net calls (http_get, ai_complete, etc.) — treat as net
-        "http_get" | "http_post" | "ai_complete" => Some(IoKind::Net),
+        "http_get"
+        | "http_post"
+        | "ai_complete"
+        | "ai_extract_uncertain_i64"
+        | "ai_extract_uncertain_f64" => Some(IoKind::Net),
         _ => None,
     }
 }

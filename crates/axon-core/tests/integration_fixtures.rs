@@ -1228,6 +1228,20 @@ fn ai_complete_fixture_type_checks_cleanly() {
 }
 
 #[test]
+fn ai_extract_uncertain_fixture_clean() {
+    // Layer-3 ASI marquee: ai_extract_uncertain_i64 / ai_extract_uncertain_f64
+    // must parse + type-check (LLM confidence flows in as Uncertain<T>) and
+    // pass capability classification (Net) and verify (no @[verify] preds).
+    // Parse-only — does NOT execute (requires ANTHROPIC_API_KEY).
+    let errors = check_fixture("ai_extract_uncertain.ax");
+    assert!(
+        errors.is_empty(),
+        "ai_extract_uncertain.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn adaptive_basic_fixture_clean() {
     let errors = check_fixture("adaptive_basic.ax");
     assert!(
