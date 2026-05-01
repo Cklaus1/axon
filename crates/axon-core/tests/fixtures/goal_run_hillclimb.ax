@@ -1,0 +1,32 @@
+// Fixture: ASI Layer-3 live hill-climb against an `@[adaptive]` function.
+//
+// `measured` carries `@[adaptive(...)]` AND its signature is `fn(i64) -> i64`,
+// so codegen registers it with the runtime adaptive registry at module init.
+// When `goal_run("measured", 0.0, 64)` runs:
+//   1. The runtime looks "measured" up in the registry.
+//   2. It hill-climbs `cur ± step` from a starting input of 0, calling
+//      `measured` directly each iteration, and tracks the score closest to
+//      `target = 0.0`.
+//   3. With `(x - 7) * (x - 7)` the global minimum is at `x = 7`, score 0.0,
+//      so `goal_run` should return a value very close to 0.
+//
+// V1 narrowing (strict): only `@[adaptive] fn(i64) -> i64` is eligible for
+// live hill-climb.  Anything else (multi-arg, f64 input, str input, …) falls
+// back to the Layer-2 retrospective best-observed path.
+//
+// Note: this fixture is type-check-only at integration-test time; executing
+// it requires the codegen feature, which is intentionally not enabled in the
+// fast test path.
+
+@[adaptive(metric: cost, target: 0.0)]
+fn measured(x: i64) -> i64 {
+    let d = x - 7
+    d * d
+}
+
+fn main() {
+    // No prior calls — goal_run should hill-climb from scratch and find a
+    // score near 0 (because the global minimum of (x - 7)^2 is at x = 7).
+    let best = goal_run("measured", 0.0, 64)
+    println(to_str_f64(best))
+}

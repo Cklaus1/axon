@@ -1250,6 +1250,20 @@ fn goal_run_optimizer_fixture_clean() {
     );
 }
 
+#[test]
+fn goal_run_hillclimb_fixture_clean() {
+    // ASI Layer-3 fixture: live hill-climb against an `@[adaptive] fn(i64) -> i64`.
+    // Type-check only at integration-test time — the runtime side of the
+    // hill-climb is exercised by axon-rt's unit tests.  We just confirm the
+    // fixture parses, resolves names, and type-checks cleanly.
+    let errors = check_fixture("goal_run_hillclimb.ax");
+    assert!(
+        errors.is_empty(),
+        "goal_run_hillclimb.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── Layer-1 ASI: Uncertain<T> / Temporal<T> ───────────────────────────────────
 
 #[test]
