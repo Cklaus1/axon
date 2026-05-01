@@ -1157,6 +1157,36 @@ impl Parser {
         })
     }
 
+    /// Parse `ai_extract::<T>(prompt)` — Layer-3 ASI generic AI extraction.
+    ///
+    /// Mirrors `parse_chan_new`: the type parameter T is encoded into a
+    /// synthetic callee name `"ai_extract::<T>"` so infer can decode it back
+    /// into `Result<T, str>` and codegen can dispatch to the right runtime
+    /// helper.  Caller has already consumed the `ai_extract` Ident; this
+    /// expects the cursor at `::` `<`.
+    ///
+    /// v1 supports T ∈ { i64, f64, bool, Uncertain<i64>, Uncertain<f64> }.
+    /// Other Ts will parse but fail downstream (codegen has no dispatch).
+    fn parse_ai_extract_turbofish(&mut self) -> Result<Expr> {
+        self.expect(&Token::ColonColon)?;
+        self.expect(&Token::Lt)?;
+        let elem_ty = self.parse_type()?;
+        self.expect_gt()?;
+        self.expect(&Token::LParen)?;
+        self.paren_depth += 1;
+        let prompt = self.parse_expr()?;
+        self.paren_depth -= 1;
+        self.expect(&Token::RParen)?;
+        let callee_name = format!("ai_extract::<{}>", axon_type_to_str(&elem_ty));
+        Ok(Expr::Call {
+            callee: Box::new(Expr::StructLit {
+                name: callee_name,
+                fields: Vec::new(),
+            }),
+            args: vec![prompt],
+        })
+    }
+
     // ── Binary ops with precedence climbing ─────────────────────────────────
 
     /// Lowest-precedence binary layer: `&&` and `||`.
@@ -1460,6 +1490,17 @@ impl Parser {
             }
             Some(Token::Ident(_)) => {
                 if let Token::Ident(name) = self.advance()?.clone() {
+                    // ── Generic builtin: `ai_extract::<T>(prompt)` ──
+                    // Mirrors the chan<T>() lowering: encode the type parameter
+                    // in the callee name so infer/codegen can decode it.  The
+                    // turbofish form (`::<T>`) is the only generic syntax v1
+                    // supports, and only for the `ai_extract` builtin.
+                    if name == "ai_extract"
+                        && self.at(&Token::ColonColon)
+                        && matches!(self.tokens.get(self.pos + 1), Some(Token::Lt))
+                    {
+                        return self.parse_ai_extract_turbofish();
+                    }
                     // Check for enum variant: Name :: Variant { ... }
                     // Now uses the dedicated `ColonColon` token.
                     let is_enum_variant = self.at(&Token::ColonColon);

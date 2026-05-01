@@ -56,6 +56,10 @@ fn classify_call(name: &str) -> Option<IoKind> {
         | "ai_complete"
         | "ai_extract_uncertain_i64"
         | "ai_extract_uncertain_f64" => Some(IoKind::Net),
+        // Generic Layer-3 ASI surface: `ai_extract::<T>(prompt)` lowers to a
+        // `Call { callee: StructLit { name: "ai_extract::<T>", … }, … }`.
+        // Every concrete T is a network call regardless of the v1 dispatch set.
+        n if n.starts_with("ai_extract::<") => Some(IoKind::Net),
         _ => None,
     }
 }
@@ -109,8 +113,17 @@ fn check_stmts(stmts: &[Stmt], spec: &ContainedSpec, errors: &mut Vec<Capability
 fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
     match expr {
         Expr::Call { callee, args } => {
-            if let Expr::Ident(name) = callee.as_ref() {
-                check_call(name, args, spec, errors);
+            // Plain-ident call sites:    `ai_extract_uncertain_i64(p)`
+            // Generic-builtin call sites: `ai_extract::<T>(p)` lowers to
+            //   `Call { callee: StructLit { name: "ai_extract::<T>", … } }`
+            // — see `parser.rs::parse_ai_extract_turbofish`.  Both shapes
+            // funnel through `classify_call`, which keys on the synthetic name.
+            match callee.as_ref() {
+                Expr::Ident(name) => check_call(name, args, spec, errors),
+                Expr::StructLit { name, fields } if fields.is_empty() => {
+                    check_call(name, args, spec, errors);
+                }
+                _ => {}
             }
             // Recurse into callee and args.
             check_expr(callee, spec, errors);

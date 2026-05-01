@@ -3924,6 +3924,153 @@ impl<'ctx> Codegen<'ctx> {
             }
         }
 
+        // ── ASI Layer-3 generic ai_extract::<T> — flat-T helpers ────────────────
+        // The user-facing surface is `ai_extract::<T>(prompt: str) -> Result<T, str>`.
+        // The parser lowers that to a `Call { callee: StructLit { name: "ai_extract::<T>" }, … }`
+        // and `emit_call`'s StructLit dispatch routes to one of these per-T helpers.
+        //
+        // For T ∈ { Uncertain<i64>, Uncertain<f64> } we reuse the existing
+        // `ai_extract_uncertain_i64`/`_f64` helpers above (no new bridges).
+        //
+        // For T ∈ { i64, f64, bool } we emit fresh helpers here that call the
+        // new flat-T runtime bridges in axon-ai:
+        //   i32 __axon_ai_extract_i64 (prompt_ptr, prompt_len, *out_value: *i64,
+        //                              *out_err_len: *i64, *out_err_ptr: **u8) -> 0|1
+        //   i32 __axon_ai_extract_f64 (… *out_value: *f64, …)                  -> 0|1
+        //   i32 __axon_ai_extract_bool(… *out_value: *bool, …)                 -> 0|1
+        //
+        // Each Axon-level helper returns `Result<T, str>` with the canonical
+        // 16-byte payload union (T fits — i64/f64 are 8 bytes, bool is 1, str
+        // is 16).  source_tag is *not* present here because T is a flat scalar.
+        {
+            let f64_ty = self.context.f64_type();
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let bool_ptr = bool_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let i8_arr16_ty = self.context.i8_type().array_type(16);
+            let result_flat_ty = self.context.struct_type(
+                &[bool_ty.into(), i8_arr16_ty.into()],
+                false,
+            );
+
+            // Common runtime extern signature factory (5 args, no confidence).
+            let make_rt_ty = |val_ptr: inkwell::types::PointerType<'ctx>| {
+                i32_ty.fn_type(
+                    &[
+                        i8_ptr.into(),       // prompt_ptr
+                        i64_ty.into(),       // prompt_len
+                        val_ptr.into(),      // out_value
+                        i64_ptr.into(),      // out_err_len
+                        i8_ptr_ptr.into(),   // out_err_ptr
+                    ],
+                    false,
+                )
+            };
+
+            // Emit one flat-T extraction helper.
+            //
+            //   helper_name : Axon-level fn name registered in self.functions
+            //   rt_name     : runtime symbol exported by axon-ai
+            //   axon_t      : Axon Type for fn_return_types
+            //   val_kind    : enum-ish marker for the value LLVM type
+            #[derive(Clone, Copy)]
+            enum FlatVal { I64, F64, Bool }
+            let mut emit_flat_helper = |val_kind: FlatVal, helper_name: &str, rt_name: &str, axon_t: Type| {
+                let (val_llvm_ty, val_ptr_ty): (BasicTypeEnum<'ctx>, inkwell::types::PointerType<'ctx>) =
+                    match val_kind {
+                        FlatVal::I64  => (i64_ty.into(),  i64_ptr),
+                        FlatVal::F64  => (f64_ty.into(),  f64_ptr),
+                        FlatVal::Bool => (bool_ty.into(), bool_ptr),
+                    };
+                let rt_fn = self.module.add_function(rt_name, make_rt_ty(val_ptr_ty), None);
+
+                let fn_ty = result_flat_ty.fn_type(&[str_ty.into()], false);
+                let fn_val = self.module.add_function(helper_name, fn_ty, None);
+
+                let entry_bb = self.context.append_basic_block(fn_val, "aex_entry");
+                let ok_bb    = self.context.append_basic_block(fn_val, "aex_ok");
+                let err_bb   = self.context.append_basic_block(fn_val, "aex_err");
+                let saved = self.builder.get_insert_block();
+                self.builder.position_at_end(entry_bb);
+
+                let prompt_str   = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let prompt_len   = self.builder.build_extract_value(prompt_str, 0, "aex_plen").unwrap().into_int_value();
+                let prompt_ptr_v = self.builder.build_extract_value(prompt_str, 1, "aex_pptr").unwrap().into_pointer_value();
+
+                let out_val_slot     = self.builder.build_alloca(val_llvm_ty, "aex_out_val").unwrap();
+                let out_err_len_slot = self.builder.build_alloca(i64_ty,     "aex_out_err_len").unwrap();
+                let out_err_ptr_slot = self.builder.build_alloca(i8_ptr,     "aex_out_err_ptr").unwrap();
+                let out_err_ptr_cast = self.builder
+                    .build_pointer_cast(out_err_ptr_slot, i8_ptr_ptr, "aex_eptrptr")
+                    .unwrap();
+
+                let rc_call = self.builder.build_call(
+                    rt_fn,
+                    &[
+                        prompt_ptr_v.into(),
+                        prompt_len.into(),
+                        out_val_slot.into(),
+                        out_err_len_slot.into(),
+                        out_err_ptr_cast.into(),
+                    ],
+                    "aex_rc",
+                ).unwrap();
+                let rc = rc_call.try_as_basic_value().left().unwrap().into_int_value();
+                let zero_i32 = i32_ty.const_int(0, false);
+                let is_ok = self.builder
+                    .build_int_compare(IntPredicate::EQ, rc, zero_i32, "aex_is_ok")
+                    .unwrap();
+                self.builder.build_conditional_branch(is_ok, ok_bb, err_bb).unwrap();
+
+                // ok_bb: load typed value, store into payload via a typed pointer
+                // cast, set tag=1, return.
+                self.builder.position_at_end(ok_bb);
+                let ok_alloca = self.builder.build_alloca(result_flat_ty, "aex_ok_slot").unwrap();
+                let tag_ptr_ok = self.builder.build_struct_gep(result_flat_ty, ok_alloca, 0, "aex_tag_ok").unwrap();
+                self.builder.build_store(tag_ptr_ok, bool_ty.const_int(1, false)).unwrap();
+                let payload_ok = self.builder.build_struct_gep(result_flat_ty, ok_alloca, 1, "aex_pay_ok").unwrap();
+                let typed_payload_ptr = self.builder
+                    .build_pointer_cast(payload_ok, val_ptr_ty, "aex_typed_pp")
+                    .unwrap();
+                let val_loaded = self.builder.build_load(val_llvm_ty, out_val_slot, "aex_val").unwrap();
+                self.builder.build_store(typed_payload_ptr, val_loaded).unwrap();
+                let ok_val = self.builder.build_load(result_flat_ty, ok_alloca, "aex_ok_val").unwrap();
+                self.builder.build_return(Some(&ok_val)).unwrap();
+
+                // err_bb: read err_len/err_ptr, build str payload, set tag=0, return.
+                self.builder.position_at_end(err_bb);
+                let err_len = self.builder.build_load(i64_ty, out_err_len_slot, "aex_elen").unwrap().into_int_value();
+                let err_ptr = self.builder.build_load(i8_ptr, out_err_ptr_slot, "aex_eptr").unwrap().into_pointer_value();
+                let err_alloca = self.builder.build_alloca(result_flat_ty, "aex_err_slot").unwrap();
+                let tag_ptr_err = self.builder.build_struct_gep(result_flat_ty, err_alloca, 0, "aex_tag_err").unwrap();
+                self.builder.build_store(tag_ptr_err, bool_ty.const_int(0, false)).unwrap();
+                let payload_err = self.builder.build_struct_gep(result_flat_ty, err_alloca, 1, "aex_pay_err").unwrap();
+                let str_err_ptr = self.builder
+                    .build_pointer_cast(payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "aex_str_err_pp")
+                    .unwrap();
+                let str_err_slot = self.builder.build_alloca(str_ty, "aex_str_err").unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 0, "").unwrap(), err_len).unwrap();
+                self.builder.build_store(self.builder.build_struct_gep(str_ty, str_err_slot, 1, "").unwrap(), err_ptr).unwrap();
+                let str_err_val = self.builder.build_load(str_ty, str_err_slot, "aex_str_err_val").unwrap();
+                self.builder.build_store(str_err_ptr, str_err_val).unwrap();
+                let err_val = self.builder.build_load(result_flat_ty, err_alloca, "aex_err_val").unwrap();
+                self.builder.build_return(Some(&err_val)).unwrap();
+
+                if let Some(b) = saved { self.builder.position_at_end(b); }
+                self.functions.insert(helper_name.to_string(), fn_val);
+                self.fn_return_types.insert(
+                    helper_name.to_string(),
+                    Type::Result(Box::new(axon_t), Box::new(Type::Str)),
+                );
+            };
+
+            emit_flat_helper(FlatVal::I64,  "ai_extract_i64",  "__axon_ai_extract_i64",  Type::I64);
+            emit_flat_helper(FlatVal::F64,  "ai_extract_f64",  "__axon_ai_extract_f64",  Type::F64);
+            emit_flat_helper(FlatVal::Bool, "ai_extract_bool", "__axon_ai_extract_bool", Type::Bool);
+        }
+
         // ── Provenance log: __axon_provenance_log(name_ptr, name_len, payload_ptr, payload_len) ──
         // Used by `@[adaptive]` injection at fn prologue / return sites for the
         // string-event flavour ("call" / "return").  Not exposed as a user-
@@ -5014,6 +5161,22 @@ impl<'ctx> Codegen<'ctx> {
                         // chan::<T> → alias to Chan::new
                         if name.starts_with("chan::<") {
                             self.functions.get("Chan::new").copied()
+                        } else if let Some(inner) =
+                            name.strip_prefix("ai_extract::<").and_then(|s| s.strip_suffix(">"))
+                        {
+                            // ai_extract::<T> → dispatch to the per-T helper.
+                            // v1 T set: i64, f64, bool, Uncertain<i64>, Uncertain<f64>.
+                            // The concrete LLVM functions are emitted in
+                            // declare_builtins under the same names.
+                            let helper = match inner.trim() {
+                                "i64"            => "ai_extract_i64",
+                                "f64"            => "ai_extract_f64",
+                                "bool"           => "ai_extract_bool",
+                                "Uncertain<i64>" => "ai_extract_uncertain_i64",
+                                "Uncertain<f64>" => "ai_extract_uncertain_f64",
+                                _ => "",
+                            };
+                            self.functions.get(helper).copied()
                         } else {
                             self.functions.get(name.as_str()).copied()
                         }

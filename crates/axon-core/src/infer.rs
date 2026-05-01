@@ -645,6 +645,24 @@ impl InferCtx {
                         return Type::Chan(Box::new(parse_type_str(inner)));
                     }
                 }
+
+                // Handle `ai_extract::<T>(prompt)` lowered form (Layer-3 ASI):
+                //   "ai_extract::<T>" → Result<T, str>, taking a single str arg.
+                // Mirrors the chan decode just above.  v1 T set is enforced
+                // downstream in codegen (only i64/f64/bool/Uncertain<i64>/Uncertain<f64>
+                // get a dispatch); the type system flows the declared T through
+                // unchanged so callers see the right `Result<T, str>` shape.
+                if let Some(ref name) = fn_name {
+                    if let Some(inner) = name.strip_prefix("ai_extract::<").and_then(|s| s.strip_suffix(">")) {
+                        let t = parse_type_str(inner);
+                        // Constrain the (single) arg to be `str`.
+                        for arg in args {
+                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                            self.constrain(arg_ty, Type::Str, "arg 0 of `ai_extract`");
+                        }
+                        return Type::Result(Box::new(t), Box::new(Type::Str));
+                    }
+                }
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);
 
                 if let Some(name) = fn_name {
