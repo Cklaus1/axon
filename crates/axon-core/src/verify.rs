@@ -324,10 +324,16 @@ impl<'a> Analyzer<'a> {
             Expr::Block(stmts) => self.confidence_of_block(stmts, env),
 
             Expr::Call { callee, args } => {
-                if let Expr::Ident(name) = callee.as_ref() {
-                    self.confidence_of_call(name, args, env)
-                } else {
-                    Confidence::Unknown
+                match callee.as_ref() {
+                    Expr::Ident(name) => self.confidence_of_call(name, args, env),
+                    // Generic builtin lowering: `ai_extract::<T>(prompt)` parses
+                    // to `Call { callee: StructLit { name: "ai_extract::<T>", … }, … }`.
+                    // Route through the same classifier so the synthetic name
+                    // is recognised as a Runtime source for `@[verify]`.
+                    Expr::StructLit { name, fields } if fields.is_empty() => {
+                        self.confidence_of_call(name, args, env)
+                    }
+                    _ => Confidence::Unknown,
                 }
             }
 
@@ -511,6 +517,14 @@ impl<'a> Analyzer<'a> {
             | "ai_extract_uncertain_f64"
             | "uncertain_dyn_i64"
             | "uncertain_dyn_f64" => Confidence::Runtime,
+            // Layer-3 generic surface: `ai_extract::<Uncertain<T>>` returns an
+            // `Uncertain<T>` whose confidence is reported by the LLM at
+            // runtime.  Mirror the legacy `ai_extract_uncertain_*` aliases so
+            // `@[verify]` defers to the runtime check.  The flat-T variants
+            // (`ai_extract::<i64>` etc.) return non-Uncertain types and so
+            // never reach this classifier (no Uncertain to inspect).
+            "ai_extract::<Uncertain<i64>>"
+            | "ai_extract::<Uncertain<f64>>" => Confidence::Runtime,
             // Inter-procedural: another verify-annotated function.
             other => match self.fn_bounds.get(other) {
                 Some(b) => Confidence::Known(*b),
@@ -677,6 +691,35 @@ mod tests {
         assert!(
             errors.is_empty(),
             "AI runtime source should be silent at compile time, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn ai_extract_generic_uncertain_is_runtime_silent() {
+        // The generic surface `ai_extract::<Uncertain<i64>>(prompt)` parses to
+        // a `Call { callee: StructLit { name: "ai_extract::<Uncertain<i64>>" } }`.
+        // Even though the predicate threshold is 0.8 and we have no static
+        // confidence to check, the source must classify as Runtime so the
+        // static checker stays silent and defers to `__axon_verify_panic`.
+        let synthetic_call = Expr::Call {
+            callee: Box::new(Expr::StructLit {
+                name: "ai_extract::<Uncertain<i64>>".into(),
+                fields: vec![],
+            }),
+            args: vec![Expr::Literal(Literal::Str("how many?".into()))],
+        };
+        let body = Expr::Block(vec![Stmt::simple(synthetic_call)]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("ai_query_generic", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let errors = check_verify(&prog);
+        assert!(
+            errors.is_empty(),
+            "ai_extract::<Uncertain<i64>> should classify Runtime → silent, got: {errors:?}",
         );
     }
 

@@ -1,0 +1,43 @@
+// Fixture: generic `ai_extract::<T>(prompt) -> Result<T, str>` builtin (Layer-3 ASI).
+// Parse + type-check only — does NOT execute (requires ANTHROPIC_API_KEY).
+//
+// Demonstrates the v1-supported T set:
+//   i64, f64, bool, Uncertain<i64>, Uncertain<f64>
+//
+// The Uncertain<T> variants are aliases for the existing
+// `ai_extract_uncertain_{i64,f64}` helpers; the flat-T variants use the new
+// `__axon_ai_extract_{i64,f64,bool}` runtime bridges.  Backward compat with
+// the legacy aliases is covered by `ai_extract_uncertain.ax`.
+
+fn extract_count(prompt: str) -> Result<i64, str> {
+    ai_extract::<i64>(prompt)
+}
+
+fn extract_speed(prompt: str) -> Result<f64, str> {
+    ai_extract::<f64>(prompt)
+}
+
+fn extract_yesno(prompt: str) -> Result<bool, str> {
+    ai_extract::<bool>(prompt)
+}
+
+fn extract_unc_count(prompt: str) -> Result<Uncertain<i64>, str> {
+    ai_extract::<Uncertain<i64>>(prompt)
+}
+
+fn extract_unc_temp(prompt: str) -> Result<Uncertain<f64>, str> {
+    ai_extract::<Uncertain<f64>>(prompt)
+}
+
+fn main() {
+    let r1 = extract_count("How many planets?")
+    let r2 = extract_speed("Speed of light in m/s?")
+    let r3 = extract_yesno("Is the sky blue?")
+    let r4 = extract_unc_count("World population?")
+    let r5 = extract_unc_temp("Temperature in NYC?")
+    match r1 { Ok(n) => println(to_str(n))      Err(e) => eprintln(e) }
+    match r2 { Ok(x) => println(to_str_f64(x))  Err(e) => eprintln(e) }
+    match r3 { Ok(b) => println(if b { "yes" } else { "no" })  Err(e) => eprintln(e) }
+    match r4 { Ok(u) => println(to_str(u.value)) Err(e) => eprintln(e) }
+    match r5 { Ok(u) => println(to_str_f64(u.value)) Err(e) => eprintln(e) }
+}

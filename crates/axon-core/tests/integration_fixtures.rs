@@ -1291,6 +1291,21 @@ fn ai_extract_uncertain_fixture_clean() {
 }
 
 #[test]
+fn ai_extract_generic_fixture_clean() {
+    // Generic surface: `ai_extract::<T>(prompt) -> Result<T, str>` for the
+    // v1 T set { i64, f64, bool, Uncertain<i64>, Uncertain<f64> }.  Parser
+    // lowers to a synthetic-name StructLit-as-callee; infer decodes T back
+    // out and produces `Result<T, str>`; codegen would dispatch to a per-T
+    // runtime bridge.  Parse-only — does NOT execute (requires ANTHROPIC_API_KEY).
+    let errors = check_fixture("ai_extract_generic.ax");
+    assert!(
+        errors.is_empty(),
+        "ai_extract_generic.ax produced unexpected errors:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn adaptive_basic_fixture_clean() {
     let errors = check_fixture("adaptive_basic.ax");
     assert!(
