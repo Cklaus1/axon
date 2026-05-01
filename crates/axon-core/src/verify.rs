@@ -61,30 +61,50 @@ impl VerifyError {
 /// A confidence-lattice value attached to an expression.
 ///
 /// `Known(c)` means the analysis proved confidence is at least `c` (a lower
-/// bound — we can be more confident than this, but never less). `Unknown`
-/// means we couldn't track the value and treat it as `0.0` for soundness.
+/// bound — we can be more confident than this, but never less). `Runtime`
+/// means the value comes from a source with a runtime confidence check
+/// (e.g. `ai_extract_uncertain_*`); the static checker defers to the
+/// runtime gate (`__axon_verify_panic`, Layer 3.5). `Unknown` means we
+/// couldn't track the value and treat it as `0.0` for soundness.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Confidence {
     /// Lower bound on the confidence in `[0.0, 1.0]`.
     Known(f64),
+    /// Confidence is checked at runtime — static analysis stays silent.
+    Runtime,
     /// Cannot prove any bound — soundly treated as 0.0.
     Unknown,
 }
 
 impl Confidence {
     /// Minimum of two confidences. The bottom element propagates.
+    ///
+    /// Lattice ordering (worst → best for the caller):
+    ///   Unknown  <  Runtime  <  Known(c)
+    ///
+    /// `Unknown` is strictly worse than `Runtime` because `Runtime` carries
+    /// a guarantee (the runtime check will fire), whereas `Unknown` carries
+    /// no guarantee at all.
     fn min(self, other: Confidence) -> Confidence {
         match (self, other) {
             (Confidence::Known(a), Confidence::Known(b)) => Confidence::Known(a.min(b)),
-            // Treat Unknown as 0.0 for ordering but keep the Unknown tag.
+            // Unknown dominates anything (it is the bottom element).
             (Confidence::Unknown, _) | (_, Confidence::Unknown) => Confidence::Unknown,
+            // Runtime dominates Known — defer to the runtime check.
+            (Confidence::Runtime, Confidence::Known(_))
+            | (Confidence::Known(_), Confidence::Runtime)
+            | (Confidence::Runtime, Confidence::Runtime) => Confidence::Runtime,
         }
     }
 
-    /// Concrete numeric value — Unknown maps to 0.0.
+    /// Concrete numeric value — Unknown maps to 0.0, Runtime is not numeric
+    /// but is treated as 0.0 here for any caller that still needs a value
+    /// (the predicate evaluator short-circuits on `Runtime` before reaching
+    /// this).
     fn as_f64(self) -> f64 {
         match self {
             Confidence::Known(c) => c,
+            Confidence::Runtime => 0.0,
             Confidence::Unknown => 0.0,
         }
     }
@@ -247,6 +267,12 @@ fn check_fn(
     // of the value the function produces.
     let analyzer = Analyzer { fn_bounds };
     let min_conf = analyzer.confidence_of(&fndef.body, &HashMap::new());
+
+    // `Runtime` means a runtime-checked source dominates the lattice — the
+    // static checker defers entirely to `__axon_verify_panic` (Layer 3.5).
+    if matches!(min_conf, Confidence::Runtime) {
+        return;
+    }
 
     let min = min_conf.as_f64();
     match evaluate_predicate(&op, min, lit) {
@@ -472,6 +498,10 @@ impl<'a> Analyzer<'a> {
             }
             // `uncertain_deterministic(value)` — confidence is exactly 1.0.
             "uncertain_deterministic" => Confidence::Known(1.0),
+            // Runtime sources: the LLM reports a confidence at runtime that
+            // `__axon_verify_panic` (Layer 3.5) will gate.  Static analysis
+            // stays silent and defers to the runtime check.
+            "ai_extract_uncertain_i64" | "ai_extract_uncertain_f64" => Confidence::Runtime,
             // Inter-procedural: another verify-annotated function.
             other => match self.fn_bounds.get(other) {
                 Some(b) => Confidence::Known(*b),
@@ -616,6 +646,112 @@ mod tests {
         let prog = Program { items: vec![Item::FnDef(fndef)] };
         let errors = check_verify(&prog);
         assert!(errors.is_empty(), "unsupported predicate form should be silent");
+    }
+
+    #[test]
+    fn ai_source_is_runtime_silent() {
+        // fn ai_query() @[verify(confidence >= 0.8)] { ai_extract_uncertain_i64("...") }
+        // Lattice value at the body is `Runtime` — static checker stays silent
+        // and defers to the runtime check (`__axon_verify_panic`).
+        let body = Expr::Block(vec![Stmt::simple(call(
+            "ai_extract_uncertain_i64",
+            vec![Expr::Literal(Literal::Str("how many?".into()))],
+        ))]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("ai_query", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let errors = check_verify(&prog);
+        assert!(
+            errors.is_empty(),
+            "AI runtime source should be silent at compile time, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn ai_source_combined_with_known_via_binop() {
+        // ai_extract_uncertain_i64(...) + uncertain_new(0, 0.9)
+        //   →  min(Runtime, Known(0.9)) = Runtime  →  silent
+        let body = Expr::Block(vec![Stmt::simple(Expr::BinOp {
+            op: BinOp::Add,
+            left: Box::new(call(
+                "ai_extract_uncertain_i64",
+                vec![Expr::Literal(Literal::Str("q".into()))],
+            )),
+            right: Box::new(call("uncertain_new", vec![lit_i(0), lit_f(0.9)])),
+        })]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("mixed", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let errors = check_verify(&prog);
+        assert!(
+            errors.is_empty(),
+            "min(Runtime, Known) should be Runtime → silent, got: {errors:?}",
+        );
+    }
+
+    #[test]
+    fn ai_source_combined_with_unknown_is_unknown() {
+        // ai_extract_uncertain_i64(...) + some_unknown_thing()
+        //   →  min(Runtime, Unknown) = Unknown
+        // Unknown maps to 0.0; predicate `confidence >= 0.8` fails for 0.0 →
+        // the existing `Known(0.0)`-style behavior would emit, but Unknown
+        // here is computed via the binop path. The point of this test is to
+        // pin down that Runtime does NOT mask Unknown — Unknown remains the
+        // bottom and dominates.
+        let body = Expr::Block(vec![Stmt::simple(Expr::BinOp {
+            op: BinOp::Add,
+            left: Box::new(call(
+                "ai_extract_uncertain_i64",
+                vec![Expr::Literal(Literal::Str("q".into()))],
+            )),
+            // An unknown-classified call: not a known builtin, not a tracked
+            // user fn. Its arg list contains no Uncertains, so the helper
+            // resolves to Unknown.
+            right: Box::new(call("totally_opaque_helper", vec![lit_i(7)])),
+        })]);
+        let pred = Expr::BinOp {
+            op: BinOp::GtEq,
+            left: Box::new(Expr::Ident("confidence".into())),
+            right: Box::new(lit_f(0.8)),
+        };
+        let fndef = make_fn("opaque_mix", body, Some(pred));
+        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let _errors = check_verify(&prog);
+        // We don't assert on emit/silence here — the spec instructs *not* to
+        // change Unknown semantics. We only assert the lattice combinator
+        // produced Unknown (via the direct-min unit test) and that nothing
+        // panicked.  Behavior is whatever Layer 2 Track B already does.
+    }
+
+    #[test]
+    fn lattice_min_rules() {
+        let k_a = Confidence::Known(0.9);
+        let k_b = Confidence::Known(0.5);
+        let r   = Confidence::Runtime;
+        let u   = Confidence::Unknown;
+
+        // Known × Known
+        assert_eq!(k_a.min(k_b), Confidence::Known(0.5));
+        // Known × Runtime  →  Runtime  (both directions)
+        assert_eq!(k_a.min(r), Confidence::Runtime);
+        assert_eq!(r.min(k_a), Confidence::Runtime);
+        // Runtime × Runtime  →  Runtime
+        assert_eq!(r.min(r), Confidence::Runtime);
+        // Known × Unknown  →  Unknown
+        assert_eq!(k_a.min(u), Confidence::Unknown);
+        // Runtime × Unknown  →  Unknown  (Unknown is bottom)
+        assert_eq!(r.min(u), Confidence::Unknown);
+        assert_eq!(u.min(r), Confidence::Unknown);
+        // Unknown × Unknown  →  Unknown
+        assert_eq!(u.min(u), Confidence::Unknown);
     }
 
     #[test]

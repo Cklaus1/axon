@@ -1234,6 +1234,20 @@ fn verify_runtime_pass_fixture_clean() {
 }
 
 #[test]
+fn verify_ai_source_fixture_clean() {
+    // ASI Layer-3.5 lattice relaxation: AI runtime sources are classified
+    // as `Runtime`, not `Unknown`. The static checker should NOT emit E1101
+    // for `ai_extract_uncertain_i64(...)` body — the runtime check
+    // (`__axon_verify_panic`) is the gate.
+    let errors = check_fixture("verify_ai_source.ax");
+    assert!(
+        !errors.iter().any(|e| e.contains("E1101")),
+        "verify_ai_source.ax should NOT produce E1101 (AI source is Runtime, deferred to runtime check), got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn ai_complete_fixture_type_checks_cleanly() {
     let errors = check_fixture("ai_complete.ax");
     assert!(
