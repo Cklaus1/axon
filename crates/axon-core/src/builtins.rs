@@ -583,6 +583,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Send prompt to the Anthropic API (claude-sonnet-4-6) and return the reply. Returns Ok(reply) or Err(message). Requires ANTHROPIC_API_KEY env var.",
     },
     BuiltinFn {
+        name: "ai_extract_uncertain_i64",
+        params: &[("prompt", "str")],
+        ret: "Result<Uncertain<i64>, str>",
+        doc: "Send `prompt` to Anthropic with a structured-output tool. The LLM returns its answer plus a self-reported confidence in [0,1]. Returns Ok(Uncertain<i64>) or Err(reason). Requires ANTHROPIC_API_KEY.",
+    },
+    BuiltinFn {
+        name: "ai_extract_uncertain_f64",
+        params: &[("prompt", "str")],
+        ret: "Result<Uncertain<f64>, str>",
+        doc: "Same as ai_extract_uncertain_i64 but value is f64.",
+    },
+    BuiltinFn {
         name: "goal_run",
         params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
         ret: "f64",

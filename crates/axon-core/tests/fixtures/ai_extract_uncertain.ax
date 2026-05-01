@@ -1,0 +1,27 @@
+// Fixture: ai_extract_uncertain_{i64,f64} builtins -- parse + type-check only.
+// Do NOT run (requires ANTHROPIC_API_KEY and would hit the network).
+//
+// Demonstrates that AI output enters Axon's type system as `Uncertain<T>`
+// and can be branched on by the user (`.confidence > threshold`), composing
+// with the existing Layer-1/Layer-2 Uncertain<T> machinery.
+
+fn confident_count(item: str) -> Result<i64, str> {
+    let r = ai_extract_uncertain_i64(item)?
+    if r.confidence > 0.8 {
+        Ok(r.value)
+    } else {
+        Err("low confidence")
+    }
+}
+
+fn fuzzy_temp(city: str) -> Result<Uncertain<f64>, str> {
+    let r = ai_extract_uncertain_f64(city)?
+    Ok(r)
+}
+
+fn main() {
+    match confident_count("How many planets in the solar system?") {
+        Ok(n)  => println(to_str(n))
+        Err(e) => eprintln(e)
+    }
+}
