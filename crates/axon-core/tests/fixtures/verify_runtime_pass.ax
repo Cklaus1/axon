@@ -1,0 +1,22 @@
+// verify_runtime_pass.ax
+// ASI Layer-3: runtime enforcement of @[verify(confidence OP K)].
+//
+// At runtime, the returned Uncertain<i64> has confidence 0.9, which
+// satisfies `confidence >= 0.8`.  The codegen-injected runtime check
+// therefore *does not* trigger __axon_verify_panic, and the program
+// runs to completion as if the verify clause weren't there.
+//
+// Note: this fixture is parse + check-only at integration test time —
+// the no-default-features test pipeline doesn't execute the program.
+// The runtime panic helper itself is unit-tested in axon-rt
+// (verify_panic_tests::message_contains_fn_name_op_bound_actual).
+
+@[verify(confidence >= 0.8)]
+fn ok_value() -> Uncertain<i64> {
+    uncertain_new(42, 0.9)
+}
+
+fn main() {
+    let r = ok_value()
+    println(to_str(r.value))
+}

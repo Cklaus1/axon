@@ -1218,6 +1218,22 @@ fn verify_fail_fixture_emits_e1101() {
 }
 
 #[test]
+fn verify_runtime_pass_fixture_clean() {
+    // ASI Layer-3 runtime verify: this fixture exercises the same shape as
+    // verify_pass.ax, but is the canonical sample for the runtime-injection
+    // path.  Static checker should still emit no E1101 because the bound is
+    // satisfiable from `uncertain_new(_, 0.9)`.  The integration test here is
+    // parse + check-only; the runtime hook itself (`__axon_verify_panic`) is
+    // unit-tested in axon-rt.
+    let errors = check_fixture("verify_runtime_pass.ax");
+    assert!(
+        !errors.iter().any(|e| e.contains("E1101")),
+        "verify_runtime_pass.ax should NOT produce E1101, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn ai_complete_fixture_type_checks_cleanly() {
     let errors = check_fixture("ai_complete.ax");
     assert!(

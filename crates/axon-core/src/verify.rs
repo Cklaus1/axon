@@ -121,6 +121,26 @@ fn build_fn_bounds(program: &Program) -> HashMap<String, f64> {
 
 // ── Predicate matching ───────────────────────────────────────────────────────
 
+/// Public re-export for codegen: decode an `@[verify(...)]` predicate of the
+/// form `confidence OP literal_f64` (or its symmetric `literal OP confidence`).
+/// Returns `(op, literal)` with `op` normalised so that `confidence` is always
+/// the left-hand side.  Any other predicate shape returns `None`.
+///
+/// The runtime verify-check codegen path uses this to extract the operator
+/// and bound at every return site of a `@[verify]`-annotated fn.  The static
+/// checker uses the same helper to decide whether to evaluate the predicate.
+/// Single source of truth for predicate decoding — the operator-string
+/// rendering for runtime panic messages comes from [`op_to_str`] (also pub).
+pub fn decode_verify_predicate(expr: &Expr) -> Option<(BinOp, f64)> {
+    match_confidence_predicate(expr)
+}
+
+/// Public re-export of the internal `op_to_str` so codegen can format the
+/// operator into runtime-panic messages identically to compile-time messages.
+pub fn binop_to_verify_str(op: &BinOp) -> &'static str {
+    op_to_str(op)
+}
+
 /// Match an expression of the shape `confidence OP literal_f64` and return
 /// `(op, literal)`. Returns `None` for any other shape.
 fn match_confidence_predicate(expr: &Expr) -> Option<(BinOp, f64)> {

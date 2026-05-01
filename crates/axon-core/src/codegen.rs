@@ -111,6 +111,13 @@ pub struct Codegen<'ctx> {
     /// signatures (multi-arg, f64 input, str input, …) silently fall
     /// through and rely on the Layer-2 retrospective `goal_run` path.
     adaptive_registry_targets: Vec<String>,
+    /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries
+    /// `@[verify(confidence OP K)]` *and* whose return type is `Uncertain<T>`,
+    /// this holds `(fn_name, op_str, bound)` so each return site can inject
+    /// a runtime confidence check via `__axon_verify_panic`.  `op_str` is the
+    /// source-level operator (`">="`, `">"`, …) and `bound` is the literal K.
+    /// `None` whenever the surrounding function has no decodable verify spec.
+    current_verify_fn: Option<(String, &'static str, f64)>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -141,6 +148,7 @@ impl<'ctx> Codegen<'ctx> {
             current_lambda_env: None,
             current_adaptive_fn: None,
             adaptive_registry_targets: Vec::new(),
+            current_verify_fn: None,
         }
     }
 
@@ -3900,6 +3908,38 @@ impl<'ctx> Codegen<'ctx> {
             self.module.add_function("__axon_provenance_log_ret_f64", prov_f64_ty, None);
         }
 
+        // ── ASI Layer-3: @[verify] runtime panic ──────────────────────────────
+        //   __axon_verify_panic(fn_name_ptr, fn_name_len,
+        //                       op_ptr, op_len,
+        //                       bound: f64, actual: f64) -> noreturn
+        //
+        // Codegen injects a guarded call to this at every return site of a
+        // function carrying `@[verify(confidence OP K)]`.  The static
+        // `verify::check_verify` pass remains the primary gate; this runtime
+        // hook catches violations whose source is unknown to the static
+        // lattice (e.g. confidence flowing in from `ai_extract_uncertain_*`).
+        {
+            let f64_ty = self.context.f64_type();
+            let vp_ty = void_ty.fn_type(
+                &[
+                    i8_ptr.into(),  // fn_name_ptr
+                    i64_ty.into(),  // fn_name_len
+                    i8_ptr.into(),  // op_ptr
+                    i64_ty.into(),  // op_len
+                    f64_ty.into(),  // bound
+                    f64_ty.into(),  // actual
+                ],
+                false,
+            );
+            // Mark as noreturn at the LLVM level so optimisers know the
+            // failure path doesn't fall through.
+            let vp_fn = self.module.add_function("__axon_verify_panic", vp_ty, None);
+            // (No attribute setting on inkwell 0.4 stable API — codegen still
+            // emits an `unreachable` on the failure path so semantic
+            // correctness doesn't depend on the noreturn attribute.)
+            let _ = vp_fn;
+        }
+
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
         //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
         //
@@ -4395,6 +4435,7 @@ impl<'ctx> Codegen<'ctx> {
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_result_types = self.current_result_types.take();
         let saved_adaptive = self.current_adaptive_fn.take();
+        let saved_verify = self.current_verify_fn.take();
 
         // ── @[adaptive]: emit a "call" event at the prologue. ─────────────────
         // Activates `current_adaptive_fn` so any subsequent build_return inside
@@ -4402,6 +4443,30 @@ impl<'ctx> Codegen<'ctx> {
         if has_adaptive_attr(&f.attrs) {
             self.current_adaptive_fn = Some(f.name.clone());
             self.emit_provenance_log(&f.name, "call");
+        }
+
+        // ── ASI Layer-3 @[verify]: arm runtime predicate enforcement. ─────────
+        // Activates `current_verify_fn` so every return site of this function
+        // emits a guarded call to `__axon_verify_panic` when the runtime
+        // confidence violates the predicate.  We only arm the check when:
+        //   1. The function has a `VerifySpec`.
+        //   2. The predicate decodes as `confidence OP literal_f64`.
+        //   3. The declared return type is `Uncertain<T>` (defensive — the
+        //      static checker should have rejected the verify clause otherwise).
+        // If any of those fail, we silently emit nothing — same shape as the
+        // static checker, which also no-ops on undecodable predicates.
+        if let Some(spec) = &f.verify {
+            if let Some((op, bound)) = crate::verify::decode_verify_predicate(&spec.predicate) {
+                let ret_is_uncertain = f
+                    .return_type
+                    .as_ref()
+                    .map(|t| matches!(self.axon_type_to_semantic(t), Type::Uncertain(_)))
+                    .unwrap_or(false);
+                if ret_is_uncertain {
+                    let op_str = crate::verify::binop_to_verify_str(&op);
+                    self.current_verify_fn = Some((f.name.clone(), op_str, bound));
+                }
+            }
         }
 
         // ── ASI Layer-3: in `main`'s prologue, register each eligible
@@ -4456,6 +4521,7 @@ impl<'ctx> Codegen<'ctx> {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
                         self.log_return_if_adaptive_val(v);
+                        self.emit_verify_check_if_needed(v, llvm_fn);
                         self.builder.build_return(Some(&v)).unwrap();
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
@@ -4464,6 +4530,7 @@ impl<'ctx> Codegen<'ctx> {
                         if let Some(ret_llvm_ty) = self.llvm_type(&ret_sem) {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
+                            self.emit_verify_check_if_needed(zero_val, llvm_fn);
                             self.builder.build_return(Some(&zero_val)).unwrap();
                         } else {
                             self.log_return_if_adaptive();
@@ -4483,6 +4550,7 @@ impl<'ctx> Codegen<'ctx> {
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
         self.current_adaptive_fn = saved_adaptive;
+        self.current_verify_fn = saved_verify;
     }
 
     // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
@@ -4575,6 +4643,122 @@ impl<'ctx> Codegen<'ctx> {
         if let Some(fn_name) = self.current_adaptive_fn.clone() {
             self.emit_provenance_log_ret(&fn_name, ret_val);
         }
+    }
+
+    /// ASI Layer-3 `@[verify]` runtime helper.
+    ///
+    /// Called at every return site of a function whose `current_verify_fn`
+    /// is set (i.e. the surrounding fn is `@[verify(confidence OP K)]` and
+    /// has return type `Uncertain<T>`).  At codegen time we:
+    ///
+    ///   1. `extractvalue` field index 1 (`confidence: f64`) from the
+    ///      Uncertain struct value being returned.
+    ///   2. `fcmp <pred>` it against the literal bound K, where `<pred>`
+    ///      mirrors the source operator (`>=` → OGE, `>` → OGT, `<=` → OLE,
+    ///      `<` → OLT, `==` → OEQ, `!=` → ONE).
+    ///   3. Branch: on success, fall through to the original `build_return`;
+    ///      on failure, call `__axon_verify_panic(fn_name, op, K, actual)`
+    ///      and emit `unreachable`.
+    ///
+    /// No-op when `current_verify_fn` is `None`, when the value is not an
+    /// Uncertain struct (defensive), or when the verify-panic extern is
+    /// missing.  Codegen never aborts compilation here — the static checker
+    /// is the primary gate; this is *additional* enforcement.
+    ///
+    /// Call this at every `build_return(Some(&v))` site immediately *before*
+    /// the actual `build_return`, alongside `log_return_if_adaptive_val(v)`.
+    fn emit_verify_check_if_needed(
+        &mut self,
+        ret_val: BasicValueEnum<'ctx>,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        // Quick exit: not in a verify-armed function.
+        let (fn_name, op_str, bound) = match self.current_verify_fn.clone() {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Defensive: skip if the runtime extern isn't declared.
+        let panic_fn = match self.module.get_function("__axon_verify_panic") {
+            Some(f) => f,
+            None => return,
+        };
+
+        // Skip if the current basic block is already terminated — we can't
+        // legally insert further IR there.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+
+        // The return value must be an Uncertain<T> struct (field 1 = f64
+        // confidence).  Anything else means the verify clause was attached to
+        // a function whose return type isn't actually Uncertain — the static
+        // checker should have rejected it, but be defensive.
+        let struct_val = match ret_val {
+            BasicValueEnum::StructValue(sv) => sv,
+            _ => return,
+        };
+        let f64_ty = self.context.f64_type();
+        // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
+        let conf_ev = match self.builder.build_extract_value(struct_val, 1, "verify_conf") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        // Sanity: must be an f64.  If the struct shape is unexpected, bail.
+        let actual = match conf_ev {
+            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
+            _ => return,
+        };
+
+        // Translate operator string → LLVM float predicate.  Matches the set
+        // accepted by `verify::decode_verify_predicate`.
+        let pred = match op_str {
+            ">="          => FloatPredicate::OGE,
+            ">"           => FloatPredicate::OGT,
+            "<="          => FloatPredicate::OLE,
+            "<"           => FloatPredicate::OLT,
+            "=="          => FloatPredicate::OEQ,
+            "!="          => FloatPredicate::ONE,
+            // Unknown op string: silently no-op (mirrors static checker).
+            _ => return,
+        };
+
+        let bound_const = f64_ty.const_float(bound);
+        let cmp = match self.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        // Build branch: cmp ? continue : panic.  We append two blocks to the
+        // current function and route the *current* block into them.
+        let panic_bb = self.context.append_basic_block(llvm_fn, "verify_panic");
+        let cont_bb  = self.context.append_basic_block(llvm_fn, "verify_ok");
+
+        let _ = self.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
+
+        // ── Panic path ────────────────────────────────────────────────────
+        self.builder.position_at_end(panic_bb);
+        let i64_ty = self.context.i64_type();
+        let name_g = self.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
+        let op_g   = self.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+        let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
+        let _ = self.builder.build_call(
+            panic_fn,
+            &[
+                name_g.as_pointer_value().into(),
+                name_len.into(),
+                op_g.as_pointer_value().into(),
+                op_len.into(),
+                bound_const.into(),
+                actual.into(),
+            ],
+            "",
+        );
+        let _ = self.builder.build_unreachable();
+
+        // ── Continue path: original return falls through here. ────────────
+        self.builder.position_at_end(cont_bb);
     }
 
     /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
@@ -5086,6 +5270,7 @@ impl<'ctx> Codegen<'ctx> {
                     std::option::Option::Some(e) => {
                         if let Some(v) = self.emit_expr(e, fn_val) {
                             self.log_return_if_adaptive_val(v);
+                            self.emit_verify_check_if_needed(v, fn_val);
                             self.builder.build_return(Some(&v)).unwrap();
                         } else {
                             self.log_return_if_adaptive();

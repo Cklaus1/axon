@@ -398,9 +398,111 @@ pub extern "C" fn __axon_i64_to_str_radix(
     }
 }
 
+// ── ASI Layer-3: @[verify] runtime enforcement ────────────────────────────────
+
+/// Runtime panic for `@[verify(confidence OP K)]` violations.
+///
+/// Codegen injects a call to this symbol at every return site of an
+/// `@[verify]`-annotated function whose `Uncertain<T>` return value has a
+/// runtime confidence that fails the predicate.  The static `verify::check_verify`
+/// pass catches *definite* violations at compile time; this runtime hook
+/// catches violations whose source is unknown to the static lattice
+/// (e.g. confidence flowing in from `ai_extract_uncertain_*`).
+///
+/// Behaviour: writes a one-line error message to stderr and calls
+/// `std::process::abort()`.  We pick `abort()` over `exit(101)` to mirror
+/// Rust's `panic!` (core dump, unambiguous programmer error).
+///
+/// Parameters:
+/// * `fn_name_ptr` / `fn_name_len` — pointer + byte length of the offending
+///   function's name (Axon `str` ABI).
+/// * `op_ptr` / `op_len` — the source-level operator string (`">="`, `">"`,
+///   `"<="`, `"<"`, `"=="`, `"!="`).  Used only for the message; the runtime
+///   does no semantic interpretation.
+/// * `bound` — the literal `f64` from the predicate.
+/// * `actual` — the runtime confidence extracted from the `Uncertain<T>`
+///   value at the return site.
+#[no_mangle]
+pub extern "C" fn __axon_verify_panic(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    op_ptr: *const u8,
+    op_len: i64,
+    bound: f64,
+    actual: f64,
+) -> ! {
+    let msg = format_verify_panic(fn_name_ptr, fn_name_len, op_ptr, op_len, bound, actual);
+    eprintln!("{msg}");
+    std::process::abort();
+}
+
+/// Produce the verify-panic message without aborting.  Factored out so unit
+/// tests can assert on the formatted text without taking the process down.
+fn format_verify_panic(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    op_ptr: *const u8,
+    op_len: i64,
+    bound: f64,
+    actual: f64,
+) -> String {
+    let fn_name = verify_slice_to_str(fn_name_ptr, fn_name_len);
+    let op = verify_slice_to_str(op_ptr, op_len);
+    format!(
+        "axon: verify violation in `{fn_name}`: confidence {op} {bound} failed (actual={actual})"
+    )
+}
+
+fn verify_slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
+    if ptr.is_null() || len <= 0 {
+        return "<unknown>";
+    }
+    unsafe {
+        let bytes = std::slice::from_raw_parts(ptr, len as usize);
+        std::str::from_utf8(bytes).unwrap_or("<invalid utf8>")
+    }
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 unsafe fn libc_malloc(size: usize) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
     std::alloc::alloc(layout)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod verify_panic_tests {
+    use super::*;
+
+    #[test]
+    fn message_contains_fn_name_op_bound_actual() {
+        let fn_name = b"safe_extract";
+        let op = b">=";
+        let msg = format_verify_panic(
+            fn_name.as_ptr(),
+            fn_name.len() as i64,
+            op.as_ptr(),
+            op.len() as i64,
+            0.8,
+            0.42,
+        );
+        assert!(msg.contains("safe_extract"), "msg: {msg}");
+        assert!(msg.contains(">="),           "msg: {msg}");
+        assert!(msg.contains("0.8"),          "msg: {msg}");
+        assert!(msg.contains("0.42"),         "msg: {msg}");
+        assert!(msg.contains("verify violation"), "msg: {msg}");
+    }
+
+    #[test]
+    fn message_handles_null_ptrs_gracefully() {
+        let msg = format_verify_panic(
+            std::ptr::null(), 0,
+            std::ptr::null(), 0,
+            0.5, 0.1,
+        );
+        // Should not panic; should contain placeholder text.
+        assert!(msg.contains("<unknown>"), "msg: {msg}");
+    }
 }
