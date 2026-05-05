@@ -1,0 +1,95 @@
+// Axon ASI demo (cousin #6): pricing recommender with multi-objective reward.
+//
+// Demonstrates **reward shaping** without dedicated syntax (F10 in
+// ROADMAP §9.5).  The score combines two objectives:
+//
+//   demand_estimate   — LLM judges plausibility of customer uptake (0..1)
+//   margin_compliance — flat 1.0 if price >= floor, else 0.0
+//
+// score = round(70 × demand × confidence_demand + 30 × margin_compliance)
+//
+// A future @[reward(weight: λ)]-annotated multi-metric goal collapses
+// this into one declarative line.  For now we hand-fuse.
+//
+// Run: ANTHROPIC_API_KEY=... axon run examples/asi/pricing.ax
+
+// ── Domain: 5 candidate prices (cents), one is the search dimension ────────
+
+fn candidate_price_cents(variant_id: i64) -> i64 {
+    let v = variant_id % 5
+    let v2 = if v < 0 { v + 5 } else { v }
+    if v2 == 0 { 1999 }
+    else if v2 == 1 { 2499 }
+    else if v2 == 2 { 2999 }
+    else if v2 == 3 { 3499 }
+    else { 3999 }
+}
+
+fn price_floor_cents() -> i64 { 2400 }   // do not deploy under this
+
+fn product_blurb() -> str {
+    "A 12-month subscription to a developer-focused note-taking app with offline mode, end-to-end encryption, and unlimited devices."
+}
+
+// ── Demand estimate: ask the LLM to rate plausibility of uptake ────────────
+// Returns 0..100 (with confidence) using ai_extract_uncertain_i64.
+
+fn build_demand_prompt(price_cents: i64) -> str {
+    let dollars = price_cents / 100
+    let cents = price_cents % 100
+    "Given this product:\n\n{product_blurb()}\n\nAt a price of ${to_str(dollars)}.{to_str(cents)}/year, output an integer 0..100 estimating customer uptake (100 = highly likely to convert, 0 = will not convert).  Output ONLY the integer."
+}
+
+fn demand_score(price_cents: i64) -> i64 {
+    match ai_extract_uncertain_i64(build_demand_prompt(price_cents)) {
+        Ok(u) => {
+            let v = if u.value < 0 { 0 } else if u.value > 100 { 100 } else { u.value }
+            // Weight by confidence: a low-confidence high estimate counts less.
+            f64_to_i64(u.confidence * (i64_to_f64(v) * 0.7))
+        }
+        Err(_) => 0
+    }
+}
+
+// ── Margin compliance: hard 0/30 ───────────────────────────────────────────
+
+fn margin_compliance(price_cents: i64) -> i64 {
+    if price_cents >= price_floor_cents() { 30 } else { 0 }
+}
+
+// ── Composite metric ────────────────────────────────────────────────────────
+
+@[adaptive(metric: pricing_quality, target: 100)]
+fn try_variant(variant_id: i64) -> i64 {
+    let p = candidate_price_cents(variant_id)
+    demand_score(p) + margin_compliance(p)
+}
+
+// ── Deploy gate ─────────────────────────────────────────────────────────────
+
+@[verify(confidence >= 0.7)]
+fn deploy_gate(best_score: f64) -> Uncertain<i64> {
+    let conf = best_score / 100.0
+    let clamped = if best_score < 0.0 { 0.0 }
+                  else if best_score > 100.0 { 100.0 }
+                  else { best_score }
+    uncertain_dyn_i64(f64_to_i64(clamped), conf)
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== Axon ASI demo (cousin #6): multi-objective pricing ===")
+    println("Composite reward: 70% LLM demand × confidence  +  30% margin compliance")
+    println("Hard floor: ${to_str(price_floor_cents() / 100)}.00")
+    println("")
+
+    let _ = try_variant(0)
+    let best = goal_run("try_variant", 100.0, 15)
+    println("Best observed score: {to_str_f64(best)} / 100")
+
+    let u = deploy_gate(best)
+    println("Deploy gate: PASS — confidence >= 0.7")
+    println("Confirmed best composite score: {to_str(u.value)}")
+    0
+}

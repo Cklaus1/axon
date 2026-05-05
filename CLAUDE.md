@@ -170,8 +170,36 @@ fn test_panic() { assert(false) }
 |-------|--------|---------|
 | 1 | ✅ Complete | Functions, if/else, match, Result/Option, basic builtins, JIT+AOT |
 | 2 | ✅ Complete | Structs, enums, slices, lambdas, while, `%`/`&&`/`||`, string interp, extended builtins, IR bug fixes |
-| 3 | 📋 Specced | Generics, traits, closures w/ captures, channels, borrow checker, comptime, spans |
-| 4 | 📋 Specced | LSP, formatter, doc gen, incremental compile, multi-file, cross-compile |
+| 3 | ✅ Complete | Generics, traits, closures w/ captures, channels, borrow checker, comptime, spans |
+| 4 | ✅ Complete | LSP, formatter, doc gen, incremental compile, multi-file, cross-compile |
+| ASI 1–3.6 | ✅ Merged | `Uncertain<T>`, `Temporal<T>`, `@[verify]`, `@[adaptive]`, `goal_run`, `ai_complete`, `ai_extract*`, `@[contained]` |
+| 5 | 📋 Drafted | Refinement types + SMT (Z3) — see `spec/compiler-phase5.md` |
+| 6 | 📋 Drafted | Row-polymorphic effects + handlers — see `spec/compiler-phase6.md` |
+| 7+ | 📋 Roadmapped | `Principal`, `Store`, `Supervisor`, `LLM<Caps>`, goal/agent surface — see `ROADMAP.md` |
+
+## Forward Roadmap
+
+Forward planning lives in `ROADMAP.md`. Highlights:
+- Two-track architecture: typed `.ax` is an IR; user-facing surface is structured-prose forms compiled to AST
+- Userland OS, not kernel replacement
+- 14-type Tier-1 stdlib (`Goal`, `Constraint`, `Budget`, `Principal`, `Effect`, `Store`, etc.)
+- TCB enumerated; self-modification cannot weaken it
+- `examples/asi/` is the public face, not `examples/fibonacci.ax`
+
+## ASI Demo Set
+
+`examples/asi/` ships end-to-end ASI workflows on already-shipped primitives. Each demo is the
+forcing function for upcoming phase work — friction encountered while building lands in
+`ROADMAP.md` §9.5 as concrete spec items.
+
+| Demo | Pattern |
+|---|---|
+| `optimize.ax` | ai_complete + parse + adaptive + verify + redteam |
+| `classify.ax` | ai_extract_uncertain_i64; confidence in score |
+| `summarize.ax` | composite metric (length × LLM-judged coverage) |
+| `code_review.ax` | two cooperating @[adaptive] fns (proposer + critic) |
+
+CLI surface simulated as `examples/asi/run.sh` (the eventual Phase-10 `axon goal …` shape).
 
 ## Design Reference
 

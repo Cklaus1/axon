@@ -1,0 +1,202 @@
+// Axon ASI demo: autonomous prompt optimizer.
+//
+// Goal: find a phone-number-extraction prompt variant that scores >= 90/100
+// on a held-out test set, with confidence >= 0.9, and that does not
+// hallucinate on adversarial input.
+//
+// Loop primitives (all already shipped on `merge-asi-layer3`):
+//   * @[adaptive(metric, target)]          — provenance-logs every call
+//   * fn try_variant(i64) -> i64           — goal_run live-hill-climbs over this
+//   * goal_run(name, target, max_evals)    — drives the search
+//   * @[verify(confidence >= 0.9)]         — runtime gate, panics on miss
+//   * uncertain_dyn_i64                    — runtime-classified Uncertain
+//   * ai_complete                          — Anthropic inference
+//
+// Run:  ANTHROPIC_API_KEY=... axon run examples/asi/optimize.ax
+
+// ── Test set ────────────────────────────────────────────────────────────────
+// Three labeled samples + one adversarial sample (no phone, must not
+// hallucinate).  We score by last-4-digit match: each LLM reply is parsed
+// for its trailing integer, compared against the expected last-4 digits.
+
+fn test_text(i: i64) -> str {
+    if i == 0 {
+        "Call me back at 415-555-0142 tomorrow morning."
+    } else if i == 1 {
+        "Customer support: dial 800.555.0199 anytime."
+    } else if i == 2 {
+        "My number is +1 (212) 555-0137 — leave a message."
+    } else {
+        ""
+    }
+}
+
+fn test_expected_last4(i: i64) -> i64 {
+    if i == 0 {
+        142
+    } else if i == 1 {
+        199
+    } else if i == 2 {
+        137
+    } else {
+        0
+    }
+}
+
+fn adversarial_text() -> str {
+    "Our office is at 100 Main Street, suite 42. We've been there since 2003."
+}
+
+// ── Prompt variants ─────────────────────────────────────────────────────────
+// Eight candidate prompt prefixes.  goal_run's hill-climb perturbs the
+// variant_id integer, so each prefix is one search-space point.
+
+fn build_prompt(variant_id: i64) -> str {
+    let v = variant_id % 8
+    let v2 = if v < 0 { v + 8 } else { v }
+    if v2 == 0 {
+        "Extract the phone number. Reply with the LAST 4 DIGITS only as a bare integer. Text: "
+    } else if v2 == 1 {
+        "From the text below, output the last 4 digits of the phone number as a single integer with no other text. Text: "
+    } else if v2 == 2 {
+        "Phone number extraction. Output ONLY the last 4 digits as digits. No words. Text: "
+    } else if v2 == 3 {
+        "You are a phone parser. Reply with the last 4 digits of the phone number you find, as a plain integer. Text: "
+    } else if v2 == 4 {
+        "Find phone. Last 4 digits as int only. Text: "
+    } else if v2 == 5 {
+        "Read the text. Find the phone number. Output only its last 4 digits. Just digits. Text: "
+    } else if v2 == 6 {
+        "TASK: phone number last-4. INPUT: "
+    } else {
+        "Extract phone. Output: last_four_digits as integer. No formatting, no explanation. Text: "
+    }
+}
+
+// ── Score one variant against the test set ─────────────────────────────────
+// Returns 0..100.  Each correct match contributes ~33 points; missing
+// samples contribute 0.  We use parse_int on the LLM reply and tolerate
+// it returning a longer integer by taking value % 10000 as "last 4".
+
+fn extract_last4(reply: str) -> i64 {
+    match parse_int(reply) {
+        Ok(n) => {
+            let m = n % 10000
+            if m < 0 { -m } else { m }
+        }
+        Err(_) => -1
+    }
+}
+
+fn score_one_sample(prefix: str, idx: i64) -> i64 {
+    let prompt = "{prefix}{test_text(idx)}"
+    match ai_complete(prompt) {
+        Ok(reply) => {
+            let got = extract_last4(reply)
+            if got == test_expected_last4(idx) {
+                33
+            } else {
+                0
+            }
+        }
+        Err(_) => 0
+    }
+}
+
+fn score_variant(variant_id: i64) -> i64 {
+    let prefix = build_prompt(variant_id)
+    let s0 = score_one_sample(prefix, 0)
+    let s1 = score_one_sample(prefix, 1)
+    let s2 = score_one_sample(prefix, 2)
+    s0 + s1 + s2
+}
+
+// ── Adaptive entry — drives goal_run's live hill-climb ─────────────────────
+// Signature is fn(i64) -> i64, the only shape goal_run can live-perturb.
+// Each call appends (variant_id, score) to ~/.cache/axon/provenance.jsonl
+// via the @[adaptive] prologue.
+
+@[adaptive(metric: extraction_score, target: 100)]
+fn try_variant(variant_id: i64) -> i64 {
+    score_variant(variant_id)
+}
+
+// ── Deploy gate — @[verify] enforces confidence floor at runtime ───────────
+// Wraps the best score as Uncertain<i64> with confidence = score/100.  The
+// @[verify(confidence >= 0.9)] clause panics via __axon_verify_panic if
+// the live confidence is below 0.9 — i.e., if the optimizer didn't reach
+// score 90.  This is the runtime "do-not-deploy" gate.
+//
+// uncertain_dyn_i64 (Layer-3.6) classifies the source as Runtime, so the
+// static checker leaves the predicate to the runtime check rather than
+// trying to prove it (which would require Phase-5 refinement types).
+
+@[verify(confidence >= 0.9)]
+fn deploy_gate(best_score: f64) -> Uncertain<i64> {
+    let conf = best_score / 100.0
+    let clamped = if best_score < 0.0 {
+        0.0
+    } else if best_score > 100.0 {
+        100.0
+    } else {
+        best_score
+    }
+    uncertain_dyn_i64(f64_to_i64(clamped), conf)
+}
+
+// ── Redteam: adversarial input must not yield a phone number ───────────────
+// Runs the prompt against text that contains no phone number.  If the LLM
+// hallucinates a numeric reply, we treat that as a redteam fail.  Returns
+// 1 = safe (no number), 0 = hallucinated.
+
+fn redteam_one(variant_id: i64) -> i64 {
+    let prefix = build_prompt(variant_id)
+    let prompt = "{prefix}{adversarial_text()}"
+    match ai_complete(prompt) {
+        Ok(reply) => {
+            match parse_int(reply) {
+                Ok(_)  => 0
+                Err(_) => 1
+            }
+        }
+        Err(_) => 1
+    }
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== Axon ASI demo: prompt optimizer ===")
+    println("Target: extraction_score >= 90/100 with confidence >= 0.9")
+    println("Search space: 8 prompt variants")
+    println("Live hill-climb via goal_run on try_variant(i64) -> i64")
+    println("")
+
+    // Seed: try variant 0 once so goal_run has a starting record.  The
+    // hill-climb will perturb from 0 and accumulate (variant_id, score)
+    // pairs in the provenance log automatically.
+    let _ = try_variant(0)
+
+    // Drive the search.  max_evals = 24 caps the number of LLM-backed
+    // evaluations.  Target 100.0 means "as close to perfect as possible";
+    // hill-climb halts when the step size drops below 1.
+    let best = goal_run("try_variant", 100.0, 24)
+    println("Best observed score: {to_str_f64(best)} / 100")
+
+    // Deploy gate.  If best < 90, deploy_gate's @[verify] clause panics
+    // because confidence (= best/100) < 0.9.
+    let u = deploy_gate(best)
+    println("Deploy gate: PASS — score wrapped as Uncertain<i64> with confidence >= 0.9")
+    println("Confirmed best variant score: {to_str(u.value)}")
+
+    // Redteam pass: run variant 0 (representative) against adversarial input.
+    // A real redteam would run all variants seen during search; v1 spot-checks.
+    let safe = redteam_one(0)
+    if safe == 1 {
+        println("Redteam: PASS — no hallucinated phone on adversarial input")
+        0
+    } else {
+        println("Redteam: FAIL — variant 0 hallucinated on input with no phone number")
+        2
+    }
+}

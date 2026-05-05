@@ -1,9 +1,12 @@
 # Axon Compiler — Phase 4 Status
 
-**Last updated**: 2026-04-28  
-**Phase**: 4 (active implementation)  
-**Spec**: `spec/compiler-phase4.md`  
-**Previous spec**: `spec/compiler-phase3.md`  
+**Last updated**: 2026-05-04
+**Phase**: 4 complete; ASI Layers 1–3.6 merged on `merge-asi-layer3`
+**Forward roadmap**: `ROADMAP.md` (Phases 5–14+, strategic reframe, TCB, acid tests, friction-derived gap list)
+**Spec**: `spec/compiler-phase4.md`
+**Previous spec**: `spec/compiler-phase3.md`
+**Drafted next specs**: `spec/compiler-phase5.md` (refinement + SMT), `spec/compiler-phase6.md` (effect rows + handlers)
+**ASI demo set**: `examples/asi/` — 4 working demos exercising shipped primitives end-to-end
 **Runtime spec**: `spec/runtime.md`
 
 ---

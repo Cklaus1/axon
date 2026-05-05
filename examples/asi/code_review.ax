@@ -1,0 +1,117 @@
+// Axon ASI demo (cousin #4): cooperating proposer + critic agents.
+//
+// Demonstrates the **multi-agent pattern** without an Agent type (F12 in
+// ROADMAP §9.5).  Two @[adaptive] fns play distinct roles:
+//
+//   propose_change(seed)    — generates a code "fix" candidate (str)
+//   critique_change(seed)   — scores the most recent fix on a held-out
+//                             problem (returns 0..100)
+//
+// Both are fn(i64) -> i64 / fn(i64) -> str, so goal_run live-hill-climbs
+// over critique_change's seed (the score), and the proposer's outputs
+// land in the provenance log for inspection.
+//
+// Goal: critique_change peaks at >= 75/100 with confidence >= 0.75.
+//
+// This is a v1 multi-agent pattern.  Once Phase 7+8 ship, the same shape
+// becomes:
+//   agent proposer { effects: { AI }, propose: () -> Plan<Fix> }
+//   agent critic   { effects: { AI }, score: Fix -> i64 }
+//   for! maximize critique_change with proposer { ... }
+
+// ── The "broken" code under review (single string, deterministic) ───────────
+
+fn broken_code() -> str {
+    "fn divide(a: i64, b: i64) -> i64 {{ a / b }}   // BUG: panics on b == 0"
+}
+
+fn problem_statement() -> str {
+    "The function divide panics when b == 0.  Propose a one-line replacement that returns Result<i64, str> instead, with Err(\"division by zero\") on b == 0 and Ok(a/b) otherwise."
+}
+
+// ── Proposer: returns one fix candidate per seed ────────────────────────────
+// We feed `seed` into the prompt so different seeds → different candidates.
+
+fn build_propose_prompt(seed: i64) -> str {
+    let p = problem_statement()
+    let c = broken_code()
+    "{p}\n\nCurrent code:\n{c}\n\nVariation seed: {to_str(seed)}.  Output ONLY the replacement function definition, no explanation."
+}
+
+@[adaptive(metric: proposal, target: 0)]
+fn propose_change(seed: i64) -> str {
+    match ai_complete(build_propose_prompt(seed)) {
+        Ok(reply) => reply
+        Err(_)    => ""
+    }
+}
+
+// ── Critic: scores the proposal on three checks ─────────────────────────────
+//   * does it return Result<i64, str>            (40 pts)
+//   * does it match Err("division by zero")      (30 pts)
+//   * does it preserve a / b on the happy path   (30 pts)
+
+fn build_critique_prompt(proposal: str) -> str {
+    "Rate this Rust/Axon function definition on three criteria, each yes=1 / no=0:\n  1. Returns Result<i64, str>?\n  2. Returns Err(\"division by zero\") on b == 0?\n  3. Returns Ok(a/b) on b != 0?\nOutput one integer in 0..3 = number of YES answers.\n\nDefinition:\n{proposal}"
+}
+
+fn score_proposal(proposal: str) -> i64 {
+    if str_len(proposal) == 0 {
+        0
+    } else {
+        match ai_extract_uncertain_i64(build_critique_prompt(proposal)) {
+            Ok(u) => {
+                // Map yes-count (0..3) to 0..100, weighted by confidence.
+                let yes_count = if u.value < 0 { 0 } else if u.value > 3 { 3 } else { u.value }
+                let base = yes_count * 33
+                let conf_bonus = f64_to_i64(u.confidence * 1.0)
+                base + conf_bonus
+            }
+            Err(_) => 0
+        }
+    }
+}
+
+// ── Adaptive critic — drives goal_run's hill-climb ──────────────────────────
+// For each seed, we generate a fresh proposal, then score it.  The score
+// is what gets logged + hill-climbed.
+
+@[adaptive(metric: review_score, target: 100)]
+fn critique_change(seed: i64) -> i64 {
+    let proposal = propose_change(seed)
+    score_proposal(proposal)
+}
+
+// ── Deploy gate ─────────────────────────────────────────────────────────────
+
+@[verify(confidence >= 0.75)]
+fn deploy_gate(best_score: f64) -> Uncertain<i64> {
+    let conf = best_score / 100.0
+    let clamped = if best_score < 0.0 { 0.0 }
+                  else if best_score > 100.0 { 100.0 }
+                  else { best_score }
+    uncertain_dyn_i64(f64_to_i64(clamped), conf)
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== Axon ASI demo (cousin #4): cooperating proposer + critic ===")
+    println("Pattern: two @[adaptive] fns, one drives goal_run, one runs upstream")
+    println("Target: review_score >= 75 with confidence >= 0.75")
+    println("")
+
+    // Seed: one proposal/critique cycle so the provenance log is non-empty.
+    let _ = critique_change(0)
+
+    // Drive the search.  Each eval runs propose_change then score_proposal,
+    // so there are TWO LLM calls per goal_run iteration.  max_evals: 12
+    // → ~24 LLM calls total.
+    let best = goal_run("critique_change", 100.0, 12)
+    println("Best observed review score: {to_str_f64(best)} / 100")
+
+    let u = deploy_gate(best)
+    println("Deploy gate: PASS — confidence >= 0.75")
+    println("Confirmed best score: {to_str(u.value)}")
+    0
+}

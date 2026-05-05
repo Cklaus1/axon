@@ -16,6 +16,26 @@
 
 use std::alloc::Layout;
 
+// -- Endpoint resolution -------------------------------------------------------
+//
+// Reads the optional ANTHROPIC_BASE_URL environment variable and returns the
+// full Messages API URL.  Defaults to api.anthropic.com when unset or empty.
+//
+// Use cases:
+//   * Cost / latency observability via Helicone (point at oai.helicone.ai)
+//   * Local mock / replay during demo development
+//   * Region-specific deployments
+//
+// Trailing slashes on the base URL are tolerated.
+fn messages_url() -> String {
+    let base = std::env::var("ANTHROPIC_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://api.anthropic.com".to_string());
+    let trimmed = base.trim_end_matches('/');
+    format!("{}/v1/messages", trimmed)
+}
+
 // -- malloc helper (mirrors axon-rt's libc_malloc) ----------------------------
 
 unsafe fn libc_malloc(size: usize) -> *mut u8 {
@@ -91,7 +111,7 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
     // POST to Anthropic Messages API.
     let client = reqwest::blocking::Client::new();
     let response = client
-        .post("https://api.anthropic.com/v1/messages")
+        .post(messages_url())
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -188,7 +208,7 @@ fn complete_typed_uncertain_inner(
 
     let client = reqwest::blocking::Client::new();
     let response = client
-        .post("https://api.anthropic.com/v1/messages")
+        .post(messages_url())
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -291,7 +311,7 @@ fn complete_typed_flat_inner(
 
     let client = reqwest::blocking::Client::new();
     let response = client
-        .post("https://api.anthropic.com/v1/messages")
+        .post(messages_url())
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")

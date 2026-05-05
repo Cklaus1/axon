@@ -1,0 +1,145 @@
+// Axon ASI demo (cousin #3): summarizer with length-vs-quality tradeoff.
+//
+// Demonstrates a **composite metric** (correctness + brevity) without
+// reward-shaping syntax (F10 in ROADMAP §9.5).  We hand-compute the
+// composite score in score_variant; once Phase 8 lands, this becomes
+// `@[reward(weight: ...)]` annotations on each component.
+//
+// Goal: find a summarization prompt whose summaries are (a) short
+// (≤ 12 words) and (b) capture the key concept (validated by a second
+// LLM call that returns Uncertain<i64> confidence in coverage).
+//
+// Run: ANTHROPIC_API_KEY=... axon run examples/asi/summarize.ax
+
+// ── Test set: 3 source paragraphs + their key concept ──────────────────────
+
+fn source_text(i: i64) -> str {
+    if i == 0 {
+        "The Anthropic API supports prompt caching, which dramatically reduces cost for repeated context. Caches expire after five minutes by default."
+    } else if i == 1 {
+        "LLVM 17 introduces opaque pointers throughout its IR, simplifying type management and enabling further optimizer passes that were previously blocked by typed pointers."
+    } else if i == 2 {
+        "Rust's borrow checker prevents data races at compile time by enforcing that mutable references are never aliased with any other reference, mutable or shared."
+    } else {
+        ""
+    }
+}
+
+fn key_concept(i: i64) -> str {
+    if i == 0 { "prompt caching reduces API cost" }
+    else if i == 1 { "LLVM 17 uses opaque pointers" }
+    else if i == 2 { "Rust prevents data races at compile time" }
+    else { "" }
+}
+
+// ── Prompt variants — vary terseness pressure ──────────────────────────────
+
+fn build_prompt(variant_id: i64) -> str {
+    let v = variant_id % 5
+    let v2 = if v < 0 { v + 5 } else { v }
+    if v2 == 0 {
+        "Summarize in one short sentence (≤ 12 words). Output the summary only, no preamble. Text: "
+    } else if v2 == 1 {
+        "Compress to a single short sentence. Be terse. Text: "
+    } else if v2 == 2 {
+        "Output a one-sentence summary. Text: "
+    } else if v2 == 3 {
+        "TASK: 12-word-or-fewer summary. Output only the summary. Text: "
+    } else {
+        "Summarize tersely (≤ 12 words). Text: "
+    }
+}
+
+// ── Scoring helpers ─────────────────────────────────────────────────────────
+// Word count: count spaces + 1 (rough but stable for short outputs).
+
+fn word_count(s: str) -> i64 {
+    let n = str_len(s)
+    let count = 0
+    let i = 0
+    while i < n {
+        if char_at(s, i) == 32 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    count + 1
+}
+
+// Length score: 12 points when ≤ 12 words, decays linearly.
+fn length_score(words: i64) -> i64 {
+    if words <= 12 {
+        12
+    } else if words >= 30 {
+        0
+    } else {
+        12 - (words - 12)
+    }
+}
+
+// Coverage score: ask the LLM "did the summary capture <concept>?".
+// Returns 0..21 (Uncertain<i64> 0/1 × 0..21 confidence-weighted).
+
+fn coverage_score(summary: str, concept: str) -> i64 {
+    let q = "Does the following summary capture this key idea: '{concept}'? Output 1 for yes, 0 for no. Summary: {summary}"
+    match ai_extract_uncertain_i64(q) {
+        Ok(u) => {
+            let correct_f = if u.value == 1 { 21.0 } else { 0.0 }
+            f64_to_i64(u.confidence * correct_f)
+        }
+        Err(_) => 0
+    }
+}
+
+// ── Score one sample (composite: length × coverage) ────────────────────────
+
+fn score_one(prefix: str, idx: i64) -> i64 {
+    let prompt = "{prefix}{source_text(idx)}"
+    match ai_complete(prompt) {
+        Ok(summary) => {
+            let words = word_count(summary)
+            let length = length_score(words)
+            let coverage = coverage_score(summary, key_concept(idx))
+            length + coverage
+        }
+        Err(_) => 0
+    }
+}
+
+fn score_variant(variant_id: i64) -> i64 {
+    let prefix = build_prompt(variant_id)
+    let s0 = score_one(prefix, 0)
+    let s1 = score_one(prefix, 1)
+    let s2 = score_one(prefix, 2)
+    s0 + s1 + s2
+}
+
+@[adaptive(metric: summary_quality, target: 99)]
+fn try_variant(variant_id: i64) -> i64 {
+    score_variant(variant_id)
+}
+
+@[verify(confidence >= 0.85)]
+fn deploy_gate(best_score: f64) -> Uncertain<i64> {
+    let conf = best_score / 99.0
+    let clamped = if best_score < 0.0 { 0.0 }
+                  else if best_score > 99.0 { 99.0 }
+                  else { best_score }
+    uncertain_dyn_i64(f64_to_i64(clamped), conf)
+}
+
+fn main() -> i64 {
+    println("=== Axon ASI demo (cousin #3): summarizer ===")
+    println("Composite metric: length (≤12 words) + coverage (LLM-judged)")
+    println("Search space: 5 prompt variants")
+    println("")
+
+    let _ = try_variant(0)
+    let best = goal_run("try_variant", 99.0, 15)
+    println("Best observed score: {to_str_f64(best)} / 99")
+
+    let u = deploy_gate(best)
+    println("Deploy gate: PASS — confidence >= 0.85")
+    println("Confirmed best score: {to_str(u.value)}")
+    0
+}

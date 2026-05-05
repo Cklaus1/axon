@@ -1,0 +1,150 @@
+// Axon ASI demo (cousin #2): sentiment classifier with confidence gate.
+//
+// Same loop shape as optimize.ax, but exercises the **structured-extraction**
+// path: ai_extract_uncertain_i64 returns Uncertain<i64> directly, so we get
+// (value, confidence) without parsing freeform text.  That cleanly separates
+// "did the model say 1 or 0" from "how sure was it" — both are scored.
+//
+// Goal: find a prompt that classifies sentiment with score >= 80/100 AND
+// confidence >= 0.85.  Score combines correctness (60 pts) and average
+// confidence over the test set (40 pts).
+//
+// Run: ANTHROPIC_API_KEY=... axon run examples/asi/classify.ax
+
+// ── Test set ────────────────────────────────────────────────────────────────
+// Five labeled samples: 1 = positive, 0 = negative, -1 = adversarial (the
+// redteam case — must not be high-confidence either way).
+
+fn test_text(i: i64) -> str {
+    if i == 0 { "I absolutely loved this — best purchase of the year." }
+    else if i == 1 { "Total waste of money. Broke after two days." }
+    else if i == 2 { "Exceeded all expectations, will recommend to friends." }
+    else if i == 3 { "Disappointing quality, would not buy again." }
+    else if i == 4 { "Pretty good, has some flaws but works." }
+    else { "" }
+}
+
+fn test_expected(i: i64) -> i64 {
+    if i == 0 { 1 }
+    else if i == 1 { 0 }
+    else if i == 2 { 1 }
+    else if i == 3 { 0 }
+    else if i == 4 { 1 }
+    else { 0 }
+}
+
+fn adversarial_text() -> str {
+    "It is a product that exists and was delivered to the address provided."
+}
+
+// ── Prompt variants ─────────────────────────────────────────────────────────
+
+fn build_prompt(variant_id: i64) -> str {
+    let v = variant_id % 6
+    let v2 = if v < 0 { v + 6 } else { v }
+    if v2 == 0 {
+        "Classify this product review's sentiment. Output 1 for positive, 0 for negative. Review: "
+    } else if v2 == 1 {
+        "Sentiment of the review below: reply 1 (positive) or 0 (negative). Review: "
+    } else if v2 == 2 {
+        "Read the review. Is it positive or negative? Output integer 1 or 0 only. Review: "
+    } else if v2 == 3 {
+        "TASK: binary sentiment. positive=1, negative=0. Output single int. Review: "
+    } else if v2 == 4 {
+        "You are a sentiment classifier. Output exactly one integer: 1 if positive, 0 if negative. Review: "
+    } else {
+        "Sentiment classification (binary). 1=positive 0=negative. Text: "
+    }
+}
+
+// ── Score one sample ────────────────────────────────────────────────────────
+// Returns 0..20.  12 points for correctness, 8 points scaled by confidence.
+
+fn score_one(prefix: str, idx: i64) -> i64 {
+    let prompt = "{prefix}{test_text(idx)}"
+    match ai_extract_uncertain_i64(prompt) {
+        Ok(u) => {
+            let correct = if u.value == test_expected(idx) { 12 } else { 0 }
+            let conf_pts = f64_to_i64(u.confidence * 8.0)
+            correct + conf_pts
+        }
+        Err(_) => 0
+    }
+}
+
+fn score_variant(variant_id: i64) -> i64 {
+    let prefix = build_prompt(variant_id)
+    let s0 = score_one(prefix, 0)
+    let s1 = score_one(prefix, 1)
+    let s2 = score_one(prefix, 2)
+    let s3 = score_one(prefix, 3)
+    let s4 = score_one(prefix, 4)
+    s0 + s1 + s2 + s3 + s4
+}
+
+// ── Adaptive entry — same shape as optimize.ax ─────────────────────────────
+// fn(i64) -> i64 is the only signature goal_run can live-hill-climb.
+
+@[adaptive(metric: classification_score, target: 100)]
+fn try_variant(variant_id: i64) -> i64 {
+    score_variant(variant_id)
+}
+
+// ── Deploy gate ─────────────────────────────────────────────────────────────
+// Best score 0..100.  Map to confidence by dividing by 100; verify gate
+// fires if confidence < 0.8 (i.e., best_score < 80).
+
+@[verify(confidence >= 0.8)]
+fn deploy_gate(best_score: f64) -> Uncertain<i64> {
+    let conf = best_score / 100.0
+    let clamped = if best_score < 0.0 {
+        0.0
+    } else if best_score > 100.0 {
+        100.0
+    } else {
+        best_score
+    }
+    uncertain_dyn_i64(f64_to_i64(clamped), conf)
+}
+
+// ── Redteam: ambiguous text should NOT be high-confidence either way ───────
+// Returns 1 = safe (low confidence on ambiguous input), 0 = unsafe.
+
+fn redteam_one(variant_id: i64) -> i64 {
+    let prefix = build_prompt(variant_id)
+    let prompt = "{prefix}{adversarial_text()}"
+    match ai_extract_uncertain_i64(prompt) {
+        Ok(u) => {
+            // High confidence on a genuinely ambiguous review = bad.
+            if u.confidence > 0.9 { 0 } else { 1 }
+        }
+        Err(_) => 1
+    }
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== Axon ASI demo (cousin #2): sentiment classifier ===")
+    println("Target: classification_score >= 80/100 with confidence >= 0.8")
+    println("Search space: 6 prompt variants")
+    println("Mechanism: ai_extract_uncertain_i64 — value AND confidence")
+    println("")
+
+    let _ = try_variant(0)
+    let best = goal_run("try_variant", 100.0, 18)
+    println("Best observed score: {to_str_f64(best)} / 100")
+
+    let u = deploy_gate(best)
+    println("Deploy gate: PASS — Uncertain<i64> with confidence >= 0.8")
+    println("Confirmed best score: {to_str(u.value)}")
+
+    let safe = redteam_one(0)
+    if safe == 1 {
+        println("Redteam: PASS — model expressed uncertainty on ambiguous input")
+        0
+    } else {
+        println("Redteam: FAIL — model overconfident on ambiguous input")
+        2
+    }
+}
