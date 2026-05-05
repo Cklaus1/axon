@@ -339,25 +339,33 @@ explosion is bounded to one impl block.
 **Lifetime-erasure pattern**: arena with index handles (cranelift-codegen does this);
 *not* `Arc<Context>` (requires unsafe `'static` transmutes; one mistake = UAF).
 
-**Effort**: 2–6 weeks of focused engineering covering ~150–250 inkwell methods +
-their tests + the migration of every codegen call site. Coordinates poorly with
-in-flight Phase-5/6 codegen churn.
+**Effort**: a few ASI iteration cycles to design + emit the shim trait + ~150–250
+method wrappers + tests + migration of every codegen call site.  Bounded by
+solver iteration count (one cycle to draft the shim, one cycle to migrate
+callers, one cycle to validate against the existing test suite per backend).
+Coordinates poorly with in-flight Phase-5/6 codegen churn — the merge
+conflicts grow with every concurrent edit to codegen.
 
 **Speedup**: plausibly 5–20x on the front end. Even bigger:
 - Backend optionality: swap LLVM ↔ cranelift ↔ MLIR by writing a second `impl IR`
 - Testability: mock `IR` for unit tests; today most codegen logic requires a live LLVM context
 
 **When this is right**: pick the shim if **two or more** are true:
-1. Axon committed for 3+ year horizon
+1. Axon committed for the long horizon (substrate stability matters more than per-feature speed)
 2. MLIR / cranelift / WASM-direct is a real (not slogan) goal
 3. Crate-split insufficient
-4. 3–6 wk dedicated engineering available
+4. ASI iteration budget for a multi-cycle refactor is available
 5. No major Phase-5/6 codegen work in flight (merge-conflict risk)
 
 **When it's wrong**: skip if codegen will likely move to MLIR anyway in near future
 (sunk cost), or if crate-split brings build under 10 min (good-enough).
 
-**Risk for module split**: 4–8 hours of focused refactoring with careful testing. Schedule on a dedicated branch before Phase 5 implementation begins so the Phase-5 churn happens in the new structure.
+**Risk for module split**: bounded — a single ASI iteration cycle for the
+file-move pattern (one file at a time, validated with `rustfmt --check` per
+move) plus one validation cycle running the full `cargo build -p axon-core`
+on canonical hardware to catch any visibility cascade.  Schedule on a
+dedicated branch before Phase 5 implementation begins so the Phase-5 churn
+happens in the new structure.
 
 **Acceptance**: `cargo build -p axon-core` completes in ≤ 10 min on the canonical dev
 machine; `cargo build` after editing only `codegen/expr.rs` completes in ≤ 60s.
@@ -403,8 +411,11 @@ slow on the current WSL2 box (reached 6h+ before kill).
 
 **Future work (Phase 3)**: actual *decomposition* of `declare_builtins` and
 `emit_expr` into per-builtin / per-Expr-variant helper methods.  This is what
-unlocks the trait-cache wins on clean builds.  Estimated 1–2 weeks per giant
-method; do on a fast machine after Phase 2 is validated to compile.
+unlocks the trait-cache wins on clean builds.  Bounded by the number of
+distinct builtin entries (~80) and Expr variants (~30) — one ASI iteration
+per giant method to draft the decomposition, plus one validation cycle each
+on canonical hardware to confirm the codegen-feature build passes
+end-to-end.  Schedule after Phase 2 is validated to compile.
 
 ---
 

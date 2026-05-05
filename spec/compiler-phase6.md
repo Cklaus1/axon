@@ -6,7 +6,11 @@ phase rides: Principal capabilities (Phase 7) become rows; `Store<T>` operations
 their effect row in their type; `LLM<Caps>` enforces budget metering as a typed effect;
 `Sandbox<P>` (Phase 9) is the runtime counterpart of the static row.
 **Builds on**: Phase 5 (`spec/compiler-phase5.md` — refinement + SMT).
-**Timeline**: 4–6 months after Phase 5 ships.
+**Timeline**: a multi-iteration ASI project — row-polymorphic effect inference,
+handler lowering, and the substrate/surface gate sit on the critical path;
+each can be drafted in one iteration cycle but the lowering needs a
+validation cycle against the full fixture suite + a benchmark cycle to
+confirm zero codegen overhead vs. Phase 5.
 
 ---
 

@@ -6,7 +6,10 @@
 rather than runtime-trapping ones.
 **Builds on**: Phase 4 (`spec/compiler-phase4.md`) and ASI Layers 1–3 (Uncertain<T>, Temporal<T>,
 `@[verify]`, `@[adaptive]`, `@[contained]`).
-**Timeline**: 4–6 months after Phase 4 ships.
+**Timeline**: a multi-iteration ASI project — solver integration, refinement
+type-system extensions, and termination checking all sit on the critical
+path; each can be drafted in one iteration cycle but requires a validation
+cycle against the full Phase 1–4 fixture suite before merging.
 
 ---
 
