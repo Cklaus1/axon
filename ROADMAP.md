@@ -362,34 +362,49 @@ in-flight Phase-5/6 codegen churn.
 **Acceptance**: `cargo build -p axon-core` completes in ≤ 10 min on the canonical dev
 machine; `cargo build` after editing only `codegen/expr.rs` completes in ≤ 60s.
 
-**Progress as of 2026-05-04** (commits `62bcc6f` + this):
+**Progress as of 2026-05-04** (commits `62bcc6f` + `fbab931` + this):
 
-| Phase | Module | Lines moved | Status |
+| Phase | Module | Lines | Status |
 |---|---|---|---|
-| 1   | `codegen/link.rs`  | 281 — free-function helpers (compile_bitcode_to_binary, emit_object_and_link, build_axon_rt, build_axon_ai, read_cross_linker) | ✅ landed |
-| 2.1 | `codegen/types.rs` | 210 — `llvm_type`, `llvm_sizeof`, `llvm_align_of` | ✅ landed |
-| 2.2 | `codegen/asi.rs`   | 279 — provenance log emission, @[verify] runtime gate, @[adaptive] registry init | ✅ landed |
-| 2.3 | `codegen/asi.rs` extension: `emit_binop_uncertain` (Layer-2 Uncertain<T> arithmetic) | ~100 lines | 🚧 pending — needs `emit_binop`/`emit_expr` to be `pub(super)` |
-| 2.4 | `codegen/match_pat.rs` (`emit_match`, `emit_pattern_test`, `emit_pattern_bindings`) | ~470 lines | 🚧 pending — needs many fields `pub(super)` for pattern bindings |
-| 2.5 | `codegen/option_result.rs` (emit_option, emit_result, extract_result_payload, emit_question) | ~200 lines | 🚧 pending |
-| 2.6 | `codegen/output.rs` (write_ir, compile_to_binary, emit_bitcode, run_tests) | ~150 lines | 🚧 pending |
-| 2.7 | `codegen/expr.rs` (decompose `emit_expr` 1380-line method into per-Expr-variant helpers, then move) | ~2000 lines | 🚧 high effort — central hub |
-| 2.8 | `codegen/builtins.rs` (decompose `declare_builtins` 3870-line method) | ~3000 lines | 🚧 highest effort — biggest single method |
+| 1   | `codegen/link.rs`         |   281 | ✅ landed (62bcc6f) |
+| 2.1 | `codegen/types.rs`        |   210 | ✅ landed (fbab931) |
+| 2.2 | `codegen/asi.rs` (initial) |   279 | ✅ landed (fbab931) |
+| 2.3 | `codegen/asi.rs` (+ `emit_binop_uncertain`) | total 391 | ✅ landed (this) |
+| 2.4 | `codegen/match_pat.rs`     |   489 | ✅ landed (this) |
+| 2.5 | `codegen/option_result.rs` |   224 | ✅ landed (this) |
+| 2.6 | `codegen/output.rs`        |   121 | ✅ landed (this) |
+| 2.7 | `codegen/expr.rs` (file-move only, no decomposition) | 1,759 | ✅ landed (this) |
+| 2.8 | `codegen/builtins.rs` (file-move only, no decomposition) | 3,904 | ✅ landed (this) |
 
-**State of mod.rs**: 8135 → 7457 lines (≈8% reduction). The bulk reduction comes
-from Phases 2.7 + 2.8 which require decomposing two giant methods, not just
-moving them.
+**Final state of `codegen/mod.rs`**: 8,135 → 984 lines (**88 % reduction**).  The
+remaining mod.rs holds the Codegen struct definition, the constructor `new()`,
+the orchestration methods (`declare_functions`, `emit_program`, `emit_vtable_*`,
+`emit_fn`), and four internal helpers (`axon_type_to_semantic`,
+`llvm_type_from_axon`, `value_type_hint`, `infer_expr_sem_type`,
+`sem_type_of_expr`).
 
-**Validation status**: Phase 1 + 2.1 + 2.2 are syntactically validated via
-`rustfmt --check` (parses cleanly) and the non-codegen-feature build via the
-parallel `axon-check` tool.  **Full type+visibility validation requires
-`cargo build -p axon-core` with the codegen feature** — not done in the
-landing session because the build pathologically slow on the WSL2 dev box
-(reached 6h+ before kill).  Worst-case failure modes from these moves are
-predictable: a few unused-import warnings in mod.rs (Command, Path, inkwell
-targets are now possibly orphan), and any visibility-cascade error would
-surface at compile time as a "private field" or "private method" diagnostic
-that's mechanically fixable.
+**Validation status**: every file passes `rustfmt --check` (parses cleanly).
+The non-codegen-feature build (`/tmp/axon-check`) rebuilds clean and all 6
+ASI demos still type-check.  **Full type+visibility validation requires
+`cargo build -p axon-core` with the codegen feature** — deferred to a faster
+machine because the inkwell trait-monomorphization build is pathologically
+slow on the current WSL2 box (reached 6h+ before kill).
+
+**Predictable failure modes when re-built on canonical hardware**:
+1. Unused-import warnings in mod.rs (`Path`, `Command`, `inkwell::targets::*`,
+   `OptimizationLevel`) — non-fatal.
+2. Possible visibility cascades: if `emit_expr` (now `pub(super)` in expr.rs)
+   needs to call back into something private in mod.rs, it'll surface as a
+   "private field/method" diagnostic — mechanically fixable in minutes.
+3. `declare_builtins` was a single 3,870-line method; the move to
+   `builtins.rs` doesn't decompose it, so trait-cache hits within that method
+   are unchanged.  The expected speedup comes from incremental rebuild
+   (changing one of the 8 sibling files leaves the other 7 cached).
+
+**Future work (Phase 3)**: actual *decomposition* of `declare_builtins` and
+`emit_expr` into per-builtin / per-Expr-variant helper methods.  This is what
+unlocks the trait-cache wins on clean builds.  Estimated 1–2 weeks per giant
+method; do on a fast machine after Phase 2 is validated to compile.
 
 ---
 

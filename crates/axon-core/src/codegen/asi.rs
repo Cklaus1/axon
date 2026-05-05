@@ -20,6 +20,9 @@
 use inkwell::values::{BasicValueEnum, FunctionValue};
 use inkwell::FloatPredicate;
 
+use crate::ast;
+use crate::types::Type;
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
     /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
@@ -275,5 +278,114 @@ impl<'ctx> super::Codegen<'ctx> {
                 "",
             );
         }
+    }
+
+    // ── Uncertain<T> binary operation emission (ASI Layer 2) ─────────────────
+    //
+    // V1 design choice: even multiplication uses `min` rather than `c1 * c2`.
+    // Multiplicative confidence (joint probability) is more accurate when
+    // operands are independent, but it conflates correctness with independence
+    // assumptions. Layer-3 will revisit with a proper combinator API once we
+    // have provenance tracking. The simple `min` rule keeps confidence
+    // monotonically non-increasing through any chain of operations.
+    pub(super) fn emit_binop_uncertain(
+        &mut self,
+        op: &ast::BinOp,
+        left: &ast::Expr,
+        right: &ast::Expr,
+        lt_sem: &Option<Type>,
+        rt_sem: &Option<Type>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let lhs = self.emit_expr(left, fn_val)?;
+        let rhs = self.emit_expr(right, fn_val)?;
+        let f64_ty = self.context.f64_type();
+        let i64_ty = self.context.i64_type();
+        let one_conf = f64_ty.const_float(1.0);
+
+        // Extract (value, confidence) from a side that may or may not be Uncertain.
+        // For non-Uncertain sides, confidence defaults to 1.0.
+        let extract = |this: &Self,
+                       val: BasicValueEnum<'ctx>,
+                       sem: &Option<Type>|
+         -> Option<(BasicValueEnum<'ctx>, inkwell::values::FloatValue<'ctx>)> {
+            if let Some(Type::Uncertain(_)) = sem {
+                if let BasicValueEnum::StructValue(sv) = val {
+                    let v = this
+                        .builder
+                        .build_extract_value(sv, 0, "unc_v")
+                        .ok()?;
+                    let c = this
+                        .builder
+                        .build_extract_value(sv, 1, "unc_c")
+                        .ok()?
+                        .into_float_value();
+                    return Some((v, c));
+                }
+                None
+            } else {
+                Some((val, one_conf))
+            }
+        };
+
+        let (l_val, l_conf) = extract(self, lhs, lt_sem)?;
+        let (r_val, r_conf) = extract(self, rhs, rt_sem)?;
+
+        // min(l_conf, r_conf): select the smaller of the two via OLT compare.
+        let cmp = self
+            .builder
+            .build_float_compare(FloatPredicate::OLT, l_conf, r_conf, "uconf_lt")
+            .ok()?;
+        let new_conf = self
+            .builder
+            .build_select(cmp, l_conf, r_conf, "uconf_min")
+            .ok()?
+            .into_float_value();
+
+        // Determine the inner T from whichever side is Uncertain.
+        let inner_ty: Type = match (lt_sem, rt_sem) {
+            (Some(Type::Uncertain(t)), _) => *t.clone(),
+            (_, Some(Type::Uncertain(t))) => *t.clone(),
+            _ => Type::I64,
+        };
+
+        // Compute the operation on the underlying values. Reuses `emit_binop`
+        // so we get the standard integer/float lowering paths.
+        let op_result = self.emit_binop(op, l_val, r_val, &inner_ty);
+
+        // Determine the result struct type. For arithmetic ops the result
+        // matches the inner T; for comparisons/logical it is bool.
+        let is_cmp = matches!(
+            op,
+            ast::BinOp::Eq | ast::BinOp::NotEq
+                | ast::BinOp::Lt | ast::BinOp::Gt
+                | ast::BinOp::LtEq | ast::BinOp::GtEq
+                | ast::BinOp::And | ast::BinOp::Or
+        );
+        let result_inner_ty = if is_cmp { Type::Bool } else { inner_ty.clone() };
+        let result_inner_llvm = self.llvm_type(&result_inner_ty)?;
+        let result_struct_ty = self.context.struct_type(
+            &[result_inner_llvm, f64_ty.into(), i64_ty.into()],
+            false,
+        );
+
+        // Build { value, confidence, source_tag = 0 }.
+        let mut sv = result_struct_ty.get_undef();
+        sv = self
+            .builder
+            .build_insert_value(sv, op_result, 0, "unc_iv")
+            .ok()?
+            .into_struct_value();
+        sv = self
+            .builder
+            .build_insert_value(sv, new_conf, 1, "unc_ic")
+            .ok()?
+            .into_struct_value();
+        sv = self
+            .builder
+            .build_insert_value(sv, i64_ty.const_zero(), 2, "unc_is")
+            .ok()?
+            .into_struct_value();
+        Some(sv.into())
     }
 }
