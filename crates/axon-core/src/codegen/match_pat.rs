@@ -10,7 +10,11 @@
 //! All `pub(super)` so the parent `codegen::mod` can call `emit_match`
 //! from inside `emit_expr`'s `Expr::Match` arm.
 
+use inkwell::types::BasicType;
 use inkwell::values::{BasicValueEnum, FunctionValue};
+use inkwell::AddressSpace;
+use inkwell::FloatPredicate;
+use inkwell::IntPredicate;
 
 use crate::ast;
 use crate::types::Type;

@@ -973,12 +973,5 @@ impl<'ctx> Codegen<'ctx> {
     }
 }
 
-// ── Test result ───────────────────────────────────────────────────────────────
-
-#[derive(Debug)]
-pub struct TestResult {
-    pub name: String,
-    pub passed: bool,
-    pub duration_ms: u64,
-    pub error: Option<String>,
-}
+// (TestResult moved to codegen/output.rs in Phase 2.6 — re-exported above
+// via `pub use output::TestResult` for backwards-compatible path access.)

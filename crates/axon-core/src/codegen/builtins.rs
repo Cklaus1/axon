@@ -20,6 +20,7 @@ use std::collections::HashMap;
 use inkwell::types::{BasicType, BasicTypeEnum, BasicMetadataTypeEnum};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue};
 use inkwell::AddressSpace;
+use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
 
 use crate::ast;

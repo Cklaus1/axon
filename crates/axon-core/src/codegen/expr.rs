@@ -171,281 +171,10 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Function call ─────────────────────────────────────────────────
-            ast::Expr::Call { callee, args } => {
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let i64_ty = self.context.i64_type();
-
-                // Try to resolve callee as a global function first.
-                let maybe_fn_v = match callee.as_ref() {
-                    ast::Expr::Ident(name) => self.functions.get(name.as_str()).copied(),
-                    // Chan::new / chan<T>() — StructLit callees with known names.
-                    ast::Expr::StructLit { name, fields } if fields.is_empty() => {
-                        // chan::<T> → alias to Chan::new
-                        if name.starts_with("chan::<") {
-                            self.functions.get("Chan::new").copied()
-                        } else if let Some(inner) =
-                            name.strip_prefix("ai_extract::<").and_then(|s| s.strip_suffix(">"))
-                        {
-                            // ai_extract::<T> → dispatch to the per-T helper.
-                            // v1 T set: i64, f64, bool, Uncertain<i64>, Uncertain<f64>.
-                            // The concrete LLVM functions are emitted in
-                            // declare_builtins under the same names.
-                            let helper = match inner.trim() {
-                                "i64"            => "ai_extract_i64",
-                                "f64"            => "ai_extract_f64",
-                                "bool"           => "ai_extract_bool",
-                                "Uncertain<i64>" => "ai_extract_uncertain_i64",
-                                "Uncertain<f64>" => "ai_extract_uncertain_f64",
-                                _ => "",
-                            };
-                            self.functions.get(helper).copied()
-                        } else {
-                            self.functions.get(name.as_str()).copied()
-                        }
-                    }
-                    _ => None,
-                };
-
-                // Try closure call: callee is a local holding a {fn_ptr, env_ptr} struct.
-                if maybe_fn_v.is_none() {
-                    if let ast::Expr::Ident(name) = callee.as_ref() {
-                        if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
-                            let fat = self.builder.build_load(ty, alloca, "closure").unwrap();
-                            if let BasicValueEnum::StructValue(sv) = fat {
-                                let fp = self.builder.build_extract_value(sv, 0, "cfp").unwrap();
-                                let ep = self.builder.build_extract_value(sv, 1, "cep").unwrap();
-                                // Build arg list: env_ptr first, then explicit args.
-                                let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> =
-                                    vec![ep.into()];
-                                for a in args {
-                                    if let Some(v) = self.emit_expr(a, fn_val) {
-                                        call_args.push(v.into());
-                                    }
-                                }
-                                // Build an indirect call via fn pointer.
-                                let fn_ptr = self.builder
-                                    .build_pointer_cast(
-                                        fp.into_pointer_value(),
-                                        ptr_ty,
-                                        "fp_cast",
-                                    )
-                                    .unwrap();
-                                // Build the function type for the indirect call.
-                                let mut ipt: Vec<BasicMetadataTypeEnum<'ctx>> =
-                                    vec![ptr_ty.into()];
-                                for _ in args {
-                                    ipt.push(i64_ty.into());
-                                }
-                                let indirect_ty = i64_ty.fn_type(&ipt, false);
-                                let call = self.builder
-                                    .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
-                                    .unwrap();
-                                return call.try_as_basic_value().left();
-                            }
-                        }
-                    }
-                }
-
-                // Resolve the callee to an LLVM FunctionValue (direct call).
-                let fn_v = maybe_fn_v?;
-
-                // Get declared parameter types to coerce mismatched integer widths.
-                let param_tys: Vec<BasicTypeEnum<'ctx>> = fn_v.get_type().get_param_types();
-
-                // Get Axon-level param types for DynTrait coercion.
-                let axon_params: Vec<ast::AxonType> = if let ast::Expr::Ident(name) = callee.as_ref() {
-                    self.fn_axon_params.get(name).cloned().unwrap_or_default()
-                } else {
-                    Vec::new()
-                };
-
-                let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
-                for (i, a) in args.iter().enumerate() {
-                    // Check for DynTrait coercion: concrete type → fat pointer.
-                    let axon_param_ty = axon_params.get(i);
-                    let is_dyn_param = matches!(axon_param_ty, Some(ast::AxonType::DynTrait(_)));
-
-                    if is_dyn_param {
-                        let trait_name = match axon_param_ty {
-                            Some(ast::AxonType::DynTrait(t)) => t.clone(),
-                            _ => unreachable!(),
-                        };
-                        // Get the concrete argument's type to find the right vtable.
-                        let arg_sem_ty = self.infer_expr_sem_type(a);
-                        let type_name = match &arg_sem_ty {
-                            Some(Type::Struct(n)) | Some(Type::Enum(n)) => Some(n.clone()),
-                            _ => None,
-                        };
-
-                        if let Some(type_name) = type_name {
-                            let vtable_key = (trait_name.clone(), type_name.clone());
-                            if let Some(vtable_global) = self.vtable_globals.get(&vtable_key).copied() {
-                                let concrete_val = self.emit_expr(a, fn_val);
-                                if let Some(val) = concrete_val {
-                                    // Alloca the concrete value; store it so we have a data ptr.
-                                    let concrete_llvm_ty = val.get_type();
-                                    let data_alloca = self.builder.build_alloca(concrete_llvm_ty, "dyn_data").unwrap();
-                                    self.builder.build_store(data_alloca, val).unwrap();
-
-                                    // Build fat pointer { data_ptr, vtable_ptr }.
-                                    let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                                    let fat_ty = self.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false);
-                                    let fat_undef = fat_ty.get_undef();
-
-                                    let data_cast = self.builder.build_pointer_cast(data_alloca, i8_ptr, "data_cast").unwrap();
-                                    let vtbl_ptr = vtable_global.as_pointer_value();
-                                    let vtbl_cast = self.builder.build_pointer_cast(vtbl_ptr, i8_ptr, "vtbl_cast").unwrap();
-
-                                    let fat0 = self.builder.build_insert_value(fat_undef, data_cast, 0, "fat0").unwrap();
-                                    let fat1 = self.builder.build_insert_value(fat0.into_struct_value(), vtbl_cast, 1, "fat1").unwrap();
-                                    // AggregateValueEnum → StructValue → BasicMetadataValueEnum
-                                    arg_vals.push(BasicValueEnum::StructValue(fat1.into_struct_value()).into());
-                                    continue;
-                                }
-                            }
-                        }
-                        // Fallthrough: emit arg as-is if coercion wasn't possible.
-                        if let Some(v) = self.emit_expr(a, fn_val) {
-                            arg_vals.push(v.into());
-                        }
-                        continue;
-                    }
-
-                    let val = match self.emit_expr(a, fn_val) {
-                        Some(v) => v,
-                        None => continue,
-                    };
-                    // Coerce argument types to match declared parameter types.
-                    let expected_ty = param_tys.get(i).copied();
-                    let coerced = match (expected_ty, val) {
-                        // int width mismatch: truncate or extend (zext for unsigned, sext for signed)
-                        (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::IntValue(iv)) => {
-                            let actual = iv.get_type().get_bit_width();
-                            let expect = exp_int.get_bit_width();
-                            if actual > expect {
-                                self.builder.build_int_truncate(iv, exp_int, "trunc").unwrap().into()
-                            } else if actual < expect {
-                                let sem_ty = self.infer_expr_sem_type(a);
-                                let is_unsigned = matches!(
-                                    sem_ty,
-                                    Some(Type::U8) | Some(Type::U16) | Some(Type::U32) | Some(Type::U64)
-                                );
-                                if is_unsigned {
-                                    self.builder.build_int_z_extend(iv, exp_int, "zext").unwrap().into()
-                                } else {
-                                    self.builder.build_int_s_extend(iv, exp_int, "sext").unwrap().into()
-                                }
-                            } else {
-                                val
-                            }
-                        }
-                        // float → int: e.g. to_str(f64_val) where to_str takes i64
-                        (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::FloatValue(fv)) => {
-                            self.builder.build_float_to_signed_int(fv, exp_int, "ftoi").unwrap().into()
-                        }
-                        // int → float
-                        (Some(BasicTypeEnum::FloatType(exp_flt)), BasicValueEnum::IntValue(iv)) => {
-                            self.builder.build_signed_int_to_float(iv, exp_flt, "itof").unwrap().into()
-                        }
-                        _ => val,
-                    };
-                    arg_vals.push(coerced.into());
-                }
-
-                let call = self
-                    .builder
-                    .build_call(fn_v, &arg_vals, "call")
-                    .unwrap();
-                call.try_as_basic_value().left()
-            }
+            ast::Expr::Call { callee, args } => self.emit_call(callee, args, fn_val),
 
             // ── Method call — dispatches to mangled `TypeName__method` fn ──────
-            ast::Expr::MethodCall { receiver, method, args } => {
-                // --- DynTrait: vtable dispatch ---
-                let recv_sem_ty = self.infer_expr_sem_type(receiver);
-                if let Some(Type::DynTrait(trait_name)) = recv_sem_ty {
-                    let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let fat = recv_val.into_struct_value();
-                    let data_ptr = self.builder.build_extract_value(fat, 0, "data_ptr")
-                        .unwrap().into_pointer_value();
-                    let vtbl_ptr = self.builder.build_extract_value(fat, 1, "vtbl_ptr")
-                        .unwrap().into_pointer_value();
-
-                    // Find method index in the trait definition.
-                    let trait_def = self.trait_defs.get(&trait_name).cloned()?;
-                    let method_idx = trait_def.methods.iter().position(|m| m.name == *method)?;
-
-                    // GEP into vtable array to get the function pointer slot.
-                    let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                    let arr_ty = i8_ptr.array_type(trait_def.methods.len() as u32);
-                    let idx_zero = self.context.i64_type().const_zero();
-                    let idx_m = self.context.i64_type().const_int(method_idx as u64, false);
-                    let fn_slot = unsafe {
-                        self.builder.build_gep(arr_ty, vtbl_ptr, &[idx_zero, idx_m], "fn_slot").unwrap()
-                    };
-                    let fn_ptr = self.builder.build_load(i8_ptr, fn_slot, "fn_ptr")
-                        .unwrap().into_pointer_value();
-
-                    // Build call args: data_ptr + any extra args.
-                    let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data_ptr.into()];
-                    for a in args {
-                        if let Some(v) = self.emit_expr(a, fn_val) {
-                            call_args.push(v.into());
-                        }
-                    }
-
-                    let thunk_ty = self.vtable_thunk_types.get(&(trait_name, method.clone())).copied()?;
-                    let call = self.builder.build_indirect_call(thunk_ty, fn_ptr, &call_args, "vtbl_call").unwrap();
-                    return call.try_as_basic_value().left();
-                }
-
-                // --- Static dispatch (struct/enum method) ---
-                // Determine the receiver's struct/enum type for name mangling.
-                let type_name = self.infer_expr_sem_type(receiver).and_then(|t| match t {
-                    Type::Struct(n) | Type::Enum(n) => Some(n),
-                    _ => None,
-                });
-
-                let recv_val = self.emit_expr(receiver, fn_val);
-
-                // Try mangled name first, fall back to bare method name.
-                let mangled = type_name.as_deref().map(|tn| format!("{tn}__{method}"));
-                let fn_v = mangled
-                    .as_deref()
-                    .and_then(|m| self.functions.get(m).copied())
-                    .or_else(|| self.functions.get(method.as_str()).copied());
-
-                if let Some(fn_v) = fn_v {
-                    let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
-                    // Prepend the receiver as the first argument.
-                    // For Chan methods, cast receiver to i8* (opaque pointer ABI).
-                    if let Some(rv) = recv_val {
-                        let is_chan_method = matches!(method.as_str(), "send" | "recv" | "clone");
-                        let rv = if is_chan_method {
-                            if let BasicValueEnum::PointerValue(pv) = rv {
-                                let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                                self.builder.build_pointer_cast(pv, i8_ptr, "chan_cast").unwrap().into()
-                            } else {
-                                rv
-                            }
-                        } else {
-                            rv
-                        };
-                        arg_vals.push(rv.into());
-                    }
-                    for a in args {
-                        if let Some(v) = self.emit_expr(a, fn_val) {
-                            arg_vals.push(v.into());
-                        }
-                    }
-                    let call = self
-                        .builder
-                        .build_call(fn_v, &arg_vals, "mcall")
-                        .unwrap();
-                    return call.try_as_basic_value().left();
-                }
-                None
-            }
+            ast::Expr::MethodCall { receiver, method, args } => self.emit_method_call(receiver, method, args, fn_val),
 
             // ── If / else ─────────────────────────────────────────────────────
             ast::Expr::If { cond, then, else_ } => {
@@ -501,387 +230,25 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Return ────────────────────────────────────────────────────────
-            ast::Expr::Return(maybe_val) => {
-                match maybe_val {
-                    std::option::Option::Some(e) => {
-                        if let Some(v) = self.emit_expr(e, fn_val) {
-                            self.log_return_if_adaptive_val(v);
-                            self.emit_verify_check_if_needed(v, fn_val);
-                            self.builder.build_return(Some(&v)).unwrap();
-                        } else {
-                            self.log_return_if_adaptive();
-                            self.builder.build_return(None).unwrap();
-                        }
-                    }
-                    std::option::Option::None => {
-                        self.log_return_if_adaptive();
-                        self.builder.build_return(None).unwrap();
-                    }
-                }
-                None
-            }
+            ast::Expr::Return(maybe_val) => self.emit_return(maybe_val, fn_val),
 
             // ── Array literal ─────────────────────────────────────────────────
-            ast::Expr::Array(elems) => {
-                if elems.is_empty() {
-                    // Return a zero-length slice struct.
-                    let i64_ty = self.context.i64_type();
-                    let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                    let slice_ty = self.context.struct_type(
-                        &[i64_ty.into(), ptr_ty.into()],
-                        false,
-                    );
-                    let zero = i64_ty.const_zero();
-                    let null = ptr_ty.const_null();
-                    let agg = slice_ty.const_named_struct(&[zero.into(), null.into()]);
-                    return Some(agg.into());
-                }
-
-                // Emit each element.
-                let mut vals: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(elems.len());
-                for e in elems {
-                    if let Some(v) = self.emit_expr(e, fn_val) {
-                        vals.push(v);
-                    }
-                }
-                if vals.is_empty() {
-                    return None;
-                }
-
-                let elem_ty = vals[0].get_type();
-                let n = vals.len() as u32;
-
-                // Use malloc for the array backing store so the slice remains
-                // valid if returned from a function (no dangling stack pointer).
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                // Compute element size from the LLVM type bit-width.
-                let elem_size_bytes: u64 = match elem_ty {
-                    BasicTypeEnum::IntType(it) => (it.get_bit_width() as u64 + 7) / 8,
-                    BasicTypeEnum::FloatType(ft) => {
-                        if ft == self.context.f32_type() { 4 } else { 8 }
-                    }
-                    BasicTypeEnum::StructType(_) | BasicTypeEnum::ArrayType(_)
-                    | BasicTypeEnum::PointerType(_) | BasicTypeEnum::VectorType(_) => 8,
-                };
-                let total_bytes = i64_ty.const_int(elem_size_bytes * n as u64, false);
-                let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
-                    let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
-                    self.module.add_function("malloc", malloc_ty, None)
-                });
-                let malloc_call = self.builder
-                    .build_call(malloc_fn, &[total_bytes.into()], "arrdata")
-                    .unwrap();
-                let raw_ptr = malloc_call.try_as_basic_value().left().unwrap().into_pointer_value();
-                // Cast to typed element pointer for GEP.
-                let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
-                let elem_data_ptr = self.builder
-                    .build_pointer_cast(raw_ptr, elem_ptr_ty, "arrelemptr")
-                    .unwrap();
-                for (idx, v) in vals.iter().enumerate() {
-                    let idx_val = i64_ty.const_int(idx as u64, false);
-                    let gep = unsafe {
-                        self.builder
-                            .build_gep(elem_ty, elem_data_ptr, &[idx_val], "arrelem")
-                            .unwrap()
-                    };
-                    self.builder.build_store(gep, *v).unwrap();
-                }
-
-                // Build slice struct { len, ptr }.
-                let slice_ty = self.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()],
-                    false,
-                );
-                let len_val = i64_ty.const_int(n as u64, false);
-                // Cast malloc ptr to opaque i8* for the slice data field.
-                let data_ptr = self
-                    .builder
-                    .build_pointer_cast(raw_ptr, ptr_ty, "sliceptr")
-                    .unwrap();
-                let slice_alloca = self.builder.build_alloca(slice_ty, "slice").unwrap();
-                // Store len.
-                let len_ptr = self
-                    .builder
-                    .build_struct_gep(slice_ty, slice_alloca, 0, "lenptr")
-                    .unwrap();
-                self.builder.build_store(len_ptr, len_val).unwrap();
-                // Store data ptr.
-                let data_field_ptr = self
-                    .builder
-                    .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
-                    .unwrap();
-                self.builder.build_store(data_field_ptr, data_ptr).unwrap();
-                let slice_val = self
-                    .builder
-                    .build_load(slice_ty, slice_alloca, "sliceval")
-                    .unwrap();
-                Some(slice_val)
-            }
+            ast::Expr::Array(elems) => self.emit_array_lit(elems, fn_val),
 
             // ── Struct literal: Name { field: expr, ... } ─────────────────────
-            ast::Expr::StructLit { name, fields } => {
-                if name.contains("::") {
-                    // Enum variant construction: "EnumName::VariantName"
-                    let mut parts = name.splitn(2, "::");
-                    let enum_name = parts.next().unwrap().to_string();
-                    let variant_name = parts.next().unwrap().to_string();
-
-                    // Look up variant info.
-                    let variants = self.enum_variants.get(&enum_name).cloned()?;
-                    let (tag_int, field_types) = variants
-                        .iter()
-                        .find(|(vn, _, _)| vn == &variant_name)
-                        .map(|(_, tag, fts)| (*tag, fts.clone()))?;
-
-                    // Look up the LLVM struct type for the enum.
-                    let struct_name = format!("{enum_name}_enum");
-                    let enum_struct_ty = self.module.get_struct_type(&struct_name)?;
-
-                    // Alloca for the enum struct { i32, [N x i8] }.
-                    let alloca = self.builder.build_alloca(enum_struct_ty, &struct_name).unwrap();
-
-                    // Store tag (field 0).
-                    let i32_ty = self.context.i32_type();
-                    let tag_ptr = self.builder
-                        .build_struct_gep(enum_struct_ty, alloca, 0, "tagptr")
-                        .unwrap();
-                    self.builder
-                        .build_store(tag_ptr, i32_ty.const_int(tag_int as u64, false))
-                        .unwrap();
-
-                    // Store each field into the payload (field 1) at byte offsets.
-                    if !fields.is_empty() {
-                        let i8_ty = self.context.i8_type();
-                        let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
-
-                        // Get pointer to payload field.
-                        let pay_ptr = self.builder
-                            .build_struct_gep(enum_struct_ty, alloca, 1, "payptr")
-                            .unwrap();
-                        let pay_i8ptr = self.builder
-                            .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
-                            .unwrap();
-
-                        let mut byte_offset: u64 = 0;
-                        for (fi, (fname, fexpr)) in fields.iter().enumerate() {
-                            if let Some(fval) = self.emit_expr(fexpr, fn_val) {
-                                let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
-                                let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
-                                // GEP into the payload at the current byte offset.
-                                let offset_val = i32_ty.const_int(byte_offset, false);
-                                let field_ptr = unsafe {
-                                    self.builder
-                                        .build_gep(i8_ty, pay_i8ptr, &[offset_val], fname)
-                                        .unwrap()
-                                };
-                                // Cast to the appropriate typed pointer and store.
-                                let fval_ptr_ty = fval.get_type().ptr_type(AddressSpace::default());
-                                let typed_ptr = self.builder
-                                    .build_pointer_cast(field_ptr, fval_ptr_ty, "ftyptr")
-                                    .unwrap();
-                                self.builder.build_store(typed_ptr, fval).unwrap();
-                                byte_offset += fsize;
-                            }
-                        }
-                    }
-
-                    let val = self.builder.build_load(enum_struct_ty, alloca, name).unwrap();
-                    Some(val)
-                } else {
-                    // Regular struct literal.
-                    let struct_ty = self.module.get_struct_type(name)?;
-                    let field_names = self.struct_fields.get(name).cloned().unwrap_or_default();
-                    let alloca = self.builder.build_alloca(struct_ty, name).unwrap();
-                    for (fname, fexpr) in fields {
-                        let idx = field_names.iter().position(|n| n == fname).unwrap_or(0) as u32;
-                        if let Some(fval) = self.emit_expr(fexpr, fn_val) {
-                            let fptr = self.builder
-                                .build_struct_gep(struct_ty, alloca, idx, fname)
-                                .unwrap();
-                            self.builder.build_store(fptr, fval).unwrap();
-                        }
-                    }
-                    let val = self.builder.build_load(struct_ty, alloca, name).unwrap();
-                    Some(val)
-                }
-            }
+            ast::Expr::StructLit { name, fields } => self.emit_struct_lit(name, fields, fn_val),
 
             // ── Field access: receiver.field ──────────────────────────────────
-            ast::Expr::FieldAccess { receiver, field } => {
-                // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
-                // a direct GEP on the inferred struct shape (no named LLVM struct).
-                let recv_ty = self.sem_type_of_expr(receiver);
-                if let Some(Type::Uncertain(_)) | Some(Type::Temporal(_)) = recv_ty.clone() {
-                    let ty = recv_ty.unwrap();
-                    let idx_opt: Option<u32> = match (&ty, field.as_str()) {
-                        (Type::Uncertain(_), "value") => Some(0),
-                        (Type::Uncertain(_), "confidence") => Some(1),
-                        (Type::Uncertain(_), "source_tag") => Some(2),
-                        (Type::Temporal(_), "value") => Some(0),
-                        (Type::Temporal(_), "confidence") => Some(1),
-                        (Type::Temporal(_), "horizon_ms") => Some(2),
-                        (Type::Temporal(_), "decay") => Some(3),
-                        (Type::Temporal(_), "valid_until_ms") => Some(4),
-                        _ => None,
-                    };
-                    if let (Some(idx), Some(struct_be)) = (idx_opt, self.llvm_type(&ty)) {
-                        if let BasicTypeEnum::StructType(struct_ty) = struct_be {
-                            let recv_val = self.emit_expr(receiver, fn_val)?;
-                            let recv_alloca = self.builder
-                                .build_alloca(struct_ty, "asi_recv_tmp")
-                                .unwrap();
-                            self.builder.build_store(recv_alloca, recv_val).unwrap();
-                            let fptr = self.builder
-                                .build_struct_gep(struct_ty, recv_alloca, idx, field)
-                                .unwrap();
-                            if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
-                                let fval = self.builder.build_load(fty, fptr, field).unwrap();
-                                return Some(fval);
-                            }
-                        }
-                    }
-                }
-
-                // Determine the struct name from the receiver's semantic type.
-                // Handle both bare Ident receivers and chained FieldAccess receivers.
-                let struct_name = self.sem_type_of_expr(receiver).and_then(|ty| {
-                    if let Type::Struct(sn) = ty { Some(sn) } else { None }
-                });
-
-                if let Some(sname) = struct_name {
-                    if let (Some(struct_ty), Some(field_names)) = (
-                        self.module.get_struct_type(&sname),
-                        self.struct_fields.get(&sname).cloned(),
-                    ) {
-                        if let Some(idx) = field_names.iter().position(|n| n == field) {
-                            let recv_val = self.emit_expr(receiver, fn_val)?;
-                            let recv_alloca = self.builder
-                                .build_alloca(struct_ty, "recv_tmp")
-                                .unwrap();
-                            self.builder.build_store(recv_alloca, recv_val).unwrap();
-                            let fptr = self.builder
-                                .build_struct_gep(struct_ty, recv_alloca, idx as u32, field)
-                                .unwrap();
-                            if let Some(field_ty) = struct_ty.get_field_type_at_index(idx as u32) {
-                                let fval = self.builder.build_load(field_ty, fptr, field).unwrap();
-                                return Some(fval);
-                            }
-                        }
-                    }
-                }
-                // Fallback: emit receiver for side-effects only.
-                let _ = self.emit_expr(receiver, fn_val);
-                None
-            }
+            ast::Expr::FieldAccess { receiver, field } => self.emit_field_access(receiver, field, fn_val),
 
             // ── Index: receiver[index] ────────────────────────────────────────
-            ast::Expr::Index { receiver, index } => {
-                let elem_llvm_ty = if let ast::Expr::Ident(n) = receiver.as_ref() {
-                    self.local_types.get(n).and_then(|ty| {
-                        if let Type::Slice(inner) = ty { self.llvm_type(inner) } else { None }
-                    })
-                } else {
-                    None
-                };
-
-                let slice_val = self.emit_expr(receiver, fn_val)?;
-                let idx_val = self.emit_expr(index, fn_val)?;
-                let elem_ty = elem_llvm_ty?;
-                let idx_int = match idx_val {
-                    BasicValueEnum::IntValue(i) => i,
-                    _ => return None,
-                };
-
-                // Slice struct { i64, ptr }: extract the data pointer (field 1).
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let slice_ty = self.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()], false,
-                );
-                let slice_alloca = self.builder.build_alloca(slice_ty, "slicetmp").unwrap();
-                self.builder.build_store(slice_alloca, slice_val).unwrap();
-                let data_field_ptr = self.builder
-                    .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
-                    .unwrap();
-                let data_ptr = self.builder
-                    .build_load(ptr_ty, data_field_ptr, "dataval")
-                    .unwrap()
-                    .into_pointer_value();
-                let elem_ptr = unsafe {
-                    self.builder
-                        .build_gep(elem_ty, data_ptr, &[idx_int], "elemptr")
-                        .unwrap()
-                };
-                let elem = self.builder.build_load(elem_ty, elem_ptr, "elemval").unwrap();
-                Some(elem)
-            }
+            ast::Expr::Index { receiver, index } => self.emit_index(receiver, index, fn_val),
 
             // ── Spawn: compile lambda then call __axon_spawn(fn_ptr, env_ptr) ──
-            ast::Expr::Spawn(inner) => {
-                // inner must be a lambda expression. Compile it to get the fat ptr.
-                let fat = self.emit_expr(inner, fn_val)?;
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-
-                // If we got a struct back, extract fn_ptr and env_ptr.
-                let (fn_ptr_val, env_ptr_val) = match fat {
-                    BasicValueEnum::StructValue(sv) => {
-                        let fp = self.builder.build_extract_value(sv, 0, "spawn_fp").unwrap();
-                        let ep = self.builder.build_extract_value(sv, 1, "spawn_ep").unwrap();
-                        (fp, ep)
-                    }
-                    other => {
-                        // Bare function pointer — wrap with null env.
-                        let null_env = ptr_ty.const_null();
-                        (other, null_env.into())
-                    }
-                };
-
-                if let Some(spawn_fn) = self.functions.get("__axon_spawn").copied() {
-                    self.builder.build_call(
-                        spawn_fn,
-                        &[fn_ptr_val.into(), env_ptr_val.into()],
-                        "spawn",
-                    ).unwrap();
-                }
-                // spawn returns unit
-                None
-            }
+            ast::Expr::Spawn(inner) => self.emit_spawn(inner, fn_val),
 
             // ── Comptime: evaluate at compile time, emit LLVM constant ──────────
-            ast::Expr::Comptime(inner) => {
-                let evaluator = crate::comptime::Evaluator {
-                    env: self.comptime_env.clone(),
-                    fns: &self.fndefs,
-                };
-                match evaluator.eval(inner) {
-                    Ok(crate::comptime::ComptimeVal::Int(n)) => {
-                        Some(self.context.i64_type().const_int(n as u64, true).into())
-                    }
-                    Ok(crate::comptime::ComptimeVal::Bool(b)) => {
-                        Some(self.context.bool_type().const_int(b as u64, false).into())
-                    }
-                    Ok(crate::comptime::ComptimeVal::Float(f)) => {
-                        Some(self.context.f64_type().const_float(f).into())
-                    }
-                    Ok(crate::comptime::ComptimeVal::Str(s)) => {
-                        // Emit as a { i64 len, i8* ptr } struct matching Axon's Str layout.
-                        let len = s.len() as u64;
-                        let global = self.builder.build_global_string_ptr(&s, "comptime_str").unwrap();
-                        let i64_ty = self.context.i64_type();
-                        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                        let str_ty = self.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
-                        let mut sv = str_ty.get_undef();
-                        sv = self.builder.build_insert_value(sv, i64_ty.const_int(len, false), 0, "str_len").unwrap().into_struct_value();
-                        sv = self.builder.build_insert_value(sv, global.as_pointer_value(), 1, "str_ptr").unwrap().into_struct_value();
-                        Some(sv.into())
-                    }
-                    Err(e) => {
-                        eprintln!("comptime evaluation error: {e}");
-                        None
-                    }
-                }
-            }
+            ast::Expr::Comptime(inner) => self.emit_comptime_expr(inner),
 
             // ── Lambda: lower to a named module-level function with closure ABI ─
             //
@@ -894,140 +261,7 @@ impl<'ctx> super::Codegen<'ctx> {
             //     the env struct (GEP + load).
             //   - The result value is a fat-pointer struct `{ i8*, i8* }`:
             //       (fn_ptr, env_ptr)  — env_ptr is null for capture-free lambdas.
-            ast::Expr::Lambda { params, body, captures } => {
-                let lambda_name = format!("__lambda_{}", self.lambda_counter);
-                self.lambda_counter += 1;
-
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let closure_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
-
-                // ── Build the env struct type for captures ────────────────────
-                // All captured variables are stored as i64 (Phase 4 limitation).
-                let n_captures = captures.len();
-                let env_field_tys: Vec<BasicTypeEnum<'ctx>> =
-                    (0..n_captures).map(|_| i64_ty.into()).collect();
-                let env_struct_ty = self.context.struct_type(&env_field_tys, false);
-
-                // ── Declare the lambda function (env_ptr first, then params) ──
-                let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
-                    vec![ptr_ty.into()]; // env_ptr
-                for _ in params {
-                    lambda_param_tys.push(i64_ty.into());
-                }
-                let fn_ty = i64_ty.fn_type(&lambda_param_tys, false);
-                let lambda_fn = self.module.add_function(&lambda_name, fn_ty, None);
-
-                // ── Emit the lambda body ──────────────────────────────────────
-                let entry_bb = self.context.append_basic_block(lambda_fn, "entry");
-                let saved_ip = self.builder.get_insert_block();
-                let saved_locals = std::mem::take(&mut self.locals);
-                let saved_local_types = std::mem::take(&mut self.local_types);
-                let saved_lambda_env = self.current_lambda_env.take();
-
-                self.builder.position_at_end(entry_bb);
-
-                // env_ptr is param 0; explicit params start at 1.
-                let env_ptr_arg = lambda_fn.get_nth_param(0).unwrap().into_pointer_value();
-
-                // Bind captured variables directly to their env struct field pointers.
-                // Using the field pointer as the "alloca" means stores inside the lambda
-                // persist across calls (required for mutable closures like make_counter).
-                let mut capture_idx_map: HashMap<String, u32> = HashMap::new();
-                if n_captures > 0 {
-                    for (idx, (cap_name, _)) in captures.iter().enumerate() {
-                        let field_ptr = self.builder
-                            .build_struct_gep(env_struct_ty, env_ptr_arg, idx as u32, cap_name)
-                            .unwrap();
-                        self.locals.insert(cap_name.clone(), (field_ptr, i64_ty.into()));
-                        capture_idx_map.insert(cap_name.clone(), idx as u32);
-                    }
-                }
-
-                // Publish the env context so nested `Ident` lookups can fall back
-                // to loading captures via GEP if the resolver missed them.
-                self.current_lambda_env = Some((env_ptr_arg, env_struct_ty, capture_idx_map));
-
-                // Bind explicit parameters (offset by 1 for env_ptr).
-                for (i, p) in params.iter().enumerate() {
-                    if let Some(arg) = lambda_fn.get_nth_param((i + 1) as u32) {
-                        let alloca = self.builder.build_alloca(i64_ty, &p.name).unwrap();
-                        self.builder.build_store(alloca, arg).unwrap();
-                        self.locals.insert(p.name.clone(), (alloca, i64_ty.into()));
-                    }
-                }
-
-                let body_val = self.emit_expr(body, lambda_fn);
-                if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
-                    match body_val {
-                        Some(v) => { self.builder.build_return(Some(&v)).unwrap(); }
-                        None => { self.builder.build_return(Some(&i64_ty.const_zero())).unwrap(); }
-                    }
-                }
-
-                // Restore caller's state.
-                self.locals = saved_locals;
-                self.local_types = saved_local_types;
-                self.current_lambda_env = saved_lambda_env;
-                if let Some(b) = saved_ip { self.builder.position_at_end(b); }
-                self.functions.insert(lambda_name.clone(), lambda_fn);
-
-                // ── At the creation site: build the fat pointer struct ─────────
-                let fn_ptr = self.builder
-                    .build_pointer_cast(
-                        lambda_fn.as_global_value().as_pointer_value(),
-                        ptr_ty,
-                        "lfp",
-                    )
-                    .unwrap();
-
-                let env_ptr: BasicValueEnum<'ctx> = if n_captures > 0 {
-                    // Malloc an env struct and populate it.
-                    let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
-                        let ty = ptr_ty.fn_type(&[i64_ty.into()], false);
-                        self.module.add_function("malloc", ty, None)
-                    });
-                    let env_size = i64_ty.const_int(
-                        (n_captures * 8) as u64, // 8 bytes per i64
-                        false,
-                    );
-                    let raw = self.builder
-                        .build_call(malloc_fn, &[env_size.into()], "env_alloc")
-                        .unwrap()
-                        .try_as_basic_value()
-                        .left()
-                        .unwrap()
-                        .into_pointer_value();
-
-                    // Cast to env_struct_ty pointer for GEP.
-                    for (idx, (cap_name, _)) in captures.iter().enumerate() {
-                        // Load current value of the captured variable from caller scope
-                        // (self.locals has been restored to the caller's locals at this point).
-                        let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
-                            self.builder.build_load(ty, alloca, cap_name).unwrap()
-                        } else {
-                            i64_ty.const_zero().into()
-                        };
-                        let field_ptr = self.builder
-                            .build_struct_gep(env_struct_ty, raw, idx as u32, &format!("env_f{idx}"))
-                            .unwrap();
-                        self.builder.build_store(field_ptr, cap_val).unwrap();
-                    }
-                    // Cast back to i8* for the fat pointer.
-                    self.builder
-                        .build_pointer_cast(raw, ptr_ty, "env_i8")
-                        .unwrap()
-                        .into()
-                } else {
-                    ptr_ty.const_null().into()
-                };
-
-                // Build { fn_ptr, env_ptr } fat pointer struct.
-                let mut fat = closure_ty.get_undef();
-                fat = self.builder.build_insert_value(fat, fn_ptr, 0, "fat0").unwrap().into_struct_value();
-                fat = self.builder.build_insert_value(fat, env_ptr, 1, "fat1").unwrap().into_struct_value();
-                Some(fat.into())
-            }
+            ast::Expr::Lambda { params, body, captures } => self.emit_lambda(params, body, captures, fn_val),
 
             // ── Select (phase 1: stub) ────────────────────────────────────────
             // ── Select: non-blocking channel dispatch ────────────────────────
@@ -1035,255 +269,19 @@ impl<'ctx> super::Codegen<'ctx> {
             //   chans[n] = { emit_expr(arm.recv) for each arm }
             //   let ready = __axon_select(chans, n)
             //   switch ready -> arm bodies
-            ast::Expr::Select(arms) => {
-                let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                let i64_ty = self.context.i64_type();
-                let n = arms.len() as u64;
-
-                // Allocate an array of i8* on the stack: [n x i8*]
-                let arr_ty = i8_ptr.array_type(n as u32);
-                let chans_alloca = self.builder.build_alloca(arr_ty, "select_chans").unwrap();
-
-                // Fill each slot with the channel pointer from each arm.
-                // arm.recv is typically `ch.recv()` — extract the channel (receiver).
-                for (i, arm) in arms.iter().enumerate() {
-                    let chan_expr = match &arm.recv {
-                        // `ch.recv()` — use the receiver `ch` as the channel
-                        ast::Expr::MethodCall { receiver, .. } => receiver.as_ref(),
-                        // `ch` — the channel expression itself
-                        other => other,
-                    };
-                    if let Some(chan_val) = self.emit_expr(chan_expr, fn_val) {
-                        // cast to i8* if needed
-                        let as_ptr = match chan_val {
-                            BasicValueEnum::PointerValue(pv) => {
-                                self.builder.build_pointer_cast(pv, i8_ptr, "chan_ptr").unwrap()
-                            }
-                            _ => continue,
-                        };
-                        let slot = unsafe {
-                            self.builder.build_gep(
-                                arr_ty,
-                                chans_alloca,
-                                &[i64_ty.const_int(0, false).into(), i64_ty.const_int(i as u64, false).into()],
-                                "chan_slot",
-                            ).unwrap()
-                        };
-                        self.builder.build_store(slot, as_ptr).unwrap();
-                    }
-                }
-
-                // Cast array pointer to i8** for __axon_select.
-                let chans_ptr = self.builder.build_pointer_cast(
-                    chans_alloca,
-                    i8_ptr.ptr_type(AddressSpace::default()),
-                    "chans_ptr",
-                ).unwrap();
-
-                // Call __axon_select(chans, n) → i64 ready_idx.
-                let ready_idx = if let Some(sel_fn) = self.functions.get("__axon_select").copied() {
-                    self.builder.build_call(
-                        sel_fn,
-                        &[chans_ptr.into(), i64_ty.const_int(n, false).into()],
-                        "select_idx",
-                    ).unwrap().try_as_basic_value().left()
-                } else {
-                    None
-                };
-
-                let merge_bb = self.context.append_basic_block(fn_val, "select.merge");
-                let else_bb = self.context.append_basic_block(fn_val, "select.else");
-
-                // Build arm basic blocks.
-                let arm_bbs: Vec<_> = arms.iter().enumerate()
-                    .map(|(i, _)| self.context.append_basic_block(fn_val, &format!("select.arm{i}")))
-                    .collect();
-
-                // Build switch: pass all (tag, bb) cases at once.
-                if let Some(BasicValueEnum::IntValue(iv)) = ready_idx {
-                    let cases: Vec<_> = arm_bbs.iter().enumerate()
-                        .map(|(i, bb)| (i64_ty.const_int(i as u64, false), *bb))
-                        .collect();
-                    self.builder.build_switch(iv, else_bb, &cases).unwrap();
-                } else {
-                    self.builder.build_unconditional_branch(else_bb).unwrap();
-                }
-
-                // Emit each arm body and jump to merge.
-                for (arm, bb) in arms.iter().zip(arm_bbs.iter()) {
-                    self.builder.position_at_end(*bb);
-                    self.emit_expr(&arm.body, fn_val);
-                    self.builder.build_unconditional_branch(merge_bb).unwrap();
-                }
-
-                // else: no arm ready — branch to merge (runtime will have blocked).
-                self.builder.position_at_end(else_bb);
-                self.builder.build_unconditional_branch(merge_bb).unwrap();
-
-                self.builder.position_at_end(merge_bb);
-                None
-            }
+            ast::Expr::Select(arms) => self.emit_select_expr(arms, fn_val),
 
             // ── While loop ────────────────────────────────────────────────────
-            ast::Expr::While { cond, body } => {
-                let cond_bb = self.context.append_basic_block(fn_val, "while.cond");
-                let body_bb = self.context.append_basic_block(fn_val, "while.body");
-                let exit_bb = self.context.append_basic_block(fn_val, "while.exit");
-
-                // Push loop context so break/continue can find their targets.
-                self.loop_stack.push((cond_bb, exit_bb));
-
-                // Jump to condition check.
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                // Emit condition.
-                self.builder.position_at_end(cond_bb);
-                let cond_val = match self.emit_expr(cond, fn_val) {
-                    Some(BasicValueEnum::IntValue(i)) => i,
-                    _ => {
-                        // If condition didn't produce a value, treat as infinite loop.
-                        self.builder.build_unconditional_branch(body_bb).unwrap();
-                        self.loop_stack.pop();
-                        self.builder.position_at_end(exit_bb);
-                        return Some(self.context.i64_type().const_zero().into());
-                    }
-                };
-                self.builder.build_conditional_branch(cond_val, body_bb, exit_bb).unwrap();
-
-                // Emit body.
-                self.builder.position_at_end(body_bb);
-                for stmt in body {
-                    self.emit_expr(&stmt.expr, fn_val);
-                    // Stop emitting if a terminator was added (e.g., return, break, continue).
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        break;
-                    }
-                }
-                // Jump back to condition if not already terminated.
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder.build_unconditional_branch(cond_bb).unwrap();
-                }
-
-                // Pop loop context after body is fully emitted.
-                self.loop_stack.pop();
-
-                // Continue after loop.
-                self.builder.position_at_end(exit_bb);
-                Some(self.context.i64_type().const_zero().into())
-            }
+            ast::Expr::While { cond, body } => self.emit_while(cond, body, fn_val),
 
             // ── While-let loop ───────────────────────────────────────────────
             // `while let <pattern> = <expr> { body }` — compiled as:
             //   loop { val = expr; if !pattern_matches(val) { break }; bind; body }
-            ast::Expr::WhileLet { pattern, expr, body } => {
-                let cond_bb = self.context.append_basic_block(fn_val, "wl.cond");
-                let body_bb = self.context.append_basic_block(fn_val, "wl.body");
-                let exit_bb = self.context.append_basic_block(fn_val, "wl.exit");
-
-                self.loop_stack.push((cond_bb, exit_bb));
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                // Evaluate the scrutinee and test the pattern.
-                self.builder.position_at_end(cond_bb);
-                let subject = match self.emit_expr(expr, fn_val) {
-                    Some(v) => v,
-                    None => {
-                        // Expression produced no value; treat as infinite loop.
-                        self.builder.build_unconditional_branch(body_bb).unwrap();
-                        self.loop_stack.pop();
-                        self.builder.position_at_end(exit_bb);
-                        return Some(self.context.i64_type().const_zero().into());
-                    }
-                };
-                let matches = self.emit_pattern_test(pattern, subject);
-                let cond_int = match matches {
-                    BasicValueEnum::IntValue(i) => i,
-                    _ => self.context.bool_type().const_int(1, false),
-                };
-                self.builder.build_conditional_branch(cond_int, body_bb, exit_bb).unwrap();
-
-                // Bind pattern variables and emit body.
-                self.builder.position_at_end(body_bb);
-                self.emit_pattern_bindings(pattern, subject);
-                for stmt in body {
-                    self.emit_expr(&stmt.expr, fn_val);
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        break;
-                    }
-                }
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder.build_unconditional_branch(cond_bb).unwrap();
-                }
-
-                self.loop_stack.pop();
-                self.builder.position_at_end(exit_bb);
-                Some(self.context.i64_type().const_zero().into())
-            }
+            ast::Expr::WhileLet { pattern, expr, body } => self.emit_while_let(pattern, expr, body, fn_val),
 
             // ── For-in range loop ─────────────────────────────────────────────
             // `for i in start..end { body }` or `start..=end` (inclusive).
-            ast::Expr::For { var, start, end, body, inclusive } => {
-                let i64_ty = self.context.i64_type();
-
-                // Evaluate start and end once before the loop.
-                let start_val = match self.emit_expr(start, fn_val) {
-                    Some(BasicValueEnum::IntValue(i)) => i,
-                    _ => i64_ty.const_zero(),
-                };
-                let end_val = match self.emit_expr(end, fn_val) {
-                    Some(BasicValueEnum::IntValue(i)) => i,
-                    _ => i64_ty.const_zero(),
-                };
-
-                // Allocate induction variable on the stack.
-                let var_ptr = self.builder.build_alloca(i64_ty, var).unwrap();
-                self.builder.build_store(var_ptr, start_val).unwrap();
-                // Register the variable so body statements can read it.
-                self.locals.insert(var.clone(), (var_ptr, i64_ty.into()));
-
-                let cond_bb = self.context.append_basic_block(fn_val, "for.cond");
-                let body_bb = self.context.append_basic_block(fn_val, "for.body");
-                let incr_bb = self.context.append_basic_block(fn_val, "for.incr");
-                let exit_bb = self.context.append_basic_block(fn_val, "for.exit");
-
-                self.loop_stack.push((incr_bb, exit_bb));
-
-                // Jump to condition.
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                // Condition: i < end  (exclusive)  or  i <= end  (inclusive)
-                self.builder.position_at_end(cond_bb);
-                let cur = self.builder.build_load(i64_ty, var_ptr, "for.i").unwrap().into_int_value();
-                let pred = if *inclusive { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::SLT };
-                let cmp = self.builder.build_int_compare(
-                    pred, cur, end_val, "for.cmp").unwrap();
-                self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
-
-                // Body.
-                self.builder.position_at_end(body_bb);
-                for stmt in body {
-                    self.emit_expr(&stmt.expr, fn_val);
-                    if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
-                        break;
-                    }
-                }
-                if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-                    self.builder.build_unconditional_branch(incr_bb).unwrap();
-                }
-
-                // Increment: i = i + 1
-                self.builder.position_at_end(incr_bb);
-                let cur2 = self.builder.build_load(i64_ty, var_ptr, "for.i2").unwrap().into_int_value();
-                let next = self.builder.build_int_add(cur2, i64_ty.const_int(1, false), "for.next").unwrap();
-                self.builder.build_store(var_ptr, next).unwrap();
-                self.builder.build_unconditional_branch(cond_bb).unwrap();
-
-                self.loop_stack.pop();
-                self.locals.remove(var);
-
-                self.builder.position_at_end(exit_bb);
-                Some(i64_ty.const_zero().into())
-            }
+            ast::Expr::For { var, start, end, body, inclusive } => self.emit_for_in(var, start, end, body, *inclusive, fn_val),
 
             // ── Break / Continue ──────────────────────────────────────────────
             ast::Expr::Break => {
@@ -1310,109 +308,7 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── FmtStr: lower to a chain of axon_concat calls ────────────────
-            ast::Expr::FmtStr { parts } => {
-                // We build the result left-to-right:
-                //   acc = ""
-                //   for each part: acc = axon_concat(acc, part_value)
-                let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                let i64_ty = self.context.i64_type();
-                let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-
-                // Start with an empty string literal (use a unique name per fmtstr).
-                let fmtstr_id = self.fmtstr_counter;
-                self.fmtstr_counter += 1;
-                let empty_arr_ty = self.context.i8_type().array_type(1);
-                let empty_name = format!("fmtstr_empty_{fmtstr_id}");
-                let empty_global = self.module.add_global(empty_arr_ty, None, &empty_name);
-                empty_global.set_initializer(
-                    &self.context.i8_type().const_array(&[self.context.i8_type().const_int(0, false)])
-                );
-                empty_global.set_constant(true);
-                let empty_ptr = self.builder
-                    .build_pointer_cast(empty_global.as_pointer_value(), i8_ptr, "emptyptr")
-                    .unwrap();
-
-                // Build the empty str struct as the initial accumulator.
-                let init_alloca = self.builder.build_alloca(str_ty, "fmtinit").unwrap();
-                let init_len_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 0, "il").unwrap();
-                let init_dat_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 1, "id").unwrap();
-                self.builder.build_store(init_len_ptr, i64_ty.const_int(0, false)).unwrap();
-                self.builder.build_store(init_dat_ptr, empty_ptr).unwrap();
-                let mut acc: BasicValueEnum<'ctx> = self.builder
-                    .build_load(str_ty, init_alloca, "fmtacc0")
-                    .unwrap();
-
-                let concat_fn = self.functions.get("axon_concat").copied()?;
-
-                for part in parts {
-                    let part_val: BasicValueEnum<'ctx> = match part {
-                        ast::FmtPart::Lit(s) => {
-                            // Emit the literal as a str value.
-                            let bytes = s.as_bytes();
-                            let lit_len = i64_ty.const_int(bytes.len() as u64, false);
-                            let arr_ty = self.context.i8_type().array_type(bytes.len() as u32 + 1);
-                            let lit_name = format!("fmtlit_{fmtstr_id}_{}", self.fmtstr_counter);
-                            self.fmtstr_counter += 1;
-                            let g = self.module.add_global(arr_ty, None, &lit_name);
-                            let byte_vals: Vec<_> = bytes
-                                .iter()
-                                .chain(std::iter::once(&0u8))
-                                .map(|&b| self.context.i8_type().const_int(b as u64, false))
-                                .collect();
-                            g.set_initializer(&self.context.i8_type().const_array(&byte_vals));
-                            g.set_constant(true);
-                            let lit_ptr = self.builder
-                                .build_pointer_cast(g.as_pointer_value(), i8_ptr, "litptr")
-                                .unwrap();
-                            let lit_alloca = self.builder.build_alloca(str_ty, "litstr").unwrap();
-                            let lp = self.builder.build_struct_gep(str_ty, lit_alloca, 0, "lp").unwrap();
-                            let dp = self.builder.build_struct_gep(str_ty, lit_alloca, 1, "dp").unwrap();
-                            self.builder.build_store(lp, lit_len).unwrap();
-                            self.builder.build_store(dp, lit_ptr).unwrap();
-                            self.builder.build_load(str_ty, lit_alloca, "litval").unwrap()
-                        }
-                        ast::FmtPart::Expr(e) => {
-                            let v = self.emit_expr(e, fn_val)?;
-                            // Auto-coerce non-str values to str.
-                            match v {
-                                BasicValueEnum::StructValue(_) => v, // already str
-                                BasicValueEnum::IntValue(iv) => {
-                                    if iv.get_type().get_bit_width() == 1 {
-                                        // bool → to_str_bool
-                                        if let Some(f) = self.functions.get("to_str_bool").copied() {
-                                            self.builder.build_call(f, &[iv.into()], "fmtb")
-                                                .unwrap().try_as_basic_value().left()?
-                                        } else { v }
-                                    } else {
-                                        // i64 → to_str
-                                        if let Some(f) = self.functions.get("to_str").copied() {
-                                            self.builder.build_call(f, &[iv.into()], "fmti")
-                                                .unwrap().try_as_basic_value().left()?
-                                        } else { v }
-                                    }
-                                }
-                                BasicValueEnum::FloatValue(fv) => {
-                                    // f64 → to_str_f64
-                                    if let Some(f) = self.functions.get("to_str_f64").copied() {
-                                        self.builder.build_call(f, &[fv.into()], "fmtf")
-                                            .unwrap().try_as_basic_value().left()?
-                                    } else { v }
-                                }
-                                _ => v,
-                            }
-                        }
-                    };
-                    // acc = axon_concat(acc, part_val)
-                    let res = self.builder.build_call(
-                        concat_fn,
-                        &[acc.into(), part_val.into()],
-                        "fmtcat",
-                    ).unwrap();
-                    acc = res.try_as_basic_value().left()?;
-                }
-
-                Some(acc)
-            }
+            ast::Expr::FmtStr { parts } => self.emit_fmt_str(parts, fn_val),
         }
     }
 
@@ -1752,8 +648,1156 @@ impl<'ctx> super::Codegen<'ctx> {
             _ => None,
         }
     }
+    // ── Phase 3 decomposition: per-Expr-variant helper methods ────────
 
-}
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_fmt_str(&mut self, parts: &[ast::FmtPart], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        // We build the result left-to-right:
+        //   acc = ""
+        //   for each part: acc = axon_concat(acc, part_value)
+        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
 
-impl<'ctx> Codegen<'ctx> {
+        // Start with an empty string literal (use a unique name per fmtstr).
+        let fmtstr_id = self.fmtstr_counter;
+        self.fmtstr_counter += 1;
+        let empty_arr_ty = self.context.i8_type().array_type(1);
+        let empty_name = format!("fmtstr_empty_{fmtstr_id}");
+        let empty_global = self.module.add_global(empty_arr_ty, None, &empty_name);
+        empty_global.set_initializer(
+            &self.context.i8_type().const_array(&[self.context.i8_type().const_int(0, false)])
+        );
+        empty_global.set_constant(true);
+        let empty_ptr = self.builder
+            .build_pointer_cast(empty_global.as_pointer_value(), i8_ptr, "emptyptr")
+            .unwrap();
+
+        // Build the empty str struct as the initial accumulator.
+        let init_alloca = self.builder.build_alloca(str_ty, "fmtinit").unwrap();
+        let init_len_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 0, "il").unwrap();
+        let init_dat_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 1, "id").unwrap();
+        self.builder.build_store(init_len_ptr, i64_ty.const_int(0, false)).unwrap();
+        self.builder.build_store(init_dat_ptr, empty_ptr).unwrap();
+        let mut acc: BasicValueEnum<'ctx> = self.builder
+            .build_load(str_ty, init_alloca, "fmtacc0")
+            .unwrap();
+
+        let concat_fn = self.functions.get("axon_concat").copied()?;
+
+        for part in parts {
+            let part_val: BasicValueEnum<'ctx> = match part {
+                ast::FmtPart::Lit(s) => {
+                    // Emit the literal as a str value.
+                    let bytes = s.as_bytes();
+                    let lit_len = i64_ty.const_int(bytes.len() as u64, false);
+                    let arr_ty = self.context.i8_type().array_type(bytes.len() as u32 + 1);
+                    let lit_name = format!("fmtlit_{fmtstr_id}_{}", self.fmtstr_counter);
+                    self.fmtstr_counter += 1;
+                    let g = self.module.add_global(arr_ty, None, &lit_name);
+                    let byte_vals: Vec<_> = bytes
+                        .iter()
+                        .chain(std::iter::once(&0u8))
+                        .map(|&b| self.context.i8_type().const_int(b as u64, false))
+                        .collect();
+                    g.set_initializer(&self.context.i8_type().const_array(&byte_vals));
+                    g.set_constant(true);
+                    let lit_ptr = self.builder
+                        .build_pointer_cast(g.as_pointer_value(), i8_ptr, "litptr")
+                        .unwrap();
+                    let lit_alloca = self.builder.build_alloca(str_ty, "litstr").unwrap();
+                    let lp = self.builder.build_struct_gep(str_ty, lit_alloca, 0, "lp").unwrap();
+                    let dp = self.builder.build_struct_gep(str_ty, lit_alloca, 1, "dp").unwrap();
+                    self.builder.build_store(lp, lit_len).unwrap();
+                    self.builder.build_store(dp, lit_ptr).unwrap();
+                    self.builder.build_load(str_ty, lit_alloca, "litval").unwrap()
+                }
+                ast::FmtPart::Expr(e) => {
+                    let v = self.emit_expr(e, fn_val)?;
+                    // Auto-coerce non-str values to str.
+                    match v {
+                        BasicValueEnum::StructValue(_) => v, // already str
+                        BasicValueEnum::IntValue(iv) => {
+                            if iv.get_type().get_bit_width() == 1 {
+                                // bool → to_str_bool
+                                if let Some(f) = self.functions.get("to_str_bool").copied() {
+                                    self.builder.build_call(f, &[iv.into()], "fmtb")
+                                        .unwrap().try_as_basic_value().left()?
+                                } else { v }
+                            } else {
+                                // i64 → to_str
+                                if let Some(f) = self.functions.get("to_str").copied() {
+                                    self.builder.build_call(f, &[iv.into()], "fmti")
+                                        .unwrap().try_as_basic_value().left()?
+                                } else { v }
+                            }
+                        }
+                        BasicValueEnum::FloatValue(fv) => {
+                            // f64 → to_str_f64
+                            if let Some(f) = self.functions.get("to_str_f64").copied() {
+                                self.builder.build_call(f, &[fv.into()], "fmtf")
+                                    .unwrap().try_as_basic_value().left()?
+                            } else { v }
+                        }
+                        _ => v,
+                    }
+                }
+            };
+            // acc = axon_concat(acc, part_val)
+            let res = self.builder.build_call(
+                concat_fn,
+                &[acc.into(), part_val.into()],
+                "fmtcat",
+            ).unwrap();
+            acc = res.try_as_basic_value().left()?;
+        }
+
+        Some(acc)
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_for_in(&mut self, var: &str, start: &ast::Expr, end: &ast::Expr, body: &ast::Expr, inclusive: bool, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.context.i64_type();
+
+        // Evaluate start and end once before the loop.
+        let start_val = match self.emit_expr(start, fn_val) {
+            Some(BasicValueEnum::IntValue(i)) => i,
+            _ => i64_ty.const_zero(),
+        };
+        let end_val = match self.emit_expr(end, fn_val) {
+            Some(BasicValueEnum::IntValue(i)) => i,
+            _ => i64_ty.const_zero(),
+        };
+
+        // Allocate induction variable on the stack.
+        let var_ptr = self.builder.build_alloca(i64_ty, var).unwrap();
+        self.builder.build_store(var_ptr, start_val).unwrap();
+        // Register the variable so body statements can read it.
+        self.locals.insert(var.clone(), (var_ptr, i64_ty.into()));
+
+        let cond_bb = self.context.append_basic_block(fn_val, "for.cond");
+        let body_bb = self.context.append_basic_block(fn_val, "for.body");
+        let incr_bb = self.context.append_basic_block(fn_val, "for.incr");
+        let exit_bb = self.context.append_basic_block(fn_val, "for.exit");
+
+        self.loop_stack.push((incr_bb, exit_bb));
+
+        // Jump to condition.
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        // Condition: i < end  (exclusive)  or  i <= end  (inclusive)
+        self.builder.position_at_end(cond_bb);
+        let cur = self.builder.build_load(i64_ty, var_ptr, "for.i").unwrap().into_int_value();
+        let pred = if *inclusive { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::SLT };
+        let cmp = self.builder.build_int_compare(
+            pred, cur, end_val, "for.cmp").unwrap();
+        self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
+
+        // Body.
+        self.builder.position_at_end(body_bb);
+        for stmt in body {
+            self.emit_expr(&stmt.expr, fn_val);
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
+        }
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(incr_bb).unwrap();
+        }
+
+        // Increment: i = i + 1
+        self.builder.position_at_end(incr_bb);
+        let cur2 = self.builder.build_load(i64_ty, var_ptr, "for.i2").unwrap().into_int_value();
+        let next = self.builder.build_int_add(cur2, i64_ty.const_int(1, false), "for.next").unwrap();
+        self.builder.build_store(var_ptr, next).unwrap();
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        self.loop_stack.pop();
+        self.locals.remove(var);
+
+        self.builder.position_at_end(exit_bb);
+        Some(i64_ty.const_zero().into())
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_while_let(&mut self, pattern: &ast::Pattern, expr: &ast::Expr, body: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let cond_bb = self.context.append_basic_block(fn_val, "wl.cond");
+        let body_bb = self.context.append_basic_block(fn_val, "wl.body");
+        let exit_bb = self.context.append_basic_block(fn_val, "wl.exit");
+
+        self.loop_stack.push((cond_bb, exit_bb));
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        // Evaluate the scrutinee and test the pattern.
+        self.builder.position_at_end(cond_bb);
+        let subject = match self.emit_expr(expr, fn_val) {
+            Some(v) => v,
+            None => {
+                // Expression produced no value; treat as infinite loop.
+                self.builder.build_unconditional_branch(body_bb).unwrap();
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                return Some(self.context.i64_type().const_zero().into());
+            }
+        };
+        let matches = self.emit_pattern_test(pattern, subject);
+        let cond_int = match matches {
+            BasicValueEnum::IntValue(i) => i,
+            _ => self.context.bool_type().const_int(1, false),
+        };
+        self.builder.build_conditional_branch(cond_int, body_bb, exit_bb).unwrap();
+
+        // Bind pattern variables and emit body.
+        self.builder.position_at_end(body_bb);
+        self.emit_pattern_bindings(pattern, subject);
+        for stmt in body {
+            self.emit_expr(&stmt.expr, fn_val);
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
+        }
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(cond_bb).unwrap();
+        }
+
+        self.loop_stack.pop();
+        self.builder.position_at_end(exit_bb);
+        Some(self.context.i64_type().const_zero().into())
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_while(&mut self, cond: &ast::Expr, body: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let cond_bb = self.context.append_basic_block(fn_val, "while.cond");
+        let body_bb = self.context.append_basic_block(fn_val, "while.body");
+        let exit_bb = self.context.append_basic_block(fn_val, "while.exit");
+
+        // Push loop context so break/continue can find their targets.
+        self.loop_stack.push((cond_bb, exit_bb));
+
+        // Jump to condition check.
+        self.builder.build_unconditional_branch(cond_bb).unwrap();
+
+        // Emit condition.
+        self.builder.position_at_end(cond_bb);
+        let cond_val = match self.emit_expr(cond, fn_val) {
+            Some(BasicValueEnum::IntValue(i)) => i,
+            _ => {
+                // If condition didn't produce a value, treat as infinite loop.
+                self.builder.build_unconditional_branch(body_bb).unwrap();
+                self.loop_stack.pop();
+                self.builder.position_at_end(exit_bb);
+                return Some(self.context.i64_type().const_zero().into());
+            }
+        };
+        self.builder.build_conditional_branch(cond_val, body_bb, exit_bb).unwrap();
+
+        // Emit body.
+        self.builder.position_at_end(body_bb);
+        for stmt in body {
+            self.emit_expr(&stmt.expr, fn_val);
+            // Stop emitting if a terminator was added (e.g., return, break, continue).
+            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+                break;
+            }
+        }
+        // Jump back to condition if not already terminated.
+        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.builder.build_unconditional_branch(cond_bb).unwrap();
+        }
+
+        // Pop loop context after body is fully emitted.
+        self.loop_stack.pop();
+
+        // Continue after loop.
+        self.builder.position_at_end(exit_bb);
+        Some(self.context.i64_type().const_zero().into())
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_select_expr(&mut self, arms: &[ast::SelectArm], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+        let n = arms.len() as u64;
+
+        // Allocate an array of i8* on the stack: [n x i8*]
+        let arr_ty = i8_ptr.array_type(n as u32);
+        let chans_alloca = self.builder.build_alloca(arr_ty, "select_chans").unwrap();
+
+        // Fill each slot with the channel pointer from each arm.
+        // arm.recv is typically `ch.recv()` — extract the channel (receiver).
+        for (i, arm) in arms.iter().enumerate() {
+            let chan_expr = match &arm.recv {
+                // `ch.recv()` — use the receiver `ch` as the channel
+                ast::Expr::MethodCall { receiver, .. } => receiver.as_ref(),
+                // `ch` — the channel expression itself
+                other => other,
+            };
+            if let Some(chan_val) = self.emit_expr(chan_expr, fn_val) {
+                // cast to i8* if needed
+                let as_ptr = match chan_val {
+                    BasicValueEnum::PointerValue(pv) => {
+                        self.builder.build_pointer_cast(pv, i8_ptr, "chan_ptr").unwrap()
+                    }
+                    _ => continue,
+                };
+                let slot = unsafe {
+                    self.builder.build_gep(
+                        arr_ty,
+                        chans_alloca,
+                        &[i64_ty.const_int(0, false).into(), i64_ty.const_int(i as u64, false).into()],
+                        "chan_slot",
+                    ).unwrap()
+                };
+                self.builder.build_store(slot, as_ptr).unwrap();
+            }
+        }
+
+        // Cast array pointer to i8** for __axon_select.
+        let chans_ptr = self.builder.build_pointer_cast(
+            chans_alloca,
+            i8_ptr.ptr_type(AddressSpace::default()),
+            "chans_ptr",
+        ).unwrap();
+
+        // Call __axon_select(chans, n) → i64 ready_idx.
+        let ready_idx = if let Some(sel_fn) = self.functions.get("__axon_select").copied() {
+            self.builder.build_call(
+                sel_fn,
+                &[chans_ptr.into(), i64_ty.const_int(n, false).into()],
+                "select_idx",
+            ).unwrap().try_as_basic_value().left()
+        } else {
+            None
+        };
+
+        let merge_bb = self.context.append_basic_block(fn_val, "select.merge");
+        let else_bb = self.context.append_basic_block(fn_val, "select.else");
+
+        // Build arm basic blocks.
+        let arm_bbs: Vec<_> = arms.iter().enumerate()
+            .map(|(i, _)| self.context.append_basic_block(fn_val, &format!("select.arm{i}")))
+            .collect();
+
+        // Build switch: pass all (tag, bb) cases at once.
+        if let Some(BasicValueEnum::IntValue(iv)) = ready_idx {
+            let cases: Vec<_> = arm_bbs.iter().enumerate()
+                .map(|(i, bb)| (i64_ty.const_int(i as u64, false), *bb))
+                .collect();
+            self.builder.build_switch(iv, else_bb, &cases).unwrap();
+        } else {
+            self.builder.build_unconditional_branch(else_bb).unwrap();
+        }
+
+        // Emit each arm body and jump to merge.
+        for (arm, bb) in arms.iter().zip(arm_bbs.iter()) {
+            self.builder.position_at_end(*bb);
+            self.emit_expr(&arm.body, fn_val);
+            self.builder.build_unconditional_branch(merge_bb).unwrap();
+        }
+
+        // else: no arm ready — branch to merge (runtime will have blocked).
+        self.builder.position_at_end(else_bb);
+        self.builder.build_unconditional_branch(merge_bb).unwrap();
+
+        self.builder.position_at_end(merge_bb);
+        None
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_lambda(&mut self, params: &[ast::Param], body: &ast::Expr, captures: &[String], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let lambda_name = format!("__lambda_{}", self.lambda_counter);
+        self.lambda_counter += 1;
+
+        let i64_ty = self.context.i64_type();
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let closure_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+
+        // ── Build the env struct type for captures ────────────────────
+        // All captured variables are stored as i64 (Phase 4 limitation).
+        let n_captures = captures.len();
+        let env_field_tys: Vec<BasicTypeEnum<'ctx>> =
+            (0..n_captures).map(|_| i64_ty.into()).collect();
+        let env_struct_ty = self.context.struct_type(&env_field_tys, false);
+
+        // ── Declare the lambda function (env_ptr first, then params) ──
+        let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
+            vec![ptr_ty.into()]; // env_ptr
+        for _ in params {
+            lambda_param_tys.push(i64_ty.into());
+        }
+        let fn_ty = i64_ty.fn_type(&lambda_param_tys, false);
+        let lambda_fn = self.module.add_function(&lambda_name, fn_ty, None);
+
+        // ── Emit the lambda body ──────────────────────────────────────
+        let entry_bb = self.context.append_basic_block(lambda_fn, "entry");
+        let saved_ip = self.builder.get_insert_block();
+        let saved_locals = std::mem::take(&mut self.locals);
+        let saved_local_types = std::mem::take(&mut self.local_types);
+        let saved_lambda_env = self.current_lambda_env.take();
+
+        self.builder.position_at_end(entry_bb);
+
+        // env_ptr is param 0; explicit params start at 1.
+        let env_ptr_arg = lambda_fn.get_nth_param(0).unwrap().into_pointer_value();
+
+        // Bind captured variables directly to their env struct field pointers.
+        // Using the field pointer as the "alloca" means stores inside the lambda
+        // persist across calls (required for mutable closures like make_counter).
+        let mut capture_idx_map: HashMap<String, u32> = HashMap::new();
+        if n_captures > 0 {
+            for (idx, (cap_name, _)) in captures.iter().enumerate() {
+                let field_ptr = self.builder
+                    .build_struct_gep(env_struct_ty, env_ptr_arg, idx as u32, cap_name)
+                    .unwrap();
+                self.locals.insert(cap_name.clone(), (field_ptr, i64_ty.into()));
+                capture_idx_map.insert(cap_name.clone(), idx as u32);
+            }
+        }
+
+        // Publish the env context so nested `Ident` lookups can fall back
+        // to loading captures via GEP if the resolver missed them.
+        self.current_lambda_env = Some((env_ptr_arg, env_struct_ty, capture_idx_map));
+
+        // Bind explicit parameters (offset by 1 for env_ptr).
+        for (i, p) in params.iter().enumerate() {
+            if let Some(arg) = lambda_fn.get_nth_param((i + 1) as u32) {
+                let alloca = self.builder.build_alloca(i64_ty, &p.name).unwrap();
+                self.builder.build_store(alloca, arg).unwrap();
+                self.locals.insert(p.name.clone(), (alloca, i64_ty.into()));
+            }
+        }
+
+        let body_val = self.emit_expr(body, lambda_fn);
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
+            match body_val {
+                Some(v) => { self.builder.build_return(Some(&v)).unwrap(); }
+                None => { self.builder.build_return(Some(&i64_ty.const_zero())).unwrap(); }
+            }
+        }
+
+        // Restore caller's state.
+        self.locals = saved_locals;
+        self.local_types = saved_local_types;
+        self.current_lambda_env = saved_lambda_env;
+        if let Some(b) = saved_ip { self.builder.position_at_end(b); }
+        self.functions.insert(lambda_name.clone(), lambda_fn);
+
+        // ── At the creation site: build the fat pointer struct ─────────
+        let fn_ptr = self.builder
+            .build_pointer_cast(
+                lambda_fn.as_global_value().as_pointer_value(),
+                ptr_ty,
+                "lfp",
+            )
+            .unwrap();
+
+        let env_ptr: BasicValueEnum<'ctx> = if n_captures > 0 {
+            // Malloc an env struct and populate it.
+            let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+                let ty = ptr_ty.fn_type(&[i64_ty.into()], false);
+                self.module.add_function("malloc", ty, None)
+            });
+            let env_size = i64_ty.const_int(
+                (n_captures * 8) as u64, // 8 bytes per i64
+                false,
+            );
+            let raw = self.builder
+                .build_call(malloc_fn, &[env_size.into()], "env_alloc")
+                .unwrap()
+                .try_as_basic_value()
+                .left()
+                .unwrap()
+                .into_pointer_value();
+
+            // Cast to env_struct_ty pointer for GEP.
+            for (idx, (cap_name, _)) in captures.iter().enumerate() {
+                // Load current value of the captured variable from caller scope
+                // (self.locals has been restored to the caller's locals at this point).
+                let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
+                    self.builder.build_load(ty, alloca, cap_name).unwrap()
+                } else {
+                    i64_ty.const_zero().into()
+                };
+                let field_ptr = self.builder
+                    .build_struct_gep(env_struct_ty, raw, idx as u32, &format!("env_f{idx}"))
+                    .unwrap();
+                self.builder.build_store(field_ptr, cap_val).unwrap();
+            }
+            // Cast back to i8* for the fat pointer.
+            self.builder
+                .build_pointer_cast(raw, ptr_ty, "env_i8")
+                .unwrap()
+                .into()
+        } else {
+            ptr_ty.const_null().into()
+        };
+
+        // Build { fn_ptr, env_ptr } fat pointer struct.
+        let mut fat = closure_ty.get_undef();
+        fat = self.builder.build_insert_value(fat, fn_ptr, 0, "fat0").unwrap().into_struct_value();
+        fat = self.builder.build_insert_value(fat, env_ptr, 1, "fat1").unwrap().into_struct_value();
+        Some(fat.into())
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_comptime_expr(&mut self, inner: &ast::Expr) -> Option<BasicValueEnum<'ctx>> {
+        let evaluator = crate::comptime::Evaluator {
+            env: self.comptime_env.clone(),
+            fns: &self.fndefs,
+        };
+        match evaluator.eval(inner) {
+            Ok(crate::comptime::ComptimeVal::Int(n)) => {
+                Some(self.context.i64_type().const_int(n as u64, true).into())
+            }
+            Ok(crate::comptime::ComptimeVal::Bool(b)) => {
+                Some(self.context.bool_type().const_int(b as u64, false).into())
+            }
+            Ok(crate::comptime::ComptimeVal::Float(f)) => {
+                Some(self.context.f64_type().const_float(f).into())
+            }
+            Ok(crate::comptime::ComptimeVal::Str(s)) => {
+                // Emit as a { i64 len, i8* ptr } struct matching Axon's Str layout.
+                let len = s.len() as u64;
+                let global = self.builder.build_global_string_ptr(&s, "comptime_str").unwrap();
+                let i64_ty = self.context.i64_type();
+                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let mut sv = str_ty.get_undef();
+                sv = self.builder.build_insert_value(sv, i64_ty.const_int(len, false), 0, "str_len").unwrap().into_struct_value();
+                sv = self.builder.build_insert_value(sv, global.as_pointer_value(), 1, "str_ptr").unwrap().into_struct_value();
+                Some(sv.into())
+            }
+            Err(e) => {
+                eprintln!("comptime evaluation error: {e}");
+                None
+            }
+        }
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_spawn(&mut self, inner: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        // inner must be a lambda expression. Compile it to get the fat ptr.
+        let fat = self.emit_expr(inner, fn_val)?;
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+
+        // If we got a struct back, extract fn_ptr and env_ptr.
+        let (fn_ptr_val, env_ptr_val) = match fat {
+            BasicValueEnum::StructValue(sv) => {
+                let fp = self.builder.build_extract_value(sv, 0, "spawn_fp").unwrap();
+                let ep = self.builder.build_extract_value(sv, 1, "spawn_ep").unwrap();
+                (fp, ep)
+            }
+            other => {
+                // Bare function pointer — wrap with null env.
+                let null_env = ptr_ty.const_null();
+                (other, null_env.into())
+            }
+        };
+
+        if let Some(spawn_fn) = self.functions.get("__axon_spawn").copied() {
+            self.builder.build_call(
+                spawn_fn,
+                &[fn_ptr_val.into(), env_ptr_val.into()],
+                "spawn",
+            ).unwrap();
+        }
+        // spawn returns unit
+        None
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_index(&mut self, receiver: &ast::Expr, index: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let elem_llvm_ty = if let ast::Expr::Ident(n) = receiver.as_ref() {
+            self.local_types.get(n).and_then(|ty| {
+                if let Type::Slice(inner) = ty { self.llvm_type(inner) } else { None }
+            })
+        } else {
+            None
+        };
+
+        let slice_val = self.emit_expr(receiver, fn_val)?;
+        let idx_val = self.emit_expr(index, fn_val)?;
+        let elem_ty = elem_llvm_ty?;
+        let idx_int = match idx_val {
+            BasicValueEnum::IntValue(i) => i,
+            _ => return None,
+        };
+
+        // Slice struct { i64, ptr }: extract the data pointer (field 1).
+        let i64_ty = self.context.i64_type();
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.context.struct_type(
+            &[i64_ty.into(), ptr_ty.into()], false,
+        );
+        let slice_alloca = self.builder.build_alloca(slice_ty, "slicetmp").unwrap();
+        self.builder.build_store(slice_alloca, slice_val).unwrap();
+        let data_field_ptr = self.builder
+            .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
+            .unwrap();
+        let data_ptr = self.builder
+            .build_load(ptr_ty, data_field_ptr, "dataval")
+            .unwrap()
+            .into_pointer_value();
+        let elem_ptr = unsafe {
+            self.builder
+                .build_gep(elem_ty, data_ptr, &[idx_int], "elemptr")
+                .unwrap()
+        };
+        let elem = self.builder.build_load(elem_ty, elem_ptr, "elemval").unwrap();
+        Some(elem)
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
+        // a direct GEP on the inferred struct shape (no named LLVM struct).
+        let recv_ty = self.sem_type_of_expr(receiver);
+        if let Some(Type::Uncertain(_)) | Some(Type::Temporal(_)) = recv_ty.clone() {
+            let ty = recv_ty.unwrap();
+            let idx_opt: Option<u32> = match (&ty, field.as_str()) {
+                (Type::Uncertain(_), "value") => Some(0),
+                (Type::Uncertain(_), "confidence") => Some(1),
+                (Type::Uncertain(_), "source_tag") => Some(2),
+                (Type::Temporal(_), "value") => Some(0),
+                (Type::Temporal(_), "confidence") => Some(1),
+                (Type::Temporal(_), "horizon_ms") => Some(2),
+                (Type::Temporal(_), "decay") => Some(3),
+                (Type::Temporal(_), "valid_until_ms") => Some(4),
+                _ => None,
+            };
+            if let (Some(idx), Some(struct_be)) = (idx_opt, self.llvm_type(&ty)) {
+                if let BasicTypeEnum::StructType(struct_ty) = struct_be {
+                    let recv_val = self.emit_expr(receiver, fn_val)?;
+                    let recv_alloca = self.builder
+                        .build_alloca(struct_ty, "asi_recv_tmp")
+                        .unwrap();
+                    self.builder.build_store(recv_alloca, recv_val).unwrap();
+                    let fptr = self.builder
+                        .build_struct_gep(struct_ty, recv_alloca, idx, field)
+                        .unwrap();
+                    if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
+                        let fval = self.builder.build_load(fty, fptr, field).unwrap();
+                        return Some(fval);
+                    }
+                }
+            }
+        }
+
+        // Determine the struct name from the receiver's semantic type.
+        // Handle both bare Ident receivers and chained FieldAccess receivers.
+        let struct_name = self.sem_type_of_expr(receiver).and_then(|ty| {
+            if let Type::Struct(sn) = ty { Some(sn) } else { None }
+        });
+
+        if let Some(sname) = struct_name {
+            if let (Some(struct_ty), Some(field_names)) = (
+                self.module.get_struct_type(&sname),
+                self.struct_fields.get(&sname).cloned(),
+            ) {
+                if let Some(idx) = field_names.iter().position(|n| n == field) {
+                    let recv_val = self.emit_expr(receiver, fn_val)?;
+                    let recv_alloca = self.builder
+                        .build_alloca(struct_ty, "recv_tmp")
+                        .unwrap();
+                    self.builder.build_store(recv_alloca, recv_val).unwrap();
+                    let fptr = self.builder
+                        .build_struct_gep(struct_ty, recv_alloca, idx as u32, field)
+                        .unwrap();
+                    if let Some(field_ty) = struct_ty.get_field_type_at_index(idx as u32) {
+                        let fval = self.builder.build_load(field_ty, fptr, field).unwrap();
+                        return Some(fval);
+                    }
+                }
+            }
+        }
+        // Fallback: emit receiver for side-effects only.
+        let _ = self.emit_expr(receiver, fn_val);
+        None
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_struct_lit(&mut self, name: &str, fields: &[(String, ast::Expr)], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        if name.contains("::") {
+            // Enum variant construction: "EnumName::VariantName"
+            let mut parts = name.splitn(2, "::");
+            let enum_name = parts.next().unwrap().to_string();
+            let variant_name = parts.next().unwrap().to_string();
+
+            // Look up variant info.
+            let variants = self.enum_variants.get(&enum_name).cloned()?;
+            let (tag_int, field_types) = variants
+                .iter()
+                .find(|(vn, _, _)| vn == &variant_name)
+                .map(|(_, tag, fts)| (*tag, fts.clone()))?;
+
+            // Look up the LLVM struct type for the enum.
+            let struct_name = format!("{enum_name}_enum");
+            let enum_struct_ty = self.module.get_struct_type(&struct_name)?;
+
+            // Alloca for the enum struct { i32, [N x i8] }.
+            let alloca = self.builder.build_alloca(enum_struct_ty, &struct_name).unwrap();
+
+            // Store tag (field 0).
+            let i32_ty = self.context.i32_type();
+            let tag_ptr = self.builder
+                .build_struct_gep(enum_struct_ty, alloca, 0, "tagptr")
+                .unwrap();
+            self.builder
+                .build_store(tag_ptr, i32_ty.const_int(tag_int as u64, false))
+                .unwrap();
+
+            // Store each field into the payload (field 1) at byte offsets.
+            if !fields.is_empty() {
+                let i8_ty = self.context.i8_type();
+                let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
+
+                // Get pointer to payload field.
+                let pay_ptr = self.builder
+                    .build_struct_gep(enum_struct_ty, alloca, 1, "payptr")
+                    .unwrap();
+                let pay_i8ptr = self.builder
+                    .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
+                    .unwrap();
+
+                let mut byte_offset: u64 = 0;
+                for (fi, (fname, fexpr)) in fields.iter().enumerate() {
+                    if let Some(fval) = self.emit_expr(fexpr, fn_val) {
+                        let fty = field_types.get(fi).cloned().unwrap_or(Type::Unknown);
+                        let fsize = self.llvm_sizeof(&fty).unwrap_or(8);
+                        // GEP into the payload at the current byte offset.
+                        let offset_val = i32_ty.const_int(byte_offset, false);
+                        let field_ptr = unsafe {
+                            self.builder
+                                .build_gep(i8_ty, pay_i8ptr, &[offset_val], fname)
+                                .unwrap()
+                        };
+                        // Cast to the appropriate typed pointer and store.
+                        let fval_ptr_ty = fval.get_type().ptr_type(AddressSpace::default());
+                        let typed_ptr = self.builder
+                            .build_pointer_cast(field_ptr, fval_ptr_ty, "ftyptr")
+                            .unwrap();
+                        self.builder.build_store(typed_ptr, fval).unwrap();
+                        byte_offset += fsize;
+                    }
+                }
+            }
+
+            let val = self.builder.build_load(enum_struct_ty, alloca, name).unwrap();
+            Some(val)
+        } else {
+            // Regular struct literal.
+            let struct_ty = self.module.get_struct_type(name)?;
+            let field_names = self.struct_fields.get(name).cloned().unwrap_or_default();
+            let alloca = self.builder.build_alloca(struct_ty, name).unwrap();
+            for (fname, fexpr) in fields {
+                let idx = field_names.iter().position(|n| n == fname).unwrap_or(0) as u32;
+                if let Some(fval) = self.emit_expr(fexpr, fn_val) {
+                    let fptr = self.builder
+                        .build_struct_gep(struct_ty, alloca, idx, fname)
+                        .unwrap();
+                    self.builder.build_store(fptr, fval).unwrap();
+                }
+            }
+            let val = self.builder.build_load(struct_ty, alloca, name).unwrap();
+            Some(val)
+        }
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_array_lit(&mut self, elems: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        if elems.is_empty() {
+            // Return a zero-length slice struct.
+            let i64_ty = self.context.i64_type();
+            let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+            let slice_ty = self.context.struct_type(
+                &[i64_ty.into(), ptr_ty.into()],
+                false,
+            );
+            let zero = i64_ty.const_zero();
+            let null = ptr_ty.const_null();
+            let agg = slice_ty.const_named_struct(&[zero.into(), null.into()]);
+            return Some(agg.into());
+        }
+
+        // Emit each element.
+        let mut vals: Vec<BasicValueEnum<'ctx>> = Vec::with_capacity(elems.len());
+        for e in elems {
+            if let Some(v) = self.emit_expr(e, fn_val) {
+                vals.push(v);
+            }
+        }
+        if vals.is_empty() {
+            return None;
+        }
+
+        let elem_ty = vals[0].get_type();
+        let n = vals.len() as u32;
+
+        // Use malloc for the array backing store so the slice remains
+        // valid if returned from a function (no dangling stack pointer).
+        let i64_ty = self.context.i64_type();
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        // Compute element size from the LLVM type bit-width.
+        let elem_size_bytes: u64 = match elem_ty {
+            BasicTypeEnum::IntType(it) => (it.get_bit_width() as u64 + 7) / 8,
+            BasicTypeEnum::FloatType(ft) => {
+                if ft == self.context.f32_type() { 4 } else { 8 }
+            }
+            BasicTypeEnum::StructType(_) | BasicTypeEnum::ArrayType(_)
+            | BasicTypeEnum::PointerType(_) | BasicTypeEnum::VectorType(_) => 8,
+        };
+        let total_bytes = i64_ty.const_int(elem_size_bytes * n as u64, false);
+        let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+            let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
+            self.module.add_function("malloc", malloc_ty, None)
+        });
+        let malloc_call = self.builder
+            .build_call(malloc_fn, &[total_bytes.into()], "arrdata")
+            .unwrap();
+        let raw_ptr = malloc_call.try_as_basic_value().left().unwrap().into_pointer_value();
+        // Cast to typed element pointer for GEP.
+        let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
+        let elem_data_ptr = self.builder
+            .build_pointer_cast(raw_ptr, elem_ptr_ty, "arrelemptr")
+            .unwrap();
+        for (idx, v) in vals.iter().enumerate() {
+            let idx_val = i64_ty.const_int(idx as u64, false);
+            let gep = unsafe {
+                self.builder
+                    .build_gep(elem_ty, elem_data_ptr, &[idx_val], "arrelem")
+                    .unwrap()
+            };
+            self.builder.build_store(gep, *v).unwrap();
+        }
+
+        // Build slice struct { len, ptr }.
+        let slice_ty = self.context.struct_type(
+            &[i64_ty.into(), ptr_ty.into()],
+            false,
+        );
+        let len_val = i64_ty.const_int(n as u64, false);
+        // Cast malloc ptr to opaque i8* for the slice data field.
+        let data_ptr = self
+            .builder
+            .build_pointer_cast(raw_ptr, ptr_ty, "sliceptr")
+            .unwrap();
+        let slice_alloca = self.builder.build_alloca(slice_ty, "slice").unwrap();
+        // Store len.
+        let len_ptr = self
+            .builder
+            .build_struct_gep(slice_ty, slice_alloca, 0, "lenptr")
+            .unwrap();
+        self.builder.build_store(len_ptr, len_val).unwrap();
+        // Store data ptr.
+        let data_field_ptr = self
+            .builder
+            .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
+            .unwrap();
+        self.builder.build_store(data_field_ptr, data_ptr).unwrap();
+        let slice_val = self
+            .builder
+            .build_load(slice_ty, slice_alloca, "sliceval")
+            .unwrap();
+        Some(slice_val)
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_return(&mut self, maybe_val: &Option<Box<ast::Expr>>, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        match maybe_val {
+            std::option::Option::Some(e) => {
+                if let Some(v) = self.emit_expr(e, fn_val) {
+                    self.log_return_if_adaptive_val(v);
+                    self.emit_verify_check_if_needed(v, fn_val);
+                    self.builder.build_return(Some(&v)).unwrap();
+                } else {
+                    self.log_return_if_adaptive();
+                    self.builder.build_return(None).unwrap();
+                }
+            }
+            std::option::Option::None => {
+                self.log_return_if_adaptive();
+                self.builder.build_return(None).unwrap();
+            }
+        }
+        None
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_method_call(&mut self, receiver: &ast::Expr, method: &str, args: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        // --- DynTrait: vtable dispatch ---
+        let recv_sem_ty = self.infer_expr_sem_type(receiver);
+        if let Some(Type::DynTrait(trait_name)) = recv_sem_ty {
+            let recv_val = self.emit_expr(receiver, fn_val)?;
+            let fat = recv_val.into_struct_value();
+            let data_ptr = self.builder.build_extract_value(fat, 0, "data_ptr")
+                .unwrap().into_pointer_value();
+            let vtbl_ptr = self.builder.build_extract_value(fat, 1, "vtbl_ptr")
+                .unwrap().into_pointer_value();
+
+            // Find method index in the trait definition.
+            let trait_def = self.trait_defs.get(&trait_name).cloned()?;
+            let method_idx = trait_def.methods.iter().position(|m| m.name == *method)?;
+
+            // GEP into vtable array to get the function pointer slot.
+            let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+            let arr_ty = i8_ptr.array_type(trait_def.methods.len() as u32);
+            let idx_zero = self.context.i64_type().const_zero();
+            let idx_m = self.context.i64_type().const_int(method_idx as u64, false);
+            let fn_slot = unsafe {
+                self.builder.build_gep(arr_ty, vtbl_ptr, &[idx_zero, idx_m], "fn_slot").unwrap()
+            };
+            let fn_ptr = self.builder.build_load(i8_ptr, fn_slot, "fn_ptr")
+                .unwrap().into_pointer_value();
+
+            // Build call args: data_ptr + any extra args.
+            let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = vec![data_ptr.into()];
+            for a in args {
+                if let Some(v) = self.emit_expr(a, fn_val) {
+                    call_args.push(v.into());
+                }
+            }
+
+            let thunk_ty = self.vtable_thunk_types.get(&(trait_name, method.clone())).copied()?;
+            let call = self.builder.build_indirect_call(thunk_ty, fn_ptr, &call_args, "vtbl_call").unwrap();
+            return call.try_as_basic_value().left();
+        }
+
+        // --- Static dispatch (struct/enum method) ---
+        // Determine the receiver's struct/enum type for name mangling.
+        let type_name = self.infer_expr_sem_type(receiver).and_then(|t| match t {
+            Type::Struct(n) | Type::Enum(n) => Some(n),
+            _ => None,
+        });
+
+        let recv_val = self.emit_expr(receiver, fn_val);
+
+        // Try mangled name first, fall back to bare method name.
+        let mangled = type_name.as_deref().map(|tn| format!("{tn}__{method}"));
+        let fn_v = mangled
+            .as_deref()
+            .and_then(|m| self.functions.get(m).copied())
+            .or_else(|| self.functions.get(method.as_str()).copied());
+
+        if let Some(fn_v) = fn_v {
+            let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+            // Prepend the receiver as the first argument.
+            // For Chan methods, cast receiver to i8* (opaque pointer ABI).
+            if let Some(rv) = recv_val {
+                let is_chan_method = matches!(method.as_str(), "send" | "recv" | "clone");
+                let rv = if is_chan_method {
+                    if let BasicValueEnum::PointerValue(pv) = rv {
+                        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+                        self.builder.build_pointer_cast(pv, i8_ptr, "chan_cast").unwrap().into()
+                    } else {
+                        rv
+                    }
+                } else {
+                    rv
+                };
+                arg_vals.push(rv.into());
+            }
+            for a in args {
+                if let Some(v) = self.emit_expr(a, fn_val) {
+                    arg_vals.push(v.into());
+                }
+            }
+            let call = self
+                .builder
+                .build_call(fn_v, &arg_vals, "mcall")
+                .unwrap();
+            return call.try_as_basic_value().left();
+        }
+        None
+    }
+
+    /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    pub(super) fn emit_call(&mut self, callee: &ast::Expr, args: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.context.i64_type();
+
+        // Try to resolve callee as a global function first.
+        let maybe_fn_v = match callee.as_ref() {
+            ast::Expr::Ident(name) => self.functions.get(name.as_str()).copied(),
+            // Chan::new / chan<T>() — StructLit callees with known names.
+            ast::Expr::StructLit { name, fields } if fields.is_empty() => {
+                // chan::<T> → alias to Chan::new
+                if name.starts_with("chan::<") {
+                    self.functions.get("Chan::new").copied()
+                } else if let Some(inner) =
+                    name.strip_prefix("ai_extract::<").and_then(|s| s.strip_suffix(">"))
+                {
+                    // ai_extract::<T> → dispatch to the per-T helper.
+                    // v1 T set: i64, f64, bool, Uncertain<i64>, Uncertain<f64>.
+                    // The concrete LLVM functions are emitted in
+                    // declare_builtins under the same names.
+                    let helper = match inner.trim() {
+                        "i64"            => "ai_extract_i64",
+                        "f64"            => "ai_extract_f64",
+                        "bool"           => "ai_extract_bool",
+                        "Uncertain<i64>" => "ai_extract_uncertain_i64",
+                        "Uncertain<f64>" => "ai_extract_uncertain_f64",
+                        _ => "",
+                    };
+                    self.functions.get(helper).copied()
+                } else {
+                    self.functions.get(name.as_str()).copied()
+                }
+            }
+            _ => None,
+        };
+
+        // Try closure call: callee is a local holding a {fn_ptr, env_ptr} struct.
+        if maybe_fn_v.is_none() {
+            if let ast::Expr::Ident(name) = callee.as_ref() {
+                if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
+                    let fat = self.builder.build_load(ty, alloca, "closure").unwrap();
+                    if let BasicValueEnum::StructValue(sv) = fat {
+                        let fp = self.builder.build_extract_value(sv, 0, "cfp").unwrap();
+                        let ep = self.builder.build_extract_value(sv, 1, "cep").unwrap();
+                        // Build arg list: env_ptr first, then explicit args.
+                        let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> =
+                            vec![ep.into()];
+                        for a in args {
+                            if let Some(v) = self.emit_expr(a, fn_val) {
+                                call_args.push(v.into());
+                            }
+                        }
+                        // Build an indirect call via fn pointer.
+                        let fn_ptr = self.builder
+                            .build_pointer_cast(
+                                fp.into_pointer_value(),
+                                ptr_ty,
+                                "fp_cast",
+                            )
+                            .unwrap();
+                        // Build the function type for the indirect call.
+                        let mut ipt: Vec<BasicMetadataTypeEnum<'ctx>> =
+                            vec![ptr_ty.into()];
+                        for _ in args {
+                            ipt.push(i64_ty.into());
+                        }
+                        let indirect_ty = i64_ty.fn_type(&ipt, false);
+                        let call = self.builder
+                            .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
+                            .unwrap();
+                        return call.try_as_basic_value().left();
+                    }
+                }
+            }
+        }
+
+        // Resolve the callee to an LLVM FunctionValue (direct call).
+        let fn_v = maybe_fn_v?;
+
+        // Get declared parameter types to coerce mismatched integer widths.
+        let param_tys: Vec<BasicTypeEnum<'ctx>> = fn_v.get_type().get_param_types();
+
+        // Get Axon-level param types for DynTrait coercion.
+        let axon_params: Vec<ast::AxonType> = if let ast::Expr::Ident(name) = callee.as_ref() {
+            self.fn_axon_params.get(name).cloned().unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
+        let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
+        for (i, a) in args.iter().enumerate() {
+            // Check for DynTrait coercion: concrete type → fat pointer.
+            let axon_param_ty = axon_params.get(i);
+            let is_dyn_param = matches!(axon_param_ty, Some(ast::AxonType::DynTrait(_)));
+
+            if is_dyn_param {
+                let trait_name = match axon_param_ty {
+                    Some(ast::AxonType::DynTrait(t)) => t.clone(),
+                    _ => unreachable!(),
+                };
+                // Get the concrete argument's type to find the right vtable.
+                let arg_sem_ty = self.infer_expr_sem_type(a);
+                let type_name = match &arg_sem_ty {
+                    Some(Type::Struct(n)) | Some(Type::Enum(n)) => Some(n.clone()),
+                    _ => None,
+                };
+
+                if let Some(type_name) = type_name {
+                    let vtable_key = (trait_name.clone(), type_name.clone());
+                    if let Some(vtable_global) = self.vtable_globals.get(&vtable_key).copied() {
+                        let concrete_val = self.emit_expr(a, fn_val);
+                        if let Some(val) = concrete_val {
+                            // Alloca the concrete value; store it so we have a data ptr.
+                            let concrete_llvm_ty = val.get_type();
+                            let data_alloca = self.builder.build_alloca(concrete_llvm_ty, "dyn_data").unwrap();
+                            self.builder.build_store(data_alloca, val).unwrap();
+
+                            // Build fat pointer { data_ptr, vtable_ptr }.
+                            let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+                            let fat_ty = self.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false);
+                            let fat_undef = fat_ty.get_undef();
+
+                            let data_cast = self.builder.build_pointer_cast(data_alloca, i8_ptr, "data_cast").unwrap();
+                            let vtbl_ptr = vtable_global.as_pointer_value();
+                            let vtbl_cast = self.builder.build_pointer_cast(vtbl_ptr, i8_ptr, "vtbl_cast").unwrap();
+
+                            let fat0 = self.builder.build_insert_value(fat_undef, data_cast, 0, "fat0").unwrap();
+                            let fat1 = self.builder.build_insert_value(fat0.into_struct_value(), vtbl_cast, 1, "fat1").unwrap();
+                            // AggregateValueEnum → StructValue → BasicMetadataValueEnum
+                            arg_vals.push(BasicValueEnum::StructValue(fat1.into_struct_value()).into());
+                            continue;
+                        }
+                    }
+                }
+                // Fallthrough: emit arg as-is if coercion wasn't possible.
+                if let Some(v) = self.emit_expr(a, fn_val) {
+                    arg_vals.push(v.into());
+                }
+                continue;
+            }
+
+            let val = match self.emit_expr(a, fn_val) {
+                Some(v) => v,
+                None => continue,
+            };
+            // Coerce argument types to match declared parameter types.
+            let expected_ty = param_tys.get(i).copied();
+            let coerced = match (expected_ty, val) {
+                // int width mismatch: truncate or extend (zext for unsigned, sext for signed)
+                (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::IntValue(iv)) => {
+                    let actual = iv.get_type().get_bit_width();
+                    let expect = exp_int.get_bit_width();
+                    if actual > expect {
+                        self.builder.build_int_truncate(iv, exp_int, "trunc").unwrap().into()
+                    } else if actual < expect {
+                        let sem_ty = self.infer_expr_sem_type(a);
+                        let is_unsigned = matches!(
+                            sem_ty,
+                            Some(Type::U8) | Some(Type::U16) | Some(Type::U32) | Some(Type::U64)
+                        );
+                        if is_unsigned {
+                            self.builder.build_int_z_extend(iv, exp_int, "zext").unwrap().into()
+                        } else {
+                            self.builder.build_int_s_extend(iv, exp_int, "sext").unwrap().into()
+                        }
+                    } else {
+                        val
+                    }
+                }
+                // float → int: e.g. to_str(f64_val) where to_str takes i64
+                (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::FloatValue(fv)) => {
+                    self.builder.build_float_to_signed_int(fv, exp_int, "ftoi").unwrap().into()
+                }
+                // int → float
+                (Some(BasicTypeEnum::FloatType(exp_flt)), BasicValueEnum::IntValue(iv)) => {
+                    self.builder.build_signed_int_to_float(iv, exp_flt, "itof").unwrap().into()
+                }
+                _ => val,
+            };
+            arg_vals.push(coerced.into());
+        }
+
+        let call = self
+            .builder
+            .build_call(fn_v, &arg_vals, "call")
+            .unwrap();
+        call.try_as_basic_value().left()
+    }
+
+
 }
