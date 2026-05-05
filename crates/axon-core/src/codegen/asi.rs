@@ -1,0 +1,279 @@
+//! ASI Layer-1/2/3 codegen helpers.
+//!
+//! Phase 2 of the §7.5 module split: extracts the cohesive block of methods
+//! that emit ASI-specific runtime hooks:
+//!   * `__axon_provenance_log` calls (event-style, Layer 1)
+//!   * `__axon_provenance_log_ret_{i64,f64}` typed-return logs (Layer 2)
+//!   * `__axon_register_adaptive` registry init in main (Layer 3 hill-climb)
+//!   * `__axon_verify_panic` runtime gate emission (Layer 3 @[verify])
+//!
+//! All methods are `pub(super)` so the parent `codegen::mod` impl block can
+//! call them.  No fields are mutated except `self.builder`'s position;
+//! callers must restore the insert block when needed.
+//!
+//! Field visibility requirements: this file accesses `self.builder`,
+//! `self.context`, `self.module` (all `pub`), plus the ASI-specific state
+//! `self.adaptive_registry_targets`, `self.current_adaptive_fn`,
+//! `self.current_verify_fn`, and `self.functions` (made `pub(super)` in
+//! `mod.rs` to support this extraction).
+
+use inkwell::values::{BasicValueEnum, FunctionValue};
+use inkwell::FloatPredicate;
+
+impl<'ctx> super::Codegen<'ctx> {
+    // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
+    /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
+    /// builder position.  Used at function prologues and immediately before
+    /// every `build_return` in adaptive functions.
+    pub(super) fn emit_provenance_log(&mut self, fn_name: &str, event: &str) {
+        let prov_fn = match self.module.get_function("__axon_provenance_log") {
+            Some(f) => f,
+            None => return, // safety: declare_builtins should have added this
+        };
+        // Skip if the current basic block is already terminated.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let evt_g  = self.builder.build_global_string_ptr(event,   "prov_event").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+        let evt_len  = i64_ty.const_int(event.len()    as u64, false);
+        let _ = self.builder.build_call(
+            prov_fn,
+            &[
+                name_g.as_pointer_value().into(),
+                name_len.into(),
+                evt_g.as_pointer_value().into(),
+                evt_len.into(),
+            ],
+            "",
+        );
+    }
+
+    /// Layer-2: emit a typed-return provenance event for an `@[adaptive]`
+    /// function.  If the return value's LLVM type is `i64`, calls
+    /// `__axon_provenance_log_ret_i64`; if it's `f64`, calls
+    /// `__axon_provenance_log_ret_f64`.  For any other return type (str,
+    /// struct, enum, etc.) we still emit the legacy `"return"` string event so
+    /// the on-disk JSONL stays complete.
+    pub(super) fn emit_provenance_log_ret(&mut self, fn_name: &str, ret_val: BasicValueEnum<'ctx>) {
+        // Skip if the current basic block is already terminated.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let f64_ty = self.context.f64_type();
+        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+
+        match ret_val {
+            BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
+                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_i64") {
+                    let _ = self.builder.build_call(
+                        rt,
+                        &[name_g.as_pointer_value().into(), name_len.into(), iv.into()],
+                        "",
+                    );
+                    return;
+                }
+            }
+            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => {
+                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_f64") {
+                    let _ = self.builder.build_call(
+                        rt,
+                        &[name_g.as_pointer_value().into(), name_len.into(), fv.into()],
+                        "",
+                    );
+                    return;
+                }
+            }
+            _ => {}
+        }
+        // Fallback: legacy event-style log.
+        self.emit_provenance_log(fn_name, "return");
+    }
+
+    /// Emit a "return" provenance event if the current function carries
+    /// `@[adaptive]`.  Call this immediately before each `build_return` whose
+    /// return value is *not* known to be i64/f64 (or which has no value).
+    pub(super) fn log_return_if_adaptive(&mut self) {
+        if let Some(fn_name) = self.current_adaptive_fn.clone() {
+            self.emit_provenance_log(&fn_name, "return");
+        }
+    }
+
+    /// Layer-2 variant: emit a typed-return event if the current function
+    /// carries `@[adaptive]`.  Pass the value being returned so the runtime
+    /// can score it.  Call this *instead* of `log_return_if_adaptive()` at
+    /// every `build_return(Some(&v))` site.
+    pub(super) fn log_return_if_adaptive_val(&mut self, ret_val: BasicValueEnum<'ctx>) {
+        if let Some(fn_name) = self.current_adaptive_fn.clone() {
+            self.emit_provenance_log_ret(&fn_name, ret_val);
+        }
+    }
+
+    /// ASI Layer-3 `@[verify]` runtime helper.
+    ///
+    /// Called at every return site of a function whose `current_verify_fn`
+    /// is set (i.e. the surrounding fn is `@[verify(confidence OP K)]` and
+    /// has return type `Uncertain<T>`).  At codegen time we:
+    ///
+    ///   1. `extractvalue` field index 1 (`confidence: f64`) from the
+    ///      Uncertain struct value being returned.
+    ///   2. `fcmp <pred>` it against the literal bound K, where `<pred>`
+    ///      mirrors the source operator (`>=` → OGE, `>` → OGT, `<=` → OLE,
+    ///      `<` → OLT, `==` → OEQ, `!=` → ONE).
+    ///   3. Branch: on success, fall through to the original `build_return`;
+    ///      on failure, call `__axon_verify_panic(fn_name, op, K, actual)`
+    ///      and emit `unreachable`.
+    ///
+    /// No-op when `current_verify_fn` is `None`, when the value is not an
+    /// Uncertain struct (defensive), or when the verify-panic extern is
+    /// missing.  Codegen never aborts compilation here — the static checker
+    /// is the primary gate; this is *additional* enforcement.
+    ///
+    /// Call this at every `build_return(Some(&v))` site immediately *before*
+    /// the actual `build_return`, alongside `log_return_if_adaptive_val(v)`.
+    pub(super) fn emit_verify_check_if_needed(
+        &mut self,
+        ret_val: BasicValueEnum<'ctx>,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        // Quick exit: not in a verify-armed function.
+        let (fn_name, op_str, bound) = match self.current_verify_fn.clone() {
+            Some(t) => t,
+            None => return,
+        };
+
+        // Defensive: skip if the runtime extern isn't declared.
+        let panic_fn = match self.module.get_function("__axon_verify_panic") {
+            Some(f) => f,
+            None => return,
+        };
+
+        // Skip if the current basic block is already terminated — we can't
+        // legally insert further IR there.
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+
+        // The return value must be an Uncertain<T> struct (field 1 = f64
+        // confidence).  Anything else means the verify clause was attached to
+        // a function whose return type isn't actually Uncertain — the static
+        // checker should have rejected it, but be defensive.
+        let struct_val = match ret_val {
+            BasicValueEnum::StructValue(sv) => sv,
+            _ => return,
+        };
+        let f64_ty = self.context.f64_type();
+        // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
+        let conf_ev = match self.builder.build_extract_value(struct_val, 1, "verify_conf") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+        // Sanity: must be an f64.  If the struct shape is unexpected, bail.
+        let actual = match conf_ev {
+            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
+            _ => return,
+        };
+
+        // Translate operator string → LLVM float predicate.  Matches the set
+        // accepted by `verify::decode_verify_predicate`.
+        let pred = match op_str {
+            ">="          => FloatPredicate::OGE,
+            ">"           => FloatPredicate::OGT,
+            "<="          => FloatPredicate::OLE,
+            "<"           => FloatPredicate::OLT,
+            "=="          => FloatPredicate::OEQ,
+            "!="          => FloatPredicate::ONE,
+            // Unknown op string: silently no-op (mirrors static checker).
+            _ => return,
+        };
+
+        let bound_const = f64_ty.const_float(bound);
+        let cmp = match self.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
+            Ok(v) => v,
+            Err(_) => return,
+        };
+
+        // Build branch: cmp ? continue : panic.  We append two blocks to the
+        // current function and route the *current* block into them.
+        let panic_bb = self.context.append_basic_block(llvm_fn, "verify_panic");
+        let cont_bb  = self.context.append_basic_block(llvm_fn, "verify_ok");
+
+        let _ = self.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
+
+        // ── Panic path ────────────────────────────────────────────────────
+        self.builder.position_at_end(panic_bb);
+        let i64_ty = self.context.i64_type();
+        let name_g = self.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
+        let op_g   = self.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
+        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
+        let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
+        let _ = self.builder.build_call(
+            panic_fn,
+            &[
+                name_g.as_pointer_value().into(),
+                name_len.into(),
+                op_g.as_pointer_value().into(),
+                op_len.into(),
+                bound_const.into(),
+                actual.into(),
+            ],
+            "",
+        );
+        let _ = self.builder.build_unreachable();
+
+        // ── Continue path: original return falls through here. ────────────
+        self.builder.position_at_end(cont_bb);
+    }
+
+    /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
+    /// call per eligible adaptive function (`@[adaptive] fn(i64) -> i64`).
+    /// Called from main's prologue.  No-op when no eligible functions exist
+    /// (no runtime cost for non-AI programs).  Eligibility was decided in
+    /// `emit_program` and recorded in `self.adaptive_registry_targets`.
+    pub(super) fn emit_adaptive_registry_init(&mut self) {
+        if self.adaptive_registry_targets.is_empty() {
+            return;
+        }
+        let reg_fn = match self.module.get_function("__axon_register_adaptive") {
+            Some(f) => f,
+            None => return,
+        };
+        // Skip if the current basic block is already terminated (defensive).
+        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.context.i64_type();
+        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let targets = self.adaptive_registry_targets.clone();
+        for name in &targets {
+            let target_fn = match self.functions.get(name).copied() {
+                Some(f) => f,
+                None => continue,
+            };
+            let name_g = self
+                .builder
+                .build_global_string_ptr(name, "adapt_reg_name")
+                .unwrap();
+            let name_len = i64_ty.const_int(name.len() as u64, false);
+            // Cast the user fn's pointer to i8* for the C ABI.
+            let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
+            let cast_ptr = self
+                .builder
+                .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
+                .unwrap();
+            let _ = self.builder.build_call(
+                reg_fn,
+                &[
+                    name_g.as_pointer_value().into(),
+                    name_len.into(),
+                    cast_ptr.into(),
+                ],
+                "",
+            );
+        }
+    }
+}

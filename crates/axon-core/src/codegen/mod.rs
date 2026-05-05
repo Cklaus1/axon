@@ -33,11 +33,22 @@ use crate::ast::AxonType;
 use crate::types::Type;
 
 // ── Module split (ROADMAP §7.5) ───────────────────────────────────────────────
-// Phase 1 of the split: free-function helpers (object emission + linking +
-// staticlib builds) live in `link.rs`.  The Codegen<'ctx> impl blocks remain
-// in this file pending Phase 2 which moves them across `types.rs`, `expr.rs`,
-// `stmt.rs`, `builtins.rs`, and `asi.rs`.
+// Phase 1:    free-function helpers (object emission + linking + staticlib
+//             builds)                                  → `link.rs`
+// Phase 2.1:  Axon→LLVM type lowering
+//             (llvm_type, llvm_sizeof, llvm_align_of)  → `types.rs`
+// Phase 2.2:  ASI helpers (provenance log emission, @[verify] runtime gate,
+//             @[adaptive] registry init)               → `asi.rs`
+//
+// Remaining Codegen<'ctx> methods (Pass 1 declarations including
+// `declare_builtins` ~3870 lines, expression emission `emit_expr` ~1380 lines,
+// statement emission, match/pattern emission, link orchestration) stay in
+// this file pending Phase 2.3+ which requires faster-machine validation
+// because the bigger remaining splits will involve cross-cutting field-access
+// pub(super) decisions.
 pub mod link;
+pub mod types;
+pub mod asi;
 
 // Re-export the public path that lib.rs / main.rs expect: callers reach
 // `compile_bitcode_to_binary` via `axon_core::codegen::compile_bitcode_to_binary`.
@@ -72,7 +83,7 @@ pub struct Codegen<'ctx> {
     /// Maps local variable names to their alloca pointers and LLVM types.
     locals: HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
     /// Maps fn names to the LLVM function value.
-    functions: HashMap<String, FunctionValue<'ctx>>,
+    pub(super) functions: HashMap<String, FunctionValue<'ctx>>,
     /// Maps struct names to their ordered field names (for FieldAccess GEP).
     struct_fields: HashMap<String, Vec<String>>,
     /// Maps fn names to their Axon semantic return type (for call-site type inference).
@@ -117,7 +128,7 @@ pub struct Codegen<'ctx> {
     /// Phase 4 `@[adaptive]`: when emitting a function carrying that attribute,
     /// this holds the function name so `log_return_if_adaptive` can log
     /// a "return" event before each early/tail return.
-    current_adaptive_fn: Option<String>,
+    pub(super) current_adaptive_fn: Option<String>,
     /// ASI Layer-3: names of `@[adaptive] fn(i64) -> i64` functions that
     /// should be registered with the runtime adaptive registry at module
     /// startup.  Populated lazily when each FnDef is declared; consumed in
@@ -125,14 +136,14 @@ pub struct Codegen<'ctx> {
     /// entry.  v1 narrowing: only `(i64) -> i64` is eligible; other
     /// signatures (multi-arg, f64 input, str input, …) silently fall
     /// through and rely on the Layer-2 retrospective `goal_run` path.
-    adaptive_registry_targets: Vec<String>,
+    pub(super) adaptive_registry_targets: Vec<String>,
     /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries
     /// `@[verify(confidence OP K)]` *and* whose return type is `Uncertain<T>`,
     /// this holds `(fn_name, op_str, bound)` so each return site can inject
     /// a runtime confidence check via `__axon_verify_panic`.  `op_str` is the
     /// source-level operator (`">="`, `">"`, …) and `bound` is the literal K.
     /// `None` whenever the surrounding function has no decodable verify spec.
-    current_verify_fn: Option<(String, &'static str, f64)>,
+    pub(super) current_verify_fn: Option<(String, &'static str, f64)>,
 }
 
 impl<'ctx> Codegen<'ctx> {
@@ -164,198 +175,6 @@ impl<'ctx> Codegen<'ctx> {
             current_adaptive_fn: None,
             adaptive_registry_targets: Vec::new(),
             current_verify_fn: None,
-        }
-    }
-
-    // ── Type mapping ──────────────────────────────────────────────────────────
-
-    /// Convert an Axon semantic `Type` into an LLVM `BasicTypeEnum`.
-    /// Returns `None` for `Unit` (void) and unresolved/unknown types.
-    pub fn llvm_type(&self, ty: &Type) -> Option<BasicTypeEnum<'ctx>> {
-        match ty {
-            Type::I8 | Type::U8 => Some(self.context.i8_type().into()),
-            Type::I16 | Type::U16 => Some(self.context.i16_type().into()),
-            Type::I32 | Type::U32 => Some(self.context.i32_type().into()),
-            Type::I64 | Type::U64 => Some(self.context.i64_type().into()),
-            Type::F32 => Some(self.context.f32_type().into()),
-            Type::F64 => Some(self.context.f64_type().into()),
-            Type::Bool => Some(self.context.bool_type().into()),
-
-            // Str → struct { i64, ptr }
-            Type::Str => {
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let str_ty = self.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()],
-                    /*packed=*/ false,
-                );
-                Some(str_ty.into())
-            }
-
-            // Unit → no LLVM basic type (void)
-            Type::Unit => None,
-
-            // Option<T> → struct { i1, T }
-            Type::Option(inner) => {
-                let tag = self.context.bool_type();
-                if let Some(inner_llvm) = self.llvm_type(inner) {
-                    let opt_ty = self.context.struct_type(
-                        &[tag.into(), inner_llvm],
-                        false,
-                    );
-                    Some(opt_ty.into())
-                } else {
-                    // Option<Unit> is just a bool
-                    Some(tag.into())
-                }
-            }
-
-            // Result<T,E> → struct { i1, [max(sizeof T, sizeof E) x i8] }
-            Type::Result(ok_ty, err_ty) => {
-                let tag = self.context.bool_type();
-                let ok_size = self.llvm_sizeof(ok_ty).unwrap_or(0);
-                let err_size = self.llvm_sizeof(err_ty).unwrap_or(0);
-                let payload_size = ok_size.max(err_size).max(1);
-                let i8_ty = self.context.i8_type();
-                let payload = i8_ty.array_type(payload_size as u32);
-                let result_ty = self.context.struct_type(
-                    &[tag.into(), payload.into()],
-                    false,
-                );
-                Some(result_ty.into())
-            }
-
-            // Slice<T> → struct { i64, ptr }
-            Type::Slice(_inner) => {
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let slice_ty = self.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()],
-                    false,
-                );
-                Some(slice_ty.into())
-            }
-
-            // Tuple → struct { T0, T1, ... }
-            Type::Tuple(fields) => {
-                let field_tys: Vec<BasicTypeEnum<'ctx>> = fields
-                    .iter()
-                    .filter_map(|f| self.llvm_type(f))
-                    .collect();
-                let tuple_ty = self.context.struct_type(&field_tys, false);
-                Some(tuple_ty.into())
-            }
-
-            // Fn<params, ret> → opaque pointer (function pointers in LLVM 17
-            // use the opaque pointer representation; typed fn pointers are gone).
-            Type::Fn(_, _) => {
-                Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
-            }
-
-            // Named struct — look up the named struct in the LLVM module.
-            Type::Struct(name) => {
-                self.module.get_struct_type(name).map(|s| s.into())
-            }
-
-            // Enum — look up by name with "_enum" suffix convention.
-            Type::Enum(name) => {
-                let mangled = format!("{name}_enum");
-                self.module.get_struct_type(&mangled).map(|s| s.into())
-            }
-
-            // Unresolved — skip
-            Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
-            // TypeParam should be eliminated by monomorphization.
-            Type::TypeParam(_) => None,
-            // DynTrait → fat pointer { ptr data, ptr vtable }
-            Type::DynTrait(_) => {
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                Some(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
-            }
-            // Chan<T> → opaque pointer to axon-rt channel object
-            Type::Chan(_) => {
-                Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
-            }
-            // Uncertain<T> → struct { T value, f64 confidence, i64 source_tag }
-            // V1 simplification: omits `alternatives` and `interval` slots from
-            // the full PRD (AI_Language_Plan.md lines 1360-1410). Layer-1 only.
-            Type::Uncertain(inner) => {
-                let inner_llvm = self.llvm_type(inner)?;
-                let f64_ty = self.context.f64_type();
-                let i64_ty = self.context.i64_type();
-                Some(
-                    self.context
-                        .struct_type(&[inner_llvm, f64_ty.into(), i64_ty.into()], false)
-                        .into(),
-                )
-            }
-            // Temporal<T> → struct { T value, f64 confidence, i64 horizon_ms,
-            //                        f64 decay, i64 valid_until_ms }
-            // V1 monomorphisation on T = i64 / f64 (PRD lines 1411-1467).
-            Type::Temporal(inner) => {
-                let inner_llvm = self.llvm_type(inner)?;
-                let f64_ty = self.context.f64_type();
-                let i64_ty = self.context.i64_type();
-                Some(
-                    self.context
-                        .struct_type(
-                            &[
-                                inner_llvm,
-                                f64_ty.into(),
-                                i64_ty.into(),
-                                f64_ty.into(),
-                                i64_ty.into(),
-                            ],
-                            false,
-                        )
-                        .into(),
-                )
-            }
-        }
-    }
-
-    /// Heuristic byte-size of a type (used for Result payload sizing).
-    fn llvm_sizeof(&self, ty: &Type) -> Option<u64> {
-        match ty {
-            Type::I8 | Type::U8 | Type::Bool => Some(1),
-            Type::I16 | Type::U16 => Some(2),
-            Type::I32 | Type::U32 | Type::F32 => Some(4),
-            Type::I64 | Type::U64 | Type::F64 => Some(8),
-            Type::Str | Type::Slice(_) => Some(16), // { i64, ptr }
-            // Option<T> → { i1, T }: the i1 tag is padded up to align(T),
-            // so the total size is align(T) + sizeof(T).
-            Type::Option(inner) => {
-                let inner_size = self.llvm_sizeof(inner).unwrap_or(0);
-                let align = self.llvm_align_of(inner);
-                Some(align + inner_size)
-            }
-            Type::Tuple(fields) => Some(
-                fields.iter().map(|f| self.llvm_sizeof(f).unwrap_or(0)).sum(),
-            ),
-            Type::Struct(_) | Type::Enum(_) => Some(8), // conservative
-            Type::Unit => Some(0),
-            // Uncertain<T> = T value + f64 confidence + i64 source_tag → 24 bytes for T = i64
-            Type::Uncertain(inner) => {
-                let inner_size = self.llvm_sizeof(inner).unwrap_or(8);
-                Some(inner_size + 8 + 8)
-            }
-            // Temporal<T> = T value + f64 confidence + i64 horizon + f64 decay + i64 valid_until
-            Type::Temporal(inner) => {
-                let inner_size = self.llvm_sizeof(inner).unwrap_or(8);
-                Some(inner_size + 8 + 8 + 8 + 8)
-            }
-            _ => None,
-        }
-    }
-
-    /// Alignment in bytes of a type (matches LLVM's ABI alignment on x86-64).
-    fn llvm_align_of(&self, ty: &Type) -> u64 {
-        match ty {
-            Type::Bool | Type::I8 | Type::U8 => 1,
-            Type::I16 | Type::U16 => 2,
-            Type::I32 | Type::U32 | Type::F32 => 4,
-            // i64, f64, ptr, str, slice all align to 8
-            _ => 8,
         }
     }
 
@@ -4764,262 +4583,6 @@ impl<'ctx> Codegen<'ctx> {
         self.current_result_types = saved_result_types;
         self.current_adaptive_fn = saved_adaptive;
         self.current_verify_fn = saved_verify;
-    }
-
-    // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
-    /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
-    /// builder position.  Used at function prologues and immediately before
-    /// every `build_return` in adaptive functions.
-    fn emit_provenance_log(&mut self, fn_name: &str, event: &str) {
-        let prov_fn = match self.module.get_function("__axon_provenance_log") {
-            Some(f) => f,
-            None => return, // safety: declare_builtins should have added this
-        };
-        // Skip if the current basic block is already terminated.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
-            return;
-        }
-        let i64_ty = self.context.i64_type();
-        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
-        let evt_g  = self.builder.build_global_string_ptr(event,   "prov_event").unwrap();
-        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
-        let evt_len  = i64_ty.const_int(event.len()    as u64, false);
-        let _ = self.builder.build_call(
-            prov_fn,
-            &[
-                name_g.as_pointer_value().into(),
-                name_len.into(),
-                evt_g.as_pointer_value().into(),
-                evt_len.into(),
-            ],
-            "",
-        );
-    }
-
-    /// Layer-2: emit a typed-return provenance event for an `@[adaptive]`
-    /// function.  If the return value's LLVM type is `i64`, calls
-    /// `__axon_provenance_log_ret_i64`; if it's `f64`, calls
-    /// `__axon_provenance_log_ret_f64`.  For any other return type (str,
-    /// struct, enum, etc.) we still emit the legacy `"return"` string event so
-    /// the on-disk JSONL stays complete.
-    fn emit_provenance_log_ret(&mut self, fn_name: &str, ret_val: BasicValueEnum<'ctx>) {
-        // Skip if the current basic block is already terminated.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
-            return;
-        }
-        let i64_ty = self.context.i64_type();
-        let f64_ty = self.context.f64_type();
-        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
-        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
-
-        match ret_val {
-            BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
-                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_i64") {
-                    let _ = self.builder.build_call(
-                        rt,
-                        &[name_g.as_pointer_value().into(), name_len.into(), iv.into()],
-                        "",
-                    );
-                    return;
-                }
-            }
-            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => {
-                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_f64") {
-                    let _ = self.builder.build_call(
-                        rt,
-                        &[name_g.as_pointer_value().into(), name_len.into(), fv.into()],
-                        "",
-                    );
-                    return;
-                }
-            }
-            _ => {}
-        }
-        // Fallback: legacy event-style log.
-        self.emit_provenance_log(fn_name, "return");
-    }
-
-    /// Emit a "return" provenance event if the current function carries
-    /// `@[adaptive]`.  Call this immediately before each `build_return` whose
-    /// return value is *not* known to be i64/f64 (or which has no value).
-    fn log_return_if_adaptive(&mut self) {
-        if let Some(fn_name) = self.current_adaptive_fn.clone() {
-            self.emit_provenance_log(&fn_name, "return");
-        }
-    }
-
-    /// Layer-2 variant: emit a typed-return event if the current function
-    /// carries `@[adaptive]`.  Pass the value being returned so the runtime
-    /// can score it.  Call this *instead* of `log_return_if_adaptive()` at
-    /// every `build_return(Some(&v))` site.
-    fn log_return_if_adaptive_val(&mut self, ret_val: BasicValueEnum<'ctx>) {
-        if let Some(fn_name) = self.current_adaptive_fn.clone() {
-            self.emit_provenance_log_ret(&fn_name, ret_val);
-        }
-    }
-
-    /// ASI Layer-3 `@[verify]` runtime helper.
-    ///
-    /// Called at every return site of a function whose `current_verify_fn`
-    /// is set (i.e. the surrounding fn is `@[verify(confidence OP K)]` and
-    /// has return type `Uncertain<T>`).  At codegen time we:
-    ///
-    ///   1. `extractvalue` field index 1 (`confidence: f64`) from the
-    ///      Uncertain struct value being returned.
-    ///   2. `fcmp <pred>` it against the literal bound K, where `<pred>`
-    ///      mirrors the source operator (`>=` → OGE, `>` → OGT, `<=` → OLE,
-    ///      `<` → OLT, `==` → OEQ, `!=` → ONE).
-    ///   3. Branch: on success, fall through to the original `build_return`;
-    ///      on failure, call `__axon_verify_panic(fn_name, op, K, actual)`
-    ///      and emit `unreachable`.
-    ///
-    /// No-op when `current_verify_fn` is `None`, when the value is not an
-    /// Uncertain struct (defensive), or when the verify-panic extern is
-    /// missing.  Codegen never aborts compilation here — the static checker
-    /// is the primary gate; this is *additional* enforcement.
-    ///
-    /// Call this at every `build_return(Some(&v))` site immediately *before*
-    /// the actual `build_return`, alongside `log_return_if_adaptive_val(v)`.
-    fn emit_verify_check_if_needed(
-        &mut self,
-        ret_val: BasicValueEnum<'ctx>,
-        llvm_fn: FunctionValue<'ctx>,
-    ) {
-        // Quick exit: not in a verify-armed function.
-        let (fn_name, op_str, bound) = match self.current_verify_fn.clone() {
-            Some(t) => t,
-            None => return,
-        };
-
-        // Defensive: skip if the runtime extern isn't declared.
-        let panic_fn = match self.module.get_function("__axon_verify_panic") {
-            Some(f) => f,
-            None => return,
-        };
-
-        // Skip if the current basic block is already terminated — we can't
-        // legally insert further IR there.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
-            return;
-        }
-
-        // The return value must be an Uncertain<T> struct (field 1 = f64
-        // confidence).  Anything else means the verify clause was attached to
-        // a function whose return type isn't actually Uncertain — the static
-        // checker should have rejected it, but be defensive.
-        let struct_val = match ret_val {
-            BasicValueEnum::StructValue(sv) => sv,
-            _ => return,
-        };
-        let f64_ty = self.context.f64_type();
-        // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
-        let conf_ev = match self.builder.build_extract_value(struct_val, 1, "verify_conf") {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        // Sanity: must be an f64.  If the struct shape is unexpected, bail.
-        let actual = match conf_ev {
-            BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
-            _ => return,
-        };
-
-        // Translate operator string → LLVM float predicate.  Matches the set
-        // accepted by `verify::decode_verify_predicate`.
-        let pred = match op_str {
-            ">="          => FloatPredicate::OGE,
-            ">"           => FloatPredicate::OGT,
-            "<="          => FloatPredicate::OLE,
-            "<"           => FloatPredicate::OLT,
-            "=="          => FloatPredicate::OEQ,
-            "!="          => FloatPredicate::ONE,
-            // Unknown op string: silently no-op (mirrors static checker).
-            _ => return,
-        };
-
-        let bound_const = f64_ty.const_float(bound);
-        let cmp = match self.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-
-        // Build branch: cmp ? continue : panic.  We append two blocks to the
-        // current function and route the *current* block into them.
-        let panic_bb = self.context.append_basic_block(llvm_fn, "verify_panic");
-        let cont_bb  = self.context.append_basic_block(llvm_fn, "verify_ok");
-
-        let _ = self.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
-
-        // ── Panic path ────────────────────────────────────────────────────
-        self.builder.position_at_end(panic_bb);
-        let i64_ty = self.context.i64_type();
-        let name_g = self.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
-        let op_g   = self.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
-        let name_len = i64_ty.const_int(fn_name.len() as u64, false);
-        let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
-        let _ = self.builder.build_call(
-            panic_fn,
-            &[
-                name_g.as_pointer_value().into(),
-                name_len.into(),
-                op_g.as_pointer_value().into(),
-                op_len.into(),
-                bound_const.into(),
-                actual.into(),
-            ],
-            "",
-        );
-        let _ = self.builder.build_unreachable();
-
-        // ── Continue path: original return falls through here. ────────────
-        self.builder.position_at_end(cont_bb);
-    }
-
-    /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
-    /// call per eligible adaptive function (`@[adaptive] fn(i64) -> i64`).
-    /// Called from main's prologue.  No-op when no eligible functions exist
-    /// (no runtime cost for non-AI programs).  Eligibility was decided in
-    /// `emit_program` and recorded in `self.adaptive_registry_targets`.
-    fn emit_adaptive_registry_init(&mut self) {
-        if self.adaptive_registry_targets.is_empty() {
-            return;
-        }
-        let reg_fn = match self.module.get_function("__axon_register_adaptive") {
-            Some(f) => f,
-            None => return,
-        };
-        // Skip if the current basic block is already terminated (defensive).
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
-            return;
-        }
-        let i64_ty = self.context.i64_type();
-        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-        let targets = self.adaptive_registry_targets.clone();
-        for name in &targets {
-            let target_fn = match self.functions.get(name).copied() {
-                Some(f) => f,
-                None => continue,
-            };
-            let name_g = self
-                .builder
-                .build_global_string_ptr(name, "adapt_reg_name")
-                .unwrap();
-            let name_len = i64_ty.const_int(name.len() as u64, false);
-            // Cast the user fn's pointer to i8* for the C ABI.
-            let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
-            let cast_ptr = self
-                .builder
-                .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
-                .unwrap();
-            let _ = self.builder.build_call(
-                reg_fn,
-                &[
-                    name_g.as_pointer_value().into(),
-                    name_len.into(),
-                    cast_ptr.into(),
-                ],
-                "",
-            );
-        }
     }
 
     // ── Expression emission ───────────────────────────────────────────────────

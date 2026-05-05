@@ -362,6 +362,35 @@ in-flight Phase-5/6 codegen churn.
 **Acceptance**: `cargo build -p axon-core` completes in ≤ 10 min on the canonical dev
 machine; `cargo build` after editing only `codegen/expr.rs` completes in ≤ 60s.
 
+**Progress as of 2026-05-04** (commits `62bcc6f` + this):
+
+| Phase | Module | Lines moved | Status |
+|---|---|---|---|
+| 1   | `codegen/link.rs`  | 281 — free-function helpers (compile_bitcode_to_binary, emit_object_and_link, build_axon_rt, build_axon_ai, read_cross_linker) | ✅ landed |
+| 2.1 | `codegen/types.rs` | 210 — `llvm_type`, `llvm_sizeof`, `llvm_align_of` | ✅ landed |
+| 2.2 | `codegen/asi.rs`   | 279 — provenance log emission, @[verify] runtime gate, @[adaptive] registry init | ✅ landed |
+| 2.3 | `codegen/asi.rs` extension: `emit_binop_uncertain` (Layer-2 Uncertain<T> arithmetic) | ~100 lines | 🚧 pending — needs `emit_binop`/`emit_expr` to be `pub(super)` |
+| 2.4 | `codegen/match_pat.rs` (`emit_match`, `emit_pattern_test`, `emit_pattern_bindings`) | ~470 lines | 🚧 pending — needs many fields `pub(super)` for pattern bindings |
+| 2.5 | `codegen/option_result.rs` (emit_option, emit_result, extract_result_payload, emit_question) | ~200 lines | 🚧 pending |
+| 2.6 | `codegen/output.rs` (write_ir, compile_to_binary, emit_bitcode, run_tests) | ~150 lines | 🚧 pending |
+| 2.7 | `codegen/expr.rs` (decompose `emit_expr` 1380-line method into per-Expr-variant helpers, then move) | ~2000 lines | 🚧 high effort — central hub |
+| 2.8 | `codegen/builtins.rs` (decompose `declare_builtins` 3870-line method) | ~3000 lines | 🚧 highest effort — biggest single method |
+
+**State of mod.rs**: 8135 → 7457 lines (≈8% reduction). The bulk reduction comes
+from Phases 2.7 + 2.8 which require decomposing two giant methods, not just
+moving them.
+
+**Validation status**: Phase 1 + 2.1 + 2.2 are syntactically validated via
+`rustfmt --check` (parses cleanly) and the non-codegen-feature build via the
+parallel `axon-check` tool.  **Full type+visibility validation requires
+`cargo build -p axon-core` with the codegen feature** — not done in the
+landing session because the build pathologically slow on the WSL2 dev box
+(reached 6h+ before kill).  Worst-case failure modes from these moves are
+predictable: a few unused-import warnings in mod.rs (Command, Path, inkwell
+targets are now possibly orphan), and any visibility-cascade error would
+surface at compile time as a "private field" or "private method" diagnostic
+that's mechanically fixable.
+
 ---
 
 ## 8. De-prioritized / Out of Scope
