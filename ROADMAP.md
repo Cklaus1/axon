@@ -409,13 +409,36 @@ slow on the current WSL2 box (reached 6h+ before kill).
    are unchanged.  The expected speedup comes from incremental rebuild
    (changing one of the 8 sibling files leaves the other 7 cached).
 
-**Future work (Phase 3)**: actual *decomposition* of `declare_builtins` and
-`emit_expr` into per-builtin / per-Expr-variant helper methods.  This is what
-unlocks the trait-cache wins on clean builds.  Bounded by the number of
-distinct builtin entries (~80) and Expr variants (~30) — one ASI iteration
-per giant method to draft the decomposition, plus one validation cycle each
-on canonical hardware to confirm the codegen-feature build passes
-end-to-end.  Schedule after Phase 2 is validated to compile.
+**Phase 3 status (landed in commits a9bcf87 + d1d9e25)**:
+* 3.1: `emit_expr` (1,380 LoC giant method) → 15 per-Expr-variant helper methods
+* 3.2: `declare_builtins` (3,870 LoC giant method) → 4 per-section helper methods
+
+**Empirical finding from validation (2026-05-05)**: Phase 3 decomposition
+delivered a measurable but **insufficient** improvement.  Compared to the
+pre-decomposition pathological build (VmPeak 3.6 GB, 9h+ never finished):
+* Phase 3 build reached LLVM codegen (**272 object files emitted** vs. 0).
+* Early-phase VmPeak dropped to 1.59 GB (60% reduction).
+* But the build then stalled mid-codegen: VmPeak climbed back to 3.1 GB,
+  CPU sustained at 99% on one thread for 5h+, no further object file
+  output.  Killed at the 5h 30m mark.
+
+**Diagnosis**: the inkwell trait-explosion happens **per codegen unit
+during LLVM IR construction**, not just during front-end monomorphization.
+Module split (Phase 2) + method decomposition (Phase 3) reduced
+front-end load substantially, but the per-CGU LLVM lowering still hits
+the same wall when each CGU's share of inkwell calls is monomorphized
+into IR.
+
+**The real fix**: the inkwell shim ("Stretch²") below.  Wrap inkwell
+behind a monomorphic IR trait so codegen no longer feeds inkwell's
+generic API into LLVM lowering.  Phase 2 + Phase 3 are the *substrate*
+the shim will sit on; the shim is what unlocks fast clean builds.
+
+**Practical implication for ongoing work**: until the shim lands, the
+parallel `/tmp/axon-check` tool (no-default-features, no LLVM) remains
+the only way to validate `.ax` sources end-to-end.  Phase 5/6+ work can
+proceed against `axon-check` validation alone; full `axon run` testing
+is gated on the shim or on nightly `-Z parallel-frontend`.
 
 ---
 
