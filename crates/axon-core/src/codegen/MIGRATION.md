@@ -17,6 +17,45 @@ surface) and `ir_inkwell.rs` (the bounded inkwell impl).
 7. `builtins.rs`      — ~3,000 sites (bulk of the work)
 8. `mod.rs`           — ~200 sites
 
+## ⚠️ Architectural constraint discovered post-Step-0
+
+`InkwellBackend<'ctx>` (as written in `ir_inkwell.rs`) **owns its own
+`Module<'ctx>` and `Builder<'ctx>`** — separate from
+`Codegen::module` / `Codegen::builder`.  Each `inkwell::Module` is an
+isolated symbol table.
+
+**Implication**: if asi.rs migrates and declares `__axon_verify_panic`
+through `self.ir.add_function(…)`, the function lands in
+`self.ir.module`.  But un-migrated callers (in expr.rs, mod.rs, etc.)
+look up symbols via `self.module.get_function(…)` — which scans the
+*legacy* module, not the IR-backed one.  **The function isn't found.
+Linker error at runtime / call returns None, etc.**
+
+This means **partial migration is syntactically validatable but
+cannot link end-to-end**.  IR.3 batches still land safely as design
+drafts (they compile, types check), but a runnable binary requires
+EITHER:
+
+  a) **Atomic IR.3 + IR.4** — migrate all 7 modules in one PR, then
+     replace `Codegen::module/builder` with `Codegen::ir`'s.  The legacy
+     fields disappear; only one Module survives.  All call sites land
+     simultaneously.
+
+  b) **Re-architect `InkwellBackend` to share** Codegen's Module +
+     Builder via borrow / shared-owner pattern.  Then per-batch
+     migration is buildable end-to-end at every step.  This is the
+     better option but requires rewriting `ir_inkwell.rs::new` to take
+     existing module/builder by reference, plus arena-field placement
+     decisions.
+
+**Recommendation**: pursue (b) before any IR.3 batch.  Option (a) is
+all-or-nothing and can't be staged.  Option (b) has a clear scope:
+~30-line refactor of `ir_inkwell.rs::new` + `Codegen::new` + adjust
+trait signatures where they take `&mut self`.
+
+Until (b) is done, treat IR.3 migrations as design drafts only.  Don't
+attempt to validate them via `cargo build`.
+
 ## Step 0 — Wire `ir` into Codegen
 
 Once-per-codebase change before any per-module migration:
