@@ -155,16 +155,31 @@ pub struct Codegen<'ctx> {
     /// source-level operator (`">="`, `">"`, …) and `bound` is the literal K.
     /// `None` whenever the surrounding function has no decodable verify spec.
     pub(super) current_verify_fn: Option<(String, &'static str, f64)>,
+    /// IR.3 prep: a parallel inkwell-backed IR backend that codegen
+    /// modules can call via `self.ir.*` instead of `self.builder.*` /
+    /// `self.context.*` / `self.module.*`.  During the migration phase
+    /// (IR.3) both this field AND the legacy `context/module/builder`
+    /// fields are populated; modules migrate one at a time per
+    /// `MIGRATION.md`.  IR.4 will remove the legacy fields once every
+    /// caller has migrated.  Empty until first use; backend wraps its
+    /// own `Module<'ctx>` independent of `self.module`.
+    pub(super) ir: ir_inkwell::InkwellBackend<'ctx>,
 }
 
 impl<'ctx> Codegen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
         let module = context.create_module(module_name);
         let builder = context.create_builder();
+        // IR.3 prep: parallel IR-trait backend.  Owns its own LLVM module
+        // (named with a "_ir" suffix to keep it distinct from the legacy
+        // `module`).  Empty until callers start dispatching through
+        // `self.ir.*`; harmless overhead until IR.4 removes the legacy fields.
+        let ir = ir_inkwell::InkwellBackend::new(context, &format!("{}_ir", module_name));
         Self {
             context,
             module,
             builder,
+            ir,
             locals: HashMap::new(),
             functions: HashMap::new(),
             struct_fields: HashMap::new(),
