@@ -19,3 +19,6 @@ axon_out_*
 # OS
 .DS_Store
 Thumbs.db
+
+# Claude Code per-session state (worktrees, locks)
+.claude/
