@@ -65,10 +65,6 @@ pub use output::TestResult;
 // `compile_bitcode_to_binary` via `axon_core::codegen::compile_bitcode_to_binary`.
 pub use link::compile_bitcode_to_binary;
 
-// `emit_object_and_link` is invoked by the Codegen impl during the link step;
-// import it locally so call sites in this file remain unchanged.
-use link::emit_object_and_link;
-
 /// Phase 4 `@[adaptive]`: returns true if the attribute list contains an
 /// `adaptive` annotation (regardless of its argument list).  Used by
 /// `emit_fn` to decide whether to inject `__axon_provenance_log` calls.

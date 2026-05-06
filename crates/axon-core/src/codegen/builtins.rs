@@ -17,7 +17,7 @@
 #[allow(unused_imports)]
 use std::collections::HashMap;
 
-use inkwell::types::{BasicType, BasicTypeEnum, BasicMetadataTypeEnum};
+use inkwell::types::{BasicTypeEnum, BasicMetadataTypeEnum};
 use inkwell::values::{BasicMetadataValueEnum, FunctionValue};
 use inkwell::AddressSpace;
 use inkwell::FloatPredicate;

@@ -12,7 +12,7 @@
 //! No state is mutated by any of these methods — they are pure functions of
 //! `&self` and the input `Type`.
 
-use inkwell::types::{BasicType, BasicTypeEnum};
+use inkwell::types::BasicTypeEnum;
 use inkwell::AddressSpace;
 
 use crate::types::Type;

@@ -312,10 +312,12 @@ impl<'ctx> super::Codegen<'ctx> {
             if let Some(Type::Uncertain(_)) = sem {
                 if let BasicValueEnum::StructValue(sv) = val {
                     let v = this
+                        .ir
                         .builder
                         .build_extract_value(sv, 0, "unc_v")
                         .ok()?;
                     let c = this
+                        .ir
                         .builder
                         .build_extract_value(sv, 1, "unc_c")
                         .ok()?
