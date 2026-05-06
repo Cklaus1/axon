@@ -22,47 +22,47 @@ impl<'ctx> super::Codegen<'ctx> {
         inner: Option<BasicValueEnum<'ctx>>,
         inner_ty: &Type,
     ) -> BasicValueEnum<'ctx> {
-        let tag_ty = self.context.bool_type();
+        let tag_ty = self.ir.context.bool_type();
 
         match inner {
             Some(val) => {
                 let llvm_inner = val.get_type();
-                let opt_ty = self.context.struct_type(
+                let opt_ty = self.ir.context.struct_type(
                     &[tag_ty.into(), llvm_inner],
                     false,
                 );
-                let alloca = self.builder.build_alloca(opt_ty, "some").unwrap();
-                let tag_ptr = self
+                let alloca = self.ir.builder.build_alloca(opt_ty, "some").unwrap();
+                let tag_ptr = self.ir
                     .builder
                     .build_struct_gep(opt_ty, alloca, 0, "tagptr")
                     .unwrap();
-                let val_ptr = self
+                let val_ptr = self.ir
                     .builder
                     .build_struct_gep(opt_ty, alloca, 1, "valptr")
                     .unwrap();
-                self.builder
+                self.ir.builder
                     .build_store(tag_ptr, tag_ty.const_int(1, false))
                     .unwrap();
-                self.builder.build_store(val_ptr, val).unwrap();
-                self.builder.build_load(opt_ty, alloca, "someval").unwrap()
+                self.ir.builder.build_store(val_ptr, val).unwrap();
+                self.ir.builder.build_load(opt_ty, alloca, "someval").unwrap()
             }
             None => {
                 // None: if we have a known inner type, build { false, undef }
                 let llvm_inner = self.llvm_type(inner_ty);
                 if let Some(inner_llvm_ty) = llvm_inner {
-                    let opt_ty = self.context.struct_type(
+                    let opt_ty = self.ir.context.struct_type(
                         &[tag_ty.into(), inner_llvm_ty],
                         false,
                     );
-                    let alloca = self.builder.build_alloca(opt_ty, "none").unwrap();
-                    let tag_ptr = self
+                    let alloca = self.ir.builder.build_alloca(opt_ty, "none").unwrap();
+                    let tag_ptr = self.ir
                         .builder
                         .build_struct_gep(opt_ty, alloca, 0, "tagptr")
                         .unwrap();
-                    self.builder
+                    self.ir.builder
                         .build_store(tag_ptr, tag_ty.const_zero())
                         .unwrap();
-                    self.builder.build_load(opt_ty, alloca, "noneval").unwrap()
+                    self.ir.builder.build_load(opt_ty, alloca, "noneval").unwrap()
                 } else {
                     // Unit inner: None is just `false`.
                     tag_ty.const_zero().into()
@@ -78,7 +78,7 @@ impl<'ctx> super::Codegen<'ctx> {
         is_ok: bool,
         val: BasicValueEnum<'ctx>,
     ) -> BasicValueEnum<'ctx> {
-        let tag_ty = self.context.bool_type();
+        let tag_ty = self.ir.context.bool_type();
         let tag_val = tag_ty.const_int(if is_ok { 1 } else { 0 }, false);
 
         if let Some((ok_ty, err_ty)) = self.current_result_types.clone() {
@@ -87,46 +87,46 @@ impl<'ctx> super::Codegen<'ctx> {
             let ok_size = self.llvm_sizeof(&ok_ty).unwrap_or(0);
             let err_size = self.llvm_sizeof(&err_ty).unwrap_or(0);
             let payload_size = ok_size.max(err_size).max(1) as u32;
-            let i8_ty = self.context.i8_type();
+            let i8_ty = self.ir.context.i8_type();
             let payload_arr_ty = i8_ty.array_type(payload_size);
-            let result_ty = self.context.struct_type(
+            let result_ty = self.ir.context.struct_type(
                 &[tag_ty.into(), payload_arr_ty.into()], false,
             );
 
-            let alloca = self.builder.build_alloca(result_ty, "result").unwrap();
-            let tag_ptr = self.builder
+            let alloca = self.ir.builder.build_alloca(result_ty, "result").unwrap();
+            let tag_ptr = self.ir.builder
                 .build_struct_gep(result_ty, alloca, 0, "tagptr")
                 .unwrap();
-            let pay_ptr = self.builder
+            let pay_ptr = self.ir.builder
                 .build_struct_gep(result_ty, alloca, 1, "payptr")
                 .unwrap();
 
-            self.builder.build_store(tag_ptr, tag_val).unwrap();
+            self.ir.builder.build_store(tag_ptr, tag_val).unwrap();
             // Cast the payload pointer to the value's typed pointer before storing,
             // so the store type matches the pointer's element type.
             let val_ptr_ty = val.get_type().ptr_type(inkwell::AddressSpace::default());
-            let typed_pay_ptr = self.builder
+            let typed_pay_ptr = self.ir.builder
                 .build_pointer_cast(pay_ptr, val_ptr_ty, "pay_typed")
                 .unwrap();
-            self.builder.build_store(typed_pay_ptr, val).unwrap();
+            self.ir.builder.build_store(typed_pay_ptr, val).unwrap();
 
-            self.builder.build_load(result_ty, alloca, "resultval").unwrap()
+            self.ir.builder.build_load(result_ty, alloca, "resultval").unwrap()
         } else {
             // Fallback: simple { i1, T } when no type info is available.
             let payload_ty = val.get_type();
-            let result_ty = self.context.struct_type(
+            let result_ty = self.ir.context.struct_type(
                 &[tag_ty.into(), payload_ty], false,
             );
-            let alloca = self.builder.build_alloca(result_ty, "result").unwrap();
-            let tag_ptr = self.builder
+            let alloca = self.ir.builder.build_alloca(result_ty, "result").unwrap();
+            let tag_ptr = self.ir.builder
                 .build_struct_gep(result_ty, alloca, 0, "tagptr")
                 .unwrap();
-            let val_ptr = self.builder
+            let val_ptr = self.ir.builder
                 .build_struct_gep(result_ty, alloca, 1, "valptr")
                 .unwrap();
-            self.builder.build_store(tag_ptr, tag_val).unwrap();
-            self.builder.build_store(val_ptr, val).unwrap();
-            self.builder.build_load(result_ty, alloca, "resultval").unwrap()
+            self.ir.builder.build_store(tag_ptr, tag_val).unwrap();
+            self.ir.builder.build_store(val_ptr, val).unwrap();
+            self.ir.builder.build_load(result_ty, alloca, "resultval").unwrap()
         }
     }
 
@@ -138,13 +138,13 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let llvm_ty = self.llvm_type(typed_ty)?;
         let arr_ty = payload.get_type();
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let arr_alloca = self.builder.build_alloca(arr_ty, "payloadalc").unwrap();
-        self.builder.build_store(arr_alloca, payload).unwrap();
-        let typed_ptr = self.builder
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let arr_alloca = self.ir.builder.build_alloca(arr_ty, "payloadalc").unwrap();
+        self.ir.builder.build_store(arr_alloca, payload).unwrap();
+        let typed_ptr = self.ir.builder
             .build_pointer_cast(arr_alloca, ptr_ty, "payloadptr")
             .unwrap();
-        let val = self.builder.build_load(llvm_ty, typed_ptr, "payloadval").unwrap();
+        let val = self.ir.builder.build_load(llvm_ty, typed_ptr, "payloadval").unwrap();
         Some(val)
     }
 
@@ -166,7 +166,7 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Extract the tag (field 0).
-        let tag = self
+        let tag = self.ir
             .builder
             .build_extract_value(result_val.into_struct_value(), 0, "qtag")
             .unwrap();
@@ -177,17 +177,17 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Build the two branches: ok_bb and err_bb.
-        let ok_bb = self.context.append_basic_block(fn_val, "q_ok");
-        let err_bb = self.context.append_basic_block(fn_val, "q_err");
+        let ok_bb = self.ir.context.append_basic_block(fn_val, "q_ok");
+        let err_bb = self.ir.context.append_basic_block(fn_val, "q_err");
 
-        self.builder
+        self.ir.builder
             .build_conditional_branch(tag_int, ok_bb, err_bb)
             .unwrap();
 
         // --- Err branch: early return an Err using the *outer* function's Result type.
         // This ensures the return type matches the enclosing function's signature.
-        self.builder.position_at_end(err_bb);
-        let err_payload = self
+        self.ir.builder.position_at_end(err_bb);
+        let err_payload = self.ir
             .builder
             .build_extract_value(result_val.into_struct_value(), 1, "qerr_payload")
             .unwrap();
@@ -203,11 +203,11 @@ impl<'ctx> super::Codegen<'ctx> {
             result_val
         };
         self.log_return_if_adaptive();
-        self.builder.build_return(Some(&err_return_val)).unwrap();
+        self.ir.builder.build_return(Some(&err_return_val)).unwrap();
 
         // --- Ok branch: extract the typed Ok payload using extract_result_payload.
-        self.builder.position_at_end(ok_bb);
-        let raw_payload = self
+        self.ir.builder.position_at_end(ok_bb);
+        let raw_payload = self.ir
             .builder
             .build_extract_value(result_val.into_struct_value(), 1, "qpayload")
             .unwrap();

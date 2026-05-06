@@ -88,9 +88,6 @@ fn ast_type_simple_name(ty: &AxonType) -> String {
 // ── Public surface ────────────────────────────────────────────────────────────
 
 pub struct Codegen<'ctx> {
-    pub context: &'ctx Context,
-    pub module: Module<'ctx>,
-    pub builder: Builder<'ctx>,
     /// Maps local variable names to their alloca pointers and LLVM types.
     locals: HashMap<String, (PointerValue<'ctx>, BasicTypeEnum<'ctx>)>,
     /// Maps fn names to the LLVM function value.
@@ -156,29 +153,26 @@ pub struct Codegen<'ctx> {
     /// `None` whenever the surrounding function has no decodable verify spec.
     pub(super) current_verify_fn: Option<(String, &'static str, f64)>,
     /// IR.3 prep: a parallel inkwell-backed IR backend that codegen
-    /// modules can call via `self.ir.*` instead of `self.builder.*` /
-    /// `self.context.*` / `self.module.*`.  During the migration phase
+    /// modules can call via `self.ir.*` instead of `self.ir.builder.*` /
+    /// `self.ir.context.*` / `self.ir.module.*`.  During the migration phase
     /// (IR.3) both this field AND the legacy `context/module/builder`
     /// fields are populated; modules migrate one at a time per
     /// `MIGRATION.md`.  IR.4 will remove the legacy fields once every
     /// caller has migrated.  Empty until first use; backend wraps its
-    /// own `Module<'ctx>` independent of `self.module`.
+    /// own `Module<'ctx>` independent of `self.ir.module`.
     pub(super) ir: ir_inkwell::InkwellBackend<'ctx>,
 }
 
 impl<'ctx> Codegen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
+        // IR_REARCH.md option (c): InkwellBackend owns the only module +
+        // builder.  Codegen accesses them through `self.ir.{module,
+        // builder, context}`.  Single symbol table → IR.3 partial
+        // migrations are end-to-end linkable.
         let module = context.create_module(module_name);
         let builder = context.create_builder();
-        // IR.3 prep: parallel IR-trait backend.  Owns its own LLVM module
-        // (named with a "_ir" suffix to keep it distinct from the legacy
-        // `module`).  Empty until callers start dispatching through
-        // `self.ir.*`; harmless overhead until IR.4 removes the legacy fields.
-        let ir = ir_inkwell::InkwellBackend::new(context, &format!("{}_ir", module_name));
+        let ir = ir_inkwell::InkwellBackend::adopt(context, module, builder);
         Self {
-            context,
-            module,
-            builder,
             ir,
             locals: HashMap::new(),
             functions: HashMap::new(),
@@ -244,7 +238,7 @@ impl<'ctx> Codegen<'ctx> {
     /// For each `impl Trait for Type`, declare a thunk function per trait method.
     /// The thunk takes `ptr` as self (for uniform vtable ABI) and calls the concrete impl.
     fn declare_vtable_thunks(&mut self, program: &ast::Program) {
-        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
 
         // Collect all impl blocks first (avoid borrow issues with trait_defs).
         let impls: Vec<ast::ImplBlock> = program.items.iter()
@@ -279,12 +273,12 @@ impl<'ctx> Codegen<'ctx> {
                 let (fn_val, fn_ty) = match self.llvm_type(&ret_sem) {
                     Some(ret_ty) => {
                         let fn_ty = ret_ty.fn_type(&param_tys, false);
-                        let fv = self.module.add_function(&thunk_name, fn_ty, None);
+                        let fv = self.ir.module.add_function(&thunk_name, fn_ty, None);
                         (fv, fn_ty)
                     }
                     None => {
-                        let fn_ty = self.context.void_type().fn_type(&param_tys, false);
-                        let fv = self.module.add_function(&thunk_name, fn_ty, None);
+                        let fn_ty = self.ir.context.void_type().fn_type(&param_tys, false);
+                        let fv = self.ir.module.add_function(&thunk_name, fn_ty, None);
                         (fv, fn_ty)
                     }
                 };
@@ -307,7 +301,7 @@ impl<'ctx> Codegen<'ctx> {
                     .iter()
                     .filter_map(|f| self.llvm_type_from_axon(&f.ty))
                     .collect();
-                let named_struct = self.context.opaque_struct_type(&td.name);
+                let named_struct = self.ir.context.opaque_struct_type(&td.name);
                 named_struct.set_body(&field_types, false);
                 let field_names: Vec<String> =
                     td.fields.iter().map(|f| f.name.clone()).collect();
@@ -323,8 +317,8 @@ impl<'ctx> Codegen<'ctx> {
     fn declare_enum_types(&mut self, program: &ast::Program) {
         for item in &program.items {
             if let ast::Item::EnumDef(ed) = item {
-                let i32_ty = self.context.i32_type();
-                let i8_ty = self.context.i8_type();
+                let i32_ty = self.ir.context.i32_type();
+                let i8_ty = self.ir.context.i8_type();
 
                 // Compute field semantic types and payload size for each variant.
                 let mut variants_info: Vec<(String, usize, Vec<Type>)> = Vec::new();
@@ -350,7 +344,7 @@ impl<'ctx> Codegen<'ctx> {
                 let payload_size = max_size.max(1) as u32;
 
                 let struct_name = format!("{}_enum", ed.name);
-                let named_struct = self.context.opaque_struct_type(&struct_name);
+                let named_struct = self.ir.context.opaque_struct_type(&struct_name);
                 named_struct.set_body(
                     &[i32_ty.into(), i8_ty.array_type(payload_size).into()],
                     false,
@@ -385,17 +379,17 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap_or(Type::Unit);
 
         let fn_val = if name == "main" && matches!(ret_sem, Type::Unit) {
-            let fn_ty = self.context.i32_type().fn_type(&param_tys, false);
-            self.module.add_function("main", fn_ty, None)
+            let fn_ty = self.ir.context.i32_type().fn_type(&param_tys, false);
+            self.ir.module.add_function("main", fn_ty, None)
         } else {
             match self.llvm_type(&ret_sem) {
                 Some(ret_ty) => {
                     let fn_ty = ret_ty.fn_type(&param_tys, /*variadic=*/ false);
-                    self.module.add_function(name, fn_ty, None)
+                    self.ir.module.add_function(name, fn_ty, None)
                 }
                 None => {
-                    let fn_ty = self.context.void_type().fn_type(&param_tys, false);
-                    self.module.add_function(name, fn_ty, None)
+                    let fn_ty = self.ir.context.void_type().fn_type(&param_tys, false);
+                    self.ir.module.add_function(name, fn_ty, None)
                 }
             }
         };
@@ -511,9 +505,9 @@ impl<'ctx> Codegen<'ctx> {
                     None => continue,
                 };
 
-                let saved = self.builder.get_insert_block();
-                let entry = self.context.append_basic_block(thunk_fn, "entry");
-                self.builder.position_at_end(entry);
+                let saved = self.ir.builder.get_insert_block();
+                let entry = self.ir.context.append_basic_block(thunk_fn, "entry");
+                self.ir.builder.position_at_end(entry);
 
                 // Parameter 0 is `ptr self_ptr`; load the concrete type from it.
                 let self_ptr = thunk_fn.get_nth_param(0).unwrap().into_pointer_value();
@@ -531,7 +525,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 if has_self_param {
                     if let Some(ty) = concrete_llvm_ty {
-                        let self_val = self.builder.build_load(ty, self_ptr, "self_val").unwrap();
+                        let self_val = self.ir.builder.build_load(ty, self_ptr, "self_val").unwrap();
                         call_args.push(self_val.into());
                     } else {
                         // Opaque self — pass the ptr directly.
@@ -547,27 +541,27 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
 
-                let call = self.builder.build_call(concrete_fn, &call_args, "thunk_ret").unwrap();
+                let call = self.ir.builder.build_call(concrete_fn, &call_args, "thunk_ret").unwrap();
                 let ret_sem = tm.return_type.as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
                     .unwrap_or(crate::types::Type::Unit);
 
                 if matches!(ret_sem, crate::types::Type::Unit) {
-                    self.builder.build_return(None).unwrap();
+                    self.ir.builder.build_return(None).unwrap();
                 } else if let Some(ret_val) = call.try_as_basic_value().left() {
-                    self.builder.build_return(Some(&ret_val)).unwrap();
+                    self.ir.builder.build_return(Some(&ret_val)).unwrap();
                 } else {
-                    self.builder.build_return(None).unwrap();
+                    self.ir.builder.build_return(None).unwrap();
                 }
 
-                if let Some(b) = saved { self.builder.position_at_end(b); }
+                if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             }
         }
     }
 
     /// Emit one `@vtable_Trait_Type = constant [N x ptr] [...]` global per impl block.
     fn emit_vtable_globals(&mut self, program: &ast::Program) {
-        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
 
         let impls: Vec<ast::ImplBlock> = program.items.iter()
             .filter_map(|item| if let ast::Item::ImplBlock(b) = item { Some(b.clone()) } else { None })
@@ -599,7 +593,7 @@ impl<'ctx> Codegen<'ctx> {
             let arr_const = i8_ptr.const_array(&thunk_ptrs);
 
             let global_name = format!("vtable_{trait_name}_{type_name}");
-            let global = self.module.add_global(arr_ty, None, &global_name);
+            let global = self.ir.module.add_global(arr_ty, None, &global_name);
             global.set_initializer(&arr_const);
             global.set_constant(true);
 
@@ -610,8 +604,8 @@ impl<'ctx> Codegen<'ctx> {
     // ── Function bodies ───────────────────────────────────────────────────────
 
     fn emit_fn(&mut self, f: &ast::FnDef, llvm_fn: FunctionValue<'ctx>) {
-        let entry = self.context.append_basic_block(llvm_fn, "entry");
-        self.builder.position_at_end(entry);
+        let entry = self.ir.context.append_basic_block(llvm_fn, "entry");
+        self.ir.builder.position_at_end(entry);
 
         // Save outer locals/types; reset for this function scope.
         let saved_locals = std::mem::take(&mut self.locals);
@@ -677,9 +671,9 @@ impl<'ctx> Codegen<'ctx> {
         for (i, param) in f.params.iter().enumerate() {
             let sem_ty = self.axon_type_to_semantic(&param.ty);
             if let Some(llvm_ty) = self.llvm_type(&sem_ty) {
-                let alloca = self.builder.build_alloca(llvm_ty, &param.name).unwrap();
+                let alloca = self.ir.builder.build_alloca(llvm_ty, &param.name).unwrap();
                 if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
-                    self.builder.build_store(alloca, arg).unwrap();
+                    self.ir.builder.build_store(alloca, arg).unwrap();
                 }
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
                 self.local_types.insert(param.name.clone(), sem_ty);
@@ -689,23 +683,23 @@ impl<'ctx> Codegen<'ctx> {
         let body_val = self.emit_expr(&f.body, llvm_fn);
 
         // Emit return if the builder is still on a live block.
-        if self
+        if self.ir
             .builder
             .get_insert_block()
             .and_then(|b| b.get_terminator())
             .is_none()
         {
             if f.name == "main" && matches!(ret_sem, Type::Unit) {
-                let zero = self.context.i32_type().const_int(0, false);
+                let zero = self.ir.context.i32_type().const_int(0, false);
                 // main() returning 0 isn't an interesting score; use the legacy event log.
                 self.log_return_if_adaptive();
-                self.builder.build_return(Some(&zero)).unwrap();
+                self.ir.builder.build_return(Some(&zero)).unwrap();
             } else {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
                         self.log_return_if_adaptive_val(v);
                         self.emit_verify_check_if_needed(v, llvm_fn);
-                        self.builder.build_return(Some(&v)).unwrap();
+                        self.ir.builder.build_return(Some(&v)).unwrap();
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
                         // No value from body but function has non-void return type:
@@ -714,15 +708,15 @@ impl<'ctx> Codegen<'ctx> {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
                             self.emit_verify_check_if_needed(zero_val, llvm_fn);
-                            self.builder.build_return(Some(&zero_val)).unwrap();
+                            self.ir.builder.build_return(Some(&zero_val)).unwrap();
                         } else {
                             self.log_return_if_adaptive();
-                            self.builder.build_return(None).unwrap();
+                            self.ir.builder.build_return(None).unwrap();
                         }
                     }
                     _ => {
                         self.log_return_if_adaptive();
-                        self.builder.build_return(None).unwrap();
+                        self.ir.builder.build_return(None).unwrap();
                     }
                 }
             }
@@ -830,7 +824,7 @@ impl<'ctx> Codegen<'ctx> {
                 _ => Type::I64,
             },
             BasicValueEnum::FloatValue(f) => {
-                if f.get_type() == self.context.f32_type() {
+                if f.get_type() == self.ir.context.f32_type() {
                     Type::F32
                 } else {
                     Type::F64
@@ -963,7 +957,7 @@ impl<'ctx> Codegen<'ctx> {
                 let sname = if let Type::Struct(sn) = recv_ty { sn } else { return None; };
                 let field_names = self.struct_fields.get(&sname)?;
                 let idx = field_names.iter().position(|n| n == field)?;
-                let struct_ty = self.module.get_struct_type(&sname)?;
+                let struct_ty = self.ir.module.get_struct_type(&sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
                 // Convert the LLVM field type back to a semantic type via local_types heuristics.
                 // For struct fields, we need to look up the LLVM type name.
@@ -971,7 +965,7 @@ impl<'ctx> Codegen<'ctx> {
                     BasicTypeEnum::IntType(it) => Some(match it.get_bit_width() {
                         1 => Type::Bool, 8 => Type::I8, 16 => Type::I16, 32 => Type::I32, _ => Type::I64,
                     }),
-                    BasicTypeEnum::FloatType(ft) => Some(if ft == self.context.f32_type() { Type::F32 } else { Type::F64 }),
+                    BasicTypeEnum::FloatType(ft) => Some(if ft == self.ir.context.f32_type() { Type::F32 } else { Type::F64 }),
                     BasicTypeEnum::StructType(st) => {
                         // Try to find the struct name in the module.
                         st.get_name().and_then(|n| n.to_str().ok()).map(|n| {

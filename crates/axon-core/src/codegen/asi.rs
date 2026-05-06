@@ -8,11 +8,11 @@
 //!   * `__axon_verify_panic` runtime gate emission (Layer 3 @[verify])
 //!
 //! All methods are `pub(super)` so the parent `codegen::mod` impl block can
-//! call them.  No fields are mutated except `self.builder`'s position;
+//! call them.  No fields are mutated except `self.ir.builder`'s position;
 //! callers must restore the insert block when needed.
 //!
-//! Field visibility requirements: this file accesses `self.builder`,
-//! `self.context`, `self.module` (all `pub`), plus the ASI-specific state
+//! Field visibility requirements: this file accesses `self.ir.builder`,
+//! `self.ir.context`, `self.ir.module` (all `pub`), plus the ASI-specific state
 //! `self.adaptive_registry_targets`, `self.current_adaptive_fn`,
 //! `self.current_verify_fn`, and `self.functions` (made `pub(super)` in
 //! `mod.rs` to support this extraction).
@@ -29,20 +29,20 @@ impl<'ctx> super::Codegen<'ctx> {
     /// builder position.  Used at function prologues and immediately before
     /// every `build_return` in adaptive functions.
     pub(super) fn emit_provenance_log(&mut self, fn_name: &str, event: &str) {
-        let prov_fn = match self.module.get_function("__axon_provenance_log") {
+        let prov_fn = match self.ir.module.get_function("__axon_provenance_log") {
             Some(f) => f,
             None => return, // safety: declare_builtins should have added this
         };
         // Skip if the current basic block is already terminated.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
             return;
         }
-        let i64_ty = self.context.i64_type();
-        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
-        let evt_g  = self.builder.build_global_string_ptr(event,   "prov_event").unwrap();
+        let i64_ty = self.ir.context.i64_type();
+        let name_g = self.ir.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let evt_g  = self.ir.builder.build_global_string_ptr(event,   "prov_event").unwrap();
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
         let evt_len  = i64_ty.const_int(event.len()    as u64, false);
-        let _ = self.builder.build_call(
+        let _ = self.ir.builder.build_call(
             prov_fn,
             &[
                 name_g.as_pointer_value().into(),
@@ -62,18 +62,18 @@ impl<'ctx> super::Codegen<'ctx> {
     /// the on-disk JSONL stays complete.
     pub(super) fn emit_provenance_log_ret(&mut self, fn_name: &str, ret_val: BasicValueEnum<'ctx>) {
         // Skip if the current basic block is already terminated.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
             return;
         }
-        let i64_ty = self.context.i64_type();
-        let f64_ty = self.context.f64_type();
-        let name_g = self.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let i64_ty = self.ir.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let name_g = self.ir.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
 
         match ret_val {
             BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
-                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_i64") {
-                    let _ = self.builder.build_call(
+                if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_i64") {
+                    let _ = self.ir.builder.build_call(
                         rt,
                         &[name_g.as_pointer_value().into(), name_len.into(), iv.into()],
                         "",
@@ -82,8 +82,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
             BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => {
-                if let Some(rt) = self.module.get_function("__axon_provenance_log_ret_f64") {
-                    let _ = self.builder.build_call(
+                if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_f64") {
+                    let _ = self.ir.builder.build_call(
                         rt,
                         &[name_g.as_pointer_value().into(), name_len.into(), fv.into()],
                         "",
@@ -150,14 +150,14 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Defensive: skip if the runtime extern isn't declared.
-        let panic_fn = match self.module.get_function("__axon_verify_panic") {
+        let panic_fn = match self.ir.module.get_function("__axon_verify_panic") {
             Some(f) => f,
             None => return,
         };
 
         // Skip if the current basic block is already terminated — we can't
         // legally insert further IR there.
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
             return;
         }
 
@@ -169,9 +169,9 @@ impl<'ctx> super::Codegen<'ctx> {
             BasicValueEnum::StructValue(sv) => sv,
             _ => return,
         };
-        let f64_ty = self.context.f64_type();
+        let f64_ty = self.ir.context.f64_type();
         // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
-        let conf_ev = match self.builder.build_extract_value(struct_val, 1, "verify_conf") {
+        let conf_ev = match self.ir.builder.build_extract_value(struct_val, 1, "verify_conf") {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -195,26 +195,26 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         let bound_const = f64_ty.const_float(bound);
-        let cmp = match self.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
+        let cmp = match self.ir.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
             Ok(v) => v,
             Err(_) => return,
         };
 
         // Build branch: cmp ? continue : panic.  We append two blocks to the
         // current function and route the *current* block into them.
-        let panic_bb = self.context.append_basic_block(llvm_fn, "verify_panic");
-        let cont_bb  = self.context.append_basic_block(llvm_fn, "verify_ok");
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "verify_panic");
+        let cont_bb  = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
 
-        let _ = self.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
+        let _ = self.ir.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
 
         // ── Panic path ────────────────────────────────────────────────────
-        self.builder.position_at_end(panic_bb);
-        let i64_ty = self.context.i64_type();
-        let name_g = self.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
-        let op_g   = self.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
+        self.ir.builder.position_at_end(panic_bb);
+        let i64_ty = self.ir.context.i64_type();
+        let name_g = self.ir.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
+        let op_g   = self.ir.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
         let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
-        let _ = self.builder.build_call(
+        let _ = self.ir.builder.build_call(
             panic_fn,
             &[
                 name_g.as_pointer_value().into(),
@@ -226,10 +226,10 @@ impl<'ctx> super::Codegen<'ctx> {
             ],
             "",
         );
-        let _ = self.builder.build_unreachable();
+        let _ = self.ir.builder.build_unreachable();
 
         // ── Continue path: original return falls through here. ────────────
-        self.builder.position_at_end(cont_bb);
+        self.ir.builder.position_at_end(cont_bb);
     }
 
     /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
@@ -241,34 +241,34 @@ impl<'ctx> super::Codegen<'ctx> {
         if self.adaptive_registry_targets.is_empty() {
             return;
         }
-        let reg_fn = match self.module.get_function("__axon_register_adaptive") {
+        let reg_fn = match self.ir.module.get_function("__axon_register_adaptive") {
             Some(f) => f,
             None => return,
         };
         // Skip if the current basic block is already terminated (defensive).
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
             return;
         }
-        let i64_ty = self.context.i64_type();
-        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
+        let i8_ptr = self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default());
         let targets = self.adaptive_registry_targets.clone();
         for name in &targets {
             let target_fn = match self.functions.get(name).copied() {
                 Some(f) => f,
                 None => continue,
             };
-            let name_g = self
+            let name_g = self.ir
                 .builder
                 .build_global_string_ptr(name, "adapt_reg_name")
                 .unwrap();
             let name_len = i64_ty.const_int(name.len() as u64, false);
             // Cast the user fn's pointer to i8* for the C ABI.
             let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
-            let cast_ptr = self
+            let cast_ptr = self.ir
                 .builder
                 .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
                 .unwrap();
-            let _ = self.builder.build_call(
+            let _ = self.ir.builder.build_call(
                 reg_fn,
                 &[
                     name_g.as_pointer_value().into(),
@@ -299,8 +299,8 @@ impl<'ctx> super::Codegen<'ctx> {
     ) -> Option<BasicValueEnum<'ctx>> {
         let lhs = self.emit_expr(left, fn_val)?;
         let rhs = self.emit_expr(right, fn_val)?;
-        let f64_ty = self.context.f64_type();
-        let i64_ty = self.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let i64_ty = self.ir.context.i64_type();
         let one_conf = f64_ty.const_float(1.0);
 
         // Extract (value, confidence) from a side that may or may not be Uncertain.
@@ -332,11 +332,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let (r_val, r_conf) = extract(self, rhs, rt_sem)?;
 
         // min(l_conf, r_conf): select the smaller of the two via OLT compare.
-        let cmp = self
+        let cmp = self.ir
             .builder
             .build_float_compare(FloatPredicate::OLT, l_conf, r_conf, "uconf_lt")
             .ok()?;
-        let new_conf = self
+        let new_conf = self.ir
             .builder
             .build_select(cmp, l_conf, r_conf, "uconf_min")
             .ok()?
@@ -364,24 +364,24 @@ impl<'ctx> super::Codegen<'ctx> {
         );
         let result_inner_ty = if is_cmp { Type::Bool } else { inner_ty.clone() };
         let result_inner_llvm = self.llvm_type(&result_inner_ty)?;
-        let result_struct_ty = self.context.struct_type(
+        let result_struct_ty = self.ir.context.struct_type(
             &[result_inner_llvm, f64_ty.into(), i64_ty.into()],
             false,
         );
 
         // Build { value, confidence, source_tag = 0 }.
         let mut sv = result_struct_ty.get_undef();
-        sv = self
+        sv = self.ir
             .builder
             .build_insert_value(sv, op_result, 0, "unc_iv")
             .ok()?
             .into_struct_value();
-        sv = self
+        sv = self.ir
             .builder
             .build_insert_value(sv, new_conf, 1, "unc_ic")
             .ok()?
             .into_struct_value();
-        sv = self
+        sv = self.ir
             .builder
             .build_insert_value(sv, i64_ty.const_zero(), 2, "unc_is")
             .ok()?

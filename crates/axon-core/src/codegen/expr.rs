@@ -44,7 +44,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Identifier (load from local) ─────────────────────────────────
             ast::Expr::Ident(name) => {
                 if let Some((ptr, llvm_ty)) = self.locals.get(name).cloned() {
-                    let val = self.builder.build_load(llvm_ty, ptr, name).unwrap();
+                    let val = self.ir.builder.build_load(llvm_ty, ptr, name).unwrap();
                     return Some(val);
                 }
                 // Fall back to checking module-level comptime constants.
@@ -67,11 +67,11 @@ impl<'ctx> super::Codegen<'ctx> {
                         idx_map.get(name).map(|&idx| (*env_ptr, *env_ty, idx))
                     });
                 if let Some((env_ptr, env_ty, idx)) = env_lookup {
-                    let field_ptr = self.builder
+                    let field_ptr = self.ir.builder
                         .build_struct_gep(env_ty, env_ptr, idx, name)
                         .unwrap();
-                    let i64_ty = self.context.i64_type();
-                    let val = self.builder
+                    let i64_ty = self.ir.context.i64_type();
+                    let val = self.ir.builder
                         .build_load(i64_ty, field_ptr, name)
                         .unwrap();
                     return Some(val);
@@ -91,8 +91,8 @@ impl<'ctx> super::Codegen<'ctx> {
             | ast::Expr::RefBind { name, value } => {
                 let sem_ty = self.infer_expr_sem_type(value);
                 let val = self.emit_expr(value, fn_val)?;
-                let alloca = self.builder.build_alloca(val.get_type(), name).unwrap();
-                self.builder.build_store(alloca, val).unwrap();
+                let alloca = self.ir.builder.build_alloca(val.get_type(), name).unwrap();
+                self.ir.builder.build_store(alloca, val).unwrap();
                 self.locals.insert(name.clone(), (alloca, val.get_type()));
                 if let Some(ty) = sem_ty {
                     self.local_types.insert(name.clone(), ty);
@@ -133,18 +133,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 match op {
                     ast::UnaryOp::Neg => match val {
                         BasicValueEnum::IntValue(i) => {
-                            let neg = self.builder.build_int_neg(i, "neg").unwrap();
+                            let neg = self.ir.builder.build_int_neg(i, "neg").unwrap();
                             Some(neg.into())
                         }
                         BasicValueEnum::FloatValue(f) => {
-                            let neg = self.builder.build_float_neg(f, "fneg").unwrap();
+                            let neg = self.ir.builder.build_float_neg(f, "fneg").unwrap();
                             Some(neg.into())
                         }
                         _ => None,
                     },
                     ast::UnaryOp::Not => match val {
                         BasicValueEnum::IntValue(i) => {
-                            let r = self.builder.build_not(i, "not").unwrap();
+                            let r = self.ir.builder.build_not(i, "not").unwrap();
                             Some(r.into())
                         }
                         _ => None,
@@ -162,7 +162,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         BasicValueEnum::IntValue(i) => {
                             // LLVM `not` on an integer flips all bits — identical
                             // to C's `~` operator.
-                            let r = self.builder.build_not(i, "bitnot").unwrap();
+                            let r = self.ir.builder.build_not(i, "bitnot").unwrap();
                             Some(r.into())
                         }
                         _ => None,
@@ -286,13 +286,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Break / Continue ──────────────────────────────────────────────
             ast::Expr::Break => {
                 if let Some(&(_cont, exit)) = self.loop_stack.last() {
-                    self.builder.build_unconditional_branch(exit).unwrap();
+                    self.ir.builder.build_unconditional_branch(exit).unwrap();
                 }
                 None
             }
             ast::Expr::Continue => {
                 if let Some(&(cont, _exit)) = self.loop_stack.last() {
-                    self.builder.build_unconditional_branch(cont).unwrap();
+                    self.ir.builder.build_unconditional_branch(cont).unwrap();
                 }
                 None
             }
@@ -301,7 +301,7 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Assign { name, value } => {
                 if let Some(val) = self.emit_expr(value, fn_val) {
                     if let Some((ptr, _llvm_ty)) = self.locals.get(name).copied() {
-                        self.builder.build_store(ptr, val).unwrap();
+                        self.ir.builder.build_store(ptr, val).unwrap();
                     }
                 }
                 None
@@ -317,17 +317,17 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn comptime_val_to_llvm(&self, cv: &crate::comptime::ComptimeVal) -> BasicValueEnum<'ctx> {
         use crate::comptime::ComptimeVal;
         match cv {
-            ComptimeVal::Int(n) => self.context.i64_type().const_int(*n as u64, true).into(),
-            ComptimeVal::Bool(b) => self.context.bool_type().const_int(*b as u64, false).into(),
-            ComptimeVal::Float(f) => self.context.f64_type().const_float(*f).into(),
+            ComptimeVal::Int(n) => self.ir.context.i64_type().const_int(*n as u64, true).into(),
+            ComptimeVal::Bool(b) => self.ir.context.bool_type().const_int(*b as u64, false).into(),
+            ComptimeVal::Float(f) => self.ir.context.f64_type().const_float(*f).into(),
             ComptimeVal::Str(s) => {
-                let global = self.builder.build_global_string_ptr(s, "comptime_str").unwrap();
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let str_ty = self.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let global = self.ir.builder.build_global_string_ptr(s, "comptime_str").unwrap();
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
                 let mut sv = str_ty.get_undef();
-                sv = self.builder.build_insert_value(sv, i64_ty.const_int(s.len() as u64, false), 0, "s_len").unwrap().into_struct_value();
-                sv = self.builder.build_insert_value(sv, global.as_pointer_value(), 1, "s_ptr").unwrap().into_struct_value();
+                sv = self.ir.builder.build_insert_value(sv, i64_ty.const_int(s.len() as u64, false), 0, "s_len").unwrap().into_struct_value();
+                sv = self.ir.builder.build_insert_value(sv, global.as_pointer_value(), 1, "s_ptr").unwrap().into_struct_value();
                 sv.into()
             }
         }
@@ -336,16 +336,16 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn emit_literal(&self, lit: &ast::Literal) -> BasicValueEnum<'ctx> {
         match lit {
             ast::Literal::Int(n) => {
-                self.context
+                self.ir.context
                     .i64_type()
                     .const_int(*n as u64, /*sign_extend=*/ true)
                     .into()
             }
             ast::Literal::Float(f) => {
-                self.context.f64_type().const_float(*f).into()
+                self.ir.context.f64_type().const_float(*f).into()
             }
             ast::Literal::Bool(b) => {
-                self.context
+                self.ir.context
                     .bool_type()
                     .const_int(if *b { 1 } else { 0 }, false)
                     .into()
@@ -354,13 +354,13 @@ impl<'ctx> super::Codegen<'ctx> {
                 // Build a global constant for the string bytes, then construct
                 // the { i64, ptr } struct.
                 let bytes = s.as_bytes();
-                let len_val = self.context.i64_type().const_int(bytes.len() as u64, false);
+                let len_val = self.ir.context.i64_type().const_int(bytes.len() as u64, false);
 
                 // Create a global byte array for the string data.
-                let i8_ty = self.context.i8_type();
+                let i8_ty = self.ir.context.i8_type();
                 let arr_ty = i8_ty.array_type(bytes.len() as u32 + 1); // null-terminated
                 // Use add_global which auto-dedups by letting LLVM pick unique names.
-                let global = self.module.add_global(arr_ty, None, "str_data");
+                let global = self.ir.module.add_global(arr_ty, None, "str_data");
                 let byte_vals: Vec<_> = bytes
                     .iter()
                     .chain(std::iter::once(&0u8)) // null terminator
@@ -369,31 +369,31 @@ impl<'ctx> super::Codegen<'ctx> {
                 global.set_initializer(&i8_ty.const_array(&byte_vals));
                 global.set_constant(true);
 
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
                 let ptr = global.as_pointer_value();
-                let cast_ptr = self
+                let cast_ptr = self.ir
                     .builder
                     .build_pointer_cast(ptr, ptr_ty, "strptr")
                     .unwrap();
 
-                let i64_ty = self.context.i64_type();
-                let str_ty = self.context.struct_type(
+                let i64_ty = self.ir.context.i64_type();
+                let str_ty = self.ir.context.struct_type(
                     &[i64_ty.into(), ptr_ty.into()],
                     false,
                 );
                 // Build the struct value via an alloca + stores.
-                let alloca = self.builder.build_alloca(str_ty, "strlit").unwrap();
-                let len_ptr = self
+                let alloca = self.ir.builder.build_alloca(str_ty, "strlit").unwrap();
+                let len_ptr = self.ir
                     .builder
                     .build_struct_gep(str_ty, alloca, 0, "lenptr")
                     .unwrap();
-                self.builder.build_store(len_ptr, len_val).unwrap();
-                let data_ptr = self
+                self.ir.builder.build_store(len_ptr, len_val).unwrap();
+                let data_ptr = self.ir
                     .builder
                     .build_struct_gep(str_ty, alloca, 1, "dataptr")
                     .unwrap();
-                self.builder.build_store(data_ptr, cast_ptr).unwrap();
-                self.builder.build_load(str_ty, alloca, "strval").unwrap()
+                self.ir.builder.build_store(data_ptr, cast_ptr).unwrap();
+                self.ir.builder.build_load(str_ty, alloca, "strval").unwrap()
             }
         }
     }
@@ -413,25 +413,25 @@ impl<'ctx> super::Codegen<'ctx> {
         match (lhs, rhs) {
             // Integer arithmetic.
             (BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r)) => match op {
-                ast::BinOp::Add => self.builder.build_int_add(l, r, "add").unwrap().into(),
-                ast::BinOp::Sub => self.builder.build_int_sub(l, r, "sub").unwrap().into(),
-                ast::BinOp::Mul => self.builder.build_int_mul(l, r, "mul").unwrap().into(),
+                ast::BinOp::Add => self.ir.builder.build_int_add(l, r, "add").unwrap().into(),
+                ast::BinOp::Sub => self.ir.builder.build_int_sub(l, r, "sub").unwrap().into(),
+                ast::BinOp::Mul => self.ir.builder.build_int_mul(l, r, "mul").unwrap().into(),
                 ast::BinOp::Div => if is_unsigned {
-                    self.builder.build_int_unsigned_div(l, r, "udiv").unwrap().into()
+                    self.ir.builder.build_int_unsigned_div(l, r, "udiv").unwrap().into()
                 } else {
-                    self.builder.build_int_signed_div(l, r, "div").unwrap().into()
+                    self.ir.builder.build_int_signed_div(l, r, "div").unwrap().into()
                 },
-                ast::BinOp::Eq => self
+                ast::BinOp::Eq => self.ir
                     .builder
                     .build_int_compare(IntPredicate::EQ, l, r, "eq")
                     .unwrap()
                     .into(),
-                ast::BinOp::NotEq => self
+                ast::BinOp::NotEq => self.ir
                     .builder
                     .build_int_compare(IntPredicate::NE, l, r, "ne")
                     .unwrap()
                     .into(),
-                ast::BinOp::Lt => self
+                ast::BinOp::Lt => self.ir
                     .builder
                     .build_int_compare(
                         if is_unsigned { IntPredicate::ULT } else { IntPredicate::SLT },
@@ -439,7 +439,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .into(),
-                ast::BinOp::Gt => self
+                ast::BinOp::Gt => self.ir
                     .builder
                     .build_int_compare(
                         if is_unsigned { IntPredicate::UGT } else { IntPredicate::SGT },
@@ -447,7 +447,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .into(),
-                ast::BinOp::LtEq => self
+                ast::BinOp::LtEq => self.ir
                     .builder
                     .build_int_compare(
                         if is_unsigned { IntPredicate::ULE } else { IntPredicate::SLE },
@@ -455,7 +455,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .into(),
-                ast::BinOp::GtEq => self
+                ast::BinOp::GtEq => self.ir
                     .builder
                     .build_int_compare(
                         if is_unsigned { IntPredicate::UGE } else { IntPredicate::SGE },
@@ -464,74 +464,74 @@ impl<'ctx> super::Codegen<'ctx> {
                     .unwrap()
                     .into(),
                 ast::BinOp::Rem => if is_unsigned {
-                    self.builder.build_int_unsigned_rem(l, r, "urem").unwrap().into()
+                    self.ir.builder.build_int_unsigned_rem(l, r, "urem").unwrap().into()
                 } else {
-                    self.builder.build_int_signed_rem(l, r, "rem").unwrap().into()
+                    self.ir.builder.build_int_signed_rem(l, r, "rem").unwrap().into()
                 },
-                ast::BinOp::And => self.builder.build_and(l, r, "and").unwrap().into(),
-                ast::BinOp::Or => self.builder.build_or(l, r, "or").unwrap().into(),
-                ast::BinOp::BitAnd => self.builder.build_and(l, r, "band").unwrap().into(),
-                ast::BinOp::BitOr  => self.builder.build_or(l, r, "bor").unwrap().into(),
-                ast::BinOp::BitXor => self.builder.build_xor(l, r, "bxor").unwrap().into(),
-                ast::BinOp::Shl => self.builder.build_left_shift(l, r, "shl").unwrap().into(),
+                ast::BinOp::And => self.ir.builder.build_and(l, r, "and").unwrap().into(),
+                ast::BinOp::Or => self.ir.builder.build_or(l, r, "or").unwrap().into(),
+                ast::BinOp::BitAnd => self.ir.builder.build_and(l, r, "band").unwrap().into(),
+                ast::BinOp::BitOr  => self.ir.builder.build_or(l, r, "bor").unwrap().into(),
+                ast::BinOp::BitXor => self.ir.builder.build_xor(l, r, "bxor").unwrap().into(),
+                ast::BinOp::Shl => self.ir.builder.build_left_shift(l, r, "shl").unwrap().into(),
                 ast::BinOp::Shr => if is_unsigned {
-                    self.builder.build_right_shift(l, r, false, "lshr").unwrap().into()
+                    self.ir.builder.build_right_shift(l, r, false, "lshr").unwrap().into()
                 } else {
-                    self.builder.build_right_shift(l, r, true, "ashr").unwrap().into()
+                    self.ir.builder.build_right_shift(l, r, true, "ashr").unwrap().into()
                 },
             },
 
             // Float arithmetic.
             (BasicValueEnum::FloatValue(l), BasicValueEnum::FloatValue(r)) => match op {
-                ast::BinOp::Add => self.builder.build_float_add(l, r, "fadd").unwrap().into(),
-                ast::BinOp::Sub => self.builder.build_float_sub(l, r, "fsub").unwrap().into(),
-                ast::BinOp::Mul => self.builder.build_float_mul(l, r, "fmul").unwrap().into(),
-                ast::BinOp::Div => self.builder.build_float_div(l, r, "fdiv").unwrap().into(),
-                ast::BinOp::Eq => self
+                ast::BinOp::Add => self.ir.builder.build_float_add(l, r, "fadd").unwrap().into(),
+                ast::BinOp::Sub => self.ir.builder.build_float_sub(l, r, "fsub").unwrap().into(),
+                ast::BinOp::Mul => self.ir.builder.build_float_mul(l, r, "fmul").unwrap().into(),
+                ast::BinOp::Div => self.ir.builder.build_float_div(l, r, "fdiv").unwrap().into(),
+                ast::BinOp::Eq => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::OEQ, l, r, "feq")
                     .unwrap()
                     .into(),
-                ast::BinOp::NotEq => self
+                ast::BinOp::NotEq => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::ONE, l, r, "fne")
                     .unwrap()
                     .into(),
-                ast::BinOp::Lt => self
+                ast::BinOp::Lt => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::OLT, l, r, "flt")
                     .unwrap()
                     .into(),
-                ast::BinOp::Gt => self
+                ast::BinOp::Gt => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::OGT, l, r, "fgt")
                     .unwrap()
                     .into(),
-                ast::BinOp::LtEq => self
+                ast::BinOp::LtEq => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::OLE, l, r, "fle")
                     .unwrap()
                     .into(),
-                ast::BinOp::GtEq => self
+                ast::BinOp::GtEq => self.ir
                     .builder
                     .build_float_compare(FloatPredicate::OGE, l, r, "fge")
                     .unwrap()
                     .into(),
-                ast::BinOp::Rem => self.builder.build_float_rem(l, r, "frem").unwrap().into(),
+                ast::BinOp::Rem => self.ir.builder.build_float_rem(l, r, "frem").unwrap().into(),
                 // Bool ops on floats — truncate to i1 first.
                 ast::BinOp::And | ast::BinOp::Or => {
                     let zero = l.get_type().const_zero();
-                    let li = self
+                    let li = self.ir
                         .builder
                         .build_float_compare(FloatPredicate::ONE, l, zero, "ftoi_l")
                         .unwrap();
-                    let ri = self
+                    let ri = self.ir
                         .builder
                         .build_float_compare(FloatPredicate::ONE, r, zero, "ftoi_r")
                         .unwrap();
                     match op {
-                        ast::BinOp::And => self.builder.build_and(li, ri, "fand").unwrap().into(),
-                        _ => self.builder.build_or(li, ri, "for").unwrap().into(),
+                        ast::BinOp::And => self.ir.builder.build_and(li, ri, "fand").unwrap().into(),
+                        _ => self.ir.builder.build_or(li, ri, "for").unwrap().into(),
                     }
                 }
                 // Bitwise ops on floats are rejected by the type-checker; unreachable here.
@@ -546,9 +546,9 @@ impl<'ctx> super::Codegen<'ctx> {
             (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r))
                 if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq) =>
             {
-                let str_eq_fn = self.module.get_function("str_eq");
+                let str_eq_fn = self.ir.module.get_function("str_eq");
                 if let Some(eq_fn) = str_eq_fn {
-                    let result = self.builder
+                    let result = self.ir.builder
                         .build_call(eq_fn, &[l.into(), r.into()], "seq")
                         .unwrap()
                         .try_as_basic_value()
@@ -557,13 +557,13 @@ impl<'ctx> super::Codegen<'ctx> {
                         .into_int_value();
                     if matches!(op, ast::BinOp::NotEq) {
                         // Flip the result: NotEq = !Eq
-                        self.builder.build_not(result, "sne").unwrap().into()
+                        self.ir.builder.build_not(result, "sne").unwrap().into()
                     } else {
                         result.into()
                     }
                 } else {
                     // str_eq not declared yet — return false (shouldn't happen)
-                    self.context.bool_type().const_int(0, false).into()
+                    self.ir.context.bool_type().const_int(0, false).into()
                 }
             }
 
@@ -586,40 +586,40 @@ impl<'ctx> super::Codegen<'ctx> {
             _ => return None,
         };
 
-        let then_bb = self.context.append_basic_block(fn_val, "if_then");
-        let else_bb = self.context.append_basic_block(fn_val, "if_else");
-        let merge_bb = self.context.append_basic_block(fn_val, "if_merge");
+        let then_bb = self.ir.context.append_basic_block(fn_val, "if_then");
+        let else_bb = self.ir.context.append_basic_block(fn_val, "if_else");
+        let merge_bb = self.ir.context.append_basic_block(fn_val, "if_merge");
 
-        self.builder
+        self.ir.builder
             .build_conditional_branch(cond_int, then_bb, else_bb)
             .unwrap();
 
         // Then branch.
-        self.builder.position_at_end(then_bb);
+        self.ir.builder.position_at_end(then_bb);
         let then_val = self.emit_expr(then_expr, fn_val);
-        let then_end = self.builder.get_insert_block().unwrap();
+        let then_end = self.ir.builder.get_insert_block().unwrap();
         if then_end.get_terminator().is_none() {
-            self.builder.build_unconditional_branch(merge_bb).unwrap();
+            self.ir.builder.build_unconditional_branch(merge_bb).unwrap();
         }
 
         // Else branch.
-        self.builder.position_at_end(else_bb);
+        self.ir.builder.position_at_end(else_bb);
         let else_val = if let Some(e) = else_expr {
             self.emit_expr(e, fn_val)
         } else {
             None
         };
-        let else_end = self.builder.get_insert_block().unwrap();
+        let else_end = self.ir.builder.get_insert_block().unwrap();
         if else_end.get_terminator().is_none() {
-            self.builder.build_unconditional_branch(merge_bb).unwrap();
+            self.ir.builder.build_unconditional_branch(merge_bb).unwrap();
         }
 
-        self.builder.position_at_end(merge_bb);
+        self.ir.builder.position_at_end(merge_bb);
 
         // Build phi if both branches produce a value of the same type.
         match (then_val, else_val) {
             (Some(tv), Some(ev)) if tv.get_type() == ev.get_type() => {
-                let phi = self.builder.build_phi(tv.get_type(), "ifval").unwrap();
+                let phi = self.ir.builder.build_phi(tv.get_type(), "ifval").unwrap();
                 phi.add_incoming(&[(&tv, then_end), (&ev, else_end)]);
                 Some(phi.as_basic_value())
             }
@@ -636,7 +636,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     })
                     .unwrap_or(false);
                 if then_flows_to_merge {
-                    let phi = self.builder.build_phi(tv.get_type(), "ifval").unwrap();
+                    let phi = self.ir.builder.build_phi(tv.get_type(), "ifval").unwrap();
                     phi.add_incoming(&[(&tv, then_end), (&zero, else_end)]);
                     Some(phi.as_basic_value())
                 } else {
@@ -655,31 +655,31 @@ impl<'ctx> super::Codegen<'ctx> {
         // We build the result left-to-right:
         //   acc = ""
         //   for each part: acc = axon_concat(acc, part_value)
-        let i8_ptr = self.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-        let i64_ty = self.context.i64_type();
-        let str_ty = self.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+        let i8_ptr = self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
+        let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
 
         // Start with an empty string literal (use a unique name per fmtstr).
         let fmtstr_id = self.fmtstr_counter;
         self.fmtstr_counter += 1;
-        let empty_arr_ty = self.context.i8_type().array_type(1);
+        let empty_arr_ty = self.ir.context.i8_type().array_type(1);
         let empty_name = format!("fmtstr_empty_{fmtstr_id}");
-        let empty_global = self.module.add_global(empty_arr_ty, None, &empty_name);
+        let empty_global = self.ir.module.add_global(empty_arr_ty, None, &empty_name);
         empty_global.set_initializer(
-            &self.context.i8_type().const_array(&[self.context.i8_type().const_int(0, false)])
+            &self.ir.context.i8_type().const_array(&[self.ir.context.i8_type().const_int(0, false)])
         );
         empty_global.set_constant(true);
-        let empty_ptr = self.builder
+        let empty_ptr = self.ir.builder
             .build_pointer_cast(empty_global.as_pointer_value(), i8_ptr, "emptyptr")
             .unwrap();
 
         // Build the empty str struct as the initial accumulator.
-        let init_alloca = self.builder.build_alloca(str_ty, "fmtinit").unwrap();
-        let init_len_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 0, "il").unwrap();
-        let init_dat_ptr = self.builder.build_struct_gep(str_ty, init_alloca, 1, "id").unwrap();
-        self.builder.build_store(init_len_ptr, i64_ty.const_int(0, false)).unwrap();
-        self.builder.build_store(init_dat_ptr, empty_ptr).unwrap();
-        let mut acc: BasicValueEnum<'ctx> = self.builder
+        let init_alloca = self.ir.builder.build_alloca(str_ty, "fmtinit").unwrap();
+        let init_len_ptr = self.ir.builder.build_struct_gep(str_ty, init_alloca, 0, "il").unwrap();
+        let init_dat_ptr = self.ir.builder.build_struct_gep(str_ty, init_alloca, 1, "id").unwrap();
+        self.ir.builder.build_store(init_len_ptr, i64_ty.const_int(0, false)).unwrap();
+        self.ir.builder.build_store(init_dat_ptr, empty_ptr).unwrap();
+        let mut acc: BasicValueEnum<'ctx> = self.ir.builder
             .build_load(str_ty, init_alloca, "fmtacc0")
             .unwrap();
 
@@ -691,26 +691,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     // Emit the literal as a str value.
                     let bytes = s.as_bytes();
                     let lit_len = i64_ty.const_int(bytes.len() as u64, false);
-                    let arr_ty = self.context.i8_type().array_type(bytes.len() as u32 + 1);
+                    let arr_ty = self.ir.context.i8_type().array_type(bytes.len() as u32 + 1);
                     let lit_name = format!("fmtlit_{fmtstr_id}_{}", self.fmtstr_counter);
                     self.fmtstr_counter += 1;
-                    let g = self.module.add_global(arr_ty, None, &lit_name);
+                    let g = self.ir.module.add_global(arr_ty, None, &lit_name);
                     let byte_vals: Vec<_> = bytes
                         .iter()
                         .chain(std::iter::once(&0u8))
-                        .map(|&b| self.context.i8_type().const_int(b as u64, false))
+                        .map(|&b| self.ir.context.i8_type().const_int(b as u64, false))
                         .collect();
-                    g.set_initializer(&self.context.i8_type().const_array(&byte_vals));
+                    g.set_initializer(&self.ir.context.i8_type().const_array(&byte_vals));
                     g.set_constant(true);
-                    let lit_ptr = self.builder
+                    let lit_ptr = self.ir.builder
                         .build_pointer_cast(g.as_pointer_value(), i8_ptr, "litptr")
                         .unwrap();
-                    let lit_alloca = self.builder.build_alloca(str_ty, "litstr").unwrap();
-                    let lp = self.builder.build_struct_gep(str_ty, lit_alloca, 0, "lp").unwrap();
-                    let dp = self.builder.build_struct_gep(str_ty, lit_alloca, 1, "dp").unwrap();
-                    self.builder.build_store(lp, lit_len).unwrap();
-                    self.builder.build_store(dp, lit_ptr).unwrap();
-                    self.builder.build_load(str_ty, lit_alloca, "litval").unwrap()
+                    let lit_alloca = self.ir.builder.build_alloca(str_ty, "litstr").unwrap();
+                    let lp = self.ir.builder.build_struct_gep(str_ty, lit_alloca, 0, "lp").unwrap();
+                    let dp = self.ir.builder.build_struct_gep(str_ty, lit_alloca, 1, "dp").unwrap();
+                    self.ir.builder.build_store(lp, lit_len).unwrap();
+                    self.ir.builder.build_store(dp, lit_ptr).unwrap();
+                    self.ir.builder.build_load(str_ty, lit_alloca, "litval").unwrap()
                 }
                 ast::FmtPart::Expr(e) => {
                     let v = self.emit_expr(e, fn_val)?;
@@ -721,13 +721,13 @@ impl<'ctx> super::Codegen<'ctx> {
                             if iv.get_type().get_bit_width() == 1 {
                                 // bool → to_str_bool
                                 if let Some(f) = self.functions.get("to_str_bool").copied() {
-                                    self.builder.build_call(f, &[iv.into()], "fmtb")
+                                    self.ir.builder.build_call(f, &[iv.into()], "fmtb")
                                         .unwrap().try_as_basic_value().left()?
                                 } else { v }
                             } else {
                                 // i64 → to_str
                                 if let Some(f) = self.functions.get("to_str").copied() {
-                                    self.builder.build_call(f, &[iv.into()], "fmti")
+                                    self.ir.builder.build_call(f, &[iv.into()], "fmti")
                                         .unwrap().try_as_basic_value().left()?
                                 } else { v }
                             }
@@ -735,7 +735,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         BasicValueEnum::FloatValue(fv) => {
                             // f64 → to_str_f64
                             if let Some(f) = self.functions.get("to_str_f64").copied() {
-                                self.builder.build_call(f, &[fv.into()], "fmtf")
+                                self.ir.builder.build_call(f, &[fv.into()], "fmtf")
                                     .unwrap().try_as_basic_value().left()?
                             } else { v }
                         }
@@ -744,7 +744,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             };
             // acc = axon_concat(acc, part_val)
-            let res = self.builder.build_call(
+            let res = self.ir.builder.build_call(
                 concat_fn,
                 &[acc.into(), part_val.into()],
                 "fmtcat",
@@ -756,8 +756,8 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    pub(super) fn emit_for_in(&mut self, var: &str, start: &ast::Expr, end: &ast::Expr, body: &ast::Expr, inclusive: bool, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let i64_ty = self.context.i64_type();
+    pub(super) fn emit_for_in(&mut self, var: &str, start: &ast::Expr, end: &ast::Expr, body: &[ast::Stmt], inclusive: bool, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
 
         // Evaluate start and end once before the loop.
         let start_val = match self.emit_expr(start, fn_val) {
@@ -770,158 +770,158 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Allocate induction variable on the stack.
-        let var_ptr = self.builder.build_alloca(i64_ty, var).unwrap();
-        self.builder.build_store(var_ptr, start_val).unwrap();
+        let var_ptr = self.ir.builder.build_alloca(i64_ty, var).unwrap();
+        self.ir.builder.build_store(var_ptr, start_val).unwrap();
         // Register the variable so body statements can read it.
-        self.locals.insert(var.clone(), (var_ptr, i64_ty.into()));
+        self.locals.insert(var.to_string(), (var_ptr, i64_ty.into()));
 
-        let cond_bb = self.context.append_basic_block(fn_val, "for.cond");
-        let body_bb = self.context.append_basic_block(fn_val, "for.body");
-        let incr_bb = self.context.append_basic_block(fn_val, "for.incr");
-        let exit_bb = self.context.append_basic_block(fn_val, "for.exit");
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "for.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "for.body");
+        let incr_bb = self.ir.context.append_basic_block(fn_val, "for.incr");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "for.exit");
 
         self.loop_stack.push((incr_bb, exit_bb));
 
         // Jump to condition.
-        self.builder.build_unconditional_branch(cond_bb).unwrap();
+        self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
 
         // Condition: i < end  (exclusive)  or  i <= end  (inclusive)
-        self.builder.position_at_end(cond_bb);
-        let cur = self.builder.build_load(i64_ty, var_ptr, "for.i").unwrap().into_int_value();
-        let pred = if *inclusive { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::SLT };
-        let cmp = self.builder.build_int_compare(
+        self.ir.builder.position_at_end(cond_bb);
+        let cur = self.ir.builder.build_load(i64_ty, var_ptr, "for.i").unwrap().into_int_value();
+        let pred = if inclusive { inkwell::IntPredicate::SLE } else { inkwell::IntPredicate::SLT };
+        let cmp = self.ir.builder.build_int_compare(
             pred, cur, end_val, "for.cmp").unwrap();
-        self.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
+        self.ir.builder.build_conditional_branch(cmp, body_bb, exit_bb).unwrap();
 
         // Body.
-        self.builder.position_at_end(body_bb);
+        self.ir.builder.position_at_end(body_bb);
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
-            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            if self.ir.builder.get_insert_block().unwrap().get_terminator().is_some() {
                 break;
             }
         }
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_unconditional_branch(incr_bb).unwrap();
+        if self.ir.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.ir.builder.build_unconditional_branch(incr_bb).unwrap();
         }
 
         // Increment: i = i + 1
-        self.builder.position_at_end(incr_bb);
-        let cur2 = self.builder.build_load(i64_ty, var_ptr, "for.i2").unwrap().into_int_value();
-        let next = self.builder.build_int_add(cur2, i64_ty.const_int(1, false), "for.next").unwrap();
-        self.builder.build_store(var_ptr, next).unwrap();
-        self.builder.build_unconditional_branch(cond_bb).unwrap();
+        self.ir.builder.position_at_end(incr_bb);
+        let cur2 = self.ir.builder.build_load(i64_ty, var_ptr, "for.i2").unwrap().into_int_value();
+        let next = self.ir.builder.build_int_add(cur2, i64_ty.const_int(1, false), "for.next").unwrap();
+        self.ir.builder.build_store(var_ptr, next).unwrap();
+        self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
 
         self.loop_stack.pop();
         self.locals.remove(var);
 
-        self.builder.position_at_end(exit_bb);
+        self.ir.builder.position_at_end(exit_bb);
         Some(i64_ty.const_zero().into())
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    pub(super) fn emit_while_let(&mut self, pattern: &ast::Pattern, expr: &ast::Expr, body: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let cond_bb = self.context.append_basic_block(fn_val, "wl.cond");
-        let body_bb = self.context.append_basic_block(fn_val, "wl.body");
-        let exit_bb = self.context.append_basic_block(fn_val, "wl.exit");
+    pub(super) fn emit_while_let(&mut self, pattern: &ast::Pattern, expr: &ast::Expr, body: &[ast::Stmt], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "wl.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "wl.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "wl.exit");
 
         self.loop_stack.push((cond_bb, exit_bb));
-        self.builder.build_unconditional_branch(cond_bb).unwrap();
+        self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
 
         // Evaluate the scrutinee and test the pattern.
-        self.builder.position_at_end(cond_bb);
+        self.ir.builder.position_at_end(cond_bb);
         let subject = match self.emit_expr(expr, fn_val) {
             Some(v) => v,
             None => {
                 // Expression produced no value; treat as infinite loop.
-                self.builder.build_unconditional_branch(body_bb).unwrap();
+                self.ir.builder.build_unconditional_branch(body_bb).unwrap();
                 self.loop_stack.pop();
-                self.builder.position_at_end(exit_bb);
-                return Some(self.context.i64_type().const_zero().into());
+                self.ir.builder.position_at_end(exit_bb);
+                return Some(self.ir.context.i64_type().const_zero().into());
             }
         };
         let matches = self.emit_pattern_test(pattern, subject);
         let cond_int = match matches {
             BasicValueEnum::IntValue(i) => i,
-            _ => self.context.bool_type().const_int(1, false),
+            _ => self.ir.context.bool_type().const_int(1, false),
         };
-        self.builder.build_conditional_branch(cond_int, body_bb, exit_bb).unwrap();
+        self.ir.builder.build_conditional_branch(cond_int, body_bb, exit_bb).unwrap();
 
         // Bind pattern variables and emit body.
-        self.builder.position_at_end(body_bb);
+        self.ir.builder.position_at_end(body_bb);
         self.emit_pattern_bindings(pattern, subject);
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
-            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            if self.ir.builder.get_insert_block().unwrap().get_terminator().is_some() {
                 break;
             }
         }
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_unconditional_branch(cond_bb).unwrap();
+        if self.ir.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
         }
 
         self.loop_stack.pop();
-        self.builder.position_at_end(exit_bb);
-        Some(self.context.i64_type().const_zero().into())
+        self.ir.builder.position_at_end(exit_bb);
+        Some(self.ir.context.i64_type().const_zero().into())
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    pub(super) fn emit_while(&mut self, cond: &ast::Expr, body: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let cond_bb = self.context.append_basic_block(fn_val, "while.cond");
-        let body_bb = self.context.append_basic_block(fn_val, "while.body");
-        let exit_bb = self.context.append_basic_block(fn_val, "while.exit");
+    pub(super) fn emit_while(&mut self, cond: &ast::Expr, body: &[ast::Stmt], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "while.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "while.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "while.exit");
 
         // Push loop context so break/continue can find their targets.
         self.loop_stack.push((cond_bb, exit_bb));
 
         // Jump to condition check.
-        self.builder.build_unconditional_branch(cond_bb).unwrap();
+        self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
 
         // Emit condition.
-        self.builder.position_at_end(cond_bb);
+        self.ir.builder.position_at_end(cond_bb);
         let cond_val = match self.emit_expr(cond, fn_val) {
             Some(BasicValueEnum::IntValue(i)) => i,
             _ => {
                 // If condition didn't produce a value, treat as infinite loop.
-                self.builder.build_unconditional_branch(body_bb).unwrap();
+                self.ir.builder.build_unconditional_branch(body_bb).unwrap();
                 self.loop_stack.pop();
-                self.builder.position_at_end(exit_bb);
-                return Some(self.context.i64_type().const_zero().into());
+                self.ir.builder.position_at_end(exit_bb);
+                return Some(self.ir.context.i64_type().const_zero().into());
             }
         };
-        self.builder.build_conditional_branch(cond_val, body_bb, exit_bb).unwrap();
+        self.ir.builder.build_conditional_branch(cond_val, body_bb, exit_bb).unwrap();
 
         // Emit body.
-        self.builder.position_at_end(body_bb);
+        self.ir.builder.position_at_end(body_bb);
         for stmt in body {
             self.emit_expr(&stmt.expr, fn_val);
             // Stop emitting if a terminator was added (e.g., return, break, continue).
-            if self.builder.get_insert_block().unwrap().get_terminator().is_some() {
+            if self.ir.builder.get_insert_block().unwrap().get_terminator().is_some() {
                 break;
             }
         }
         // Jump back to condition if not already terminated.
-        if self.builder.get_insert_block().unwrap().get_terminator().is_none() {
-            self.builder.build_unconditional_branch(cond_bb).unwrap();
+        if self.ir.builder.get_insert_block().unwrap().get_terminator().is_none() {
+            self.ir.builder.build_unconditional_branch(cond_bb).unwrap();
         }
 
         // Pop loop context after body is fully emitted.
         self.loop_stack.pop();
 
         // Continue after loop.
-        self.builder.position_at_end(exit_bb);
-        Some(self.context.i64_type().const_zero().into())
+        self.ir.builder.position_at_end(exit_bb);
+        Some(self.ir.context.i64_type().const_zero().into())
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_select_expr(&mut self, arms: &[ast::SelectArm], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ty = self.context.i64_type();
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
         let n = arms.len() as u64;
 
         // Allocate an array of i8* on the stack: [n x i8*]
         let arr_ty = i8_ptr.array_type(n as u32);
-        let chans_alloca = self.builder.build_alloca(arr_ty, "select_chans").unwrap();
+        let chans_alloca = self.ir.builder.build_alloca(arr_ty, "select_chans").unwrap();
 
         // Fill each slot with the channel pointer from each arm.
         // arm.recv is typically `ch.recv()` — extract the channel (receiver).
@@ -936,24 +936,24 @@ impl<'ctx> super::Codegen<'ctx> {
                 // cast to i8* if needed
                 let as_ptr = match chan_val {
                     BasicValueEnum::PointerValue(pv) => {
-                        self.builder.build_pointer_cast(pv, i8_ptr, "chan_ptr").unwrap()
+                        self.ir.builder.build_pointer_cast(pv, i8_ptr, "chan_ptr").unwrap()
                     }
                     _ => continue,
                 };
                 let slot = unsafe {
-                    self.builder.build_gep(
+                    self.ir.builder.build_gep(
                         arr_ty,
                         chans_alloca,
                         &[i64_ty.const_int(0, false).into(), i64_ty.const_int(i as u64, false).into()],
                         "chan_slot",
                     ).unwrap()
                 };
-                self.builder.build_store(slot, as_ptr).unwrap();
+                self.ir.builder.build_store(slot, as_ptr).unwrap();
             }
         }
 
         // Cast array pointer to i8** for __axon_select.
-        let chans_ptr = self.builder.build_pointer_cast(
+        let chans_ptr = self.ir.builder.build_pointer_cast(
             chans_alloca,
             i8_ptr.ptr_type(AddressSpace::default()),
             "chans_ptr",
@@ -961,7 +961,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Call __axon_select(chans, n) → i64 ready_idx.
         let ready_idx = if let Some(sel_fn) = self.functions.get("__axon_select").copied() {
-            self.builder.build_call(
+            self.ir.builder.build_call(
                 sel_fn,
                 &[chans_ptr.into(), i64_ty.const_int(n, false).into()],
                 "select_idx",
@@ -970,12 +970,12 @@ impl<'ctx> super::Codegen<'ctx> {
             None
         };
 
-        let merge_bb = self.context.append_basic_block(fn_val, "select.merge");
-        let else_bb = self.context.append_basic_block(fn_val, "select.else");
+        let merge_bb = self.ir.context.append_basic_block(fn_val, "select.merge");
+        let else_bb = self.ir.context.append_basic_block(fn_val, "select.else");
 
         // Build arm basic blocks.
         let arm_bbs: Vec<_> = arms.iter().enumerate()
-            .map(|(i, _)| self.context.append_basic_block(fn_val, &format!("select.arm{i}")))
+            .map(|(i, _)| self.ir.context.append_basic_block(fn_val, &format!("select.arm{i}")))
             .collect();
 
         // Build switch: pass all (tag, bb) cases at once.
@@ -983,41 +983,41 @@ impl<'ctx> super::Codegen<'ctx> {
             let cases: Vec<_> = arm_bbs.iter().enumerate()
                 .map(|(i, bb)| (i64_ty.const_int(i as u64, false), *bb))
                 .collect();
-            self.builder.build_switch(iv, else_bb, &cases).unwrap();
+            self.ir.builder.build_switch(iv, else_bb, &cases).unwrap();
         } else {
-            self.builder.build_unconditional_branch(else_bb).unwrap();
+            self.ir.builder.build_unconditional_branch(else_bb).unwrap();
         }
 
         // Emit each arm body and jump to merge.
         for (arm, bb) in arms.iter().zip(arm_bbs.iter()) {
-            self.builder.position_at_end(*bb);
+            self.ir.builder.position_at_end(*bb);
             self.emit_expr(&arm.body, fn_val);
-            self.builder.build_unconditional_branch(merge_bb).unwrap();
+            self.ir.builder.build_unconditional_branch(merge_bb).unwrap();
         }
 
         // else: no arm ready — branch to merge (runtime will have blocked).
-        self.builder.position_at_end(else_bb);
-        self.builder.build_unconditional_branch(merge_bb).unwrap();
+        self.ir.builder.position_at_end(else_bb);
+        self.ir.builder.build_unconditional_branch(merge_bb).unwrap();
 
-        self.builder.position_at_end(merge_bb);
+        self.ir.builder.position_at_end(merge_bb);
         None
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    pub(super) fn emit_lambda(&mut self, params: &[ast::Param], body: &ast::Expr, captures: &[String], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+    pub(super) fn emit_lambda(&mut self, params: &[ast::LambdaParam], body: &ast::Expr, captures: &[(String, Option<crate::types::Type>)], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
 
-        let i64_ty = self.context.i64_type();
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let closure_ty = self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let closure_ty = self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
 
         // ── Build the env struct type for captures ────────────────────
         // All captured variables are stored as i64 (Phase 4 limitation).
         let n_captures = captures.len();
         let env_field_tys: Vec<BasicTypeEnum<'ctx>> =
             (0..n_captures).map(|_| i64_ty.into()).collect();
-        let env_struct_ty = self.context.struct_type(&env_field_tys, false);
+        let env_struct_ty = self.ir.context.struct_type(&env_field_tys, false);
 
         // ── Declare the lambda function (env_ptr first, then params) ──
         let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
@@ -1026,16 +1026,16 @@ impl<'ctx> super::Codegen<'ctx> {
             lambda_param_tys.push(i64_ty.into());
         }
         let fn_ty = i64_ty.fn_type(&lambda_param_tys, false);
-        let lambda_fn = self.module.add_function(&lambda_name, fn_ty, None);
+        let lambda_fn = self.ir.module.add_function(&lambda_name, fn_ty, None);
 
         // ── Emit the lambda body ──────────────────────────────────────
-        let entry_bb = self.context.append_basic_block(lambda_fn, "entry");
-        let saved_ip = self.builder.get_insert_block();
+        let entry_bb = self.ir.context.append_basic_block(lambda_fn, "entry");
+        let saved_ip = self.ir.builder.get_insert_block();
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_lambda_env = self.current_lambda_env.take();
 
-        self.builder.position_at_end(entry_bb);
+        self.ir.builder.position_at_end(entry_bb);
 
         // env_ptr is param 0; explicit params start at 1.
         let env_ptr_arg = lambda_fn.get_nth_param(0).unwrap().into_pointer_value();
@@ -1046,7 +1046,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let mut capture_idx_map: HashMap<String, u32> = HashMap::new();
         if n_captures > 0 {
             for (idx, (cap_name, _)) in captures.iter().enumerate() {
-                let field_ptr = self.builder
+                let field_ptr = self.ir.builder
                     .build_struct_gep(env_struct_ty, env_ptr_arg, idx as u32, cap_name)
                     .unwrap();
                 self.locals.insert(cap_name.clone(), (field_ptr, i64_ty.into()));
@@ -1061,17 +1061,17 @@ impl<'ctx> super::Codegen<'ctx> {
         // Bind explicit parameters (offset by 1 for env_ptr).
         for (i, p) in params.iter().enumerate() {
             if let Some(arg) = lambda_fn.get_nth_param((i + 1) as u32) {
-                let alloca = self.builder.build_alloca(i64_ty, &p.name).unwrap();
-                self.builder.build_store(alloca, arg).unwrap();
+                let alloca = self.ir.builder.build_alloca(i64_ty, &p.name).unwrap();
+                self.ir.builder.build_store(alloca, arg).unwrap();
                 self.locals.insert(p.name.clone(), (alloca, i64_ty.into()));
             }
         }
 
         let body_val = self.emit_expr(body, lambda_fn);
-        if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
             match body_val {
-                Some(v) => { self.builder.build_return(Some(&v)).unwrap(); }
-                None => { self.builder.build_return(Some(&i64_ty.const_zero())).unwrap(); }
+                Some(v) => { self.ir.builder.build_return(Some(&v)).unwrap(); }
+                None => { self.ir.builder.build_return(Some(&i64_ty.const_zero())).unwrap(); }
             }
         }
 
@@ -1079,11 +1079,11 @@ impl<'ctx> super::Codegen<'ctx> {
         self.locals = saved_locals;
         self.local_types = saved_local_types;
         self.current_lambda_env = saved_lambda_env;
-        if let Some(b) = saved_ip { self.builder.position_at_end(b); }
+        if let Some(b) = saved_ip { self.ir.builder.position_at_end(b); }
         self.functions.insert(lambda_name.clone(), lambda_fn);
 
         // ── At the creation site: build the fat pointer struct ─────────
-        let fn_ptr = self.builder
+        let fn_ptr = self.ir.builder
             .build_pointer_cast(
                 lambda_fn.as_global_value().as_pointer_value(),
                 ptr_ty,
@@ -1093,15 +1093,15 @@ impl<'ctx> super::Codegen<'ctx> {
 
         let env_ptr: BasicValueEnum<'ctx> = if n_captures > 0 {
             // Malloc an env struct and populate it.
-            let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+            let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
                 let ty = ptr_ty.fn_type(&[i64_ty.into()], false);
-                self.module.add_function("malloc", ty, None)
+                self.ir.module.add_function("malloc", ty, None)
             });
             let env_size = i64_ty.const_int(
                 (n_captures * 8) as u64, // 8 bytes per i64
                 false,
             );
-            let raw = self.builder
+            let raw = self.ir.builder
                 .build_call(malloc_fn, &[env_size.into()], "env_alloc")
                 .unwrap()
                 .try_as_basic_value()
@@ -1114,17 +1114,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 // Load current value of the captured variable from caller scope
                 // (self.locals has been restored to the caller's locals at this point).
                 let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
-                    self.builder.build_load(ty, alloca, cap_name).unwrap()
+                    self.ir.builder.build_load(ty, alloca, cap_name).unwrap()
                 } else {
                     i64_ty.const_zero().into()
                 };
-                let field_ptr = self.builder
+                let field_ptr = self.ir.builder
                     .build_struct_gep(env_struct_ty, raw, idx as u32, &format!("env_f{idx}"))
                     .unwrap();
-                self.builder.build_store(field_ptr, cap_val).unwrap();
+                self.ir.builder.build_store(field_ptr, cap_val).unwrap();
             }
             // Cast back to i8* for the fat pointer.
-            self.builder
+            self.ir.builder
                 .build_pointer_cast(raw, ptr_ty, "env_i8")
                 .unwrap()
                 .into()
@@ -1134,8 +1134,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Build { fn_ptr, env_ptr } fat pointer struct.
         let mut fat = closure_ty.get_undef();
-        fat = self.builder.build_insert_value(fat, fn_ptr, 0, "fat0").unwrap().into_struct_value();
-        fat = self.builder.build_insert_value(fat, env_ptr, 1, "fat1").unwrap().into_struct_value();
+        fat = self.ir.builder.build_insert_value(fat, fn_ptr, 0, "fat0").unwrap().into_struct_value();
+        fat = self.ir.builder.build_insert_value(fat, env_ptr, 1, "fat1").unwrap().into_struct_value();
         Some(fat.into())
     }
 
@@ -1147,24 +1147,24 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         match evaluator.eval(inner) {
             Ok(crate::comptime::ComptimeVal::Int(n)) => {
-                Some(self.context.i64_type().const_int(n as u64, true).into())
+                Some(self.ir.context.i64_type().const_int(n as u64, true).into())
             }
             Ok(crate::comptime::ComptimeVal::Bool(b)) => {
-                Some(self.context.bool_type().const_int(b as u64, false).into())
+                Some(self.ir.context.bool_type().const_int(b as u64, false).into())
             }
             Ok(crate::comptime::ComptimeVal::Float(f)) => {
-                Some(self.context.f64_type().const_float(f).into())
+                Some(self.ir.context.f64_type().const_float(f).into())
             }
             Ok(crate::comptime::ComptimeVal::Str(s)) => {
                 // Emit as a { i64 len, i8* ptr } struct matching Axon's Str layout.
                 let len = s.len() as u64;
-                let global = self.builder.build_global_string_ptr(&s, "comptime_str").unwrap();
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let str_ty = self.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let global = self.ir.builder.build_global_string_ptr(&s, "comptime_str").unwrap();
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
                 let mut sv = str_ty.get_undef();
-                sv = self.builder.build_insert_value(sv, i64_ty.const_int(len, false), 0, "str_len").unwrap().into_struct_value();
-                sv = self.builder.build_insert_value(sv, global.as_pointer_value(), 1, "str_ptr").unwrap().into_struct_value();
+                sv = self.ir.builder.build_insert_value(sv, i64_ty.const_int(len, false), 0, "str_len").unwrap().into_struct_value();
+                sv = self.ir.builder.build_insert_value(sv, global.as_pointer_value(), 1, "str_ptr").unwrap().into_struct_value();
                 Some(sv.into())
             }
             Err(e) => {
@@ -1178,13 +1178,13 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn emit_spawn(&mut self, inner: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // inner must be a lambda expression. Compile it to get the fat ptr.
         let fat = self.emit_expr(inner, fn_val)?;
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
 
         // If we got a struct back, extract fn_ptr and env_ptr.
         let (fn_ptr_val, env_ptr_val) = match fat {
             BasicValueEnum::StructValue(sv) => {
-                let fp = self.builder.build_extract_value(sv, 0, "spawn_fp").unwrap();
-                let ep = self.builder.build_extract_value(sv, 1, "spawn_ep").unwrap();
+                let fp = self.ir.builder.build_extract_value(sv, 0, "spawn_fp").unwrap();
+                let ep = self.ir.builder.build_extract_value(sv, 1, "spawn_ep").unwrap();
                 (fp, ep)
             }
             other => {
@@ -1195,7 +1195,7 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         if let Some(spawn_fn) = self.functions.get("__axon_spawn").copied() {
-            self.builder.build_call(
+            self.ir.builder.build_call(
                 spawn_fn,
                 &[fn_ptr_val.into(), env_ptr_val.into()],
                 "spawn",
@@ -1207,8 +1207,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_index(&mut self, receiver: &ast::Expr, index: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let elem_llvm_ty = if let ast::Expr::Ident(n) = receiver.as_ref() {
-            self.local_types.get(n).and_then(|ty| {
+        let elem_llvm_ty = if let ast::Expr::Ident(n) = receiver {
+            self.local_types.get(n.as_str()).and_then(|ty| {
                 if let Type::Slice(inner) = ty { self.llvm_type(inner) } else { None }
             })
         } else {
@@ -1224,26 +1224,26 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Slice struct { i64, ptr }: extract the data pointer (field 1).
-        let i64_ty = self.context.i64_type();
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let slice_ty = self.context.struct_type(
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(
             &[i64_ty.into(), ptr_ty.into()], false,
         );
-        let slice_alloca = self.builder.build_alloca(slice_ty, "slicetmp").unwrap();
-        self.builder.build_store(slice_alloca, slice_val).unwrap();
-        let data_field_ptr = self.builder
+        let slice_alloca = self.ir.builder.build_alloca(slice_ty, "slicetmp").unwrap();
+        self.ir.builder.build_store(slice_alloca, slice_val).unwrap();
+        let data_field_ptr = self.ir.builder
             .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
             .unwrap();
-        let data_ptr = self.builder
+        let data_ptr = self.ir.builder
             .build_load(ptr_ty, data_field_ptr, "dataval")
             .unwrap()
             .into_pointer_value();
         let elem_ptr = unsafe {
-            self.builder
+            self.ir.builder
                 .build_gep(elem_ty, data_ptr, &[idx_int], "elemptr")
                 .unwrap()
         };
-        let elem = self.builder.build_load(elem_ty, elem_ptr, "elemval").unwrap();
+        let elem = self.ir.builder.build_load(elem_ty, elem_ptr, "elemval").unwrap();
         Some(elem)
     }
 
@@ -1254,7 +1254,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let recv_ty = self.sem_type_of_expr(receiver);
         if let Some(Type::Uncertain(_)) | Some(Type::Temporal(_)) = recv_ty.clone() {
             let ty = recv_ty.unwrap();
-            let idx_opt: Option<u32> = match (&ty, field.as_str()) {
+            let idx_opt: Option<u32> = match (&ty, field) {
                 (Type::Uncertain(_), "value") => Some(0),
                 (Type::Uncertain(_), "confidence") => Some(1),
                 (Type::Uncertain(_), "source_tag") => Some(2),
@@ -1268,15 +1268,15 @@ impl<'ctx> super::Codegen<'ctx> {
             if let (Some(idx), Some(struct_be)) = (idx_opt, self.llvm_type(&ty)) {
                 if let BasicTypeEnum::StructType(struct_ty) = struct_be {
                     let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let recv_alloca = self.builder
+                    let recv_alloca = self.ir.builder
                         .build_alloca(struct_ty, "asi_recv_tmp")
                         .unwrap();
-                    self.builder.build_store(recv_alloca, recv_val).unwrap();
-                    let fptr = self.builder
+                    self.ir.builder.build_store(recv_alloca, recv_val).unwrap();
+                    let fptr = self.ir.builder
                         .build_struct_gep(struct_ty, recv_alloca, idx, field)
                         .unwrap();
                     if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
-                        let fval = self.builder.build_load(fty, fptr, field).unwrap();
+                        let fval = self.ir.builder.build_load(fty, fptr, field).unwrap();
                         return Some(fval);
                     }
                 }
@@ -1291,20 +1291,20 @@ impl<'ctx> super::Codegen<'ctx> {
 
         if let Some(sname) = struct_name {
             if let (Some(struct_ty), Some(field_names)) = (
-                self.module.get_struct_type(&sname),
+                self.ir.module.get_struct_type(&sname),
                 self.struct_fields.get(&sname).cloned(),
             ) {
                 if let Some(idx) = field_names.iter().position(|n| n == field) {
                     let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let recv_alloca = self.builder
+                    let recv_alloca = self.ir.builder
                         .build_alloca(struct_ty, "recv_tmp")
                         .unwrap();
-                    self.builder.build_store(recv_alloca, recv_val).unwrap();
-                    let fptr = self.builder
+                    self.ir.builder.build_store(recv_alloca, recv_val).unwrap();
+                    let fptr = self.ir.builder
                         .build_struct_gep(struct_ty, recv_alloca, idx as u32, field)
                         .unwrap();
                     if let Some(field_ty) = struct_ty.get_field_type_at_index(idx as u32) {
-                        let fval = self.builder.build_load(field_ty, fptr, field).unwrap();
+                        let fval = self.ir.builder.build_load(field_ty, fptr, field).unwrap();
                         return Some(fval);
                     }
                 }
@@ -1332,30 +1332,30 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Look up the LLVM struct type for the enum.
             let struct_name = format!("{enum_name}_enum");
-            let enum_struct_ty = self.module.get_struct_type(&struct_name)?;
+            let enum_struct_ty = self.ir.module.get_struct_type(&struct_name)?;
 
             // Alloca for the enum struct { i32, [N x i8] }.
-            let alloca = self.builder.build_alloca(enum_struct_ty, &struct_name).unwrap();
+            let alloca = self.ir.builder.build_alloca(enum_struct_ty, &struct_name).unwrap();
 
             // Store tag (field 0).
-            let i32_ty = self.context.i32_type();
-            let tag_ptr = self.builder
+            let i32_ty = self.ir.context.i32_type();
+            let tag_ptr = self.ir.builder
                 .build_struct_gep(enum_struct_ty, alloca, 0, "tagptr")
                 .unwrap();
-            self.builder
+            self.ir.builder
                 .build_store(tag_ptr, i32_ty.const_int(tag_int as u64, false))
                 .unwrap();
 
             // Store each field into the payload (field 1) at byte offsets.
             if !fields.is_empty() {
-                let i8_ty = self.context.i8_type();
+                let i8_ty = self.ir.context.i8_type();
                 let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
 
                 // Get pointer to payload field.
-                let pay_ptr = self.builder
+                let pay_ptr = self.ir.builder
                     .build_struct_gep(enum_struct_ty, alloca, 1, "payptr")
                     .unwrap();
-                let pay_i8ptr = self.builder
+                let pay_i8ptr = self.ir.builder
                     .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
                     .unwrap();
 
@@ -1367,38 +1367,38 @@ impl<'ctx> super::Codegen<'ctx> {
                         // GEP into the payload at the current byte offset.
                         let offset_val = i32_ty.const_int(byte_offset, false);
                         let field_ptr = unsafe {
-                            self.builder
+                            self.ir.builder
                                 .build_gep(i8_ty, pay_i8ptr, &[offset_val], fname)
                                 .unwrap()
                         };
                         // Cast to the appropriate typed pointer and store.
                         let fval_ptr_ty = fval.get_type().ptr_type(AddressSpace::default());
-                        let typed_ptr = self.builder
+                        let typed_ptr = self.ir.builder
                             .build_pointer_cast(field_ptr, fval_ptr_ty, "ftyptr")
                             .unwrap();
-                        self.builder.build_store(typed_ptr, fval).unwrap();
+                        self.ir.builder.build_store(typed_ptr, fval).unwrap();
                         byte_offset += fsize;
                     }
                 }
             }
 
-            let val = self.builder.build_load(enum_struct_ty, alloca, name).unwrap();
+            let val = self.ir.builder.build_load(enum_struct_ty, alloca, name).unwrap();
             Some(val)
         } else {
             // Regular struct literal.
-            let struct_ty = self.module.get_struct_type(name)?;
+            let struct_ty = self.ir.module.get_struct_type(name)?;
             let field_names = self.struct_fields.get(name).cloned().unwrap_or_default();
-            let alloca = self.builder.build_alloca(struct_ty, name).unwrap();
+            let alloca = self.ir.builder.build_alloca(struct_ty, name).unwrap();
             for (fname, fexpr) in fields {
                 let idx = field_names.iter().position(|n| n == fname).unwrap_or(0) as u32;
                 if let Some(fval) = self.emit_expr(fexpr, fn_val) {
-                    let fptr = self.builder
+                    let fptr = self.ir.builder
                         .build_struct_gep(struct_ty, alloca, idx, fname)
                         .unwrap();
-                    self.builder.build_store(fptr, fval).unwrap();
+                    self.ir.builder.build_store(fptr, fval).unwrap();
                 }
             }
-            let val = self.builder.build_load(struct_ty, alloca, name).unwrap();
+            let val = self.ir.builder.build_load(struct_ty, alloca, name).unwrap();
             Some(val)
         }
     }
@@ -1407,9 +1407,9 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn emit_array_lit(&mut self, elems: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         if elems.is_empty() {
             // Return a zero-length slice struct.
-            let i64_ty = self.context.i64_type();
-            let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-            let slice_ty = self.context.struct_type(
+            let i64_ty = self.ir.context.i64_type();
+            let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+            let slice_ty = self.ir.context.struct_type(
                 &[i64_ty.into(), ptr_ty.into()],
                 false,
             );
@@ -1435,66 +1435,66 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Use malloc for the array backing store so the slice remains
         // valid if returned from a function (no dangling stack pointer).
-        let i64_ty = self.context.i64_type();
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         // Compute element size from the LLVM type bit-width.
         let elem_size_bytes: u64 = match elem_ty {
             BasicTypeEnum::IntType(it) => (it.get_bit_width() as u64 + 7) / 8,
             BasicTypeEnum::FloatType(ft) => {
-                if ft == self.context.f32_type() { 4 } else { 8 }
+                if ft == self.ir.context.f32_type() { 4 } else { 8 }
             }
             BasicTypeEnum::StructType(_) | BasicTypeEnum::ArrayType(_)
             | BasicTypeEnum::PointerType(_) | BasicTypeEnum::VectorType(_) => 8,
         };
         let total_bytes = i64_ty.const_int(elem_size_bytes * n as u64, false);
-        let malloc_fn = self.module.get_function("malloc").unwrap_or_else(|| {
+        let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
             let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
-            self.module.add_function("malloc", malloc_ty, None)
+            self.ir.module.add_function("malloc", malloc_ty, None)
         });
-        let malloc_call = self.builder
+        let malloc_call = self.ir.builder
             .build_call(malloc_fn, &[total_bytes.into()], "arrdata")
             .unwrap();
         let raw_ptr = malloc_call.try_as_basic_value().left().unwrap().into_pointer_value();
         // Cast to typed element pointer for GEP.
         let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
-        let elem_data_ptr = self.builder
+        let elem_data_ptr = self.ir.builder
             .build_pointer_cast(raw_ptr, elem_ptr_ty, "arrelemptr")
             .unwrap();
         for (idx, v) in vals.iter().enumerate() {
             let idx_val = i64_ty.const_int(idx as u64, false);
             let gep = unsafe {
-                self.builder
+                self.ir.builder
                     .build_gep(elem_ty, elem_data_ptr, &[idx_val], "arrelem")
                     .unwrap()
             };
-            self.builder.build_store(gep, *v).unwrap();
+            self.ir.builder.build_store(gep, *v).unwrap();
         }
 
         // Build slice struct { len, ptr }.
-        let slice_ty = self.context.struct_type(
+        let slice_ty = self.ir.context.struct_type(
             &[i64_ty.into(), ptr_ty.into()],
             false,
         );
         let len_val = i64_ty.const_int(n as u64, false);
         // Cast malloc ptr to opaque i8* for the slice data field.
-        let data_ptr = self
+        let data_ptr = self.ir
             .builder
             .build_pointer_cast(raw_ptr, ptr_ty, "sliceptr")
             .unwrap();
-        let slice_alloca = self.builder.build_alloca(slice_ty, "slice").unwrap();
+        let slice_alloca = self.ir.builder.build_alloca(slice_ty, "slice").unwrap();
         // Store len.
-        let len_ptr = self
+        let len_ptr = self.ir
             .builder
             .build_struct_gep(slice_ty, slice_alloca, 0, "lenptr")
             .unwrap();
-        self.builder.build_store(len_ptr, len_val).unwrap();
+        self.ir.builder.build_store(len_ptr, len_val).unwrap();
         // Store data ptr.
-        let data_field_ptr = self
+        let data_field_ptr = self.ir
             .builder
             .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
             .unwrap();
-        self.builder.build_store(data_field_ptr, data_ptr).unwrap();
-        let slice_val = self
+        self.ir.builder.build_store(data_field_ptr, data_ptr).unwrap();
+        let slice_val = self.ir
             .builder
             .build_load(slice_ty, slice_alloca, "sliceval")
             .unwrap();
@@ -1508,15 +1508,15 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(v) = self.emit_expr(e, fn_val) {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
-                    self.builder.build_return(Some(&v)).unwrap();
+                    self.ir.builder.build_return(Some(&v)).unwrap();
                 } else {
                     self.log_return_if_adaptive();
-                    self.builder.build_return(None).unwrap();
+                    self.ir.builder.build_return(None).unwrap();
                 }
             }
             std::option::Option::None => {
                 self.log_return_if_adaptive();
-                self.builder.build_return(None).unwrap();
+                self.ir.builder.build_return(None).unwrap();
             }
         }
         None
@@ -1529,9 +1529,9 @@ impl<'ctx> super::Codegen<'ctx> {
         if let Some(Type::DynTrait(trait_name)) = recv_sem_ty {
             let recv_val = self.emit_expr(receiver, fn_val)?;
             let fat = recv_val.into_struct_value();
-            let data_ptr = self.builder.build_extract_value(fat, 0, "data_ptr")
+            let data_ptr = self.ir.builder.build_extract_value(fat, 0, "data_ptr")
                 .unwrap().into_pointer_value();
-            let vtbl_ptr = self.builder.build_extract_value(fat, 1, "vtbl_ptr")
+            let vtbl_ptr = self.ir.builder.build_extract_value(fat, 1, "vtbl_ptr")
                 .unwrap().into_pointer_value();
 
             // Find method index in the trait definition.
@@ -1539,14 +1539,14 @@ impl<'ctx> super::Codegen<'ctx> {
             let method_idx = trait_def.methods.iter().position(|m| m.name == *method)?;
 
             // GEP into vtable array to get the function pointer slot.
-            let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
+            let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
             let arr_ty = i8_ptr.array_type(trait_def.methods.len() as u32);
-            let idx_zero = self.context.i64_type().const_zero();
-            let idx_m = self.context.i64_type().const_int(method_idx as u64, false);
+            let idx_zero = self.ir.context.i64_type().const_zero();
+            let idx_m = self.ir.context.i64_type().const_int(method_idx as u64, false);
             let fn_slot = unsafe {
-                self.builder.build_gep(arr_ty, vtbl_ptr, &[idx_zero, idx_m], "fn_slot").unwrap()
+                self.ir.builder.build_gep(arr_ty, vtbl_ptr, &[idx_zero, idx_m], "fn_slot").unwrap()
             };
-            let fn_ptr = self.builder.build_load(i8_ptr, fn_slot, "fn_ptr")
+            let fn_ptr = self.ir.builder.build_load(i8_ptr, fn_slot, "fn_ptr")
                 .unwrap().into_pointer_value();
 
             // Build call args: data_ptr + any extra args.
@@ -1557,8 +1557,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
 
-            let thunk_ty = self.vtable_thunk_types.get(&(trait_name, method.clone())).copied()?;
-            let call = self.builder.build_indirect_call(thunk_ty, fn_ptr, &call_args, "vtbl_call").unwrap();
+            let thunk_ty = self.vtable_thunk_types.get(&(trait_name, method.to_string())).copied()?;
+            let call = self.ir.builder.build_indirect_call(thunk_ty, fn_ptr, &call_args, "vtbl_call").unwrap();
             return call.try_as_basic_value().left();
         }
 
@@ -1576,18 +1576,18 @@ impl<'ctx> super::Codegen<'ctx> {
         let fn_v = mangled
             .as_deref()
             .and_then(|m| self.functions.get(m).copied())
-            .or_else(|| self.functions.get(method.as_str()).copied());
+            .or_else(|| self.functions.get(method).copied());
 
         if let Some(fn_v) = fn_v {
             let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
             // Prepend the receiver as the first argument.
             // For Chan methods, cast receiver to i8* (opaque pointer ABI).
             if let Some(rv) = recv_val {
-                let is_chan_method = matches!(method.as_str(), "send" | "recv" | "clone");
+                let is_chan_method = matches!(method, "send" | "recv" | "clone");
                 let rv = if is_chan_method {
                     if let BasicValueEnum::PointerValue(pv) = rv {
-                        let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                        self.builder.build_pointer_cast(pv, i8_ptr, "chan_cast").unwrap().into()
+                        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                        self.ir.builder.build_pointer_cast(pv, i8_ptr, "chan_cast").unwrap().into()
                     } else {
                         rv
                     }
@@ -1601,7 +1601,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     arg_vals.push(v.into());
                 }
             }
-            let call = self
+            let call = self.ir
                 .builder
                 .build_call(fn_v, &arg_vals, "mcall")
                 .unwrap();
@@ -1612,11 +1612,11 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_call(&mut self, callee: &ast::Expr, args: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
-        let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-        let i64_ty = self.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let i64_ty = self.ir.context.i64_type();
 
         // Try to resolve callee as a global function first.
-        let maybe_fn_v = match callee.as_ref() {
+        let maybe_fn_v = match callee {
             ast::Expr::Ident(name) => self.functions.get(name.as_str()).copied(),
             // Chan::new / chan<T>() — StructLit callees with known names.
             ast::Expr::StructLit { name, fields } if fields.is_empty() => {
@@ -1648,12 +1648,12 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Try closure call: callee is a local holding a {fn_ptr, env_ptr} struct.
         if maybe_fn_v.is_none() {
-            if let ast::Expr::Ident(name) = callee.as_ref() {
+            if let ast::Expr::Ident(name) = callee {
                 if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
-                    let fat = self.builder.build_load(ty, alloca, "closure").unwrap();
+                    let fat = self.ir.builder.build_load(ty, alloca, "closure").unwrap();
                     if let BasicValueEnum::StructValue(sv) = fat {
-                        let fp = self.builder.build_extract_value(sv, 0, "cfp").unwrap();
-                        let ep = self.builder.build_extract_value(sv, 1, "cep").unwrap();
+                        let fp = self.ir.builder.build_extract_value(sv, 0, "cfp").unwrap();
+                        let ep = self.ir.builder.build_extract_value(sv, 1, "cep").unwrap();
                         // Build arg list: env_ptr first, then explicit args.
                         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> =
                             vec![ep.into()];
@@ -1663,7 +1663,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             }
                         }
                         // Build an indirect call via fn pointer.
-                        let fn_ptr = self.builder
+                        let fn_ptr = self.ir.builder
                             .build_pointer_cast(
                                 fp.into_pointer_value(),
                                 ptr_ty,
@@ -1677,7 +1677,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             ipt.push(i64_ty.into());
                         }
                         let indirect_ty = i64_ty.fn_type(&ipt, false);
-                        let call = self.builder
+                        let call = self.ir.builder
                             .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
                             .unwrap();
                         return call.try_as_basic_value().left();
@@ -1693,7 +1693,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let param_tys: Vec<BasicTypeEnum<'ctx>> = fn_v.get_type().get_param_types();
 
         // Get Axon-level param types for DynTrait coercion.
-        let axon_params: Vec<ast::AxonType> = if let ast::Expr::Ident(name) = callee.as_ref() {
+        let axon_params: Vec<ast::AxonType> = if let ast::Expr::Ident(name) = callee {
             self.fn_axon_params.get(name).cloned().unwrap_or_default()
         } else {
             Vec::new()
@@ -1724,20 +1724,20 @@ impl<'ctx> super::Codegen<'ctx> {
                         if let Some(val) = concrete_val {
                             // Alloca the concrete value; store it so we have a data ptr.
                             let concrete_llvm_ty = val.get_type();
-                            let data_alloca = self.builder.build_alloca(concrete_llvm_ty, "dyn_data").unwrap();
-                            self.builder.build_store(data_alloca, val).unwrap();
+                            let data_alloca = self.ir.builder.build_alloca(concrete_llvm_ty, "dyn_data").unwrap();
+                            self.ir.builder.build_store(data_alloca, val).unwrap();
 
                             // Build fat pointer { data_ptr, vtable_ptr }.
-                            let i8_ptr = self.context.i8_type().ptr_type(AddressSpace::default());
-                            let fat_ty = self.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false);
+                            let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                            let fat_ty = self.ir.context.struct_type(&[i8_ptr.into(), i8_ptr.into()], false);
                             let fat_undef = fat_ty.get_undef();
 
-                            let data_cast = self.builder.build_pointer_cast(data_alloca, i8_ptr, "data_cast").unwrap();
+                            let data_cast = self.ir.builder.build_pointer_cast(data_alloca, i8_ptr, "data_cast").unwrap();
                             let vtbl_ptr = vtable_global.as_pointer_value();
-                            let vtbl_cast = self.builder.build_pointer_cast(vtbl_ptr, i8_ptr, "vtbl_cast").unwrap();
+                            let vtbl_cast = self.ir.builder.build_pointer_cast(vtbl_ptr, i8_ptr, "vtbl_cast").unwrap();
 
-                            let fat0 = self.builder.build_insert_value(fat_undef, data_cast, 0, "fat0").unwrap();
-                            let fat1 = self.builder.build_insert_value(fat0.into_struct_value(), vtbl_cast, 1, "fat1").unwrap();
+                            let fat0 = self.ir.builder.build_insert_value(fat_undef, data_cast, 0, "fat0").unwrap();
+                            let fat1 = self.ir.builder.build_insert_value(fat0.into_struct_value(), vtbl_cast, 1, "fat1").unwrap();
                             // AggregateValueEnum → StructValue → BasicMetadataValueEnum
                             arg_vals.push(BasicValueEnum::StructValue(fat1.into_struct_value()).into());
                             continue;
@@ -1763,7 +1763,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     let actual = iv.get_type().get_bit_width();
                     let expect = exp_int.get_bit_width();
                     if actual > expect {
-                        self.builder.build_int_truncate(iv, exp_int, "trunc").unwrap().into()
+                        self.ir.builder.build_int_truncate(iv, exp_int, "trunc").unwrap().into()
                     } else if actual < expect {
                         let sem_ty = self.infer_expr_sem_type(a);
                         let is_unsigned = matches!(
@@ -1771,9 +1771,9 @@ impl<'ctx> super::Codegen<'ctx> {
                             Some(Type::U8) | Some(Type::U16) | Some(Type::U32) | Some(Type::U64)
                         );
                         if is_unsigned {
-                            self.builder.build_int_z_extend(iv, exp_int, "zext").unwrap().into()
+                            self.ir.builder.build_int_z_extend(iv, exp_int, "zext").unwrap().into()
                         } else {
-                            self.builder.build_int_s_extend(iv, exp_int, "sext").unwrap().into()
+                            self.ir.builder.build_int_s_extend(iv, exp_int, "sext").unwrap().into()
                         }
                     } else {
                         val
@@ -1781,18 +1781,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 // float → int: e.g. to_str(f64_val) where to_str takes i64
                 (Some(BasicTypeEnum::IntType(exp_int)), BasicValueEnum::FloatValue(fv)) => {
-                    self.builder.build_float_to_signed_int(fv, exp_int, "ftoi").unwrap().into()
+                    self.ir.builder.build_float_to_signed_int(fv, exp_int, "ftoi").unwrap().into()
                 }
                 // int → float
                 (Some(BasicTypeEnum::FloatType(exp_flt)), BasicValueEnum::IntValue(iv)) => {
-                    self.builder.build_signed_int_to_float(iv, exp_flt, "itof").unwrap().into()
+                    self.ir.builder.build_signed_int_to_float(iv, exp_flt, "itof").unwrap().into()
                 }
                 _ => val,
             };
             arg_vals.push(coerced.into());
         }
 
-        let call = self
+        let call = self.ir
             .builder
             .build_call(fn_v, &arg_vals, "call")
             .unwrap();

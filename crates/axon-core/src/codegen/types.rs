@@ -22,19 +22,19 @@ impl<'ctx> super::Codegen<'ctx> {
     /// Returns `None` for `Unit` (void) and unresolved/unknown types.
     pub fn llvm_type(&self, ty: &Type) -> Option<BasicTypeEnum<'ctx>> {
         match ty {
-            Type::I8 | Type::U8 => Some(self.context.i8_type().into()),
-            Type::I16 | Type::U16 => Some(self.context.i16_type().into()),
-            Type::I32 | Type::U32 => Some(self.context.i32_type().into()),
-            Type::I64 | Type::U64 => Some(self.context.i64_type().into()),
-            Type::F32 => Some(self.context.f32_type().into()),
-            Type::F64 => Some(self.context.f64_type().into()),
-            Type::Bool => Some(self.context.bool_type().into()),
+            Type::I8 | Type::U8 => Some(self.ir.context.i8_type().into()),
+            Type::I16 | Type::U16 => Some(self.ir.context.i16_type().into()),
+            Type::I32 | Type::U32 => Some(self.ir.context.i32_type().into()),
+            Type::I64 | Type::U64 => Some(self.ir.context.i64_type().into()),
+            Type::F32 => Some(self.ir.context.f32_type().into()),
+            Type::F64 => Some(self.ir.context.f64_type().into()),
+            Type::Bool => Some(self.ir.context.bool_type().into()),
 
             // Str → struct { i64, ptr }
             Type::Str => {
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let str_ty = self.context.struct_type(
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(
                     &[i64_ty.into(), ptr_ty.into()],
                     /*packed=*/ false,
                 );
@@ -46,9 +46,9 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Option<T> → struct { i1, T }
             Type::Option(inner) => {
-                let tag = self.context.bool_type();
+                let tag = self.ir.context.bool_type();
                 if let Some(inner_llvm) = self.llvm_type(inner) {
-                    let opt_ty = self.context.struct_type(
+                    let opt_ty = self.ir.context.struct_type(
                         &[tag.into(), inner_llvm],
                         false,
                     );
@@ -61,13 +61,13 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Result<T,E> → struct { i1, [max(sizeof T, sizeof E) x i8] }
             Type::Result(ok_ty, err_ty) => {
-                let tag = self.context.bool_type();
+                let tag = self.ir.context.bool_type();
                 let ok_size = self.llvm_sizeof(ok_ty).unwrap_or(0);
                 let err_size = self.llvm_sizeof(err_ty).unwrap_or(0);
                 let payload_size = ok_size.max(err_size).max(1);
-                let i8_ty = self.context.i8_type();
+                let i8_ty = self.ir.context.i8_type();
                 let payload = i8_ty.array_type(payload_size as u32);
-                let result_ty = self.context.struct_type(
+                let result_ty = self.ir.context.struct_type(
                     &[tag.into(), payload.into()],
                     false,
                 );
@@ -76,9 +76,9 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Slice<T> → struct { i64, ptr }
             Type::Slice(_inner) => {
-                let i64_ty = self.context.i64_type();
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                let slice_ty = self.context.struct_type(
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self.ir.context.struct_type(
                     &[i64_ty.into(), ptr_ty.into()],
                     false,
                 );
@@ -91,25 +91,25 @@ impl<'ctx> super::Codegen<'ctx> {
                     .iter()
                     .filter_map(|f| self.llvm_type(f))
                     .collect();
-                let tuple_ty = self.context.struct_type(&field_tys, false);
+                let tuple_ty = self.ir.context.struct_type(&field_tys, false);
                 Some(tuple_ty.into())
             }
 
             // Fn<params, ret> → opaque pointer (function pointers in LLVM 17
             // use the opaque pointer representation; typed fn pointers are gone).
             Type::Fn(_, _) => {
-                Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
+                Some(self.ir.context.i8_type().ptr_type(AddressSpace::default()).into())
             }
 
             // Named struct — look up the named struct in the LLVM module.
             Type::Struct(name) => {
-                self.module.get_struct_type(name).map(|s| s.into())
+                self.ir.module.get_struct_type(name).map(|s| s.into())
             }
 
             // Enum — look up by name with "_enum" suffix convention.
             Type::Enum(name) => {
                 let mangled = format!("{name}_enum");
-                self.module.get_struct_type(&mangled).map(|s| s.into())
+                self.ir.module.get_struct_type(&mangled).map(|s| s.into())
             }
 
             // Unresolved — skip
@@ -118,22 +118,22 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::TypeParam(_) => None,
             // DynTrait → fat pointer { ptr data, ptr vtable }
             Type::DynTrait(_) => {
-                let ptr_ty = self.context.i8_type().ptr_type(AddressSpace::default());
-                Some(self.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                Some(self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
             }
             // Chan<T> → opaque pointer to axon-rt channel object
             Type::Chan(_) => {
-                Some(self.context.i8_type().ptr_type(AddressSpace::default()).into())
+                Some(self.ir.context.i8_type().ptr_type(AddressSpace::default()).into())
             }
             // Uncertain<T> → struct { T value, f64 confidence, i64 source_tag }
             // V1 simplification: omits `alternatives` and `interval` slots from
             // the full PRD (AI_Language_Plan.md lines 1360-1410). Layer-1 only.
             Type::Uncertain(inner) => {
                 let inner_llvm = self.llvm_type(inner)?;
-                let f64_ty = self.context.f64_type();
-                let i64_ty = self.context.i64_type();
+                let f64_ty = self.ir.context.f64_type();
+                let i64_ty = self.ir.context.i64_type();
                 Some(
-                    self.context
+                    self.ir.context
                         .struct_type(&[inner_llvm, f64_ty.into(), i64_ty.into()], false)
                         .into(),
                 )
@@ -143,10 +143,10 @@ impl<'ctx> super::Codegen<'ctx> {
             // V1 monomorphisation on T = i64 / f64 (PRD lines 1411-1467).
             Type::Temporal(inner) => {
                 let inner_llvm = self.llvm_type(inner)?;
-                let f64_ty = self.context.f64_type();
-                let i64_ty = self.context.i64_type();
+                let f64_ty = self.ir.context.f64_type();
+                let i64_ty = self.ir.context.i64_type();
                 Some(
-                    self.context
+                    self.ir.context
                         .struct_type(
                             &[
                                 inner_llvm,

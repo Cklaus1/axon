@@ -79,10 +79,18 @@ pub struct InkwellBackend<'ctx> {
 }
 
 impl<'ctx> InkwellBackend<'ctx> {
-    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
-        let module = context.create_module(module_name);
-        let builder = context.create_builder();
-        let mut backend = Self {
+    /// Adopt an externally-owned `Module<'ctx>` + `Builder<'ctx>`, taking
+    /// ownership.  This is the path used by `Codegen::new`: Codegen creates
+    /// the module + builder, then immediately hands them to `adopt` so
+    /// there is exactly ONE Module per codegen run (per `IR_REARCH.md`
+    /// option (c) — fixes the dual-module-symbol-table issue that blocked
+    /// IR.3 partial migration).
+    pub fn adopt(
+        context: &'ctx Context,
+        module: Module<'ctx>,
+        builder: Builder<'ctx>,
+    ) -> Self {
+        Self {
             context,
             module,
             builder,
@@ -93,11 +101,16 @@ impl<'ctx> InkwellBackend<'ctx> {
             globals: Vec::new(),
             fn_types: Vec::new(),
             name_counter: 0,
-        };
-        // Pre-register sentinel value to keep arena indices ≥ 1 if we want.
-        // For now we allow IRValue(0) to be a real value; users rely on
-        // method semantics to determine "no value".
-        backend
+        }
+    }
+
+    /// Convenience constructor used by tests and standalone benchmarks
+    /// that don't have their own pre-built module.  Creates a fresh
+    /// module + builder and delegates to `adopt`.
+    pub fn new(context: &'ctx Context, module_name: &str) -> Self {
+        let module = context.create_module(module_name);
+        let builder = context.create_builder();
+        Self::adopt(context, module, builder)
     }
 
     fn next_name(&mut self, prefix: &str) -> String {

@@ -29,7 +29,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Write the LLVM IR text representation to `path` (usually `*.ll`).
     pub fn write_ir(&self, path: &str) -> Result<(), String> {
-        self.module
+        self.ir.module
             .print_to_file(Path::new(path))
             .map_err(|e| e.to_string())
     }
@@ -56,15 +56,15 @@ impl<'ctx> super::Codegen<'ctx> {
         release: bool,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
-        self.module
+        self.ir.module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
-        emit_object_and_link(&self.module, output_path, release, target_triple)
+        emit_object_and_link(&self.ir.module, output_path, release, target_triple)
     }
 
     /// Serialize the compiled LLVM IR as bitcode bytes (for the incremental cache).
     pub fn emit_bitcode(&self) -> Vec<u8> {
-        self.module.write_bitcode_to_memory().as_slice().to_vec()
+        self.ir.module.write_bitcode_to_memory().as_slice().to_vec()
     }
 
     // ── Test runner ───────────────────────────────────────────────────────
@@ -77,7 +77,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// `exit(1)`, terminating the process — Phase 1 limitation.
     pub fn run_tests(&self, fns: &[String]) -> Vec<TestResult> {
         // Verify the module before running tests.
-        if let Err(e) = self.module.verify() {
+        if let Err(e) = self.ir.module.verify() {
             return fns.iter().map(|name| TestResult {
                 name: name.clone(),
                 passed: false,
@@ -87,7 +87,7 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // Create a single JIT engine for the whole module.
-        let ee = match self.module.create_jit_execution_engine(OptimizationLevel::None) {
+        let ee = match self.ir.module.create_jit_execution_engine(OptimizationLevel::None) {
             Ok(e) => e,
             Err(e) => {
                 return fns.iter().map(|name| TestResult {
