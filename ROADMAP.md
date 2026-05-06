@@ -438,7 +438,37 @@ the shim will sit on; the shim is what unlocks fast clean builds.
 parallel `/tmp/axon-check` tool (no-default-features, no LLVM) remains
 the only way to validate `.ax` sources end-to-end.  Phase 5/6+ work can
 proceed against `axon-check` validation alone; full `axon run` testing
-is gated on the shim or on nightly `-Z parallel-frontend`.
+is gated on the shim.
+
+**Update 2026-05-05 — `-Z parallel-frontend` empirically tested and rejected**:
+Tried nightly rustc with `RUSTFLAGS="-Z threads=8"` + Phase 2/3 splits +
+`RUST_MIN_STACK=16777216`.  Build ran 4h 35m wall clock with 11 threads
+spawned but **only one thread doing work** the entire time (LWP burned
+4h 14m CPU; the other 7 worker threads at 0:00 throughout).  Same
+single-threaded pathology, same memory growth (VmPeak 3.5 GB), 1 object
+file emitted.
+
+This confirms: nightly's parallel frontend either (a) doesn't parallelize
+the specific trait queries that inkwell triggers, or (b) serializes on a
+global lock somewhere.  Either way, throwing more cores at the same
+workload is not the fix.
+
+**Conclusion**: the inkwell shim ("Stretch²" above) is the only remaining
+lever.  Module split + method decomposition + parallel frontend, all
+combined, fail to bring this build into reasonable time.  The shim
+fundamentally bounds inkwell's generic surface to one impl block;
+codegen.rs becomes monomorphic over plain handles.  This is the answer.
+
+**Recommendation for future ASI session**: schedule the shim refactor on
+canonical hardware where each method-batch can be validated by a fast
+build cycle.  Migration plan: define `trait IR` with arena handle types
+(`IRValue(u32)`, `IRType(u32)`, `IRBlock(u32)`); implement
+`InkwellBackend<'ctx>` as the *single* place inkwell appears; migrate
+codegen call sites in batches grouped by file (asi.rs, option_result.rs,
+types.rs are smallest, do first); cargo build after each batch to
+isolate failures.  The Phase 2 + Phase 3 work already done is the right
+substrate — files are split and methods are bounded — so each migration
+batch is self-contained.
 
 ---
 
