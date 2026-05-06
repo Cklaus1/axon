@@ -876,3 +876,115 @@ impl<'ctx> IR for InkwellBackend<'ctx> {
 fn _unused_addr_space(_: IRAddrSpace) {}
 #[allow(dead_code)]
 fn _unused_opt_level(_: IROptLevel) {}
+
+// ── Unit tests ─────────────────────────────────────────────────────────────
+//
+// These exercise the shim in isolation: construct a tiny backend, build a
+// small function, verify the module.  They DON'T pay the full codegen.rs
+// inkwell tax — only the methods on the IR-trait critical path are
+// monomorphized once for these tests.
+//
+// To run:  cargo test -p axon-core --lib codegen::ir_inkwell
+//
+// Note: these tests require the `codegen` feature.  Without it, the whole
+// `codegen` module (and these tests with it) are excluded from the build.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use inkwell::context::Context;
+
+    /// Build `fn add42(x: i64) -> i64 { x + 42 }` through the IR trait.
+    /// Verifies the module passes LLVM verification.
+    #[test]
+    fn add42_function_verifies() {
+        let ctx = Context::create();
+        let mut be = InkwellBackend::new(&ctx, "test_add42");
+
+        // Type: fn(i64) -> i64
+        let i64_ty = be.t_i64();
+        let fn_ty = be.t_fn(&[i64_ty], Some(i64_ty), false);
+        let f = be.add_function("add42", fn_ty);
+
+        // Block: entry
+        let entry = be.append_block(f, "entry");
+        be.position_at_end(entry);
+
+        // x is the first parameter.  fn_param returns IRValue(0) in the
+        // current placeholder impl, so we work around: use the function's
+        // raw nth_param via inkwell directly to bridge into the arena.
+        let raw_param = be.func(f).get_nth_param(0).unwrap();
+        let x = be.store_val(raw_param);
+
+        // const 42, then x + 42, then return.
+        let c42 = be.const_i64(42);
+        let sum = be.iadd(x, c42);
+        be.ret(sum);
+
+        // Module should pass LLVM verification.
+        be.verify().expect("add42 module should verify");
+    }
+
+    /// Build a small if-then-else: `fn pick(c: bool) -> i64 { if c { 1 } else { 2 } }`.
+    /// Exercises append_block, position_at_end, cond_br, ret in coordination.
+    #[test]
+    fn if_then_else_verifies() {
+        let ctx = Context::create();
+        let mut be = InkwellBackend::new(&ctx, "test_if");
+
+        let i64_ty = be.t_i64();
+        let bool_ty = be.t_bool();
+        let fn_ty = be.t_fn(&[bool_ty], Some(i64_ty), false);
+        let f = be.add_function("pick", fn_ty);
+
+        let entry = be.append_block(f, "entry");
+        let then_b = be.append_block(f, "then");
+        let else_b = be.append_block(f, "else");
+
+        be.position_at_end(entry);
+        let raw_param = be.func(f).get_nth_param(0).unwrap();
+        let c = be.store_val(raw_param);
+        be.cond_br(c, then_b, else_b);
+
+        be.position_at_end(then_b);
+        let one = be.const_i64(1);
+        be.ret(one);
+
+        be.position_at_end(else_b);
+        let two = be.const_i64(2);
+        be.ret(two);
+
+        be.verify().expect("if/else module should verify");
+    }
+
+    /// Exercise alloca + load + store + struct_gep on a `{ i64, i64 }` struct.
+    #[test]
+    fn struct_alloca_load_store_verifies() {
+        let ctx = Context::create();
+        let mut be = InkwellBackend::new(&ctx, "test_struct");
+
+        let i64_ty = be.t_i64();
+        let void_ret = None;
+        let struct_ty = be.t_struct(&[i64_ty, i64_ty], false);
+        let fn_ty = be.t_fn(&[], void_ret, false);
+        let f = be.add_function("set_pair", fn_ty);
+
+        let entry = be.append_block(f, "entry");
+        be.position_at_end(entry);
+
+        let pair = be.alloca(struct_ty);
+        let f0 = be.struct_gep(struct_ty, pair, 0);
+        let f1 = be.struct_gep(struct_ty, pair, 1);
+
+        let v10 = be.const_i64(10);
+        let v20 = be.const_i64(20);
+        be.store(f0, v10);
+        be.store(f1, v20);
+
+        // Read field 0 back to ensure load works.
+        let _read = be.load(i64_ty, f0);
+
+        be.ret_void();
+        be.verify().expect("struct module should verify");
+    }
+}
