@@ -3,6 +3,7 @@
 **Last update**: 2026-05-05 (multi-day session 2026-05-04 → 2026-05-05)
 **Branch**: `merge-asi-layer3`
 **TrainLoop session id**: `axon-20260505-8dbfd412` (tag: `axon`)
+**Latest commit**: `3f759ef` — IR_REARCH option (c) refactor (2,448 mechanical renames; dual-module bug fixed)
 
 A snapshot of state across the recent multi-cycle work.  Companion to
 `ROADMAP.md` (forward plan) and `STATUS.md` (Phase 4 shipped state).
@@ -77,16 +78,18 @@ stalled.
 | IR.1 | `ir.rs` — IR trait + 5 handle types + helper enums (~280 LoC) | ✅ landed |
 | IR.2 | `ir_inkwell.rs` — `InkwellBackend<'ctx>` impl (~990 LoC, 3 tests) | ✅ landed |
 | IR.3 prep | `ir: InkwellBackend<'ctx>` field wired into Codegen | ✅ landed |
-| IR.3 | per-module migration to `self.ir.*` | ⚠️ blocked — see below |
-| IR.4 | remove legacy `module/builder` fields | not started |
+| IR_REARCH | `InkwellBackend::adopt()` + 2,448 mechanical renames; ONE Module per run | ✅ landed (`3f759ef`) |
+| IR.3 | per-module migration to `self.ir.*` (using IR-trait calls) | unblocked, not started |
+| IR.4 | remove residual inkwell-typed Codegen fields (vtable_globals, loop_stack, etc.) | not started |
 | IR.5 | validate `cargo build -p axon-core` <30 min | not started |
 
-**Architectural blocker on IR.3**: `InkwellBackend` currently *owns* its
-own `Module<'ctx>` separate from `Codegen::module`.  Symbol lookups
-diverge — partial migration is unbuildable end-to-end.  Documented in
-`MIGRATION.md`'s ⚠️ section.  Resolution: re-architect
-`InkwellBackend` to *share* Codegen's Module + Builder.  In progress
-(sub-agent task drafting `IR_REARCH.md`).
+**IR_REARCH resolution**: Per option (c) of `IR_REARCH.md` (sub-agent
+recommendation): InkwellBackend now owns the only Module + Builder.
+Codegen accesses them via `self.ir.{module, builder, context}`.  Single
+symbol table → IR.3 partial migrations are end-to-end linkable.  The
+mechanical rename was 2,448 substitutions across 8 files (script-driven
+single-line + multi-line patterns); rustfmt parses cleanly and
+axon-check (no-default-features) rebuilds in 0.04s.
 
 ### ASI demo set (validation infrastructure)
 
@@ -118,14 +121,23 @@ without paying inkwell tax.
 
 ## Current blockers (in priority order)
 
-1. **IR_REARCH.md design** (in flight, sub-agent drafting) — must land
-   before any IR.3 batch
-2. **InkwellBackend re-architecture** (after IR_REARCH lands) — share
-   Module + Builder with Codegen
-3. **IR.3 batch migrations** (after re-arch) — 7 modules, smallest
-   first, validate per batch
-4. **IR.4 + IR.5** — remove legacy fields, validate full build
-5. **Phase 5 (refinement) implementation** — currently spec-only
+1. ~~IR_REARCH.md design~~ ✅ landed (commit `3f759ef`)
+2. ~~InkwellBackend re-architecture~~ ✅ landed (same commit)
+3. **IR.3 batch migrations** — 7 modules, smallest first.  Now unblocked
+   AND parallelizable (one sub-agent per file).  Each batch rewrites
+   `self.ir.builder.build_int_add(a, b, "n")` → `self.ir.iadd(a, b)`
+   etc. per `MIGRATION.md` recipes.  After each batch, `cargo build -p
+   axon-core` should still succeed (single Module, all symbols resolve).
+4. **IR.4** — remove residual inkwell-typed Codegen fields
+   (`vtable_globals: HashMap<…, GlobalValue<'ctx>>`,
+   `loop_stack: Vec<(BasicBlock<'ctx>, BasicBlock<'ctx>)>`,
+   `current_lambda_env`, `vtable_thunk_types`).  Replace with
+   `IRGlobal`/`IRBlock` arena handles.
+5. **IR.5** — validate `cargo build -p axon-core` <30 min on canonical
+   hardware.  This is the success metric.  Pre-shim build was 5h+ never
+   finished; success target is one cycle.
+6. **Phase 5 (refinement) implementation** — currently spec-only,
+   blocked on a working binary for end-to-end validation
 
 ---
 
@@ -141,7 +153,12 @@ Recent loop iterations chose:
 4. → draft `MIGRATION.md`
 5. → wire `ir` field into Codegen (Step 0)
 6. → discover architectural constraint, document in MIGRATION.md
-7. → spawn sub-agent for IR_REARCH design + write SESSION_STATUS.md (this)
+7. → spawn sub-agent for IR_REARCH design + write SESSION_STATUS.md
+8. → execute IR_REARCH option (c): InkwellBackend::adopt() + 2,448 mechanical renames
+
+Next iteration's likely target: spawn 7 sub-agents (one per module) to
+do IR.3 batch migrations in parallel, each translating raw `self.ir.builder.X`
+calls into IR-trait `self.ir.X` calls per MIGRATION.md recipes.
 
 ---
 
