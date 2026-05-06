@@ -1,0 +1,211 @@
+// Axon Goal: tweet-length summarization.
+//
+// This is the TYPED-AST artifact compiled from `hello-goal.md`.  In
+// Phase 10 the prose-to-AST compiler builds this file from the markdown
+// source.  Today it's hand-written so we can run end-to-end on shipped
+// primitives and verify the surface→IR mapping.
+//
+// Loop primitives used (all shipped on `merge-asi-layer3`):
+//   * @[adaptive]                  — provenance-logs each candidate
+//   * @[verify(predicate)]         — runtime gate before deploy
+//   * fn try_summary(i64) -> i64   — goal_run hill-climbs the variant id
+//   * goal_run(name, target, n)    — drive the search
+//   * ai_complete(prompt)          — call the LLM
+//   * parse_int                    — turn LLM-output digits into i64
+
+// ── Test set ────────────────────────────────────────────────────────────────
+//
+// Two real source texts + one adversarial (the "Pemonia" hallucination
+// bait from the goal's redteam section).
+
+fn test_source(i: i64) -> str {
+    if i == 0 {
+        "The European Central Bank raised its main interest rate by 25 basis points to 4.25% on Thursday, citing persistent core inflation in the services sector. President Lagarde signaled at least one more hike before year-end."
+    } else if i == 1 {
+        "SpaceX successfully launched 23 Starlink satellites from Cape Canaveral on Saturday, the company's 47th launch of the year, bringing the active constellation to over 5,800 satellites in low Earth orbit."
+    } else {
+        adversarial_source()
+    }
+}
+
+fn adversarial_source() -> str {
+    // Hallucination bait: a fictional country.  Faithful summaries
+    // must NOT assert anything about Pemonia not in this text.
+    "Pemonia held its national elections on Tuesday. Turnout was reported as moderate."
+}
+
+// ── Candidate generation ───────────────────────────────────────────────────
+//
+// The variant_id is what goal_run hill-climbs over.  Each variant is one
+// prompt-prefix the LLM sees.  Eight candidate prefixes form the
+// search space for this Hello-Goal demo.
+
+fn build_prompt(variant_id: i64) -> str {
+    let v = variant_id % 8
+    let v2 = if v < 0 { v + 8 } else { v }
+    if v2 == 0 {
+        "Summarize the following text in 280 characters or less. Plain text only. Output ONLY the summary, no preamble.\n\nText: "
+    } else if v2 == 1 {
+        "Tweet-length summary. Lead with the single most important claim. <=280 chars. No quotes around your output.\n\nText: "
+    } else if v2 == 2 {
+        "Read the text. Output a one-sentence summary of the most newsworthy fact. Max 280 characters.\n\nText: "
+    } else if v2 == 3 {
+        "Summarize as a tweet (280 chars max). Surface the lead fact. Plain text, no markdown.\n\nText: "
+    } else if v2 == 4 {
+        "Compress the input into a 280-char tweet. Faithful to source. No fabrication.\n\nText: "
+    } else if v2 == 5 {
+        "Reduce to <=280 characters. Preserve the highest-impact fact. Output only the summary.\n\nText: "
+    } else if v2 == 6 {
+        "Headline-style summary. <=280 chars. Front-load the key claim. Strip filler.\n\nText: "
+    } else {
+        "Tweet summary. 280-char hard cap. One key fact. No editorializing.\n\nText: "
+    }
+}
+
+// ── LLM-judge helpers ──────────────────────────────────────────────────────
+//
+// Coverage and faithfulness are subjective.  We delegate the rubric to
+// the LLM and parse its 0-10 integer response.  A failed parse is
+// treated as 0 (the conservative default).
+
+fn judge_coverage(source: str, summary: str) -> i64 {
+    let prompt = "On a scale 0-10, rate how well this summary captures the most important claim from the source. Output ONLY the integer, no other text.\n\nSource: {source}\n\nSummary: {summary}\n\nScore:"
+    match ai_complete(prompt) {
+        Ok(reply) => {
+            match parse_int(reply) {
+                Ok(n) => clamp_score(n),
+                Err(_) => 0,
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+fn judge_faithfulness(source: str, summary: str) -> i64 {
+    let prompt = "On a scale 0-10, rate whether this summary introduces any claim NOT supported by the source. 10 = fully faithful, 0 = entirely fabricated. Output ONLY the integer.\n\nSource: {source}\n\nSummary: {summary}\n\nScore:"
+    match ai_complete(prompt) {
+        Ok(reply) => {
+            match parse_int(reply) {
+                Ok(n) => clamp_score(n),
+                Err(_) => 0,
+            }
+        }
+        Err(_) => 0,
+    }
+}
+
+fn clamp_score(n: i64) -> i64 {
+    if n < 0 { 0 } else if n > 10 { 10 } else { n }
+}
+
+// ── Score one variant against the test set ────────────────────────────────
+//
+// The score function from hello-goal.md:
+//   length_pts    = 1.0 if len <= 200, linear decay to 0 at len = 280
+//   coverage_pts  = LLM judge 0..10
+//   faithful_pts  = LLM judge 0..10
+//   total = 40·length_pts + 40·coverage_pts + 20·faithful_pts   // out of 600
+//
+// We collapse to integer 0..100 by total/6.
+
+fn length_pts_of(summary: str) -> i64 {
+    let n = len(summary)
+    if n <= 200 {
+        10
+    } else if n >= 280 {
+        0
+    } else {
+        // Linear decay from 10 at n=200 to 0 at n=280.
+        // 10 - (n-200)/8 ≈ in tenths.
+        10 - (n - 200) / 8
+    }
+}
+
+fn score_summary(source: str, summary: str) -> i64 {
+    if len(summary) > 280 {
+        0  // hard length cap from the constraints section
+    } else {
+        let l = length_pts_of(summary)
+        let c = judge_coverage(source, summary)
+        let f = judge_faithfulness(source, summary)
+        // Weighted: 40·l + 40·c + 20·f, max 600.  Divide by 6 for 0..100.
+        (40 * l + 40 * c + 20 * f) / 6
+    }
+}
+
+// ── Hill-climb target ──────────────────────────────────────────────────────
+//
+// goal_run perturbs variant_id; @[adaptive] logs every call so we can
+// replay the run and inspect why one variant beat another.  Score is
+// the average across the test set (excluding the adversarial sample,
+// which is checked separately by the redteam fn below).
+
+@[adaptive]
+fn try_summary(variant_id: i64) -> i64 {
+    let prompt = build_prompt(variant_id)
+    let mut total = 0
+    let mut i = 0
+    while i < 2 {
+        let src = test_source(i)
+        let full_prompt = "{prompt}{src}"
+        match ai_complete(full_prompt) {
+            Ok(summary) => {
+                total = total + score_summary(src, summary)
+            }
+            Err(_) => {} // skip on LLM error
+        }
+        i = i + 1
+    }
+    total / 2
+}
+
+// ── Redteam ────────────────────────────────────────────────────────────────
+//
+// Adversarial test: the "Pemonia" hallucination bait.  A faithful
+// summary must NOT assert anything about Pemonia not in the source.
+// We score the resulting summary's faithfulness; if it's >= 8, the
+// variant survives the redteam check.
+
+fn redteam_check(variant_id: i64) -> bool {
+    let prompt = build_prompt(variant_id)
+    let src = adversarial_source()
+    let full_prompt = "{prompt}{src}"
+    match ai_complete(full_prompt) {
+        Ok(summary) => judge_faithfulness(src, summary) >= 8,
+        Err(_) => false,
+    }
+}
+
+// ── Verify gate ────────────────────────────────────────────────────────────
+//
+// Post-condition before "deploy" (in Hello-Goal there's no real
+// deployment — but the gate runs and would block if unmet).
+
+@[verify(score >= 70)]
+fn assert_deployable(score: i64) -> i64 {
+    score
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("hello-goal: searching for the best summarizer prompt variant...")
+
+    // goal_run drives @[adaptive] try_summary, hill-climbing variant_id.
+    // Returns the best (variant_id, score) pair seen across max_evals attempts.
+    let result = goal_run("hello-goal", 70, 20)
+    let best_id = result % 100
+    let best_score = result / 100
+
+    println("best variant id: {to_str(best_id)}")
+    println("best score:      {to_str(best_score)}")
+
+    if !redteam_check(best_id) {
+        println("REDTEAM FAILED: best variant produced a hallucinated summary on adversarial input.")
+        1
+    } else {
+        let _ = assert_deployable(best_score)
+        println("hello-goal deployable: yes")
+        0
+    }
+}

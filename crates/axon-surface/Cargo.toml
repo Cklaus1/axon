@@ -1,0 +1,20 @@
+[package]
+name = "axon-surface"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Axon Phase-10 prose-to-AST compiler — turns goal.md into goal.ax"
+
+[lib]
+name = "axon_surface"
+path = "src/lib.rs"
+
+[[bin]]
+name = "axon-surface"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+thiserror.workspace = true
+anyhow = "1"
