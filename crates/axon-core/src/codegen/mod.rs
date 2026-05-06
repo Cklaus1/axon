@@ -54,6 +54,7 @@ pub mod output;
 pub mod match_pat;
 pub mod builtins;
 pub mod expr;
+pub mod ir;
 
 // Re-export TestResult so backward-compatible path
 // `axon_core::codegen::TestResult` keeps working.
