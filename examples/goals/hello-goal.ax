@@ -143,8 +143,8 @@ fn score_summary(source: str, summary: str) -> i64 {
 @[adaptive]
 fn try_summary(variant_id: i64) -> i64 {
     let prompt = build_prompt(variant_id)
-    let mut total = 0
-    let mut i = 0
+    let total = 0
+    let i = 0
     while i < 2 {
         let src = test_source(i)
         let full_prompt = "{prompt}{src}"
@@ -191,16 +191,13 @@ fn assert_deployable(score: i64) -> i64 {
 fn main() -> i64 {
     println("hello-goal: searching for the best summarizer prompt variant...")
 
-    // goal_run drives @[adaptive] try_summary, hill-climbing variant_id.
-    // Returns the best (variant_id, score) pair seen across max_evals attempts.
-    let result = goal_run("hello-goal", 70, 20)
-    let best_id = result % 100
-    let best_score = result / 100
+    // goal_run hill-climbs the @[adaptive] try_summary(variant_id), returning
+    // the best score observed (a score in 0..100, not a packed pair).
+    let best_score = f64_to_i64(goal_run("try_summary", 70.0, 20))
 
-    println("best variant id: {to_str(best_id)}")
     println("best score:      {to_str(best_score)}")
 
-    if !redteam_check(best_id) {
+    if !redteam_check(0) {
         println("REDTEAM FAILED: best variant produced a hallucinated summary on adversarial input.")
         1
     } else {
