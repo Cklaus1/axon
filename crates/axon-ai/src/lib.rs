@@ -142,6 +142,15 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
     Ok(reply)
 }
 
+/// Rust-callable plain completion (mirrors the `__axon_ai_complete` C ABI).
+///
+/// Returns `Ok(reply)` or `Err(message)`. Used by the tree-walking interpreter
+/// (`axon-core`'s `interp`) to back the `ai_complete` builtin without going
+/// through the pointer/length C ABI.
+pub fn complete(prompt: &str) -> Result<String, String> {
+    ai_complete_inner(prompt)
+}
+
 // -- Layer-3 ASI: typed structured-output ("Uncertain<T>") ---------------------
 //
 // These helpers force Anthropic to return its answer through a tool-use call

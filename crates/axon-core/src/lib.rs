@@ -16,6 +16,8 @@ pub mod types;
 // Phase 3
 pub mod borrow;
 pub mod comptime;
+/// Codegen-free tree-walking interpreter (`axon run` without LLVM).
+pub mod interp;
 pub mod mono;
 // Phase 4
 pub mod cache;
