@@ -675,32 +675,45 @@ impl Parser {
         // Disambiguation: `(` followed by `)` → unit type `()`.
         //                 `(` followed by a type → tuple (must have ≥1 comma).
         if self.at(&Token::LParen) {
-            // Check for `()` unit type first.
+            // `()` — unit type, or `() -> R` zero-arg function type.
             if matches!(self.tokens.get(self.pos + 1), Some(Token::RParen)) {
                 self.advance()?; // consume `(`
                 self.advance()?; // consume `)`
+                if self.eat(&Token::Arrow) {
+                    let ret = self.parse_type()?;
+                    return Ok(AxonType::Fn { params: Vec::new(), ret: Box::new(ret) });
+                }
                 return Ok(AxonType::Named("()".to_string()));
             }
-            // Parse `(T, T, ...)` tuple type — requires at least one comma.
             self.advance()?; // consume `(`
-            let first = self.parse_type()?;
-            if self.eat(&Token::Comma) {
-                // We have a real tuple.
-                let mut elems = vec![first];
-                while !self.at(&Token::RParen) {
-                    elems.push(self.parse_type()?);
-                    if !self.eat(&Token::Comma) { break; }
-                }
-                self.expect(&Token::RParen)?;
-                return Ok(AxonType::Tuple(elems));
-            } else {
-                // Parenthesised type — just a grouping `(T)`.
-                self.expect(&Token::RParen)?;
-                return Ok(first);
+            let mut elems = vec![self.parse_type()?];
+            let mut had_comma = false;
+            while self.eat(&Token::Comma) {
+                had_comma = true;
+                if self.at(&Token::RParen) { break; }
+                elems.push(self.parse_type()?);
             }
+            self.expect(&Token::RParen)?;
+            // `(P0, P1, ...) -> R` — parenthesised function type (no `fn` keyword),
+            // e.g. `f: (i64) -> i64`. This shape is used by higher-order params and
+            // closure-returning functions.
+            if self.eat(&Token::Arrow) {
+                let ret = self.parse_type()?;
+                return Ok(AxonType::Fn { params: elems, ret: Box::new(ret) });
+            }
+            // A comma means a real tuple `(T1, T2)`; otherwise a grouping `(T)`.
+            if had_comma {
+                return Ok(AxonType::Tuple(elems));
+            }
+            return Ok(elems.into_iter().next().unwrap())
         }
         if self.eat(&Token::LBracket) {
             let inner = self.parse_type()?;
+            // Optional fixed-size suffix `[T; N]`. The length is not yet tracked
+            // in the type system, so a sized array is modelled as a slice.
+            if self.eat(&Token::Semi) {
+                self.advance()?; // consume the length literal
+            }
             self.expect(&Token::RBracket)?;
             return Ok(AxonType::Slice(Box::new(inner)));
         }
