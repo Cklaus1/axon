@@ -175,6 +175,36 @@ pub fn run_program(program: &Program) -> i32 {
     }
 }
 
+/// Run a single zero-argument function (e.g. an `@[test]`) by name.
+///
+/// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
+/// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
+pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
+    let mut interp = Interp::build(program);
+    if let Err(f) = interp.init_globals() {
+        return Err(flow_to_msg(f));
+    }
+    let Some(f) = interp.fns.get(name).copied() else {
+        return Err(format!("no function `{name}`"));
+    };
+    match interp.call_fn(f, vec![]) {
+        Ok(_) => Ok(()),
+        Err(Flow::Panic(m)) => Err(m),
+        Err(Flow::Exit(0)) => Ok(()),
+        Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
+        // A stray return/break/continue escaping the fn — treat as clean.
+        Err(_) => Ok(()),
+    }
+}
+
+fn flow_to_msg(f: Flow) -> String {
+    match f {
+        Flow::Panic(m) => m,
+        Flow::Exit(n) => format!("exited with code {n}"),
+        _ => "non-local control flow escaped the program".into(),
+    }
+}
+
 impl<'p> Interp<'p> {
     pub fn build(program: &'p Program) -> Self {
         let mut fns = HashMap::new();

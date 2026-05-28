@@ -16,6 +16,7 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use axon_core::parse_source;
+#[cfg(feature = "codegen")]
 use inkwell;
 
 // ── CLI definition ────────────────────────────────────────────────────────────
@@ -194,6 +195,15 @@ fn main() {
 
 // ── parse ─────────────────────────────────────────────────────────────────────
 
+/// `axon parse` emits the AST as JSON, which needs serde — only available when
+/// built with the `serde-json` feature.
+#[cfg(not(feature = "serde-json"))]
+fn cmd_parse(_file: PathBuf) {
+    eprintln!("error: `axon parse` (JSON AST output) requires building axon with the `serde-json` feature.");
+    process::exit(1);
+}
+
+#[cfg(feature = "serde-json")]
 fn cmd_parse(file: PathBuf) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
@@ -255,6 +265,25 @@ fn cmd_check(file: PathBuf, json_flag: bool) {
 
 // ── build ─────────────────────────────────────────────────────────────────────
 
+/// Native AOT build via the LLVM/inkwell backend. Only available when axon is
+/// built with the `codegen` feature. (`axon run`/`check`/`test` work without it
+/// via the interpreter.)
+#[cfg(not(feature = "codegen"))]
+fn cmd_build(
+    _files: Vec<PathBuf>,
+    _out: Option<PathBuf>,
+    _release: bool,
+    _target: Option<String>,
+    _no_cache: bool,
+    _cache_dir: Option<PathBuf>,
+) {
+    eprintln!("error: `axon build` (native codegen) requires building axon with the `codegen` feature.");
+    eprintln!("note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).");
+    eprintln!("hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed.");
+    process::exit(1);
+}
+
+#[cfg(feature = "codegen")]
 fn cmd_build(
     files: Vec<PathBuf>,
     out: Option<PathBuf>,
@@ -345,6 +374,7 @@ fn cmd_build(
     }
 }
 
+#[cfg(feature = "codegen")]
 struct BuildOptions {
     release: bool,
     target_triple: Option<String>,
@@ -354,14 +384,9 @@ struct BuildOptions {
 
 // ── run ───────────────────────────────────────────────────────────────────────
 
-fn cmd_run(file: PathBuf, release: bool, args: Vec<String>) {
+fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
-
-    // Build to a temp file, then exec it.
-    let tmp_dir = std::env::temp_dir();
-    let stem = file.file_stem().unwrap_or_default().to_string_lossy();
-    let tmp_bin = tmp_dir.join(format!("axon_run_{stem}_{}", process::id()));
 
     let src = read_source(&file);
     let mut program = match parse_source(&src) {
@@ -373,30 +398,24 @@ fn cmd_run(file: PathBuf, release: bool, args: Vec<String>) {
         }
     };
 
-    if let Err(e) = run_build_pipeline(
-        &mut program,
-        &file,
-        &tmp_bin,
-        &BuildOptions { release, target_triple: None, no_cache: true, cache_dir: None },
-    ) {
-        eprintln!("error: {e}");
-        // Fix 8: exit 1 for system/linker errors after type-check passes.
-        process::exit(1);
+    // Type-check before running, so type errors are reported up front rather
+    // than surfacing as interpreter runtime panics.
+    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    if !errors.is_empty() {
+        let use_json = !std::io::stderr().is_terminal();
+        for err in &errors {
+            emit_error(err, use_json);
+        }
+        process::exit(2);
     }
 
-    // Execute and forward the exit code.
-    let status = std::process::Command::new(&tmp_bin)
-        .args(&args)
-        .status()
-        .unwrap_or_else(|e| {
-            eprintln!("error executing {}: {e}", tmp_bin.display());
-            process::exit(1);
-        });
+    if !args.is_empty() {
+        eprintln!("warning: `axon run` does not yet forward arguments to the program");
+    }
 
-    // Clean up temp binary.
-    let _ = std::fs::remove_file(&tmp_bin);
-
-    process::exit(status.code().unwrap_or(1));
+    // Execute via the tree-walking interpreter (no LLVM codegen needed).
+    let code = axon_core::interp::run_program(&program);
+    process::exit(code);
 }
 
 // ── fmt ───────────────────────────────────────────────────────────────────────
@@ -449,6 +468,15 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
 
 // ── lsp ───────────────────────────────────────────────────────────────────────
 
+/// The language server depends on serde (JSON-RPC) — only available with the
+/// `serde-json` feature.
+#[cfg(not(feature = "serde-json"))]
+fn cmd_lsp() {
+    eprintln!("error: `axon lsp` requires building axon with the `serde-json` feature.");
+    process::exit(1);
+}
+
+#[cfg(feature = "serde-json")]
 fn cmd_lsp() {
     axon_core::lsp::run_lsp();
 }
@@ -541,6 +569,14 @@ fn emit_doc_output(markdown: String, out: Option<&std::path::Path>) {
 
 // ── test ──────────────────────────────────────────────────────────────────────
 
+/// Outcome of running one `@[test]` function via the interpreter.
+struct TestOutcome {
+    name: String,
+    passed: bool,
+    duration_ms: u64,
+    error: Option<String>,
+}
+
 fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -603,17 +639,33 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         .collect();
 
     let n = test_meta.len();
-    let effective_jobs = resolve_jobs(jobs);
+    let _ = jobs; // tests run in-process via the interpreter; --jobs is currently a no-op
 
     if !json {
-        if effective_jobs > 1 {
-            println!("running {n} test{} with {effective_jobs} workers", if n == 1 { "" } else { "s" });
-        } else {
-            println!("running {n} test{}", if n == 1 { "" } else { "s" });
-        }
+        println!("running {n} test{}", if n == 1 { "" } else { "s" });
     }
 
-    let all_results = run_tests_with_jobs(&program, primary_file, &test_meta, effective_jobs);
+    // Run each @[test] in-process via the interpreter (no per-test compile).
+    // A test passes if it completes without panicking; a should_fail test
+    // passes iff it panics.
+    let all_results: Vec<TestOutcome> = test_meta
+        .iter()
+        .map(|(name, should_fail)| {
+            let start = Instant::now();
+            let outcome = axon_core::interp::run_test_fn(&program, name);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let (passed, error) = match outcome {
+                Ok(()) if *should_fail => (
+                    false,
+                    Some(format!("should_fail test '{name}' completed without panicking")),
+                ),
+                Ok(()) => (true, None),
+                Err(_) if *should_fail => (true, None),
+                Err(e) => (false, Some(e)),
+            };
+            TestOutcome { name: name.clone(), passed, duration_ms, error }
+        })
+        .collect();
 
     let mut passed = 0u32;
     let mut failed = 0u32;
@@ -667,278 +719,6 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     }
 
     process::exit(if failed == 0 { 0 } else { 3 });
-}
-
-/// Resolve `--jobs` value: 0 → available parallelism, else use as-is (min 1).
-fn resolve_jobs(jobs: usize) -> usize {
-    if jobs == 0 {
-        std::thread::available_parallelism()
-            .map(|n| n.get())
-            .unwrap_or(4)
-    } else {
-        jobs
-    }
-}
-
-/// Run tests sequentially or in parallel based on `jobs`.
-fn run_tests_with_jobs(
-    program: &axon_core::ast::Program,
-    source_path: &PathBuf,
-    test_meta: &[(String, bool)],
-    jobs: usize,
-) -> Vec<axon_core::codegen::TestResult> {
-    if jobs <= 1 {
-        return run_all_tests_as_subprocesses(program, source_path, test_meta);
-    }
-    run_tests_parallel(program, source_path, test_meta, jobs)
-}
-
-/// Run tests in parallel using `jobs` worker threads.
-fn run_tests_parallel(
-    program: &axon_core::ast::Program,
-    source_path: &PathBuf,
-    test_meta: &[(String, bool)],
-    jobs: usize,
-) -> Vec<axon_core::codegen::TestResult> {
-    use std::sync::{Arc, Mutex};
-    use std::sync::mpsc;
-
-    if test_meta.is_empty() {
-        return vec![];
-    }
-
-    let program = Arc::new(program.clone());
-    let source_path = Arc::new(source_path.clone());
-    let test_meta = Arc::new(test_meta.to_vec());
-
-    // Work queue: indices into test_meta, shared across workers.
-    let queue: Arc<Mutex<Vec<usize>>> =
-        Arc::new(Mutex::new((0..test_meta.len()).rev().collect()));
-
-    // Result channel.
-    let (tx, rx) = mpsc::channel::<(usize, axon_core::codegen::TestResult)>();
-
-    let worker_count = jobs.min(test_meta.len());
-    let mut handles = Vec::with_capacity(worker_count);
-
-    for _ in 0..worker_count {
-        let prog = Arc::clone(&program);
-        let path = Arc::clone(&source_path);
-        let meta = Arc::clone(&test_meta);
-        let q = Arc::clone(&queue);
-        let tx = tx.clone();
-
-        let handle = std::thread::spawn(move || {
-            loop {
-                let idx = {
-                    let mut q = q.lock().unwrap();
-                    q.pop()
-                };
-                let Some(idx) = idx else { break };
-
-                let (name, should_fail) = &meta[idx];
-                let start = std::time::Instant::now();
-                let result = run_single_test_as_subprocess(&prog, &path, name);
-                let duration_ms = start.elapsed().as_millis() as u64;
-
-                let tr = match result {
-                    Ok(exit_code) => {
-                        let exited_ok = exit_code == 0;
-                        let passed = if *should_fail { !exited_ok } else { exited_ok };
-                        let error = if passed {
-                            None
-                        } else if *should_fail {
-                            Some(format!(
-                                "should_fail test '{name}' exited 0 (expected non-zero)"
-                            ))
-                        } else {
-                            Some(format!("test '{name}' exited with code {exit_code}"))
-                        };
-                        axon_core::codegen::TestResult { name: name.clone(), passed, duration_ms, error }
-                    }
-                    Err(e) => axon_core::codegen::TestResult {
-                        name: name.clone(),
-                        passed: false,
-                        duration_ms,
-                        error: Some(e),
-                    },
-                };
-
-                if tx.send((idx, tr)).is_err() {
-                    break; // main thread dropped receiver
-                }
-            }
-        });
-        handles.push(handle);
-    }
-    drop(tx); // close sender so rx.iter() terminates
-
-    let mut results: Vec<Option<axon_core::codegen::TestResult>> =
-        (0..test_meta.len()).map(|_| None).collect();
-    for (idx, tr) in rx {
-        results[idx] = Some(tr);
-    }
-
-    for h in handles {
-        h.join().expect("test worker thread panicked");
-    }
-
-    results.into_iter().map(|r| r.unwrap()).collect()
-}
-
-/// Run ALL test functions as subprocesses (both normal and should_fail).
-///
-/// Fix 1: This avoids in-process JIT execution where a test calling exit(1)
-/// would kill the entire test runner, silently dropping remaining tests.
-///
-/// Strategy: compile one temporary binary containing all test functions plus a
-/// `main` dispatcher.  Then, for each test function, invoke the binary with
-/// `--run-test <name>`.  Normal tests pass if exit code is 0; should_fail
-/// tests pass if exit code is non-zero.
-fn run_all_tests_as_subprocesses(
-    program: &axon_core::ast::Program,
-    source_path: &PathBuf,
-    test_meta: &[(String, bool)],
-) -> Vec<axon_core::codegen::TestResult> {
-    if test_meta.is_empty() {
-        return vec![];
-    }
-
-    // Build one binary with a dispatcher main that accepts `--run-test <name>`.
-    let tmp_dir = std::env::temp_dir();
-    let stem = source_path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy();
-    let tmp_bin = tmp_dir.join(format!(
-        "axon_test_{stem}_{pid}",
-        pid = process::id()
-    ));
-
-    // We use the per-test subprocess approach (one binary per test) because
-    // inserting a runtime dispatcher into the Axon IR is complex and fragile.
-    // This matches what `run_single_should_fail_test` already does and is
-    // correct: each test gets its own clean process.
-    let results: Vec<axon_core::codegen::TestResult> = test_meta
-        .iter()
-        .map(|(name, should_fail)| {
-            let start = std::time::Instant::now();
-            let result = run_single_test_as_subprocess(program, source_path, name);
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            match result {
-                Ok(exit_code) => {
-                    let exited_ok = exit_code == 0;
-                    let passed = if *should_fail { !exited_ok } else { exited_ok };
-                    let error = if passed {
-                        None
-                    } else if *should_fail {
-                        Some(format!(
-                            "should_fail test '{name}' exited 0 (expected non-zero / panic)"
-                        ))
-                    } else {
-                        Some(format!("test '{name}' exited with code {exit_code}"))
-                    };
-                    axon_core::codegen::TestResult {
-                        name: name.clone(),
-                        passed,
-                        duration_ms,
-                        error,
-                    }
-                }
-                Err(e) => axon_core::codegen::TestResult {
-                    name: name.clone(),
-                    passed: false,
-                    duration_ms,
-                    error: Some(e),
-                },
-            }
-        })
-        .collect();
-
-    // Clean up temp binary if it somehow exists (shouldn't, per-test binaries
-    // are cleaned up inside run_single_test_as_subprocess).
-    let _ = std::fs::remove_file(&tmp_bin);
-
-    results
-}
-
-/// Compile a synthetic program where `test_name` is called from `main`,
-/// execute it as a subprocess, and return the exit code.
-///
-/// Returns `Ok(exit_code)` on successful execution, `Err(msg)` on
-/// compilation or spawn failure.
-fn run_single_test_as_subprocess(
-    program: &axon_core::ast::Program,
-    source_path: &PathBuf,
-    test_name: &str,
-) -> Result<i32, String> {
-    use axon_core::ast::{FnDef, Expr, Stmt, Item};
-
-    // Clone the program and add a synthetic `main` that calls `test_name()`.
-    // Remove any existing `main` to avoid duplicate symbols.
-    let mut items: Vec<Item> = program
-        .items
-        .iter()
-        .filter(|item| {
-            if let Item::FnDef(f) = item {
-                f.name != "main"
-            } else {
-                true
-            }
-        })
-        .cloned()
-        .collect();
-
-    // Add: fn main() { <test_name>() }
-    let call_test = Expr::Call {
-        callee: Box::new(Expr::Ident(test_name.to_string())),
-        args: vec![],
-    };
-    let main_fn = FnDef {
-        public: false,
-        name: "main".to_string(),
-        generic_params: vec![],
-        generic_bounds: vec![],
-        params: vec![],
-        return_type: None,
-        body: Expr::Block(vec![Stmt::simple(call_test)]),
-        attrs: vec![],
-        contained: None,
-        verify: None,
-        span: axon_core::span::Span::dummy(),
-    };
-    items.push(Item::FnDef(main_fn));
-
-    let synthetic = axon_core::ast::Program { items };
-
-    // Compile to a temp binary.
-    let tmp_dir = std::env::temp_dir();
-    let tmp_bin = tmp_dir.join(format!(
-        "axon_test_{stem}_{name}_{pid}",
-        stem = source_path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy(),
-        name = test_name,
-        pid = process::id(),
-    ));
-
-    let ctx = inkwell::context::Context::create();
-    let module_name = format!("test_{test_name}");
-    let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
-    cg.declare_functions(&synthetic);
-    cg.emit_program(&synthetic);
-    cg.compile_to_binary(&tmp_bin.to_string_lossy(), /*release=*/ false)?;
-
-    // Execute as a subprocess.
-    let status = std::process::Command::new(&tmp_bin)
-        .status()
-        .map_err(|e| format!("spawn {}: {e}", tmp_bin.display()))?;
-
-    let _ = std::fs::remove_file(&tmp_bin);
-
-    Ok(status.code().unwrap_or(1))
 }
 
 // ── Pipeline ──────────────────────────────────────────────────────────────────
@@ -1054,7 +834,9 @@ fn run_check_pipeline(
     (all_errors, infer_ctx)
 }
 
-/// Compile the program to a native binary at `output`.
+/// Compile the program to a native binary at `output`. Native AOT path —
+/// only compiled with the `codegen` feature.
+#[cfg(feature = "codegen")]
 fn run_build_pipeline(
     program: &mut axon_core::ast::Program,
     source_path: &PathBuf,
@@ -1130,6 +912,7 @@ fn run_build_pipeline(
 }
 
 /// Emit LLVM IR, optionally write bitcode to cache, then link.
+#[cfg(feature = "codegen")]
 fn build_ir_and_link(
     program: &mut axon_core::ast::Program,
     source_path: &PathBuf,

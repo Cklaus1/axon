@@ -8,7 +8,10 @@ license.workspace = true
 [[bin]]
 name = "axon"
 path = "src/main.rs"
-required-features = ["codegen", "serde-json"]
+# No required-features: the recommended dev build is feature-light and fast —
+#   cargo build -p axon-core --no-default-features --bin axon
+# run/check/test/fmt/doc execute via the interpreter. `axon build` (native AOT)
+# needs the `codegen` feature; `axon parse`/`lsp` (JSON) need `serde-json`.
 
 # Codegen-free runner — builds without inkwell/LLVM, so it compiles in seconds.
 # `cargo build -p axon-core --no-default-features --bin axon-run`
