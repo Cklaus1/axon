@@ -213,6 +213,16 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn sum_type_pipe_syntax_runs() {
+    // `type Name = A {..} | B` (the documented sum-type spelling) parses to the
+    // same EnumDef as `enum Name { ... }` and runs end-to-end.
+    let out = axon().args(["run", &ex("sum_types.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(47), "27 + 20 + 0 = 47");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("total area: 47"), "stdout: {stdout:?}");
+}
+
+#[test]
 fn struct_and_array_equality() {
     // Regression: `==`/`!=` on composite values (structs, arrays, enums) used to
     // panic at runtime ("cannot apply Eq"); the interpreter now does structural

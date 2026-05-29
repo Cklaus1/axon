@@ -1,0 +1,26 @@
+// sum_types.ax — algebraic data types via the `type Name = A | B` spelling.
+//
+// This is the sum-type syntax from the language reference: variants separated by
+// `|`, mixing payload variants (`Circle { r }`) and unit variants (`Point`). It
+// is exactly equivalent to `enum Name { Circle { r: i64 }, Point }` — same AST,
+// same matching — just the algebraic spelling.
+//
+//   axon run examples/sum_types.ax
+
+type Shape = Circle { r: i64 } | Rect { w: i64, h: i64 } | Point
+
+fn area(s: Shape) -> i64 {
+    match s {
+        Shape::Circle { r } => r * r * 3 // integer demo, π≈3
+        Shape::Rect { w, h } => w * h
+        Shape::Point => 0
+    }
+}
+
+fn main() -> i64 {
+    let total = area(Shape::Circle { r: 3 })
+        + area(Shape::Rect { w: 4, h: 5 })
+        + area(Shape::Point) // 27 + 20 + 0
+    println("total area: {to_str(total)}")
+    total
+}

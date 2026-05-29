@@ -332,7 +332,7 @@ impl Parser {
                 fndef.verify = verify_spec;
                 Ok(Item::FnDef(fndef))
             }
-            Some(Token::Type)  => Ok(Item::TypeDef(self.parse_type_def()?)),
+            Some(Token::Type)  => self.parse_type_def(),
             Some(Token::Enum)  => Ok(Item::EnumDef(self.parse_enum_def()?)),
             Some(Token::Mod)   => Ok(Item::ModDecl(self.parse_mod()?)),
             Some(Token::Use)   => Ok(Item::UseDecl(self.parse_use()?)),
@@ -776,12 +776,32 @@ impl Parser {
 
     // ── Struct / Enum / Mod / Use ─────────────────────────────────────────────
 
-    fn parse_type_def(&mut self) -> Result<TypeDef> {
+    /// `type Name = { fields }` (struct) OR the sum-type sugar
+    /// `type Name = Variant { fields }? ( | Variant ... )*`, which produces the
+    /// same `EnumDef` as `enum Name { ... }`. Returns the appropriate `Item`.
+    fn parse_type_def(&mut self) -> Result<Item> {
         let start = self.current_span().start;
         self.expect(&Token::Type)?;
         let name = self.expect_ident()?;
         let (generic_params, _) = self.parse_generic_params()?;
         self.expect(&Token::Eq)?;
+
+        // Sum-type form: the RHS starts with a variant name, not `{`.
+        if !self.at(&Token::LBrace) {
+            let mut variants = Vec::new();
+            loop {
+                let vname = self.expect_ident()?;
+                let fields = self.parse_variant_fields()?;
+                variants.push(EnumVariant { name: vname, fields });
+                if !self.eat(&Token::Pipe) {
+                    break;
+                }
+            }
+            let end = self.current_span().end;
+            return Ok(Item::EnumDef(EnumDef { name, generic_params, variants, span: Span::new(start, end) }));
+        }
+
+        // Struct form: `type Name = { field: Type, ... }`.
         self.expect(&Token::LBrace)?;
         let mut fields = Vec::new();
         while !self.at(&Token::RBrace) {
@@ -793,7 +813,25 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(TypeDef { name, generic_params, fields, span: Span::new(start, end) })
+        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, span: Span::new(start, end) }))
+    }
+
+    /// Parse an enum variant's optional `{ field: Type, ... }` payload (shared by
+    /// the `enum` and `type = | ` forms). No braces → a unit variant.
+    fn parse_variant_fields(&mut self) -> Result<Vec<TypeField>> {
+        if !self.eat(&Token::LBrace) {
+            return Ok(Vec::new());
+        }
+        let mut fs = Vec::new();
+        while !self.at(&Token::RBrace) {
+            let fname = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let ty = self.parse_type()?;
+            fs.push(TypeField { name: fname, ty });
+            self.eat(&Token::Comma);
+        }
+        self.expect(&Token::RBrace)?;
+        Ok(fs)
     }
 
     fn parse_enum_def(&mut self) -> Result<EnumDef> {
@@ -805,18 +843,7 @@ impl Parser {
         let mut variants = Vec::new();
         while !self.at(&Token::RBrace) {
             let vname = self.expect_ident()?;
-            let fields = if self.eat(&Token::LBrace) {
-                let mut fs = Vec::new();
-                while !self.at(&Token::RBrace) {
-                    let fn_ = self.expect_ident()?;
-                    self.expect(&Token::Colon)?;
-                    let ty = self.parse_type()?;
-                    fs.push(TypeField { name: fn_, ty });
-                    self.eat(&Token::Comma);
-                }
-                self.expect(&Token::RBrace)?;
-                fs
-            } else { Vec::new() };
+            let fields = self.parse_variant_fields()?;
             variants.push(EnumVariant { name: vname, fields });
             self.eat(&Token::Comma);
         }
