@@ -213,6 +213,26 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn struct_and_array_equality() {
+    // Regression: `==`/`!=` on composite values (structs, arrays, enums) used to
+    // panic at runtime ("cannot apply Eq"); the interpreter now does structural
+    // equality, matching `assert_eq`.
+    let f = std::env::temp_dir().join(format!("axon_eq_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type P = { x: i64, y: i64 }\nfn main() -> i64 {\n  \
+         let a = P { x: 1, y: 2 }\n  let b = P { x: 1, y: 2 }\n  \
+         let c = P { x: 9, y: 2 }\n  \
+         let arr_eq = if [1, 2] == [1, 2] { 1 } else { 0 }\n  \
+         if a == b && a != c && arr_eq == 1 { 7 } else { 0 }\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(7), "structural == / != should work");
+}
+
+#[test]
 fn deliberative_agent_picks_best_permitted() {
     // Constrained optimization: the agent takes the best action it is *permitted*
     // to take, declining a higher-value unsafe option and an over-budget one.

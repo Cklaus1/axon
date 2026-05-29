@@ -1877,6 +1877,11 @@ fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         (BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
         (Shl, Int(a), Int(b)) => Ok(Int(a.wrapping_shl(b as u32))),
         (Shr, Int(a), Int(b)) => Ok(Int(a.wrapping_shr(b as u32))),
+        // Structural equality for composite values (structs, enums, arrays,
+        // Option/Result). Primitives are handled above; this catches the rest,
+        // matching the `values_equal` used by `assert_eq`.
+        (Eq, l, r) => Ok(Bool(values_equal(&l, &r))),
+        (NotEq, l, r) => Ok(Bool(!values_equal(&l, &r))),
         (op, l, r) => panic(format!(
             "cannot apply {op:?} to {} / {}",
             l.type_name(),
