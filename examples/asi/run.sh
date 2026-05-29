@@ -110,7 +110,7 @@ Axon ASI demo CLI (Phase-10 surface, simulated)
 
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
-  ./run.sh trace       # axon trace — per-fn score trajectory (add --fn NAME)
+  ./run.sh trace       # axon trace — per-fn score trajectory (add --fn NAME or --json)
   ./run.sh analyze     # score-trajectory analysis (plateau, recommendations)
   ./run.sh improve     # continue search — adds more evals to the same log
   ./run.sh redteam     # run the adversarial pass (currently part of main)

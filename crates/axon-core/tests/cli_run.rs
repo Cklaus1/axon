@@ -165,6 +165,27 @@ fn trace_summarizes_provenance() {
 }
 
 #[test]
+fn trace_json_is_machine_readable() {
+    let cache = std::env::temp_dir().join(format!("axon_tracej_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = axon()
+        .args(["goal", "--iterate", "6", &ex("goals/learn-goal.md")])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_GOAL_CONTINUE")
+        .output()
+        .unwrap();
+
+    let out = axon().args(["trace", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(out.status.success());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.trim_start().starts_with('['), "should be a JSON array: {stdout:?}");
+    assert!(stdout.contains("\"fn\":\"try_variant\""), "stdout: {stdout:?}");
+    assert!(stdout.contains("\"best_input\":12"), "stdout: {stdout:?}");
+    assert!(stdout.contains("\"trend\":\"improving\""), "stdout: {stdout:?}");
+}
+
+#[test]
 fn trace_missing_log_exits_nonzero() {
     let out = axon()
         .args(["trace"])

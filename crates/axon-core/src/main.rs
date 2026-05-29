@@ -185,6 +185,10 @@ enum Command {
         /// Provenance log path (default: $XDG_CACHE_HOME/axon/provenance.jsonl).
         #[arg(long, value_name = "PATH", help = "Override the provenance log path")]
         path: Option<PathBuf>,
+
+        /// Emit the per-fn summary as a JSON array (for programmatic consumers).
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
     },
 }
 
@@ -224,7 +228,7 @@ fn main() {
         Command::Lsp => cmd_lsp(),
         Command::Cache { action } => cmd_cache(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
-        Command::Trace { func, path } => cmd_trace(func, path),
+        Command::Trace { func, path, json } => cmd_trace(func, path, json),
     }
 }
 
@@ -506,7 +510,19 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
 
 // ── trace ─────────────────────────────────────────────────────────────────────
 
-fn cmd_trace(func: Option<String>, path: Option<PathBuf>) {
+/// Per-fn score-trajectory summary computed from the provenance log.
+struct TraceStat {
+    func: String,
+    evals: usize,
+    min: f64,
+    max: f64,
+    best_input: Option<i64>,
+    first: f64,
+    last: f64,
+    trend: &'static str,
+}
+
+fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
     use std::collections::HashMap;
     let Some(recs) = axon_core::interp::read_provenance(path.as_deref()) else {
         eprintln!("no provenance log found (run a goal first — see examples/goals/).");
@@ -529,27 +545,53 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>) {
         total += 1;
     }
 
+    let stats: Vec<TraceStat> = order
+        .iter()
+        .map(|f| {
+            let g = &groups[f.as_str()];
+            let best = g.iter().copied().fold(g[0], |a, r| if r.score > a.score { r } else { a });
+            TraceStat {
+                func: f.clone(),
+                evals: g.len(),
+                min: g.iter().map(|r| r.score).fold(f64::INFINITY, f64::min),
+                max: best.score,
+                best_input: best.input,
+                first: g.first().unwrap().score,
+                last: g.last().unwrap().score,
+                trend: match g.last().unwrap().score.partial_cmp(&g.first().unwrap().score) {
+                    Some(std::cmp::Ordering::Greater) => "improving",
+                    Some(std::cmp::Ordering::Less) => "regressing",
+                    _ => "flat",
+                },
+            }
+        })
+        .collect();
+
+    if json {
+        let body: Vec<String> = stats
+            .iter()
+            .map(|s| {
+                let bi = s.best_input.map(|i| i.to_string()).unwrap_or_else(|| "null".into());
+                format!(
+                    "{{\"fn\":\"{}\",\"evals\":{},\"min\":{},\"max\":{},\"best_input\":{bi},\"first\":{},\"last\":{},\"trend\":\"{}\"}}",
+                    s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
+                )
+            })
+            .collect();
+        println!("[{}]", body.join(","));
+        return;
+    }
+
     if total == 0 {
         println!("# provenance: 0 matching records");
         return;
     }
     println!("# provenance: {total} record(s) across {} fn(s)", order.len());
-    for f in &order {
-        let g = &groups[f.as_str()];
-        let first = g.first().unwrap().score;
-        let last = g.last().unwrap().score;
-        let min = g.iter().map(|r| r.score).fold(f64::INFINITY, f64::min);
-        let best = g.iter().copied().fold(g[0], |a, r| if r.score > a.score { r } else { a });
-        let at = best.input.map(|i| format!(" at input {i}")).unwrap_or_default();
-        let trend = match last.partial_cmp(&first) {
-            Some(std::cmp::Ordering::Greater) => "improving",
-            Some(std::cmp::Ordering::Less) => "regressing",
-            _ => "flat",
-        };
+    for s in &stats {
+        let at = s.best_input.map(|i| format!(" at input {i}")).unwrap_or_default();
         println!(
-            "  {f}: {} eval(s)  range [{min}, {maxv}{at}]  first {first} → last {last}  [{trend}]",
-            g.len(),
-            maxv = best.score,
+            "  {}: {} eval(s)  range [{}, {}{at}]  first {} → last {}  [{}]",
+            s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
         );
     }
 }
