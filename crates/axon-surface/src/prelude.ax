@@ -1,0 +1,36 @@
+// Axon goal prelude — reusable scoring helpers auto-included by axon-surface
+// into a generated goal when the goal's `axon` blocks reference them. Each is
+// self-contained (uses only builtins + its own params), so usage-filtering can
+// include exactly the ones a goal calls. Keep them dependency-free.
+
+fn normalize_score(raw: i64, max: i64) -> i64 {
+    if max <= 0 {
+        0
+    } else {
+        clamp_i64(raw * 100 / max, 0, 100)
+    }
+}
+
+fn score_to_confidence(score: i64) -> f64 {
+    i64_to_f64(clamp_i64(score, 0, 100)) / 100.0
+}
+
+fn length_score(n: i64, ideal: i64, cap: i64) -> i64 {
+    if n <= ideal {
+        100
+    } else if n >= cap {
+        0
+    } else if cap <= ideal {
+        0
+    } else {
+        100 - (n - ideal) * 100 / (cap - ideal)
+    }
+}
+
+fn weighted2(a: i64, wa: i64, b: i64, wb: i64) -> i64 {
+    (a * wa + b * wb) / max_i64(wa + wb, 1)
+}
+
+fn budget_ok(used: i64, cap: i64) -> bool {
+    used <= cap
+}

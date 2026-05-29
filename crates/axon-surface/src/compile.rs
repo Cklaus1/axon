@@ -9,6 +9,9 @@ use crate::parser::GoalFile;
 use crate::Result;
 use std::fmt::Write;
 
+/// Reusable goal-scoring helpers, auto-included on demand (see [`prelude_fns`]).
+const PRELUDE_SRC: &str = include_str!("prelude.ax");
+
 pub fn emit(goal: &GoalFile) -> Result<String> {
     let mut out = String::new();
 
@@ -48,6 +51,23 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // helpers they omit fall back to TODO: scaffolding.
     let author = goal.author_code();
     let provides = |name: &str| author.contains(&format!("fn {name}("));
+
+    // Auto-include prelude helpers the goal references but doesn't itself define.
+    // Each prelude fn is self-contained, so a direct-reference filter is enough.
+    let used_prelude: Vec<(String, String)> = prelude_fns()
+        .into_iter()
+        .filter(|(name, _)| {
+            author.contains(&format!("{name}(")) && !author.contains(&format!("fn {name}("))
+        })
+        .collect();
+    if !used_prelude.is_empty() {
+        let _ = writeln!(out, "// ── Prelude (auto-included helpers the goal references) ──");
+        for (_, def) in &used_prelude {
+            let _ = writeln!(out, "{def}");
+            let _ = writeln!(out);
+        }
+    }
+
     if !author.is_empty() {
         let _ = writeln!(out, "// ── Author-supplied (lifted from the goal file's ```axon blocks) ──");
         let _ = writeln!(out, "{author}");
@@ -195,6 +215,32 @@ fn extract_target_from_predicate(p: &str) -> Option<i64> {
     None
 }
 
+/// Split [`PRELUDE_SRC`] into `(fn_name, full_definition_text)` pairs — one per
+/// top-level `fn` (those starting at column 0). Header/inter-fn comment lines
+/// are dropped; only the definitions are returned.
+fn prelude_fns() -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    let mut name: Option<String> = None;
+    let mut body = String::new();
+    for line in PRELUDE_SRC.lines() {
+        if let Some(rest) = line.strip_prefix("fn ") {
+            if let Some(n) = name.take() {
+                out.push((n, body.trim_end().to_string()));
+                body.clear();
+            }
+            name = Some(rest.split('(').next().unwrap_or("").trim().to_string());
+        }
+        if name.is_some() {
+            body.push_str(line);
+            body.push('\n');
+        }
+    }
+    if let Some(n) = name {
+        out.push((n, body.trim_end().to_string()));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -265,6 +311,21 @@ Some scoring.
         assert!(ax.contains("fn build_prompt(variant_id: i64) -> str"));
         // With no author code blocks, the score scaffold is emitted.
         assert!(ax.contains("// TODO: implement the score formula"));
+    }
+
+    #[test]
+    fn bundles_only_referenced_prelude_helpers() {
+        // Author score_output references normalize_score → it's auto-included;
+        // unreferenced prelude helpers (weighted2) are not.
+        let md = format!(
+            "{SAMPLE}\n## Implementation\n\n```axon\n\
+             fn score_output(text: str, summary: str) -> i64 {{ normalize_score(len(summary), 100) }}\n```\n"
+        );
+        let g = GoalFile::parse(&md).unwrap();
+        let ax = emit(&g).unwrap();
+        assert!(ax.contains("// ── Prelude"), "prelude header missing");
+        assert!(ax.contains("fn normalize_score("), "referenced helper not bundled");
+        assert!(!ax.contains("fn weighted2("), "unreferenced helper should not be bundled");
     }
 
     #[test]
