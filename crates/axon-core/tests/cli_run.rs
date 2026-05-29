@@ -38,6 +38,45 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn all_examples_typecheck_clean() {
+    // Stronger than the lib's parse-only guard: every example must pass the FULL
+    // CLI check pipeline (resolve/infer/check/borrow/capability/verify), with
+    // module resolution via AXON_PATH for the modular examples. Catches runtime/
+    // type regressions the parse test misses.
+    fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for e in entries.flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    collect(&p, out);
+                } else if p.extension().map(|x| x == "ax").unwrap_or(false) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    let root = format!("{}/../../examples", env!("CARGO_MANIFEST_DIR"));
+    let modpath = format!("{}/../../examples/modular", env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect(std::path::Path::new(&root), &mut files);
+    assert!(files.len() >= 20, "expected many examples, found {}", files.len());
+    for f in &files {
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .env("AXON_PATH", &modpath)
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{} should type-check clean: {}",
+            f.display(),
+            String::from_utf8_lossy(&out.stdout)
+        );
+    }
+}
+
+#[test]
 fn chan_type_as_function_parameter() {
     // `chan<T>` is usable as a type — a channel can be passed to a worker fn.
     let f = std::env::temp_dir().join(format!("axon_chanty_{}.ax", std::process::id()));
