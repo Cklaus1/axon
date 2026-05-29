@@ -65,9 +65,25 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
                     remaining = &remaining[open + 2..];
                     continue;
                 }
-                // Regular interpolation `{expr}`.
+                // Regular interpolation `{expr}`. Find the *matching* close `}`,
+                // honoring nested braces so the expression may itself contain
+                // `{ }` — e.g. `{to_str(if c { 1 } else { 0 })}` or a struct
+                // literal `{f(Pt { x: 1 })}`.
                 let after_open = &remaining[open + 1..];
-                let close = after_open.find('}').ok_or_else(|| {
+                let mut depth = 0usize;
+                let mut close_opt = None;
+                for (i, ch) in after_open.char_indices() {
+                    match ch {
+                        '{' => depth += 1,
+                        '}' if depth == 0 => {
+                            close_opt = Some(i);
+                            break;
+                        }
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                let close = close_opt.ok_or_else(|| {
                     ParseError::Other("unclosed `{` in interpolated string".into())
                 })?;
                 let inner = after_open[..close].trim();

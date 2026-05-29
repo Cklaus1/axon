@@ -213,6 +213,26 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn interpolation_allows_nested_braces() {
+    // Regression: an `if`/`match`/struct expression (which contains `{ }`) inside
+    // a `{ … }` interpolation used to truncate at the first inner `}`.
+    let f = std::env::temp_dir().join(format!("axon_interp_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() { println(\"v={to_str(if true { 7 } else { 0 })}\") }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("v=7"), "stdout: {:?}", out.stdout);
+}
+
+#[test]
+fn feature_tour_tests_pass() {
+    // The feature tour's @[test]s exercise the session's language fixes together.
+    let out = axon().args(["test", &ex("feature_tour.ax")]).output().unwrap();
+    assert!(out.status.success(), "feature_tour tests failed: {:?}", out.status.code());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("6 passed"), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+}
+
+#[test]
 fn logical_and_binds_tighter_than_or() {
     // Regression: `&&` and `||` used to share one precedence level, so
     // `true || true && false` parsed as `(true || true) && false` = false. With

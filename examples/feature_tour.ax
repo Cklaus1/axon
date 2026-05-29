@@ -1,0 +1,78 @@
+// feature_tour.ax — a runnable tour of Axon language features, including the
+// ones fixed/added recently: the `type = A | B` sum-type spelling, or-patterns,
+// structural equality on composite values, `if`/`match` as operands, `len` over
+// arrays, and correct `&&`/`||` precedence. Each is pinned by an @[test].
+//
+//   axon test examples/feature_tour.ax
+//   axon run  examples/feature_tour.ax
+
+// Sum-type (algebraic) declaration with payload and unit variants.
+type Op = Add { a: i64, b: i64 } | Neg { x: i64 } | Zero
+
+fn eval(o: Op) -> i64 {
+    match o {
+        Op::Add { a, b } => a + b
+        Op::Neg { x } => 0 - x
+        Op::Zero => 0
+    }
+}
+
+// or-patterns in a match arm.
+fn small_prime(n: i64) -> bool {
+    match n { 2 | 3 | 5 | 7 => true  _ => false }
+}
+
+// arrays + len + a fold.
+fn max_of(xs: [i64]) -> i64 {
+    let m = xs[0]
+    for i in 0..len(xs) { if xs[i] > m { m = xs[i] } }
+    m
+}
+
+@[test]
+fn test_sum_type_eval() {
+    assert_eq(eval(Op::Add { a: 3, b: 4 }), 7)
+    assert_eq(eval(Op::Neg { x: 9 }), 0 - 9)
+    assert_eq(eval(Op::Zero), 0)
+}
+
+@[test]
+fn test_or_patterns() {
+    assert(small_prime(7))
+    assert(!small_prime(8))
+}
+
+@[test]
+fn test_structural_equality() {
+    assert([1, 2, 3] == [1, 2, 3])           // arrays
+    assert(Op::Zero == Op::Zero)             // enum variants
+    assert(Op::Add { a: 1, b: 2 } != Op::Zero)
+}
+
+@[test]
+fn test_block_expr_operands() {
+    let c = true
+    // `if` and `match` used as operands inside arithmetic.
+    let r = 10 + if c { 5 } else { 0 } + match 2 { 2 => 100  _ => 0 }
+    assert_eq(r, 115)
+}
+
+@[test]
+fn test_bool_precedence() {
+    assert(true || true && false)            // true || (true && false) = true
+    assert(!(false && true || false))        // ((false && true) || false) = false
+}
+
+@[test]
+fn test_arrays() {
+    assert_eq(max_of([3, 9, 2, 7]), 9)
+    assert_eq(len([10, 20, 30]), 3)
+}
+
+fn main() {
+    println("feature tour:")
+    println("  eval(Add 3 4)      = {to_str(eval(Op::Add { a: 3, b: 4 }))}")
+    println("  max_of([3,9,2,7])  = {to_str(max_of([3, 9, 2, 7]))}")
+    println("  small_prime(7)     = {to_str(if small_prime(7) { 1 } else { 0 })}")
+    println("run `axon test examples/feature_tour.ax` for the 6 feature assertions")
+}
