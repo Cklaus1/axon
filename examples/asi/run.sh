@@ -35,6 +35,16 @@ cmd="${1:-help}"
 shift || true
 
 case "$cmd" in
+    demos)
+        # Run the key-free deterministic decision-pattern demos end to end — the
+        # public-face tour. (The LLM demos #1–3 need AXON_AI_MOCK=1 or a key.)
+        bin="$(axon_bin)"
+        for d in supervised_agent deliberative_agent planner pareto allocate rank; do
+            echo "── $d ──"
+            "$bin" run "$HERE/$d.ax" || echo "  (demo $d exited $?)"
+            echo ""
+        done
+        ;;
     # ── Phase-10 CLI shape ──────────────────────────────────────────────────
     compile|check)
         # Future: axon ast review optimize.ax
@@ -108,6 +118,7 @@ case "$cmd" in
         cat <<EOF
 Axon ASI demo CLI (Phase-10 surface, simulated)
 
+  ./run.sh demos       # run the 6 key-free decision-pattern demos end to end (the tour)
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
   ./run.sh trace       # axon trace — per-fn score trajectory (add --fn NAME or --json)
