@@ -1,0 +1,103 @@
+// Tier-1 stdlib: safe-action gate — composing the four ASI-safety axes.
+//
+// An autonomous agent should act only when ALL of these hold at once:
+//   • Uncertain — it is confident enough (confidence >= floor)
+//   • Budget    — the action fits the remaining resource budget
+//   • Principal — the agent is authorized for the action
+//   • Constraint— the action meets a hard quality floor (must-hold rule)
+// safe_to_act folds them into a single yes/no; deny_reason names the first
+// failing axis. This is the unified gate the four primitives exist to support.
+//
+//   axon test examples/stdlib/safe_action.ax
+//   axon run  examples/stdlib/safe_action.ax
+
+type Action = { name: str, quality: i64, confidence: f64, cost: i64 }
+
+fn safe_to_act(
+    a: Action,
+    budget_remaining: i64,
+    authorized: bool,
+    min_quality: i64,
+    min_confidence: f64,
+) -> bool {
+    let confident = a.confidence >= min_confidence
+    let affordable = a.cost <= budget_remaining
+    let meets_quality = a.quality >= min_quality
+    confident && affordable && authorized && meets_quality
+}
+
+// The first failing axis (or "approved"). Order: confidence, budget, auth, quality.
+fn deny_reason(
+    a: Action,
+    budget_remaining: i64,
+    authorized: bool,
+    min_quality: i64,
+    min_confidence: f64,
+) -> str {
+    if a.confidence < min_confidence {
+        "under-confident"
+    } else if a.cost > budget_remaining {
+        "over budget"
+    } else if !authorized {
+        "unauthorized"
+    } else if a.quality < min_quality {
+        "fails quality constraint"
+    } else {
+        "approved"
+    }
+}
+
+@[test]
+fn test_all_axes_pass() {
+    let a = Action { name: "good", quality: 90, confidence: 0.9, cost: 200 }
+    assert(safe_to_act(a, 1000, true, 70, 0.8))
+    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), "approved")
+}
+
+@[test]
+fn test_under_confident_blocks() {
+    let a = Action { name: "unsure", quality: 90, confidence: 0.5, cost: 200 }
+    assert(!safe_to_act(a, 1000, true, 70, 0.8))
+    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), "under-confident")
+}
+
+@[test]
+fn test_over_budget_blocks() {
+    let a = Action { name: "pricey", quality: 90, confidence: 0.9, cost: 5000 }
+    assert(!safe_to_act(a, 1000, true, 70, 0.8))
+    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), "over budget")
+}
+
+@[test]
+fn test_unauthorized_blocks() {
+    let a = Action { name: "forbidden", quality: 90, confidence: 0.9, cost: 200 }
+    assert(!safe_to_act(a, 1000, false, 70, 0.8))
+    assert_eq_str(deny_reason(a, 1000, false, 70, 0.8), "unauthorized")
+}
+
+@[test]
+fn test_quality_constraint_blocks() {
+    let a = Action { name: "shoddy", quality: 50, confidence: 0.9, cost: 200 }
+    assert(!safe_to_act(a, 1000, true, 70, 0.8))
+    assert_eq_str(deny_reason(a, 1000, true, 70, 0.8), "fails quality constraint")
+}
+
+fn report(a: Action, budget_remaining: i64, authorized: bool) {
+    let ok = safe_to_act(a, budget_remaining, authorized, 70, 0.8)
+    let why = deny_reason(a, budget_remaining, authorized, 70, 0.8)
+    let nm = a.name
+    if ok {
+        println("ACT   {nm}: approved")
+    } else {
+        println("DENY  {nm}: {why}")
+    }
+}
+
+fn main() {
+    println("safe-action gate (min_quality=70, min_confidence=0.8, budget=1000):")
+    report(Action { name: "summarize", quality: 92, confidence: 0.91, cost: 300 }, 1000, true)
+    report(Action { name: "guess",     quality: 88, confidence: 0.55, cost: 300 }, 1000, true)
+    report(Action { name: "deep-scan", quality: 95, confidence: 0.99, cost: 5000 }, 1000, true)
+    report(Action { name: "exfil",     quality: 90, confidence: 0.95, cost: 100 }, 1000, false)
+    report(Action { name: "rushed",    quality: 40, confidence: 0.99, cost: 100 }, 1000, true)
+}
