@@ -213,6 +213,24 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn block_expressions_as_operands() {
+    // `if`/`match` can be used as operands inside a larger expression, not only
+    // as a let-RHS or call arg.
+    let f = std::env::temp_dir().join(format!("axon_blockop_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  let c = true\n  \
+         let a = 1 + if c { 5 } else { 9 }\n  \
+         let b = 100 + match 2 { 1 => 10  _ => 20 }\n  \
+         a + b\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(126), "6 + 120 = 126");
+}
+
+#[test]
 fn or_patterns_in_match() {
     // `pat | pat => body` (or-patterns) desugar to one arm per alternative; a
     // guard applies to each. Covers enum-variant and literal alternatives.

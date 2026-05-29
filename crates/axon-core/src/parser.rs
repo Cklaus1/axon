@@ -1449,6 +1449,10 @@ impl Parser {
         match self.peek() {
             Some(Token::Comptime) => self.parse_comptime(),
             Some(Token::LBrace)  => self.parse_block(),
+            // Block-form expressions are valid operands too (e.g. `1 + if c {..}
+            // else {..}`, `n * match k { .. }`), not just `let`-RHS / call args.
+            Some(Token::Match)   => self.parse_match(),
+            Some(Token::If)      => self.parse_if(),
             Some(Token::LParen)  => {
                 if self.is_paren_lambda() {
                     self.parse_paren_lambda()
