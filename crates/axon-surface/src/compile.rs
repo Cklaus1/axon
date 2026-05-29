@@ -54,8 +54,12 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
         let _ = writeln!(out);
     }
 
+    // The scaffolded helpers below exist only to feed the default `try_variant`
+    // loop; if the author supplies their own `try_variant`, none are needed.
+    let default_loop = !provides("try_variant");
+
     // ── Scaffold: test set ───────────────────────────────────────
-    if !provides("test_input") {
+    if default_loop && !provides("test_input") {
         let _ = writeln!(out, "// ── Scaffold: test set ───────────────────────────────────");
         let _ = writeln!(out, "// TODO: fill in N concrete test cases (3-5 typical, 1-2 adversarial).");
         let _ = writeln!(out, "fn test_input(i: i64) -> {inputs_arg_ty} {{");
@@ -69,7 +73,7 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
         let _ = writeln!(out, "}}");
         let _ = writeln!(out);
     }
-    if !provides("adversarial_input") {
+    if default_loop && !provides("adversarial_input") {
         let _ = writeln!(out, "fn adversarial_input() -> {inputs_arg_ty} {{");
         let _ = writeln!(out, "    // TODO: hallucination-bait / prompt-injection / edge-case input.");
         let _ = writeln!(out, "    \"TODO\"");
@@ -78,7 +82,7 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     }
 
     // ── Scaffold: candidate generation ───────────────────────────
-    if !provides("build_prompt") {
+    if default_loop && !provides("build_prompt") {
         let _ = writeln!(out, "// ── Scaffold: candidate generation ───────────────────────");
         let _ = writeln!(out, "// TODO: enumerate 4-8 distinct prompt-prefix variants to compare.");
         let _ = writeln!(out, "fn build_prompt(variant_id: i64) -> str {{");
@@ -98,7 +102,7 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     }
 
     // ── Scaffold: score function ─────────────────────────────────
-    if !provides("score_output") {
+    if default_loop && !provides("score_output") {
         let _ = writeln!(out, "// ── Scaffold: score function ─────────────────────────────");
         let _ = writeln!(out, "// TODO: implement the score formula from the Score section (0..100).");
         let _ = writeln!(out, "fn score_output({inputs_arg_name}: {inputs_arg_ty}, {output_arg}) -> i64 {{");
@@ -108,24 +112,29 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     }
 
     // ── Hill-climb target ────────────────────────────────────────
-    let _ = writeln!(out, "// ── Hill-climb target — driven by goal_run ───────────────");
-    let _ = writeln!(out, "@[adaptive]");
-    let _ = writeln!(out, "fn try_variant(variant_id: i64) -> i64 {{");
-    let _ = writeln!(out, "    let prompt = build_prompt(variant_id)");
-    let _ = writeln!(out, "    let total = 0");
-    let _ = writeln!(out, "    let i = 0");
-    let _ = writeln!(out, "    while i < 2 {{");
-    let _ = writeln!(out, "        let inp = test_input(i)");
-    let _ = writeln!(out, "        let full = \"{{prompt}}{{inp}}\"");
-    let _ = writeln!(out, "        match ai_complete(full) {{");
-    let _ = writeln!(out, "            Ok(reply) => {{ total = total + score_output(inp, reply) }}");
-    let _ = writeln!(out, "            Err(_) => {{}}");
-    let _ = writeln!(out, "        }}");
-    let _ = writeln!(out, "        i = i + 1");
-    let _ = writeln!(out, "    }}");
-    let _ = writeln!(out, "    total / 2");
-    let _ = writeln!(out, "}}");
-    let _ = writeln!(out);
+    // The author may supply their own `@[adaptive] fn try_variant(i64) -> i64`
+    // in a prose ```axon block (full control over the goal loop). Otherwise we
+    // emit the default LLM-driven loop over prompt variants + test cases.
+    if !provides("try_variant") {
+        let _ = writeln!(out, "// ── Hill-climb target — driven by goal_run ───────────────");
+        let _ = writeln!(out, "@[adaptive]");
+        let _ = writeln!(out, "fn try_variant(variant_id: i64) -> i64 {{");
+        let _ = writeln!(out, "    let prompt = build_prompt(variant_id)");
+        let _ = writeln!(out, "    let total = 0");
+        let _ = writeln!(out, "    let i = 0");
+        let _ = writeln!(out, "    while i < 2 {{");
+        let _ = writeln!(out, "        let inp = test_input(i)");
+        let _ = writeln!(out, "        let full = \"{{prompt}}{{inp}}\"");
+        let _ = writeln!(out, "        match ai_complete(full) {{");
+        let _ = writeln!(out, "            Ok(reply) => {{ total = total + score_output(inp, reply) }}");
+        let _ = writeln!(out, "            Err(_) => {{}}");
+        let _ = writeln!(out, "        }}");
+        let _ = writeln!(out, "        i = i + 1");
+        let _ = writeln!(out, "    }}");
+        let _ = writeln!(out, "    total / 2");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+    }
 
     // ── Verify gate ──────────────────────────────────────────────
     // The prose predicate may be richer than Axon's v0 verify form
@@ -148,7 +157,10 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // goal_run drives the @[adaptive] try_variant (hill-climbing variant_id).
     // Its target is an f64; the result is converted back to i64 for the gate.
     let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, 20)");
-    let _ = writeln!(out, "    let _ = assert_deployable(f64_to_i64(result))");
+    let _ = writeln!(out, "    let best = f64_to_i64(result)");
+    let _ = writeln!(out, "    println(\"best score: {{to_str(best)}} (target {target})\")");
+    let _ = writeln!(out, "    let _ = assert_deployable(best)");
+    let _ = writeln!(out, "    println(\"deploy gate: passed\")");
     let _ = writeln!(out, "    0");
     let _ = writeln!(out, "}}");
 
