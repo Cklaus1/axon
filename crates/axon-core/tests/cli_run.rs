@@ -69,3 +69,41 @@ fn run_exits_with_main_return_value() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(7), "main's i64 return should be the exit code");
 }
+
+/// Parse the integer from a "best score: N (target …)" line.
+fn best_score(stdout: &str) -> i64 {
+    let key = "best score: ";
+    let i = stdout.find(key).unwrap_or_else(|| panic!("no 'best score:' in: {stdout:?}")) + key.len();
+    let rest = &stdout[i..];
+    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+    rest[..end].parse().unwrap_or_else(|_| panic!("unparseable score in: {stdout:?}"))
+}
+
+#[test]
+fn cross_run_improves_with_continuation() {
+    // learn-goal's per-run budget can't reach the optimum from 0; with
+    // AXON_GOAL_CONTINUE the second run resumes from the first run's best input
+    // (via the persisted provenance log) and scores strictly higher.
+    let cache = std::env::temp_dir().join(format!("axon_xrun_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let goal = ex("goals/learn-goal.md");
+
+    let r1 = axon()
+        .args(["goal", &goal])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_GOAL_CONTINUE")
+        .output()
+        .unwrap();
+    let s1 = best_score(&String::from_utf8_lossy(&r1.stdout));
+
+    let r2 = axon()
+        .args(["goal", &goal])
+        .env("XDG_CACHE_HOME", &cache)
+        .env("AXON_GOAL_CONTINUE", "1")
+        .output()
+        .unwrap();
+    let s2 = best_score(&String::from_utf8_lossy(&r2.stdout));
+
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(s2 > s1, "continuation should improve the best score: run1={s1}, run2={s2}");
+}
