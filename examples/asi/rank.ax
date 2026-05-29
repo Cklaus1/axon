@@ -1,0 +1,62 @@
+// rank.ax — rank candidate actions by score (in-place selection sort).
+//
+// The first demo to ORDER the whole option set rather than pick one — agents
+// rank to prioritize a queue or present alternatives. The sort mutates the
+// array in place (swapping elements), which place assignment (`xs[i] = v`) now
+// makes possible. Runs key-free.
+//
+//   axon run  examples/asi/rank.ax
+//   axon test examples/asi/rank.ax
+
+type Action = { name: str, score: i64 }
+
+// Selection sort, descending by score, in place; returns the ranked array.
+fn rank_by_score(xs: [Action]) -> [Action] {
+    let n = len(xs)
+    for i in 0..n {
+        let best = i
+        for j in i..n {
+            if xs[j].score > xs[best].score { best = j }
+        }
+        let tmp = xs[i]
+        xs[i] = xs[best]
+        xs[best] = tmp
+    }
+    xs
+}
+
+@[test]
+fn test_ranking_orders_descending() {
+    let ranked = rank_by_score([
+        Action { name: "a", score: 30 },
+        Action { name: "b", score: 90 },
+        Action { name: "c", score: 60 },
+    ])
+    assert_eq(ranked[0].score, 90)
+    assert_eq(ranked[1].score, 60)
+    assert_eq(ranked[2].score, 30)
+}
+
+@[test]
+fn test_ranking_singleton() {
+    let ranked = rank_by_score([Action { name: "x", score: 7 }])
+    assert_eq(len(ranked), 1)
+    assert_eq(ranked[0].score, 7)
+}
+
+fn main() {
+    let ranked = rank_by_score([
+        Action { name: "explore", score: 42 },
+        Action { name: "exploit", score: 88 },
+        Action { name: "wait", score: 17 },
+        Action { name: "verify", score: 75 },
+    ])
+    println("ranked actions (best first):")
+    let i = 0
+    for a in ranked {
+        let nm = a.name
+        let sc = a.score
+        println("  #{to_str(i + 1)}  {nm} (score {to_str(sc)})")
+        i = i + 1
+    }
+}

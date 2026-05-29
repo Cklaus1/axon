@@ -264,6 +264,16 @@ fn for_in_nested_over_same_collection() {
 }
 
 #[test]
+fn rank_orders_actions_by_score() {
+    // In-place selection sort (uses place assignment) ranks actions descending.
+    let out = axon().args(["run", &ex("asi/rank.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("#1  exploit (score 88)"), "stdout: {stdout}");
+    assert!(stdout.contains("#4  wait (score 17)"), "stdout: {stdout}");
+}
+
+#[test]
 fn allocate_knapsack_maximizes_within_budget() {
     let out = axon().args(["run", &ex("asi/allocate.ax")]).output().unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());

@@ -41,6 +41,7 @@ examples/asi/
 ├── planner.ax     # demo #6 — multi-step planning with safety lookahead (recursive-enum tree); key-free
 ├── pareto.ax      # demo #7 — multi-objective decision-making (Pareto frontier, value vs risk); key-free
 ├── allocate.ax    # demo #8 — bounded resource allocation (0/1 knapsack under a budget); key-free
+├── rank.ax        # demo #9 — rank actions by score (in-place selection sort via place assignment); key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file
 ```
