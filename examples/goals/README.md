@@ -76,6 +76,8 @@ pulls in exactly the ones you use.
 | `verified-goal.md` | enforced confidence gate blocking an under-target agent | **blocks** (exit 101) |
 | `redteam-goal.md` | adversarial gate blocking a high-scoring but unsafe agent | **blocks** (exit 1) |
 | `hello-goal.md` | the canonical summarizer (uses `ai_complete`) | deploys under `AXON_AI_MOCK=1` |
+| `flagship-goal.md` | the **full stack**: LLM + prelude scoring + search + budget + confidence gate + redteam, all passing | deploys under `AXON_AI_MOCK=1` (exit 0) |
 
 The `optimize` / `verified` / `redteam` / `compose` demos run with **no API key**
-(pure objectives); `hello-goal` needs `AXON_AI_MOCK=1` (or a real key).
+(pure objectives); `hello-goal` and `flagship-goal` need `AXON_AI_MOCK=1` (or a
+real key) because they call `ai_complete`.
