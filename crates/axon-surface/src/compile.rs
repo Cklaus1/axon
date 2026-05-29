@@ -142,13 +142,18 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // a valid `score`-threshold gate the skeleton can actually compile and run.
     let predicate = goal.verify_predicate()?;
     let target = extract_target_from_predicate(&predicate).unwrap_or(70);
-    let _ = writeln!(out, "// ── Verify gate (derived from prose) ──────────────────────");
-    let _ = writeln!(out, "// prose predicate: {predicate}");
-    let _ = writeln!(out, "@[verify(score >= {target})]");
-    let _ = writeln!(out, "fn assert_deployable(score: i64) -> i64 {{");
-    let _ = writeln!(out, "    score");
-    let _ = writeln!(out, "}}");
-    let _ = writeln!(out);
+    // The author may supply their own `assert_deployable` (e.g. a confidence-
+    // returning gate that the runtime `@[verify]` check actually enforces).
+    // Otherwise emit a pass-through gate carrying the prose predicate's threshold.
+    if !provides("assert_deployable") {
+        let _ = writeln!(out, "// ── Verify gate (derived from prose) ──────────────────────");
+        let _ = writeln!(out, "// prose predicate: {predicate}");
+        let _ = writeln!(out, "@[verify(score >= {target})]");
+        let _ = writeln!(out, "fn assert_deployable(score: i64) -> i64 {{");
+        let _ = writeln!(out, "    score");
+        let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+    }
 
     // ── Main ─────────────────────────────────────────────────────
     let _ = writeln!(out, "// ── Main loop ────────────────────────────────────────────");
