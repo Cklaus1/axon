@@ -1139,6 +1139,14 @@ impl InferCtx {
                 }
                 Type::Unit
             }
+            Expr::AssignTo { place, value } => {
+                // `place[i] = v` / `place.f = v`: the value must match the
+                // element/field type the place denotes.
+                let place_ty = self.infer_expr(place, scope, ret_ty);
+                let val_ty = self.infer_expr(value, scope, ret_ty);
+                self.constrain(val_ty, place_ty, "place assignment");
+                Type::Unit
+            }
 
             // ── FmtStr: infer type of each interpolated part, return Str ────
             Expr::FmtStr { parts } => {

@@ -213,6 +213,23 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn place_assignment_mutates_array_and_field() {
+    // `xs[i] = v` and `s.field = v` mutate in place (incl. inside a loop).
+    let f = std::env::temp_dir().join(format!("axon_place_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type P = { x: i64, y: i64 }\nfn main() -> i64 {\n  \
+         let xs = [0, 0, 0, 0]\n  for i in 0..4 { xs[i] = i * i }\n  \
+         let p = P { x: 1, y: 2 }\n  p.x = 10\n  \
+         xs[0] + xs[1] + xs[2] + xs[3] + p.x + p.y\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(26), "(0+1+4+9) + 10 + 2 = 26");
+}
+
+#[test]
 fn for_in_collection_iterates() {
     // `for x in <array>` (not just `for i in a..b`) — desugars to an index loop;
     // covers a literal, a bound variable, structs, and nesting.

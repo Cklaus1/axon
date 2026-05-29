@@ -232,6 +232,11 @@ impl OwnershipGraph {
                 // Re-binding moves old value out if it was owned.
                 self.bindings.insert(name.to_string(), BindingState::Owned);
             }
+            Expr::AssignTo { place, value } => {
+                // The value is moved into the place; the place's base is read.
+                self.check_move_expr(value);
+                self.check_read(place);
+            }
 
             Expr::Block(stmts) => {
                 self.push_scope();

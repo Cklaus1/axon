@@ -62,12 +62,13 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   (constrained single choice), #6 `planner` (multi-step lookahead, recursive
   enums), #7 `pareto` (multi-objective frontier), #8 `allocate` (0/1 knapsack
   under a budget). Capability *and* control, demonstrated.
-- **Language hardened by build-and-fix probing — 9 fixes**: `len` on slices;
-  structural `==`/`!=`; `type Name = A | B` sum-types; or-patterns; `match`/`if`
-  as operands; `&&`/`||` precedence (correctness bug); nested braces in string
-  interpolation; functions returning enums; `for x in <collection>` (borrows the
-  collection, supports nesting). Each gated + regression-tested. `feature_tour.ax`
-  exercises them together.
+- **Language hardened by build-and-fix probing — 10 fixes/features**: `len` on
+  slices; structural `==`/`!=`; `type Name = A | B` sum-types; or-patterns;
+  `match`/`if` as operands; `&&`/`||` precedence (correctness bug); nested braces
+  in string interpolation; functions returning enums; `for x in <collection>`
+  (borrows, supports nesting); **single-level place assignment** (`xs[i] = v`,
+  `s.field = v`, incl. in loops — enables in-place mutation/accumulation). Each
+  gated + regression-tested. `feature_tour.ax` exercises several together.
 - **Ownership model mapped**: pass collections to helpers as `&[T]` (borrow);
   `for-in` borrows; `ref` is binding-only (see memory `axon-ownership-idioms`).
 - **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`, 28), goal-demo +
@@ -76,11 +77,12 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
 
 ## Top remaining work (prioritized)
 
-1. **Place assignment** (`xs[i] = v`, `s.field = v`) — the #1 language gap;
-   unblocks mutation algorithms (sort, in-place accumulation). A dedicated,
-   reviewed effort: an lvalue AST node + interpreter mutable-place resolution +
-   borrow rules across ~6 files (codegen has a catch-all). Not a safe autonomous
-   tick. Also: tuple expressions, typed `let` (both AST-level).
+1. **Nested place assignment + tuples + typed `let`.** Single-level place
+   assignment (`xs[i] = v`, `s.field = v`) now works (lvalue `AssignTo` node +
+   interpreter mutable-place resolution, across 11 passes; codegen leaves it
+   unsupported via its catch-all). Remaining: nested places (`a.b[i]`), tuple
+   expressions, and typed `let` (all AST-level). Native codegen lowering of
+   `AssignTo` (GEP+store) is also still a TODO.
 2. **Live ASI** — set `ANTHROPIC_API_KEY` (+ `--features asi-runtime`) to run the
    LLM demos for real instead of `AXON_AI_MOCK=1`.
 3. **Native build** — the `#[inline(never)]`-wrapper fix is applied; validate an
@@ -95,8 +97,8 @@ idioms) but each is a clean future task:
   targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
   value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
   through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
-- **No place assignment.** `xs[i] = v` / `s.field = v` don't parse; rebuild +
-  rebind whole values. (AST-level: an lvalue node through ~12 files + codegen.)
+- **Place assignment is single-level only.** `xs[i] = v` and `s.field = v` work
+  (incl. in loops); nested places (`a.b[i]`, `a[i].f`) are not yet supported.
 - **No tuple expressions.** `(a, b)` doesn't parse (the type system has
   `Type::Tuple`, but there's no value syntax); use a struct.
 - **No typed `let`.** `let x: T = e` doesn't parse; `let x = e` (inferred) only.

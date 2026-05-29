@@ -237,6 +237,10 @@ pub enum Expr {
         body: Vec<Stmt>,
     },
     Assign { name: String, value: Box<Expr> },
+    /// Place assignment: `<place> = <value>`, where `place` is an `Index` or
+    /// `FieldAccess` (e.g. `xs[i] = v`, `s.field = v`). Bare `ident = v` uses
+    /// `Assign` instead.
+    AssignTo { place: Box<Expr>, value: Box<Expr> },
     /// Exit the nearest enclosing `while` loop.
     Break,
     /// Jump to the condition-check of the nearest enclosing `while` loop.

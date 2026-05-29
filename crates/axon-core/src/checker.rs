@@ -1008,6 +1008,10 @@ impl CheckCtx {
                 let ty = self.resolve_expr_type(value, &val_path, scope);
                 scope.insert(name.clone(), ty);
             }
+            Expr::AssignTo { place, value } => {
+                self.check_expr(place, &format!("{node_path}.place"), scope);
+                self.check_expr(value, &format!("{node_path}.value"), scope);
+            }
 
             // ── FmtStr: check each interpolated sub-expression ──────────────
             Expr::FmtStr { parts } => {

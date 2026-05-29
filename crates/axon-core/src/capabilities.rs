@@ -180,6 +180,10 @@ fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityErro
             check_stmts(body, spec, errors);
         }
         Expr::Assign { value, .. } => check_expr(value, spec, errors),
+        Expr::AssignTo { place, value } => {
+            check_expr(place, spec, errors);
+            check_expr(value, spec, errors);
+        }
         Expr::Return(inner) => {
             if let Some(e) = inner { check_expr(e, spec, errors); }
         }

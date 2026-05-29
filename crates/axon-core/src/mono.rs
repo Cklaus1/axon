@@ -62,6 +62,10 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
             Expr::RefBind { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
         Expr::Assign { name, value } =>
             Expr::Assign { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
+        Expr::AssignTo { place, value } => Expr::AssignTo {
+            place: Box::new(subst_expr(place, subst)),
+            value: Box::new(subst_expr(value, subst)),
+        },
 
         Expr::Call { callee, args } => Expr::Call {
             callee: Box::new(subst_expr(callee, subst)),
@@ -377,6 +381,10 @@ impl MonoContext {
                 for s in body { self.collect_from_expr(&s.expr); }
             }
             Expr::Assign { value, .. } => self.collect_from_expr(value),
+            Expr::AssignTo { place, value } => {
+                self.collect_from_expr(place);
+                self.collect_from_expr(value);
+            }
             Expr::MethodCall { receiver, args, .. } => {
                 self.collect_from_expr(receiver);
                 for a in args { self.collect_from_expr(a); }
@@ -470,6 +478,10 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         Expr::Own { name, value } => Expr::Own { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::RefBind { name, value } => Expr::RefBind { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::Assign { name, value } => Expr::Assign { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
+        Expr::AssignTo { place, value } => Expr::AssignTo {
+            place: Box::new(rename_calls_expr(place, rename)),
+            value: Box::new(rename_calls_expr(value, rename)),
+        },
         Expr::BinOp { op, left, right } => Expr::BinOp {
             op: op.clone(),
             left: Box::new(rename_calls_expr(left, rename)),

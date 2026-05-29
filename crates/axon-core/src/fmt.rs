@@ -394,6 +394,11 @@ impl Formatter {
                 self.write(" = ");
                 self.emit_expr(value);
             }
+            Expr::AssignTo { place, value } => {
+                self.emit_expr(place);
+                self.write(" = ");
+                self.emit_expr(value);
+            }
 
             Expr::BinOp { op, left, right } => {
                 self.emit_expr_prec(left, binop_prec(op), false);

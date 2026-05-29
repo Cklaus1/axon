@@ -125,6 +125,10 @@ impl Env {
         }
         false
     }
+    /// Mutable reference to the nearest existing binding (for place assignment).
+    fn get_mut(&mut self, name: &str) -> Option<&mut Value> {
+        self.scopes.iter_mut().rev().find_map(|s| s.get_mut(name))
+    }
     /// Flatten all visible bindings into one map (inner shadows outer).
     /// Used to snapshot the environment a closure captures.
     fn snapshot(&self) -> HashMap<String, Value> {
@@ -518,6 +522,51 @@ impl<'p> Interp<'p> {
                     Ok(Value::Unit)
                 } else {
                     panic(format!("assignment to undefined variable `{name}`"))
+                }
+            }
+
+            // Place assignment: `ident[i] = v` / `ident.field = v`. Single-level
+            // (the receiver is a plain identifier); the value interpreter mutates
+            // the binding in place. Nested places (`a.b[i]`, `a[i].f`) aren't
+            // supported yet.
+            Expr::AssignTo { place, value } => {
+                let v = self.eval(value, env)?;
+                match place.as_ref() {
+                    Expr::Index { receiver, index } => {
+                        let Expr::Ident(name) = receiver.as_ref() else {
+                            return panic("only `ident[i] = v` place assignment is supported");
+                        };
+                        let idx = as_int(&self.eval(index, env)?)?;
+                        let slot = env
+                            .get_mut(name)
+                            .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{name}`")))?;
+                        match slot {
+                            Value::Array(items) => {
+                                if idx < 0 || idx as usize >= items.len() {
+                                    return panic(format!("index {idx} out of bounds (len {})", items.len()));
+                                }
+                                items[idx as usize] = v;
+                                Ok(Value::Unit)
+                            }
+                            other => panic(format!("cannot index-assign into {}", other.type_name())),
+                        }
+                    }
+                    Expr::FieldAccess { receiver, field } => {
+                        let Expr::Ident(name) = receiver.as_ref() else {
+                            return panic("only `ident.field = v` place assignment is supported");
+                        };
+                        let slot = env
+                            .get_mut(name)
+                            .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{name}`")))?;
+                        match slot {
+                            Value::Struct { fields, .. } => {
+                                fields.insert(field.clone(), v);
+                                Ok(Value::Unit)
+                            }
+                            other => panic(format!("cannot field-assign into {}", other.type_name())),
+                        }
+                    }
+                    _ => panic("invalid assignment target"),
                 }
             }
 

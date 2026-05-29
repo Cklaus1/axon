@@ -385,6 +385,7 @@ fn expr_kind_name(e: &Expr) -> &'static str {
         Expr::While { .. }   => "while",
         Expr::WhileLet { .. } => "while_let",
         Expr::Assign { .. }  => "assign",
+        Expr::AssignTo { .. } => "assign",
         Expr::Break          => "break",
         Expr::Continue       => "continue",
         Expr::For { .. }     => "for",

@@ -1030,7 +1030,23 @@ impl Parser {
             {
                 self.parse_assign()
             }
-            _                     => self.parse_logical(),
+            _ => {
+                let expr = self.parse_logical()?;
+                // Place assignment: `<place> = <value>` where the place is an
+                // index or field access (bare `ident = …` is handled above, and
+                // `==` / a newline-led `=` are not assignments).
+                if matches!(expr, Expr::Index { .. } | Expr::FieldAccess { .. })
+                    && matches!(self.peek(), Some(Token::Eq))
+                    && !matches!(self.tokens.get(self.pos + 1), Some(Token::Eq))
+                    && !self.newlines.get(self.pos).copied().unwrap_or(false)
+                {
+                    self.advance()?; // consume `=`
+                    let value = self.parse_logical()?;
+                    Ok(Expr::AssignTo { place: Box::new(expr), value: Box::new(value) })
+                } else {
+                    Ok(expr)
+                }
+            }
         }
     }
 

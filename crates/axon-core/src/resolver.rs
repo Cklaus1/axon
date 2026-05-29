@@ -850,6 +850,12 @@ impl<'a> Resolver<'a> {
                     Some(_) => {} // Symbol::Local — valid assignment target
                 }
             }
+            // Place assignment: resolving the place expr resolves the base
+            // identifier (must be in scope) and any index sub-expressions.
+            Expr::AssignTo { place, value } => {
+                self.resolve_expr(place);
+                self.resolve_expr(value);
+            }
 
 
             // ── FmtStr: resolve each interpolated sub-expression ─────────────
@@ -1071,6 +1077,10 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
             fill_captures_expr(receiver, outer)
         }
         Expr::Assign { value, .. } => fill_captures_expr(value, outer),
+        Expr::AssignTo { place, value } => {
+            fill_captures_expr(place, outer);
+            fill_captures_expr(value, outer);
+        }
         Expr::While { cond, body } => {
             fill_captures_expr(cond, outer);
             for stmt in body {
@@ -1189,6 +1199,10 @@ fn collect_free_vars(
             collect_free_vars(receiver, bound, free)
         }
         Expr::Assign { value, .. } => collect_free_vars(value, bound, free),
+        Expr::AssignTo { place, value } => {
+            collect_free_vars(place, bound, free);
+            collect_free_vars(value, bound, free);
+        }
         Expr::While { cond, body } => {
             collect_free_vars(cond, bound, free);
             for stmt in body {
