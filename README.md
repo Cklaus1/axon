@@ -40,24 +40,27 @@ Lexer → Parser → Resolver → fill_captures → Infer (HM) → Checker → B
 
 ## Quick Start
 
+Axon runs via a **codegen-free tree-walking interpreter** — the `axon` CLI
+builds in seconds without LLVM. (The native LLVM/codegen build is currently
+slow / CI-only; see `BUILD_DIAGNOSIS.md`.)
+
 ```bash
-# Build
-cargo build -p axon-core
+# Build the interpreter CLI (fast, no LLVM):
+cargo build -p axon-core --no-default-features --bin axon
 
-# Run a file
-./target/debug/axon run hello.ax
-
-# Type-check only
+# Run / type-check / test a file:
+./target/debug/axon run   hello.ax
 ./target/debug/axon check hello.ax
+./target/debug/axon test  hello.ax
 
-# Format
-./target/debug/axon fmt hello.ax
+# Compile a structured-prose goal file → AST → run it (Phase-10 two-track flow):
+./target/debug/axon goal examples/goals/optimize-goal.md
 
-# Run tests (@[test] annotated functions)
-./target/debug/axon test hello.ax
+# LLM-backed goals/demos run key-free with deterministic stubs:
+AXON_AI_MOCK=1 ./target/debug/axon goal examples/goals/hello-goal.md
 
-# Start LSP server (reads JSON-RPC from stdin)
-./target/debug/axon lsp
+# `axon build` (native binary) and `axon parse --json` / `axon lsp` need extra
+# features: --features codegen and --features serde-json respectively.
 ```
 
 ## Language Tour
@@ -223,8 +226,14 @@ examples/             # Sample programs
 
 ## Status
 
-Phase 4 complete — all compiler stages implemented and tested. See [STATUS.md](STATUS.md) for
-the full feature matrix.
+Phases 1–4 complete (functions/structs/enums/generics/traits/closures/LSP). The
+current execution path is a codegen-free **interpreter** (`interp.rs`, full
+builtin coverage); the native LLVM build is diagnosed + structurally fixed but
+slow (`BUILD_DIAGNOSIS.md`). Phase-10 **`axon goal`** compiles structured-prose
+goals to runnable AST, with a goal-safety stdlib (`examples/stdlib/`: Budget,
+Constraint, Principal, Uncertain + composition) and key-free demos
+(`examples/goals/`). See [SESSION_STATUS.md](SESSION_STATUS.md) for current
+state and [STATUS.md](STATUS.md) for the Phase-4 feature matrix.
 
 **Test suite**: 246 tests (189 unit + 57 integration), all passing.
 
