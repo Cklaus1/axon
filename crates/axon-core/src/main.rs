@@ -171,6 +171,21 @@ enum Command {
         #[arg(long, help = "Machine-readable NDJSON output")]
         json: bool,
     },
+
+    /// Summarize the provenance log: per-`@[adaptive]`-fn score trajectory.
+    ///
+    /// Reads `$XDG_CACHE_HOME/axon/provenance.jsonl` (written by `@[adaptive]`
+    /// returns and `goal_run`) and reports, per function, how the score moved —
+    /// the first-class form of what `examples/asi/run.sh trace` simulates.
+    Trace {
+        /// Only report on this function name.
+        #[arg(long = "fn", value_name = "NAME", help = "Filter to one function")]
+        func: Option<String>,
+
+        /// Provenance log path (default: $XDG_CACHE_HOME/axon/provenance.jsonl).
+        #[arg(long, value_name = "PATH", help = "Override the provenance log path")]
+        path: Option<PathBuf>,
+    },
 }
 
 // ── Cache subcommand actions ──────────────────────────────────────────────────
@@ -209,6 +224,7 @@ fn main() {
         Command::Lsp => cmd_lsp(),
         Command::Cache { action } => cmd_cache(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
+        Command::Trace { func, path } => cmd_trace(func, path),
     }
 }
 
@@ -486,6 +502,56 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
         prev_best = best;
     }
     process::exit(code);
+}
+
+// ── trace ─────────────────────────────────────────────────────────────────────
+
+fn cmd_trace(func: Option<String>, path: Option<PathBuf>) {
+    use std::collections::HashMap;
+    let Some(recs) = axon_core::interp::read_provenance(path.as_deref()) else {
+        eprintln!("no provenance log found (run a goal first — see examples/goals/).");
+        process::exit(1);
+    };
+
+    // Group by fn, preserving first-seen order. The log is append-only, so each
+    // group's records stay in chronological order.
+    let mut order: Vec<String> = Vec::new();
+    let mut groups: HashMap<&str, Vec<&axon_core::interp::ProvRecord>> = HashMap::new();
+    let mut total = 0usize;
+    for r in &recs {
+        if func.as_ref().is_some_and(|f| f != &r.func) {
+            continue;
+        }
+        if !groups.contains_key(r.func.as_str()) {
+            order.push(r.func.clone());
+        }
+        groups.entry(r.func.as_str()).or_default().push(r);
+        total += 1;
+    }
+
+    if total == 0 {
+        println!("# provenance: 0 matching records");
+        return;
+    }
+    println!("# provenance: {total} record(s) across {} fn(s)", order.len());
+    for f in &order {
+        let g = &groups[f.as_str()];
+        let first = g.first().unwrap().score;
+        let last = g.last().unwrap().score;
+        let min = g.iter().map(|r| r.score).fold(f64::INFINITY, f64::min);
+        let best = g.iter().copied().fold(g[0], |a, r| if r.score > a.score { r } else { a });
+        let at = best.input.map(|i| format!(" at input {i}")).unwrap_or_default();
+        let trend = match last.partial_cmp(&first) {
+            Some(std::cmp::Ordering::Greater) => "improving",
+            Some(std::cmp::Ordering::Less) => "regressing",
+            _ => "flat",
+        };
+        println!(
+            "  {f}: {} eval(s)  range [{min}, {maxv}{at}]  first {first} → last {last}  [{trend}]",
+            g.len(),
+            maxv = best.score,
+        );
+    }
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────

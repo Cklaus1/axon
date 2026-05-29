@@ -142,6 +142,40 @@ fn goal_iterate_converges() {
 }
 
 #[test]
+fn trace_summarizes_provenance() {
+    // Produce a provenance log by iterating a goal, then `axon trace` should
+    // summarize the search: the function, its eval count, and that the best
+    // score was found at the optimum input (12).
+    let cache = std::env::temp_dir().join(format!("axon_trace_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = axon()
+        .args(["goal", "--iterate", "6", &ex("goals/learn-goal.md")])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_GOAL_CONTINUE")
+        .output()
+        .unwrap();
+
+    let out = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(out.status.success(), "trace exited {:?}", out.status.code());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("try_variant"), "stdout: {stdout:?}");
+    assert!(stdout.contains("at input 12"), "best score is at the optimum input: {stdout:?}");
+    assert!(stdout.contains("improving"), "trajectory should be improving: {stdout:?}");
+}
+
+#[test]
+fn trace_missing_log_exits_nonzero() {
+    let out = axon()
+        .args(["trace"])
+        .env("XDG_CACHE_HOME", "/nonexistent-axon-cache-xyz")
+        .env_remove("HOME")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1), "missing log should exit 1");
+}
+
+#[test]
 fn run_trait_methods_dispatch() {
     // trait + impl methods + value.method() dispatch (the interpreter picks the
     // impl from the receiver's runtime type).

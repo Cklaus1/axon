@@ -1674,6 +1674,54 @@ pub fn best_recorded_score(since_ts_ms: u64) -> Option<f64> {
     best
 }
 
+/// One parsed provenance record — the fields `axon trace` reports on.
+pub struct ProvRecord {
+    pub ts_ms: u64,
+    pub func: String,
+    pub score: f64,
+    pub input: Option<i64>,
+}
+
+/// Read and parse the provenance JSONL (best-effort; malformed lines skipped).
+/// `path` defaults to the standard log location. Returns `None` only if the log
+/// file is absent/unreadable. Used by `axon trace`.
+pub fn read_provenance(path: Option<&std::path::Path>) -> Option<Vec<ProvRecord>> {
+    let owned;
+    let path = match path {
+        Some(p) => p,
+        None => {
+            owned = provenance_log_path()?;
+            &owned
+        }
+    };
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut out = Vec::new();
+    for line in content.lines() {
+        let (Some(func), Some(score)) =
+            (extract_json_str(line, "\"fn\":"), extract_json_num(line, "\"score\":"))
+        else {
+            continue;
+        };
+        out.push(ProvRecord {
+            ts_ms: extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0) as u64,
+            func,
+            score,
+            input: extract_json_num(line, "\"input\":").map(|x| x as i64),
+        });
+    }
+    Some(out)
+}
+
+/// Extract the string value following `key` (e.g. `"fn":`) in a JSON line.
+/// Tolerant of our own fixed log format; assumes no escaped quotes in the value
+/// (true for fn names). `None` if absent or unterminated.
+fn extract_json_str(line: &str, key: &str) -> Option<String> {
+    let start = line.find(key)? + key.len();
+    let rest = line[start..].trim_start().strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
+}
+
 /// Extract the numeric value following `key` in a JSON line (up to the next
 /// `,` or `}`). Tolerant of our own fixed log format; not a general parser.
 fn extract_json_num(line: &str, key: &str) -> Option<f64> {

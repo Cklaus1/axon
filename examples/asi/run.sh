@@ -54,14 +54,9 @@ case "$cmd" in
         "$(axon_bin)" run "$DEMO"
         ;;
     trace)
-        # Future: axon trace show <run-id>
-        # Today: tail the provenance log filtered to try_variant
-        if [[ ! -f "$PROV" ]]; then
-            echo "No provenance log at $PROV (run the demo first)" >&2
-            exit 1
-        fi
-        echo "# Provenance entries for try_variant (most recent last)"
-        grep '"fn":"try_variant"' "$PROV" | tail -50 || echo "(no entries)"
+        # Now first-class: `axon trace` summarizes the per-fn score trajectory.
+        # Extra args pass through (e.g. --fn try_variant).
+        "$(axon_bin)" trace "$@"
         ;;
     improve)
         # Continue the search across runs: AXON_GOAL_CONTINUE makes goal_run
@@ -115,7 +110,7 @@ Axon ASI demo CLI (Phase-10 surface, simulated)
 
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
-  ./run.sh trace       # show provenance entries for try_variant
+  ./run.sh trace       # axon trace — per-fn score trajectory (add --fn NAME)
   ./run.sh analyze     # score-trajectory analysis (plateau, recommendations)
   ./run.sh improve     # continue search — adds more evals to the same log
   ./run.sh redteam     # run the adversarial pass (currently part of main)
