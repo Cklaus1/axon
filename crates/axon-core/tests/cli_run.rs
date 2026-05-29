@@ -213,6 +213,18 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn logical_and_binds_tighter_than_or() {
+    // Regression: `&&` and `||` used to share one precedence level, so
+    // `true || true && false` parsed as `(true || true) && false` = false. With
+    // standard precedence it is `true || (true && false)` = true.
+    let f = std::env::temp_dir().join(format!("axon_prec_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { if true || true && false { 1 } else { 0 } }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "a || b && c == a || (b && c)");
+}
+
+#[test]
 fn block_expressions_as_operands() {
     // `if`/`match` can be used as operands inside a larger expression, not only
     // as a let-RHS or call arg.

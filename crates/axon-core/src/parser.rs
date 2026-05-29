@@ -1243,20 +1243,30 @@ impl Parser {
 
     // ── Binary ops with precedence climbing ─────────────────────────────────
 
-    /// Lowest-precedence binary layer: `&&` and `||`.
+    /// Lowest-precedence binary layer: `||` (logical OR). Binds looser than `&&`,
+    /// so `a || b && c` parses as `a || (b && c)` (standard precedence).
     fn parse_logical(&mut self) -> Result<Expr> {
-        let mut left = self.parse_bitwise_or()?;
+        let mut left = self.parse_logical_and()?;
         loop {
             // ASI: an operator on a new line (outside parens) terminates the expression.
             if self.preceded_by_newline() { break; }
-            let op = match self.peek() {
-                Some(Token::And) => BinOp::And,
-                Some(Token::Or)  => BinOp::Or,
-                _ => break,
-            };
+            if !matches!(self.peek(), Some(Token::Or)) { break; }
+            self.advance()?;
+            let right = self.parse_logical_and()?;
+            left = Expr::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+        }
+        Ok(left)
+    }
+
+    /// Logical AND: `a && b` — tighter than `||`, looser than bitwise/comparison.
+    fn parse_logical_and(&mut self) -> Result<Expr> {
+        let mut left = self.parse_bitwise_or()?;
+        loop {
+            if self.preceded_by_newline() { break; }
+            if !matches!(self.peek(), Some(Token::And)) { break; }
             self.advance()?;
             let right = self.parse_bitwise_or()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
         }
         Ok(left)
     }
