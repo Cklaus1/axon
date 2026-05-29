@@ -369,7 +369,20 @@ impl Formatter {
             Expr::Ident(name) => self.write(name),
             Expr::Literal(lit) => self.emit_literal(lit),
 
-            Expr::Block(stmts) => self.emit_inline_block(stmts),
+            Expr::Block(stmts) => {
+                // Re-sugar the `for x in coll` parser desugar instead of leaking
+                // its internal `__forarr_*` / `__fori_*` names.
+                if let Some((var, coll, body)) = as_desugared_foreach(stmts) {
+                    self.write("for ");
+                    self.write(&var);
+                    self.write(" in ");
+                    self.emit_expr(coll);
+                    self.write(" ");
+                    self.emit_block_body(&Expr::Block(body));
+                } else {
+                    self.emit_inline_block(stmts)
+                }
+            }
 
             Expr::Let { name, value } => {
                 self.write("let ");
@@ -742,6 +755,42 @@ fn binop_prec(op: &BinOp) -> u8 {
     }
 }
 
+/// Recognize the parser's `for x in coll` desugar so fmt can re-print the
+/// surface form rather than leaking its internal names. The shape is:
+/// `{ ref __forarr_N = coll  for __fori_N in 0..len(__forarr_N) {
+///      let x = __forarr_N[__fori_N]  <body…> } }`.
+/// Returns `(loop var, collection, body without the element binding)`.
+fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
+    if stmts.len() != 2 {
+        return None;
+    }
+    let Expr::RefBind { name: arr, value: coll } = &stmts[0].expr else {
+        return None;
+    };
+    if !arr.starts_with("__forarr_") {
+        return None;
+    }
+    let Expr::For { var: idx, body, .. } = &stmts[1].expr else {
+        return None;
+    };
+    if !idx.starts_with("__fori_") {
+        return None;
+    }
+    let Expr::Let { name: uservar, value } = &body.first()?.expr else {
+        return None;
+    };
+    let Expr::Index { receiver, .. } = value.as_ref() else {
+        return None;
+    };
+    let Expr::Ident(rn) = receiver.as_ref() else {
+        return None;
+    };
+    if rn != arr {
+        return None;
+    }
+    Some((uservar.clone(), coll.as_ref(), body[1..].to_vec()))
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -879,5 +928,16 @@ mod tests {
         let (out1, out2) = round_trip(src);
         assert_eq!(out1, out2);
         assert!(out1.contains("for"), "for should appear: {out1}");
+    }
+
+    #[test]
+    fn fmt_for_in_collection_resugars() {
+        // The `for x in coll` parser desugar must be re-sugared, not leaked as
+        // its internal `__forarr_*` / `__fori_*` names.
+        let src = "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let s = 0\n    for x in xs {\n        s = s + x\n    }\n    s\n}\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2, "format must be idempotent");
+        assert!(out1.contains("for x in xs"), "should re-sugar the collection loop: {out1}");
+        assert!(!out1.contains("__forarr"), "must not leak internal names: {out1}");
     }
 }
