@@ -1,6 +1,6 @@
 # Axon Roadmap
 
-**Last updated**: 2026-05-01
+**Last updated**: 2026-05-28
 **Companion docs**: `STATUS.md` (shipped state), `CLAUDE.md` (project conventions),
 `spec/compiler-phaseN.md` (per-phase specs).
 
@@ -549,6 +549,86 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 **Cross-references** to existing §9 questions: F8 partially overlaps with the substrate/surface enforcement question (Phase 6); F15 partially overlaps with risk-classification source (Phase 11). No conflicts; the §9 defaults are still the right defaults.
 
 **Update protocol**: every subsequent ASI demo (the five "cousins" listed in `examples/asi/README.md`) appends its own friction items here before it lands in `examples/`. The list is allowed to grow; it is not allowed to be discarded without a phase landing that closes its target.
+
+---
+
+## 9.6 Session findings (2026-05-28) — interpreter-first execution + native-build fix
+
+A build session landed an end-to-end execution path that bypasses the native-codegen
+stall and stood up the first Phase-10 surface command. Each item below is a concrete
+forward task, not a status note. Companion docs: `BUILD_DIAGNOSIS.md`,
+`CODEGEN_WRAPPER_PROTOTYPE.md`, `SESSION_STATUS.md`. Verifiable in git
+(`0fb49c0..800d219`).
+
+### Native codegen build — diagnosed, fix applied, validation pending
+
+- **Root cause pinned** (`BUILD_DIAGNOSIS.md`): the multi-hour `cargo build` stall is
+  **100% LLVM-IR generation** of monomorphized inkwell generics in `codegen::builtins`
+  — serial, CGU-immune, *not* frontend monomorphization and *not* LLVM optimization
+  (`cargo check` finishes in ~4.5 s; `cargo build` is unbounded). This **supersedes the
+  §7.5 conclusion** that the inkwell IR-shim ("Stretch²") was the only remaining lever:
+  the trait shim was a measured null result; the shim changes dispatch, not instantiation
+  count.
+- **Fix applied** (commits `f59e392` + `800d219`): all `.build_*` sites in
+  `codegen/builtins.rs` now route through `#[inline(never)]` **non-generic** wrappers in
+  `codegen/build_wrappers.rs` (each inkwell call monomorphized exactly once;
+  `Copies = 1`). `cargo check` clean. Isolated repro (`CODEGEN_WRAPPER_PROTOTYPE.md`)
+  measured **−43% IR / −36% RSS / ~1.7–3× wall-clock** — a **constant factor, not an
+  asymptote fix** (the two giant functions still lower serially in one CGU each).
+- **Remaining work**: (a) run a *finishing* native build on CI / beefy hardware and
+  measure the real IR / time / RSS delta against the repro's projection; (b) optionally
+  compound the wrappers with **per-builtin function-splitting** so `codegen-units` can
+  parallelize the now-smaller bodies; (c) **decide whether native codegen is worth
+  maintaining at all** versus interpreter-only — the interpreter already covers
+  `run`/`check`/`test`/`goal`, so native is a release/AOT artifact, not a dev dependency.
+  Default: keep native CI/release-only behind `--features codegen`; develop against
+  `--no-default-features`.
+
+### Interpreter is now the reference execution semantics
+
+- A codegen-free tree-walking interpreter (`crates/axon-core/src/interp.rs`, commit
+  `1f6d37a`) is the execution path. `axon run`/`check`/`test`/`goal` all work via the
+  interpreter built `cargo build -p axon-core --no-default-features --bin axon` (sub-second).
+  Builtin coverage is **90/90**, with an automated table-vs-interpreter audit reporting
+  zero gaps (commits `4056608`, `8f1d117`).
+- **Forward rule**: the interpreter is now the *de facto* reference semantics. Every new
+  language/ASI feature (Phase 5+ refinements, Phase 6 effects, Phase 7 runtime types,
+  Phase 8 `goal`/`agent`/`for!`) **must be implemented in `interp.rs`**, not only in
+  codegen. Native codegen, if maintained, follows the interpreter — not the reverse. Add
+  an interpreter-vs-codegen conformance check to CI once a native build finishes (item
+  above), so the two paths cannot silently diverge.
+
+### Phase-10 surface compiler — v1 lifts, v1.1 must generate
+
+- `axon goal <file.md>` (commits `1f83f2a`, `e6ba0f8`) compiles a structured-prose goal
+  (`axon-surface`) → `.ax` → type-check → interpret in one command. Surface v1 **lifts**
+  real function bodies from the goal file's ` ```axon ` fenced blocks; goals can override
+  `try_variant`, `assert_deployable`, and `redteam_check` (commits `f559e93`, `28ab154`,
+  `3d36b0f`). This is the first concrete progress on **F13** (no structured-prose surface)
+  — but only the *plumbing*; it does not yet author intent.
+- **Next** (toward the §5 "Hello Goal" forcing function and Phase-10 exit criteria):
+  1. **LLM-driven body *generation*** — v1 only lifts author-written bodies; the surface
+     compiler must *propose* bodies from prose, with confidence markers and the mandatory
+     user-approval-of-AST step (§2.4). This is the actual Phase-10 deliverable.
+  2. **Bundle the `asi_prelude`** (`examples/stdlib/asi_prelude.ax`, commit `fb771cd`) so
+     goals can call shared pure score/budget/confidence helpers instead of re-emitting
+     scaffolding — the seed of `std::asi::*` (§6).
+  3. **Cleaner verify-target extraction** from the Verify prose block (the predicate is
+     the one block surface v1 does *not* lift); generalizes once Phase 5 refinements land
+     (overlaps **F6**).
+
+### Goal-safety gate — pattern proven, compose with capabilities next
+
+- Three key-free demos in `examples/goals/` prove the safety-gate trio:
+  `optimize-goal.md` (deploys), `verified-goal.md` (a confidence `@[verify]` gate blocks
+  an under-target agent, exit 101), `redteam-goal.md` (an adversarial `redteam_check`
+  blocks a high-scoring-but-unsafe agent, exit 1). The verify + redteam gate composition
+  is now an executable pattern, not a slogan — partial closure of **F15** (the
+  simulate→redteam→verify→deploy pipeline), still single-stage.
+- **Next**: compose the gate with **Budget / Effect / Principal** Tier-1 stdlib
+  capabilities (Phase 7) — today the gates are pure-predicate fns with no budget meter
+  (**F4**), no effect rows (**F5**), and no Principal-tagged audit trail (**F3**). The
+  proven gate shape is the integration point for those primitives as they land.
 
 ---
 
