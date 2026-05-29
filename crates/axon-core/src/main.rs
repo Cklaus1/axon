@@ -1059,6 +1059,13 @@ fn run_check_pipeline(
         }
     }
 
+    // Step 5: capability checking — enforce `@[contained(...)]` I/O sandboxing
+    // (E1001). Previously only run by the library check path, so the CLI did not
+    // reject containment violations; wire it in so `axon check`/`run` enforce it.
+    for err in axon_core::capabilities::check_capabilities(program) {
+        all_errors.push(format!("[{}] {}", err.code, err.message));
+    }
+
     (all_errors, infer_ctx)
 }
 

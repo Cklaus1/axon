@@ -15,6 +15,28 @@ fn ex(rel: &str) -> String {
     format!("{}/../../examples/{}", env!("CARGO_MANIFEST_DIR"), rel)
 }
 
+fn fixture(rel: &str) -> String {
+    format!("{}/tests/fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel)
+}
+
+#[test]
+fn contained_capability_sandbox_is_enforced_by_check() {
+    // Regression: `@[contained(...)]` I/O sandboxing must be enforced by the CLI
+    // check pipeline, not only the library path. A write outside the fs allowlist
+    // is rejected; a compliant contained fn checks clean.
+    let bad = axon().args(["check", &fixture("contained_fail_fs.ax")]).output().unwrap();
+    assert_eq!(bad.status.code(), Some(2), "containment violation must be rejected");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(msg.contains("E1001"), "expected E1001, got: {msg}");
+
+    let ok = axon().args(["check", &fixture("contained_pass.ax")]).output().unwrap();
+    assert!(ok.status.success(), "compliant @[contained] fn should check clean");
+}
+
 #[test]
 fn run_hello_prints_greeting() {
     let out = axon().args(["run", &ex("hello.ax")]).output().unwrap();
