@@ -213,6 +213,24 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn or_patterns_in_match() {
+    // `pat | pat => body` (or-patterns) desugar to one arm per alternative; a
+    // guard applies to each. Covers enum-variant and literal alternatives.
+    let f = std::env::temp_dir().join(format!("axon_or_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "enum C { Red, Green, Blue }\n\
+         fn warm(c: C) -> i64 { match c { C::Red | C::Green => 1  C::Blue => 0 } }\n\
+         fn rank(n: i64) -> i64 { match n { 1 | 2 | 3 => 10  _ => 0 } }\n\
+         fn main() -> i64 { warm(C::Green) + warm(C::Blue) + rank(2) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(11), "1 + 0 + 10 = 11");
+}
+
+#[test]
 fn sum_type_pipe_syntax_runs() {
     // `type Name = A {..} | B` (the documented sum-type spelling) parses to the
     // same EnumDef as `enum Name { ... }` and runs end-to-end.

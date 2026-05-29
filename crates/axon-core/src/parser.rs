@@ -1124,14 +1124,23 @@ impl Parser {
         self.expect(&Token::LBrace)?;
         let mut arms = Vec::new();
         while !self.at(&Token::RBrace) {
-            let pattern = self.parse_pattern()?;
+            // Or-patterns: `pat | pat | ... ( if guard )? => body`. Desugared to
+            // one MatchArm per alternative sharing the (cloned) guard and body,
+            // so no Pattern AST node / downstream changes are needed. First match
+            // still wins, matching standard semantics.
+            let mut patterns = vec![self.parse_pattern()?];
+            while self.eat(&Token::Pipe) {
+                patterns.push(self.parse_pattern()?);
+            }
             let guard = if self.eat(&Token::If) {
                 Some(self.parse_logical()?)
             } else { None };
             self.expect(&Token::FatArrow)?;
             let body = self.parse_expr()?;
             self.eat(&Token::Comma);
-            arms.push(MatchArm { pattern, guard, body });
+            for pattern in patterns {
+                arms.push(MatchArm { pattern, guard: guard.clone(), body: body.clone() });
+            }
         }
         self.expect(&Token::RBrace)?;
         Ok(Expr::Match { subject: Box::new(subject), arms })
