@@ -86,9 +86,9 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Let / Own / RefBind ──────────────────────────────────────────
-            ast::Expr::Let { name, value }
-            | ast::Expr::Own { name, value }
-            | ast::Expr::RefBind { name, value } => {
+            ast::Expr::Let { name, value, .. }
+            | ast::Expr::Own { name, value, .. }
+            | ast::Expr::RefBind { name, value, .. } => {
                 let sem_ty = self.infer_expr_sem_type(value);
                 let val = self.emit_expr(value, fn_val)?;
                 let alloca = self.ir.builder.build_alloca(val.get_type(), name).unwrap();
@@ -306,6 +306,10 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
                 None
             }
+
+            // Place assignment (`xs[i] = v`, `s.field = v`) isn't lowered to
+            // native code yet; the interpreter is the supported execution path.
+            ast::Expr::AssignTo { .. } => None,
 
             // ── FmtStr: lower to a chain of axon_concat calls ────────────────
             ast::Expr::FmtStr { parts } => self.emit_fmt_str(parts, fn_val),
