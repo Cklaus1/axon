@@ -2,7 +2,7 @@
 
 **Last update**: 2026-05-29
 **Branch**: `merge-asi-layer3` (== `main`, pushed to `origin/main`)
-**Latest commit**: `7176f8f` — trait-method demo + e2e test (see "Shipped since" below)
+**Latest commit**: `1972fc2` — allocate (knapsack) demo (see "Shipped since" below)
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 `STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
@@ -34,7 +34,7 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   artifact). This differs from the failed trait-based IR-shim because
   non-generic wrappers monomorphize each inkwell call exactly once.
 
-## Shipped since (this session, ~30 ticks on `main`)
+## Shipped since (this session, on `main`)
 
 - **Codegen wrapper fix fully applied** (above) + CI **clippy `-D warnings` gate
   green** (was red, 33 lints). `check`/`test`/`clippy` green; `fmt-check` is
@@ -56,8 +56,35 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   learn-goal converges 100→136→164→184→200 over 6 runs.
 - **Multi-file modules** (`mod`+`use`+`AXON_PATH`) work via the interpreter;
   see `examples/modular/`.
-- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`), goal-demo + all-examples
-  -parse regression locks, full builtin coverage (90/90). `dev.sh` is interpreter-first.
+- **ASI demo set spans the decision-pattern spectrum** (`examples/asi/`, all
+  key-free): #1–3 LLM tasks (optimize/classify/summarize), #4 `supervised_agent`
+  (greedy stream under a latching kill-switch), #5 `deliberative_agent`
+  (constrained single choice), #6 `planner` (multi-step lookahead, recursive
+  enums), #7 `pareto` (multi-objective frontier), #8 `allocate` (0/1 knapsack
+  under a budget). Capability *and* control, demonstrated.
+- **Language hardened by build-and-fix probing — 9 fixes**: `len` on slices;
+  structural `==`/`!=`; `type Name = A | B` sum-types; or-patterns; `match`/`if`
+  as operands; `&&`/`||` precedence (correctness bug); nested braces in string
+  interpolation; functions returning enums; `for x in <collection>` (borrows the
+  collection, supports nesting). Each gated + regression-tested. `feature_tour.ax`
+  exercises them together.
+- **Ownership model mapped**: pass collections to helpers as `&[T]` (borrow);
+  `for-in` borrows; `ref` is binding-only (see memory `axon-ownership-idioms`).
+- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`, 28), goal-demo +
+  all-examples-parse regression locks, full builtin coverage (90/90).
+  `dev.sh` is interpreter-first. Commits gated on a green suite.
+
+## Top remaining work (prioritized)
+
+1. **Place assignment** (`xs[i] = v`, `s.field = v`) — the #1 language gap;
+   unblocks mutation algorithms (sort, in-place accumulation). A dedicated,
+   reviewed effort: an lvalue AST node + interpreter mutable-place resolution +
+   borrow rules across ~6 files (codegen has a catch-all). Not a safe autonomous
+   tick. Also: tuple expressions, typed `let` (both AST-level).
+2. **Live ASI** — set `ANTHROPIC_API_KEY` (+ `--features asi-runtime`) to run the
+   LLM demos for real instead of `AXON_AI_MOCK=1`.
+3. **Native build** — the `#[inline(never)]`-wrapper fix is applied; validate an
+   end-to-end `--features codegen` build on a beefy machine / CI.
 
 ## Known language gaps (discovered this session — future work)
 
