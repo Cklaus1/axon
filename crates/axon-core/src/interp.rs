@@ -20,7 +20,7 @@
 //! `uncertain_*`/`temporal_*` family) are stubbed with a clear runtime error —
 //! wiring them to `axon-ai`/`axon-rt` is M2.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
 use std::rc::Rc;
@@ -166,10 +166,47 @@ pub struct Interp<'p> {
     /// In-memory provenance store: `@[adaptive]` fn name → recorded return
     /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
     provenance: RefCell<HashMap<String, Vec<f64>>>,
+    /// Current call-stack depth, bounded by `RECURSION_LIMIT` so runaway
+    /// recursion fails with a catchable panic rather than overflowing the
+    /// (large but finite) interpreter thread stack and aborting the process.
+    call_depth: Cell<usize>,
+}
+
+/// Max interpreter call depth before a graceful "recursion limit" panic. The
+/// debug-build `eval` frame is large (~128 KB/call), so a 1 GiB thread stack
+/// overflows around ~8000 frames; this limit fires first, turning runaway
+/// recursion into a catchable panic instead of a process-aborting overflow.
+const RECURSION_LIMIT: usize = 6_000;
+
+/// Decrements the call-depth counter when a `call_fn` frame unwinds (any path).
+struct DepthGuard<'a>(&'a Cell<usize>);
+impl Drop for DepthGuard<'_> {
+    fn drop(&mut self) {
+        self.0.set(self.0.get().saturating_sub(1));
+    }
+}
+
+/// Run `f` on a thread with a large stack. The tree-walking interpreter uses a
+/// lot of native stack per call, so an 8 MB main stack overflows at only a few
+/// hundred frames; this lets reasonably deep recursion run, while the
+/// `RECURSION_LIMIT` guard backstops truly runaway recursion with a clean panic.
+fn on_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(1024 * 1024 * 1024)
+            .spawn_scoped(s, f)
+            .expect("spawn interpreter thread")
+            .join()
+            .expect("interpreter thread panicked")
+    })
 }
 
 /// Parse-and-run convenience: returns the process exit code.
 pub fn run_program(program: &Program) -> i32 {
+    on_deep_stack(|| run_program_inner(program))
+}
+
+fn run_program_inner(program: &Program) -> i32 {
     let mut interp = Interp::build(program);
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
     match outcome {
@@ -191,6 +228,10 @@ pub fn run_program(program: &Program) -> i32 {
 /// Returns `Ok(())` if it completed without panicking, or `Err(message)` on a
 /// runtime panic / non-zero `exit`. Used by `axon test` to run tests in-process.
 pub fn run_test_fn(program: &Program, name: &str) -> Result<(), String> {
+    on_deep_stack(|| run_test_fn_inner(program, name))
+}
+
+fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
     let mut interp = Interp::build(program);
     if let Err(f) = interp.init_globals() {
         return Err(flow_to_msg(f));
@@ -256,6 +297,7 @@ impl<'p> Interp<'p> {
             global_defs,
             globals: HashMap::new(),
             provenance: RefCell::new(HashMap::new()),
+            call_depth: Cell::new(0),
         }
     }
 
@@ -286,6 +328,19 @@ impl<'p> Interp<'p> {
     // ── Function / closure calls ─────────────────────────────────────────────
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
+        // Bound recursion: a graceful panic instead of a process-aborting stack
+        // overflow on runaway/infinite recursion. `_guard` restores the depth on
+        // any return path (including `?`).
+        let depth = self.call_depth.get() + 1;
+        if depth > RECURSION_LIMIT {
+            return panic(format!(
+                "recursion limit exceeded ({RECURSION_LIMIT}) in `{}` — infinite or excessively deep recursion?",
+                f.name
+            ));
+        }
+        self.call_depth.set(depth);
+        let _guard = DepthGuard(&self.call_depth);
+
         if f.params.len() != args.len() {
             return panic(format!(
                 "{}: expected {} args, got {}",

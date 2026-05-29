@@ -38,6 +38,42 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn deep_recursion_fails_gracefully_not_aborts() {
+    // Runaway recursion must be a catchable panic (exit 101) with a clear
+    // message — not a process-aborting stack overflow (exit 134 / SIGABRT).
+    let f = std::env::temp_dir().join(format!("axon_deeprec_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn c(n: i64) -> i64 { if n == 0 { 0 } else { 1 + c(n - 1) } }\n\
+         fn main() -> i64 { c(200000) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(101), "deep recursion should panic gracefully, not abort");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("recursion limit"),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn moderate_recursion_works() {
+    // ~5000-deep recursion runs (large interpreter thread stack); was ~64 before.
+    let f = std::env::temp_dir().join(format!("axon_modrec_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn c(n: i64) -> i64 { if n == 0 { 0 } else { 1 + c(n - 1) } }\n\
+         fn main() -> i64 { c(5000) % 100 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "5000-deep recursion should run (5000 % 100 = 0)");
+}
+
+#[test]
 fn all_examples_typecheck_clean() {
     // Stronger than the lib's parse-only guard: every example must pass the FULL
     // CLI check pipeline (resolve/infer/check/borrow/capability/verify), with
