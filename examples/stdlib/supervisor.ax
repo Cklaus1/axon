@@ -1,0 +1,123 @@
+// Tier-1 stdlib: Supervisor — runtime oversight that can HALT an agent.
+//
+// safe_action.ax gates a *single* action; a Supervisor watches the *stream* of
+// an agent's actions over time. It carries state (remaining budget, a strike
+// count) and trips a kill-switch when the agent crosses a safety boundary —
+// too many consecutive unsafe/unaffordable attempts. Once tripped, the halt
+// LATCHES: every later action is refused, even a safe one. This is the
+// corrigibility primitive — an overseer the agent cannot out-vote or reset.
+//
+//   axon test examples/stdlib/supervisor.ax
+//   axon run  examples/stdlib/supervisor.ax
+
+type Supervisor = {
+    budget: i64,       // resource budget remaining
+    strikes: i64,      // consecutive unsafe/unaffordable attempts
+    max_strikes: i64,  // trip the kill-switch at this many strikes
+    halted: bool,      // latched: once true, stays true
+}
+
+type Action = { name: str, cost: i64, safe: bool }
+
+fn new_supervisor(budget: i64, max_strikes: i64) -> Supervisor {
+    Supervisor { budget: budget, strikes: 0, max_strikes: max_strikes, halted: false }
+}
+
+// Would the supervisor approve this action, given its current state? Approves
+// only when not halted, the action is flagged safe, and it fits the budget.
+fn approves(s: Supervisor, a: Action) -> bool {
+    !s.halted && a.safe && a.cost <= s.budget
+}
+
+// Observe one proposed action and return the updated supervisor. An approved
+// action debits the budget and clears the strike streak. An unsafe or
+// unaffordable action adds a strike; reaching max_strikes latches the halt.
+// A halted supervisor refuses everything (state unchanged).
+fn observe(s: Supervisor, a: Action) -> Supervisor {
+    if s.halted {
+        s
+    } else if approves(s, a) {
+        Supervisor { budget: s.budget - a.cost, strikes: 0, max_strikes: s.max_strikes, halted: false }
+    } else {
+        let strikes = s.strikes + 1
+        Supervisor { budget: s.budget, strikes: strikes, max_strikes: s.max_strikes, halted: strikes >= s.max_strikes }
+    }
+}
+
+@[test]
+fn test_safe_stream_debits_budget() {
+    let s = observe(
+        observe(new_supervisor(500, 2), Action { name: "read", cost: 100, safe: true }),
+        Action { name: "write", cost: 100, safe: true },
+    )
+    assert(!s.halted)
+    assert_eq(s.budget, 300)
+    assert_eq(s.strikes, 0)
+}
+
+@[test]
+fn test_strikes_trip_kill_switch() {
+    let s1 = observe(new_supervisor(500, 2), Action { name: "bad", cost: 10, safe: false })
+    assert(!s1.halted)
+    assert_eq(s1.strikes, 1)
+    let s2 = observe(s1, Action { name: "bad2", cost: 10, safe: false })
+    assert(s2.halted)
+}
+
+@[test]
+fn test_halt_latches_and_refuses_safe_actions() {
+    let s1 = observe(new_supervisor(100, 1), Action { name: "bad", cost: 10, safe: false })
+    assert(s1.halted)
+    let s2 = observe(s1, Action { name: "good", cost: 10, safe: true })
+    assert(s2.halted)        // still latched
+    assert_eq(s2.budget, 100) // budget untouched after halt
+}
+
+@[test]
+fn test_over_budget_counts_as_a_strike() {
+    let s = observe(new_supervisor(50, 5), Action { name: "expensive", cost: 100, safe: true })
+    assert_eq(s.strikes, 1)
+    assert_eq(s.budget, 50) // not debited
+}
+
+@[test]
+fn test_approves_predicate() {
+    let s = new_supervisor(100, 2)
+    assert(approves(s, Action { name: "ok", cost: 50, safe: true }))
+    assert(!approves(s, Action { name: "unsafe", cost: 50, safe: false }))
+    assert(!approves(s, Action { name: "pricey", cost: 200, safe: true }))
+}
+
+fn step(s: Supervisor, a: Action) -> Supervisor {
+    let nm = a.name
+    let ns = observe(s, a)
+    let b = ns.budget
+    let st = ns.strikes
+    let mx = ns.max_strikes
+    if approves(s, a) {
+        println("ACT    {nm} (cost {to_str(a.cost)}) -> budget {to_str(b)}")
+        ns
+    } else if ns.halted {
+        println("HALTED at {nm} -- kill-switch latched")
+        ns
+    } else {
+        println("DENY   {nm} -- strike {to_str(st)}/{to_str(mx)}")
+        ns
+    }
+}
+
+fn main() {
+    println("supervisor: budget=500, max_strikes=2")
+    let s0 = new_supervisor(500, 2)
+    let s1 = step(s0, Action { name: "read",   cost: 100, safe: true })
+    let s2 = step(s1, Action { name: "write",  cost: 100, safe: true })
+    let s3 = step(s2, Action { name: "exfil",  cost: 50,  safe: false }) // strike 1
+    let s4 = step(s3, Action { name: "exfil2", cost: 50,  safe: false }) // strike 2 -> halt
+    let s5 = step(s4, Action { name: "resume", cost: 10,  safe: true })  // refused (latched)
+    let fb = s5.budget
+    if s5.halted {
+        println("final: HALTED, {to_str(fb)} budget unspent")
+    } else {
+        println("final: running, budget {to_str(fb)}")
+    }
+}

@@ -19,6 +19,16 @@ all hold at once:
 authorization + a hard quality constraint into one act/deny decision, and
 `deny_reason` names the first failing axis.
 
+## Oversight (corrigibility)
+
+The quartet gates a *single* action; `supervisor.ax` adds the *temporal* axis.
+A `Supervisor { budget, strikes, max_strikes, halted }` watches the stream of an
+agent's actions over time: `observe` debits the budget on an approved action and
+adds a strike on an unsafe/unaffordable one, tripping a **kill-switch** at
+`max_strikes`. The halt **latches** — once tripped, every later action is
+refused, even a safe one. This is the overseer an agent cannot out-vote or
+reset, the control counterpart to the capability work in `examples/goals/`.
+
 ## Scoring helpers
 
 `asi_prelude.ax` — numeric helpers for turning raw model outputs into bounded
@@ -37,8 +47,10 @@ axon test examples/stdlib/uncertain.ax     # 5
 axon test examples/stdlib/constraint.ax    # 5
 axon test examples/stdlib/principal.ax     # 3
 axon test examples/stdlib/safe_action.ax   # 5
+axon test examples/stdlib/supervisor.ax    # 5
 axon test examples/stdlib/asi_prelude.ax   # 8
 axon run  examples/stdlib/safe_action.ax   # the composed gate in action
+axon run  examples/stdlib/supervisor.ax    # the kill-switch latching mid-stream
 ```
 
 ## Notes
