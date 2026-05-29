@@ -38,6 +38,21 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn chan_type_as_function_parameter() {
+    // `chan<T>` is usable as a type — a channel can be passed to a worker fn.
+    let f = std::env::temp_dir().join(format!("axon_chanty_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn worker(out: chan<i64>, x: i64) { out.send(x * x) }\n\
+         fn main() -> i64 { let c = chan<i64>()  spawn { worker(c, 9) }  c.recv() }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(81), "worker(c, 9) sends 81 over the channel");
+}
+
+#[test]
 fn select_fires_first_ready_channel() {
     // Cooperative select: the arm whose channel has a ready value fires. Here `a`
     // is empty and `b` was sent to, so the `b` arm runs (result = 2).

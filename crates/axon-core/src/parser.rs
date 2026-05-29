@@ -738,6 +738,14 @@ impl Parser {
             self.expect(&Token::RBracket)?;
             return Ok(AxonType::Slice(Box::new(inner)));
         }
+        // `chan<T>` — channel type (the lexer makes `chan` a keyword, so it never
+        // reaches the named-type match below where `"chan"` is also handled).
+        if self.eat(&Token::Chan) {
+            self.expect(&Token::Lt)?;
+            let inner = self.parse_type()?;
+            self.expect_gt()?;
+            return Ok(AxonType::Chan(Box::new(inner)));
+        }
         // `fn(P0, P1) -> R` — function type
         if self.eat(&Token::Fn) {
             self.expect(&Token::LParen)?;
