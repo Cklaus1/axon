@@ -38,6 +38,7 @@ examples/asi/
 ├── summarize.ax   # demo #3 — composite-metric summarizer (length × coverage)
 ├── supervised_agent.ax # demo #4 — capability UNDER control (latching kill-switch); key-free
 ├── deliberative_agent.ax # demo #5 — constrained optimization (best PERMITTED action); key-free
+├── planner.ax     # demo #6 — multi-step planning with safety lookahead (recursive-enum tree); key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file
 ```
