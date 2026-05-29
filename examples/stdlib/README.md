@@ -1,29 +1,52 @@
-# examples/stdlib
+# examples/stdlib — Axon ASI primitives
 
-Small, pure, reusable Axon helpers — building blocks for the ASI demos in
-`examples/asi/`, composed only from existing builtins (no Rust changes).
+Small, pure, reusable Axon modules: the building blocks the goal/agent surface
+composes. Each runs key-free (`axon test <file>` / `axon run <file>`).
 
-## `asi_prelude.ax`
+## The ASI-safety quartet
 
-Numeric helpers for turning raw model outputs into bounded scores,
-confidences, and budget checks:
+Four orthogonal axes of safe autonomous action — an agent should act only when
+all hold at once:
 
-- `bound_i64` / `bound_f64` — clamp into `[lo, hi]` (inline; the `clamp_*`
-  builtins are codegen-only and not implemented in the interpreter).
-- `normalize_score(raw, max)` — map `0..max` onto `0..100` (rounded, clamped).
-- `score_to_confidence` / `confidence_to_score` — bridge `0..100` ⇄ `0.0..1.0`.
-- `length_score(n_chars, ideal, cap)` — generalized summarizer length heuristic.
-- `budget_ok` / `budget_remaining` / `budget_used_pct` — budget accounting.
-- `weighted2(a, wa, b, wb)` / `mean2(a, b)` — integer weighted average.
+| Module | Axis | Type / key functions |
+|---|---|---|
+| `budget.ax` | **how much** (bounded resources) | `Budget { used, cap }`; `budget_new/spend/remaining/exhausted/ok/used_pct` |
+| `constraint.ax` | **correctness** (hard must-hold rules) | `Constraint { name, satisfied }`; `within/at_most/enforce/both` |
+| `principal.ax` | **permission** (capabilities) | `Principal { name, net, fs_write, exec }`; `sandboxed/principal/require_cap` |
+| `uncertain.ax` | **confidence** (calibrated belief) | combinators over `Uncertain<i64>`: `u_confident/u_and/u_or/u_max_conf` |
 
-Validate:
+`safe_action.ax` **composes** them: `safe_to_act` folds confidence + budget +
+authorization + a hard quality constraint into one act/deny decision, and
+`deny_reason` names the first failing axis.
+
+## Scoring helpers
+
+`asi_prelude.ax` — numeric helpers for turning raw model outputs into bounded
+scores/confidences: `normalize_score`, `score_to_confidence` /
+`confidence_to_score`, `length_score`, `budget_ok/remaining/used_pct`,
+`weighted2`/`mean2`, `bound_i64`/`bound_f64`. (`axon-surface` auto-bundles
+several of these into goals that reference them — see `examples/goals/`.)
+
+## Run them
 
 ```bash
-./target/debug/axon check examples/stdlib/asi_prelude.ax
-./target/debug/axon test  examples/stdlib/asi_prelude.ax   # 8 tests
-./target/debug/axon run   examples/stdlib/asi_prelude.ax
+cargo build -p axon-core --no-default-features --bin axon   # the interpreter CLI
+
+axon test examples/stdlib/budget.ax        # 5 tests
+axon test examples/stdlib/uncertain.ax     # 5
+axon test examples/stdlib/constraint.ax    # 5
+axon test examples/stdlib/principal.ax     # 3
+axon test examples/stdlib/safe_action.ax   # 5
+axon test examples/stdlib/asi_prelude.ax   # 8
+axon run  examples/stdlib/safe_action.ax   # the composed gate in action
 ```
 
-Note: `clamp_i64`, `clamp_f64`, `min_f64`, `max_f64`, `sign_i64`, `pow_i64`
-exist in the type table but are not implemented in the codegen-free
-interpreter, so this prelude avoids them at runtime and clamps inline instead.
+## Notes
+
+- These are standalone tutorial modules (each has `@[test]`s + a demo `main`).
+  To `use` a helper across files instead of inlining it, see
+  `examples/modular/` (importable, `main`-free modules + `AXON_PATH`).
+- The math builtins `clamp_i64`/`clamp_f64`, `min_f64`/`max_f64`, `sign_i64`,
+  `pow_i64` are **now implemented in the interpreter** (full 90/90 builtin
+  coverage), so new code can call them directly; `asi_prelude.ax`'s inline
+  `bound_*` clamps predate that and are kept for continuity.
