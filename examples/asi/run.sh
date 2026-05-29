@@ -64,12 +64,11 @@ case "$cmd" in
         grep '"fn":"try_variant"' "$PROV" | tail -50 || echo "(no entries)"
         ;;
     improve)
-        # Future: axon goal improve <run-id>
-        # Today: rerun — goal_run reads the existing provenance log AND
-        # adds new evaluations via live hill-climb, so a second run
-        # continues the search from where the first left off.
-        echo "# Continuing search from existing provenance log"
-        "$(axon_bin)" run "$DEMO"
+        # Continue the search across runs: AXON_GOAL_CONTINUE makes goal_run
+        # resume its hill-climb from the best input recorded in the persisted
+        # provenance log, so repeated `improve` runs converge.
+        echo "# Continuing search from existing provenance log (AXON_GOAL_CONTINUE=1)"
+        AXON_GOAL_CONTINUE=1 "$(axon_bin)" run "$DEMO"
         ;;
     redteam)
         # Future: axon redteam <plan-id>

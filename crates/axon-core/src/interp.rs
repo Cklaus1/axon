@@ -283,6 +283,12 @@ impl<'p> Interp<'p> {
                 args.len()
             ));
         }
+        // The leading i64 arg (if any) is the goal-search input — recorded with
+        // the provenance so goal_run can resume from the best prior input.
+        let input_arg = args.first().and_then(|v| match v {
+            Value::Int(n) => Some(*n),
+            _ => None,
+        });
         let mut env = Env::new();
         for (p, a) in f.params.iter().zip(args) {
             env.define(p.name.clone(), a);
@@ -308,7 +314,7 @@ impl<'p> Interp<'p> {
                     Value::Int(n) => format!("ret_i64={n}"),
                     _ => format!("ret_f64={score}"),
                 };
-                append_provenance_jsonl(&f.name, &payload, score);
+                append_provenance_jsonl(&f.name, &payload, score, input_arg);
             }
         }
 
@@ -400,7 +406,13 @@ impl<'p> Interp<'p> {
             }
         };
 
-        let mut cur_input: i64 = 0;
+        // Resume from the best prior input across runs when continuation is
+        // enabled (`AXON_GOAL_CONTINUE`); otherwise start fresh at 0.
+        let mut cur_input: i64 = if goal_continue_enabled() {
+            read_best_input(&f.name, target).unwrap_or(0)
+        } else {
+            0
+        };
         let initial = eval_at(cur_input)?;
         let mut best_score = initial;
         let mut best_dist = (initial - target).abs();
@@ -1566,7 +1578,7 @@ fn provenance_log_path() -> Option<std::path::PathBuf> {
 /// axon-rt writes (`ts_ms`/`fn`/`event`/`payload`/`score`), so `axon trace`
 /// and the observability tools see interpreter runs. Best-effort (errors
 /// ignored — provenance is advisory, not load-bearing).
-fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64) {
+fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64, input: Option<i64>) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
@@ -1575,8 +1587,13 @@ fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64) {
     }
     let ts = now_ms().max(0) as u64;
     let s = if score.is_finite() { format!("{score}") } else { "0".to_string() };
+    // `input` (the goal-search arg) is an additive field; axon-rt readers ignore it.
+    let inp = match input {
+        Some(x) => format!(",\"input\":{x}"),
+        None => String::new(),
+    };
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}{inp}}}\n",
         f = json_quote(fn_name),
         p = json_quote(payload),
     );
@@ -1600,6 +1617,48 @@ fn json_quote(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// Cross-run continuation is opt-in via `AXON_GOAL_CONTINUE` (so default runs —
+/// and tests — stay deterministic, starting each hill-climb from 0).
+fn goal_continue_enabled() -> bool {
+    std::env::var("AXON_GOAL_CONTINUE").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+}
+
+/// Read the persisted provenance JSONL and return the recorded `input` whose
+/// `score` is closest to `target` for `fn_name` — i.e. the best prior search
+/// position to resume a hill-climb from. `None` if no usable record exists.
+fn read_best_input(fn_name: &str, target: f64) -> Option<i64> {
+    let path = provenance_log_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let needle = format!("\"fn\":{}", json_quote(fn_name));
+    let mut best_input: Option<i64> = None;
+    let mut best_dist = f64::INFINITY;
+    for line in content.lines() {
+        if !line.contains(&needle) {
+            continue;
+        }
+        let (Some(input), Some(score)) =
+            (extract_json_num(line, "\"input\":"), extract_json_num(line, "\"score\":"))
+        else {
+            continue;
+        };
+        let dist = (score - target).abs();
+        if dist < best_dist {
+            best_dist = dist;
+            best_input = Some(input as i64);
+        }
+    }
+    best_input
+}
+
+/// Extract the numeric value following `key` in a JSON line (up to the next
+/// `,` or `}`). Tolerant of our own fixed log format; not a general parser.
+fn extract_json_num(line: &str, key: &str) -> Option<f64> {
+    let start = line.find(key)? + key.len();
+    let rest = &line[start..];
+    let end = rest.find([',', '}']).unwrap_or(rest.len());
+    rest[..end].trim().parse::<f64>().ok()
 }
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
