@@ -281,6 +281,18 @@ fn for_in_nested_over_same_collection() {
 }
 
 #[test]
+fn local_search_reaches_optimum() {
+    // Pure-Axon black-box hill-climbing converges a bit-vector to the optimum.
+    let out = axon().args(["run", &ex("asi/local_search.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("score 2 -> 6 (optimum 6)"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn rank_orders_actions_by_score() {
     // In-place selection sort (uses place assignment) ranks actions descending.
     let out = axon().args(["run", &ex("asi/rank.ax")]).output().unwrap();

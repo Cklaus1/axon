@@ -1,0 +1,65 @@
+// local_search.ax — black-box hill-climbing over a solution VECTOR.
+//
+// optimize.ax calls the goal_run builtin; this shows Axon is now expressive
+// enough to write the optimizer itself in userland. The search holds a vector
+// of bits and improves it by single-bit flips, keeping a flip only if it raises
+// the score (a black box it can call but not see inside) — classic local
+// search, converging to the optimum. Requires in-place mutation (place
+// assignment) over `&[i64]`-borrowed helpers. Runs key-free.
+//
+//   axon run  examples/asi/local_search.ax
+//   axon test examples/asi/local_search.ax
+
+// The (black-box) objective: how many positions match the hidden target.
+fn score(v: &[i64], target: &[i64]) -> i64 {
+    let s = 0
+    for i in 0..len(v) {
+        if v[i] == target[i] { s = s + 1 }
+    }
+    s
+}
+
+// Hill-climb `v` in place: for each position, flip the bit and keep the flip
+// only if `score` improved, else revert. `n` passes converge for n bits.
+fn climb(v: [i64], target: [i64]) -> [i64] {
+    let n = len(v)
+    for pass in 0..n {
+        for i in 0..n {
+            let before = score(&v, &target)
+            let old = v[i]
+            v[i] = 1 - old // flip (bits are 0/1)
+            if score(&v, &target) <= before {
+                v[i] = old // revert: the flip didn't help
+            }
+        }
+    }
+    v
+}
+
+@[test]
+fn test_score_counts_matches() {
+    let v = [1, 0, 1, 0]
+    let t = [1, 1, 1, 1]
+    assert_eq(score(&v, &t), 2) // positions 0 and 2 match
+}
+
+@[test]
+fn test_climb_reaches_optimum() {
+    let target = [1, 0, 1, 1, 0]
+    let start = [0, 0, 0, 0, 0]
+    let best = climb(start, target)
+    // Converged: every position now matches the target → score == len.
+    assert_eq(score(&best, &target), 5)
+    assert_eq(best[0], 1)
+    assert_eq(best[1], 0)
+    assert_eq(best[3], 1)
+}
+
+fn main() {
+    let target = [1, 0, 1, 1, 0, 1]
+    let start = [0, 0, 0, 0, 0, 0]
+    let before = score(&start, &target)
+    let best = climb(start, target)
+    let after = score(&best, &target)
+    println("local search: score {to_str(before)} -> {to_str(after)} (optimum {to_str(len(target))})")
+}
