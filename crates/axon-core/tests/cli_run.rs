@@ -38,6 +38,19 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn borrow_violation_rejected_by_check() {
+    // Borrow checking (E0601 use-after-move etc.) must run in the CLI pipeline.
+    let out = axon().args(["check", &fixture("borrow_errors.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "borrow violation must be rejected");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(msg.contains("E0601"), "expected E0601, got: {msg}");
+}
+
+#[test]
 fn verify_unsatisfiable_postcondition_rejected_by_check() {
     // Static @[verify] checking (E1101) must run in the CLI: a postcondition the
     // function's confidence bound can never meet is rejected; a met one is clean.

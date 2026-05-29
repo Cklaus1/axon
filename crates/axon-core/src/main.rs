@@ -952,6 +952,11 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 /// Run the type-checking pipeline and return a list of error messages.
+// NOTE: this must stay in sync with `lib::check_pipeline` re: the safety passes
+// it runs (resolve → infer → check → borrow → capabilities → verify). The two
+// drifted before, silently dropping the @[contained] (E1001) and @[verify]
+// (E1101) checks from the CLI; the `*_rejected_by_check` tests in
+// `tests/cli_run.rs` guard each class against recurrence.
 fn run_check_pipeline(
     program: &mut axon_core::ast::Program,
     source_path: &Path,
