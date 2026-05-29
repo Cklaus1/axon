@@ -1,0 +1,83 @@
+// Tier-1 stdlib: Constraint — hard rules that must hold (vs soft scores).
+//
+// A goal's Score is a soft objective to maximize; a Constraint is a HARD rule
+// whose violation disqualifies a candidate outright (score 0), regardless of
+// how good it otherwise looks. Keeping the two separate is central to safe
+// optimization — you never deploy a high-scoring candidate that breaks a
+// must-hold rule.
+//
+//   axon test examples/stdlib/constraint.ax
+//   axon run  examples/stdlib/constraint.ax
+
+type Constraint = { name: str, satisfied: bool }
+
+fn constraint(name: str, satisfied: bool) -> Constraint {
+    Constraint { name: name, satisfied: satisfied }
+}
+
+// A range constraint: `value` must be within [lo, hi].
+fn within(name: str, value: i64, lo: i64, hi: i64) -> Constraint {
+    constraint(name, value >= lo && value <= hi)
+}
+
+// A ceiling constraint: `value` must be <= cap.
+fn at_most(name: str, value: i64, cap: i64) -> Constraint {
+    constraint(name, value <= cap)
+}
+
+// Disqualify (score 0) when violated, reporting which rule failed; else pass
+// the score through unchanged.
+fn enforce(c: Constraint, score: i64) -> i64 {
+    if c.satisfied {
+        score
+    } else {
+        let nm = c.name
+        eprintln("constraint violated: {nm}")
+        0
+    }
+}
+
+// Both constraints must hold.
+fn both(a: Constraint, b: Constraint) -> bool {
+    a.satisfied && b.satisfied
+}
+
+@[test]
+fn test_enforce_passthrough_when_ok() {
+    assert_eq(enforce(constraint("c", true), 50), 50)
+}
+
+@[test]
+fn test_enforce_disqualifies_when_violated() {
+    assert_eq(enforce(constraint("c", false), 50), 0)
+}
+
+@[test]
+fn test_within() {
+    assert(within("len", 100, 0, 280).satisfied)
+    assert(!within("len", 300, 0, 280).satisfied)
+}
+
+@[test]
+fn test_at_most() {
+    assert(at_most("tokens", 7000, 8000).satisfied)
+    assert(!at_most("tokens", 9000, 8000).satisfied)
+}
+
+@[test]
+fn test_both() {
+    assert(both(constraint("a", true), constraint("b", true)))
+    assert(!both(constraint("a", true), constraint("b", false)))
+}
+
+fn main() {
+    // A candidate summary: quality 92, but it must also fit in 280 chars.
+    let quality = 92
+    let length = 305
+    let fits = at_most("length<=280", length, 280)
+    let final_score = enforce(fits, quality)
+    println("quality {to_str(quality)}, length {to_str(length)} -> final score {to_str(final_score)}")
+    if final_score == 0 {
+        println("disqualified: a hard constraint was violated despite high quality")
+    }
+}
