@@ -1,0 +1,36 @@
+// trait_methods.ax — trait-based polymorphism via impl methods.
+//
+// traits_demo.ax models shared behavior with an enum + a match dispatch
+// function; this shows the other idiom: a trait with impl blocks per type, and
+// `value.method()` dispatch (the interpreter picks the impl from the receiver's
+// runtime type). Note Axon types `self` explicitly in impls: `fn area(self: Sq)`.
+
+trait Shape {
+    fn area(self) -> i64
+    fn name(self) -> str
+}
+
+type Square = { side: i64 }
+type Rect = { w: i64, h: i64 }
+
+impl Shape for Square {
+    fn area(self: Square) -> i64 { self.side * self.side }
+    fn name(self: Square) -> str { "Square" }
+}
+
+impl Shape for Rect {
+    fn area(self: Rect) -> i64 { self.w * self.h }
+    fn name(self: Rect) -> str { "Rect" }
+}
+
+fn describe(label: str, area: i64) {
+    println("{label} area = {to_str(area)}")
+}
+
+fn main() -> i64 {
+    let sq = Square { side: 5 }
+    let r = Rect { w: 4, h: 6 }
+    describe(sq.name(), sq.area())   // Square area = 25
+    describe(r.name(), r.area())     // Rect area = 24
+    sq.area() + r.area()             // 49
+}

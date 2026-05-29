@@ -107,3 +107,14 @@ fn cross_run_improves_with_continuation() {
     let _ = std::fs::remove_dir_all(&cache);
     assert!(s2 > s1, "continuation should improve the best score: run1={s1}, run2={s2}");
 }
+
+#[test]
+fn run_trait_methods_dispatch() {
+    // trait + impl methods + value.method() dispatch (the interpreter picks the
+    // impl from the receiver's runtime type).
+    let out = axon().args(["run", &ex("traits_methods.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(49), "sq.area()+r.area() should be 49");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Square area = 25"), "stdout: {stdout:?}");
+    assert!(stdout.contains("Rect area = 24"), "stdout: {stdout:?}");
+}
