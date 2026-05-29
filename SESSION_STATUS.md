@@ -1,8 +1,8 @@
 # Axon Session Status
 
-**Last update**: 2026-05-28
+**Last update**: 2026-05-29
 **Branch**: `merge-asi-layer3` (== `main`, pushed to `origin/main`)
-**Latest commit**: `e6ba0f8` — surface v1 (lift real bodies from prose)
+**Latest commit**: `7176f8f` — trait-method demo + e2e test (see "Shipped since" below)
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 `STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
@@ -24,13 +24,38 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   (`crates/axon-core/src/interp.rs`) is now the execution path. The `axon`
   binary builds **without** the `codegen` feature in sub-seconds:
   `cargo build -p axon-core --no-default-features --bin axon`.
-- **Fix (prototyped, GO)**: `CODEGEN_WRAPPER_PROTOTYPE.md` shows that routing
-  the generic inkwell `.build_*` calls through `#[inline(never)]` *non-generic*
-  free-function wrappers cuts LLVM-IR ~43%, peak RSS ~36%, wall-clock ~1.7–3×
-  on an isolated repro. Constant-factor (not asymptotic) — turns a multi-hour
-  build into a fraction, not into seconds. NOT YET APPLIED to `builtins.rs`.
-  (This differs from the failed trait-based IR-shim because non-generic
-  wrappers monomorphize each inkwell call exactly once.)
+- **Fix (APPLIED + landed)**: the `#[inline(never)]` non-generic-wrapper fix is
+  now fully applied — both giant codegen functions (`declare_builtins` +
+  `declare_string_builtins`) route their ~971 inkwell `.build_*` calls through
+  `codegen/build_wrappers.rs`; 0 raw calls remain; `cargo check` (codegen) is
+  clean. `CODEGEN_WRAPPER_PROTOTYPE.md` measured the per-function win
+  (LLVM-IR ~43%↓, RSS ~36%↓, ~1.7–3× faster). Constant-factor (not asymptotic) — turns a multi-hour
+  build into a fraction, not into seconds (so native stays a CI/beefy-machine
+  artifact). This differs from the failed trait-based IR-shim because
+  non-generic wrappers monomorphize each inkwell call exactly once.
+
+## Shipped since (this session, ~30 ticks on `main`)
+
+- **Codegen wrapper fix fully applied** (above) + CI **clippy `-D warnings` gate
+  green** (was red, 33 lints). `check`/`test`/`clippy` green; `fmt-check` is
+  pre-existing red (intentional hand-formatting style — a CI-policy call).
+- **Tier-1 ASI-safety stdlib** (`examples/stdlib/`): `budget` · `constraint` ·
+  `principal` · `uncertain` combinators, composed by `safe_action` (the unified
+  act/deny gate), + `asi_prelude` scoring helpers. All tested, key-free.
+- **Goal surface is rich**: every prose section is actionable (Inputs/Outputs→
+  sigs, Verify→gate, Redteam→check, Implementation→bodies, Budget→`max_evals`);
+  author-overrides (`try_variant`/`assert_deployable`/`redteam_check`); prelude
+  auto-bundling. Demos: optimize/verified/redteam/compose/flagship + `learn`.
+- **Mock-LLM mode** (`AXON_AI_MOCK=1`): the `ai_*` builtins return deterministic
+  stubs, so all ASI demos run with no key/network/feature.
+- **Observability loop works on the interpreter**: `@[adaptive]` returns persist
+  to the provenance JSONL → `axon trace` / `analyze.py` / `run.sh analyze`.
+- **Cross-run self-improvement** (`AXON_GOAL_CONTINUE=1`): `goal_run` resumes its
+  hill-climb from the best prior input; `run.sh improve` converges across runs.
+- **Multi-file modules** (`mod`+`use`+`AXON_PATH`) work via the interpreter;
+  see `examples/modular/`.
+- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`), goal-demo + all-examples
+  -parse regression locks, full builtin coverage (90/90). `dev.sh` is interpreter-first.
 
 ## What works now (via the interpreter, no LLVM)
 
