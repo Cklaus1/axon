@@ -1078,6 +1078,71 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Int(base.wrapping_pow(exp as u32)));
             }
+            "sqrt_f64" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.sqrt()));
+            }
+            "floor_f64" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.floor()));
+            }
+            "ceil_f64" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.ceil()));
+            }
+            "round_f64" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.round()));
+            }
+            "random_f64" => {
+                want(0)?;
+                // 53-bit mantissa → uniform [0.0, 1.0)
+                ok!(Value::Float((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0));
+            }
+            "random_i64" => {
+                want(2)?;
+                let (lo, hi) = (as_int(&args[0])?, as_int(&args[1])?);
+                if hi <= lo {
+                    ok!(Value::Int(lo));
+                }
+                let range = (hi as i128 - lo as i128) as u128;
+                ok!(Value::Int(lo + (next_rand_u64() as u128 % range) as i64));
+            }
+            "str_pad_start" => {
+                want(3)?;
+                let s = as_str(&args[0])?;
+                let width = as_int(&args[1])?.max(0) as usize;
+                let fill = as_str(&args[2])?.chars().next().unwrap_or(' ');
+                ok!(Value::Str(if s.len() >= width {
+                    s.to_string()
+                } else {
+                    format!("{}{}", fill.to_string().repeat(width - s.len()), s)
+                }));
+            }
+            "str_pad_end" => {
+                want(3)?;
+                let s = as_str(&args[0])?;
+                let width = as_int(&args[1])?.max(0) as usize;
+                let fill = as_str(&args[2])?.chars().next().unwrap_or(' ');
+                ok!(Value::Str(if s.len() >= width {
+                    s.to_string()
+                } else {
+                    format!("{}{}", s, fill.to_string().repeat(width - s.len()))
+                }));
+            }
+            "i64_to_str_radix" => {
+                want(2)?;
+                let n = as_int(&args[0])?;
+                let base = as_int(&args[1])?;
+                if !(2..=36).contains(&base) {
+                    ok!(Value::Str(String::new()));
+                }
+                ok!(Value::Str(i64_to_radix(n, base as u32)));
+            }
+            "uncertain_new_f64" => {
+                want(2)?;
+                ok!(make_uncertain(Value::Float(as_float(&args[0])?), as_float(&args[1])?));
+            }
 
             // ── Bit ops ───────────────────────────────────────────────────────
             "bit_and" => {
@@ -1457,6 +1522,43 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// A pseudo-random `u64` from a process-global xorshift state (seeded from the
+/// clock on first use). Single-threaded interpreter, so no CAS needed.
+fn next_rand_u64() -> u64 {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static STATE: AtomicU64 = AtomicU64::new(0);
+    let mut x = STATE.load(Ordering::Relaxed);
+    if x == 0 {
+        x = (now_ms() as u64) | 1;
+    }
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    STATE.store(x, Ordering::Relaxed);
+    x
+}
+
+/// Render `n` in `base` (2–36), '-'-prefixed when negative.
+fn i64_to_radix(n: i64, base: u32) -> String {
+    const DIGITS: &[u8] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if n == 0 {
+        return "0".to_string();
+    }
+    let neg = n < 0;
+    let mut v = (n as i128).unsigned_abs(); // u128 — handles i64::MIN
+    let b = base as u128;
+    let mut buf = Vec::new();
+    while v > 0 {
+        buf.push(DIGITS[(v % b) as usize]);
+        v /= b;
+    }
+    if neg {
+        buf.push(b'-');
+    }
+    buf.reverse();
+    String::from_utf8(buf).unwrap()
 }
 
 /// A numeric value coerced to `f64` for scoring, if it is numeric.
@@ -1886,5 +1988,22 @@ mod tests {
             }
         "#;
         assert_eq!(run(src), 1134);
+    }
+
+    #[test]
+    fn more_builtins_coverage() {
+        // sqrt_f64 / round_f64 / str_pad_start / str_pad_end / i64_to_str_radix / uncertain_new_f64
+        let src = r#"
+            fn main() -> i64 {
+                let a = f64_to_i64(sqrt_f64(144.0))                  // 12
+                let b = f64_to_i64(round_f64(2.6))                   // 3
+                let p = str_len(str_pad_start("7", 4, "0"))          // "0007" -> 4
+                let q = str_len(str_pad_end("7", 2, "x"))            // "7x" -> 2
+                let r = if str_eq(i64_to_str_radix(255, 16), "ff") { 1 } else { 0 } // 1
+                let u = f64_to_i64(uncertain_new_f64(5.0, 0.9).value) // 5
+                a + b + p + q + r + u
+            }
+        "#;
+        assert_eq!(run(src), 27);
     }
 }
