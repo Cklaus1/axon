@@ -1,0 +1,23 @@
+// agent.ax — imports scorelib and makes a decision with it.
+//
+// Run (the module is resolved from AXON_PATH):
+//   AXON_PATH=examples/modular axon run examples/modular/agent.ax
+//
+// `mod scorelib` declares the module; `use scorelib.{…}` imports its items.
+// axon-core resolves `scorelib` → `scorelib.ax` in an AXON_PATH directory,
+// merges it, type-checks, and the interpreter runs the combined program.
+
+mod scorelib
+use scorelib.{weighted, approve}
+
+fn main() -> i64 {
+    let combined = weighted(90, 6, 80, 4)
+    println("agent: combined score = {to_str(combined)}")
+    if approve(combined, 70) {
+        println("agent: clears floor 70 -> ACT")
+        0
+    } else {
+        println("agent: below floor 70 -> HOLD")
+        1
+    }
+}
