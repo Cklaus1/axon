@@ -1,0 +1,80 @@
+// deliberative_agent.ax — constrained optimization (the shape of safe capability).
+//
+// supervised_agent.ax processes a queue greedily; this agent *deliberates*: it
+// scores all candidate actions and takes the single highest-value one it is
+// PERMITTED to take — safe and within budget. The point is what it does NOT do:
+// a naive argmax grabs the maximum value, but the constrained argmax declines a
+// tempting high-value *unsafe* action (and an unaffordable one) in favour of a
+// lower-value action it is actually allowed to take. Capability bounded by
+// control, as an optimal choice rather than a stream. Runs key-free.
+//
+//   axon run  examples/asi/deliberative_agent.ax
+//   axon test examples/asi/deliberative_agent.ax
+
+type Action = { name: str, value: i64, cost: i64, safe: bool }
+
+// Index of the highest-value action that is both safe and within budget; -1 if
+// nothing qualifies. This is `argmax` restricted to the permitted subset.
+fn best_permitted(cands: [Action], budget: i64) -> i64 {
+    let best = -1 // index, -1 = none permitted yet
+    let best_val = 0
+    for i in 0..len(cands) {
+        let c = cands[i]
+        let permitted = c.safe && c.cost <= budget
+        if permitted && (best < 0 || c.value > best_val) {
+            best = i
+            best_val = c.value
+        }
+    }
+    best
+}
+
+@[test]
+fn test_picks_best_safe_affordable() {
+    let cands = [
+        Action { name: "unsafe-max", value: 100, cost: 10, safe: false }, // tempting, unsafe
+        Action { name: "thorough",   value: 60,  cost: 30, safe: true },  // permitted, best
+        Action { name: "cheap",      value: 40,  cost: 5,  safe: true },  // permitted, lower
+        Action { name: "too-pricey", value: 80,  cost: 999, safe: true }, // over budget
+    ]
+    assert_eq(best_permitted(cands, 100), 1) // "thorough", not the higher-value unsafe/pricey ones
+}
+
+@[test]
+fn test_abstains_when_nothing_permitted() {
+    let cands = [
+        Action { name: "unsafe", value: 100, cost: 10, safe: false },
+        Action { name: "pricey", value: 90,  cost: 500, safe: true },
+    ]
+    assert_eq(best_permitted(cands, 100), -1) // nothing safe AND affordable → abstain
+}
+
+@[test]
+fn test_prefers_higher_value_among_permitted() {
+    let cands = [
+        Action { name: "lo", value: 10, cost: 1, safe: true },
+        Action { name: "hi", value: 90, cost: 1, safe: true },
+    ]
+    assert_eq(best_permitted(cands, 100), 1)
+}
+
+fn main() {
+    let budget = 100
+    let cands = [
+        Action { name: "exfil-and-win", value: 100, cost: 10,  safe: false },
+        Action { name: "deep-analysis", value: 60,  cost: 30,  safe: true },
+        Action { name: "quick-summary", value: 40,  cost: 5,   safe: true },
+        Action { name: "full-recompute", value: 80, cost: 999, safe: true },
+    ]
+    println("deliberating over 4 candidates (budget {to_str(budget)}):")
+    let pick = best_permitted(cands, budget)
+    if pick < 0 {
+        println("  -> abstain: no safe, affordable action available")
+    } else {
+        let c = cands[pick]
+        let nm = c.name
+        let v = c.value
+        println("  -> take '{nm}' (value {to_str(v)}) — the best action it is permitted to take")
+        println("     declined: exfil-and-win (value 100, unsafe), full-recompute (value 80, over budget)")
+    }
+}

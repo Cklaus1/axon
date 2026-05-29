@@ -213,6 +213,16 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn deliberative_agent_picks_best_permitted() {
+    // Constrained optimization: the agent takes the best action it is *permitted*
+    // to take, declining a higher-value unsafe option and an over-budget one.
+    let out = axon().args(["run", &ex("asi/deliberative_agent.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("take 'deep-analysis'"), "should pick the best permitted: {stdout:?}");
+}
+
+#[test]
 fn len_works_on_arrays() {
     // Regression: `len` was typed str-only, so `len(my_array)` failed the type
     // checker even though the interpreter supports it. It now accepts slices, so
