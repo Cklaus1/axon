@@ -201,6 +201,23 @@ fn trace_missing_log_exits_nonzero() {
 }
 
 #[test]
+fn len_works_on_arrays() {
+    // Regression: `len` was typed str-only, so `len(my_array)` failed the type
+    // checker even though the interpreter supports it. It now accepts slices, so
+    // the idiomatic `for i in 0..len(xs)` index loop type-checks and runs.
+    let f = std::env::temp_dir().join(format!("axon_len_arr_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  let xs = [10, 20, 30]\n  let total = 0\n  \
+         for i in 0..len(xs) { total = total + xs[i] }\n  total\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(60), "len-driven array loop should sum to 60");
+}
+
+#[test]
 fn run_trait_methods_dispatch() {
     // trait + impl methods + value.method() dispatch (the interpreter picks the
     // impl from the receiver's runtime type).

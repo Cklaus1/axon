@@ -663,6 +663,20 @@ impl InferCtx {
                         return Type::Result(Box::new(t), Box::new(Type::Str));
                     }
                 }
+
+                // `len` accepts a `str` OR any slice/array `[T]` — the interpreter
+                // handles both, but the builtin signature only lists `str`. Special
+                // -case the arg type so `len(my_array)` type-checks. A non-slice arg
+                // flows through the declared `str` param, so `len(42)` still errors.
+                if let Some(ref name) = fn_name {
+                    if name == "len" && args.len() == 1 {
+                        let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
+                        if !matches!(arg_ty, Type::Slice(_)) {
+                            self.constrain(arg_ty, Type::Str, "arg 0 of `len`");
+                        }
+                        return Type::I64;
+                    }
+                }
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);
 
                 if let Some(name) = fn_name {
