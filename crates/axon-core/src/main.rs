@@ -10,7 +10,7 @@
 #![recursion_limit = "2048"]
 
 use std::io::IsTerminal as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
@@ -793,7 +793,7 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 /// Run the type-checking pipeline and return a list of error messages.
 fn run_check_pipeline(
     program: &mut axon_core::ast::Program,
-    source_path: &PathBuf,
+    source_path: &Path,
 ) -> (Vec<String>, axon_core::infer::InferCtx) {
     let file = source_path.display().to_string();
     let mut all_errors: Vec<String> = Vec::new();
@@ -1041,7 +1041,7 @@ fn emit_error(msg: &str, as_json: bool) {
 
 /// Fix 5: Validate that `file` has a `.ax` extension.
 /// Exits with code 1 if the extension is wrong.
-fn validate_ax_extension(file: &PathBuf) {
+fn validate_ax_extension(file: &Path) {
     let ext = file.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext != "ax" {
         let filename = file.display();

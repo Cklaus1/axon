@@ -384,7 +384,7 @@ impl InferCtx {
                         .map(|p| resolve_with_generics(&p.ty))
                         .collect();
                     let ret = f.return_type.as_ref()
-                        .map(|t| resolve_with_generics(t))
+                        .map(resolve_with_generics)
                         .unwrap_or(Type::Unit);
                     self.fn_sigs.insert(f.name.clone(), FnSig { params, ret });
                     if !f.generic_params.is_empty() {
@@ -1461,12 +1461,12 @@ impl InferCtx {
                 self.unify(*inner, other, origin, subst);
             }
             (Type::Tuple(ts1), Type::Tuple(ts2)) if ts1.len() == ts2.len() => {
-                for (a, b) in ts1.into_iter().zip(ts2.into_iter()) {
+                for (a, b) in ts1.into_iter().zip(ts2) {
                     self.unify(a, b, origin, subst);
                 }
             }
             (Type::Fn(ps1, r1), Type::Fn(ps2, r2)) if ps1.len() == ps2.len() => {
-                for (a, b) in ps1.into_iter().zip(ps2.into_iter()) {
+                for (a, b) in ps1.into_iter().zip(ps2) {
                     self.unify(a, b, origin, subst);
                 }
                 self.unify(*r1, *r2, origin, subst);

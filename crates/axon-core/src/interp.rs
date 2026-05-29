@@ -1313,7 +1313,7 @@ impl<'p> Interp<'p> {
             }
             "exit" => {
                 want(1)?;
-                return Err(Flow::Exit(as_int(&args[0])? as i32));
+                Err(Flow::Exit(as_int(&args[0])? as i32))
             }
 
             // ── ASI: numeric conversions ────────────────────────────────────
@@ -1372,7 +1372,7 @@ impl<'p> Interp<'p> {
                         let offset = as_int(&args[1])?;
                         ok!(make_temporal(value, horizon, decay, created + offset));
                     }
-                    _ => return panic("temporal_at: expected a Temporal value"),
+                    _ => panic("temporal_at: expected a Temporal value"),
                 }
             }
             "temporal_is_valid" => {
@@ -1383,7 +1383,7 @@ impl<'p> Interp<'p> {
                         let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
                         ok!(Value::Bool(now_ms() <= created + horizon));
                     }
-                    _ => return panic("temporal_is_valid: expected a Temporal value"),
+                    _ => panic("temporal_is_valid: expected a Temporal value"),
                 }
             }
 

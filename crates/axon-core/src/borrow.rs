@@ -108,7 +108,7 @@ impl OwnershipGraph {
             current_span: Span::dummy(),
         };
         // Parameters start as Owned.
-        for (name, _) in &param_types {
+        for name in param_types.keys() {
             g.bindings.insert(name.clone(), BindingState::Owned);
             g.scopes[0].push(name.clone());
         }

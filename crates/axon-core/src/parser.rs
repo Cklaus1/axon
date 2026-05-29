@@ -2,6 +2,10 @@ use crate::ast::*;
 use crate::span::Span;
 use crate::token::Token;
 
+/// `(param_names, bounds)` parsed from a generic parameter list, where each
+/// bound is `(param_name, trait_names)`.
+type GenericParams = (Vec<String>, Vec<(String, Vec<String>)>);
+
 // ── Format-string helpers ─────────────────────────────────────────────────────
 
 /// Parse a raw string that may contain `{...}` interpolation markers.
@@ -532,6 +536,7 @@ impl Parser {
     ///   - float literal:    `0.9`
     ///   - string literal:   `"hello"`
     ///   - key:value pair:   `metric: quality`, `target: 0.9`, `mode: "fast"`
+    ///
     /// Each is serialised back to a `String` so the AST's
     /// `Attr.args: Vec<String>` field stays unchanged.
     fn parse_attr_arg(&mut self) -> Result<String> {
@@ -617,7 +622,7 @@ impl Parser {
     /// Parse optional generic type parameter list: `<A, B: Trait1 + Trait2, C>` after an item name.
     /// Returns `(param_names, bounds)` where `bounds` is `Vec<(param_name, trait_names)>`.
     /// Bounds are only stored for entries that actually have a `:` clause.
-    fn parse_generic_params(&mut self) -> Result<(Vec<String>, Vec<(String, Vec<String>)>)> {
+    fn parse_generic_params(&mut self) -> Result<GenericParams> {
         // Lookahead: `<` followed by an ident (type param) or `>` (empty list).
         // Distinguish from `<` as a comparison operator.
         let is_generic_start = self.at(&Token::Lt)
@@ -1748,21 +1753,21 @@ fn axon_type_to_str(ty: &AxonType) -> String {
         AxonType::Result { ok, err } => format!("Result<{},{}>", axon_type_to_str(ok), axon_type_to_str(err)),
         AxonType::Ref(inner) => format!("&{}", axon_type_to_str(inner)),
         AxonType::Fn { params, ret } => {
-            let ps: Vec<String> = params.iter().map(|p| axon_type_to_str(p)).collect();
+            let ps: Vec<String> = params.iter().map(axon_type_to_str).collect();
             format!("fn({}) -> {}", ps.join(", "), axon_type_to_str(ret))
         }
         AxonType::Generic { base, args } => {
-            let as_: Vec<String> = args.iter().map(|a| axon_type_to_str(a)).collect();
+            let as_: Vec<String> = args.iter().map(axon_type_to_str).collect();
             format!("{}<{}>", base, as_.join(", "))
         }
         AxonType::DynTrait(name) => format!("dyn {name}"),
         AxonType::TypeParam(name) => name.clone(),
         AxonType::Tuple(elems) => {
-            let inner: Vec<String> = elems.iter().map(|e| axon_type_to_str(e)).collect();
+            let inner: Vec<String> = elems.iter().map(axon_type_to_str).collect();
             format!("({})", inner.join(", "))
         }
         AxonType::Union(members) => {
-            let inner: Vec<String> = members.iter().map(|m| axon_type_to_str(m)).collect();
+            let inner: Vec<String> = members.iter().map(axon_type_to_str).collect();
             inner.join("|")
         }
     }

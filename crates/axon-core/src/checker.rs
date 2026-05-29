@@ -679,10 +679,8 @@ impl CheckCtx {
                 Self::collect_confidence_observed(value, out);
             }
             Expr::Assign { value, .. } => Self::collect_confidence_observed(value, out),
-            Expr::Return(opt) => {
-                if let Some(e) = opt {
-                    Self::collect_confidence_observed(e, out);
-                }
+            Expr::Return(Some(e)) => {
+                Self::collect_confidence_observed(e, out);
             }
             // Leaf / no-receiver variants
             _ => {}
@@ -1245,7 +1243,7 @@ impl CheckCtx {
             // Fix #16: include function name and parameter index for clarity.
             // Allow implicit integer widening (e.g. i32 arg where i64 expected).
             // Allow concrete type coercion to dyn Trait when the type implements the trait.
-            let dyn_coercion_ok = if let Type::DynTrait(trait_name) = &*param_ty {
+            let dyn_coercion_ok = if let Type::DynTrait(trait_name) = param_ty {
                 let concrete_name = match &arg_ty {
                     Type::Struct(n) | Type::Enum(n) => Some(n.as_str()),
                     _ => None,

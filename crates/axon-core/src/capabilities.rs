@@ -14,10 +14,10 @@ use crate::span::Span;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
 
-pub const E1001: &'static str = "E1001";
-pub const E1002: &'static str = "E1002";
-pub const E1003: &'static str = "E1003";
-pub const E1004: &'static str = "E1004";
+pub const E1001: &str = "E1001";
+pub const E1002: &str = "E1002";
+pub const E1003: &str = "E1003";
+pub const E1004: &str = "E1004";
 
 // ── Diagnostic ───────────────────────────────────────────────────────────────
 
@@ -42,6 +42,9 @@ enum IoKind {
     FsRead,
     FsWrite,
     Net,
+    // Part of the @[contained] effect taxonomy used by the codegen path; not yet
+    // produced by `classify_call` here, but kept so the enum stays exhaustive.
+    #[allow(dead_code)]
     Exec,
 }
 

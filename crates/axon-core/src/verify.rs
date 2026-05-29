@@ -209,7 +209,7 @@ fn flip_op(op: BinOp) -> BinOp {
 ///   - `Some(true)`  — predicate provably holds for the computed min.
 ///   - `Some(false)` — predicate provably fails for the computed min.
 ///   - `None`        — cannot decide statically (e.g. predicate uses an
-///                     equality that depends on the exact value).
+///     equality that depends on the exact value).
 fn evaluate_predicate(op: &BinOp, min_conf: f64, lit: f64) -> Option<bool> {
     match op {
         // `c >= lit` — sound iff min_conf >= lit.
@@ -361,10 +361,8 @@ impl<'a> Analyzer<'a> {
                 acc.unwrap_or(Confidence::Unknown)
             }
 
-            Expr::Return(inner) => match inner {
-                Some(e) => self.confidence_of(e, env),
-                None => Confidence::Unknown,
-            },
+            Expr::Return(Some(e)) => self.confidence_of(e, env),
+            Expr::Return(None) => Confidence::Unknown,
 
             Expr::BinOp { left, right, .. } => {
                 // For Uncertain arithmetic the runtime takes the min of the

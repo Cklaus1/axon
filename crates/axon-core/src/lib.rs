@@ -42,6 +42,12 @@ pub enum AxonError {
     Parse(#[from] ParseError),
 }
 
+/// A token paired with its byte span in the source, as produced by the lexer.
+pub type TokenSpan = (token::Token, std::ops::Range<usize>);
+
+/// A parsed file: its path/name plus the resulting AST.
+pub type NamedProgram = (String, ast::Program);
+
 pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
     let raw = Lexer::tokenize_with_newlines(src)?;
     let mut tokens = Vec::with_capacity(raw.len());
@@ -60,12 +66,12 @@ pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
 /// Used by the LSP server and formatter (Phase 4) which need source positions.
 pub fn parse_source_with_spans(
     src: &str,
-) -> Result<(ast::Program, Vec<(token::Token, std::ops::Range<usize>)>), AxonError> {
+) -> Result<(ast::Program, Vec<TokenSpan>), AxonError> {
     let raw = Lexer::tokenize_with_newlines(src)?;
     let mut tokens = Vec::with_capacity(raw.len());
     let mut spans_ast = Vec::with_capacity(raw.len());
     let mut newlines = Vec::with_capacity(raw.len());
-    let mut token_spans: Vec<(token::Token, std::ops::Range<usize>)> = Vec::with_capacity(raw.len());
+    let mut token_spans: Vec<TokenSpan> = Vec::with_capacity(raw.len());
     for (tok, range, nl) in raw {
         spans_ast.push(span::Span::new(range.start, range.end));
         newlines.push(nl);
@@ -221,11 +227,11 @@ pub fn analyse(source: &str, uri: &str) -> AnalysisResult {
 /// or a vec of error messages if any file fails to read or parse.
 pub fn parse_source_files(
     paths: &[std::path::PathBuf],
-) -> Result<Vec<(String, ast::Program)>, Vec<String>> {
+) -> Result<Vec<NamedProgram>, Vec<String>> {
     use std::sync::{Arc, Mutex};
 
     let errors: Arc<Mutex<Vec<(usize, String)>>> = Arc::new(Mutex::new(Vec::new()));
-    let results: Arc<Mutex<Vec<Option<(String, ast::Program)>>>> =
+    let results: Arc<Mutex<Vec<Option<NamedProgram>>>> =
         Arc::new(Mutex::new(vec![None; paths.len()]));
 
     let handles: Vec<_> = paths
@@ -487,9 +493,9 @@ fn load_module_recursive(
             },
             Err(e) => {
                 // I/O error on this candidate — try next directory.
-                searched
-                    .last_mut()
-                    .map(|s| s.push_str(&format!(" (read error: {e})")));
+                if let Some(s) = searched.last_mut() {
+                    s.push_str(&format!(" (read error: {e})"));
+                }
             }
         }
     }
@@ -533,7 +539,7 @@ pub fn check_pipeline(
         }
     };
 
-    let resolve_result = resolver::resolve_program(&mut program, file);
+    let resolve_result = resolver::resolve_program(&program, file);
     for d in &resolve_result.errors {
         let (line, col) = if !d.span.is_dummy() {
             let (l, c) = source_map.line_col(d.span.start);
@@ -564,7 +570,7 @@ pub fn check_pipeline(
 
     resolver::fill_captures(&mut program);
     let mut infer_ctx = infer::InferCtx::new(file);
-    let _subst = infer_ctx.infer_program(&mut program);
+    let _subst = infer_ctx.infer_program(&program);
     for e in &infer_ctx.errors {
         let (line, col) = if !e.span.is_dummy() {
             let (l, c) = source_map.line_col(e.span.start);
@@ -593,7 +599,7 @@ pub fn check_pipeline(
         .map(|(k, v)| (k.clone(), checker::FnSig { params: v.params.clone(), ret: v.ret.clone() }))
         .collect();
     let mut check_ctx = checker::CheckCtx::new(file, fn_sigs, infer_ctx.struct_fields);
-    let check_errors = check_ctx.check_program(&mut program, std::collections::HashMap::new());
+    let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
     for e in &check_errors {
         let (line, col) = if !e.span.is_dummy() {
             let (l, c) = source_map.line_col(e.span.start);

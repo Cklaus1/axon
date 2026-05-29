@@ -138,7 +138,7 @@ impl<'a> Evaluator<'a> {
             }
 
             other => Err(ComptimeError::NotEvaluable {
-                reason: format!("{}", expr_kind_name(other)),
+                reason: expr_kind_name(other).to_string(),
                 span: Span::dummy(),
             }),
         }

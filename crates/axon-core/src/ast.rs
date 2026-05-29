@@ -13,6 +13,9 @@ pub struct Program {
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 #[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
+// Boxing FnDef would change this enum's layout; the codegen path matches on it
+// by value, so keep the variants inline and accept the size difference.
+#[allow(clippy::large_enum_variant)]
 pub enum Item {
     FnDef(FnDef),
     TypeDef(TypeDef),
