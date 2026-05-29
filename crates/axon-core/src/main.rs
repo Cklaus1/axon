@@ -505,6 +505,20 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
         }
         prev_best = best;
     }
+
+    // Report the solution found: the best score this session and the input that
+    // achieved it (the actual result of an optimization, otherwise only visible
+    // via `axon trace`). Scoped to entries written during this iterate run.
+    if let Some(recs) = axon_core::interp::read_provenance(None) {
+        if let Some(best) = recs
+            .iter()
+            .filter(|r| r.ts_ms >= start_ts)
+            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
+        {
+            let at = best.input.map(|i| format!(" at input {i}")).unwrap_or_default();
+            eprintln!("# best: score {}{at}", best.score);
+        }
+    }
     process::exit(code);
 }
 

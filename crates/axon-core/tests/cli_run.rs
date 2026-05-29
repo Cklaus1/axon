@@ -139,6 +139,10 @@ fn goal_iterate_converges() {
     assert!(scores.len() < 12, "should stop early on convergence, not run the full cap: {scores:?}");
     assert!(scores.windows(2).all(|w| w[1] >= w[0]), "best score is non-decreasing: {scores:?}");
     assert_eq!(*scores.last().unwrap(), 200, "should converge to the optimum: {scores:?}");
+
+    // It should also report the solution (best score + the input that achieved it).
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("# best: score 200 at input 12"), "should report the solution: {stderr:?}");
 }
 
 #[test]
