@@ -213,6 +213,38 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn function_can_return_an_enum() {
+    // Regression: a function returning an enum built from a variant literal
+    // ("fn make() -> Plan { Plan::Step { … } }") failed the checker with
+    // "expected Plan, found Plan" — the declared type resolved to Struct, the
+    // body to Enum. Enum factory functions now type-check and run.
+    let f = std::env::temp_dir().join(format!("axon_enumret_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "enum Plan { Step { v: i64, next: Plan }, Done }\n\
+         fn make() -> Plan { Plan::Step { v: 7, next: Plan::Done } }\n\
+         fn val(p: Plan) -> i64 { match p { Plan::Done => 0  Plan::Step { v, next } => v + val(next) } }\n\
+         fn main() -> i64 { val(make()) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(7), "make() returns Step{{7}} → val = 7");
+}
+
+#[test]
+fn planner_prunes_unsafe_path() {
+    // Multi-step planning with safety lookahead (recursive-enum decision tree).
+    let out = axon().args(["run", &ex("asi/planner.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("safe path worth 40"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn interpolation_allows_nested_braces() {
     // Regression: an `if`/`match`/struct expression (which contains `{ }`) inside
     // a `{ … }` interpolation used to truncate at the first inner `}`.

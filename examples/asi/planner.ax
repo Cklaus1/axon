@@ -1,0 +1,77 @@
+// planner.ax — multi-step planning under safety constraints (lookahead).
+//
+// supervised_agent / deliberative_agent decide one action at a time; a planner
+// looks AHEAD. It searches a decision tree of action sequences and returns the
+// best total value of a fully SAFE path. A path is pruned if it contains any
+// unsafe step — even a high-value one, and even if the unsafe step is several
+// moves away — so the agent plans around danger instead of greedily banking
+// value step by step. Built on recursive enums; runs key-free.
+//
+//   axon run  examples/asi/planner.ax
+//   axon test examples/asi/planner.ax
+
+type Plan = Step { name: str, value: i64, safe: bool, next: Plan }
+    | Choice { a: Plan, b: Plan }
+    | Done
+
+// Sentinel for "no safe path here" — large negative so a Choice never picks it.
+fn blocked() -> i64 { 0 - 1000000 }
+
+// Best total value of a fully safe path through the plan. A `Step` is only worth
+// taking if it is safe AND its continuation has a safe path (lookahead); a
+// `Choice` takes the better branch; `Done` ends a safe path with value 0.
+fn best_value(p: Plan) -> i64 {
+    match p {
+        Plan::Done => 0
+        Plan::Choice { a, b } => {
+            let va = best_value(a)
+            let vb = best_value(b)
+            if va > vb { va } else { vb }
+        }
+        Plan::Step { name, value, safe, next } => {
+            let rest = best_value(next)
+            if safe && rest > blocked() { value + rest } else { blocked() }
+        }
+    }
+}
+
+fn has_safe_plan(p: Plan) -> bool { best_value(p) > blocked() }
+
+// scan(safe) → choose between exfil(unsafe, high value) and report(safe).
+fn sample_plan() -> Plan {
+    Plan::Step { name: "scan", value: 10, safe: true, next: Plan::Choice {
+        a: Plan::Step { name: "exfil", value: 100, safe: false, next: Plan::Done },
+        b: Plan::Step { name: "report", value: 30, safe: true, next: Plan::Done },
+    } }
+}
+
+@[test]
+fn test_prunes_unsafe_high_value_path() {
+    // The 110-value path (scan→exfil) is unsafe, so the planner takes the
+    // 40-value safe path (scan→report) instead.
+    assert_eq(best_value(sample_plan()), 40)
+    assert(has_safe_plan(sample_plan()))
+}
+
+@[test]
+fn test_no_plan_when_all_unsafe() {
+    let p = Plan::Step { name: "bad", value: 99, safe: false, next: Plan::Done }
+    assert(!has_safe_plan(p))
+}
+
+@[test]
+fn test_lookahead_blocks_dead_end() {
+    // A safe first step whose only continuation is unsafe is itself a dead end.
+    let p = Plan::Step { name: "ok", value: 5, safe: true, next: Plan::Step { name: "trap", value: 50, safe: false, next: Plan::Done } }
+    assert(!has_safe_plan(p))
+}
+
+fn main() {
+    let p = sample_plan()
+    let v = best_value(p)
+    if has_safe_plan(p) {
+        println("planned a safe path worth {to_str(v)} (declined the 110-value unsafe path)")
+    } else {
+        println("no safe plan exists — abstaining")
+    }
+}

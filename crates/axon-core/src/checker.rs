@@ -542,11 +542,16 @@ impl CheckCtx {
             self.check_axon_type(&ret_ty.clone(), &path);
         }
 
-        // Resolve the declared return type for R03 / R07 checks.
+        // Resolve the declared return type for R03 / R07 checks. `enumify` maps
+        // known enum names to `Type::Enum` — `axon_type_to_type` is context-free
+        // and defaults unknown names to `Struct`, which would otherwise not match
+        // an enum-variant literal's inferred `Type::Enum` (e.g. a function that
+        // returns an enum: `fn make() -> Plan { Plan::Step { … } }`).
+        let known_enums = self.known_enums.clone();
         let resolved_ret = f
             .return_type
             .as_ref()
-            .map(axon_type_to_type)
+            .map(|t| enumify(axon_type_to_type(t), &known_enums))
             .unwrap_or(Type::Unit);
 
         let prev_ret = self.current_ret_ty.replace(resolved_ret);
@@ -554,9 +559,9 @@ impl CheckCtx {
         let fn_path = format!("#fn_{}", f.name);
         let mut scope: HashMap<String, Type> = HashMap::new();
 
-        // Seed scope with parameters.
+        // Seed scope with parameters (same enum-aware resolution as the return type).
         for param in &f.params {
-            scope.insert(param.name.clone(), axon_type_to_type(&param.ty));
+            scope.insert(param.name.clone(), enumify(axon_type_to_type(&param.ty), &known_enums));
         }
 
         // Layer-1 ASI: pre-walk the body to collect identifier names whose
@@ -1849,6 +1854,23 @@ impl CheckCtx {
 /// This is a best-effort conversion: named types that the checker does not
 /// know about become `Type::Struct(name)` so the R08 pass can flag them
 /// independently.
+/// Rewrite `Type::Struct(n)` → `Type::Enum(n)` (recursively, through the common
+/// type containers) when `n` is a known enum. `axon_type_to_type` is context-free
+/// and defaults unknown named types to `Struct`; enum and struct names don't
+/// overlap, so this is a safe normalization for declared annotations.
+fn enumify(t: Type, enums: &[String]) -> Type {
+    match t {
+        Type::Struct(n) if enums.iter().any(|e| e == &n) => Type::Enum(n),
+        Type::Option(i) => Type::Option(Box::new(enumify(*i, enums))),
+        Type::Slice(i) => Type::Slice(Box::new(enumify(*i, enums))),
+        Type::Chan(i) => Type::Chan(Box::new(enumify(*i, enums))),
+        Type::Result(o, e) => {
+            Type::Result(Box::new(enumify(*o, enums)), Box::new(enumify(*e, enums)))
+        }
+        other => other,
+    }
+}
+
 pub fn axon_type_to_type(ty: &AxonType) -> Type {
     match ty {
         AxonType::Named(n) => match n.as_str() {
