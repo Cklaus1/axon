@@ -231,6 +231,33 @@ fn for_in_collection_iterates() {
 }
 
 #[test]
+fn for_in_nested_over_same_collection() {
+    // The collection is borrowed (not moved) by `for x in coll`, so it can be
+    // iterated again and nested-iterated over itself (all-pairs).
+    let f = std::env::temp_dir().join(format!("axon_foreach2_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  let xs = [1, 2, 3]\n  let n = 0\n  \
+         for a in xs { for b in xs { n = n + a * b } }\n  n\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(36), "(1+2+3)*(1+2+3) = 36");
+}
+
+#[test]
+fn pareto_frontier_excludes_dominated() {
+    let out = axon().args(["run", &ex("asi/pareto.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("Pareto frontier (non-dominated): 4"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn function_can_return_an_enum() {
     // Regression: a function returning an enum built from a variant literal
     // ("fn make() -> Plan { Plan::Step { … } }") failed the checker with

@@ -1130,8 +1130,11 @@ impl Parser {
             inclusive: false,
             body,
         };
+        // Bind the collection with `ref` (borrow), not `let` (move), so iterating
+        // doesn't consume it — this is what lets the collection be iterated again,
+        // or nested-iterated over itself (e.g. all-pairs), without a move error.
         Ok(Expr::Block(vec![
-            Stmt { expr: Expr::Let { name: arr_name, value: Box::new(first) }, span },
+            Stmt { expr: Expr::RefBind { name: arr_name, value: Box::new(first) }, span },
             Stmt { expr: inner_for, span },
         ]))
     }

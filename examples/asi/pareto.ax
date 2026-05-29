@@ -1,0 +1,91 @@
+// pareto.ax — multi-objective decision-making (the Pareto frontier).
+//
+// The other agent demos optimize a single scalar reward. Real agents trade off
+// competing objectives — here value vs. risk — where there is no single "best":
+// instead there is a frontier of non-dominated options. A candidate is
+// DOMINATED if some other candidate is at least as good on every axis and
+// strictly better on one; the frontier is everything left.
+//
+// Exercises nested `for x in <collection>` iteration. (Note: the inner
+// comparisons read fields directly rather than passing the array into a helper
+// inside the loop — under Axon's move semantics, passing a collection to a
+// function inside a loop would move it on each iteration.)
+//
+//   axon run  examples/asi/pareto.ax
+//   axon test examples/asi/pareto.ax
+
+type Cand = { name: str, value: i64, risk: i64 }
+
+// Does `b` dominate `a`? At least as good on both axes (higher value, lower
+// risk) and strictly better on at least one.
+fn dominates(b: Cand, a: Cand) -> bool {
+    let as_good = b.value >= a.value && b.risk <= a.risk
+    let strictly_better = b.value > a.value || b.risk < a.risk
+    as_good && strictly_better
+}
+
+// Is `a` non-dominated within `cands`? (inlined comparison — see file header)
+fn on_frontier(a: Cand, cands: [Cand]) -> bool {
+    let dominated = false
+    for b in cands {
+        let as_good = b.value >= a.value && b.risk <= a.risk
+        let strictly_better = b.value > a.value || b.risk < a.risk
+        if as_good && strictly_better { dominated = true }
+    }
+    !dominated
+}
+
+fn frontier_size(cands: [Cand]) -> i64 {
+    let count = 0
+    for a in cands {
+        let dominated = false
+        for b in cands {
+            let as_good = b.value >= a.value && b.risk <= a.risk
+            let strictly_better = b.value > a.value || b.risk < a.risk
+            if as_good && strictly_better { dominated = true }
+        }
+        if !dominated { count = count + 1 }
+    }
+    count
+}
+
+fn samples() -> [Cand] {
+    [
+        Cand { name: "safe-slow", value: 30, risk: 5 },
+        Cand { name: "fast-risky", value: 90, risk: 80 },
+        Cand { name: "balanced", value: 60, risk: 30 },
+        Cand { name: "dominated", value: 40, risk: 50 },
+        Cand { name: "cheap", value: 10, risk: 1 },
+    ]
+}
+
+@[test]
+fn test_dominance() {
+    let balanced = Cand { name: "balanced", value: 60, risk: 30 }
+    let worse = Cand { name: "dominated", value: 40, risk: 50 }
+    assert(dominates(balanced, worse)) // higher value, lower risk
+    assert(!dominates(worse, balanced))
+}
+
+@[test]
+fn test_frontier_excludes_dominated() {
+    // Of the 5 samples only "dominated" (40,50) is dominated (by balanced 60,30).
+    assert_eq(frontier_size(samples()), 4)
+}
+
+@[test]
+fn test_extremes_are_on_frontier() {
+    // The highest-value and the lowest-risk options are always non-dominated.
+    assert(on_frontier(Cand { name: "fast-risky", value: 90, risk: 80 }, samples()))
+    assert(on_frontier(Cand { name: "cheap", value: 10, risk: 1 }, samples()))
+}
+
+fn main() {
+    let cands = samples()
+    let n = frontier_size(cands)
+    println("candidates: 5, Pareto frontier (non-dominated): {to_str(n)}")
+    for c in cands {
+        let nm = c.name
+        println("  {nm}: value {to_str(c.value)}, risk {to_str(c.risk)}")
+    }
+}
