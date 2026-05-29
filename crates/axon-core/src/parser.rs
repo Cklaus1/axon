@@ -1069,17 +1069,75 @@ impl Parser {
     /// Parse `for <ident> in <start>..<end> { body }` or
     /// `for <ident> in <start>..=<end> { body }` (inclusive range).
     fn parse_for(&mut self) -> Result<Expr> {
+        let uid = self.pos; // unique per for-loop in this parse (for desugar names)
         self.expect(&Token::For)?;
         let var = self.expect_ident()?;
         self.expect(&Token::In)?;
-        let start = self.parse_logical()?;
-        let inclusive = if self.eat(&Token::DotDotEq) {
-            true
+        let first = self.parse_logical()?;
+
+        // Range form: `for i in a..b` / `a..=b`.
+        let range = if self.eat(&Token::DotDotEq) {
+            Some(true)
+        } else if self.eat(&Token::DotDot) {
+            Some(false)
         } else {
-            self.expect(&Token::DotDot)?;
-            false
+            None
         };
-        let end = self.parse_logical()?;
+        if let Some(inclusive) = range {
+            let end = self.parse_logical()?;
+            let body = self.parse_for_body()?;
+            return Ok(Expr::For {
+                var,
+                start: Box::new(first),
+                end: Box::new(end),
+                inclusive,
+                body,
+            });
+        }
+
+        // Collection form: `for x in <coll> { body }`. Desugar (no new AST node)
+        // into the index-range loop the interpreter already supports:
+        //   { let __forarr_N = <coll>
+        //     for __fori_N in 0..len(__forarr_N) {
+        //         let x = __forarr_N[__fori_N]
+        //         body
+        //     } }
+        let arr_name = format!("__forarr_{uid}");
+        let idx_name = format!("__fori_{uid}");
+        let mut body = self.parse_for_body()?;
+        let span = self.current_span();
+        body.insert(
+            0,
+            Stmt {
+                expr: Expr::Let {
+                    name: var,
+                    value: Box::new(Expr::Index {
+                        receiver: Box::new(Expr::Ident(arr_name.clone())),
+                        index: Box::new(Expr::Ident(idx_name.clone())),
+                    }),
+                },
+                span,
+            },
+        );
+        let len_call = Expr::Call {
+            callee: Box::new(Expr::Ident("len".to_string())),
+            args: vec![Expr::Ident(arr_name.clone())],
+        };
+        let inner_for = Expr::For {
+            var: idx_name,
+            start: Box::new(Expr::Literal(Literal::Int(0))),
+            end: Box::new(len_call),
+            inclusive: false,
+            body,
+        };
+        Ok(Expr::Block(vec![
+            Stmt { expr: Expr::Let { name: arr_name, value: Box::new(first) }, span },
+            Stmt { expr: inner_for, span },
+        ]))
+    }
+
+    /// Parse a `{ … }` loop body into a statement list.
+    fn parse_for_body(&mut self) -> Result<Vec<Stmt>> {
         self.expect(&Token::LBrace)?;
         let mut body = Vec::new();
         while !self.at(&Token::RBrace) {
@@ -1089,7 +1147,7 @@ impl Parser {
             body.push(Stmt { expr, span });
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::For { var, start: Box::new(start), end: Box::new(end), inclusive, body })
+        Ok(body)
     }
 
     fn parse_assign(&mut self) -> Result<Expr> {

@@ -213,6 +213,24 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn for_in_collection_iterates() {
+    // `for x in <array>` (not just `for i in a..b`) — desugars to an index loop;
+    // covers a literal, a bound variable, structs, and nesting.
+    let f = std::env::temp_dir().join(format!("axon_foreach_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type P = { v: i64 }\nfn main() -> i64 {\n  \
+         let s = 0\n  for x in [10, 20, 30] { s = s + x }\n  \
+         let ps = [P { v: 5 }, P { v: 7 }]\n  for p in ps { s = s + p.v }\n  \
+         for a in [1, 2] { for b in [100, 200] { s = s + 0 * a * b } }\n  s\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(72), "60 + 12 + 0 = 72");
+}
+
+#[test]
 fn function_can_return_an_enum() {
     // Regression: a function returning an enum built from a variant literal
     // ("fn make() -> Plan { Plan::Step { … } }") failed the checker with

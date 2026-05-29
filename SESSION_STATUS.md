@@ -68,13 +68,15 @@ idioms) but each is a clean future task:
   targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
   value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
   through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
-- **`for x in array` is range-only.** `for` requires a range (`for i in 0..n`);
-  iterate collections by index (`for i in 0..len(xs) { let x = xs[i] }`).
+- **No place assignment.** `xs[i] = v` / `s.field = v` don't parse; rebuild +
+  rebind whole values. (AST-level: an lvalue node through ~12 files + codegen.)
 - **No tuple expressions.** `(a, b)` doesn't parse (the type system has
   `Type::Tuple`, but there's no value syntax); use a struct.
-- (Fixed this session: `len` accepts slices; `==`/`!=` do structural equality on
-  structs/enums/arrays; `type Name = A | B` sum-type syntax; or-patterns in
-  match; `match`/`if` usable as operands; `&&`/`||` precedence corrected.)
+- **No typed `let`.** `let x: T = e` doesn't parse; `let x = e` (inferred) only.
+  (AST-level: `Let` has no type slot.)
+- (Fixed this session: `len` accepts slices; structural `==`/`!=`; `type Name =
+  A | B` sum-types; or-patterns; `match`/`if` as operands; `&&`/`||` precedence;
+  nested braces in interpolation; functions returning enums; `for x in coll`.)
 
 ## What works now (via the interpreter, no LLVM)
 
