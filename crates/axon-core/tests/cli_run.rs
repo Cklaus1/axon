@@ -38,6 +38,18 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn invalid_radix_fails_fast() {
+    // i64_to_str_radix with a radix outside 2..=36 must fail fast (graceful
+    // panic) rather than silently returning an empty string.
+    let f = std::env::temp_dir().join(format!("axon_radix_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() { println(i64_to_str_radix(255, 0)) }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(101), "invalid radix should panic, not return \"\"");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("radix must be"), "stderr: {:?}", out.stderr);
+}
+
+#[test]
 fn deeply_nested_input_fails_gracefully_not_aborts() {
     // Adversarially deep nesting must be a clean parse error (exit 2), not a
     // parser stack overflow (exit 134 / SIGABRT).

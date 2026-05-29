@@ -1346,7 +1346,7 @@ impl<'p> Interp<'p> {
                 let n = as_int(&args[0])?;
                 let base = as_int(&args[1])?;
                 if !(2..=36).contains(&base) {
-                    ok!(Value::Str(String::new()));
+                    return panic(format!("i64_to_str_radix: radix must be 2..=36, got {base}"));
                 }
                 ok!(Value::Str(i64_to_radix(n, base as u32)));
             }
