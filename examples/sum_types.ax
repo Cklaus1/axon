@@ -18,9 +18,9 @@ fn area(s: Shape) -> i64 {
 }
 
 fn main() -> i64 {
-    let total = area(Shape::Circle { r: 3 })
-        + area(Shape::Rect { w: 4, h: 5 })
-        + area(Shape::Point) // 27 + 20 + 0
+    // 27 + 20 + 0 = 47  (kept on one line: a leading `+` on a new line would
+    // start a fresh statement under Axon's auto-semicolon rule).
+    let total = area(Shape::Circle { r: 3 }) + area(Shape::Rect { w: 4, h: 5 }) + area(Shape::Point)
     println("total area: {to_str(total)}")
     total
 }
