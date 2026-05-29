@@ -38,6 +38,23 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn verify_unsatisfiable_postcondition_rejected_by_check() {
+    // Static @[verify] checking (E1101) must run in the CLI: a postcondition the
+    // function's confidence bound can never meet is rejected; a met one is clean.
+    let bad = axon().args(["check", &fixture("verify_fail.ax")]).output().unwrap();
+    assert_eq!(bad.status.code(), Some(2), "unsatisfiable @[verify] must be rejected");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(msg.contains("E1101"), "expected E1101, got: {msg}");
+
+    let ok = axon().args(["check", &fixture("verify_pass.ax")]).output().unwrap();
+    assert!(ok.status.success(), "a satisfiable @[verify] should check clean");
+}
+
+#[test]
 fn run_hello_prints_greeting() {
     let out = axon().args(["run", &ex("hello.ax")]).output().unwrap();
     assert!(out.status.success(), "hello.ax exited {:?}", out.status.code());

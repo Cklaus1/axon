@@ -1066,6 +1066,14 @@ fn run_check_pipeline(
         all_errors.push(format!("[{}] {}", err.code, err.message));
     }
 
+    // Step 6: static `@[verify(...)]` checking — E1101 when a verify postcondition
+    // is provably unsatisfiable by the function's computed confidence bound.
+    // (Same CLI-pipeline gap as the capability check; non-`confidence` predicates
+    // are skipped, so runtime-gated verifies are unaffected.)
+    for err in axon_core::verify::check_verify(program) {
+        all_errors.push(format!("[{}] {}", err.code, err.message));
+    }
+
     (all_errors, infer_ctx)
 }
 
