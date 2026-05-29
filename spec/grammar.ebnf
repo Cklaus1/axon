@@ -114,7 +114,10 @@ param      ::= IDENT ':' type ;
 (*
   Syntax:  type Name = { field: Type, … }
 *)
-type_def   ::= 'type' IDENT '=' '{' { type_field [ ',' ] } '}' ;
+(* `type Name = { … }` is a struct; `type Name = A {…} | B | …` is the sum-type
+   spelling of an enum (produces the same definition as `enum Name { … }`). *)
+type_def   ::= 'type' IDENT '=' ( '{' { type_field [ ',' ] } '}'
+                                 | enum_variant { '|' enum_variant } ) ;
 type_field ::= IDENT ':' type ;
 
 (* ── 3.4  Enum definitions ───────────────────────────────────────────────── *)
@@ -190,6 +193,7 @@ expr       ::= let_bind
              | return_expr
              | assign_expr
              | while_expr
+             | for_expr
              | match_expr
              | if_expr
              | spawn_expr
@@ -206,18 +210,21 @@ expr       ::= let_bind
     own  — explicit move / owned binding
     ref  — shared reference binding
 *)
-let_bind   ::= 'let' IDENT '=' expr ;
-own_bind   ::= 'own' IDENT '=' expr ;
-ref_bind   ::= 'ref' IDENT '=' expr ;
+let_bind   ::= 'let' IDENT [ ':' type ] '=' expr ;   (* optional type annotation *)
+own_bind   ::= 'own' IDENT [ ':' type ] '=' expr ;
+ref_bind   ::= 'ref' IDENT [ ':' type ] '=' expr ;
 
 (* ── 6.2  Assignment rebinding ───────────────────────────────────────────── *)
 
 (*
-  Rebind an already-declared name.  Not a new declaration.
-  Disambiguated from `==` comparison by requiring a single `=`
-  that is not immediately followed by another `=`.
+  Rebind an already-declared name, or assign to a place (array element / struct
+  field, possibly nested).  Not a new declaration.  Disambiguated from `==`
+  comparison by requiring a single `=` not immediately followed by another `=`.
 *)
-assign_expr ::= IDENT '=' expr ;
+assign_expr ::= assign_target '=' expr ;
+assign_target ::= IDENT                                    (* whole-variable rebind *)
+             | place ;                                     (* `xs[i]`, `s.f`, `g[i][j]`, … *)
+place      ::= IDENT { '[' expr ']' | '.' IDENT } ;
 
 (* ── 6.3  Return ─────────────────────────────────────────────────────────── *)
 
@@ -227,10 +234,19 @@ return_expr ::= 'return' [ expr ] ;
 
 while_expr ::= 'while' comparison '{' { stmt } '}' ;
 
+(* ── 6.4b  For loop ──────────────────────────────────────────────────────── *)
+
+(*
+  Range form iterates integers; the collection form (`for x in xs`) iterates a
+  slice/array's elements (the parser desugars it to a `0..len` index loop).
+*)
+for_expr   ::= 'for' IDENT 'in' ( expr ( '..' | '..=' ) expr   (* range  *)
+                                | expr ) '{' { stmt } '}' ;     (* collection *)
+
 (* ── 6.5  Match expression ───────────────────────────────────────────────── *)
 
 match_expr ::= 'match' comparison '{' { match_arm [ ',' ] } '}' ;
-match_arm  ::= pattern [ 'if' comparison ] '=>' expr ;
+match_arm  ::= pattern { '|' pattern } [ 'if' comparison ] '=>' expr ;   (* or-patterns *)
 
 (* ── 6.6  If / else expression ───────────────────────────────────────────── *)
 
@@ -260,8 +276,9 @@ comptime_expr ::= 'comptime' block ;
     8    (atoms)        literals, ident, block, if, match, while, …
 *)
 
-logical        ::= comparison { log_op comparison } ;
-log_op         ::= '&&' | '||' ;
+(* `&&` binds tighter than `||`, so `a || b && c` is `a || (b && c)`. *)
+logical        ::= logical_and { '||' logical_and } ;
+logical_and    ::= comparison { '&&' comparison } ;
 
 comparison     ::= additive { cmp_op additive } ;
 cmp_op         ::= '==' | '!=' | '<' | '>' | '<=' | '>=' ;
