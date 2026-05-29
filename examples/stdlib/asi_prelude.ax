@@ -1,0 +1,234 @@
+// asi_prelude.ax — small, pure, reusable helpers for ASI goal/score logic.
+//
+// Every function here is PURE (no I/O, no LLM calls) and composed ONLY from
+// builtins that already exist in the BUILTINS table (see
+// crates/axon-core/src/builtins.rs). These are the bread-and-butter numeric
+// helpers the examples/asi/*.ax demos reach for when turning raw model
+// outputs into bounded 0..100 scores, 0.0..1.0 confidences, and budget checks.
+//
+// Validate:
+//   ./target/debug/axon check examples/stdlib/asi_prelude.ax
+//   ./target/debug/axon test  examples/stdlib/asi_prelude.ax
+//   ./target/debug/axon run   examples/stdlib/asi_prelude.ax
+//
+// Note on builtins used: this prelude relies only on builtins the codegen-free
+// interpreter actually implements — `abs_i64`, `min_i64`, `max_i64`,
+// `i64_to_f64`, `f64_to_i64`, `to_str`, `to_str_f64`, the assertions, and
+// `println`. The `clamp_i64` / `clamp_f64` / `min_f64` / `max_f64` builtins
+// exist in the type table but are NOT implemented in the interpreter, so
+// clamping here is written inline with `if/else` rather than calling them.
+
+// ── Bounded clamp into a custom range ──────────────────────────────────────
+// Implemented inline (the clamp_* builtins are codegen-only, not interpreted).
+
+fn bound_i64(x: i64, lo: i64, hi: i64) -> i64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+fn bound_f64(x: f64, lo: f64, hi: f64) -> f64 {
+    if x < lo { lo } else if x > hi { hi } else { x }
+}
+
+// ── normalize_score: map a raw value in 0..max onto an integer 0..100 ───────
+// Clamps the raw input to [0, max] first so out-of-range inputs are safe.
+// If max <= 0 the scale is undefined, so we return 0.
+fn normalize_score(raw: i64, max: i64) -> i64 {
+    if max <= 0 {
+        0
+    } else {
+        let r = bound_i64(raw, 0, max)
+        // integer math, rounded to nearest: (r*100 + max/2) / max
+        (r * 100 + max / 2) / max
+    }
+}
+
+// ── score_to_confidence: a 0..100 integer score → a 0.0..1.0 confidence ─────
+fn score_to_confidence(score_0_100: i64) -> f64 {
+    let s = bound_i64(score_0_100, 0, 100)
+    i64_to_f64(s) / 100.0
+}
+
+// ── confidence_to_score: inverse of the above, 0.0..1.0 → 0..100 ────────────
+fn confidence_to_score(confidence: f64) -> i64 {
+    let c = bound_f64(confidence, 0.0, 1.0)
+    // round to nearest integer
+    f64_to_i64(c * 100.0 + 0.5)
+}
+
+// ── length_score: the summarizer length heuristic, generalized ──────────────
+// Rewards being close to `ideal` characters; falls off linearly to 0 at
+// distance `cap` from ideal. Returns a 0..100 integer.
+//
+//   distance = |n_chars - ideal|
+//   if distance >= cap → 0
+//   else               → 100 * (cap - distance) / cap
+fn length_score(n_chars: i64, ideal: i64, cap: i64) -> i64 {
+    if cap <= 0 {
+        0
+    } else {
+        let distance = abs_i64(n_chars - ideal)
+        if distance >= cap {
+            0
+        } else {
+            (100 * (cap - distance)) / cap
+        }
+    }
+}
+
+// ── Budget helpers ──────────────────────────────────────────────────────────
+fn budget_remaining(used: i64, cap: i64) -> i64 {
+    // Never report negative remaining; over-budget reads as 0 left.
+    max_i64(cap - used, 0)
+}
+
+fn budget_ok(used: i64, cap: i64) -> bool {
+    used <= cap
+}
+
+fn budget_used_pct(used: i64, cap: i64) -> i64 {
+    // What fraction of the budget has been consumed, as 0..100 (clamped).
+    normalize_score(used, cap)
+}
+
+// ── weighted2: integer weighted average of two scores ───────────────────────
+// result = (a*wa + b*wb) / (wa + wb), rounded to nearest. Weights < 0 are
+// treated as 0; if both weights end up 0 we fall back to a plain mean.
+fn weighted2(a: i64, wa: i64, b: i64, wb: i64) -> i64 {
+    let wa2 = max_i64(wa, 0)
+    let wb2 = max_i64(wb, 0)
+    let total = wa2 + wb2
+    if total == 0 {
+        (a + b) / 2
+    } else {
+        (a * wa2 + b * wb2 + total / 2) / total
+    }
+}
+
+// ── mean2: convenience equal-weight average ─────────────────────────────────
+fn mean2(a: i64, b: i64) -> i64 {
+    weighted2(a, 1, b, 1)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Tests
+// ═══════════════════════════════════════════════════════════════════════════
+
+@[test]
+fn test_bound_i64() {
+    assert_eq(bound_i64(5, 0, 10), 5)
+    assert_eq(bound_i64(-3, 0, 10), 0)
+    assert_eq(bound_i64(42, 0, 10), 10)
+}
+
+@[test]
+fn test_bound_f64() {
+    assert_eq_f64(bound_f64(0.5, 0.0, 1.0), 0.5)
+    assert_eq_f64(bound_f64(-1.0, 0.0, 1.0), 0.0)
+    assert_eq_f64(bound_f64(9.0, 0.0, 1.0), 1.0)
+}
+
+@[test]
+fn test_normalize_score() {
+    assert_eq(normalize_score(0, 200), 0)
+    assert_eq(normalize_score(200, 200), 100)
+    assert_eq(normalize_score(100, 200), 50)
+    assert_eq(normalize_score(50, 200), 25)
+    // out-of-range raw clamps into [0, max]
+    assert_eq(normalize_score(500, 200), 100)
+    assert_eq(normalize_score(-5, 200), 0)
+    // degenerate scale is safe
+    assert_eq(normalize_score(10, 0), 0)
+}
+
+@[test]
+fn test_score_to_confidence() {
+    assert_eq_f64(score_to_confidence(0), 0.0)
+    assert_eq_f64(score_to_confidence(50), 0.5)
+    assert_eq_f64(score_to_confidence(100), 1.0)
+    // clamps out-of-range
+    assert_eq_f64(score_to_confidence(150), 1.0)
+    assert_eq_f64(score_to_confidence(-10), 0.0)
+}
+
+@[test]
+fn test_confidence_to_score() {
+    assert_eq(confidence_to_score(0.0), 0)
+    assert_eq(confidence_to_score(0.5), 50)
+    assert_eq(confidence_to_score(1.0), 100)
+    assert_eq(confidence_to_score(0.834), 83)
+    // clamps out-of-range
+    assert_eq(confidence_to_score(2.0), 100)
+    assert_eq(confidence_to_score(-1.0), 0)
+}
+
+@[test]
+fn test_length_score() {
+    // exactly ideal → full marks
+    assert_eq(length_score(100, 100, 50), 100)
+    // at/over the cap distance → 0
+    assert_eq(length_score(150, 100, 50), 0)
+    assert_eq(length_score(200, 100, 50), 0)
+    // halfway to the cap → ~50
+    assert_eq(length_score(125, 100, 50), 50)
+    // symmetric below ideal
+    assert_eq(length_score(75, 100, 50), 50)
+    // degenerate cap is safe
+    assert_eq(length_score(100, 100, 0), 0)
+}
+
+@[test]
+fn test_budget() {
+    assert(budget_ok(30, 100))
+    assert(budget_ok(100, 100))
+    assert_eq(budget_remaining(30, 100), 70)
+    // over budget never goes negative
+    assert_eq(budget_remaining(130, 100), 0)
+    assert_eq(budget_used_pct(25, 100), 25)
+    assert_eq(budget_used_pct(0, 100), 0)
+}
+
+@[test]
+fn test_weighted2() {
+    // equal weights → arithmetic mean
+    assert_eq(weighted2(80, 1, 60, 1), 70)
+    // heavier weight on first term
+    assert_eq(weighted2(90, 3, 50, 1), 80)
+    // zero weights fall back to plain mean
+    assert_eq(weighted2(40, 0, 80, 0), 60)
+    // negative weights treated as zero
+    assert_eq(weighted2(40, -5, 80, -5), 60)
+    assert_eq(mean2(10, 20), 15)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  Demo main — so `axon run` also exercises the prelude end-to-end.
+// ═══════════════════════════════════════════════════════════════════════════
+
+fn main() -> i64 {
+    println("=== asi_prelude demo ===")
+
+    // A model returned a raw quality measure of 170 out of a possible 200.
+    let raw = 170
+    let max = 200
+    let score = normalize_score(raw, max)
+    println("normalize_score({to_str(raw)} / {to_str(max)}) = {to_str(score)} / 100")
+
+    // Turn that into a confidence and back.
+    let conf = score_to_confidence(score)
+    println("score_to_confidence({to_str(score)}) = {to_str_f64(conf)}")
+
+    // A summary of 120 chars when we wanted ~100 (cap 50 chars of slack).
+    let len_s = length_score(120, 100, 50)
+    println("length_score(120, ideal=100, cap=50) = {to_str(len_s)} / 100")
+
+    // Blend the two signals: quality counts twice as much as length-fit.
+    let combined = weighted2(score, 2, len_s, 1)
+    println("weighted2(quality x2, length x1) = {to_str(combined)} / 100")
+
+    // Budget accounting.
+    let used = 7
+    let cap = 10
+    println("budget: used {to_str(used)} / {to_str(cap)} -> remaining {to_str(budget_remaining(used, cap))}, used_pct {to_str(budget_used_pct(used, cap))}")
+
+    0
+}

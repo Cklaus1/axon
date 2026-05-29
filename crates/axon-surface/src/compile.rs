@@ -165,8 +165,20 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out, "    let best = f64_to_i64(result)");
     let _ = writeln!(out, "    println(\"best score: {{to_str(best)}} (target {target})\")");
     let _ = writeln!(out, "    let _ = assert_deployable(best)");
-    let _ = writeln!(out, "    println(\"deploy gate: passed\")");
-    let _ = writeln!(out, "    0");
+    // If the author supplied a `redteam_check() -> bool`, the goal deploys only
+    // when the adversarial check ALSO passes — verify gate AND redteam.
+    if provides("redteam_check") {
+        let _ = writeln!(out, "    if redteam_check() {{");
+        let _ = writeln!(out, "        println(\"deploy gate: passed (verify + redteam)\")");
+        let _ = writeln!(out, "        0");
+        let _ = writeln!(out, "    }} else {{");
+        let _ = writeln!(out, "        println(\"REDTEAM FAILED: blocking deploy\")");
+        let _ = writeln!(out, "        1");
+        let _ = writeln!(out, "    }}");
+    } else {
+        let _ = writeln!(out, "    println(\"deploy gate: passed\")");
+        let _ = writeln!(out, "    0");
+    }
     let _ = writeln!(out, "}}");
 
     Ok(out)
