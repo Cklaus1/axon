@@ -6,10 +6,10 @@
 // DOMINATED if some other candidate is at least as good on every axis and
 // strictly better on one; the frontier is everything left.
 //
-// Exercises nested `for x in <collection>` iteration. (Note: the inner
-// comparisons read fields directly rather than passing the array into a helper
-// inside the loop — under Axon's move semantics, passing a collection to a
-// function inside a loop would move it on each iteration.)
+// Idiom note: the helpers take the candidate set as `&[Cand]` (a borrow). A
+// plain `[Cand]` parameter would be MOVED on each call, so passing it inside a
+// loop (as `frontier_size` and `main` do) would fail the borrow checker; `&`
+// borrows instead. `for x in coll` likewise borrows the collection.
 //
 //   axon run  examples/asi/pareto.ax
 //   axon test examples/asi/pareto.ax
@@ -24,8 +24,8 @@ fn dominates(b: Cand, a: Cand) -> bool {
     as_good && strictly_better
 }
 
-// Is `a` non-dominated within `cands`? (inlined comparison — see file header)
-fn on_frontier(a: Cand, cands: [Cand]) -> bool {
+// Is `a` non-dominated within `cands`?
+fn on_frontier(a: Cand, cands: &[Cand]) -> bool {
     let dominated = false
     for b in cands {
         let as_good = b.value >= a.value && b.risk <= a.risk
@@ -35,16 +35,10 @@ fn on_frontier(a: Cand, cands: [Cand]) -> bool {
     !dominated
 }
 
-fn frontier_size(cands: [Cand]) -> i64 {
+fn frontier_size(cands: &[Cand]) -> i64 {
     let count = 0
     for a in cands {
-        let dominated = false
-        for b in cands {
-            let as_good = b.value >= a.value && b.risk <= a.risk
-            let strictly_better = b.value > a.value || b.risk < a.risk
-            if as_good && strictly_better { dominated = true }
-        }
-        if !dominated { count = count + 1 }
+        if on_frontier(a, cands) { count = count + 1 }
     }
     count
 }
@@ -70,22 +64,24 @@ fn test_dominance() {
 @[test]
 fn test_frontier_excludes_dominated() {
     // Of the 5 samples only "dominated" (40,50) is dominated (by balanced 60,30).
-    assert_eq(frontier_size(samples()), 4)
+    let cs = samples()
+    assert_eq(frontier_size(&cs), 4)
 }
 
 @[test]
 fn test_extremes_are_on_frontier() {
     // The highest-value and the lowest-risk options are always non-dominated.
-    assert(on_frontier(Cand { name: "fast-risky", value: 90, risk: 80 }, samples()))
-    assert(on_frontier(Cand { name: "cheap", value: 10, risk: 1 }, samples()))
+    let cs = samples()
+    assert(on_frontier(Cand { name: "fast-risky", value: 90, risk: 80 }, &cs))
+    assert(on_frontier(Cand { name: "cheap", value: 10, risk: 1 }, &cs))
 }
 
 fn main() {
     let cands = samples()
-    let n = frontier_size(cands)
-    println("candidates: 5, Pareto frontier (non-dominated): {to_str(n)}")
+    println("candidates: 5, Pareto frontier (non-dominated): {to_str(frontier_size(&cands))}")
     for c in cands {
         let nm = c.name
-        println("  {nm}: value {to_str(c.value)}, risk {to_str(c.risk)}")
+        let tag = if on_frontier(c, &cands) { "FRONTIER " } else { "dominated" }
+        println("  {tag}  {nm} (value {to_str(c.value)}, risk {to_str(c.risk)})")
     }
 }
