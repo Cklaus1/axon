@@ -127,30 +127,36 @@ paths. Useful when answering "why is this build 70 minutes."
 
 ## Running
 
+These demos run via the **interpreter** (no LLVM/codegen needed). Two ways:
+
 ```bash
-# 1. Build the compiler (one-time; ~25-30 min in debug per CLAUDE.md)
-cargo build -p axon-core
+# Build the codegen-free interpreter CLI once (seconds):
+cargo build -p axon-core --no-default-features --bin axon
 
-# 2. Type-check the demo
-./examples/asi/run.sh compile
+# (a) Key-free, deterministic — mock LLM responses (ideal for CI/demos):
+AXON_AI_MOCK=1 ./target/debug/axon run examples/asi/optimize.ax
 
-# 3. Set the API key for live LLM calls
-export ANTHROPIC_API_KEY=sk-ant-...
+# (b) Live inference — needs an API key + the LLM bridge feature:
+cargo build -p axon-core --no-default-features --features asi-runtime --bin axon
+ANTHROPIC_API_KEY=sk-ant-... ./target/debug/axon run examples/asi/optimize.ax
 
-# 4. Run end-to-end
-./examples/asi/run.sh run
-
-# 5. Inspect the provenance log
-./examples/asi/run.sh trace
-
-# 6. Continue searching from the existing log
-./examples/asi/run.sh improve
+# Type-check only:
+./target/debug/axon check examples/asi/optimize.ax
 ```
 
-Without `ANTHROPIC_API_KEY`, every `ai_complete` call returns `Err`,
-every variant scores 0, the `@[verify]` gate panics with
-`confidence >= 0.9 failed (actual=0.0)` — which is itself a useful
-failure-mode demonstration.
+With **`AXON_AI_MOCK=1`** the `ai_complete`/`ai_extract_*` builtins return
+deterministic stubs, so the full search → `@[verify]` gate pipeline runs
+end-to-end with no key or network. Most demos then block at their deploy gate
+(the generic mock can't hit each demo's bar); `summarize` deploys at 90.
+
+Without a key *and* without the mock, every `ai_complete` returns `Err`,
+variants score 0, and an enforced `@[verify(confidence >= …)]` gate panics —
+itself a useful failure-mode demonstration.
+
+> Note: `run.sh` (below) predates the interpreter and drives the native codegen
+> build, which is pathologically slow / may not finish (see `BUILD_DIAGNOSIS.md`).
+> Prefer `axon run` as shown above; the `run.sh` table documents the eventual
+> `axon goal …` CLI shape.
 
 ## Phase-10 CLI surface (simulated)
 
@@ -299,16 +305,17 @@ scripting language.
   Python script with retries. The credibility win comes from `@[verify]`
   + provenance + the Phase-5 refinement story landing — not from this
   demo alone.
-- It does **not** ship without a working compiler binary. The
-  CI-equivalent pre-check is `cargo build -p axon-core && ./run.sh
-  compile`. Until that passes, the demo is paper.
+- It does **not** require the native codegen build. The demos run on the
+  codegen-free interpreter; the pre-check is
+  `cargo build -p axon-core --no-default-features --bin axon` then
+  `axon check examples/asi/<demo>.ax`.
 - It does **not** address determinism. Every metric reported is one
   observation under one LLM seed. Real evaluation needs N runs +
   variance bounds, which is Phase 13 work.
 
 ## Next concrete step
 
-Build the compiler, run `./run.sh compile`, fix any errors that
-surface, then run `./run.sh run` with a real `ANTHROPIC_API_KEY`. The
-first build's gap list (errors + manual workarounds) gets folded back
-into ROADMAP §9 as friction-derived priority — this is the entire point.
+Run the demos via the interpreter — `AXON_AI_MOCK=1 axon run
+examples/asi/<demo>.ax` for a key-free pass, or build `--features asi-runtime`
+and set `ANTHROPIC_API_KEY` for live inference. Errors + manual workarounds get
+folded back into ROADMAP §9 as friction-derived priority — this is the point.
