@@ -247,6 +247,17 @@ fn for_in_nested_over_same_collection() {
 }
 
 #[test]
+fn allocate_knapsack_maximizes_within_budget() {
+    let out = axon().args(["run", &ex("asi/allocate.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("best achievable value = 220"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+}
+
+#[test]
 fn pareto_frontier_excludes_dominated() {
     let out = axon().args(["run", &ex("asi/pareto.ax")]).output().unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());

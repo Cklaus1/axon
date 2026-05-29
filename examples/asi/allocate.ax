@@ -1,0 +1,69 @@
+// allocate.ax — bounded resource allocation (0/1 knapsack).
+//
+// An agent with a fixed cost budget must pick the SUBSET of actions that
+// maximizes total value without exceeding the budget — the Budget safety
+// primitive as an optimization, not just a gate. Solved exactly by
+// include/exclude recursion (no mutation needed); the candidate set is borrowed
+// (`&[Item]`) so it can be threaded through the recursion without being moved.
+//
+//   axon run  examples/asi/allocate.ax
+//   axon test examples/asi/allocate.ax
+
+type Item = { name: str, value: i64, cost: i64 }
+
+// Best total value achievable from items[i..] within `budget` (0/1 knapsack):
+// at each item, take the better of skipping it or taking it (if affordable).
+fn best_value(items: &[Item], i: i64, budget: i64) -> i64 {
+    if i >= len(items) {
+        0
+    } else {
+        let skip = best_value(items, i + 1, budget)
+        let cost = items[i].cost
+        let value = items[i].value
+        if cost <= budget {
+            let take = value + best_value(items, i + 1, budget - cost)
+            if take > skip { take } else { skip }
+        } else {
+            skip
+        }
+    }
+}
+
+fn max_value(items: &[Item], budget: i64) -> i64 {
+    best_value(items, 0, budget)
+}
+
+fn samples() -> [Item] {
+    [
+        Item { name: "summarize", value: 60, cost: 10 },
+        Item { name: "analyze", value: 100, cost: 20 },
+        Item { name: "verify", value: 120, cost: 30 },
+    ]
+}
+
+@[test]
+fn test_knapsack_picks_best_subset() {
+    let items = samples()
+    // budget 50: {analyze, verify} cost 50 → value 220 (beats {summarize,verify}=180).
+    assert_eq(max_value(&items, 50), 220)
+}
+
+@[test]
+fn test_tight_budget() {
+    let items = samples()
+    assert_eq(max_value(&items, 10), 60) // only "summarize" fits
+    assert_eq(max_value(&items, 0), 0)   // nothing fits
+}
+
+@[test]
+fn test_whole_budget() {
+    let items = samples()
+    assert_eq(max_value(&items, 60), 280) // all three fit (cost 60)
+}
+
+fn main() {
+    let items = samples()
+    let budget = 50
+    println("budget {to_str(budget)}: best achievable value = {to_str(max_value(&items, budget))}")
+    println("(budget 60 would allow all three: {to_str(max_value(&items, 60))})")
+}
