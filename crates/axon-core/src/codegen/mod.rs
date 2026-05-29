@@ -53,6 +53,7 @@ pub mod option_result;
 pub mod output;
 pub mod match_pat;
 pub mod builtins;
+pub mod build_wrappers;
 pub mod expr;
 pub mod ir;
 pub mod ir_inkwell;
