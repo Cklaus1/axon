@@ -1048,6 +1048,36 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.ceil()));
             }
+            "min_f64" => {
+                want(2)?;
+                ok!(Value::Float(as_float(&args[0])?.min(as_float(&args[1])?)));
+            }
+            "max_f64" => {
+                want(2)?;
+                ok!(Value::Float(as_float(&args[0])?.max(as_float(&args[1])?)));
+            }
+            "clamp_i64" => {
+                want(3)?;
+                let (n, lo, hi) = (as_int(&args[0])?, as_int(&args[1])?, as_int(&args[2])?);
+                ok!(Value::Int(n.max(lo).min(hi)));
+            }
+            "clamp_f64" => {
+                want(3)?;
+                let (n, lo, hi) = (as_float(&args[0])?, as_float(&args[1])?, as_float(&args[2])?);
+                ok!(Value::Float(n.max(lo).min(hi)));
+            }
+            "sign_i64" => {
+                want(1)?;
+                ok!(Value::Int(as_int(&args[0])?.signum()));
+            }
+            "pow_i64" => {
+                want(2)?;
+                let (base, exp) = (as_int(&args[0])?, as_int(&args[1])?);
+                if exp < 0 {
+                    return panic("pow_i64: negative exponent");
+                }
+                ok!(Value::Int(base.wrapping_pow(exp as u32)));
+            }
 
             // ── Bit ops ───────────────────────────────────────────────────────
             "bit_and" => {
@@ -1841,5 +1871,20 @@ mod tests {
             }
         "#;
         assert_eq!(run(src), 101); // verify gate fires → panic exit code
+    }
+
+    #[test]
+    fn extended_math_builtins() {
+        // clamp_i64 / sign_i64 / pow_i64 / min_f64 / max_f64 / clamp_f64
+        let src = r#"
+            fn main() -> i64 {
+                let i = clamp_i64(150, 0, 100) + clamp_i64(-5, 0, 100) + sign_i64(-7) + pow_i64(2, 10)
+                // 100 + 0 + (-1) + 1024 = 1123
+                let f = f64_to_i64(min_f64(3.5, 2.5) + max_f64(1.0, 4.0) + clamp_f64(9.9, 0.0, 5.0))
+                // 2.5 + 4.0 + 5.0 = 11.5 -> 11
+                i + f
+            }
+        "#;
+        assert_eq!(run(src), 1134);
     }
 }
