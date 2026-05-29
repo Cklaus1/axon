@@ -109,7 +109,7 @@ enum Command {
 
         /// Run the goal N times with cross-run continuation (after run 1), so its
         /// search resumes from its best prior input each time and converges.
-        #[arg(long, value_name = "N", help = "Iterate the goal N times to converge")]
+        #[arg(long, value_name = "N", help = "Iterate the goal up to N times, stopping when converged")]
         iterate: Option<usize>,
     },
 
@@ -458,8 +458,13 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
         process::exit(axon_core::interp::run_program(&program));
     };
     let n = n.max(1);
-    eprintln!("# iterate: {n} runs (cross-run continuation after run 1)");
+    let start_ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    eprintln!("# iterate: up to {n} runs (continuation after run 1; stops when converged)");
     let mut code = 0;
+    let mut prev_best: Option<f64> = None;
     for k in 1..=n {
         if k == 1 {
             std::env::remove_var("AXON_GOAL_CONTINUE");
@@ -468,6 +473,17 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
         }
         eprintln!("── run {k}/{n} ──");
         code = axon_core::interp::run_program(&program);
+
+        // Stop early once the best score stops improving (the search has
+        // converged) — autonomous "knows when it's done", not a blind budget.
+        let best = axon_core::interp::best_recorded_score(start_ts);
+        if let (Some(b), Some(p)) = (best, prev_best) {
+            if b <= p {
+                eprintln!("# converged after {k} runs (best score {b} did not improve)");
+                break;
+            }
+        }
+        prev_best = best;
     }
     process::exit(code);
 }

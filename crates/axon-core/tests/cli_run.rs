@@ -110,13 +110,14 @@ fn cross_run_improves_with_continuation() {
 
 #[test]
 fn goal_iterate_converges() {
-    // `--iterate N` runs the goal N times with cross-run continuation (after run
-    // 1). learn-goal's per-run budget can't reach the optimum alone, so the best
-    // score must climb run-over-run and converge to the target (200).
+    // `--iterate N` runs the goal with cross-run continuation (after run 1) and
+    // stops early when the best score plateaus. learn-goal's per-run budget can't
+    // reach the optimum alone, so the score climbs run-over-run; given a generous
+    // cap (12) it must converge to the target (200) and stop short of the cap.
     let cache = std::env::temp_dir().join(format!("axon_iter_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
     let out = axon()
-        .args(["goal", "--iterate", "6", &ex("goals/learn-goal.md")])
+        .args(["goal", "--iterate", "12", &ex("goals/learn-goal.md")])
         .env("XDG_CACHE_HOME", &cache)
         .env_remove("AXON_GOAL_CONTINUE")
         .output()
@@ -134,10 +135,10 @@ fn goal_iterate_converges() {
             rest[..end].parse().unwrap()
         })
         .collect();
-    assert_eq!(scores.len(), 6, "expected 6 runs, got {scores:?}");
-    assert!(scores[5] > scores[0], "best score should climb across runs: {scores:?}");
-    assert!(scores.windows(2).all(|w| w[1] >= w[0]), "non-decreasing: {scores:?}");
-    assert_eq!(scores[5], 200, "should converge to the optimum: {scores:?}");
+    assert!(scores.len() >= 5, "should take several runs to converge: {scores:?}");
+    assert!(scores.len() < 12, "should stop early on convergence, not run the full cap: {scores:?}");
+    assert!(scores.windows(2).all(|w| w[1] >= w[0]), "best score is non-decreasing: {scores:?}");
+    assert_eq!(*scores.last().unwrap(), 200, "should converge to the optimum: {scores:?}");
 }
 
 #[test]

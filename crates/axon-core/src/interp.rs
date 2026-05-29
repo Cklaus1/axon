@@ -1652,6 +1652,28 @@ fn read_best_input(fn_name: &str, target: f64) -> Option<i64> {
     best_input
 }
 
+/// Read the provenance JSONL and return the maximum `score` among entries
+/// written at or after `since_ts_ms` (epoch ms). `axon goal --iterate` records
+/// a start timestamp and calls this after each run to detect convergence — when
+/// the best score stops improving — so it can stop early. Scoping by timestamp
+/// ignores unrelated prior entries that share the (accumulating) log file.
+/// `None` if the log is absent or has no qualifying scored entry.
+pub fn best_recorded_score(since_ts_ms: u64) -> Option<f64> {
+    let path = provenance_log_path()?;
+    let content = std::fs::read_to_string(&path).ok()?;
+    let mut best: Option<f64> = None;
+    for line in content.lines() {
+        let ts = extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0);
+        if (ts as u64) < since_ts_ms {
+            continue;
+        }
+        if let Some(s) = extract_json_num(line, "\"score\":") {
+            best = Some(best.map_or(s, |b| b.max(s)));
+        }
+    }
+    best
+}
+
 /// Extract the numeric value following `key` in a JSON line (up to the next
 /// `,` or `}`). Tolerant of our own fixed log format; not a general parser.
 fn extract_json_num(line: &str, key: &str) -> Option<f64> {
