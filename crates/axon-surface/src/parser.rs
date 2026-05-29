@@ -141,6 +141,27 @@ impl GoalFile {
         Ok(after[..end].trim().to_string())
     }
 
+    /// The goal's evaluation budget — the first positive integer in the
+    /// `Budget` section (e.g. "Up to 20 candidate summaries per run" → 20).
+    /// Drives `goal_run`'s `max_evals` so the prose Budget bounds the search.
+    pub fn budget_evals(&self) -> Option<i64> {
+        let s = self.section("Budget")?;
+        let mut run = String::new();
+        for ch in s.body.chars() {
+            if ch.is_ascii_digit() {
+                run.push(ch);
+            } else if !run.is_empty() {
+                if let Ok(n) = run.parse::<i64>() {
+                    if n > 0 {
+                        return Some(n);
+                    }
+                }
+                run.clear();
+            }
+        }
+        run.parse::<i64>().ok().filter(|n| *n > 0)
+    }
+
     /// All author-supplied `​```axon` code blocks across the goal file, except
     /// the `Verify` section (whose block is the `@[verify(...)]` predicate,
     /// handled by [`Self::verify_predicate`]).
@@ -336,5 +357,12 @@ Some scoring.
         // SAMPLE has only the Verify block, which is excluded.
         let g = GoalFile::parse(SAMPLE).unwrap();
         assert_eq!(g.author_code(), "");
+    }
+
+    #[test]
+    fn budget_evals_reads_first_positive_int() {
+        // SAMPLE's Budget section is "- 100 calls."
+        let g = GoalFile::parse(SAMPLE).unwrap();
+        assert_eq!(g.budget_evals(), Some(100));
     }
 }

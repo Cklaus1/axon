@@ -162,6 +162,8 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // a valid `score`-threshold gate the skeleton can actually compile and run.
     let predicate = goal.verify_predicate()?;
     let target = extract_target_from_predicate(&predicate).unwrap_or(70);
+    // Evaluation budget from the prose Budget section bounds goal_run's search.
+    let budget = goal.budget_evals().unwrap_or(20);
     // The author may supply their own `assert_deployable` (e.g. a confidence-
     // returning gate that the runtime `@[verify]` check actually enforces).
     // Otherwise emit a pass-through gate carrying the prose predicate's threshold.
@@ -181,7 +183,7 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out, "    println(\"goal: {} — searching variants...\")", goal.title);
     // goal_run drives the @[adaptive] try_variant (hill-climbing variant_id).
     // Its target is an f64; the result is converted back to i64 for the gate.
-    let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, 20)");
+    let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, {budget})");
     let _ = writeln!(out, "    let best = f64_to_i64(result)");
     let _ = writeln!(out, "    println(\"best score: {{to_str(best)}} (target {target})\")");
     let _ = writeln!(out, "    let _ = assert_deployable(best)");
@@ -303,8 +305,9 @@ Some scoring.
         assert!(ax.contains("// prose predicate: score >= 70"));
         // Function signature uses input type from prose.
         assert!(ax.contains("fn test_input(i: i64) -> str"));
-        // Goal_run drives the adaptive try_variant with an f64 target.
-        assert!(ax.contains("goal_run(\"try_variant\", 70.0, 20)"));
+        // Goal_run drives the adaptive try_variant with an f64 target and the
+        // prose Budget ("100 calls") as max_evals.
+        assert!(ax.contains("goal_run(\"try_variant\", 70.0, 100)"));
         // Adaptive annotation present.
         assert!(ax.contains("@[adaptive]"));
         // Build_prompt present.
