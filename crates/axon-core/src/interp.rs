@@ -490,6 +490,34 @@ impl<'p> Interp<'p> {
         best
     }
 
+    /// Flatten a place expression (`base.f[i].g …`) into the root variable name
+    /// and a base-to-leaf list of steps, evaluating any index expressions now
+    /// (so the later mutable walk holds no other borrow of `env`).
+    fn flatten_place(&self, place: &Expr, env: &mut Env) -> Result<(String, Vec<PlaceStep>), Flow> {
+        let mut steps = Vec::new();
+        let mut cur = place;
+        let base = loop {
+            match cur {
+                Expr::Ident(name) => break name.clone(),
+                Expr::FieldAccess { receiver, field } => {
+                    steps.push(PlaceStep::Field(field.clone()));
+                    cur = receiver.as_ref();
+                }
+                Expr::Index { receiver, index } => {
+                    let idx = as_int(&self.eval(index, env)?)?;
+                    if idx < 0 {
+                        return Err(Flow::Panic(format!("negative index {idx}")));
+                    }
+                    steps.push(PlaceStep::Index(idx as usize));
+                    cur = receiver.as_ref();
+                }
+                _ => return Err(Flow::Panic("invalid assignment target".into())),
+            }
+        };
+        steps.reverse();
+        Ok((base, steps))
+    }
+
     // ── Core evaluator ───────────────────────────────────────────────────────
 
     fn eval(&self, expr: &Expr, env: &mut Env) -> R {
@@ -525,49 +553,49 @@ impl<'p> Interp<'p> {
                 }
             }
 
-            // Place assignment: `ident[i] = v` / `ident.field = v`. Single-level
-            // (the receiver is a plain identifier); the value interpreter mutates
-            // the binding in place. Nested places (`a.b[i]`, `a[i].f`) aren't
-            // supported yet.
+            // Place assignment: `<place> = v`, where `place` is a (possibly
+            // nested) chain of index / field accesses rooted at a variable —
+            // e.g. `xs[i] = v`, `s.field = v`, `grid[i][j] = v`, `cfg.row[i] = v`.
+            // Phase 1 flattens the place to (base ident, steps), evaluating index
+            // expressions; phase 2 walks the binding mutably and sets the leaf.
             Expr::AssignTo { place, value } => {
                 let v = self.eval(value, env)?;
-                match place.as_ref() {
-                    Expr::Index { receiver, index } => {
-                        let Expr::Ident(name) = receiver.as_ref() else {
-                            return panic("only `ident[i] = v` place assignment is supported");
-                        };
-                        let idx = as_int(&self.eval(index, env)?)?;
-                        let slot = env
-                            .get_mut(name)
-                            .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{name}`")))?;
-                        match slot {
-                            Value::Array(items) => {
-                                if idx < 0 || idx as usize >= items.len() {
-                                    return panic(format!("index {idx} out of bounds (len {})", items.len()));
-                                }
-                                items[idx as usize] = v;
-                                Ok(Value::Unit)
-                            }
-                            other => panic(format!("cannot index-assign into {}", other.type_name())),
+                let (base, steps) = self.flatten_place(place, env)?;
+                let mut slot = env
+                    .get_mut(&base)
+                    .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{base}`")))?;
+                let (last, prefix) = steps.split_last().ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
+                for step in prefix {
+                    slot = match (step, slot) {
+                        (PlaceStep::Field(f), Value::Struct { fields, .. }) => fields
+                            .get_mut(f)
+                            .ok_or_else(|| Flow::Panic(format!("no field `{f}`")))?,
+                        (PlaceStep::Index(i), Value::Array(items)) => {
+                            let n = items.len();
+                            items
+                                .get_mut(*i)
+                                .ok_or_else(|| Flow::Panic(format!("index {i} out of bounds (len {n})")))?
                         }
-                    }
-                    Expr::FieldAccess { receiver, field } => {
-                        let Expr::Ident(name) = receiver.as_ref() else {
-                            return panic("only `ident.field = v` place assignment is supported");
-                        };
-                        let slot = env
-                            .get_mut(name)
-                            .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{name}`")))?;
-                        match slot {
-                            Value::Struct { fields, .. } => {
-                                fields.insert(field.clone(), v);
-                                Ok(Value::Unit)
-                            }
-                            other => panic(format!("cannot field-assign into {}", other.type_name())),
+                        (_, other) => {
+                            return panic(format!("cannot index/field-assign into {}", other.type_name()));
                         }
-                    }
-                    _ => panic("invalid assignment target"),
+                    };
                 }
+                match (last, slot) {
+                    (PlaceStep::Field(f), Value::Struct { fields, .. }) => {
+                        fields.insert(f.clone(), v);
+                    }
+                    (PlaceStep::Index(i), Value::Array(items)) => {
+                        if *i >= items.len() {
+                            return panic(format!("index {i} out of bounds (len {})", items.len()));
+                        }
+                        items[*i] = v;
+                    }
+                    (_, other) => {
+                        return panic(format!("cannot index/field-assign into {}", other.type_name()));
+                    }
+                }
+                Ok(Value::Unit)
             }
 
             Expr::BinOp { op, left, right } => self.eval_binop(op, left, right, env),
@@ -1558,6 +1586,12 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
         Tuple(_) => "tuple".into(),
         Union(_) => "union".into(),
     }
+}
+
+/// One step of a flattened place expression (for nested place assignment).
+enum PlaceStep {
+    Field(String),
+    Index(usize),
 }
 
 fn as_int(v: &Value) -> Result<i64, Flow> {

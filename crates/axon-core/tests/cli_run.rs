@@ -213,6 +213,23 @@ fn supervised_agent_halts_on_unsafe_actions() {
 }
 
 #[test]
+fn nested_place_assignment_mutates() {
+    // Nested places: 2D array, struct-field-then-index, index-then-field.
+    let f = std::env::temp_dir().join(format!("axon_nplace_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type P = { x: i64 }\nfn main() -> i64 {\n  \
+         let g = [[1, 2], [3, 4]]\n  g[0][1] = 9\n  g[1][0] = 7\n  \
+         let ps = [P { x: 1 }, P { x: 2 }]\n  ps[1].x = 50\n  \
+         g[0][1] + g[1][0] + g[0][0] + ps[1].x\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(67), "9 + 7 + 1 + 50 = 67");
+}
+
+#[test]
 fn place_assignment_mutates_array_and_field() {
     // `xs[i] = v` and `s.field = v` mutate in place (incl. inside a loop).
     let f = std::env::temp_dir().join(format!("axon_place_{}.ax", std::process::id()));

@@ -77,12 +77,11 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
 
 ## Top remaining work (prioritized)
 
-1. **Nested place assignment + tuples + typed `let`.** Single-level place
-   assignment (`xs[i] = v`, `s.field = v`) now works (lvalue `AssignTo` node +
-   interpreter mutable-place resolution, across 11 passes; codegen leaves it
-   unsupported via its catch-all). Remaining: nested places (`a.b[i]`), tuple
-   expressions, and typed `let` (all AST-level). Native codegen lowering of
-   `AssignTo` (GEP+store) is also still a TODO.
+1. **Tuples + typed `let` + native `AssignTo`.** Place assignment now works fully
+   in the interpreter — single-level *and* nested (`g[i][j]`, `obj.row[i]`,
+   `ps[i].f`) via flatten-then-mutable-walk. Remaining language gaps: tuple
+   expressions and typed `let` (both AST-level). Native codegen lowering of
+   `AssignTo` (GEP+store) is still a TODO (codegen leaves it unsupported).
 2. **Live ASI** — set `ANTHROPIC_API_KEY` (+ `--features asi-runtime`) to run the
    LLM demos for real instead of `AXON_AI_MOCK=1`.
 3. **Native build** — the `#[inline(never)]`-wrapper fix is applied; validate an
@@ -97,8 +96,6 @@ idioms) but each is a clean future task:
   targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
   value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
   through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
-- **Place assignment is single-level only.** `xs[i] = v` and `s.field = v` work
-  (incl. in loops); nested places (`a.b[i]`, `a[i].f`) are not yet supported.
 - **No tuple expressions.** `(a, b)` doesn't parse (the type system has
   `Type::Tuple`, but there's no value syntax); use a struct.
 - **No typed `let`.** `let x: T = e` doesn't parse; `let x = e` (inferred) only.
