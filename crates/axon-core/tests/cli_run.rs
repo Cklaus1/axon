@@ -201,6 +201,18 @@ fn trace_missing_log_exits_nonzero() {
 }
 
 #[test]
+fn supervised_agent_halts_on_unsafe_actions() {
+    // Capability under control: the agent banks value from safe actions, then a
+    // two-strike kill-switch latches on unsafe proposals and the final safe
+    // action is refused.
+    let out = axon().args(["run", &ex("asi/supervised_agent.ax")]).output().unwrap();
+    assert!(out.status.success(), "exited {:?}", out.status.code());
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("HALTED: banked 50 value safely"), "stdout: {stdout:?}");
+    assert!(stdout.contains("SKIP   finish-job"), "latched halt must refuse the safe action: {stdout:?}");
+}
+
+#[test]
 fn len_works_on_arrays() {
     // Regression: `len` was typed str-only, so `len(my_array)` failed the type
     // checker even though the interpreter supports it. It now accepts slices, so

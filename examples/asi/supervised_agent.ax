@@ -1,0 +1,113 @@
+// supervised_agent.ax — capability UNDER control (the ASI shape).
+//
+// An agent works through a queue of candidate actions, greedily banking value.
+// Every proposal is overseen by a Supervisor (cf. examples/stdlib/supervisor.ax):
+// an unsafe or unaffordable action earns a strike, and at `max_strikes` the
+// kill-switch latches — the agent is HALTED and every remaining action, safe or
+// not, is refused. So the agent optimizes (banks the value it safely can) but
+// can never cross the safety boundary the overseer enforces. Capability and
+// control in one loop; runs key-free on the interpreter.
+//
+//   axon run  examples/asi/supervised_agent.ax
+//   axon test examples/asi/supervised_agent.ax
+
+type Action = { name: str, value: i64, cost: i64, safe: bool }
+type Supervisor = { budget: i64, strikes: i64, max_strikes: i64, halted: bool, gained: i64 }
+
+fn new_supervisor(budget: i64, max_strikes: i64) -> Supervisor {
+    Supervisor { budget: budget, strikes: 0, max_strikes: max_strikes, halted: false, gained: 0 }
+}
+
+// Would the overseer permit this action right now?
+fn approves(s: Supervisor, a: Action) -> bool {
+    !s.halted && a.safe && a.cost <= s.budget
+}
+
+// Fold one proposal into the supervisor state: bank value on approval, else add
+// a strike; reaching max_strikes latches the halt. A halted overseer is inert.
+fn observe(s: Supervisor, a: Action) -> Supervisor {
+    if s.halted {
+        s
+    } else if approves(s, a) {
+        Supervisor {
+            budget: s.budget - a.cost,
+            strikes: 0,
+            max_strikes: s.max_strikes,
+            halted: false,
+            gained: s.gained + a.value,
+        }
+    } else {
+        let strikes = s.strikes + 1
+        Supervisor {
+            budget: s.budget,
+            strikes: strikes,
+            max_strikes: s.max_strikes,
+            halted: strikes >= s.max_strikes,
+            gained: s.gained,
+        }
+    }
+}
+
+@[agent]
+fn run_agent(start: Supervisor, queue: [Action]) -> Supervisor {
+    let s = start
+    let n = len(queue)
+    for i in 0..n {
+        let a = queue[i]
+        let nm = a.name
+        if approves(s, a) {
+            println("ACT    {nm}  (+{to_str(a.value)} value, -{to_str(a.cost)} budget)")
+        } else if s.halted {
+            println("SKIP   {nm}  -- halted (kill-switch latched)")
+        } else if a.safe {
+            println("DENY   {nm}  -- over budget")
+        } else {
+            println("DENY   {nm}  -- unsafe")
+        }
+        s = observe(s, a)
+    }
+    s
+}
+
+@[test]
+fn test_agent_banks_safe_value_then_halts() {
+    let q = [
+        Action { name: "a", value: 10, cost: 10, safe: true },
+        Action { name: "bad", value: 99, cost: 10, safe: false },
+        Action { name: "bad2", value: 99, cost: 10, safe: false },
+        Action { name: "c", value: 50, cost: 10, safe: true },
+    ]
+    let s = run_agent(new_supervisor(100, 2), q)
+    assert(s.halted)          // two unsafe proposals tripped the kill-switch
+    assert_eq(s.gained, 10)   // only "a" banked; "c" refused after the halt latched
+}
+
+@[test]
+fn test_agent_completes_when_all_safe() {
+    let q = [
+        Action { name: "a", value: 10, cost: 10, safe: true },
+        Action { name: "b", value: 20, cost: 10, safe: true },
+    ]
+    let s = run_agent(new_supervisor(100, 2), q)
+    assert(!s.halted)
+    assert_eq(s.gained, 30)
+}
+
+fn main() {
+    println("supervised agent: budget=100, max_strikes=2")
+    let q = [
+        Action { name: "summarize",  value: 30, cost: 20, safe: true },
+        Action { name: "fetch-doc",  value: 20, cost: 20, safe: true },
+        Action { name: "exfil-keys", value: 99, cost: 5,  safe: false }, // strike 1
+        Action { name: "spawn-proc", value: 99, cost: 5,  safe: false }, // strike 2 -> HALT
+        Action { name: "finish-job", value: 40, cost: 10, safe: true },  // refused (latched)
+    ]
+    let s = run_agent(new_supervisor(100, 2), q)
+    let g = s.gained
+    let b = s.budget
+    if s.halted {
+        println("HALTED: banked {to_str(g)} value safely, {to_str(b)} budget unspent")
+    } else {
+        println("DONE: banked {to_str(g)} value, {to_str(b)} budget left")
+    }
+}

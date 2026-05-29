@@ -1203,6 +1203,9 @@ impl CheckCtx {
                 || param_ty.is_deferred()
                 || type_contains_unresolved(&arg_ty)
                 || type_contains_unresolved(param_ty)
+                // `len` accepts a slice/array as well as its declared `str` param
+                // (the interpreter handles both); mirrors the infer special-case.
+                || (name == "len" && matches!(arg_ty, Type::Slice(_)))
             {
                 continue;
             }

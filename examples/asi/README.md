@@ -36,11 +36,18 @@ examples/asi/
 ├── optimize.ax    # demo #1 — phone-number extractor (ai_complete + parse_int)
 ├── classify.ax    # demo #2 — sentiment classifier (ai_extract_uncertain_i64)
 ├── summarize.ax   # demo #3 — composite-metric summarizer (length × coverage)
+├── supervised_agent.ax # demo #4 — capability UNDER control (latching kill-switch); key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file
 ```
 
 `run.sh` defaults to `optimize.ax`; pass a different demo via `DEMO=classify.ax ./run.sh run`.
+
+Unlike demos #1–#3 (which call an LLM), `supervised_agent.ax` is a pure
+deterministic demonstration that an optimizing agent stays inside a safety
+boundary an overseer enforces — it banks the value it safely can, then a
+two-strike kill-switch latches and every later action (even a safe one) is
+refused. Run it directly: `axon run examples/asi/supervised_agent.ax`.
 
 ## Observability
 
