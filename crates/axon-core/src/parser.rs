@@ -1144,6 +1144,7 @@ impl Parser {
             Stmt {
                 expr: Expr::Let {
                     name: var,
+                    ty: None,
                     value: Box::new(Expr::Index {
                         receiver: Box::new(Expr::Ident(arr_name.clone())),
                         index: Box::new(Expr::Ident(idx_name.clone())),
@@ -1167,7 +1168,7 @@ impl Parser {
         // doesn't consume it — this is what lets the collection be iterated again,
         // or nested-iterated over itself (e.g. all-pairs), without a move error.
         Ok(Expr::Block(vec![
-            Stmt { expr: Expr::RefBind { name: arr_name, value: Box::new(first) }, span },
+            Stmt { expr: Expr::RefBind { name: arr_name, ty: None, value: Box::new(first) }, span },
             Stmt { expr: inner_for, span },
         ]))
     }
@@ -1193,28 +1194,40 @@ impl Parser {
         Ok(Expr::Assign { name, value: Box::new(value) })
     }
 
+    /// Parse an optional `: Type` annotation following a binding name.
+    fn parse_opt_binding_type(&mut self) -> Result<Option<AxonType>> {
+        if self.eat(&Token::Colon) {
+            Ok(Some(self.parse_type()?))
+        } else {
+            Ok(None)
+        }
+    }
+
     fn parse_let(&mut self) -> Result<Expr> {
         self.expect(&Token::Let)?;
         let name = self.expect_ident()?;
+        let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::Let { name, value: Box::new(value) })
+        Ok(Expr::Let { name, ty, value: Box::new(value) })
     }
 
     fn parse_own(&mut self) -> Result<Expr> {
         self.expect(&Token::Own)?;
         let name = self.expect_ident()?;
+        let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::Own { name, value: Box::new(value) })
+        Ok(Expr::Own { name, ty, value: Box::new(value) })
     }
 
     fn parse_ref_bind(&mut self) -> Result<Expr> {
         self.expect(&Token::Ref)?;
         let name = self.expect_ident()?;
+        let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::RefBind { name, value: Box::new(value) })
+        Ok(Expr::RefBind { name, ty, value: Box::new(value) })
     }
 
     fn parse_return(&mut self) -> Result<Expr> {

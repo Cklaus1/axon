@@ -88,11 +88,11 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
 
 ## Top remaining work (prioritized)
 
-1. **Tuples + typed `let` + native `AssignTo`.** Place assignment now works fully
-   in the interpreter — single-level *and* nested (`g[i][j]`, `obj.row[i]`,
-   `ps[i].f`) via flatten-then-mutable-walk. Remaining language gaps: tuple
-   expressions and typed `let` (both AST-level). Native codegen lowering of
-   `AssignTo` (GEP+store) is still a TODO (codegen leaves it unsupported).
+1. **Tuples + native codegen of new AST nodes.** Place assignment (single-level
+   *and* nested) and typed `let`/`own`/`ref` (`let x: T = e`, enforced) now work
+   in the interpreter. Remaining language gap: tuple expressions (`(a, b)`).
+   Native codegen lowering of the newer AST nodes (`AssignTo`, etc.) is still a
+   TODO — codegen leaves them unsupported via its catch-all.
 2. **Live ASI** — set `ANTHROPIC_API_KEY` (+ `--features asi-runtime`) to run the
    LLM demos for real instead of `AXON_AI_MOCK=1`.
 3. **Native build** — the `#[inline(never)]`-wrapper fix is applied; validate an
@@ -114,8 +114,6 @@ idioms) but each is a clean future task:
   `select` fires the first arm whose channel is ready (cooperative, value-less).
 - **No tuple expressions.** `(a, b)` doesn't parse (the type system has
   `Type::Tuple`, but there's no value syntax); use a struct.
-- **No typed `let`.** `let x: T = e` doesn't parse; `let x = e` (inferred) only.
-  (AST-level: `Let` has no type slot.)
 - (Fixed this session: `len` accepts slices; structural `==`/`!=`; `type Name =
   A | B` sum-types; or-patterns; `match`/`if` as operands; `&&`/`||` precedence;
   nested braces in interpolation; functions returning enums; `for x in coll`.)

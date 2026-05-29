@@ -593,7 +593,7 @@ impl<'a> Resolver<'a> {
             // The value is resolved *before* the name is defined so that
             // `let x = x + 1` correctly reports `x` (the RHS) as undefined
             // when `x` hasn't been introduced yet.
-            Expr::Let { name, value } => {
+            Expr::Let { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn when a new binding shadows an existing one.
                 if self.table.lookup(name).is_some() {
@@ -608,7 +608,7 @@ impl<'a> Resolver<'a> {
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
-            Expr::Own { name, value } => {
+            Expr::Own { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn on shadowing.
                 if self.table.lookup(name).is_some() {
@@ -623,7 +623,7 @@ impl<'a> Resolver<'a> {
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
-            Expr::RefBind { name, value } => {
+            Expr::RefBind { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn on shadowing.
                 if self.table.lookup(name).is_some() {
@@ -1508,7 +1508,7 @@ mod tests {
     fn let_binding_available_after_definition() {
         // `let x = 1; x` — `x` is used after binding.
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let {
+            Stmt::simple(Expr::Let { ty: None,
                 name: "x".to_string(),
                 value: Box::new(lit_int(1)),
             }),
@@ -1528,7 +1528,7 @@ mod tests {
         // `x; let x = 1` — `x` is used *before* the binding.
         let body = Expr::Block(vec![
             Stmt::simple(ident_expr("x")),
-            Stmt::simple(Expr::Let {
+            Stmt::simple(Expr::Let { ty: None,
                 name: "x".to_string(),
                 value: Box::new(lit_int(1)),
             }),
@@ -1546,7 +1546,7 @@ mod tests {
     #[test]
     fn let_rhs_does_not_see_own_binding() {
         // `let x = x` — the RHS `x` should be undefined if nothing else defines it.
-        let body = Expr::Let {
+        let body = Expr::Let { ty: None,
             name: "x".to_string(),
             value: Box::new(ident_expr("x")),
         };
@@ -1668,8 +1668,8 @@ mod tests {
             captures: vec![],
         };
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { name: "x".into(), value: Box::new(lit_int(1)) }),
-            Stmt::simple(Expr::Let { name: "g".into(), value: Box::new(lambda) }),
+            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(1)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "g".into(), value: Box::new(lambda) }),
         ]);
         let mut prog = program(vec![simple_fn("f", body)]);
         fill_captures(&mut prog);
@@ -1699,7 +1699,7 @@ mod tests {
             captures: vec![],
         };
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { name: "g".into(), value: Box::new(lambda) }),
+            Stmt::simple(Expr::Let { ty: None, name: "g".into(), value: Box::new(lambda) }),
         ]);
         let mut prog = program(vec![simple_fn("f", body)]);
         fill_captures(&mut prog);
@@ -1717,8 +1717,8 @@ mod tests {
     #[test]
     fn shadowing_let_produces_w0002() {
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { name: "x".into(), value: Box::new(lit_int(1)) }),
-            Stmt::simple(Expr::Let { name: "x".into(), value: Box::new(lit_int(2)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(1)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(2)) }),
         ]);
         let prog = program(vec![simple_fn("f", body)]);
         let result = resolve_program(&prog, "test.ax");

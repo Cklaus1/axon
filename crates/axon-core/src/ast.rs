@@ -190,9 +190,10 @@ pub enum AxonType {
 #[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
 pub enum Expr {
     Block(Vec<Stmt>),
-    Let { name: String, value: Box<Expr> },
-    Own { name: String, value: Box<Expr> },
-    RefBind { name: String, value: Box<Expr> },
+    /// `let name (: ty)? = value` — `ty` is an optional explicit type annotation.
+    Let { name: String, ty: Option<AxonType>, value: Box<Expr> },
+    Own { name: String, ty: Option<AxonType>, value: Box<Expr> },
+    RefBind { name: String, ty: Option<AxonType>, value: Box<Expr> },
     Call { callee: Box<Expr>, args: Vec<Expr> },
     MethodCall { receiver: Box<Expr>, method: String, args: Vec<Expr> },
     BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },

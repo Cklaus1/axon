@@ -38,6 +38,20 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn typed_let_bindings_enforce_the_annotation() {
+    // `let x: T = e` parses and enforces the annotation.
+    let f = std::env::temp_dir().join(format!("axon_tlet_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  y }\n").unwrap();
+    let ok = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(ok.status.code(), Some(10), "typed let should run: y = 10");
+
+    std::fs::write(&f, "fn main() -> i64 { let x: str = 5  0 }\n").unwrap();
+    let bad = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(bad.status.code(), Some(2), "a type-mismatched annotation must be rejected");
+}
+
+#[test]
 fn invalid_radix_fails_fast() {
     // i64_to_str_radix with a radix outside 2..=36 must fail fast (graceful
     // panic) rather than silently returning an empty string.

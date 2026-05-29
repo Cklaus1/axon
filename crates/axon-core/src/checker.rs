@@ -748,9 +748,9 @@ impl CheckCtx {
 
             // ── Binding forms ────────────────────────────────────────────────
             // The RHS is "used" (stored), so R02 does not apply.
-            Expr::Let { name, value }
-            | Expr::Own { name, value }
-            | Expr::RefBind { name, value } => {
+            Expr::Let { name, value, .. }
+            | Expr::Own { name, value, .. }
+            | Expr::RefBind { name, value, .. } => {
                 let val_path = format!("{node_path}.value");
                 self.check_expr(value, &val_path, scope);
                 let ty = self.resolve_expr_type(value, &val_path, scope);
@@ -2363,7 +2363,7 @@ mod tests {
             vec![],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![
-                Expr::Let { name: "x".into(), value: Box::new(lit_int(42)) },
+                Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(42)) },
                 Expr::FieldAccess { receiver: Box::new(ident("x")), field: "foo".into() },
             ]),
         )]);
@@ -2517,7 +2517,7 @@ mod tests {
             "f",
             vec![],
             Option::Some(AxonType::Named("()".into())),
-            block(vec![Expr::Let {
+            block(vec![Expr::Let { ty: None,
                 name: "r".into(),
                 value: Box::new(Expr::Call {
                     callee: Box::new(ident("may_fail")),

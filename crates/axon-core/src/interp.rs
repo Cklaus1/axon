@@ -598,9 +598,9 @@ impl<'p> Interp<'p> {
 
             Expr::Block(stmts) => self.eval_block(stmts, env),
 
-            Expr::Let { name, value }
-            | Expr::Own { name, value }
-            | Expr::RefBind { name, value } => {
+            Expr::Let { name, value, .. }
+            | Expr::Own { name, value, .. }
+            | Expr::RefBind { name, value, .. } => {
                 let v = self.eval(value, env)?;
                 env.define(name.clone(), v);
                 Ok(Value::Unit)

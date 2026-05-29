@@ -260,6 +260,14 @@ impl Formatter {
         self.writeln("}");
     }
 
+    /// Emit `: Type` for an optional binding annotation (typed `let`/`own`/`ref`).
+    fn emit_opt_binding_type(&mut self, ty: &Option<AxonType>) {
+        if let Some(t) = ty {
+            self.write(": ");
+            self.emit_axon_type(t);
+        }
+    }
+
     fn emit_axon_type(&mut self, ty: &AxonType) {
         match ty {
             AxonType::Named(n)     => self.write(n),
@@ -384,21 +392,24 @@ impl Formatter {
                 }
             }
 
-            Expr::Let { name, value } => {
+            Expr::Let { name, ty, value } => {
                 self.write("let ");
                 self.write(name);
+                self.emit_opt_binding_type(ty);
                 self.write(" = ");
                 self.emit_expr(value);
             }
-            Expr::Own { name, value } => {
+            Expr::Own { name, ty, value } => {
                 self.write("own ");
                 self.write(name);
+                self.emit_opt_binding_type(ty);
                 self.write(" = ");
                 self.emit_expr(value);
             }
-            Expr::RefBind { name, value } => {
+            Expr::RefBind { name, ty, value } => {
                 self.write("ref ");
                 self.write(name);
+                self.emit_opt_binding_type(ty);
                 self.write(" = ");
                 self.emit_expr(value);
             }
@@ -764,7 +775,7 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if stmts.len() != 2 {
         return None;
     }
-    let Expr::RefBind { name: arr, value: coll } = &stmts[0].expr else {
+    let Expr::RefBind { name: arr, value: coll, .. } = &stmts[0].expr else {
         return None;
     };
     if !arr.starts_with("__forarr_") {
@@ -776,7 +787,7 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if !idx.starts_with("__fori_") {
         return None;
     }
-    let Expr::Let { name: uservar, value } = &body.first()?.expr else {
+    let Expr::Let { name: uservar, value, .. } = &body.first()?.expr else {
         return None;
     };
     let Expr::Index { receiver, .. } = value.as_ref() else {

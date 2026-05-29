@@ -511,9 +511,19 @@ impl InferCtx {
             }
 
             // ── Bindings ─────────────────────────────────────────────────────
-            Expr::Let { name, value } | Expr::Own { name, value } | Expr::RefBind { name, value } => {
+            Expr::Let { name, ty, value }
+            | Expr::Own { name, ty, value }
+            | Expr::RefBind { name, ty, value } => {
                 let val_ty = self.infer_expr(value, scope, ret_ty);
-                scope.bind(name.clone(), val_ty);
+                // An explicit `: T` annotation constrains the value's type and
+                // becomes the binding's declared type.
+                if let Some(annot) = ty {
+                    let annot_ty = self.resolve_ast_type(annot);
+                    self.constrain(val_ty.clone(), annot_ty.clone(), "let type annotation");
+                    scope.bind(name.clone(), annot_ty);
+                } else {
+                    scope.bind(name.clone(), val_ty);
+                }
                 Type::Unit
             }
 
@@ -1582,7 +1592,7 @@ mod tests {
     #[test]
     fn let_binding_propagates_type() {
         let (mut ctx, mut scope) = ctx();
-        let binding = Expr::Let {
+        let binding = Expr::Let { ty: None,
             name: "x".to_string(),
             value: Box::new(lit_int(10)),
         };

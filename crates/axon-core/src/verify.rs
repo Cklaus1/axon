@@ -407,9 +407,9 @@ impl<'a> Analyzer<'a> {
             }
 
             match &stmt.expr {
-                Expr::Let { name, value }
-                | Expr::Own { name, value }
-                | Expr::RefBind { name, value } => {
+                Expr::Let { name, value, .. }
+                | Expr::Own { name, value, .. }
+                | Expr::RefBind { name, value, .. } => {
                     let c = self.confidence_of(value, &local);
                     local.insert(name.clone(), c);
                     last = Confidence::Unknown; // not the tail expr

@@ -83,7 +83,7 @@ impl<'a> Evaluator<'a> {
                 let mut last = None;
                 for stmt in stmts {
                     match &stmt.expr {
-                        Expr::Let { name, value } => {
+                        Expr::Let { name, value, .. } => {
                             let val = {
                                 let sub = Evaluator { env: local_env.clone(), fns: self.fns };
                                 sub.eval(value)?

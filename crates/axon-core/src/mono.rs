@@ -54,12 +54,12 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
         Expr::Block(stmts) =>
             Expr::Block(stmts.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect()),
 
-        Expr::Let { name, value } =>
-            Expr::Let { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
-        Expr::Own { name, value } =>
-            Expr::Own { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
-        Expr::RefBind { name, value } =>
-            Expr::RefBind { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
+        Expr::Let { name, ty, value } =>
+            Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
+        Expr::Own { name, ty, value } =>
+            Expr::Own { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
+        Expr::RefBind { name, ty, value } =>
+            Expr::RefBind { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
         Expr::Assign { name, value } =>
             Expr::Assign { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
         Expr::AssignTo { place, value } => Expr::AssignTo {
@@ -474,9 +474,9 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         Expr::Block(stmts) => Expr::Block(
             stmts.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect()
         ),
-        Expr::Let { name, value } => Expr::Let { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
-        Expr::Own { name, value } => Expr::Own { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
-        Expr::RefBind { name, value } => Expr::RefBind { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
+        Expr::Let { name, ty, value } => Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
+        Expr::Own { name, ty, value } => Expr::Own { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
+        Expr::RefBind { name, ty, value } => Expr::RefBind { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::Assign { name, value } => Expr::Assign { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::AssignTo { place, value } => Expr::AssignTo {
             place: Box::new(rename_calls_expr(place, rename)),

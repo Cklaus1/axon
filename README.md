@@ -176,7 +176,8 @@ fn main() -> i64 {
 
 ```axon
 fn buffer_size() -> i64 {
-    comptime { 1024 * 1024 } // folded once; here the interpreter evaluates it inline
+    let max: i64 = comptime { 1024 * 1024 } // typed binding + comptime block
+    max
 }
 
 fn is_debug() -> bool {
