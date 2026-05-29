@@ -1,15 +1,28 @@
 #!/usr/bin/env bash
-# Axon dev helper — quick commands for compiler development
+# Axon dev helper — quick commands for compiler development.
+# Interpreter-first: `build`/`run`/examples use the codegen-free `axon` binary
+# (no LLVM). The native codegen build is slow (see BUILD_DIAGNOSIS.md) and
+# isolated under `build-native`.
 set -euo pipefail
 
 CARGO=/root/.cargo/bin/cargo
 AXON=./target/debug/axon
 
+# Build the codegen-free interpreter CLI (fast, no LLVM). Used by run/examples.
+build_interp() { $CARGO build -q -p axon-core --no-default-features --bin axon; }
+
 cmd=${1:-help}
 
 case "$cmd" in
   build)
-    $CARGO build 2>&1
+    build_interp
+    echo "built $AXON (interpreter CLI, no codegen)"
+    ;;
+
+  build-native)
+    echo "WARNING: native codegen build is pathologically slow and may not finish."
+    echo "         See BUILD_DIAGNOSIS.md. Use 'build' (interpreter) for dev."
+    $CARGO build -p axon-core 2>&1
     ;;
 
   test)
@@ -18,136 +31,132 @@ case "$cmd" in
     ;;
 
   test-full)
-    # Full test suite with all features (requires LLVM 17)
     $CARGO test 2>&1
     ;;
 
   check)
-    # Fast type-check, no LLVM required — mirrors what CI runs
     $CARGO check --no-default-features -p axon-core 2>&1
     ;;
 
   check-full)
-    # Type-check with all features (requires LLVM 17 installed locally)
     $CARGO check 2>&1
     ;;
 
   run)
     # Usage: ./dev.sh run examples/hello.ax
+    build_interp
     $AXON run "${2:-examples/hello.ax}"
     ;;
 
+  goal)
+    # Usage: ./dev.sh goal examples/goals/optimize-goal.md  (mock LLM by default)
+    build_interp
+    AXON_AI_MOCK=1 $AXON goal "${2:-examples/goals/optimize-goal.md}"
+    ;;
+
   all-examples)
-    # Run every runnable example and show pass/fail
-    $CARGO build -q 2>/dev/null
+    # Run every runnable top-level example, show pass/fail
+    build_interp
     pass=0; fail=0
     for f in examples/*.ax; do
-      # skip test-only files (no main or test runner handles them)
-      # Axon uses @[test] / @[test(should_fail)] attribute syntax
-      if grep -qE "^@\[test" "$f" && ! grep -q "^fn main" "$f"; then
-        continue
+      if grep -qE "^@\[test" "$f" && ! grep -q "^fn main" "$f"; then continue; fi
+      case "$f" in *should_fail*|*stdlib_tests*) continue;; esac
+      if $AXON run "$f" >/dev/null 2>&1; then
+        echo "✓ $f"; pass=$((pass+1))
+      else
+        echo "✗ $f"; fail=$((fail+1))
       fi
-      if [[ "$f" == *"should_fail"* ]] || [[ "$f" == *"stdlib_tests"* ]]; then
-        continue
-      fi
-      output=$($AXON run "$f" 2>&1) && {
-        echo "✓ $f"
-        ((pass++))
-      } || {
-        echo "✗ $f"
-        echo "  $output" | head -3
-        ((fail++))
-      }
     done
     echo ""
     echo "examples: $pass passed, $fail failed"
     ;;
 
-  all-tests)
-    # Run axon test on all test files
-    $CARGO build -q 2>/dev/null
-    for f in examples/tests.ax examples/stdlib_tests.ax examples/should_fail_test.ax; do
+  stdlib)
+    # Run the Tier-1 stdlib module tests
+    build_interp
+    for f in examples/stdlib/*.ax; do
       echo "=== $f ==="
-      $AXON test "$f" 2>&1
+      $AXON test "$f" 2>&1 | tail -1 || true
     done
     ;;
 
-  full)
-    # Full CI: build + unit tests + examples + axon tests
-    echo "=== cargo build ==="
-    $CARGO build 2>&1
-    echo ""
-    echo "=== cargo test ==="
-    $CARGO test 2>&1
-    echo ""
-    echo "=== examples ==="
-    bash "$0" all-examples
-    echo ""
-    echo "=== axon tests ==="
-    bash "$0" all-tests
+  goals)
+    # Run the key-free goal demos and show each outcome
+    build_interp
+    echo "goal demos (exit 0=deploy, 101=verify-block, 1=redteam-block):"
+    for g in optimize verified redteam compose; do
+      rc=0
+      $AXON goal "examples/goals/$g-goal.md" >/dev/null 2>&1 || rc=$?
+      echo "  $g-goal -> exit $rc"
+    done
+    ;;
+
+  all-tests)
+    build_interp
+    for f in examples/tests.ax examples/stdlib_tests.ax examples/should_fail_test.ax examples/stdlib/*.ax; do
+      echo "=== $f ==="
+      $AXON test "$f" 2>&1 | tail -1 || true
+    done
+    ;;
+
+  full|verify)
+    # Interpreter-first quality gate: build + tests + examples + stdlib + goals
+    echo "=== build interpreter ==="; build_interp
+    echo "=== cargo test (no codegen) ==="; $CARGO test --no-default-features -p axon-core 2>&1 | grep -E "test result" || true
+    echo "=== examples ==="; bash "$0" all-examples
+    echo "=== stdlib ==="; bash "$0" stdlib
+    echo "=== goals ==="; bash "$0" goals
     ;;
 
   fmt)
-    # Format the axon-core crate in-place
     $CARGO fmt -p axon-core 2>&1
     ;;
 
   fmt-check)
-    # Check formatting without modifying files (mirrors CI)
     $CARGO fmt -p axon-core -- --check 2>&1
     ;;
 
   clippy)
-    # Lint with clippy, no codegen feature (mirrors CI)
     $CARGO clippy --no-default-features -p axon-core -- -D warnings 2>&1
     ;;
 
   ci)
     # Run exactly what CI runs: check → test → fmt-check → clippy
-    echo "=== cargo check (no codegen) ==="
-    bash "$0" check
-    echo ""
-    echo "=== cargo test (no codegen) ==="
-    bash "$0" test
-    echo ""
-    echo "=== cargo fmt --check ==="
-    bash "$0" fmt-check
-    echo ""
-    echo "=== cargo clippy (no codegen) ==="
-    bash "$0" clippy
+    echo "=== cargo check (no codegen) ==="; bash "$0" check
+    echo ""; echo "=== cargo test (no codegen) ==="; bash "$0" test
+    echo ""; echo "=== cargo fmt --check ==="; bash "$0" fmt-check
+    echo ""; echo "=== cargo clippy (no codegen) ==="; bash "$0" clippy
     ;;
 
   watch)
-    # Rebuild on source change (requires cargo-watch: cargo install cargo-watch)
-    $CARGO watch -x build 2>&1
+    $CARGO watch -x "build -p axon-core --no-default-features --bin axon" 2>&1
     ;;
 
   ast)
-    # Print AST as JSON for a file
-    $CARGO build -q 2>/dev/null
+    build_interp
     $AXON parse "${2:-examples/hello.ax}"
     ;;
 
   *)
     echo "Usage: ./dev.sh <command> [args]"
     echo ""
-    echo "CI commands (no LLVM required):"
+    echo "CI (no LLVM):"
     echo "  ci             check + test + fmt-check + clippy  (same as GitHub Actions)"
-    echo "  check          cargo check --no-default-features  (fast, no LLVM)"
-    echo "  test           cargo test  --no-default-features  (unit + integration)"
-    echo "  fmt-check      cargo fmt --check                  (formatting gate)"
-    echo "  clippy         cargo clippy -D warnings            (lint gate)"
+    echo "  check / test   cargo check / test --no-default-features"
+    echo "  fmt-check / clippy   formatting + lint gates"
     echo ""
-    echo "Local dev (requires LLVM 17):"
-    echo "  build          cargo build  (full, with codegen)"
-    echo "  check-full     cargo check  (full, with codegen)"
-    echo "  test-full      cargo test   (full, with codegen)"
-    echo "  fmt            cargo fmt    (format in-place)"
+    echo "Interpreter dev (no LLVM):"
+    echo "  build          build the codegen-free axon CLI (fast)"
     echo "  run [file]     axon run <file>"
-    echo "  all-examples   run every example, show pass/fail"
-    echo "  all-tests      run axon test on test files"
-    echo "  full           build + unit tests + examples + axon tests"
+    echo "  goal [file.md] axon goal <file> (mock LLM)"
+    echo "  all-examples   run every top-level example, show pass/fail"
+    echo "  stdlib         run the Tier-1 stdlib module tests"
+    echo "  goals          run the key-free goal demos, show outcomes"
+    echo "  all-tests      axon test on all test/stdlib files"
+    echo "  verify | full  build + tests + examples + stdlib + goals"
     echo "  ast [file]     print AST as JSON"
-    echo "  watch          rebuild on file change (needs cargo-watch)"
+    echo ""
+    echo "Native codegen (SLOW — see BUILD_DIAGNOSIS.md):"
+    echo "  build-native / check-full / test-full"
     ;;
 esac

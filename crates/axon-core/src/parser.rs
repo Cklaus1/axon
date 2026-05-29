@@ -968,8 +968,8 @@ impl Parser {
             Some(Token::If)       => self.parse_if(),
             Some(Token::While)    => self.parse_while(),
             Some(Token::For)      => self.parse_for(),
-            Some(Token::Break)    => { self.advance(); Ok(Expr::Break) }
-            Some(Token::Continue) => { self.advance(); Ok(Expr::Continue) }
+            Some(Token::Break)    => { self.advance()?; Ok(Expr::Break) }
+            Some(Token::Continue) => { self.advance()?; Ok(Expr::Continue) }
             Some(Token::Spawn)    => self.parse_spawn(),
             Some(Token::Select)   => self.parse_select(),
             Some(Token::Chan)     => self.parse_chan_new(),
