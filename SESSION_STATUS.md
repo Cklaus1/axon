@@ -59,6 +59,19 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
 - **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`), goal-demo + all-examples
   -parse regression locks, full builtin coverage (90/90). `dev.sh` is interpreter-first.
 
+## Known language gaps (discovered this session — future work)
+
+Found by building real programs; none block current work (there are working
+idioms) but each is a clean future task:
+
+- **No place assignment.** `xs[i] = v` and `s.field = v` don't parse — assignment
+  targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
+  value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
+  through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
+- **`for x in array` is range-only.** `for` requires a range (`for i in 0..n`);
+  iterate collections by index (`for i in 0..len(xs) { let x = xs[i] }`).
+- (Fixed this session: `len` now accepts slices, not just `str`.)
+
 ## What works now (via the interpreter, no LLVM)
 
 | Command | Behavior |

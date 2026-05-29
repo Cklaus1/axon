@@ -48,10 +48,16 @@ axon test examples/stdlib/constraint.ax    # 5
 axon test examples/stdlib/principal.ax     # 3
 axon test examples/stdlib/safe_action.ax   # 5
 axon test examples/stdlib/supervisor.ax    # 5
+axon test examples/stdlib/arrays.ax        # 5
 axon test examples/stdlib/asi_prelude.ax   # 8
 axon run  examples/stdlib/safe_action.ax   # the composed gate in action
 axon run  examples/stdlib/supervisor.ax    # the kill-switch latching mid-stream
+axon run  examples/stdlib/arrays.ax        # argmax over a candidate score set
 ```
+
+`arrays.ax` adds read-only aggregation/selection over slices (`sum`, `max_of`,
+`min_of`, `contains`, `count_at_least`, and `argmax` — the "pick the best of N
+candidates" primitive agents use to choose an action).
 
 ## Notes
 
