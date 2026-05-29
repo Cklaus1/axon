@@ -140,6 +140,58 @@ impl GoalFile {
         })?;
         Ok(after[..end].trim().to_string())
     }
+
+    /// All author-supplied `​```axon` code blocks across the goal file, except
+    /// the `Verify` section (whose block is the `@[verify(...)]` predicate,
+    /// handled by [`Self::verify_predicate`]).
+    ///
+    /// These are concatenated, in section order, as the program's author-owned
+    /// function definitions, which `compile::emit` lifts verbatim into the
+    /// generated `.ax` (replacing the corresponding `TODO:` scaffolding).
+    pub fn author_code(&self) -> String {
+        let mut out = String::new();
+        for (key, sec) in &self.sections {
+            if key == "Verify" {
+                continue;
+            }
+            for block in extract_axon_blocks(&sec.body) {
+                let block = block.trim_end();
+                if block.is_empty() {
+                    continue;
+                }
+                if !out.is_empty() {
+                    out.push_str("\n\n");
+                }
+                out.push_str(block);
+            }
+        }
+        out
+    }
+}
+
+/// Extract the contents of every ```axon (or ```ax) fenced code block in `body`.
+fn extract_axon_blocks(body: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut in_block = false;
+    let mut cur = String::new();
+    for line in body.lines() {
+        let t = line.trim_start();
+        if !in_block {
+            if t == "```axon" || t == "```ax" {
+                in_block = true;
+                cur.clear();
+            }
+            continue;
+        }
+        if t.starts_with("```") {
+            in_block = false;
+            blocks.push(std::mem::take(&mut cur));
+            continue;
+        }
+        cur.push_str(line);
+        cur.push('\n');
+    }
+    blocks
 }
 
 /// "Score (higher is better)" → "Score"; "Effect surface" → "Effect surface"
@@ -265,5 +317,24 @@ Some scoring.
             Error::MissingSection(s) => assert_eq!(s, "Inputs"),
             other => panic!("expected MissingSection, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn author_code_gathers_axon_blocks_excluding_verify() {
+        let md = format!(
+            "{SAMPLE}\n## Implementation\n\n```axon\nfn f() -> i64 {{ 1 }}\n```\n"
+        );
+        let g = GoalFile::parse(&md).unwrap();
+        let code = g.author_code();
+        assert!(code.contains("fn f() -> i64 { 1 }"), "got: {code:?}");
+        // The Verify section's `@[verify(...)]` block must be excluded.
+        assert!(!code.contains("@[verify"), "verify predicate leaked into author_code");
+    }
+
+    #[test]
+    fn author_code_empty_when_no_blocks() {
+        // SAMPLE has only the Verify block, which is excluded.
+        let g = GoalFile::parse(SAMPLE).unwrap();
+        assert_eq!(g.author_code(), "");
     }
 }
