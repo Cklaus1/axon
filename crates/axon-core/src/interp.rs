@@ -2043,4 +2043,29 @@ mod tests {
         std::env::remove_var("AXON_AI_MOCK");
         assert!(n > 0, "mock ai_complete should return Ok(non-empty), got {n}");
     }
+
+    #[test]
+    fn goal_demos_pure_outcomes() {
+        // Regression lock for the key-free goal demos: prose → .ax → run,
+        // pinning each gate path. (No LLM / no env — the mock-requiring goals
+        // hello/flagship are exercised separately.)
+        let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/goals/");
+        for (file, expected) in [
+            ("optimize-goal.md", 0),   // deploys
+            ("compose-goal.md", 0),    // deploys (prelude-composed score)
+            ("verified-goal.md", 101), // enforced confidence gate blocks
+            ("redteam-goal.md", 1),    // redteam gate blocks
+        ] {
+            let md = std::fs::read_to_string(format!("{base}{file}"))
+                .unwrap_or_else(|e| panic!("read {file}: {e}"));
+            let goal = axon_surface::parser::GoalFile::parse(&md)
+                .unwrap_or_else(|e| panic!("parse {file}: {e}"));
+            let ax = axon_surface::compile::emit(&goal)
+                .unwrap_or_else(|e| panic!("emit {file}: {e}"));
+            let program =
+                crate::parse_source(&ax).unwrap_or_else(|e| panic!("parse .ax for {file}: {e}"));
+            let code = run_program(&program);
+            assert_eq!(code, expected, "{file}: expected exit {expected}, got {code}");
+        }
+    }
 }
