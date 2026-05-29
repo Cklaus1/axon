@@ -1401,6 +1401,11 @@ impl<'p> Interp<'p> {
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────
             "ai_complete" => {
                 want(1)?;
+                if ai_mock_enabled() {
+                    ok!(Value::Ok(Box::new(Value::Str(
+                        "Mock summary: the single most important fact, stated concisely.".to_string()
+                    ))));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(match axon_ai::complete(as_str(&args[0])?) {
@@ -1409,10 +1414,15 @@ impl<'p> Interp<'p> {
                     });
                 }
                 #[cfg(not(feature = "asi-runtime"))]
-                return panic("ai_complete requires building axon-run with --features asi-runtime");
+                return panic(
+                    "ai_complete requires --features asi-runtime (or set AXON_AI_MOCK=1 for a deterministic stub)",
+                );
             }
             "ai_extract_uncertain_i64" => {
                 want(1)?;
+                if ai_mock_enabled() {
+                    ok!(Value::Ok(Box::new(make_uncertain(Value::Int(1), 0.9))));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
@@ -1422,11 +1432,14 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(not(feature = "asi-runtime"))]
                 return panic(
-                    "ai_extract_uncertain_i64 requires building axon-run with --features asi-runtime",
+                    "ai_extract_uncertain_i64 requires --features asi-runtime (or set AXON_AI_MOCK=1)",
                 );
             }
             "ai_extract_uncertain_f64" => {
                 want(1)?;
+                if ai_mock_enabled() {
+                    ok!(Value::Ok(Box::new(make_uncertain(Value::Float(1.0), 0.9))));
+                }
                 #[cfg(feature = "asi-runtime")]
                 {
                     ok!(match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
@@ -1436,7 +1449,7 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(not(feature = "asi-runtime"))]
                 return panic(
-                    "ai_extract_uncertain_f64 requires building axon-run with --features asi-runtime",
+                    "ai_extract_uncertain_f64 requires --features asi-runtime (or set AXON_AI_MOCK=1)",
                 );
             }
 
@@ -1514,6 +1527,13 @@ fn as_float_opt(v: &Value) -> Option<f64> {
         Value::Float(f) => Some(*f),
         _ => None,
     }
+}
+
+/// Whether deterministic mock-LLM responses are enabled (`AXON_AI_MOCK` set and
+/// not "0"/empty). Lets the ASI demos run end-to-end with no API key, no
+/// network, and no `asi-runtime` feature — for showcases, CI, and tests.
+fn ai_mock_enabled() -> bool {
+    std::env::var("AXON_AI_MOCK").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
 }
 
 /// Milliseconds since the Unix epoch.
@@ -2005,5 +2025,22 @@ mod tests {
             }
         "#;
         assert_eq!(run(src), 27);
+    }
+
+    #[test]
+    fn ai_mock_mode_returns_ok() {
+        // With AXON_AI_MOCK set, ai_complete returns Ok(non-empty) with no key /
+        // network / asi-runtime feature. (No other test reads this env var.)
+        std::env::set_var("AXON_AI_MOCK", "1");
+        let n = run(r#"
+            fn main() -> i64 {
+                match ai_complete("anything") {
+                    Ok(s) => str_len(s)
+                    Err(_) => -1
+                }
+            }
+        "#);
+        std::env::remove_var("AXON_AI_MOCK");
+        assert!(n > 0, "mock ai_complete should return Ok(non-empty), got {n}");
     }
 }
