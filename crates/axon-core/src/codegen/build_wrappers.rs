@@ -33,7 +33,7 @@ use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
 use inkwell::values::{
     AggregateValueEnum, BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FloatValue,
-    FunctionValue, IntValue, PointerValue, StructValue,
+    FunctionValue, IntValue, PhiValue, PointerValue, StructValue,
 };
 use inkwell::types::PointerType;
 use inkwell::{FloatPredicate, IntPredicate};
@@ -155,6 +155,16 @@ pub(crate) fn w_ptr_to_int<'ctx>(
 }
 
 #[inline(never)]
+pub(crate) fn w_int_truncate<'ctx>(
+    b: &Builder<'ctx>,
+    value: IntValue<'ctx>,
+    int_type: inkwell::types::IntType<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_int_truncate(value, int_type, name).unwrap()
+}
+
+#[inline(never)]
 pub(crate) fn w_int_z_extend<'ctx>(
     b: &Builder<'ctx>,
     value: IntValue<'ctx>,
@@ -253,6 +263,16 @@ pub(crate) fn w_and<'ctx>(
     name: &str,
 ) -> IntValue<'ctx> {
     b.build_and(l, r, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_or<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_or(l, r, name).unwrap()
 }
 
 // ── float arithmetic ──────────────────────────────────────────────────────────
@@ -364,4 +384,17 @@ pub(crate) fn w_ret<'ctx>(b: &Builder<'ctx>, value: BasicValueEnum<'ctx>) {
 #[inline(never)]
 pub(crate) fn w_unreachable(b: &Builder<'_>) {
     b.build_unreachable().unwrap();
+}
+
+// ── phi ───────────────────────────────────────────────────────────────────────
+
+/// Returns the `PhiValue` so call sites can still call `.add_incoming(..)` /
+/// `.as_basic_value()` exactly as before.
+#[inline(never)]
+pub(crate) fn w_phi<'ctx>(
+    b: &Builder<'ctx>,
+    ty: BasicTypeEnum<'ctx>,
+    name: &str,
+) -> PhiValue<'ctx> {
+    b.build_phi(ty, name).unwrap()
 }

@@ -2657,14 +2657,14 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let a = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let b = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let a_len = self.ir.builder.build_extract_value(a, 0, "se_alen").unwrap().into_int_value();
-            let b_len = self.ir.builder.build_extract_value(b, 0, "se_blen").unwrap().into_int_value();
-            let a_ptr = self.ir.builder.build_extract_value(a, 1, "se_aptr").unwrap().into_pointer_value();
-            let b_ptr = self.ir.builder.build_extract_value(b, 1, "se_bptr").unwrap().into_pointer_value();
+            let a_len = build_wrappers::w_extract_value(&self.ir.builder,a, 0, "se_alen").into_int_value();
+            let b_len = build_wrappers::w_extract_value(&self.ir.builder,b, 0, "se_blen").into_int_value();
+            let a_ptr = build_wrappers::w_extract_value(&self.ir.builder,a, 1, "se_aptr").into_pointer_value();
+            let b_ptr = build_wrappers::w_extract_value(&self.ir.builder,b, 1, "se_bptr").into_pointer_value();
 
             // If lengths differ → false immediately.
-            let lens_eq = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, a_len, b_len, "se_leneq").unwrap();
-            self.ir.builder.build_conditional_branch(lens_eq, cmp_bb, false_bb).unwrap();
+            let lens_eq = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, a_len, b_len, "se_leneq");
+            build_wrappers::w_cond_br(&self.ir.builder,lens_eq, cmp_bb, false_bb);
 
             // Same length → call memcmp.
             self.ir.builder.position_at_end(cmp_bb);
@@ -2672,16 +2672,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 let memcmp_ty = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcmp", memcmp_ty, None)
             });
-            let cmp_result = self.ir.builder.build_call(memcmp_fn, &[a_ptr.into(), b_ptr.into(), a_len.into()], "se_cmp").unwrap()
+            let cmp_result = build_wrappers::w_call(&self.ir.builder,memcmp_fn, &[a_ptr.into(), b_ptr.into(), a_len.into()], "se_cmp")
                 .try_as_basic_value().left().unwrap().into_int_value();
-            let is_zero = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, cmp_result, i32_ty.const_int(0, false), "se_iszero").unwrap();
-            self.ir.builder.build_conditional_branch(is_zero, true_bb, false_bb).unwrap();
+            let is_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, cmp_result, i32_ty.const_int(0, false), "se_iszero");
+            build_wrappers::w_cond_br(&self.ir.builder,is_zero, true_bb, false_bb);
 
             self.ir.builder.position_at_end(true_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(1, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(1, false).into());
 
             self.ir.builder.position_at_end(false_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(0, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(0, false).into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_eq".to_string(), fn_val);
@@ -2708,17 +2708,17 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "sc_sptr").unwrap().into_pointer_value();
-            let n_ptr = self.ir.builder.build_extract_value(needle, 1, "sc_nptr").unwrap().into_pointer_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sc_sptr").into_pointer_value();
+            let n_ptr = build_wrappers::w_extract_value(&self.ir.builder,needle, 1, "sc_nptr").into_pointer_value();
 
-            let found = self.ir.builder.build_call(strstr_fn, &[s_ptr.into(), n_ptr.into()], "sc_found").unwrap()
+            let found = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[s_ptr.into(), n_ptr.into()], "sc_found")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             let null = i8_ptr.const_null();
-            let found_int = self.ir.builder.build_ptr_to_int(found, i64_ty, "sc_found_int").unwrap();
-            let null_int  = self.ir.builder.build_ptr_to_int(null,  i64_ty, "sc_null_int").unwrap();
-            let is_found  = self.ir.builder.build_int_compare(inkwell::IntPredicate::NE, found_int, null_int, "sc_is_found").unwrap();
-            let result = self.ir.builder.build_int_z_extend(is_found, bool_ty, "sc_result").unwrap();
-            self.ir.builder.build_return(Some(&result)).unwrap();
+            let found_int = build_wrappers::w_ptr_to_int(&self.ir.builder,found, i64_ty, "sc_found_int");
+            let null_int  = build_wrappers::w_ptr_to_int(&self.ir.builder,null,  i64_ty, "sc_null_int");
+            let is_found  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, found_int, null_int, "sc_is_found");
+            let result = build_wrappers::w_int_z_extend(&self.ir.builder,is_found, bool_ty, "sc_result");
+            build_wrappers::w_ret(&self.ir.builder, result.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_contains".to_string(), fn_val);
@@ -2741,29 +2741,29 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let p = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_len = self.ir.builder.build_extract_value(s, 0, "ssw_slen").unwrap().into_int_value();
-            let p_len = self.ir.builder.build_extract_value(p, 0, "ssw_plen").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "ssw_sptr").unwrap().into_pointer_value();
-            let p_ptr = self.ir.builder.build_extract_value(p, 1, "ssw_pptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "ssw_slen").into_int_value();
+            let p_len = build_wrappers::w_extract_value(&self.ir.builder,p, 0, "ssw_plen").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "ssw_sptr").into_pointer_value();
+            let p_ptr = build_wrappers::w_extract_value(&self.ir.builder,p, 1, "ssw_pptr").into_pointer_value();
 
             // s_len >= p_len?
-            let long_enough = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGE, s_len, p_len, "ssw_longenough").unwrap();
-            self.ir.builder.build_conditional_branch(long_enough, cmp_bb, false_bb).unwrap();
+            let long_enough = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, s_len, p_len, "ssw_longenough");
+            build_wrappers::w_cond_br(&self.ir.builder,long_enough, cmp_bb, false_bb);
 
             self.ir.builder.position_at_end(cmp_bb);
             let memcmp_fn = self.ir.module.get_function("memcmp").unwrap_or_else(|| {
                 let memcmp_ty = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcmp", memcmp_ty, None)
             });
-            let cmp = self.ir.builder.build_call(memcmp_fn, &[s_ptr.into(), p_ptr.into(), p_len.into()], "ssw_cmp").unwrap()
+            let cmp = build_wrappers::w_call(&self.ir.builder,memcmp_fn, &[s_ptr.into(), p_ptr.into(), p_len.into()], "ssw_cmp")
                 .try_as_basic_value().left().unwrap().into_int_value();
-            let is_zero = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "ssw_iszero").unwrap();
-            self.ir.builder.build_conditional_branch(is_zero, true_bb, false_bb).unwrap();
+            let is_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "ssw_iszero");
+            build_wrappers::w_cond_br(&self.ir.builder,is_zero, true_bb, false_bb);
 
             self.ir.builder.position_at_end(true_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(1, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(1, false).into());
             self.ir.builder.position_at_end(false_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(0, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(0, false).into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_starts_with".to_string(), fn_val);
@@ -2786,33 +2786,33 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let sf = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_len  = self.ir.builder.build_extract_value(s, 0, "sew_slen").unwrap().into_int_value();
-            let sf_len = self.ir.builder.build_extract_value(sf, 0, "sew_sflen").unwrap().into_int_value();
-            let s_ptr  = self.ir.builder.build_extract_value(s, 1, "sew_sptr").unwrap().into_pointer_value();
-            let sf_ptr = self.ir.builder.build_extract_value(sf, 1, "sew_sfptr").unwrap().into_pointer_value();
+            let s_len  = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "sew_slen").into_int_value();
+            let sf_len = build_wrappers::w_extract_value(&self.ir.builder,sf, 0, "sew_sflen").into_int_value();
+            let s_ptr  = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sew_sptr").into_pointer_value();
+            let sf_ptr = build_wrappers::w_extract_value(&self.ir.builder,sf, 1, "sew_sfptr").into_pointer_value();
 
-            let long_enough = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGE, s_len, sf_len, "sew_longenough").unwrap();
-            self.ir.builder.build_conditional_branch(long_enough, cmp_bb, false_bb).unwrap();
+            let long_enough = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, s_len, sf_len, "sew_longenough");
+            build_wrappers::w_cond_br(&self.ir.builder,long_enough, cmp_bb, false_bb);
 
             self.ir.builder.position_at_end(cmp_bb);
             // offset = s_len - sf_len; start = s.ptr + offset
-            let offset = self.ir.builder.build_int_sub(s_len, sf_len, "sew_offset").unwrap();
+            let offset = build_wrappers::w_int_sub(&self.ir.builder,s_len, sf_len, "sew_offset");
             let start = unsafe {
-                self.ir.builder.build_gep(self.ir.context.i8_type(), s_ptr, &[offset], "sew_start").unwrap()
+                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[offset], "sew_start")
             };
             let memcmp_fn = self.ir.module.get_function("memcmp").unwrap_or_else(|| {
                 let memcmp_ty = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcmp", memcmp_ty, None)
             });
-            let cmp = self.ir.builder.build_call(memcmp_fn, &[start.into(), sf_ptr.into(), sf_len.into()], "sew_cmp").unwrap()
+            let cmp = build_wrappers::w_call(&self.ir.builder,memcmp_fn, &[start.into(), sf_ptr.into(), sf_len.into()], "sew_cmp")
                 .try_as_basic_value().left().unwrap().into_int_value();
-            let is_zero = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "sew_iszero").unwrap();
-            self.ir.builder.build_conditional_branch(is_zero, true_bb, false_bb).unwrap();
+            let is_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "sew_iszero");
+            build_wrappers::w_cond_br(&self.ir.builder,is_zero, true_bb, false_bb);
 
             self.ir.builder.position_at_end(true_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(1, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(1, false).into());
             self.ir.builder.position_at_end(false_bb);
-            self.ir.builder.build_return(Some(&bool_ty.const_int(0, false))).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(0, false).into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_ends_with".to_string(), fn_val);
@@ -2833,37 +2833,37 @@ impl<'ctx> super::Codegen<'ctx> {
             let s     = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let start = fn_val.get_nth_param(1).unwrap().into_int_value();
             let end   = fn_val.get_nth_param(2).unwrap().into_int_value();
-            let s_len = self.ir.builder.build_extract_value(s, 0, "ss_slen").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "ss_sptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "ss_slen").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "ss_sptr").into_pointer_value();
 
             // Clamp start to [0, s_len]
             let zero = i64_ty.const_int(0, false);
-            let start_pos = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, start, zero, "ss_s_neg").unwrap();
-            let start_clamped_lo = self.ir.builder.build_select(start_pos, zero, start, "ss_start_lo").unwrap().into_int_value();
-            let start_gt = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGT, start_clamped_lo, s_len, "ss_s_gt").unwrap();
-            let start_clamped = self.ir.builder.build_select(start_gt, s_len, start_clamped_lo, "ss_start").unwrap().into_int_value();
+            let start_pos = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, start, zero, "ss_s_neg");
+            let start_clamped_lo = build_wrappers::w_select(&self.ir.builder,start_pos, zero.into(), start.into(), "ss_start_lo").into_int_value();
+            let start_gt = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGT, start_clamped_lo, s_len, "ss_s_gt");
+            let start_clamped = build_wrappers::w_select(&self.ir.builder,start_gt, s_len.into(), start_clamped_lo.into(), "ss_start").into_int_value();
 
             // Clamp end to [start_clamped, s_len]
-            let end_lt = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, end, start_clamped, "ss_e_lt").unwrap();
-            let end_clamped_lo = self.ir.builder.build_select(end_lt, start_clamped, end, "ss_end_lo").unwrap().into_int_value();
-            let end_gt = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGT, end_clamped_lo, s_len, "ss_e_gt").unwrap();
-            let end_clamped = self.ir.builder.build_select(end_gt, s_len, end_clamped_lo, "ss_end").unwrap().into_int_value();
+            let end_lt = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, end, start_clamped, "ss_e_lt");
+            let end_clamped_lo = build_wrappers::w_select(&self.ir.builder,end_lt, start_clamped.into(), end.into(), "ss_end_lo").into_int_value();
+            let end_gt = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGT, end_clamped_lo, s_len, "ss_e_gt");
+            let end_clamped = build_wrappers::w_select(&self.ir.builder,end_gt, s_len.into(), end_clamped_lo.into(), "ss_end").into_int_value();
 
             // slice_len = end_clamped - start_clamped
-            let slice_len = self.ir.builder.build_int_sub(end_clamped, start_clamped, "ss_slicelen").unwrap();
+            let slice_len = build_wrappers::w_int_sub(&self.ir.builder,end_clamped, start_clamped, "ss_slicelen");
 
             // Allocate slice_len + 1 bytes via malloc.
             let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
                 let malloc_ty = i8_ptr.fn_type(&[i64_ty.into()], false);
                 self.ir.module.add_function("malloc", malloc_ty, None)
             });
-            let alloc_size = self.ir.builder.build_int_add(slice_len, i64_ty.const_int(1, false), "ss_alloc").unwrap();
-            let buf = self.ir.builder.build_call(malloc_fn, &[alloc_size.into()], "ss_buf").unwrap()
+            let alloc_size = build_wrappers::w_int_add(&self.ir.builder,slice_len, i64_ty.const_int(1, false), "ss_alloc");
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "ss_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
 
             // src = s_ptr + start_clamped
             let src_ptr = unsafe {
-                self.ir.builder.build_gep(self.ir.context.i8_type(), s_ptr, &[start_clamped], "ss_src").unwrap()
+                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[start_clamped], "ss_src")
             };
 
             // memcpy(buf, src, slice_len)
@@ -2871,21 +2871,21 @@ impl<'ctx> super::Codegen<'ctx> {
                 let memcpy_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcpy", memcpy_ty, None)
             });
-            self.ir.builder.build_call(memcpy_fn, &[buf.into(), src_ptr.into(), slice_len.into()], "").unwrap();
+            build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), src_ptr.into(), slice_len.into()], "");
 
             // Null-terminate: buf[slice_len] = 0
             let null_byte = self.ir.context.i8_type().const_int(0, false);
             let null_pos = unsafe {
-                self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[slice_len], "ss_null_pos").unwrap()
+                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[slice_len], "ss_null_pos")
             };
-            self.ir.builder.build_store(null_pos, null_byte).unwrap();
+            build_wrappers::w_store(&self.ir.builder,null_pos, null_byte.into());
 
             // Build result str struct { slice_len, buf }
-            let result_alloca = self.ir.builder.build_alloca(str_ty, "ss_result").unwrap();
-            self.ir.builder.build_store(self.ir.builder.build_struct_gep(str_ty, result_alloca, 0, "").unwrap(), slice_len).unwrap();
-            self.ir.builder.build_store(self.ir.builder.build_struct_gep(str_ty, result_alloca, 1, "").unwrap(), buf).unwrap();
-            let result = self.ir.builder.build_load(str_ty, result_alloca, "ss_result_val").unwrap();
-            self.ir.builder.build_return(Some(&result)).unwrap();
+            let result_alloca = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "ss_result");
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), result_alloca, 0, ""), slice_len.into());
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), result_alloca, 1, ""), buf.into());
+            let result = build_wrappers::w_load(&self.ir.builder,str_ty.into(), result_alloca, "ss_result_val");
+            build_wrappers::w_ret(&self.ir.builder, result.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_slice".to_string(), fn_val);
@@ -2908,28 +2908,28 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_ptr  = self.ir.builder.build_extract_value(s, 1, "sio_sptr").unwrap().into_pointer_value();
-            let n_ptr  = self.ir.builder.build_extract_value(needle, 1, "sio_nptr").unwrap().into_pointer_value();
+            let s_ptr  = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sio_sptr").into_pointer_value();
+            let n_ptr  = build_wrappers::w_extract_value(&self.ir.builder,needle, 1, "sio_nptr").into_pointer_value();
 
             let strstr_fn = self.ir.module.get_function("strstr").unwrap_or_else(|| {
                 let strstr_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
                 self.ir.module.add_function("strstr", strstr_ty, None)
             });
-            let found = self.ir.builder.build_call(strstr_fn, &[s_ptr.into(), n_ptr.into()], "sio_found_ptr").unwrap()
+            let found = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[s_ptr.into(), n_ptr.into()], "sio_found_ptr")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             let null = i8_ptr.const_null();
-            let found_int = self.ir.builder.build_ptr_to_int(found, i64_ty, "sio_fi").unwrap();
-            let null_int  = self.ir.builder.build_ptr_to_int(null, i64_ty, "sio_ni").unwrap();
-            let s_int     = self.ir.builder.build_ptr_to_int(s_ptr, i64_ty, "sio_si").unwrap();
-            let is_found  = self.ir.builder.build_int_compare(inkwell::IntPredicate::NE, found_int, null_int, "sio_is_found").unwrap();
-            self.ir.builder.build_conditional_branch(is_found, found_bb, notfound_bb).unwrap();
+            let found_int = build_wrappers::w_ptr_to_int(&self.ir.builder,found, i64_ty, "sio_fi");
+            let null_int  = build_wrappers::w_ptr_to_int(&self.ir.builder,null, i64_ty, "sio_ni");
+            let s_int     = build_wrappers::w_ptr_to_int(&self.ir.builder,s_ptr, i64_ty, "sio_si");
+            let is_found  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, found_int, null_int, "sio_is_found");
+            build_wrappers::w_cond_br(&self.ir.builder,is_found, found_bb, notfound_bb);
 
             self.ir.builder.position_at_end(found_bb);
-            let offset = self.ir.builder.build_int_sub(found_int, s_int, "sio_offset").unwrap();
-            self.ir.builder.build_return(Some(&offset)).unwrap();
+            let offset = build_wrappers::w_int_sub(&self.ir.builder,found_int, s_int, "sio_offset");
+            build_wrappers::w_ret(&self.ir.builder, offset.into());
 
             self.ir.builder.position_at_end(notfound_bb);
-            self.ir.builder.build_return(Some(&i64_ty.const_int(u64::MAX, true))).unwrap(); // -1 as i64
+            build_wrappers::w_ret(&self.ir.builder, i64_ty.const_int(u64::MAX, true).into()); // -1 as i64
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_index_of".to_string(), fn_val);
@@ -2951,27 +2951,27 @@ impl<'ctx> super::Codegen<'ctx> {
 
             let s     = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let idx   = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let s_len = self.ir.builder.build_extract_value(s, 0, "ca_len").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "ca_ptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "ca_len").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "ca_ptr").into_pointer_value();
 
             // Check 0 <= idx < s_len
             let zero = i64_ty.const_int(0, false);
-            let ge_zero = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGE, idx, zero, "ca_gez").unwrap();
-            let lt_len  = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, idx, s_len, "ca_ltl").unwrap();
-            let in_bounds = self.ir.builder.build_and(ge_zero, lt_len, "ca_inb").unwrap();
-            self.ir.builder.build_conditional_branch(in_bounds, inbounds_bb, oob_bb).unwrap();
+            let ge_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, idx, zero, "ca_gez");
+            let lt_len  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, idx, s_len, "ca_ltl");
+            let in_bounds = build_wrappers::w_and(&self.ir.builder,ge_zero, lt_len, "ca_inb");
+            build_wrappers::w_cond_br(&self.ir.builder,in_bounds, inbounds_bb, oob_bb);
 
             self.ir.builder.position_at_end(inbounds_bb);
             let byte_ptr = unsafe {
-                self.ir.builder.build_gep(self.ir.context.i8_type(), s_ptr, &[idx], "ca_byteptr").unwrap()
+                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[idx], "ca_byteptr")
             };
-            let byte_val = self.ir.builder.build_load(self.ir.context.i8_type(), byte_ptr, "ca_byte").unwrap().into_int_value();
+            let byte_val = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), byte_ptr, "ca_byte").into_int_value();
             // zero-extend i8 to i64
-            let byte_i64 = self.ir.builder.build_int_z_extend(byte_val, i64_ty, "ca_byte_i64").unwrap();
-            self.ir.builder.build_return(Some(&byte_i64)).unwrap();
+            let byte_i64 = build_wrappers::w_int_z_extend(&self.ir.builder,byte_val, i64_ty, "ca_byte_i64");
+            build_wrappers::w_ret(&self.ir.builder, byte_i64.into());
 
             self.ir.builder.position_at_end(oob_bb);
-            self.ir.builder.build_return(Some(&i64_ty.const_int(u64::MAX, true))).unwrap(); // -1
+            build_wrappers::w_ret(&self.ir.builder, i64_ty.const_int(u64::MAX, true).into()); // -1
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("char_at".to_string(), fn_val);
@@ -2992,8 +2992,8 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
 
             let b = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let is_true = self.ir.builder.build_int_compare(inkwell::IntPredicate::NE, b, bool_ty.const_int(0, false), "tsb_cond").unwrap();
-            self.ir.builder.build_conditional_branch(is_true, true_bb, false_bb).unwrap();
+            let is_true = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, b, bool_ty.const_int(0, false), "tsb_cond");
+            build_wrappers::w_cond_br(&self.ir.builder,is_true, true_bb, false_bb);
 
             // Declare "true\0" and "false\0" as global string constants.
             let true_bytes: Vec<_> = b"true\0".iter().map(|&c| self.ir.context.i8_type().const_int(c as u64, false)).collect();
@@ -3006,18 +3006,18 @@ impl<'ctx> super::Codegen<'ctx> {
             false_g.set_constant(true);
 
             self.ir.builder.position_at_end(true_bb);
-            let true_ptr = self.ir.builder.build_pointer_cast(true_g.as_pointer_value(), i8_ptr, "tsb_tptr").unwrap();
+            let true_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,true_g.as_pointer_value(), i8_ptr, "tsb_tptr");
             let mut true_str = str_ty.get_undef();
-            true_str = self.ir.builder.build_insert_value(true_str, i64_ty.const_int(4, false), 0, "tsb_t0").unwrap().into_struct_value();
-            true_str = self.ir.builder.build_insert_value(true_str, true_ptr, 1, "tsb_t1").unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&true_str)).unwrap();
+            true_str = build_wrappers::w_insert_value(&self.ir.builder,true_str, i64_ty.const_int(4, false).into(), 0, "tsb_t0").into_struct_value();
+            true_str = build_wrappers::w_insert_value(&self.ir.builder,true_str, true_ptr.into(), 1, "tsb_t1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, true_str.into());
 
             self.ir.builder.position_at_end(false_bb);
-            let false_ptr = self.ir.builder.build_pointer_cast(false_g.as_pointer_value(), i8_ptr, "tsb_fptr").unwrap();
+            let false_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,false_g.as_pointer_value(), i8_ptr, "tsb_fptr");
             let mut false_str = str_ty.get_undef();
-            false_str = self.ir.builder.build_insert_value(false_str, i64_ty.const_int(5, false), 0, "tsb_f0").unwrap().into_struct_value();
-            false_str = self.ir.builder.build_insert_value(false_str, false_ptr, 1, "tsb_f1").unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&false_str)).unwrap();
+            false_str = build_wrappers::w_insert_value(&self.ir.builder,false_str, i64_ty.const_int(5, false).into(), 0, "tsb_f0").into_struct_value();
+            false_str = build_wrappers::w_insert_value(&self.ir.builder,false_str, false_ptr.into(), 1, "tsb_f1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, false_str.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("to_str_bool".to_string(), fn_val);
@@ -3049,46 +3049,46 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let data_ptr = self.ir.builder.build_extract_value(s, 1, "pf_data").unwrap().into_pointer_value();
+            let data_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "pf_data").into_pointer_value();
 
-            let endptr_slot = self.ir.builder.build_alloca(i8_ptr, "pf_endptr").unwrap();
-            self.ir.builder.build_store(endptr_slot, i8_ptr.const_null()).unwrap();
-            let endptr_cast = self.ir.builder.build_pointer_cast(endptr_slot, i8_ptr_ptr, "pf_endptr_cast").unwrap();
+            let endptr_slot = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "pf_endptr");
+            build_wrappers::w_store(&self.ir.builder,endptr_slot, i8_ptr.const_null().into());
+            let endptr_cast = build_wrappers::w_pointer_cast(&self.ir.builder,endptr_slot, i8_ptr_ptr, "pf_endptr_cast");
 
-            let parsed_f64 = self.ir.builder.build_call(strtod_fn, &[data_ptr.into(), endptr_cast.into()], "pf_strtod").unwrap()
+            let parsed_f64 = build_wrappers::w_call(&self.ir.builder,strtod_fn, &[data_ptr.into(), endptr_cast.into()], "pf_strtod")
                 .try_as_basic_value().left().unwrap().into_float_value();
 
-            let endptr_val = self.ir.builder.build_load(i8_ptr, endptr_slot, "pf_endptr_val").unwrap().into_pointer_value();
-            let endptr_int = self.ir.builder.build_ptr_to_int(endptr_val, i64_ty, "pf_ep_int").unwrap();
-            let data_int   = self.ir.builder.build_ptr_to_int(data_ptr, i64_ty, "pf_data_int").unwrap();
-            let consumed   = self.ir.builder.build_int_compare(inkwell::IntPredicate::NE, endptr_int, data_int, "pf_consumed").unwrap();
-            self.ir.builder.build_conditional_branch(consumed, ok_bb, err_bb).unwrap();
+            let endptr_val = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), endptr_slot, "pf_endptr_val").into_pointer_value();
+            let endptr_int = build_wrappers::w_ptr_to_int(&self.ir.builder,endptr_val, i64_ty, "pf_ep_int");
+            let data_int   = build_wrappers::w_ptr_to_int(&self.ir.builder,data_ptr, i64_ty, "pf_data_int");
+            let consumed   = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, endptr_int, data_int, "pf_consumed");
+            build_wrappers::w_cond_br(&self.ir.builder,consumed, ok_bb, err_bb);
 
             // ok_bb: { tag=1, payload=f64 as [16 x i8] }
             self.ir.builder.position_at_end(ok_bb);
-            let ok_alloca = self.ir.builder.build_alloca(result_ty, "pf_ok_slot").unwrap();
-            let tag_ptr_ok = self.ir.builder.build_struct_gep(result_ty, ok_alloca, 0, "pf_tag_ok").unwrap();
-            self.ir.builder.build_store(tag_ptr_ok, bool_ty.const_int(1, false)).unwrap();
-            let payload_ok = self.ir.builder.build_struct_gep(result_ty, ok_alloca, 1, "pf_pay_ok").unwrap();
-            let f64_ptr = self.ir.builder.build_pointer_cast(payload_ok, f64_ty.ptr_type(inkwell::AddressSpace::default()), "pf_f64_ptr").unwrap();
-            self.ir.builder.build_store(f64_ptr, parsed_f64).unwrap();
-            let ok_val = self.ir.builder.build_load(result_ty, ok_alloca, "pf_ok_val").unwrap();
-            self.ir.builder.build_return(Some(&ok_val)).unwrap();
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_ok_slot");
+            let tag_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 0, "pf_tag_ok");
+            build_wrappers::w_store(&self.ir.builder,tag_ptr_ok, bool_ty.const_int(1, false).into());
+            let payload_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 1, "pf_pay_ok");
+            let f64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, f64_ty.ptr_type(inkwell::AddressSpace::default()), "pf_f64_ptr");
+            build_wrappers::w_store(&self.ir.builder,f64_ptr, parsed_f64.into());
+            let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pf_ok_val");
+            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
 
             // err_bb: { tag=0, payload=str{len=0, ptr=null} }
             self.ir.builder.position_at_end(err_bb);
-            let err_alloca = self.ir.builder.build_alloca(result_ty, "pf_err_slot").unwrap();
-            let tag_ptr_err = self.ir.builder.build_struct_gep(result_ty, err_alloca, 0, "pf_tag_err").unwrap();
-            self.ir.builder.build_store(tag_ptr_err, bool_ty.const_int(0, false)).unwrap();
-            let payload_err = self.ir.builder.build_struct_gep(result_ty, err_alloca, 1, "pf_pay_err").unwrap();
-            let err_str_ptr = self.ir.builder.build_pointer_cast(payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "pf_str_err_ptr").unwrap();
-            let err_str_slot = self.ir.builder.build_alloca(str_ty, "pf_str_err").unwrap();
-            self.ir.builder.build_store(self.ir.builder.build_struct_gep(str_ty, err_str_slot, 0, "").unwrap(), i64_ty.const_int(0, false)).unwrap();
-            self.ir.builder.build_store(self.ir.builder.build_struct_gep(str_ty, err_str_slot, 1, "").unwrap(), i8_ptr.const_null()).unwrap();
-            let err_str_val = self.ir.builder.build_load(str_ty, err_str_slot, "pf_err_str_val").unwrap();
-            self.ir.builder.build_store(err_str_ptr, err_str_val).unwrap();
-            let err_val = self.ir.builder.build_load(result_ty, err_alloca, "pf_err_val").unwrap();
-            self.ir.builder.build_return(Some(&err_val)).unwrap();
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_err_slot");
+            let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 0, "pf_tag_err");
+            build_wrappers::w_store(&self.ir.builder,tag_ptr_err, bool_ty.const_int(0, false).into());
+            let payload_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 1, "pf_pay_err");
+            let err_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "pf_str_err_ptr");
+            let err_str_slot = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "pf_str_err");
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 0, ""), i64_ty.const_int(0, false).into());
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 1, ""), i8_ptr.const_null().into());
+            let err_str_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), err_str_slot, "pf_err_str_val");
+            build_wrappers::w_store(&self.ir.builder,err_str_ptr, err_str_val.into());
+            let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pf_err_val");
+            build_wrappers::w_ret(&self.ir.builder, err_val.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("parse_float".to_string(), fn_val);
@@ -3108,13 +3108,13 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
             let n = fn_val.get_nth_param(0).unwrap().into_int_value();
             let zero = i64_ty.const_int(0, false);
-            let is_neg = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, n, zero, "ai_isneg").unwrap();
-            self.ir.builder.build_conditional_branch(is_neg, neg_bb, pos_bb).unwrap();
+            let is_neg = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, n, zero, "ai_isneg");
+            build_wrappers::w_cond_br(&self.ir.builder,is_neg, neg_bb, pos_bb);
             self.ir.builder.position_at_end(neg_bb);
-            let negn = self.ir.builder.build_int_neg(n, "ai_neg").unwrap();
-            self.ir.builder.build_return(Some(&negn)).unwrap();
+            let negn = build_wrappers::w_int_neg(&self.ir.builder,n, "ai_neg");
+            build_wrappers::w_ret(&self.ir.builder, negn.into());
             self.ir.builder.position_at_end(pos_bb);
-            self.ir.builder.build_return(Some(&n)).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, n.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("abs_i64".to_string(), fn_val);
             self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
@@ -3131,12 +3131,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
             let a = fn_val.get_nth_param(0).unwrap().into_int_value();
             let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_le_b = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLE, a, b, "mn_ale").unwrap();
-            self.ir.builder.build_conditional_branch(a_le_b, a_bb, b_bb).unwrap();
+            let a_le_b = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLE, a, b, "mn_ale");
+            build_wrappers::w_cond_br(&self.ir.builder,a_le_b, a_bb, b_bb);
             self.ir.builder.position_at_end(a_bb);
-            self.ir.builder.build_return(Some(&a)).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, a.into());
             self.ir.builder.position_at_end(b_bb);
-            self.ir.builder.build_return(Some(&b)).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, b.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("min_i64".to_string(), fn_val);
             self.fn_return_types.insert("min_i64".to_string(), Type::I64);
@@ -3153,12 +3153,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
             let a = fn_val.get_nth_param(0).unwrap().into_int_value();
             let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_ge_b = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGE, a, b, "mx_age").unwrap();
-            self.ir.builder.build_conditional_branch(a_ge_b, a_bb, b_bb).unwrap();
+            let a_ge_b = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, a, b, "mx_age");
+            build_wrappers::w_cond_br(&self.ir.builder,a_ge_b, a_bb, b_bb);
             self.ir.builder.position_at_end(a_bb);
-            self.ir.builder.build_return(Some(&a)).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, a.into());
             self.ir.builder.position_at_end(b_bb);
-            self.ir.builder.build_return(Some(&b)).unwrap();
+            build_wrappers::w_ret(&self.ir.builder, b.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("max_i64".to_string(), fn_val);
             self.fn_return_types.insert("max_i64".to_string(), Type::I64);
@@ -3180,62 +3180,62 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── entry: malloc, init i=0, jump to loop ──────────────────────
             self.ir.builder.position_at_end(entry_bb);
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let s_len = self.ir.builder.build_extract_value(s, 0, "stl_len").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "stl_ptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "stl_len").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "stl_ptr").into_pointer_value();
             let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
                 let ft = i8_ptr.fn_type(&[i64_ty.into()], false);
                 self.ir.module.add_function("malloc", ft, None)
             });
-            let alloc_size = self.ir.builder.build_int_add(s_len, i64_ty.const_int(1, false), "stl_sz").unwrap();
-            let buf = self.ir.builder.build_call(malloc_fn, &[alloc_size.into()], "stl_buf").unwrap()
+            let alloc_size = build_wrappers::w_int_add(&self.ir.builder,s_len, i64_ty.const_int(1, false), "stl_sz");
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "stl_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
-            let i_slot = self.ir.builder.build_alloca(i64_ty, "stl_i").unwrap();
-            self.ir.builder.build_store(i_slot, i64_ty.const_zero()).unwrap();
-            self.ir.builder.build_unconditional_branch(loop_bb).unwrap();
+            let i_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "stl_i");
+            build_wrappers::w_store(&self.ir.builder,i_slot, i64_ty.const_zero().into());
+            build_wrappers::w_br(&self.ir.builder,loop_bb);
 
             // ── loop: if i < s_len goto body else done ─────────────────────
             self.ir.builder.position_at_end(loop_bb);
-            let i_val = self.ir.builder.build_load(i64_ty, i_slot, "stl_iv").unwrap().into_int_value();
-            let in_range = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, s_len, "stl_cmp").unwrap();
-            self.ir.builder.build_conditional_branch(in_range, body_bb, done_bb).unwrap();
+            let i_val = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), i_slot, "stl_iv").into_int_value();
+            let in_range = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, i_val, s_len, "stl_cmp");
+            build_wrappers::w_cond_br(&self.ir.builder,in_range, body_bb, done_bb);
 
             // ── body: convert byte, store, increment i ─────────────────────
             self.ir.builder.position_at_end(body_bb);
-            let src_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), s_ptr, &[i_val], "stl_src").unwrap() };
-            let byte = self.ir.builder.build_load(self.ir.context.i8_type(), src_gep, "stl_byte").unwrap().into_int_value();
+            let src_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[i_val], "stl_src") };
+            let byte = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), src_gep, "stl_byte").into_int_value();
             let converted = if *is_upper {
                 // toupper: if byte in 'a'..'z' => byte - 32
                 let lo = self.ir.context.i8_type().const_int(b'a' as u64, false);
                 let hi = self.ir.context.i8_type().const_int(b'z' as u64, false);
-                let is_lo = self.ir.builder.build_int_compare(inkwell::IntPredicate::UGE, byte, lo, "stl_uge").unwrap();
-                let is_hi = self.ir.builder.build_int_compare(inkwell::IntPredicate::ULE, byte, hi, "stl_ule").unwrap();
-                let in_range_c = self.ir.builder.build_and(is_lo, is_hi, "stl_islc").unwrap();
-                let sub32 = self.ir.builder.build_int_sub(byte, self.ir.context.i8_type().const_int(32, false), "stl_sub").unwrap();
-                self.ir.builder.build_select(in_range_c, sub32, byte, "stl_sel").unwrap().into_int_value()
+                let is_lo = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::UGE, byte, lo, "stl_uge");
+                let is_hi = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::ULE, byte, hi, "stl_ule");
+                let in_range_c = build_wrappers::w_and(&self.ir.builder,is_lo, is_hi, "stl_islc");
+                let sub32 = build_wrappers::w_int_sub(&self.ir.builder,byte, self.ir.context.i8_type().const_int(32, false), "stl_sub");
+                build_wrappers::w_select(&self.ir.builder,in_range_c, sub32.into(), byte.into(), "stl_sel").into_int_value()
             } else {
                 // tolower: if byte in 'A'..'Z' => byte + 32
                 let lo = self.ir.context.i8_type().const_int(b'A' as u64, false);
                 let hi = self.ir.context.i8_type().const_int(b'Z' as u64, false);
-                let is_lo = self.ir.builder.build_int_compare(inkwell::IntPredicate::UGE, byte, lo, "stl_uge").unwrap();
-                let is_hi = self.ir.builder.build_int_compare(inkwell::IntPredicate::ULE, byte, hi, "stl_ule").unwrap();
-                let in_range_c = self.ir.builder.build_and(is_lo, is_hi, "stl_isuc").unwrap();
-                let add32 = self.ir.builder.build_int_add(byte, self.ir.context.i8_type().const_int(32, false), "stl_add").unwrap();
-                self.ir.builder.build_select(in_range_c, add32, byte, "stl_sel").unwrap().into_int_value()
+                let is_lo = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::UGE, byte, lo, "stl_uge");
+                let is_hi = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::ULE, byte, hi, "stl_ule");
+                let in_range_c = build_wrappers::w_and(&self.ir.builder,is_lo, is_hi, "stl_isuc");
+                let add32 = build_wrappers::w_int_add(&self.ir.builder,byte, self.ir.context.i8_type().const_int(32, false), "stl_add");
+                build_wrappers::w_select(&self.ir.builder,in_range_c, add32.into(), byte.into(), "stl_sel").into_int_value()
             };
-            let dst_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[i_val], "stl_dst").unwrap() };
-            self.ir.builder.build_store(dst_gep, converted).unwrap();
-            let next_i = self.ir.builder.build_int_add(i_val, i64_ty.const_int(1, false), "stl_ni").unwrap();
-            self.ir.builder.build_store(i_slot, next_i).unwrap();
-            self.ir.builder.build_unconditional_branch(loop_bb).unwrap();
+            let dst_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[i_val], "stl_dst") };
+            build_wrappers::w_store(&self.ir.builder,dst_gep, converted.into());
+            let next_i = build_wrappers::w_int_add(&self.ir.builder,i_val, i64_ty.const_int(1, false), "stl_ni");
+            build_wrappers::w_store(&self.ir.builder,i_slot, next_i.into());
+            build_wrappers::w_br(&self.ir.builder,loop_bb);
 
             // ── done: null-terminate and return ───────────────────────────
             self.ir.builder.position_at_end(done_bb);
-            let null_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[s_len], "stl_null").unwrap() };
-            self.ir.builder.build_store(null_gep, self.ir.context.i8_type().const_zero()).unwrap();
+            let null_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[s_len], "stl_null") };
+            build_wrappers::w_store(&self.ir.builder,null_gep, self.ir.context.i8_type().const_zero().into());
             let mut result = str_ty.const_zero();
-            result = self.ir.builder.build_insert_value(result, s_len, 0, "stl_r0").unwrap().into_struct_value();
-            result = self.ir.builder.build_insert_value(result, buf, 1, "stl_r1").unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&result)).unwrap();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, s_len.into(), 0, "stl_r0").into_struct_value();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, buf.into(), 1, "stl_r1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, result.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert(fname.to_string(), fn_val);
             self.fn_return_types.insert(fname.to_string(), Type::Str);
@@ -3270,14 +3270,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.ir.builder.position_at_end(entry_bb);
 
                 let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-                let orig_len = self.ir.builder.build_extract_value(s, 0, "stt_olen").unwrap().into_int_value();
-                let orig_ptr = self.ir.builder.build_extract_value(s, 1, "stt_optr").unwrap().into_pointer_value();
+                let orig_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "stt_olen").into_int_value();
+                let orig_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "stt_optr").into_pointer_value();
 
                 // start = 0, end = orig_len
-                let start_slot = self.ir.builder.build_alloca(i64_ty, "stt_start").unwrap();
-                let end_slot   = self.ir.builder.build_alloca(i64_ty, "stt_end").unwrap();
-                self.ir.builder.build_store(start_slot, i64_ty.const_zero()).unwrap();
-                self.ir.builder.build_store(end_slot, orig_len).unwrap();
+                let start_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "stt_start");
+                let end_slot   = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "stt_end");
+                build_wrappers::w_store(&self.ir.builder,start_slot, i64_ty.const_zero().into());
+                build_wrappers::w_store(&self.ir.builder,end_slot, orig_len.into());
 
                 let space_threshold = self.ir.context.i8_type().const_int(32, false);
 
@@ -3286,21 +3286,21 @@ impl<'ctx> super::Codegen<'ctx> {
                     let ts_cond = self.ir.context.append_basic_block(fn_val, "stt_sc");
                     let ts_body = self.ir.context.append_basic_block(fn_val, "stt_sb");
                     let ts_done = self.ir.context.append_basic_block(fn_val, "stt_sd");
-                    self.ir.builder.build_unconditional_branch(ts_cond).unwrap();
+                    build_wrappers::w_br(&self.ir.builder,ts_cond);
                     self.ir.builder.position_at_end(ts_cond);
-                    let cur_start = self.ir.builder.build_load(i64_ty, start_slot, "stt_cs").unwrap().into_int_value();
-                    let cur_end   = self.ir.builder.build_load(i64_ty, end_slot, "stt_ce").unwrap().into_int_value();
-                    let in_range  = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, cur_start, cur_end, "stt_ir").unwrap();
+                    let cur_start = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), start_slot, "stt_cs").into_int_value();
+                    let cur_end   = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), end_slot, "stt_ce").into_int_value();
+                    let in_range  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, cur_start, cur_end, "stt_ir");
                     // check byte
-                    let byte_ptr = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), orig_ptr, &[cur_start], "stt_bp").unwrap() };
-                    let byte_val = self.ir.builder.build_load(self.ir.context.i8_type(), byte_ptr, "stt_bv").unwrap().into_int_value();
-                    let is_space = self.ir.builder.build_int_compare(inkwell::IntPredicate::ULE, byte_val, space_threshold, "stt_isp").unwrap();
-                    let should_skip = self.ir.builder.build_and(in_range, is_space, "stt_skip").unwrap();
-                    self.ir.builder.build_conditional_branch(should_skip, ts_body, ts_done).unwrap();
+                    let byte_ptr = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), orig_ptr, &[cur_start], "stt_bp") };
+                    let byte_val = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), byte_ptr, "stt_bv").into_int_value();
+                    let is_space = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::ULE, byte_val, space_threshold, "stt_isp");
+                    let should_skip = build_wrappers::w_and(&self.ir.builder,in_range, is_space, "stt_skip");
+                    build_wrappers::w_cond_br(&self.ir.builder,should_skip, ts_body, ts_done);
                     self.ir.builder.position_at_end(ts_body);
-                    let next_start = self.ir.builder.build_int_add(cur_start, i64_ty.const_int(1, false), "stt_ns").unwrap();
-                    self.ir.builder.build_store(start_slot, next_start).unwrap();
-                    self.ir.builder.build_unconditional_branch(ts_cond).unwrap();
+                    let next_start = build_wrappers::w_int_add(&self.ir.builder,cur_start, i64_ty.const_int(1, false), "stt_ns");
+                    build_wrappers::w_store(&self.ir.builder,start_slot, next_start.into());
+                    build_wrappers::w_br(&self.ir.builder,ts_cond);
                     self.ir.builder.position_at_end(ts_done);
                 }
 
@@ -3309,45 +3309,45 @@ impl<'ctx> super::Codegen<'ctx> {
                     let te_cond = self.ir.context.append_basic_block(fn_val, "stt_ec");
                     let te_body = self.ir.context.append_basic_block(fn_val, "stt_eb");
                     let te_done = self.ir.context.append_basic_block(fn_val, "stt_ed");
-                    self.ir.builder.build_unconditional_branch(te_cond).unwrap();
+                    build_wrappers::w_br(&self.ir.builder,te_cond);
                     self.ir.builder.position_at_end(te_cond);
-                    let cur_start = self.ir.builder.build_load(i64_ty, start_slot, "stt_ecs").unwrap().into_int_value();
-                    let cur_end   = self.ir.builder.build_load(i64_ty, end_slot, "stt_ece").unwrap().into_int_value();
-                    let in_range  = self.ir.builder.build_int_compare(inkwell::IntPredicate::SGT, cur_end, cur_start, "stt_eir").unwrap();
-                    let prev_idx  = self.ir.builder.build_int_sub(cur_end, i64_ty.const_int(1, false), "stt_pi").unwrap();
-                    let byte_ptr  = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), orig_ptr, &[prev_idx], "stt_ebp").unwrap() };
-                    let byte_val  = self.ir.builder.build_load(self.ir.context.i8_type(), byte_ptr, "stt_ebv").unwrap().into_int_value();
-                    let is_space  = self.ir.builder.build_int_compare(inkwell::IntPredicate::ULE, byte_val, space_threshold, "stt_eisp").unwrap();
-                    let should_trim = self.ir.builder.build_and(in_range, is_space, "stt_etrim").unwrap();
-                    self.ir.builder.build_conditional_branch(should_trim, te_body, te_done).unwrap();
+                    let cur_start = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), start_slot, "stt_ecs").into_int_value();
+                    let cur_end   = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), end_slot, "stt_ece").into_int_value();
+                    let in_range  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGT, cur_end, cur_start, "stt_eir");
+                    let prev_idx  = build_wrappers::w_int_sub(&self.ir.builder,cur_end, i64_ty.const_int(1, false), "stt_pi");
+                    let byte_ptr  = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), orig_ptr, &[prev_idx], "stt_ebp") };
+                    let byte_val  = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), byte_ptr, "stt_ebv").into_int_value();
+                    let is_space  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::ULE, byte_val, space_threshold, "stt_eisp");
+                    let should_trim = build_wrappers::w_and(&self.ir.builder,in_range, is_space, "stt_etrim");
+                    build_wrappers::w_cond_br(&self.ir.builder,should_trim, te_body, te_done);
                     self.ir.builder.position_at_end(te_body);
-                    let next_end = self.ir.builder.build_int_sub(cur_end, i64_ty.const_int(1, false), "stt_ne").unwrap();
-                    self.ir.builder.build_store(end_slot, next_end).unwrap();
-                    self.ir.builder.build_unconditional_branch(te_cond).unwrap();
+                    let next_end = build_wrappers::w_int_sub(&self.ir.builder,cur_end, i64_ty.const_int(1, false), "stt_ne");
+                    build_wrappers::w_store(&self.ir.builder,end_slot, next_end.into());
+                    build_wrappers::w_br(&self.ir.builder,te_cond);
                     self.ir.builder.position_at_end(te_done);
                 }
 
                 // new_start, new_end computed; new_len = end - start
-                let final_start = self.ir.builder.build_load(i64_ty, start_slot, "stt_fs").unwrap().into_int_value();
-                let final_end   = self.ir.builder.build_load(i64_ty, end_slot, "stt_fe").unwrap().into_int_value();
-                let new_len = self.ir.builder.build_int_sub(final_end, final_start, "stt_nl").unwrap();
+                let final_start = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), start_slot, "stt_fs").into_int_value();
+                let final_end   = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), end_slot, "stt_fe").into_int_value();
+                let new_len = build_wrappers::w_int_sub(&self.ir.builder,final_end, final_start, "stt_nl");
 
                 // malloc(new_len + 1)
-                let alloc_sz = self.ir.builder.build_int_add(new_len, i64_ty.const_int(1, false), "stt_az").unwrap();
-                let buf = self.ir.builder.build_call(malloc_fn, &[alloc_sz.into()], "stt_buf").unwrap()
+                let alloc_sz = build_wrappers::w_int_add(&self.ir.builder,new_len, i64_ty.const_int(1, false), "stt_az");
+                let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_sz.into()], "stt_buf")
                     .try_as_basic_value().left().unwrap().into_pointer_value();
                 // memcpy(buf, orig_ptr+start, new_len)
-                let src_ptr = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), orig_ptr, &[final_start], "stt_src").unwrap() };
-                self.ir.builder.build_call(memcpy_fn, &[buf.into(), src_ptr.into(), new_len.into()], "stt_cpy").unwrap();
+                let src_ptr = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), orig_ptr, &[final_start], "stt_src") };
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), src_ptr.into(), new_len.into()], "stt_cpy");
                 // null-terminate
-                let null_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[new_len], "stt_nul").unwrap() };
-                self.ir.builder.build_store(null_gep, self.ir.context.i8_type().const_zero()).unwrap();
+                let null_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[new_len], "stt_nul") };
+                build_wrappers::w_store(&self.ir.builder,null_gep, self.ir.context.i8_type().const_zero().into());
 
                 // return str { new_len, buf }
                 let mut result = str_ty.const_zero();
-                result = self.ir.builder.build_insert_value(result, new_len, 0, "stt_r0").unwrap().into_struct_value();
-                result = self.ir.builder.build_insert_value(result, buf, 1, "stt_r1").unwrap().into_struct_value();
-                self.ir.builder.build_return(Some(&result)).unwrap();
+                result = build_wrappers::w_insert_value(&self.ir.builder,result, new_len.into(), 0, "stt_r0").into_struct_value();
+                result = build_wrappers::w_insert_value(&self.ir.builder,result, buf.into(), 1, "stt_r1").into_struct_value();
+                build_wrappers::w_ret(&self.ir.builder, result.into());
                 if let Some(b) = saved { self.ir.builder.position_at_end(b); }
                 self.functions.insert(fname.to_string(), fn_val);
                 self.fn_return_types.insert(fname.to_string(), Type::Str);
@@ -3370,8 +3370,8 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
             let s   = fn_val.get_nth_param(0).unwrap().into_struct_value();
             let n   = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let s_len = self.ir.builder.build_extract_value(s, 0, "srep_slen").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "srep_sptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "srep_slen").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "srep_sptr").into_pointer_value();
 
             let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
                 let ft = i8_ptr.fn_type(&[i64_ty.into()], false);
@@ -3384,40 +3384,40 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // n_clamped = max(n, 0); total_len = s_len * n_clamped
             let zero = i64_ty.const_zero();
-            let n_neg = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, n, zero, "srep_neg").unwrap();
-            let n_clamped = self.ir.builder.build_select(n_neg, zero, n, "srep_nc").unwrap().into_int_value();
-            let total_len = self.ir.builder.build_int_mul(s_len, n_clamped, "srep_tlen").unwrap();
+            let n_neg = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, n, zero, "srep_neg");
+            let n_clamped = build_wrappers::w_select(&self.ir.builder,n_neg, zero.into(), n.into(), "srep_nc").into_int_value();
+            let total_len = build_wrappers::w_int_mul(&self.ir.builder,s_len, n_clamped, "srep_tlen");
             // malloc(total_len + 1)
-            let alloc_sz = self.ir.builder.build_int_add(total_len, i64_ty.const_int(1, false), "srep_az").unwrap();
-            let buf = self.ir.builder.build_call(malloc_fn, &[alloc_sz.into()], "srep_buf").unwrap()
+            let alloc_sz = build_wrappers::w_int_add(&self.ir.builder,total_len, i64_ty.const_int(1, false), "srep_az");
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_sz.into()], "srep_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
-            let i_slot = self.ir.builder.build_alloca(i64_ty, "srep_i").unwrap();
-            self.ir.builder.build_store(i_slot, zero).unwrap();
-            self.ir.builder.build_unconditional_branch(loop_bb).unwrap();
+            let i_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "srep_i");
+            build_wrappers::w_store(&self.ir.builder,i_slot, zero.into());
+            build_wrappers::w_br(&self.ir.builder,loop_bb);
 
             // ── loop: if i < n_clamped goto body else done ─────────────────
             self.ir.builder.position_at_end(loop_bb);
-            let i_val = self.ir.builder.build_load(i64_ty, i_slot, "srep_iv").unwrap().into_int_value();
-            let in_range = self.ir.builder.build_int_compare(inkwell::IntPredicate::SLT, i_val, n_clamped, "srep_ir").unwrap();
-            self.ir.builder.build_conditional_branch(in_range, body_bb, done_bb).unwrap();
+            let i_val = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), i_slot, "srep_iv").into_int_value();
+            let in_range = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, i_val, n_clamped, "srep_ir");
+            build_wrappers::w_cond_br(&self.ir.builder,in_range, body_bb, done_bb);
 
             // ── body: memcpy one copy, i++ ─────────────────────────────────
             self.ir.builder.position_at_end(body_bb);
-            let offset = self.ir.builder.build_int_mul(i_val, s_len, "srep_off").unwrap();
-            let dst = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[offset], "srep_dst").unwrap() };
-            self.ir.builder.build_call(memcpy_fn, &[dst.into(), s_ptr.into(), s_len.into()], "srep_mc").unwrap();
-            let next_i = self.ir.builder.build_int_add(i_val, i64_ty.const_int(1, false), "srep_ni").unwrap();
-            self.ir.builder.build_store(i_slot, next_i).unwrap();
-            self.ir.builder.build_unconditional_branch(loop_bb).unwrap();
+            let offset = build_wrappers::w_int_mul(&self.ir.builder,i_val, s_len, "srep_off");
+            let dst = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[offset], "srep_dst") };
+            build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[dst.into(), s_ptr.into(), s_len.into()], "srep_mc");
+            let next_i = build_wrappers::w_int_add(&self.ir.builder,i_val, i64_ty.const_int(1, false), "srep_ni");
+            build_wrappers::w_store(&self.ir.builder,i_slot, next_i.into());
+            build_wrappers::w_br(&self.ir.builder,loop_bb);
 
             // ── done: null-terminate and return ───────────────────────────
             self.ir.builder.position_at_end(done_bb);
-            let null_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[total_len], "srep_nul").unwrap() };
-            self.ir.builder.build_store(null_gep, self.ir.context.i8_type().const_zero()).unwrap();
+            let null_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[total_len], "srep_nul") };
+            build_wrappers::w_store(&self.ir.builder,null_gep, self.ir.context.i8_type().const_zero().into());
             let mut result = str_ty.const_zero();
-            result = self.ir.builder.build_insert_value(result, total_len, 0, "srep_r0").unwrap().into_struct_value();
-            result = self.ir.builder.build_insert_value(result, buf, 1, "srep_r1").unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&result)).unwrap();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, total_len.into(), 0, "srep_r0").into_struct_value();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, buf.into(), 1, "srep_r1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, result.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_repeat".to_string(), fn_val);
             self.fn_return_types.insert("str_repeat".to_string(), Type::Str);
@@ -3458,121 +3458,121 @@ impl<'ctx> super::Codegen<'ctx> {
             let from = fn_val.get_nth_param(1).unwrap().into_struct_value();
             let to   = fn_val.get_nth_param(2).unwrap().into_struct_value();
 
-            let s_len    = self.ir.builder.build_extract_value(s, 0, "srpl_slen").unwrap().into_int_value();
-            let s_ptr    = self.ir.builder.build_extract_value(s, 1, "srpl_sptr").unwrap().into_pointer_value();
-            let from_len = self.ir.builder.build_extract_value(from, 0, "srpl_flen").unwrap().into_int_value();
-            let from_ptr = self.ir.builder.build_extract_value(from, 1, "srpl_fptr").unwrap().into_pointer_value();
-            let to_len   = self.ir.builder.build_extract_value(to, 0, "srpl_tlen").unwrap().into_int_value();
-            let to_ptr   = self.ir.builder.build_extract_value(to, 1, "srpl_tptr").unwrap().into_pointer_value();
+            let s_len    = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "srpl_slen").into_int_value();
+            let s_ptr    = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "srpl_sptr").into_pointer_value();
+            let from_len = build_wrappers::w_extract_value(&self.ir.builder,from, 0, "srpl_flen").into_int_value();
+            let from_ptr = build_wrappers::w_extract_value(&self.ir.builder,from, 1, "srpl_fptr").into_pointer_value();
+            let to_len   = build_wrappers::w_extract_value(&self.ir.builder,to, 0, "srpl_tlen").into_int_value();
+            let to_ptr   = build_wrappers::w_extract_value(&self.ir.builder,to, 1, "srpl_tptr").into_pointer_value();
 
             // --- Pass 1: count occurrences and compute output length ---
-            let count_slot  = self.ir.builder.build_alloca(i64_ty, "srpl_cnt").unwrap();
-            let out_len_slot = self.ir.builder.build_alloca(i64_ty, "srpl_ol").unwrap();
-            let scan_slot   = self.ir.builder.build_alloca(i8_ptr, "srpl_scan").unwrap();
-            self.ir.builder.build_store(count_slot, i64_ty.const_zero()).unwrap();
-            self.ir.builder.build_store(out_len_slot, s_len).unwrap();
-            self.ir.builder.build_store(scan_slot, s_ptr).unwrap();
+            let count_slot  = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "srpl_cnt");
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "srpl_ol");
+            let scan_slot   = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "srpl_scan");
+            build_wrappers::w_store(&self.ir.builder,count_slot, i64_ty.const_zero().into());
+            build_wrappers::w_store(&self.ir.builder,out_len_slot, s_len.into());
+            build_wrappers::w_store(&self.ir.builder,scan_slot, s_ptr.into());
             // If from_len == 0, skip replacement (avoid infinite loop).
-            let from_empty = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, from_len, i64_ty.const_zero(), "srpl_fe").unwrap();
-            self.ir.builder.build_conditional_branch(from_empty, build_init, count_cond).unwrap();
+            let from_empty = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, from_len, i64_ty.const_zero(), "srpl_fe");
+            build_wrappers::w_cond_br(&self.ir.builder,from_empty, build_init, count_cond);
 
             self.ir.builder.position_at_end(count_cond);
-            let scan = self.ir.builder.build_load(i8_ptr, scan_slot, "srpl_sv").unwrap().into_pointer_value();
-            let found = self.ir.builder.build_call(strstr_fn, &[scan.into(), from_ptr.into()], "srpl_found").unwrap()
+            let scan = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), scan_slot, "srpl_sv").into_pointer_value();
+            let found = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[scan.into(), from_ptr.into()], "srpl_found")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             // found == null → done
             let null_ptr = i8_ptr.const_null();
-            let is_null = self.ir.builder.build_int_compare(
+            let is_null = build_wrappers::w_int_compare(&self.ir.builder,
                 inkwell::IntPredicate::EQ,
-                self.ir.builder.build_ptr_to_int(found, i64_ty, "srpl_fi").unwrap(),
-                self.ir.builder.build_ptr_to_int(null_ptr, i64_ty, "srpl_ni").unwrap(),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,found, i64_ty, "srpl_fi"),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,null_ptr, i64_ty, "srpl_ni"),
                 "srpl_isnull"
-            ).unwrap();
-            self.ir.builder.build_conditional_branch(is_null, build_init, count_body).unwrap();
+            );
+            build_wrappers::w_cond_br(&self.ir.builder,is_null, build_init, count_body);
 
             self.ir.builder.position_at_end(count_body);
             // count++; out_len += (to_len - from_len); scan = found + from_len
-            let cnt = self.ir.builder.build_load(i64_ty, count_slot, "srpl_cv").unwrap().into_int_value();
-            let new_cnt = self.ir.builder.build_int_add(cnt, i64_ty.const_int(1, false), "srpl_nc").unwrap();
-            self.ir.builder.build_store(count_slot, new_cnt).unwrap();
+            let cnt = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), count_slot, "srpl_cv").into_int_value();
+            let new_cnt = build_wrappers::w_int_add(&self.ir.builder,cnt, i64_ty.const_int(1, false), "srpl_nc");
+            build_wrappers::w_store(&self.ir.builder,count_slot, new_cnt.into());
 
-            let ol = self.ir.builder.build_load(i64_ty, out_len_slot, "srpl_olv").unwrap().into_int_value();
-            let ol_adj = self.ir.builder.build_int_add(
-                self.ir.builder.build_int_sub(ol, from_len, "srpl_sub").unwrap(),
+            let ol = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), out_len_slot, "srpl_olv").into_int_value();
+            let ol_adj = build_wrappers::w_int_add(&self.ir.builder,
+                build_wrappers::w_int_sub(&self.ir.builder,ol, from_len, "srpl_sub"),
                 to_len, "srpl_ol2"
-            ).unwrap();
-            self.ir.builder.build_store(out_len_slot, ol_adj).unwrap();
+            );
+            build_wrappers::w_store(&self.ir.builder,out_len_slot, ol_adj.into());
 
             // scan = found + from_len
-            let new_scan = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), found, &[from_len], "srpl_ns").unwrap() };
-            self.ir.builder.build_store(scan_slot, new_scan).unwrap();
-            self.ir.builder.build_unconditional_branch(count_cond).unwrap();
+            let new_scan = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), found, &[from_len], "srpl_ns") };
+            build_wrappers::w_store(&self.ir.builder,scan_slot, new_scan.into());
+            build_wrappers::w_br(&self.ir.builder,count_cond);
 
             // --- Pass 2: build output ---
             self.ir.builder.position_at_end(build_init);
-            let out_len = self.ir.builder.build_load(i64_ty, out_len_slot, "srpl_fin_ol").unwrap().into_int_value();
-            let alloc_sz = self.ir.builder.build_int_add(out_len, i64_ty.const_int(1, false), "srpl_az").unwrap();
-            let out_buf = self.ir.builder.build_call(malloc_fn, &[alloc_sz.into()], "srpl_obuf").unwrap()
+            let out_len = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), out_len_slot, "srpl_fin_ol").into_int_value();
+            let alloc_sz = build_wrappers::w_int_add(&self.ir.builder,out_len, i64_ty.const_int(1, false), "srpl_az");
+            let out_buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_sz.into()], "srpl_obuf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
 
-            let write_slot = self.ir.builder.build_alloca(i8_ptr, "srpl_wr").unwrap();
-            self.ir.builder.build_store(write_slot, out_buf).unwrap();
-            self.ir.builder.build_store(scan_slot, s_ptr).unwrap();
-            self.ir.builder.build_unconditional_branch(build_cond).unwrap();
+            let write_slot = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "srpl_wr");
+            build_wrappers::w_store(&self.ir.builder,write_slot, out_buf.into());
+            build_wrappers::w_store(&self.ir.builder,scan_slot, s_ptr.into());
+            build_wrappers::w_br(&self.ir.builder,build_cond);
 
             self.ir.builder.position_at_end(build_cond);
-            let scan2 = self.ir.builder.build_load(i8_ptr, scan_slot, "srpl_s2").unwrap().into_pointer_value();
-            let found2 = self.ir.builder.build_call(strstr_fn, &[scan2.into(), from_ptr.into()], "srpl_f2").unwrap()
+            let scan2 = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), scan_slot, "srpl_s2").into_pointer_value();
+            let found2 = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[scan2.into(), from_ptr.into()], "srpl_f2")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
-            let is_null2 = self.ir.builder.build_int_compare(
+            let is_null2 = build_wrappers::w_int_compare(&self.ir.builder,
                 inkwell::IntPredicate::EQ,
-                self.ir.builder.build_ptr_to_int(found2, i64_ty, "srpl_f2i").unwrap(),
-                self.ir.builder.build_ptr_to_int(null_ptr, i64_ty, "srpl_n2i").unwrap(),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,found2, i64_ty, "srpl_f2i"),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,null_ptr, i64_ty, "srpl_n2i"),
                 "srpl_isnull2"
-            ).unwrap();
-            let from_empty2 = self.ir.builder.build_int_compare(inkwell::IntPredicate::EQ, from_len, i64_ty.const_zero(), "srpl_fe2").unwrap();
-            let skip = self.ir.builder.build_or(is_null2, from_empty2, "srpl_skip").unwrap();
-            self.ir.builder.build_conditional_branch(skip, build_done, build_body).unwrap();
+            );
+            let from_empty2 = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, from_len, i64_ty.const_zero(), "srpl_fe2");
+            let skip = build_wrappers::w_or(&self.ir.builder,is_null2, from_empty2, "srpl_skip");
+            build_wrappers::w_cond_br(&self.ir.builder,skip, build_done, build_body);
 
             self.ir.builder.position_at_end(build_body);
             // copy [scan2, found2) into write, then copy to
-            let wr = self.ir.builder.build_load(i8_ptr, write_slot, "srpl_wrv").unwrap().into_pointer_value();
-            let prefix_len = self.ir.builder.build_int_sub(
-                self.ir.builder.build_ptr_to_int(found2, i64_ty, "srpl_pfound").unwrap(),
-                self.ir.builder.build_ptr_to_int(scan2, i64_ty, "srpl_pscan").unwrap(),
+            let wr = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), write_slot, "srpl_wrv").into_pointer_value();
+            let prefix_len = build_wrappers::w_int_sub(&self.ir.builder,
+                build_wrappers::w_ptr_to_int(&self.ir.builder,found2, i64_ty, "srpl_pfound"),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,scan2, i64_ty, "srpl_pscan"),
                 "srpl_plen"
-            ).unwrap();
-            self.ir.builder.build_call(memcpy_fn, &[wr.into(), scan2.into(), prefix_len.into()], "srpl_cpy1").unwrap();
-            let wr2 = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), wr, &[prefix_len], "srpl_wr2").unwrap() };
-            self.ir.builder.build_call(memcpy_fn, &[wr2.into(), to_ptr.into(), to_len.into()], "srpl_cpy2").unwrap();
-            let wr3 = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), wr2, &[to_len], "srpl_wr3").unwrap() };
-            self.ir.builder.build_store(write_slot, wr3).unwrap();
-            let new_scan2 = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), found2, &[from_len], "srpl_ns2").unwrap() };
-            self.ir.builder.build_store(scan_slot, new_scan2).unwrap();
-            self.ir.builder.build_unconditional_branch(build_cond).unwrap();
+            );
+            build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[wr.into(), scan2.into(), prefix_len.into()], "srpl_cpy1");
+            let wr2 = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), wr, &[prefix_len], "srpl_wr2") };
+            build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[wr2.into(), to_ptr.into(), to_len.into()], "srpl_cpy2");
+            let wr3 = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), wr2, &[to_len], "srpl_wr3") };
+            build_wrappers::w_store(&self.ir.builder,write_slot, wr3.into());
+            let new_scan2 = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), found2, &[from_len], "srpl_ns2") };
+            build_wrappers::w_store(&self.ir.builder,scan_slot, new_scan2.into());
+            build_wrappers::w_br(&self.ir.builder,build_cond);
 
             self.ir.builder.position_at_end(build_done);
             // copy remaining tail
-            let final_scan = self.ir.builder.build_load(i8_ptr, scan_slot, "srpl_fscan").unwrap().into_pointer_value();
-            let final_wr   = self.ir.builder.build_load(i8_ptr, write_slot, "srpl_fwr").unwrap().into_pointer_value();
-            let tail_len = self.ir.builder.build_int_sub(
-                self.ir.builder.build_int_add(
-                    self.ir.builder.build_ptr_to_int(s_ptr, i64_ty, "srpl_sp_int").unwrap(),
+            let final_scan = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), scan_slot, "srpl_fscan").into_pointer_value();
+            let final_wr   = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), write_slot, "srpl_fwr").into_pointer_value();
+            let tail_len = build_wrappers::w_int_sub(&self.ir.builder,
+                build_wrappers::w_int_add(&self.ir.builder,
+                    build_wrappers::w_ptr_to_int(&self.ir.builder,s_ptr, i64_ty, "srpl_sp_int"),
                     s_len, "srpl_sp_end"
-                ).unwrap(),
-                self.ir.builder.build_ptr_to_int(final_scan, i64_ty, "srpl_scan_int").unwrap(),
+                ),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,final_scan, i64_ty, "srpl_scan_int"),
                 "srpl_tlen"
-            ).unwrap();
-            self.ir.builder.build_call(memcpy_fn, &[final_wr.into(), final_scan.into(), tail_len.into()], "srpl_tail").unwrap();
+            );
+            build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[final_wr.into(), final_scan.into(), tail_len.into()], "srpl_tail");
             // null-terminate out_buf[out_len] = 0
-            let null_gep = unsafe { self.ir.builder.build_gep(self.ir.context.i8_type(), out_buf, &[out_len], "srpl_nul").unwrap() };
-            self.ir.builder.build_store(null_gep, self.ir.context.i8_type().const_zero()).unwrap();
+            let null_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), out_buf, &[out_len], "srpl_nul") };
+            build_wrappers::w_store(&self.ir.builder,null_gep, self.ir.context.i8_type().const_zero().into());
 
             // return str { out_len, out_buf }
             let mut result = str_ty.const_zero();
-            result = self.ir.builder.build_insert_value(result, out_len, 0, "srpl_r0").unwrap().into_struct_value();
-            result = self.ir.builder.build_insert_value(result, out_buf, 1, "srpl_r1").unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&result)).unwrap();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, out_len.into(), 0, "srpl_r0").into_struct_value();
+            result = build_wrappers::w_insert_value(&self.ir.builder,result, out_buf.into(), 1, "srpl_r1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, result.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_replace".to_string(), fn_val);
             self.fn_return_types.insert("str_replace".to_string(), Type::Str);
@@ -3603,38 +3603,38 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
 
             let name_s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let name_ptr = self.ir.builder.build_extract_value(name_s, 1, "ev_np").unwrap().into_pointer_value();
+            let name_ptr = build_wrappers::w_extract_value(&self.ir.builder,name_s, 1, "ev_np").into_pointer_value();
 
-            let val_ptr = self.ir.builder.build_call(getenv_fn, &[name_ptr.into()], "ev_val").unwrap()
+            let val_ptr = build_wrappers::w_call(&self.ir.builder,getenv_fn, &[name_ptr.into()], "ev_val")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
 
             let null_ptr = i8_ptr.const_null();
-            let is_null = self.ir.builder.build_int_compare(
+            let is_null = build_wrappers::w_int_compare(&self.ir.builder,
                 inkwell::IntPredicate::EQ,
-                self.ir.builder.build_ptr_to_int(val_ptr, i64_ty, "ev_vi").unwrap(),
-                self.ir.builder.build_ptr_to_int(null_ptr, i64_ty, "ev_ni").unwrap(),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,val_ptr, i64_ty, "ev_vi"),
+                build_wrappers::w_ptr_to_int(&self.ir.builder,null_ptr, i64_ty, "ev_ni"),
                 "ev_isnull"
-            ).unwrap();
-            self.ir.builder.build_conditional_branch(is_null, err_bb, ok_bb).unwrap();
+            );
+            build_wrappers::w_cond_br(&self.ir.builder,is_null, err_bb, ok_bb);
 
             // Ok branch: return { tag=1, payload=str{strlen(val_ptr), val_ptr} }
             self.ir.builder.position_at_end(ok_bb);
-            let val_len = self.ir.builder.build_call(strlen_fn, &[val_ptr.into()], "ev_vlen").unwrap()
+            let val_len = build_wrappers::w_call(&self.ir.builder,strlen_fn, &[val_ptr.into()], "ev_vlen")
                 .try_as_basic_value().left().unwrap().into_int_value();
-            let ok_str_ptr = self.ir.builder.build_alloca(result_ty, "ev_ok_r").unwrap();
-            let tag_gep = self.ir.builder.build_struct_gep(result_ty, ok_str_ptr, 0, "ev_tag").unwrap();
-            self.ir.builder.build_store(tag_gep, bool_ty.const_int(1, false)).unwrap();
-            let payload_gep = self.ir.builder.build_struct_gep(result_ty, ok_str_ptr, 1, "ev_pay").unwrap();
-            let payload_as_str = self.ir.builder.build_pointer_cast(payload_gep, str_ty.ptr_type(inkwell::AddressSpace::default()), "ev_str_ptr").unwrap();
+            let ok_str_ptr = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "ev_ok_r");
+            let tag_gep = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_str_ptr, 0, "ev_tag");
+            build_wrappers::w_store(&self.ir.builder,tag_gep, bool_ty.const_int(1, false).into());
+            let payload_gep = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_str_ptr, 1, "ev_pay");
+            let payload_as_str = build_wrappers::w_pointer_cast(&self.ir.builder,payload_gep, str_ty.ptr_type(inkwell::AddressSpace::default()), "ev_str_ptr");
             let ok_str = {
                 let mut sv = str_ty.const_zero();
-                sv = self.ir.builder.build_insert_value(sv, val_len, 0, "ev_sv0").unwrap().into_struct_value();
-                sv = self.ir.builder.build_insert_value(sv, val_ptr, 1, "ev_sv1").unwrap().into_struct_value();
+                sv = build_wrappers::w_insert_value(&self.ir.builder,sv, val_len.into(), 0, "ev_sv0").into_struct_value();
+                sv = build_wrappers::w_insert_value(&self.ir.builder,sv, val_ptr.into(), 1, "ev_sv1").into_struct_value();
                 sv
             };
-            self.ir.builder.build_store(payload_as_str, ok_str).unwrap();
-            let ok_result = self.ir.builder.build_load(result_ty, ok_str_ptr, "ev_ok_val").unwrap();
-            self.ir.builder.build_return(Some(&ok_result)).unwrap();
+            build_wrappers::w_store(&self.ir.builder,payload_as_str, ok_str.into());
+            let ok_result = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_str_ptr, "ev_ok_val");
+            build_wrappers::w_ret(&self.ir.builder, ok_result.into());
 
             // Err branch: return { tag=0, payload=str{"not set"} }
             self.ir.builder.position_at_end(err_bb);
@@ -3645,24 +3645,24 @@ impl<'ctx> super::Codegen<'ctx> {
             let err_bytes: Vec<_> = err_msg.bytes().map(|c| self.ir.context.i8_type().const_int(c as u64, false)).collect();
             err_global.set_initializer(&self.ir.context.i8_type().const_array(&err_bytes));
             err_global.set_constant(true);
-            let err_ptr = self.ir.builder.build_pointer_cast(
+            let err_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,
                 err_global.as_pointer_value(), i8_ptr, "ev_eptr"
-            ).unwrap();
-            let err_str_ptr = self.ir.builder.build_alloca(result_ty, "ev_err_r").unwrap();
-            let tag_gep2 = self.ir.builder.build_struct_gep(result_ty, err_str_ptr, 0, "ev_etag").unwrap();
-            self.ir.builder.build_store(tag_gep2, bool_ty.const_int(0, false)).unwrap();
-            let payload_gep2 = self.ir.builder.build_struct_gep(result_ty, err_str_ptr, 1, "ev_epay").unwrap();
-            let payload_as_str2 = self.ir.builder.build_pointer_cast(payload_gep2, str_ty.ptr_type(inkwell::AddressSpace::default()), "ev_str_ptr2").unwrap();
+            );
+            let err_str_ptr = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "ev_err_r");
+            let tag_gep2 = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_str_ptr, 0, "ev_etag");
+            build_wrappers::w_store(&self.ir.builder,tag_gep2, bool_ty.const_int(0, false).into());
+            let payload_gep2 = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_str_ptr, 1, "ev_epay");
+            let payload_as_str2 = build_wrappers::w_pointer_cast(&self.ir.builder,payload_gep2, str_ty.ptr_type(inkwell::AddressSpace::default()), "ev_str_ptr2");
             let err_str = {
                 let err_len = i64_ty.const_int((err_msg.len() - 1) as u64, false); // exclude null
                 let mut sv = str_ty.const_zero();
-                sv = self.ir.builder.build_insert_value(sv, err_len, 0, "ev_es0").unwrap().into_struct_value();
-                sv = self.ir.builder.build_insert_value(sv, err_ptr, 1, "ev_es1").unwrap().into_struct_value();
+                sv = build_wrappers::w_insert_value(&self.ir.builder,sv, err_len.into(), 0, "ev_es0").into_struct_value();
+                sv = build_wrappers::w_insert_value(&self.ir.builder,sv, err_ptr.into(), 1, "ev_es1").into_struct_value();
                 sv
             };
-            self.ir.builder.build_store(payload_as_str2, err_str).unwrap();
-            let err_result = self.ir.builder.build_load(result_ty, err_str_ptr, "ev_err_val").unwrap();
-            self.ir.builder.build_return(Some(&err_result)).unwrap();
+            build_wrappers::w_store(&self.ir.builder,payload_as_str2, err_str.into());
+            let err_result = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_str_ptr, "ev_err_val");
+            build_wrappers::w_ret(&self.ir.builder, err_result.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("env_var".to_string(), fn_val);
@@ -3682,9 +3682,9 @@ impl<'ctx> super::Codegen<'ctx> {
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry_bb);
             let code = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let code_i32 = self.ir.builder.build_int_truncate(code, self.ir.context.i32_type(), "ex_code").unwrap();
-            self.ir.builder.build_call(c_exit_fn, &[code_i32.into()], "ex_call").unwrap();
-            self.ir.builder.build_unreachable().unwrap();
+            let code_i32 = build_wrappers::w_int_truncate(&self.ir.builder,code, self.ir.context.i32_type(), "ex_code");
+            build_wrappers::w_call(&self.ir.builder,c_exit_fn, &[code_i32.into()], "ex_call");
+            build_wrappers::w_unreachable(&self.ir.builder);
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             // Register as "exit" — this is what the Axon source calls
             self.functions.insert("exit".to_string(), fn_val);
@@ -3701,8 +3701,8 @@ impl<'ctx> super::Codegen<'ctx> {
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry_bb);
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let len = self.ir.builder.build_extract_value(s, 0, "sl_len").unwrap().into_int_value();
-            self.ir.builder.build_return(Some(&len)).unwrap();
+            let len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "sl_len").into_int_value();
+            build_wrappers::w_ret(&self.ir.builder, len.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_len".to_string(), fn_val);
             self.fn_return_types.insert("str_len".to_string(), Type::I64);
@@ -3731,19 +3731,19 @@ impl<'ctx> super::Codegen<'ctx> {
             let width = fn_val.get_nth_param(1).unwrap().into_int_value();
             let fill  = fn_val.get_nth_param(2).unwrap().into_struct_value();
 
-            let s_len = self.ir.builder.build_extract_value(s, 0, "sp_slen").unwrap().into_int_value();
-            let s_ptr = self.ir.builder.build_extract_value(s, 1, "sp_sptr").unwrap().into_pointer_value();
-            let fill_ptr = self.ir.builder.build_extract_value(fill, 1, "sp_fptr").unwrap().into_pointer_value();
+            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "sp_slen").into_int_value();
+            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sp_sptr").into_pointer_value();
+            let fill_ptr = build_wrappers::w_extract_value(&self.ir.builder,fill, 1, "sp_fptr").into_pointer_value();
 
             // if s_len >= width: return s as-is
-            let need_pad = self.ir.builder.build_int_compare(
-                inkwell::IntPredicate::SLT, s_len, width, "sp_need").unwrap();
-            self.ir.builder.build_conditional_branch(need_pad, pad_bb, done_bb).unwrap();
+            let need_pad = build_wrappers::w_int_compare(&self.ir.builder,
+                inkwell::IntPredicate::SLT, s_len, width, "sp_need");
+            build_wrappers::w_cond_br(&self.ir.builder,need_pad, pad_bb, done_bb);
 
             // pad_bb: allocate width+1 bytes, fill pad chars, copy s, null-terminate
             self.ir.builder.position_at_end(pad_bb);
-            let pad_len = self.ir.builder.build_int_sub(width, s_len, "sp_padlen").unwrap();
-            let alloc_size = self.ir.builder.build_int_add(width, i64_ty.const_int(1, false), "sp_alloc").unwrap();
+            let pad_len = build_wrappers::w_int_sub(&self.ir.builder,width, s_len, "sp_padlen");
+            let alloc_size = build_wrappers::w_int_add(&self.ir.builder,width, i64_ty.const_int(1, false), "sp_alloc");
             let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
                 let malloc_ty = i8_ptr.fn_type(&[i64_ty.into()], false);
                 self.ir.module.add_function("malloc", malloc_ty, None)
@@ -3752,54 +3752,50 @@ impl<'ctx> super::Codegen<'ctx> {
                 let memcpy_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcpy", memcpy_ty, None)
             });
-            let buf = self.ir.builder.build_call(malloc_fn, &[alloc_size.into()], "sp_buf").unwrap()
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "sp_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             // fill_char = fill_ptr[0]
-            let fill_char = self.ir.builder.build_load(self.ir.context.i8_type(), fill_ptr, "sp_fchar").unwrap().into_int_value();
+            let fill_char = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), fill_ptr, "sp_fchar").into_int_value();
             // Use memset (declare if needed)
             let memset_fn = self.ir.module.get_function("memset").unwrap_or_else(|| {
                 let memset_ty = i8_ptr.fn_type(
                     &[i8_ptr.into(), self.ir.context.i32_type().into(), i64_ty.into()], false);
                 self.ir.module.add_function("memset", memset_ty, None)
             });
-            let fill_char_i32 = self.ir.builder.build_int_z_extend(fill_char, self.ir.context.i32_type(), "sp_fc32").unwrap();
+            let fill_char_i32 = build_wrappers::w_int_z_extend(&self.ir.builder,fill_char, self.ir.context.i32_type(), "sp_fc32");
             if *pad_start {
                 // Pad bytes at start, then s
-                self.ir.builder.build_call(memset_fn, &[buf.into(), fill_char_i32.into(), pad_len.into()], "").unwrap();
+                build_wrappers::w_call(&self.ir.builder,memset_fn, &[buf.into(), fill_char_i32.into(), pad_len.into()], "");
                 let s_dest = unsafe {
-                    self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[pad_len], "sp_sdest").unwrap()
+                    build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[pad_len], "sp_sdest")
                 };
-                self.ir.builder.build_call(memcpy_fn, &[s_dest.into(), s_ptr.into(), s_len.into()], "").unwrap();
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[s_dest.into(), s_ptr.into(), s_len.into()], "");
             } else {
                 // s then pad bytes
-                self.ir.builder.build_call(memcpy_fn, &[buf.into(), s_ptr.into(), s_len.into()], "").unwrap();
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), s_ptr.into(), s_len.into()], "");
                 let pad_dest = unsafe {
-                    self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[s_len], "sp_pdest").unwrap()
+                    build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[s_len], "sp_pdest")
                 };
-                self.ir.builder.build_call(memset_fn, &[pad_dest.into(), fill_char_i32.into(), pad_len.into()], "").unwrap();
+                build_wrappers::w_call(&self.ir.builder,memset_fn, &[pad_dest.into(), fill_char_i32.into(), pad_len.into()], "");
             }
             // null-terminate
             let null_pos = unsafe {
-                self.ir.builder.build_gep(self.ir.context.i8_type(), buf, &[width], "sp_null").unwrap()
+                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[width], "sp_null")
             };
-            self.ir.builder.build_store(null_pos, self.ir.context.i8_type().const_int(0, false)).unwrap();
-            self.ir.builder.build_unconditional_branch(done_bb).unwrap();
+            build_wrappers::w_store(&self.ir.builder,null_pos, self.ir.context.i8_type().const_int(0, false).into());
+            build_wrappers::w_br(&self.ir.builder,done_bb);
 
             // done_bb: phi nodes must come FIRST (before any non-phi instructions).
             self.ir.builder.position_at_end(done_bb);
-            let len_phi = self.ir.builder.build_phi(i64_ty, "sp_rlen").unwrap();
+            let len_phi = build_wrappers::w_phi(&self.ir.builder,i64_ty.into(), "sp_rlen");
             len_phi.add_incoming(&[(&s_len, entry_bb), (&width, pad_bb)]);
-            let ptr_phi = self.ir.builder.build_phi(i8_ptr, "sp_rptr").unwrap();
+            let ptr_phi = build_wrappers::w_phi(&self.ir.builder,i8_ptr.into(), "sp_rptr");
             ptr_phi.add_incoming(&[(&s_ptr, entry_bb), (&buf, pad_bb)]);
             // Build the result str struct using insert_value (no alloca needed).
             let mut sp_res = str_ty.get_undef();
-            sp_res = self.ir.builder
-                .build_insert_value(sp_res, len_phi.as_basic_value().into_int_value(), 0, "sp_wl")
-                .unwrap().into_struct_value();
-            sp_res = self.ir.builder
-                .build_insert_value(sp_res, ptr_phi.as_basic_value().into_pointer_value(), 1, "sp_rv")
-                .unwrap().into_struct_value();
-            self.ir.builder.build_return(Some(&sp_res)).unwrap();
+            sp_res = build_wrappers::w_insert_value(&self.ir.builder,sp_res, len_phi.as_basic_value().into_int_value().into(), 0, "sp_wl").into_struct_value();
+            sp_res = build_wrappers::w_insert_value(&self.ir.builder,sp_res, ptr_phi.as_basic_value().into_pointer_value().into(), 1, "sp_rv").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, sp_res.into());
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert(fname.to_string(), fn_val);
