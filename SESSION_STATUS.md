@@ -70,10 +70,9 @@ idioms) but each is a clean future task:
   through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
 - **`for x in array` is range-only.** `for` requires a range (`for i in 0..n`);
   iterate collections by index (`for i in 0..len(xs) { let x = xs[i] }`).
-- **`match`/`if` aren't operands.** They can't appear inside a larger expression
-  (`1 + match x { … }` fails to parse); bind to a `let` or use a function first.
 - (Fixed this session: `len` accepts slices; `==`/`!=` do structural equality on
-  structs/enums/arrays; `type Name = A | B` sum-type syntax; or-patterns in match.)
+  structs/enums/arrays; `type Name = A | B` sum-type syntax; or-patterns in
+  match; `match`/`if` usable as operands in a larger expression.)
 
 ## What works now (via the interpreter, no LLVM)
 
