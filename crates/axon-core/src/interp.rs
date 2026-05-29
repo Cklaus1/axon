@@ -847,8 +847,27 @@ impl<'p> Interp<'p> {
                 self.eval(body, env)?;
                 Ok(Value::Unit)
             }
-            Expr::Select(_) => {
-                panic("`select` is not supported by the interpreter (use chan recv directly)")
+            // Cooperative select: fire the first arm whose channel has a ready
+            // value (its queue is non-empty), consuming that value and running the
+            // arm body. Arms are `c.recv() => body`. With eager `spawn`, channels
+            // are pre-filled, so this is deterministic (first ready arm wins).
+            Expr::Select(arms) => {
+                for arm in arms {
+                    let Expr::MethodCall { receiver, method, .. } = &arm.recv else {
+                        return panic("select arms must be channel `recv()` operations");
+                    };
+                    if method != "recv" {
+                        return panic("select arms must be channel `recv()` operations");
+                    }
+                    let Value::Chan(q) = self.eval(receiver, env)? else {
+                        return panic("select arm `recv` on a non-channel");
+                    };
+                    let ready = q.borrow_mut().pop_front();
+                    if ready.is_some() {
+                        return self.eval(&arm.body, env);
+                    }
+                }
+                panic("select: no channel was ready (cooperative interpreter — send before select)")
             }
         }
     }

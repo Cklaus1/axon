@@ -38,6 +38,23 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn select_fires_first_ready_channel() {
+    // Cooperative select: the arm whose channel has a ready value fires. Here `a`
+    // is empty and `b` was sent to, so the `b` arm runs (result = 2).
+    let f = std::env::temp_dir().join(format!("axon_select_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  let a = chan<i64>()\n  let b = chan<i64>()\n  \
+         let result = 0\n  spawn { b.send(99) }\n  \
+         select { a.recv() => result = 1  b.recv() => result = 2 }\n  result\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "the ready (b) arm should fire → result 2");
+}
+
+#[test]
 fn spawn_channel_fanout_collects_results() {
     // Cooperative concurrency: spawn one worker per candidate to send its score
     // to a channel, then collect — the fan-out/collect pattern runs and the best
