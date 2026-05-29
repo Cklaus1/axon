@@ -2,7 +2,7 @@
 
 **Last update**: 2026-05-29
 **Branch**: `merge-asi-layer3` (== `main`, pushed to `origin/main`)
-**Latest commit**: `1972fc2` — allocate (knapsack) demo (see "Shipped since" below)
+**Latest commit**: `e0efa67` — robustness hardening + 12 demos (see "Shipped since" below)
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 `STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
@@ -60,20 +60,31 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   key-free): #1–3 LLM tasks (optimize/classify/summarize), #4 `supervised_agent`
   (greedy stream under a latching kill-switch), #5 `deliberative_agent`
   (constrained single choice), #6 `planner` (multi-step lookahead, recursive
-  enums), #7 `pareto` (multi-objective frontier), #8 `allocate` (0/1 knapsack
-  under a budget). Capability *and* control, demonstrated.
-- **Language hardened by build-and-fix probing — 10 fixes/features**: `len` on
-  slices; structural `==`/`!=`; `type Name = A | B` sum-types; or-patterns;
-  `match`/`if` as operands; `&&`/`||` precedence (correctness bug); nested braces
-  in string interpolation; functions returning enums; `for x in <collection>`
-  (borrows, supports nesting); **single-level place assignment** (`xs[i] = v`,
-  `s.field = v`, incl. in loops — enables in-place mutation/accumulation). Each
-  gated + regression-tested. `feature_tour.ax` exercises several together.
-- **Ownership model mapped**: pass collections to helpers as `&[T]` (borrow);
-  `for-in` borrows; `ref` is binding-only (see memory `axon-ownership-idioms`).
-- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`, 28), goal-demo +
-  all-examples-parse regression locks, full builtin coverage (90/90).
-  `dev.sh` is interpreter-first. Commits gated on a green suite.
+  enums), #7 `pareto` (multi-objective frontier), #8 `allocate` (0/1 knapsack),
+  #9 `rank` (in-place selection sort), #10 `local_search` (userland black-box
+  hill-climbing), #11 `contained` (compile-time capability sandbox), #12
+  `parallel_score` (fan-out/collect). Capability *and* control, demonstrated.
+  `run.sh demos` runs the key-free tour.
+- **Language hardened by build-and-fix probing**: `len` on slices; structural
+  `==`/`!=`; `type Name = A | B` sum-types; or-patterns; `match`/`if` as operands;
+  `&&`/`||` precedence (correctness bug); nested braces in interpolation; enum
+  returns; `for x in <collection>`; **place assignment** (`xs[i]=v`, `s.f=v`,
+  nested too); `chan<T>` as a type. Each gated + regression-tested.
+- **Concurrency (cooperative, single-threaded)**: `spawn` runs eagerly, channels
+  are shared FIFOs, `send`/`recv`/`select` work — fan-out/collect runs (see
+  `parallel_score.ax`); request/response (block-on-later-send) doesn't. Memory
+  `axon-cooperative-concurrency`.
+- **Safety checks ENFORCED in the CLI** (were dead): `@[contained]` capability
+  sandbox (E1001), static `@[verify]` (E1101), borrow (E0601) — all run in
+  `run_check_pipeline`, guarded by `*_rejected_by_check` tests against drift.
+- **Robust on adversarial input** (no process aborts): deep recursion →
+  `RECURSION_LIMIT` panic; deep nesting → `MAX_EXPR_DEPTH` parse error; the CLI
+  runs on a 1 GiB-stack worker thread. Bad builtin args fail fast/gracefully.
+- **Ownership model mapped**: pass collections as `&[T]` (borrow); `for-in`
+  borrows; `ref` is binding-only (memory `axon-ownership-idioms`).
+- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`, 44) + 286 lib + 101
+  integration; `all_examples_typecheck_clean` runs the full pipeline over every
+  example. `dev.sh` is interpreter-first. Commits gated on a green suite.
 
 ## Top remaining work (prioritized)
 
