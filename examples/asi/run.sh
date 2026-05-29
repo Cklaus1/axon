@@ -26,7 +26,7 @@ axon_bin() {
     elif command -v axon >/dev/null 2>&1; then
         command -v axon
     else
-        echo "ERROR: axon binary not found. Run 'cargo build -p axon-core' first." >&2
+        echo "ERROR: axon binary not found. Build it: cargo build -p axon-core --no-default-features --bin axon" >&2
         exit 1
     fi
 }
@@ -44,9 +44,11 @@ case "$cmd" in
     run)
         # Future: axon goal run optimize.ax
         # Today: full compile + execute
-        if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-            echo "WARNING: ANTHROPIC_API_KEY is not set — ai_complete calls will return Err." >&2
-            echo "         Score will be 0 and the @[verify] gate will panic at runtime." >&2
+        if [[ -z "${ANTHROPIC_API_KEY:-}" && -z "${AXON_AI_MOCK:-}" ]]; then
+            echo "NOTE: neither ANTHROPIC_API_KEY nor AXON_AI_MOCK is set." >&2
+            echo "      Key-free deterministic run:  AXON_AI_MOCK=1 ./run.sh run" >&2
+            echo "      (ai_complete returns stubs; works on the codegen-free interpreter)." >&2
+            echo "      Live inference: build with --features asi-runtime and set ANTHROPIC_API_KEY." >&2
             echo "" >&2
         fi
         "$(axon_bin)" run "$DEMO"
@@ -103,7 +105,7 @@ case "$cmd" in
 Axon ASI demo CLI (Phase-10 surface, simulated)
 
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
-  ./run.sh run         # compile + execute the optimizer (needs ANTHROPIC_API_KEY)
+  ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
   ./run.sh trace       # show provenance entries for try_variant
   ./run.sh improve     # continue search — adds more evals to the same log
   ./run.sh redteam     # run the adversarial pass (currently part of main)
@@ -114,8 +116,9 @@ Axon ASI demo CLI (Phase-10 surface, simulated)
 Provenance log: $PROV
 Demo source:    $DEMO
 
-Build the compiler first if needed:
-  cargo build -p axon-core
+Build the interpreter CLI first (fast, no LLVM):
+  cargo build -p axon-core --no-default-features --bin axon
+For live LLM calls instead of AXON_AI_MOCK, add: --features asi-runtime
 EOF
         ;;
 esac

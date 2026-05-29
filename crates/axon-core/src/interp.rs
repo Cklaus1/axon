@@ -302,6 +302,13 @@ impl<'p> Interp<'p> {
                     .entry(f.name.clone())
                     .or_default()
                     .push(score);
+                // Also persist to the provenance JSONL (axon-rt's format) so
+                // `axon trace`/observability tooling see interpreter runs.
+                let payload = match &result {
+                    Value::Int(n) => format!("ret_i64={n}"),
+                    _ => format!("ret_f64={score}"),
+                };
+                append_provenance_jsonl(&f.name, &payload, score);
             }
         }
 
@@ -1542,6 +1549,57 @@ fn now_ms() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// The provenance log path: `$XDG_CACHE_HOME/axon/provenance.jsonl` (or
+/// `$HOME/.cache/axon/...`), matching axon-rt's location.
+fn provenance_log_path() -> Option<std::path::PathBuf> {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    Some(base.join("axon").join("provenance.jsonl"))
+}
+
+/// Append one `@[adaptive]` return to the provenance JSONL, in the same shape
+/// axon-rt writes (`ts_ms`/`fn`/`event`/`payload`/`score`), so `axon trace`
+/// and the observability tools see interpreter runs. Best-effort (errors
+/// ignored — provenance is advisory, not load-bearing).
+fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64) {
+    let Some(path) = provenance_log_path() else { return };
+    if let Some(dir) = path.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let ts = now_ms().max(0) as u64;
+    let s = if score.is_finite() { format!("{score}") } else { "0".to_string() };
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}}}\n",
+        f = json_quote(fn_name),
+        p = json_quote(payload),
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// Minimal JSON string quoting (for the provenance log).
+fn json_quote(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
