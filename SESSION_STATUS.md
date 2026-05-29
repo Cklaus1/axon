@@ -96,6 +96,11 @@ idioms) but each is a clean future task:
   targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
   value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
   through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
+- **Concurrency is cooperative (single-threaded).** `spawn`/`chan`/`send`/`recv`
+  now run in the interpreter — `spawn` bodies execute eagerly, so fan-out/collect
+  (workers produce, main consumes) works; patterns where a spawned task must
+  *block* on a value sent later (request/response) don't — send before recv.
+  `select` is still unsupported.
 - **No tuple expressions.** `(a, b)` doesn't parse (the type system has
   `Type::Tuple`, but there's no value syntax); use a struct.
 - **No typed `let`.** `let x: T = e` doesn't parse; `let x = e` (inferred) only.

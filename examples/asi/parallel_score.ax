@@ -1,0 +1,31 @@
+// parallel_score.ax — fan-out / collect with spawn + channels.
+//
+// Score candidates concurrently: a worker is spawned per candidate to compute
+// its score and send it to a shared channel; the main flow collects the results
+// and keeps the best. The interpreter runs `spawn` bodies cooperatively (eagerly,
+// single-threaded) — correct for this fan-out/collect shape (workers produce,
+// main consumes). Note: because spawns run eagerly, patterns where a spawned
+// task must BLOCK on a value the main flow sends later (request/response) are not
+// supported — send before recv. Runs key-free.
+//
+//   axon run examples/asi/parallel_score.ax
+
+fn score(x: i64) -> i64 { x * x - 3 * x }
+
+fn main() -> i64 {
+    let results = chan<i64>()
+    let inputs = [2, 5, 8, 11]
+    // Fan out: one worker per candidate.
+    for x in inputs { spawn { results.send(score(x)) } }
+    // Collect: take every result, keep the best.
+    let best = 0
+    let first = true
+    for k in 0..len(inputs) {
+        let s = results.recv()
+        if first || s > best {
+            best = s
+            first = false
+        }
+    }
+    best // score(11) = 88 is the max
+}

@@ -21,8 +21,9 @@
 //! wiring them to `axon-ai`/`axon-rt` is M2.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
+use std::rc::Rc;
 
 use crate::ast::{BinOp, EnumDef, Expr, FnDef, ImplBlock, Item, Literal, Pattern, Program, Stmt,
                  TypeDef, UnaryOp};
@@ -48,6 +49,11 @@ pub enum Value {
     Err(Box<Value>),
     /// A lambda plus the environment it captured at creation time.
     Closure { params: Vec<String>, body: Box<Expr>, captured: HashMap<String, Value> },
+    /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
+    /// a `spawn`ed body and the main flow see the same queue. The interpreter is
+    /// cooperative/single-threaded: `spawn` runs eagerly, so a `send` happens
+    /// before the matching `recv`.
+    Chan(Rc<RefCell<VecDeque<Value>>>),
 }
 
 impl Value {
@@ -64,6 +70,7 @@ impl Value {
             Value::Some(_) | Value::None => "Option".into(),
             Value::Ok(_) | Value::Err(_) => "Result".into(),
             Value::Closure { .. } => "fn".into(),
+            Value::Chan(_) => "chan".into(),
         }
     }
 }
@@ -714,10 +721,38 @@ impl<'p> Interp<'p> {
                 other => panic(format!("`?` applied to non-Result/Option ({})", other.type_name())),
             },
 
-            Expr::Call { callee, args } => self.eval_call(callee, args, env),
+            Expr::Call { callee, args } => {
+                // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
+                if let Expr::StructLit { name, .. } = callee.as_ref() {
+                    if name.starts_with("chan::<") {
+                        return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
+                    }
+                }
+                self.eval_call(callee, args, env)
+            }
 
             Expr::MethodCall { receiver, method, args } => {
                 let recv = self.eval(receiver, env)?;
+                // Channel methods (cooperative, single-threaded): send pushes to
+                // the shared queue, recv pops from it, clone shares the handle.
+                if let Value::Chan(q) = &recv {
+                    return match method.as_str() {
+                        "send" => {
+                            let v = self.eval(&args[0], env)?;
+                            q.borrow_mut().push_back(v);
+                            Ok(Value::Unit)
+                        }
+                        "recv" => q.borrow_mut().pop_front().ok_or_else(|| {
+                            Flow::Panic(
+                                "recv on an empty channel — the interpreter runs `spawn` bodies \
+                                 eagerly, so a value must be sent before it is received"
+                                    .into(),
+                            )
+                        }),
+                        "clone" => Ok(Value::Chan(q.clone())),
+                        other => panic(format!("no method `{other}` on a channel")),
+                    };
+                }
                 let mut argv = Vec::with_capacity(args.len() + 1);
                 argv.push(recv);
                 for a in args {
@@ -806,8 +841,14 @@ impl<'p> Interp<'p> {
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
-            Expr::Spawn(_) | Expr::Select(_) => {
-                panic("channels/concurrency are not supported by the interpreter")
+            // Cooperative concurrency: run the spawned body eagerly (single-
+            // threaded), so its sends are queued before the main flow continues.
+            Expr::Spawn(body) => {
+                self.eval(body, env)?;
+                Ok(Value::Unit)
+            }
+            Expr::Select(_) => {
+                panic("`select` is not supported by the interpreter (use chan recv directly)")
             }
         }
     }
@@ -2027,6 +2068,7 @@ fn display(v: &Value) -> String {
             }
         }
         Value::Closure { .. } => "<fn>".into(),
+        Value::Chan(q) => format!("<chan len={}>", q.borrow().len()),
     }
 }
 

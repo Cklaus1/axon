@@ -38,6 +38,15 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn spawn_channel_fanout_collects_results() {
+    // Cooperative concurrency: spawn one worker per candidate to send its score
+    // to a channel, then collect — the fan-out/collect pattern runs and the best
+    // score (88) is found.
+    let out = axon().args(["run", &ex("asi/parallel_score.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(88), "best fan-out score should be 88");
+}
+
+#[test]
 fn contained_scorer_demo_runs_and_blocks_exfiltration() {
     // The sandboxed scorer demo runs clean...
     let out = axon().args(["run", &ex("asi/contained.ax")]).output().unwrap();
