@@ -1,0 +1,69 @@
+// Tier-1 stdlib: Principal — capability-based authorization for agents.
+//
+// An autonomous agent should only perform actions it is *permitted* to. A
+// Principal carries a capability set (mirroring @[contained]'s net/fs/exec
+// surface); `require_cap` gates an action's score on holding the capability,
+// denying (score 0) and reporting otherwise. This is the permission counterpart
+// to Budget (how much), Constraint (correctness), and Uncertain (how sure).
+//
+//   axon test examples/stdlib/principal.ax
+//   axon run  examples/stdlib/principal.ax
+
+type Principal = { name: str, net: bool, fs_write: bool, exec: bool }
+
+// A principal with no capabilities — the safe default for an untrusted agent.
+fn sandboxed(name: str) -> Principal {
+    Principal { name: name, net: false, fs_write: false, exec: false }
+}
+
+fn principal(name: str, net: bool, fs_write: bool, exec: bool) -> Principal {
+    Principal { name: name, net: net, fs_write: fs_write, exec: exec }
+}
+
+// Allow `score` only if the capability is granted; else deny (0) + report.
+fn require_cap(granted: bool, cap: str, score: i64) -> i64 {
+    if granted {
+        score
+    } else {
+        let c = cap
+        eprintln("capability denied: {c}")
+        0
+    }
+}
+
+@[test]
+fn test_sandboxed_denies() {
+    let p = sandboxed("agent")
+    assert(!p.net)
+    assert(!p.fs_write)
+    assert(!p.exec)
+    assert_eq(require_cap(p.net, "net", 50), 0)
+}
+
+@[test]
+fn test_granted_allows() {
+    let p = principal("agent", true, false, false)
+    assert(p.net)
+    assert_eq(require_cap(p.net, "net", 50), 50)
+}
+
+@[test]
+fn test_principal_capabilities() {
+    let p = principal("a", true, false, true)
+    assert(p.net)
+    assert(!p.fs_write)
+    assert(p.exec)
+}
+
+fn main() {
+    let agent = sandboxed("summarizer")
+    let s1 = require_cap(agent.net, "net", 80)
+    println("sandboxed agent, net action -> score {to_str(s1)} (denied)")
+
+    let trusted = principal("trusted-fetcher", true, false, false)
+    let s2 = require_cap(trusted.net, "net", 80)
+    println("net-granted agent, net action -> score {to_str(s2)} (allowed)")
+
+    let s3 = require_cap(trusted.exec, "exec", 80)
+    println("net-granted agent, exec action -> score {to_str(s3)} (denied; no exec cap)")
+}
