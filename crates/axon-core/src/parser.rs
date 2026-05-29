@@ -140,7 +140,16 @@ pub struct Parser {
     /// consuming the `Shr` token and setting this flag; the *next* `expect_gt`
     /// call then succeeds without advancing the token stream.
     shr_pending: bool,
+    /// Current expression-nesting depth, bounded by `MAX_EXPR_DEPTH` so deeply
+    /// nested input (e.g. `((((…))))`) fails with a clean parse error instead of
+    /// overflowing the parser's recursion and aborting the process.
+    expr_depth: usize,
 }
+
+/// Max nested-expression depth before a graceful parse error. Far beyond any
+/// realistic (even generated) code, but below where the parser would overflow
+/// the large interpreter/CLI thread stack.
+const MAX_EXPR_DEPTH: usize = 4_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ParseError {
@@ -157,16 +166,16 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false }
+        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false }
+        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false }
+        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
     }
 
     fn current_span(&self) -> Span {
@@ -1557,6 +1566,22 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expr> {
+        // Bound expression nesting so adversarially deep input fails gracefully
+        // rather than overflowing the parser's recursion. The decrement runs on
+        // every path (the inner call's `?`s return into `r`, then we decrement).
+        self.expr_depth += 1;
+        if self.expr_depth > MAX_EXPR_DEPTH {
+            self.expr_depth -= 1;
+            return Err(ParseError::Other(format!(
+                "expression nesting too deep (limit {MAX_EXPR_DEPTH})"
+            )));
+        }
+        let r = self.parse_primary_inner();
+        self.expr_depth -= 1;
+        r
+    }
+
+    fn parse_primary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Comptime) => self.parse_comptime(),
             Some(Token::LBrace)  => self.parse_block(),

@@ -38,6 +38,23 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn deeply_nested_input_fails_gracefully_not_aborts() {
+    // Adversarially deep nesting must be a clean parse error (exit 2), not a
+    // parser stack overflow (exit 134 / SIGABRT).
+    let f = std::env::temp_dir().join(format!("axon_nest_{}.ax", std::process::id()));
+    let src = format!("fn main() -> i64 {{ {}1{} }}\n", "(".repeat(50000), ")".repeat(50000));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "deep nesting should be a clean parse error, not abort");
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("nesting too deep")
+            || String::from_utf8_lossy(&out.stderr).contains("nesting too deep"),
+        "expected 'nesting too deep'"
+    );
+}
+
+#[test]
 fn deep_recursion_fails_gracefully_not_aborts() {
     // Runaway recursion must be a catchable panic (exit 101) with a clear
     // message — not a process-aborting stack overflow (exit 134 / SIGABRT).

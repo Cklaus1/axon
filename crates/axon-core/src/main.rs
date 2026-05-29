@@ -214,8 +214,21 @@ enum CacheAction {
 
 fn main() {
     let cli = Cli::parse();
+    // Run the command on a large stack. The recursive-descent parser and the
+    // tree-walking interpreter both use heavy native stack, so deeply nested
+    // input (e.g. agent-generated code) or recursion would overflow the small
+    // default main-thread stack and abort the process. (The interpreter also
+    // bounds recursion via RECURSION_LIMIT for runaway cases.)
+    std::thread::Builder::new()
+        .stack_size(1024 * 1024 * 1024)
+        .spawn(move || dispatch(cli.command))
+        .expect("spawn worker thread")
+        .join()
+        .expect("worker thread panicked");
+}
 
-    match cli.command {
+fn dispatch(command: Command) {
+    match command {
         Command::Parse { file } => cmd_parse(file),
         Command::Check { file, json } => cmd_check(file, json),
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
