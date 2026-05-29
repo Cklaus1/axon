@@ -43,6 +43,7 @@ examples/asi/
 ├── allocate.ax    # demo #8 — bounded resource allocation (0/1 knapsack under a budget); key-free
 ├── rank.ax        # demo #9 — rank actions by score (in-place selection sort via place assignment); key-free
 ├── local_search.ax # demo #10 — black-box hill-climbing over a vector, written in userland Axon; key-free
+├── contained.ax   # demo #11 — compile-time capability sandbox (agent provably can't exfiltrate); key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file
 ```

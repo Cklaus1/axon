@@ -38,6 +38,27 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn contained_scorer_demo_runs_and_blocks_exfiltration() {
+    // The sandboxed scorer demo runs clean...
+    let out = axon().args(["run", &ex("asi/contained.ax")]).output().unwrap();
+    assert!(out.status.success(), "contained demo exited {:?}", out.status.code());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("score = 70"), "stdout: {:?}", out.stdout);
+    // ...and adding a network (LLM) call under the same @[contained] spec is rejected.
+    let bad = std::env::temp_dir().join(format!("axon_cexfil_{}.ax", std::process::id()));
+    std::fs::write(
+        &bad,
+        "@[contained(fs: [], exec: none)]\nfn s() -> i64 { let l = ai_complete(\"x\")  1 }\n\
+         fn main() -> i64 { s() }\n",
+    )
+    .unwrap();
+    let r = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    assert_eq!(r.status.code(), Some(2), "exfiltration via net must be rejected");
+    let msg = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+    assert!(msg.contains("E1001"), "expected E1001, got: {msg}");
+}
+
+#[test]
 fn borrow_violation_rejected_by_check() {
     // Borrow checking (E0601 use-after-move etc.) must run in the CLI pipeline.
     let out = axon().args(["check", &fixture("borrow_errors.ax")]).output().unwrap();

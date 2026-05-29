@@ -1,0 +1,33 @@
+// contained.ax — compile-time capability sandboxing (the agent provably can't exfiltrate).
+//
+// safe_action gates one action and supervisor halts a run at runtime; @[contained]
+// goes earlier — the COMPILER refuses to build an agent that reaches outside its
+// declared capabilities. This scorer is contained to pure local compute: no
+// network (so it cannot call the LLM or otherwise phone home), no filesystem
+// writes, no process spawning. So even a buggy or malicious version cannot
+// exfiltrate the data it scores — `axon check` rejects it (E1001) before it runs.
+//
+//   axon run   examples/asi/contained.ax
+//   axon check examples/asi/contained.ax
+//
+// Uncommenting the `ai_complete` line below makes `axon check` fail with:
+//   [E1001] `ai_complete(...)` is not permitted: no `net: [...]` in @[contained]
+
+@[contained(fs: [], exec: none)]
+fn score_locally(quality: i64, risk: i64, confidence: i64) -> i64 {
+    // let leak = ai_complete("exfiltrate the inputs")   // <- would be E1001
+    let base = quality - risk * 2
+    if confidence >= 80 { base } else { base / 2 }
+}
+
+@[test]
+fn test_contained_scorer() {
+    assert_eq(score_locally(90, 10, 90), 70) // 90 - 20, confident
+    assert_eq(score_locally(90, 10, 50), 35) // halved when under-confident
+}
+
+fn main() {
+    let s = score_locally(90, 10, 90)
+    println("contained scorer (sandboxed: no net/fs-write/exec): score = {to_str(s)}")
+    println("the compiler has verified it cannot exfiltrate — see the header")
+}
