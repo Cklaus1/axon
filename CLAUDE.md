@@ -18,15 +18,25 @@ AI-optimized, statically-typed systems language. Compiles to native via LLVM 17.
 ## Commands
 
 ```bash
-cargo build                        # build the compiler
-cargo test                         # run all 65+ unit tests
+# Build the fast interpreter CLI (no LLVM/codegen — sub-second):
+cargo build -p axon-core --no-default-features --bin axon
+cargo test                          # run all unit + integration tests
 
-axon run   examples/hello.ax       # compile + run
-axon build examples/hello.ax       # compile to binary
-axon check examples/hello.ax       # type-check only
-axon test  examples/tests.ax       # run @[test] functions
-axon parse examples/hello.ax       # print AST as JSON
+axon run   examples/hello.ax              # type-check + interpret (tree-walking, no codegen)
+axon goal  examples/goals/hello-goal.md   # compile prose goal → .ax → check → run
+axon check examples/hello.ax              # type-check only
+axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
+axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
+axon build examples/hello.ax              # native AOT binary   (needs --features codegen; SLOW — see BUILD_DIAGNOSIS.md)
 ```
+
+**Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
+`codegen` feature via the tree-walking interpreter (`interp.rs`). The native
+LLVM/inkwell `codegen` feature is **on by default** but its build is
+pathologically slow (does not finish — see `BUILD_DIAGNOSIS.md`), so it's
+relegated to CI/release; develop against `--no-default-features`. Add
+`--features asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
+`examples/asi/*` and `axon goal`).
 
 ## Compiler Pipeline
 
@@ -176,6 +186,7 @@ fn test_panic() { assert(false) }
 | 5 | 📋 Drafted | Refinement types + SMT (Z3) — see `spec/compiler-phase5.md` |
 | 6 | 📋 Drafted | Row-polymorphic effects + handlers — see `spec/compiler-phase6.md` |
 | 7+ | 📋 Roadmapped | `Principal`, `Store`, `Supervisor`, `LLM<Caps>`, goal/agent surface — see `ROADMAP.md` |
+| 10 v0–v1 | ✅ Landed | Codegen-free tree-walking interpreter (`interp.rs`) → `axon run`/`test`/`goal`; prose→AST surface compiler (`axon goal`, lifts ` ```axon ` blocks); ASI builtins in the interpreter. Native codegen build diagnosed as serial LLVM-IR-gen (`BUILD_DIAGNOSIS.md`); fix prototyped (`CODEGEN_WRAPPER_PROTOTYPE.md`) |
 
 ## Forward Roadmap
 
