@@ -95,6 +95,16 @@ case "$cmd" in
             exit 1
         fi
         ;;
+    analyze)
+        # Score-trajectory analysis of the provenance log: per-fn score stats,
+        # plateau detection, and tuning recommendations. Extra args pass through
+        # (e.g. --fn try_variant, --json).
+        if [[ ! -f "$PROV" ]]; then
+            echo "No provenance log at $PROV (run the demo first)" >&2
+            exit 1
+        fi
+        python3 "$HERE/analyze.py" --path "$PROV" "$@"
+        ;;
     clear)
         # Wipe the provenance log so a fresh run starts from zero
         rm -f "$PROV"
@@ -107,6 +117,7 @@ Axon ASI demo CLI (Phase-10 surface, simulated)
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
   ./run.sh trace       # show provenance entries for try_variant
+  ./run.sh analyze     # score-trajectory analysis (plateau, recommendations)
   ./run.sh improve     # continue search — adds more evals to the same log
   ./run.sh redteam     # run the adversarial pass (currently part of main)
   ./run.sh replay      # GAP: deterministic replay (Phase 9)
