@@ -2068,4 +2068,32 @@ mod tests {
             assert_eq!(code, expected, "{file}: expected exit {expected}, got {code}");
         }
     }
+
+    #[test]
+    fn all_example_ax_files_parse() {
+        // Broad regression guard: every .ax under examples/ must parse (covers
+        // the basic examples, the asi "public face", stdlib, and modular libs).
+        fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for e in entries.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        collect(&p, out);
+                    } else if p.extension().map(|x| x == "ax").unwrap_or(false) {
+                        out.push(p);
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples"));
+        let mut files = Vec::new();
+        collect(root, &mut files);
+        assert!(files.len() >= 20, "expected many example .ax files, found {}", files.len());
+        for f in &files {
+            let src = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
+            if let Err(e) = crate::parse_source(&src) {
+                panic!("{} failed to parse: {e}", f.display());
+            }
+        }
+    }
 }
