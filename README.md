@@ -154,7 +154,7 @@ fn producer(ch: chan<i64>) -> () {
 }
 
 fn main() -> i64 {
-    let ch = chan<i64>(16)
+    let ch = chan<i64>()
     spawn { producer(ch.clone()) }
     let sum = 0
     let i = 0
@@ -162,14 +162,22 @@ fn main() -> i64 {
         sum = sum + ch.recv()
         i = i + 1
     }
-    sum
+    sum            // 0 + 1 + … + 9 = 45
 }
 ```
+
+> The interpreter runs concurrency **cooperatively** (single-threaded): a `spawn`
+> body runs eagerly, so the producer above fully queues its values before `main`
+> drains them — fan-out/collect works. Patterns where a spawned task must *block*
+> on a value `main` sends later need the native runtime. `select` takes the first
+> ready channel.
 
 ### Comptime
 
 ```axon
-let MAX: i64 = comptime { 1024 * 1024 }
+fn buffer_size() -> i64 {
+    comptime { 1024 * 1024 } // folded once; here the interpreter evaluates it inline
+}
 
 fn is_debug() -> bool {
     comptime { false }
