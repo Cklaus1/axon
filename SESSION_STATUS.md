@@ -52,6 +52,8 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
   to the provenance JSONL → `axon trace` / `analyze.py` / `run.sh analyze`.
 - **Cross-run self-improvement** (`AXON_GOAL_CONTINUE=1`): `goal_run` resumes its
   hill-climb from the best prior input; `run.sh improve` converges across runs.
+  `axon goal --iterate N <file.md>` drives this autonomously in one command —
+  learn-goal converges 100→136→164→184→200 over 6 runs.
 - **Multi-file modules** (`mod`+`use`+`AXON_PATH`) work via the interpreter;
   see `examples/modular/`.
 - **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`), goal-demo + all-examples

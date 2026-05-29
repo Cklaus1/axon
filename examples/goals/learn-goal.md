@@ -8,9 +8,13 @@ it converges. Pure objective → runs key-free.
 
 ```bash
 cargo build -p axon-core --no-default-features --bin axon
+# One command, autonomous iterate-to-converge (100 → 136 → 164 → 184 → 200):
+XDG_CACHE_HOME=/tmp/learn ./target/debug/axon goal --iterate 6 examples/goals/learn-goal.md
+
+# Or step it manually to see continuation resume from the best prior input:
 XDG_CACHE_HOME=/tmp/learn ./target/debug/axon goal examples/goals/learn-goal.md   # fresh: ~modest score
 XDG_CACHE_HOME=/tmp/learn AXON_GOAL_CONTINUE=1 ./target/debug/axon goal examples/goals/learn-goal.md  # resumes, higher
-# ...repeat to converge on 200. (examples/asi/run.sh improve does this for you.)
+# (examples/asi/run.sh improve does the manual step for the asi demos.)
 ```
 
 ## Intent

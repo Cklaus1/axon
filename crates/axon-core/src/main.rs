@@ -106,6 +106,11 @@ enum Command {
         /// Print the generated `.ax` source instead of running it.
         #[arg(long, help = "Emit the compiled .ax to stdout and exit")]
         emit: bool,
+
+        /// Run the goal N times with cross-run continuation (after run 1), so its
+        /// search resumes from its best prior input each time and converges.
+        #[arg(long, value_name = "N", help = "Iterate the goal N times to converge")]
+        iterate: Option<usize>,
     },
 
     /// Compile a .ax file and execute it, forwarding remaining arguments.
@@ -197,7 +202,7 @@ fn main() {
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
             cmd_build(files, out, release, target, no_cache, cache_dir)
         }
-        Command::Goal { file, emit } => cmd_goal(file, emit),
+        Command::Goal { file, emit, iterate } => cmd_goal(file, emit, iterate),
         Command::Run { file, release, args } => cmd_run(file, release, args),
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -400,7 +405,7 @@ struct BuildOptions {
 
 /// `axon goal <file.md>` — the Phase-10 two-track flow in one command:
 /// compile structured prose → `.ax` (via `axon-surface`) → type-check → run.
-fn cmd_goal(file: PathBuf, emit_only: bool) {
+fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     let md = read_source(&file);
 
     // Prose → typed-AST `.ax` source via the surface compiler.
@@ -444,8 +449,26 @@ fn cmd_goal(file: PathBuf, emit_only: bool) {
         process::exit(2);
     }
 
-    // Interpret.
-    let code = axon_core::interp::run_program(&program);
+    // Interpret. With --iterate N, run the goal N times: run 1 establishes a
+    // baseline (continuation off), then runs 2..N resume from the best prior
+    // input via the persisted provenance log (AXON_GOAL_CONTINUE) — so the
+    // best score climbs run-over-run and converges. Autonomous iterate-to-
+    // converge, driven by one command (builds on cross-run self-improvement).
+    let Some(n) = iterate else {
+        process::exit(axon_core::interp::run_program(&program));
+    };
+    let n = n.max(1);
+    eprintln!("# iterate: {n} runs (cross-run continuation after run 1)");
+    let mut code = 0;
+    for k in 1..=n {
+        if k == 1 {
+            std::env::remove_var("AXON_GOAL_CONTINUE");
+        } else {
+            std::env::set_var("AXON_GOAL_CONTINUE", "1");
+        }
+        eprintln!("── run {k}/{n} ──");
+        code = axon_core::interp::run_program(&program);
+    }
     process::exit(code);
 }
 

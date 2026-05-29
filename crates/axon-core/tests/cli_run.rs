@@ -109,6 +109,38 @@ fn cross_run_improves_with_continuation() {
 }
 
 #[test]
+fn goal_iterate_converges() {
+    // `--iterate N` runs the goal N times with cross-run continuation (after run
+    // 1). learn-goal's per-run budget can't reach the optimum alone, so the best
+    // score must climb run-over-run and converge to the target (200).
+    let cache = std::env::temp_dir().join(format!("axon_iter_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let out = axon()
+        .args(["goal", "--iterate", "6", &ex("goals/learn-goal.md")])
+        .env("XDG_CACHE_HOME", &cache)
+        .env_remove("AXON_GOAL_CONTINUE")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+
+    // Each run prints its "best score: N" to stdout (iterate headers go to stderr).
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let key = "best score: ";
+    let scores: Vec<i64> = stdout
+        .match_indices(key)
+        .map(|(i, _)| {
+            let rest = &stdout[i + key.len()..];
+            let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+            rest[..end].parse().unwrap()
+        })
+        .collect();
+    assert_eq!(scores.len(), 6, "expected 6 runs, got {scores:?}");
+    assert!(scores[5] > scores[0], "best score should climb across runs: {scores:?}");
+    assert!(scores.windows(2).all(|w| w[1] >= w[0]), "non-decreasing: {scores:?}");
+    assert_eq!(scores[5], 200, "should converge to the optimum: {scores:?}");
+}
+
+#[test]
 fn run_trait_methods_dispatch() {
     // trait + impl methods + value.method() dispatch (the interpreter picks the
     // impl from the receiver's runtime type).
