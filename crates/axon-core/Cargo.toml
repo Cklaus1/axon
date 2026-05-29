@@ -42,3 +42,5 @@ inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
 which = "6"
 sha2  = "0.10"
 axon-ai = { path = "../axon-ai", optional = true }
+# Phase-10 surface compiler (goal.md → .ax), for the `axon goal` command.
+axon-surface = { path = "../axon-surface" }

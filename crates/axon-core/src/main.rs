@@ -95,6 +95,19 @@ enum Command {
         action: CacheAction,
     },
 
+    /// Compile a structured-prose goal file (`*.md`) to AST and run it.
+    ///
+    /// The Phase-10 two-track flow in one step: `goal.md` → (axon-surface) →
+    /// `.ax` → type-check → interpret.
+    Goal {
+        #[arg(help = "Path to the goal .md file")]
+        file: PathBuf,
+
+        /// Print the generated `.ax` source instead of running it.
+        #[arg(long, help = "Emit the compiled .ax to stdout and exit")]
+        emit: bool,
+    },
+
     /// Compile a .ax file and execute it, forwarding remaining arguments.
     Run {
         #[arg(help = "Path to .ax source file")]
@@ -184,6 +197,7 @@ fn main() {
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
             cmd_build(files, out, release, target, no_cache, cache_dir)
         }
+        Command::Goal { file, emit } => cmd_goal(file, emit),
         Command::Run { file, release, args } => cmd_run(file, release, args),
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
@@ -380,6 +394,59 @@ struct BuildOptions {
     target_triple: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
+}
+
+// ── goal ──────────────────────────────────────────────────────────────────────
+
+/// `axon goal <file.md>` — the Phase-10 two-track flow in one command:
+/// compile structured prose → `.ax` (via `axon-surface`) → type-check → run.
+fn cmd_goal(file: PathBuf, emit_only: bool) {
+    let md = read_source(&file);
+
+    // Prose → typed-AST `.ax` source via the surface compiler.
+    let goal = match axon_surface::parser::GoalFile::parse(&md) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("error: goal file invalid: {e}");
+            process::exit(2);
+        }
+    };
+    let ax_src = match axon_surface::compile::emit(&goal) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: goal compilation failed: {e}");
+            process::exit(2);
+        }
+    };
+
+    if emit_only {
+        print!("{ax_src}");
+        return;
+    }
+
+    // Parse the generated `.ax`.
+    let mut program = match parse_source(&ax_src) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: generated .ax failed to parse: {e}");
+            eprintln!("hint: re-run with --emit to inspect the generated source");
+            process::exit(1);
+        }
+    };
+
+    // Type-check before running.
+    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    if !errors.is_empty() {
+        let use_json = !std::io::stderr().is_terminal();
+        for err in &errors {
+            emit_error(err, use_json);
+        }
+        process::exit(2);
+    }
+
+    // Interpret.
+    let code = axon_core::interp::run_program(&program);
+    process::exit(code);
 }
 
 // ── run ───────────────────────────────────────────────────────────────────────

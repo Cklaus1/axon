@@ -99,8 +99,8 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out, "@[adaptive]");
     let _ = writeln!(out, "fn try_variant(variant_id: i64) -> i64 {{");
     let _ = writeln!(out, "    let prompt = build_prompt(variant_id)");
-    let _ = writeln!(out, "    let mut total = 0");
-    let _ = writeln!(out, "    let mut i = 0");
+    let _ = writeln!(out, "    let total = 0");
+    let _ = writeln!(out, "    let i = 0");
     let _ = writeln!(out, "    while i < 2 {{");
     let _ = writeln!(out, "        let inp = test_input(i)");
     let _ = writeln!(out, "        let full = \"{{prompt}}{{inp}}\"");
@@ -115,9 +115,14 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out);
 
     // ── Verify gate ──────────────────────────────────────────────
+    // The prose predicate may be richer than Axon's v0 verify form
+    // (`<metric> OP <number>`), so preserve it verbatim as a comment and emit
+    // a valid `score`-threshold gate the skeleton can actually compile and run.
     let predicate = goal.verify_predicate()?;
-    let _ = writeln!(out, "// ── Verify gate (compiled directly from prose) ────────────");
-    let _ = writeln!(out, "@[verify({predicate})]");
+    let target = extract_target_from_predicate(&predicate).unwrap_or(70);
+    let _ = writeln!(out, "// ── Verify gate (derived from prose) ──────────────────────");
+    let _ = writeln!(out, "// prose predicate: {predicate}");
+    let _ = writeln!(out, "@[verify(score >= {target})]");
     let _ = writeln!(out, "fn assert_deployable(score: i64) -> i64 {{");
     let _ = writeln!(out, "    score");
     let _ = writeln!(out, "}}");
@@ -127,10 +132,10 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out, "// ── Main loop ────────────────────────────────────────────");
     let _ = writeln!(out, "fn main() -> i64 {{");
     let _ = writeln!(out, "    println(\"goal: {} — searching variants...\")", goal.title);
-    // Goal_run target = whatever's in verify predicate (extract literal threshold).
-    let target = extract_target_from_predicate(&predicate).unwrap_or(70);
-    let _ = writeln!(out, "    let result = goal_run(\"{}\", {target}, 20)", goal.title);
-    let _ = writeln!(out, "    let _ = assert_deployable(result)");
+    // goal_run drives the @[adaptive] try_variant (hill-climbing variant_id).
+    // Its target is an f64; the result is converted back to i64 for the gate.
+    let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, 20)");
+    let _ = writeln!(out, "    let _ = assert_deployable(f64_to_i64(result))");
     let _ = writeln!(out, "    0");
     let _ = writeln!(out, "}}");
 
@@ -204,12 +209,14 @@ Some scoring.
         let ax = emit(&g).unwrap();
         // Header.
         assert!(ax.starts_with("// Goal: Test sample"));
-        // Verify gate carried through verbatim.
+        // Verify gate carried through (score-threshold form derived from prose).
         assert!(ax.contains("@[verify(score >= 70)]"));
+        // Prose predicate preserved as a comment.
+        assert!(ax.contains("// prose predicate: score >= 70"));
         // Function signature uses input type from prose.
         assert!(ax.contains("fn test_input(i: i64) -> str"));
-        // Goal_run uses the predicate threshold.
-        assert!(ax.contains("goal_run(\"Goal: Test sample\", 70, 20)"));
+        // Goal_run drives the adaptive try_variant with an f64 target.
+        assert!(ax.contains("goal_run(\"try_variant\", 70.0, 20)"));
         // Adaptive annotation present.
         assert!(ax.contains("@[adaptive]"));
         // Build_prompt present.
