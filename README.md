@@ -199,11 +199,12 @@ Run with `axon test file.ax` or `axon test --jobs 0` for parallel execution.
 ## Builtins
 
 **I/O**: `print`, `println`, `eprint`, `eprintln`, `read_line`, `read_file`, `write_file`  
-**String**: `str_len`, `str_eq`, `str_contains`, `str_starts_with`, `str_ends_with`, `str_slice`, `str_index_of`, `char_at`, `str_to_upper`, `str_to_lower`, `str_trim`, `str_replace`, `str_repeat`, `str_pad_start`, `str_pad_end`  
+**String / collections**: `len` (str *and* arrays), `str_len`, `str_eq`, `str_contains`, `str_starts_with`, `str_ends_with`, `str_slice`, `str_index_of`, `char_at`, `str_to_upper`, `str_to_lower`, `str_trim`, `str_replace`, `str_repeat`, `str_pad_start`, `str_pad_end`, `i64_to_str_radix`  
 **Math**: `abs_i64`, `min_i64`, `max_i64`, `clamp_i64`, `pow_i64`, `abs_f64`, `min_f64`, `max_f64`, `sqrt`, `pow`, `floor`, `ceil`, `round_f64`, `random_i64`, `random_f64`  
 **Conversion**: `to_str`, `to_str_f64`, `to_str_bool`, `parse_int`, `parse_float`, `parse_bool`, `i64_to_f64`, `f64_to_i64`  
 **System**: `env_var`, `exit`, `sleep_ms`, `now_ms`  
-**Assert**: `assert_eq`, `assert_eq_str`, `assert_eq_f64`
+**Assert**: `assert`, `assert_eq`, `assert_eq_str`, `assert_eq_f64`, `assert_err`  
+**ASI**: `ai_complete`, `ai_extract_uncertain_i64`, `ai_extract_uncertain_f64`, `goal_run`, `uncertain_new`, `uncertain_new_f64`, `uncertain_confidence`, `temporal_new`, `temporal_at`, `temporal_now` — the LLM/goal/uncertainty/temporal primitives (live with `--features asi-runtime` + `ANTHROPIC_API_KEY`, or deterministic stubs via `AXON_AI_MOCK=1`)
 
 ## Project Structure
 
