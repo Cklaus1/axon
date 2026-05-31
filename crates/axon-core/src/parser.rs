@@ -1806,6 +1806,15 @@ impl Parser {
                     if !self.eat(&Token::Comma) { break; }
                 }
                 self.expect(&Token::Pipe)?; // consume closing `|`
+                // Optional explicit return type: `|...| -> Type body`. The
+                // type is parsed for forward-compat / readability and then
+                // discarded — Lambda::ret_ty is inferred during HM, and the
+                // ast::Expr::Lambda variant doesn't carry an explicit
+                // return-type slot. Matches the Rust/TypeScript ergonomics
+                // people expect when migrating example code.
+                if self.eat(&Token::Arrow) {
+                    let _ret_ty = self.parse_type_atom()?;
+                }
                 let body = self.parse_logical()?;
                 Ok(Expr::Lambda { params, body: Box::new(body), captures: Vec::new() })
             }

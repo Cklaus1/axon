@@ -46,6 +46,7 @@ examples/asi/
 ├── contained.ax   # demo #11 — compile-time capability sandbox (agent provably can't exfiltrate); key-free
 ├── parallel_score.ax # demo #12 — fan-out/collect with spawn + channels (cooperative concurrency); key-free
 ├── self_improve.ax # demo #13 — full self-improvement cycle: goal_run + goal_history + goal_best_input + goal_clear + Uncertain + @[verify]; key-free
+├── learn_linear.ax # demo #14 — fit y = a·x + b by coordinate descent over a multi-arg @[adaptive] fn; key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file
 ```

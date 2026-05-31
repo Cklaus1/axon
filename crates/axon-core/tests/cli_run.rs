@@ -896,6 +896,41 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn closure_accepts_explicit_return_type_annotation() {
+    // `|x: i64| -> i64 { x + 1 }` used to fail with "unexpected token Arrow"
+    // because the closure parser jumped straight from the closing `|` to
+    // the body, skipping the optional `-> Type` annotation Rust/TS users
+    // expect. The annotation is parsed (and forward-compat for future
+    // inference hints) but discarded today — Lambda's return type is
+    // inferred via HM. Both `body` and `{ block }` body shapes work.
+    let src = "fn main() -> i64 {\n  \
+        let n = 5\n  \
+        let add_block = |x: i64| -> i64 { x + n }\n  \
+        let add_expr  = |x: i64| -> i64 x + n\n  \
+        add_block(7) + add_expr(10)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_cl_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    // 7+5 + 10+5 = 27
+    assert_eq!(out.status.code(), Some(27), "closure should run with explicit return type: {:?}", out);
+}
+
+#[test]
+fn learn_linear_demo_fits_y_equals_3x_plus_1() {
+    // `examples/asi/learn_linear.ax` showcases multi-arg @[adaptive] on a
+    // realistic fitting task: minimize sum-of-absolute-errors of a linear
+    // model on 8 data points. The optimizer must land on `(a, b) = (3, 1)`
+    // with zero loss; the program returns 1 iff that holds.
+    let out = axon().args(["run", &ex("asi/learn_linear.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "linear regression should fit exactly: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("learned:   y = 3*x + 1"), "stdout: {stdout}");
+    assert!(stdout.contains("loss:      0 "), "stdout: {stdout}");
+}
+
+#[test]
 fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
     // Closes ROADMAP §9.5 F1/F9 for the i64^N → i64 family. The optimizer
     // now coordinate-descends over every i64 dim of an @[adaptive] fn,
