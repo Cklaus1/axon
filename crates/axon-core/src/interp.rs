@@ -1646,6 +1646,113 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Array(out));
             }
+            // Reduce an array to a single value via `f(acc, x) -> acc`.
+            // The most general functional combinator — arr_sum_i64, arr_max,
+            // arr_min, count, product, etc. are all special cases.
+            "arr_fold" => {
+                want(3)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_fold: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut acc = args[1].clone();
+                let f = args[2].clone();
+                for x in xs {
+                    acc = self.call_closure(f.clone(), vec![acc, x])?;
+                }
+                ok!(acc);
+            }
+            // Sort an array via a comparator closure `(a, b) -> i64` with
+            // standard cmp semantics (neg = a<b, 0 = eq, pos = a>b).
+            // Stable sort (insertion-sort under the hood for simplicity);
+            // not big-O optimal but plenty for ASI-scale arrays. Returns a
+            // fresh sorted array — input untouched.
+            "arr_sort_by" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_sort_by: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let cmp = args[1].clone();
+                // Insertion sort. Each comparison hits call_closure;
+                // O(n²) on length but the closure dispatch dominates so
+                // a fancier algorithm wouldn't move the needle here.
+                let mut out: Vec<Value> = Vec::with_capacity(xs.len());
+                for x in xs {
+                    let mut lo = 0;
+                    let hi = out.len();
+                    // Linear probe (binary search would re-run the cmp for
+                    // already-sorted items; for typical ASI use n is small).
+                    while lo < hi {
+                        let r = self.call_closure(cmp.clone(), vec![x.clone(), out[lo].clone()])?;
+                        let r = match r {
+                            Value::Int(n) => n,
+                            other => return panic(format!(
+                                "arr_sort_by: comparator must return i64, got {}",
+                                other.type_name()
+                            )),
+                        };
+                        if r < 0 { break; }
+                        lo += 1;
+                    }
+                    out.insert(lo, x);
+                }
+                ok!(Value::Array(out));
+            }
+            // Pair two arrays element-wise into a `[(a, b)]` slice; truncates
+            // to the shorter input. Composes with arr_map / arr_filter for
+            // dataset zipping (features + labels, etc.).
+            "arr_zip" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_zip: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let ys = match &args[1] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_zip: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let n = xs.len().min(ys.len());
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    out.push(Value::Tuple(vec![xs[i].clone(), ys[i].clone()]));
+                }
+                ok!(Value::Array(out));
+            }
+            // Linear scan: does `xs` contain a value equal to `v`?
+            // Structural equality via the existing `values_equal` helper —
+            // works for primitives, strings, tuples, nested arrays.
+            "arr_contains" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_contains: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let needle = &args[1];
+                let mut found = false;
+                for v in xs {
+                    if values_equal(v, needle) {
+                        found = true;
+                        break;
+                    }
+                }
+                ok!(Value::Bool(found));
+            }
             // Filter an array by a predicate closure (`i64 -> bool`). Keeps
             // elements where the closure returns `true`. Closures that
             // don't return bool panic, surfacing a typing mistake.

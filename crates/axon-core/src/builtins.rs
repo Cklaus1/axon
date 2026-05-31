@@ -337,6 +337,30 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "[i64]",
         doc: "Keep elements where the predicate returns true. Predicate that returns non-bool panics. Concrete-typed for i64 today.",
     },
+    BuiltinFn {
+        name: "arr_fold",
+        params: &[("xs", "[i64]"), ("init", "i64"), ("f", "fn(i64, i64) -> i64")],
+        ret: "i64",
+        doc: "Reduce `xs` to a single i64 via `f(acc, x) -> acc`, threading `init` as the starting accumulator. Most general combinator — sum, max, count, product are all special cases.",
+    },
+    BuiltinFn {
+        name: "arr_sort_by",
+        params: &[("xs", "[i64]"), ("cmp", "fn(i64, i64) -> i64")],
+        ret: "[i64]",
+        doc: "Return a sorted copy of `xs` using the comparator (neg = a<b, 0 = eq, pos = a>b). Stable insertion sort — closure-dispatch dominates, so a fancier algorithm wouldn't move the needle on ASI-scale arrays. Input untouched.",
+    },
+    BuiltinFn {
+        name: "arr_zip",
+        params: &[("xs", "[i64]"), ("ys", "[i64]")],
+        ret: "[(i64, i64)]",
+        doc: "Pair two arrays element-wise into a slice of `(x, y)` tuples; truncates to the shorter input. Composes with `arr_map` / `arr_filter` for dataset zipping (features + labels).",
+    },
+    BuiltinFn {
+        name: "arr_contains",
+        params: &[("xs", "[i64]"), ("v", "i64")],
+        ret: "bool",
+        doc: "Linear scan: does `xs` contain a value structurally equal to `v`? Works for primitives, strings, tuples, nested arrays.",
+    },
     // ── Phase 6: String builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "str_to_upper",

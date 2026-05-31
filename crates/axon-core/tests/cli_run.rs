@@ -896,6 +896,48 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_stdlib_fold_sort_zip_contains_compose() {
+    // Round out the functional array stdlib so ASI programs can write
+    // reduce / sort / pair / membership ops as one-liners. `arr_fold`
+    // generalizes sum/max/min/product; `arr_sort_by` takes a comparator
+    // closure (neg = a<b); `arr_zip` pairs into `(a, b)` tuples that
+    // destructure cleanly; `arr_contains` does a structural-equality scan.
+    let src = "fn main() -> i64 {\n  \
+        // Product of 1..=5 via fold = 120.\n  \
+        let prod = arr_fold(arr_range(1, 6), 1, |acc, x| acc * x)\n  \
+        // Sort + take min/max.\n  \
+        let xs = [3, 1, 4, 1, 5, 9, 2, 6]\n  \
+        let asc = arr_sort_by(xs, |a, b| a - b)\n  \
+        let mn = asc[0]                       // 1\n  \
+        let mx = asc[7]                       // 9\n  \
+        // Zip + dot product via destructure-in-while.\n  \
+        let ys = [1, 2, 3, 4]\n  \
+        let zs = [10, 20, 30, 40]\n  \
+        let pairs = arr_zip(ys, zs)\n  \
+        let dot = 0\n  \
+        let i = 0\n  \
+        while i < len(pairs) {\n    \
+            let (a, b) = pairs[i]\n    \
+            dot = dot + a * b\n    \
+            i = i + 1\n  \
+        }                                   // 300\n  \
+        // Membership.\n  \
+        let yes = arr_contains(xs, 9)\n  \
+        let no  = arr_contains(xs, 99)\n  \
+        println(\"prod={to_str(prod)} mn={to_str(mn)} mx={to_str(mx)} dot={to_str(dot)} yes={to_str_bool(yes)} no={to_str_bool(no)}\")\n  \
+        // Exit code = 1 iff every result is correct.\n  \
+        if prod == 120 && mn == 1 && mx == 9 && dot == 300 && yes && !no { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_arrfns_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "fold + sort + zip + contains should compose: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("prod=120 mn=1 mx=9 dot=300 yes=true no=false"), "stdout: {stdout}");
+}
+
+#[test]
 fn array_functional_pipeline_filter_then_map_then_sum() {
     // `arr_map` and `arr_filter` close the higher-order-fn gap on top of
     // closures + the new scalar array helpers. Each runs the closure via
