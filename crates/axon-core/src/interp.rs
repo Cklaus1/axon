@@ -1625,6 +1625,54 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Int(s));
             }
+            // Map a closure / lambda across an array, producing a fresh
+            // array of the results. The closure runs through `call_closure`
+            // so it sees its captured environment, and any `Flow::Panic`
+            // it raises is bubbled up — failures aren't swallowed.
+            "arr_map" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_map: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let f = args[1].clone();
+                let mut out = Vec::with_capacity(xs.len());
+                for x in xs {
+                    let mapped = self.call_closure(f.clone(), vec![x])?;
+                    out.push(mapped);
+                }
+                ok!(Value::Array(out));
+            }
+            // Filter an array by a predicate closure (`i64 -> bool`). Keeps
+            // elements where the closure returns `true`. Closures that
+            // don't return bool panic, surfacing a typing mistake.
+            "arr_filter" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_filter: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let f = args[1].clone();
+                let mut out = Vec::with_capacity(xs.len());
+                for x in xs {
+                    let keep = self.call_closure(f.clone(), vec![x.clone()])?;
+                    match keep {
+                        Value::Bool(true) => out.push(x),
+                        Value::Bool(false) => {}
+                        other => return panic(format!(
+                            "arr_filter: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Array(out));
+            }
             // Max / min of an i64 array. Empty → panic (no sensible default
             // for an unbounded domain; caller should `if len(xs) > 0` first).
             "arr_max_i64" | "arr_min_i64" => {

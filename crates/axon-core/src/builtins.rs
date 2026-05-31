@@ -325,6 +325,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Minimum of an i64 array. Panics on an empty array.",
     },
+    BuiltinFn {
+        name: "arr_map",
+        params: &[("xs", "[i64]"), ("f", "fn(i64) -> i64")],
+        ret: "[i64]",
+        doc: "Apply a closure to each element of an i64 array, producing a new array of results. Closure failures (panics) propagate. Concrete-typed for i64 → i64 today; generic [T] / [U] form waits on Phase 8.",
+    },
+    BuiltinFn {
+        name: "arr_filter",
+        params: &[("xs", "[i64]"), ("pred", "fn(i64) -> bool")],
+        ret: "[i64]",
+        doc: "Keep elements where the predicate returns true. Predicate that returns non-bool panics. Concrete-typed for i64 today.",
+    },
     // ── Phase 6: String builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "str_to_upper",

@@ -896,6 +896,28 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_functional_pipeline_filter_then_map_then_sum() {
+    // `arr_map` and `arr_filter` close the higher-order-fn gap on top of
+    // closures + the new scalar array helpers. Each runs the closure via
+    // call_closure, so captures and lambda bodies (block-form or expr-
+    // form) all work. A real ASI program can now build feature vectors,
+    // score lists, and reduce — without inlining each loop.
+    let src = "fn main() -> i64 {\n  \
+        // Sum of squares of even numbers in 1..=10. Expected:\n  \
+        // (2² + 4² + 6² + 8² + 10²) = 4 + 16 + 36 + 64 + 100 = 220.\n  \
+        let xs = arr_range(1, 11)\n  \
+        let evens = arr_filter(xs, |x| x % 2 == 0)\n  \
+        let squares = arr_map(evens, |x| x * x)\n  \
+        arr_sum_i64(squares)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pipe_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(220), "filter→map→sum should compose to 220: {:?}", out);
+}
+
+#[test]
 fn array_helpers_range_push_sum_max_min() {
     // Adds the missing scalar array stdlib that demos kept reaching for:
     //   arr_range, arr_push, arr_sum_i64, arr_max_i64, arr_min_i64
