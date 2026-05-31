@@ -41,6 +41,9 @@ pub enum Token {
     #[token("self")]   SelfKw,
     #[token("where")]  Where,
     #[token("chan")]    Chan,
+    /// `expr as Type` — postfix numeric cast (parser sugar over `as_i64` /
+    /// `as_f64` / etc., which are polymorphic on the source type).
+    #[token("as")]      As,
 
     // Operators
     #[token("->")] Arrow,

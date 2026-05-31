@@ -896,6 +896,31 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn as_cast_operator_lowers_to_polymorphic_builtins() {
+    // Closes ROADMAP §9.5 F8. `expr as Type` is parser sugar over the
+    // polymorphic `as_<type>` builtins shipped last tick. Higher precedence
+    // than arithmetic — `10 + 3.7 as i64` parses as `10 + (3.7 as i64)`.
+    let src = "fn main() -> i64 {\n  \
+        // i64 → f64 → arithmetic → back to i64.\n  \
+        let f = 5 as f64 * 2.5                    // 12.5\n  \
+        let fi = f as i64                         // 12\n  \
+        // f64 truncating cast.\n  \
+        let tri = 3.7 as i64                      // 3\n  \
+        // Precedence: as binds tighter than +.\n  \
+        let mix = 10 + 3.7 as i64                 // 13\n  \
+        // Bool → i64.\n  \
+        let bi = (true as i64) * 100 + (false as i64)  // 100\n  \
+        println(\"fi={to_str(fi)} tri={to_str(tri)} mix={to_str(mix)} bi={to_str(bi)}\")\n  \
+        if fi == 12 && tri == 3 && mix == 13 && bi == 100 { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_as_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "as cast should compose: {:?}", out);
+}
+
+#[test]
 fn array_repeat_concat_flatten_compose() {
     // Three new array primitives that round out the construction surface:
     //   arr_repeat(v, n)  — build a default-filled array

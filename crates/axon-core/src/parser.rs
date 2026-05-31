@@ -1656,6 +1656,30 @@ impl Parser {
                     self.expect(&Token::RBracket)?;
                     expr = Expr::Index { receiver: Box::new(expr), index: Box::new(index) };
                 }
+                // `expr as Type` — postfix numeric cast. Desugars to a call to
+                // the polymorphic `as_<type>` builtin (`as_f64`, `as_i64`,
+                // `as_str`, …); the interpreter dispatches on the runtime
+                // source type. Higher-precedence than arithmetic (matches
+                // Rust), so `x + y as f64` parses as `x + (y as f64)`.
+                Some(Token::As) => {
+                    self.advance()?;
+                    // Parse a single type atom — `Type::Result<…>` and other
+                    // composite type forms aren't valid as cast targets, only
+                    // bare names like `f64`, `i64`, `str`, `bool`.
+                    let ty = self.parse_type_atom()?;
+                    let name = match ty {
+                        AxonType::Named(n) => n,
+                        other => return Err(ParseError::Other(format!(
+                            "`as` expects a primitive type name (f64, i64, str, bool, …), got {:?}",
+                            other,
+                        ))),
+                    };
+                    let callee = format!("as_{name}");
+                    expr = Expr::Call {
+                        callee: Box::new(Expr::Ident(callee)),
+                        args: vec![expr],
+                    };
+                }
                 _ => break,
             }
         }
