@@ -1,0 +1,122 @@
+// Axon ASI demo: autonomous self-improving search loop.
+//
+// Showcases the full optimizer-introspection surface added on
+// `merge-asi-layer3`: goal_run + goal_best_input + goal_history +
+// goal_clear, composed into a single self-improvement cycle that
+// inspects its own learning trajectory and decides when to stop.
+//
+//   1. Run the optimizer over an @[adaptive] objective.
+//   2. Read the full (input, score) trace via goal_history.
+//   3. Compute convergence stats: best, mean of the last 5 probes,
+//      number of distinct probes — i.e., introspect what was learned.
+//   4. Extract the winning probe via goal_best_input.
+//   5. Wrap the answer as Uncertain<i64> with a confidence derived
+//      from "how close did we get to target?" and pass it through
+//      a @[verify(confidence >= 0.95)] deploy gate.
+//   6. If the gate panics, the message names the rejected value AND
+//      the input that produced it (verify-panic enrichment) so a
+//      retry can pick up exactly where this attempt left off.
+//
+// No LLM. Pure compute. The objective is a numeric function whose
+// peak the optimizer has to find. Replace `objective` with anything
+// callable from Axon to apply the same loop to a real task.
+
+// ── The objective (peak at x = 137) ─────────────────────────────────────────
+// A noisy unimodal function. The hill-climb's wide-step seed locates the
+// peak via binary search; for a 50-eval budget that's well under the
+// budget. The redundant `+ 0` keeps the body multi-token so the parser
+// stays honest about ASI continuation across the arithmetic.
+
+@[adaptive]
+fn objective(x: i64) -> i64 {
+    let d = x - 137
+    1000 - d * d / 4 + 0
+}
+
+// ── Confidence model ────────────────────────────────────────────────────────
+// We trust the answer in proportion to "how close did we get to the target".
+// At target reached, confidence = 1.0; at target/2, confidence = 0.5.
+
+fn confidence_from_score(score: f64, target: f64) -> f64 {
+    if target == 0.0 { 0.0 }
+    else {
+        let raw = score / target
+        if raw < 0.0 { 0.0 }
+        else if raw > 1.0 { 1.0 }
+        else { raw }
+    }
+}
+
+// ── Deploy gate ─────────────────────────────────────────────────────────────
+// Runtime @[verify] gate: confidence must be >= 0.95 or the program panics
+// with a message naming the rejected value + the input that produced it.
+
+@[verify(confidence >= 0.95)]
+fn deploy_gate(best_x: i64, best_score: f64, target: f64) -> Uncertain<i64> {
+    let c = confidence_from_score(best_score, target)
+    uncertain_dyn_i64(best_x, c)
+}
+
+fn main() {
+    let target = 1000.0
+    let budget = 50
+
+    // ── 1. Optimize ────────────────────────────────────────────────────────
+    let _ = goal_clear("objective")
+    let best_score = goal_run("objective", target, budget)
+
+    // ── 2-3. Inspect the learning trajectory ───────────────────────────────
+    let trace = goal_history("objective")
+    let n = len(trace)
+
+    // Mean score over the last 5 probes (a crude "is this converged?" signal).
+    let sum_tail = 0.0
+    let tail_start = if n >= 5 { n - 5 } else { 0 }
+    let i = tail_start
+    while i < n {
+        let (_x, s) = trace[i]
+        sum_tail = sum_tail + s
+        i = i + 1
+    }
+    let tail_count = n - tail_start
+    let tail_mean = if tail_count > 0 {
+        sum_tail / i64_to_f64(tail_count)
+    } else { 0.0 }
+
+    // Number of distinct probes: a proxy for how broadly the search swept.
+    // (Trace can be long when convergence is slow; many repeats means the
+    // step size collapsed too early.)
+    let distinct = 0
+    let j = 0
+    while j < n {
+        let (xj, _sj) = trace[j]
+        let seen = false
+        let k = 0
+        while k < j {
+            let (xk, _sk) = trace[k]
+            if xk == xj { seen = true }
+            k = k + 1
+        }
+        if !seen { distinct = distinct + 1 }
+        j = j + 1
+    }
+
+    println("=== self-improvement cycle ===")
+    println("budget:         {to_str(budget)} evals")
+    println("trace length:   {to_str(n)}")
+    println("distinct probes:{to_str(distinct)}")
+    println("best score:     {to_str_f64(best_score)} / {to_str_f64(target)}")
+    println("tail mean(5):   {to_str_f64(tail_mean)}")
+
+    // ── 4. Extract the winning probe ───────────────────────────────────────
+    let best_x = goal_best_input("objective", target)
+    println("best input:     {to_str(best_x)} (peak is at 137)")
+
+    // ── 5-6. Deploy gate (Uncertain + @[verify]) ──────────────────────────
+    // The gate panics with the enriched message if confidence < 0.95. With
+    // this objective the optimizer reaches score = 1000, confidence = 1.0,
+    // so the gate passes.
+    let u = deploy_gate(best_x, best_score, target)
+    println("deploy gate:    PASS (confidence = {to_str_f64(u.confidence)})")
+    println("verified value: {to_str(u.value)}")
+}

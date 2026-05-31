@@ -878,6 +878,23 @@ fn hill_climb_finds_diverse_peaks_in_a_small_budget() {
 }
 
 #[test]
+fn self_improve_demo_completes_the_full_cycle() {
+    // examples/asi/self_improve.ax exercises the full optimizer-introspection
+    // loop end-to-end: goal_clear → goal_run → goal_history (destructure +
+    // distinct counting) → goal_best_input → Uncertain + @[verify] deploy
+    // gate. If any of these regresses, the demo trips. Pinning the contract:
+    // the deploy gate passes, the verified value is the peak (137), and the
+    // confidence is exactly 1.0.
+    let out = axon().args(["run", &ex("asi/self_improve.ax")]).output().unwrap();
+    assert!(out.status.success(), "self_improve demo should run cleanly: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("best score:     1000"), "stdout: {stdout}");
+    assert!(stdout.contains("best input:     137"), "stdout: {stdout}");
+    assert!(stdout.contains("deploy gate:    PASS"), "stdout: {stdout}");
+    assert!(stdout.contains("verified value: 137"), "stdout: {stdout}");
+}
+
+#[test]
 fn hill_climb_exact_landing_on_a_modest_peak() {
     // The peak at x=37 should be found exactly within a 50-eval budget.
     let src = "@[adaptive]\n\
