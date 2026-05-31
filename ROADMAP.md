@@ -519,7 +519,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
-| F1 | `goal_run` only live-hill-climbs `fn(i64) -> i64`; every other signature falls back to retrospective best-observed lookup | 8 | Generalize search via strategy parameter (`for!<HillClimb>` over arbitrary domain). Today's encoding (variant catalog → integer index) is awkward for continuous params and string inputs. |
+| F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **partially closed** for `fn(i64, …, i64) -> i64`. The interpreter now coordinate-descends over every i64 dim of an `@[adaptive]` fn; `goal_best_inputs(name, target) -> [i64]` returns the full input tuple. Continuous / string / mixed-type domains still wait on Phase 8 strategy parameter. | 8 | Done for i64^N. |
 | F2 | `ai_complete` is non-deterministic; `axon trace replay` cannot reproduce a run | 9 | Without this, every "auditable" claim is weaker than advertised. Replay engine + seed capture + LLM-call memoization. |
 | F3 | Provenance log is flat NDJSON `(fn_name, score)` — no Principal, no effect row, no causal link to the goal that triggered the call | 7 + 9 | Typed `AuditEvent` per effect; Principal-tagged; queryable as a stream. |
 | F4 | No budget meter — token cost per `ai_complete` call is invisible; `max_evals` is a poor proxy | 7 | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`, halts on overrun. |
@@ -532,7 +532,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | F6 | `@[verify]` predicate language is `confidence OP K` only — cannot express `value >= 0 AND confidence >= 0.9` or relations between two Uncertain values | 5 | **Partially closed** — interpreter now also accepts `@[verify(value OP K)]` (i64 or f64 Uncertain.value vs a numeric bound). Full `AND` / multi-Uncertain shapes still wait on refinement types in Phase 5. |
 | F7 | ~~No string→digit-only filter builtin~~ — **closed** by `str_digits_only(s) -> str` (interpreter). `parse_int(str_digits_only("415-555-0142"))` → `Ok(4155550142)`. | stdlib | Done. |
 | F8 | No `as` cast operator — must use `f64_to_i64` / `i64_to_f64` builtins | language | Stylistic only; not load-bearing. Defer. |
-| F9 | `@[adaptive]` only single-arg `fn(i64) -> i64` is eligible for live hill-climb; multi-arg adaptive fns silently fall back | 8 | Generalize alongside F1 to multi-dim domain. |
+| F9 | ~~`@[adaptive]` only single-arg `fn(i64) -> i64` is eligible for live hill-climb~~ — **closed** via coordinate descent: any `fn(i64, …, i64) -> i64` with `@[adaptive]` now hill-climbs in `goal_run`. Provenance logs the full input tuple (`provenance_inputs: Vec<Vec<i64>>`); `goal_best_inputs` reads it back. | 8 | Done. |
 | F10 | No reward-shaping syntax — score *is* the metric; cannot declaratively say `score = accuracy − 0.1·tokens` | 8 | `Reward<T>` as signed Metric with composition operators. |
 | F11 | ~~`@[adaptive]` records only return values, not inputs — hill-climb cannot warm-start from the best previous input~~ — **closed** in the interpreter. The interp now logs `(input, score)` pairs in lock-step (`provenance_inputs`); exposed via `goal_best_input(name, target) -> i64` and `goal_history(name) -> [(i64, f64)]`. Native codegen still logs scores only. | 7 (codegen) | Interpreter done; codegen ABI extension still scheduled for Phase 7. |
 | F12 | No `Agent` type — the redteam is just another fn; no tools, effects, policy; two agents cannot be composed | 7 + 8 | Tier-1 stdlib type. |

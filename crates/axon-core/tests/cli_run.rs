@@ -896,6 +896,46 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
+    // Closes ROADMAP §9.5 F1/F9 for the i64^N → i64 family. The optimizer
+    // now coordinate-descends over every i64 dim of an @[adaptive] fn,
+    // not just a single arg. `goal_best_inputs(name, target)` returns the
+    // full input tuple so callers can read both `x*` and `y*` back.
+    //
+    // Two-dim: peak at (3, 7).
+    let src2 = "@[adaptive]\n\
+        fn pair(x: i64, y: i64) -> i64 { 100 - abs_i64(x - 3) - abs_i64(y - 7) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"pair\", 100.0, 80)\n  \
+            let xs = goal_best_inputs(\"pair\", 100.0)\n  \
+            // Exit code = x* + y* (3 + 7 = 10) so we can pin the contract.\n  \
+            xs[0] + xs[1]\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_m2_{}.ax", std::process::id()));
+    std::fs::write(&f, src2).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(10), "2-arg peak: x* + y* should be 3 + 7 = 10: {:?}", out);
+
+    // Three-dim: peak at (3, 7, 11). Bigger budget — coordinate descent
+    // costs n_dims sweeps before convergence settles.
+    let src3 = "@[adaptive]\n\
+        fn trio(x: i64, y: i64, z: i64) -> i64 {\n  \
+            100 - abs_i64(x - 3) - abs_i64(y - 7) - abs_i64(z - 11)\n\
+        }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"trio\", 100.0, 200)\n  \
+            let xs = goal_best_inputs(\"trio\", 100.0)\n  \
+            xs[0] + xs[1] + xs[2]\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_m3_{}.ax", std::process::id()));
+    std::fs::write(&f, src3).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(21), "3-arg peak: sum of dims should be 3+7+11=21: {:?}", out);
+}
+
+#[test]
 fn raw_string_literal_disables_interpolation_and_escapes() {
     // Closes ROADMAP §9.5 F16. `r"…"` lets demos embed literal Axon/Rust/
     // JSON/regex source that contains `\`, `{`, `}` without `{{`/`}}` or

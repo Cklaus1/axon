@@ -630,7 +630,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "goal_best_input",
         params: &[("name", "str"), ("target", "f64")],
         ret: "i64",
-        doc: "Return the leading-i64 input that produced the best observed score (closest to `target`) for the @[adaptive] function `name`. Pairs with `goal_run` so an ASI loop can introspect which probe got it there. Returns 0 when no inputs were recorded.",
+        doc: "Return the leading-i64 input that produced the best observed score (closest to `target`) for the @[adaptive] function `name`. Pairs with `goal_run` so an ASI loop can introspect which probe got it there. For multi-arg adaptive fns this returns the FIRST dim; use `goal_best_inputs` for the full tuple. Returns 0 when no inputs were recorded.",
+    },
+    BuiltinFn {
+        name: "goal_best_inputs",
+        params: &[("name", "str"), ("target", "f64")],
+        ret: "[i64]",
+        doc: "Return all i64 input dims that produced the best observed score for the @[adaptive] function `name`. The multi-arg companion to `goal_best_input` — for `fn(x: i64, y: i64) -> i64` it returns `[x*, y*]`. Empty slice when the fn was never called.",
     },
     BuiltinFn {
         name: "goal_history",

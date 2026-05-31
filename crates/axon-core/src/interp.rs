@@ -169,11 +169,13 @@ pub struct Interp<'p> {
     /// In-memory provenance store: `@[adaptive]` fn name → recorded return
     /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
     provenance: RefCell<HashMap<String, Vec<f64>>>,
-    /// Per-call leading-i64 inputs, in lock-step with `provenance`. `None`
-    /// when the `@[adaptive]` fn's first arg isn't an i64. Read by the
-    /// `goal_best_input` builtin so ASI loops can introspect which probe
-    /// produced the best score.
-    provenance_inputs: RefCell<HashMap<String, Vec<Option<i64>>>>,
+    /// Per-call i64-prefix input tuple, in lock-step with `provenance`. The
+    /// vec collects every leading i64 arg the fn took (length = how many
+    /// of the fn's first args were i64). Empty when none were. Read by
+    /// `goal_best_input` (returns the first dim) and `goal_best_inputs`
+    /// (returns the full tuple), and used by the multi-arg coordinate-
+    /// descent hill-climb to seed the next sweep.
+    provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
     /// Current call-stack depth, bounded by `RECURSION_LIMIT` so runaway
     /// recursion fails with a catchable panic rather than overflowing the
     /// (large but finite) interpreter thread stack and aborting the process.
@@ -358,12 +360,19 @@ impl<'p> Interp<'p> {
                 args.len()
             ));
         }
-        // The leading i64 arg (if any) is the goal-search input — recorded with
-        // the provenance so goal_run can resume from the best prior input.
-        let input_arg = args.first().and_then(|v| match v {
-            Value::Int(n) => Some(*n),
-            _ => None,
-        });
+        // The leading i64 args (if any) form the goal-search input tuple —
+        // recorded so goal_run can resume from the best prior probe and
+        // multi-arg coordinate descent can seed each dim independently.
+        // We collect every leading arg that's an i64; the run stops at
+        // the first non-i64 (subsequent args stay opaque to the optimizer).
+        let input_args: Vec<i64> = args
+            .iter()
+            .take_while(|v| matches!(v, Value::Int(_)))
+            .map(|v| if let Value::Int(n) = v { *n } else { 0 })
+            .collect();
+        // First dim, for back-compat with the verify-panic enrichment that
+        // reports a single "input N" suffix.
+        let input_arg: Option<i64> = input_args.first().copied();
         let mut env = Env::new();
         for (p, a) in f.params.iter().zip(args) {
             env.define(p.name.clone(), a);
@@ -387,7 +396,7 @@ impl<'p> Interp<'p> {
                     .borrow_mut()
                     .entry(f.name.clone())
                     .or_default()
-                    .push(input_arg);
+                    .push(input_args.clone());
                 // Also persist to the provenance JSONL (axon-rt's format) so
                 // `axon trace`/observability tooling see interpreter runs.
                 let payload = match &result {
@@ -491,12 +500,17 @@ impl<'p> Interp<'p> {
     fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
-            let eligible = f.attrs.iter().any(|a| a.name == "adaptive")
-                && f.params.len() == 1
-                && is_i64_type(&f.params[0].ty)
-                && f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
-            if eligible {
-                return self.hill_climb_i64(f, target, max_evals);
+            let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+            let all_i64_params = !f.params.is_empty()
+                && f.params.iter().all(|p| is_i64_type(&p.ty));
+            let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+            if is_adaptive && all_i64_params && i64_ret {
+                return if f.params.len() == 1 {
+                    self.hill_climb_i64(f, target, max_evals)
+                } else {
+                    // Multi-arg: coordinate descent over each i64 dim.
+                    self.hill_climb_multi_i64(f, target, max_evals)
+                };
             }
         }
         Ok(self.best_observed(name, target, max_evals))
@@ -605,6 +619,113 @@ impl<'p> Interp<'p> {
         Ok(best_score)
     }
 
+    /// Coordinate-descent hill climb for an `@[adaptive] fn(i64, i64, ...) -> i64`.
+    /// Cycles through each dim, halving-step searching that dim while holding
+    /// the others fixed, then repeats the sweep until either no dim improves
+    /// (its halving cascade bottomed out) or the budget is exhausted.
+    /// Direction-agnostic: returns the observed score closest to `target`.
+    /// Each callback flows through `Interp::call_fn`, so provenance (scores +
+    /// full input tuples) accumulates as a side effect.
+    fn hill_climb_multi_i64(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
+        let n_dims = f.params.len();
+        let unlimited = max_evals <= 0;
+        let mut cur: Vec<i64> = vec![0; n_dims];
+        let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
+            let args = xs.iter().map(|&x| Value::Int(x)).collect();
+            match self.call_fn(f, args)? {
+                Value::Int(n) => Ok(n as f64),
+                Value::Float(v) => Ok(v),
+                other => panic(format!(
+                    "@[adaptive] fn `{}` must return a number, got {}",
+                    f.name,
+                    other.type_name()
+                )),
+            }
+        };
+
+        let mut best_score = eval_at(&cur)?;
+        let mut best_dist = (best_score - target).abs();
+        let mut evals: i64 = 1;
+        if best_dist <= f64::EPSILON {
+            return Ok(best_score);
+        }
+
+        // Per-dim step seeding. Mirrors the 1-D formula: each dim gets a
+        // wide first probe so it can sweep an interval before the halving
+        // cascade narrows. We divide the budget across dims so a single
+        // sweep stays inside the user's eval cap.
+        let per_dim_budget = if unlimited { 0 } else { std::cmp::max(4, max_evals / (n_dims as i64).max(1)) };
+        let seed_step: i64 = if unlimited { 4096 } else { std::cmp::max(16, per_dim_budget.saturating_mul(4)) };
+
+        let mut steps: Vec<i64> = vec![seed_step; n_dims];
+
+        // Sweep until no dim improves or budget hits.
+        loop {
+            let mut any_improvement = false;
+            for d in 0..n_dims {
+                if !unlimited && evals >= max_evals {
+                    return Ok(best_score);
+                }
+                while steps[d] >= 1 {
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+                    let mut improved = false;
+
+                    let mut probe = cur.clone();
+                    probe[d] = cur[d].saturating_add(steps[d]);
+                    let up_score = eval_at(&probe)?;
+                    evals += 1;
+                    if (up_score - target).abs() < best_dist {
+                        best_dist = (up_score - target).abs();
+                        best_score = up_score;
+                        cur[d] = probe[d];
+                        improved = true;
+                        any_improvement = true;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                    }
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+
+                    let mut probe = cur.clone();
+                    probe[d] = cur[d].saturating_sub(steps[d]);
+                    let dn_score = eval_at(&probe)?;
+                    evals += 1;
+                    if (dn_score - target).abs() < best_dist {
+                        best_dist = (dn_score - target).abs();
+                        best_score = dn_score;
+                        cur[d] = probe[d];
+                        improved = true;
+                        any_improvement = true;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                    }
+
+                    if !improved {
+                        steps[d] /= 2;
+                    }
+                }
+            }
+            if !any_improvement {
+                return Ok(best_score);
+            }
+            // Re-arm each dim's step for another sweep — a higher-dim move
+            // may have opened a new gradient in dim 0.
+            for s in steps.iter_mut() {
+                *s = seed_step;
+            }
+        }
+    }
+
     /// Closest recorded score to `target` for `name` (or `target` if none).
     /// `max_evals > 0` keeps only the most recent N records.
     fn best_observed(&self, name: &str, target: f64, max_evals: i64) -> f64 {
@@ -633,10 +754,9 @@ impl<'p> Interp<'p> {
     }
 
     /// Full `(input, score)` trace for an `@[adaptive]` fn. Walks the
-    /// in-memory provenance store in call order, dropping entries whose
-    /// leading-i64 input was unrecorded. Returned as a Slice of two-element
-    /// tuples so callers can iterate, plot, persist, or compute custom
-    /// aggregates beyond what `goal_run` + `goal_best_input` give.
+    /// in-memory provenance store in call order. Each entry's input is the
+    /// FIRST i64 dim — multi-arg fns expose all dims via `goal_best_inputs`
+    /// instead. Empty when nothing was recorded or the fn had no i64 args.
     fn history(&self, name: &str) -> Value {
         let mut out: Vec<Value> = Vec::new();
         if name.is_empty() {
@@ -648,9 +768,9 @@ impl<'p> Interp<'p> {
             let n = scores.len().min(inputs.len());
             out.reserve(n);
             for i in 0..n {
-                if let Some(input) = inputs[i] {
+                if let Some(&first) = inputs[i].first() {
                     out.push(Value::Tuple(vec![
-                        Value::Int(input),
+                        Value::Int(first),
                         Value::Float(scores[i]),
                     ]));
                 }
@@ -676,28 +796,22 @@ impl<'p> Interp<'p> {
         evicted
     }
 
-    /// Input that produced the score closest to `target` for an `@[adaptive]`
-    /// fn. Walks the per-fn `(input, score)` log (in lock-step with the
-    /// score store), picks the entry minimizing `|score - target|`, returns
-    /// its leading-i64 input. Falls back to 0 when no inputs were recorded
-    /// (e.g. the fn was never invoked, or its first arg isn't i64).
-    fn best_input(&self, name: &str, target: f64) -> i64 {
+    /// Index of the provenance entry whose score is closest to `target`,
+    /// among entries with at least one recorded i64 input. None when nothing
+    /// was recorded for `name`.
+    fn best_input_index(&self, name: &str, target: f64) -> Option<usize> {
         if name.is_empty() {
-            return 0;
+            return None;
         }
         let scores_store = self.provenance.borrow();
         let inputs_store = self.provenance_inputs.borrow();
-        let Some(scores) = scores_store.get(name).filter(|s| !s.is_empty()) else {
-            return 0;
-        };
-        let Some(inputs) = inputs_store.get(name) else {
-            return 0;
-        };
+        let scores = scores_store.get(name).filter(|s| !s.is_empty())?;
+        let inputs = inputs_store.get(name)?;
         let n = scores.len().min(inputs.len());
         let mut best_idx: Option<usize> = None;
         let mut best_dist = f64::INFINITY;
         for i in 0..n {
-            if let Some(_in) = inputs[i] {
+            if !inputs[i].is_empty() {
                 let d = (scores[i] - target).abs();
                 if d < best_dist {
                     best_dist = d;
@@ -706,8 +820,31 @@ impl<'p> Interp<'p> {
             }
         }
         best_idx
-            .and_then(|i| inputs[i])
+    }
+
+    /// Input that produced the score closest to `target` for an `@[adaptive]`
+    /// fn. Returns the FIRST i64 dim — for multi-arg fns, use
+    /// `goal_best_inputs` for the full tuple. Falls back to 0 when no inputs
+    /// were recorded (the fn was never invoked, or it had no i64 args).
+    fn best_input(&self, name: &str, target: f64) -> i64 {
+        self.best_input_index(name, target)
+            .and_then(|i| self.provenance_inputs.borrow().get(name)?.get(i)?.first().copied())
             .unwrap_or(0)
+    }
+
+    /// All i64 input dims that produced the score closest to `target` for an
+    /// `@[adaptive]` fn. Returns an empty slice when nothing was recorded.
+    fn best_inputs(&self, name: &str, target: f64) -> Value {
+        let Some(idx) = self.best_input_index(name, target) else {
+            return Value::Array(Vec::new());
+        };
+        let inputs_store = self.provenance_inputs.borrow();
+        let dims = inputs_store
+            .get(name)
+            .and_then(|v| v.get(idx))
+            .cloned()
+            .unwrap_or_default();
+        Value::Array(dims.into_iter().map(Value::Int).collect())
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable name
@@ -1810,13 +1947,26 @@ impl<'p> Interp<'p> {
             // Read back the best-scoring leading-i64 input observed for an
             // `@[adaptive]` fn. Pairs with `goal_run` — the optimizer logs
             // (input, score) on every call, so a follow-up call can
-            // introspect "what probe got us closest to target?". Returns 0
-            // when the fn was never called or has no i64 leading param.
+            // introspect "what probe got us closest to target?". For
+            // multi-arg fns this returns the FIRST dim; use
+            // `goal_best_inputs` to read the full tuple. Returns 0 when
+            // the fn was never called or has no i64 leading param.
             "goal_best_input" => {
                 want(2)?;
                 let name = as_str(&args[0])?.to_string();
                 let target = as_float(&args[1])?;
                 ok!(Value::Int(self.best_input(&name, target)));
+            }
+
+            // All i64 input dims that produced the best score, as a slice.
+            // The multi-arg companion to `goal_best_input`: for an
+            // `@[adaptive] fn(x: i64, y: i64) -> i64` it returns `[x*, y*]`.
+            // Empty slice when the fn was never called.
+            "goal_best_inputs" => {
+                want(2)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                ok!(self.best_inputs(&name, target));
             }
 
             // Full optimization trace as a slice of `(input, score)` tuples,
