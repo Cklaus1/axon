@@ -294,6 +294,37 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Return the greater of two i64 values.",
     },
+    // ── Array helpers ─────────────────────────────────────────────────────────
+    BuiltinFn {
+        name: "arr_range",
+        params: &[("start", "i64"), ("end", "i64")],
+        ret: "[i64]",
+        doc: "Return the half-open range `[start, end)` as a fresh i64 slice. Empty when `end <= start`. Useful for `for i in arr_range(0, n)` and as a seed for further array ops.",
+    },
+    BuiltinFn {
+        name: "arr_push",
+        params: &[("xs", "[i64]"), ("x", "i64")],
+        ret: "[i64]",
+        doc: "Return a fresh array with `x` appended. Copy semantics — the input is unaffected. (Concrete-typed for i64 today; generic [T] form waits on Phase 8.)",
+    },
+    BuiltinFn {
+        name: "arr_sum_i64",
+        params: &[("xs", "[i64]")],
+        ret: "i64",
+        doc: "Sum of an i64 array. Empty → 0. Saturates on overflow.",
+    },
+    BuiltinFn {
+        name: "arr_max_i64",
+        params: &[("xs", "[i64]")],
+        ret: "i64",
+        doc: "Maximum of an i64 array. Panics on an empty array — caller should guard with `if len(xs) > 0` first.",
+    },
+    BuiltinFn {
+        name: "arr_min_i64",
+        params: &[("xs", "[i64]")],
+        ret: "i64",
+        doc: "Minimum of an i64 array. Panics on an empty array.",
+    },
     // ── Phase 6: String builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "str_to_upper",

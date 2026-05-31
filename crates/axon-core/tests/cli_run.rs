@@ -896,6 +896,31 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_helpers_range_push_sum_max_min() {
+    // Adds the missing scalar array stdlib that demos kept reaching for:
+    //   arr_range, arr_push, arr_sum_i64, arr_max_i64, arr_min_i64
+    // All concrete-typed for i64 today; generic [T] forms wait on Phase 8.
+    let src = "fn main() -> i64 {\n  \
+        // Build 1..=10 via range, then push 99.\n  \
+        let xs = arr_range(1, 11)\n  \
+        let ys = arr_push(xs, 99)\n  \
+        let s = arr_sum_i64(ys)         // 1+2+...+10 + 99 = 55 + 99 = 154\n  \
+        let mx = arr_max_i64(ys)        // 99\n  \
+        let mn = arr_min_i64(ys)        // 1\n  \
+        println(\"sum={to_str(s)} max={to_str(mx)} min={to_str(mn)}\")\n  \
+        // Pin the contract: 154 + 99 + 1 = 254, fits in u8.\n  \
+        s + mx + mn\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_arr_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(254), "array helpers should compose: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("sum=154 max=99 min=1"), "stdout: {stdout}");
+}
+
+#[test]
 fn closure_accepts_explicit_return_type_annotation() {
     // `|x: i64| -> i64 { x + 1 }` used to fail with "unexpected token Arrow"
     // because the closure parser jumped straight from the closing `|` to

@@ -1562,6 +1562,105 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Int(as_int(&args[0])?.abs()));
             }
+
+            // ── Array helpers ─────────────────────────────────────────────────
+            // Concrete-typed because the interpreter's array path holds
+            // `Vec<Value>` and the inference layer wants concrete return shapes;
+            // generic [T] forms wait on Phase-8 search-strategy work that also
+            // teaches the optimizer about user-defined domains.
+
+            // Half-open range `[start, end)`. Returns an empty slice when
+            // `end <= start`. Saturates element count silently if asked for an
+            // implausibly large range — caller should size with awareness.
+            "arr_range" => {
+                want(2)?;
+                let start = as_int(&args[0])?;
+                let end = as_int(&args[1])?;
+                if end <= start {
+                    ok!(Value::Array(Vec::new()));
+                }
+                let len = (end - start) as usize;
+                let mut out = Vec::with_capacity(len.min(1 << 20));
+                let mut i = start;
+                while i < end && out.len() < (1 << 20) {
+                    out.push(Value::Int(i));
+                    i += 1;
+                }
+                ok!(Value::Array(out));
+            }
+            // Append: returns a fresh array with `x` at the end. Copy
+            // semantics — the input array is unaffected.
+            "arr_push" => {
+                want(2)?;
+                let mut xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_push: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                xs.push(args[1].clone());
+                ok!(Value::Array(xs));
+            }
+            // Sum of an i64 array. Empty → 0. Saturates on overflow.
+            "arr_sum_i64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_sum_i64: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut s: i64 = 0;
+                for v in xs {
+                    let n = match v {
+                        Value::Int(n) => *n,
+                        other => return panic(format!(
+                            "arr_sum_i64: element must be i64, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    s = s.saturating_add(n);
+                }
+                ok!(Value::Int(s));
+            }
+            // Max / min of an i64 array. Empty → panic (no sensible default
+            // for an unbounded domain; caller should `if len(xs) > 0` first).
+            "arr_max_i64" | "arr_min_i64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "{name}: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() {
+                    return panic(format!("{name}: array is empty"));
+                }
+                let pick_max = name == "arr_max_i64";
+                let mut best: i64 = match &xs[0] {
+                    Value::Int(n) => *n,
+                    other => return panic(format!(
+                        "{name}: element must be i64, got {}",
+                        other.type_name()
+                    )),
+                };
+                for v in &xs[1..] {
+                    let n = match v {
+                        Value::Int(n) => *n,
+                        other => return panic(format!(
+                            "{name}: element must be i64, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    if (pick_max && n > best) || (!pick_max && n < best) {
+                        best = n;
+                    }
+                }
+                ok!(Value::Int(best));
+            }
             "abs_f64" => {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.abs()));
