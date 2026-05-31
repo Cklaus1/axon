@@ -513,6 +513,13 @@ impl<'p> Interp<'p> {
         let mut best_input = cur_input;
         let mut evals: i64 = 1;
         let unlimited = max_evals <= 0;
+        // Early exit if the very first probe already hit target — no point
+        // burning the rest of the budget on a perfect score (and downstream
+        // tests / observability are cleaner when the trace doesn't include
+        // redundant tail evals).
+        if best_dist <= f64::EPSILON {
+            return Ok(best_score);
+        }
         // Coarse-then-fine: when the starting probe is small (e.g. 0), the
         // old `step = max(1, |x|/4)` formula locked us into a unit-step walk
         // and 50 evals never escaped the local neighborhood. Seed wide and
@@ -547,6 +554,11 @@ impl<'p> Interp<'p> {
                 best_score = up_score;
                 best_input = up;
                 improved = true;
+                // Hit target exactly — stop now so subsequent observability
+                // (goal_history, goal_best_input) reflects a tight trace.
+                if best_dist <= f64::EPSILON {
+                    return Ok(best_score);
+                }
             }
             if !unlimited && evals >= max_evals {
                 break;
@@ -560,6 +572,9 @@ impl<'p> Interp<'p> {
                 best_score = dn_score;
                 best_input = dn;
                 improved = true;
+                if best_dist <= f64::EPSILON {
+                    return Ok(best_score);
+                }
             }
 
             if improved {

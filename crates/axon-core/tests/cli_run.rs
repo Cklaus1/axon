@@ -895,6 +895,32 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn hill_climb_stops_early_when_target_is_reached() {
+    // Once the optimizer hits a probe whose score equals target exactly,
+    // it returns immediately rather than burning the rest of the budget on
+    // redundant tail evals — `goal_history` should be tight (fewer than
+    // half the budget) and the best score should be exactly the target.
+    let src = "@[adaptive]\n\
+        fn p(x: i64) -> i64 { 1000 - abs_i64(x - 37) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"p\", 1000.0, 200)\n  \
+            let h = goal_history(\"p\")\n  \
+            // Exit code = history length so we can pin the contract.\n  \
+            len(h)\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_early_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let code = out.status.code().expect("exit code");
+    assert!(
+        (1..50).contains(&code),
+        "should converge in well under the 200-eval budget, got history length {code}: {:?}",
+        out
+    );
+}
+
+#[test]
 fn hill_climb_exact_landing_on_a_modest_peak() {
     // The peak at x=37 should be found exactly within a 50-eval budget.
     let src = "@[adaptive]\n\
