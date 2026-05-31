@@ -401,6 +401,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<bool, str>",
         doc: "Parse `\"true\"` or `\"false\"`. Returns `Ok(true/false)` or `Err(\"invalid bool\")`.",
     },
+    BuiltinFn {
+        name: "str_digits_only",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "Keep only the ASCII digits in `s`; everything else (dashes, spaces, letters, Unicode) is dropped. Composes with `parse_int`: `parse_int(str_digits_only(\"415-555-0142\"))` → `Ok(4155550142)`. Closes ROADMAP §9.5 F7.",
+    },
     // ── Phase 7: Random ───────────────────────────────────────────────────
     BuiltinFn {
         name: "random_i64",

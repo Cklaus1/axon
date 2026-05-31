@@ -530,11 +530,11 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
 | F6 | `@[verify]` predicate language is `confidence OP K` only — cannot express `value >= 0 AND confidence >= 0.9` or relations between two Uncertain values | 5 | Refinement types generalize the predicate language; trivial extension once Phase 5 lands. |
-| F7 | No string→digit-only filter builtin; `parse_int("415-555-0142")` fails on the dashes, forcing the demo to push parsing onto the LLM | stdlib | Cheap one-liner: `str_digits_only(s) -> str`. |
+| F7 | ~~No string→digit-only filter builtin~~ — **closed** by `str_digits_only(s) -> str` (interpreter). `parse_int(str_digits_only("415-555-0142"))` → `Ok(4155550142)`. | stdlib | Done. |
 | F8 | No `as` cast operator — must use `f64_to_i64` / `i64_to_f64` builtins | language | Stylistic only; not load-bearing. Defer. |
 | F9 | `@[adaptive]` only single-arg `fn(i64) -> i64` is eligible for live hill-climb; multi-arg adaptive fns silently fall back | 8 | Generalize alongside F1 to multi-dim domain. |
 | F10 | No reward-shaping syntax — score *is* the metric; cannot declaratively say `score = accuracy − 0.1·tokens` | 8 | `Reward<T>` as signed Metric with composition operators. |
-| F11 | `@[adaptive]` records only return values, not inputs — hill-climb cannot warm-start from the best previous input | 7 | ABI extension: log `(input, output)` pairs. |
+| F11 | ~~`@[adaptive]` records only return values, not inputs — hill-climb cannot warm-start from the best previous input~~ — **closed** in the interpreter. The interp now logs `(input, score)` pairs in lock-step (`provenance_inputs`); exposed via `goal_best_input(name, target) -> i64` and `goal_history(name) -> [(i64, f64)]`. Native codegen still logs scores only. | 7 (codegen) | Interpreter done; codegen ABI extension still scheduled for Phase 7. |
 | F12 | No `Agent` type — the redteam is just another fn; no tools, effects, policy; two agents cannot be composed | 7 + 8 | Tier-1 stdlib type. |
 | F16 | String interpolation parser eagerly treats `{` as an interpolation start — embedding literal Rust/Axon code in a string requires `{{` `}}` escapes (caught at type-check time as "cannot find name") | language | Cheap fix: a `r"…"` raw-string literal that disables `{}` interpolation entirely. Or improve diagnostics so the error names the lexed slot expression rather than the slot's free vars. |
 

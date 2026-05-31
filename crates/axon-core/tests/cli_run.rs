@@ -895,6 +895,28 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn str_digits_only_strips_non_digits() {
+    // Closes ROADMAP §9.5 F7. `str_digits_only(s)` keeps only ASCII digits;
+    // composes with `parse_int` so demos that parse phone numbers / codes
+    // don't have to push the work onto an LLM.
+    let src = "fn main() -> i64 {\n  \
+        let phone = \"(415) 555-0142\"\n  \
+        let digits = str_digits_only(phone)\n  \
+        println(digits)\n  \
+        // The full 10-digit number overflows a u8 exit code, so check via\n  \
+        // a verifiable hash instead. len(\"4155550142\") == 10.\n  \
+        len(digits)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_strd_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(10), "stripped digits should be 10 chars: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("4155550142"), "expected stripped digits in stdout: {stdout}");
+}
+
+#[test]
 fn hill_climb_stops_early_when_target_is_reached() {
     // Once the optimizer hits a probe whose score equals target exactly,
     // it returns immediately rather than burning the rest of the budget on

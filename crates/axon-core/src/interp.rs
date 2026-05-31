@@ -1382,6 +1382,16 @@ impl<'p> Interp<'p> {
                     _ => Value::Err(Box::new(Value::Str("parse error".into()))),
                 });
             }
+            // Keep only ASCII digits; everything else is dropped. Closes
+            // ROADMAP §9.5 F7 — gives string-shape demos (phone numbers,
+            // codes, IDs) a one-liner alternative to pushing parsing onto
+            // an LLM. Composes with parse_int: parse_int(str_digits_only(s)).
+            "str_digits_only" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let out: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+                ok!(Value::Str(out));
+            }
             "len" => {
                 want(1)?;
                 ok!(match &args[0] {
