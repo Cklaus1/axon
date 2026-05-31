@@ -779,3 +779,22 @@ fn verify_runtime_panic_includes_returned_value_and_input() {
     assert!(stderr.contains("returned value 84"), "must include rejected value: {stderr}");
     assert!(stderr.contains("input 42"), "must include search input: {stderr}");
 }
+
+#[test]
+fn goal_best_input_returns_the_winning_probe() {
+    // `goal_best_input(name, target)` lets an ASI loop introspect the input
+    // that produced the best score, complementing `goal_run` (which only
+    // returns the score itself). With a single-peak adaptive fn at x=37,
+    // the hill-climb finds it and `goal_best_input` reads it back.
+    let src = "@[adaptive]\n\
+        fn peak(x: i64) -> i64 { 100 - abs_i64(x - 37) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"peak\", 100.0, 200)\n  \
+            goal_best_input(\"peak\", 100.0)\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_best_inp_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(37), "best input should be the peak at x=37: {:?}", out);
+}

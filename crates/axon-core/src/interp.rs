@@ -169,6 +169,11 @@ pub struct Interp<'p> {
     /// In-memory provenance store: `@[adaptive]` fn name → recorded return
     /// scores, in call order. Read by `goal_run` (mirrors `axon-rt`'s store).
     provenance: RefCell<HashMap<String, Vec<f64>>>,
+    /// Per-call leading-i64 inputs, in lock-step with `provenance`. `None`
+    /// when the `@[adaptive]` fn's first arg isn't an i64. Read by the
+    /// `goal_best_input` builtin so ASI loops can introspect which probe
+    /// produced the best score.
+    provenance_inputs: RefCell<HashMap<String, Vec<Option<i64>>>>,
     /// Current call-stack depth, bounded by `RECURSION_LIMIT` so runaway
     /// recursion fails with a catchable panic rather than overflowing the
     /// (large but finite) interpreter thread stack and aborting the process.
@@ -300,6 +305,7 @@ impl<'p> Interp<'p> {
             global_defs,
             globals: HashMap::new(),
             provenance: RefCell::new(HashMap::new()),
+            provenance_inputs: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
         }
     }
@@ -377,6 +383,11 @@ impl<'p> Interp<'p> {
                     .entry(f.name.clone())
                     .or_default()
                     .push(score);
+                self.provenance_inputs
+                    .borrow_mut()
+                    .entry(f.name.clone())
+                    .or_default()
+                    .push(input_arg);
                 // Also persist to the provenance JSONL (axon-rt's format) so
                 // `axon trace`/observability tooling see interpreter runs.
                 let payload = match &result {
@@ -567,6 +578,40 @@ impl<'p> Interp<'p> {
             }
         }
         best
+    }
+
+    /// Input that produced the score closest to `target` for an `@[adaptive]`
+    /// fn. Walks the per-fn `(input, score)` log (in lock-step with the
+    /// score store), picks the entry minimizing `|score - target|`, returns
+    /// its leading-i64 input. Falls back to 0 when no inputs were recorded
+    /// (e.g. the fn was never invoked, or its first arg isn't i64).
+    fn best_input(&self, name: &str, target: f64) -> i64 {
+        if name.is_empty() {
+            return 0;
+        }
+        let scores_store = self.provenance.borrow();
+        let inputs_store = self.provenance_inputs.borrow();
+        let Some(scores) = scores_store.get(name).filter(|s| !s.is_empty()) else {
+            return 0;
+        };
+        let Some(inputs) = inputs_store.get(name) else {
+            return 0;
+        };
+        let n = scores.len().min(inputs.len());
+        let mut best_idx: Option<usize> = None;
+        let mut best_dist = f64::INFINITY;
+        for i in 0..n {
+            if let Some(_in) = inputs[i] {
+                let d = (scores[i] - target).abs();
+                if d < best_dist {
+                    best_dist = d;
+                    best_idx = Some(i);
+                }
+            }
+        }
+        best_idx
+            .and_then(|i| inputs[i])
+            .unwrap_or(0)
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable name
@@ -1654,6 +1699,18 @@ impl<'p> Interp<'p> {
                 let target = as_float(&args[1])?;
                 let max_evals = as_int(&args[2])?;
                 ok!(Value::Float(self.run_goal(&name, target, max_evals)?));
+            }
+
+            // Read back the best-scoring leading-i64 input observed for an
+            // `@[adaptive]` fn. Pairs with `goal_run` — the optimizer logs
+            // (input, score) on every call, so a follow-up call can
+            // introspect "what probe got us closest to target?". Returns 0
+            // when the fn was never called or has no i64 leading param.
+            "goal_best_input" => {
+                want(2)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                ok!(Value::Int(self.best_input(&name, target)));
             }
 
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────

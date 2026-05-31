@@ -620,6 +620,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "f64",
         doc: "Read the provenance log for the @[adaptive] function named `name` and return the best observed score (the recorded return value closest to `target`). Returns `target` when no records exist. `max_evals` caps the number of recent records consulted (≤0 = no cap).",
     },
+    BuiltinFn {
+        name: "goal_best_input",
+        params: &[("name", "str"), ("target", "f64")],
+        ret: "i64",
+        doc: "Return the leading-i64 input that produced the best observed score (closest to `target`) for the @[adaptive] function `name`. Pairs with `goal_run` so an ASI loop can introspect which probe got it there. Returns 0 when no inputs were recorded.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
