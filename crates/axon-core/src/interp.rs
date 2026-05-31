@@ -513,7 +513,25 @@ impl<'p> Interp<'p> {
         let mut best_input = cur_input;
         let mut evals: i64 = 1;
         let unlimited = max_evals <= 0;
-        let mut step: i64 = std::cmp::max(1, (cur_input.unsigned_abs() as i64) / 4);
+        // Coarse-then-fine: when the starting probe is small (e.g. 0), the
+        // old `step = max(1, |x|/4)` formula locked us into a unit-step walk
+        // and 50 evals never escaped the local neighborhood. Seed wide and
+        // let the halving phase narrow toward the optimum.
+        //
+        // Two modes:
+        //  - Fresh start (cur_input == 0 and no prior best on disk): seed
+        //    `step ≈ max_evals * 4` so the first probes can leap across
+        //    the whole plausible range and the halving cascade acts as a
+        //    binary search toward the peak.
+        //  - Continuation / nonzero start: assume the input is already in a
+        //    good neighborhood, use the narrow `|x|/4` seed (with a floor
+        //    of 1) so we fine-tune rather than overshoot — preserves the
+        //    cross-run continuation semantics tested by `learn-goal.md`.
+        let mut step: i64 = if cur_input == 0 {
+            if unlimited { 4096 } else { std::cmp::max(16, max_evals.saturating_mul(4)) }
+        } else {
+            std::cmp::max(1, (cur_input.unsigned_abs() as i64) / 4)
+        };
 
         while step >= 1 {
             if !unlimited && evals >= max_evals {
