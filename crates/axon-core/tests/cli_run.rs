@@ -896,6 +896,21 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn learn_linear_f64_demo_recovers_weights() {
+    // examples/asi/learn_linear_f64.ax exercises multi-arg f64 @[adaptive]
+    // on a realistic ML shape: fit y = slope*x + intercept by negating
+    // sum-of-squared-errors and asking the optimizer to drive toward 0.
+    // With a few-thousand-eval budget the weights land within 0.05 of
+    // ground truth (0.5, 1.25) — wider tolerance than the i64 demo since
+    // cyclic coordinate descent converges slowly on correlated dims.
+    let out = axon().args(["run", &ex("asi/learn_linear_f64.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "f64 linear regression should converge: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("learned:   y = "), "stdout: {stdout}");
+    assert!(stdout.contains("budget:    3000"), "stdout: {stdout}");
+}
+
+#[test]
 fn f64_adaptive_finds_continuous_peak() {
     // Closes the f64 half of ROADMAP §9.5 F1: the optimizer now coordinate-
     // descends over real-valued inputs too, not just i64. 1D and 2D peaks

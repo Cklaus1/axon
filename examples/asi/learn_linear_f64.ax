@@ -1,0 +1,79 @@
+// Axon ASI demo: continuous-domain linear regression.
+//
+// Companion to `learn_linear.ax` (which uses i64 weights). This one runs
+// over f64 weights — the natural setting for real ML — using the new
+// `@[adaptive] fn(f64, …) -> f64` coordinate-descent path. Same shape:
+//
+//   data:    eight (x, y) points on y = 0.5·x + 1.25 (noise-free)
+//   loss:    sum of squared errors (neg-loss so higher = better for the optimizer)
+//   search:  goal_run("neg_loss", 0.0, 3000)
+//   read:    goal_best_inputs_f64("neg_loss", 0.0) -> [slope, intercept]
+//
+// Slope and intercept are correlated (both shift the same y), so cyclic
+// coordinate descent converges slowly — each sweep cuts the residual by
+// a constant factor, not linearly. A few thousand evals get us within
+// ~1e-3 of the analytical optimum, more than enough to demonstrate the
+// f64 path works end-to-end. Powell's-method-style joint moves would
+// converge faster; a future tick can add a `goal_run` strategy
+// parameter that selects between CD and a joint-direction variant.
+
+// Eight data points: y = 0.5*x + 1.25, exact (no noise).
+fn dataset_x(i: i64) -> f64 {
+    [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0][i]
+}
+fn dataset_y(i: i64) -> f64 {
+    [1.25, 1.75, 2.25, 2.75, 3.25, 3.75, 4.25, 4.75][i]
+}
+fn n_pts() -> i64 { 8 }
+
+// Loss is sum of squared residuals; we return its negation so the
+// optimizer (which converges toward `target`) maximizes fit quality.
+@[adaptive]
+fn neg_loss(slope: f64, intercept: f64) -> f64 {
+    let total = 0.0
+    let i = 0
+    while i < n_pts() {
+        let pred = slope * dataset_x(i) + intercept
+        let err = pred - dataset_y(i)
+        total = total + err * err
+        i = i + 1
+    }
+    -total
+}
+
+fn main() -> i64 {
+    // ── Fit ────────────────────────────────────────────────────────────────
+    let budget = 3000
+    let _ = goal_run("neg_loss", 0.0, budget)
+    let weights = goal_best_inputs_f64("neg_loss", 0.0)
+    let slope = weights[0]
+    let intercept = weights[1]
+
+    // ── Report ─────────────────────────────────────────────────────────────
+    // Re-compute loss in user space rather than via a second goal_run call,
+    // which would launch a fresh optimization session and append to the
+    // provenance log — divorcing best_loss from the `weights` we just read.
+    let best_loss = -neg_loss(slope, intercept)
+    println("=== f64 linear regression by coordinate descent ===")
+    println("budget:    {to_str(budget)} evals")
+    println("learned:   y = {to_str_f64(slope)} * x + {to_str_f64(intercept)}")
+    println("loss:      {to_str_f64(best_loss)}")
+
+    // Sanity: walk the dataset.
+    let i = 0
+    while i < n_pts() {
+        let pred = slope * dataset_x(i) + intercept
+        println("  x={to_str_f64(dataset_x(i))}  truth={to_str_f64(dataset_y(i))}  pred={to_str_f64(pred)}")
+        i = i + 1
+    }
+
+    // Exit 1 iff weights are within 0.05 of ground truth and loss < 0.01.
+    // Tolerance is loose because cyclic coordinate descent has a constant-
+    // factor convergence rate on correlated dims like slope/intercept —
+    // we expect ~2 significant figures from a few-thousand-eval budget,
+    // not 6.
+    let ds = slope - 0.5
+    let di = intercept - 1.25
+    let close = (ds > -0.05) && (ds < 0.05) && (di > -0.05) && (di < 0.05)
+    if close && best_loss < 0.01 { 1 } else { 0 }
+}
