@@ -155,6 +155,30 @@ pub fn decode_verify_predicate(expr: &Expr) -> Option<(BinOp, f64)> {
     match_confidence_predicate(expr)
 }
 
+/// Decoded `@[verify(<ident> OP literal)]` predicate. `ident` is the name on
+/// the LHS (so the user can write `value OP K` or `confidence OP K`); `op` is
+/// already normalised with `ident` on the left. `None` for any other shape.
+///
+/// Two-step API: existing codegen / static check that only know about
+/// `confidence` keep using [`decode_verify_predicate`]; the interpreter's
+/// runtime gate uses this richer decoder to also enforce `value OP K`
+/// (closes ROADMAP §9.5 F6 for numeric-comparison shape).
+pub fn decode_verify_predicate_with_ident(expr: &Expr) -> Option<(String, BinOp, f64)> {
+    if let Expr::BinOp { op, left, right } = expr {
+        if let Expr::Ident(name) = left.as_ref() {
+            if let Some(lit) = as_float_literal(right) {
+                return Some((name.clone(), op.clone(), lit));
+            }
+        }
+        if let Expr::Ident(name) = right.as_ref() {
+            if let Some(lit) = as_float_literal(left) {
+                return Some((name.clone(), flip_op(op.clone()), lit));
+            }
+        }
+    }
+    None
+}
+
 /// Public re-export of the internal `op_to_str` so codegen can format the
 /// operator into runtime-panic messages identically to compile-time messages.
 pub fn binop_to_verify_str(op: &BinOp) -> &'static str {

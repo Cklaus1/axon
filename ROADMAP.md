@@ -529,7 +529,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
-| F6 | `@[verify]` predicate language is `confidence OP K` only — cannot express `value >= 0 AND confidence >= 0.9` or relations between two Uncertain values | 5 | Refinement types generalize the predicate language; trivial extension once Phase 5 lands. |
+| F6 | `@[verify]` predicate language is `confidence OP K` only — cannot express `value >= 0 AND confidence >= 0.9` or relations between two Uncertain values | 5 | **Partially closed** — interpreter now also accepts `@[verify(value OP K)]` (i64 or f64 Uncertain.value vs a numeric bound). Full `AND` / multi-Uncertain shapes still wait on refinement types in Phase 5. |
 | F7 | ~~No string→digit-only filter builtin~~ — **closed** by `str_digits_only(s) -> str` (interpreter). `parse_int(str_digits_only("415-555-0142"))` → `Ok(4155550142)`. | stdlib | Done. |
 | F8 | No `as` cast operator — must use `f64_to_i64` / `i64_to_f64` builtins | language | Stylistic only; not load-bearing. Defer. |
 | F9 | `@[adaptive]` only single-arg `fn(i64) -> i64` is eligible for live hill-climb; multi-arg adaptive fns silently fall back | 8 | Generalize alongside F1 to multi-dim domain. |

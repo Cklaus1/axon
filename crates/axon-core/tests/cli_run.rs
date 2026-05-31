@@ -782,7 +782,8 @@ fn verify_runtime_panic_includes_returned_value_and_input() {
     assert!(!out.status.success(), "verify breach should panic");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("verify failed in `weak`"), "msg: {stderr}");
-    assert!(stderr.contains("returned value 84"), "must include rejected value: {stderr}");
+    assert!(stderr.contains("value 84"), "must include rejected value: {stderr}");
+    assert!(stderr.contains("confidence 0.5"), "must include observed confidence: {stderr}");
     assert!(stderr.contains("input 42"), "must include search input: {stderr}");
 }
 
@@ -892,6 +893,37 @@ fn self_improve_demo_completes_the_full_cycle() {
     assert!(stdout.contains("best input:     137"), "stdout: {stdout}");
     assert!(stdout.contains("deploy gate:    PASS"), "stdout: {stdout}");
     assert!(stdout.contains("verified value: 137"), "stdout: {stdout}");
+}
+
+#[test]
+fn verify_value_predicate_gates_on_uncertain_value() {
+    // Closes ROADMAP §9.5 F6 for the simple numeric shape. The interpreter
+    // now accepts `@[verify(value OP K)]` in addition to `confidence OP K`,
+    // extracting `.value` from the Uncertain return (i64 or f64) and
+    // comparing it to the literal bound. A passing case runs cleanly; a
+    // failing case panics with the enriched message naming the rejected
+    // value AND the input that produced it.
+    let pass = "@[verify(value >= 50)]\n\
+        fn gate(n: i64) -> Uncertain<i64> { uncertain_dyn_i64(n, 0.9) }\n\
+        fn main() -> i64 { gate(75).value }\n";
+    let f = std::env::temp_dir().join(format!("axon_vv_pass_{}.ax", std::process::id()));
+    std::fs::write(&f, pass).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(75), "passing value should run cleanly: {:?}", out);
+
+    let fail = "@[verify(value >= 50)]\n\
+        fn gate(n: i64) -> Uncertain<i64> { uncertain_dyn_i64(n, 0.9) }\n\
+        fn main() { let _ = gate(42)  println(\"unreached\") }\n";
+    let f = std::env::temp_dir().join(format!("axon_vv_fail_{}.ax", std::process::id()));
+    std::fs::write(&f, fail).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "value-gate breach should panic");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("verify failed in `gate`"), "msg: {stderr}");
+    assert!(stderr.contains("value 42 >= 50 is false"), "must name the breaching ident: {stderr}");
+    assert!(stderr.contains("input 42"), "must include search input: {stderr}");
 }
 
 #[test]

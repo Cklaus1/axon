@@ -398,15 +398,28 @@ impl<'p> Interp<'p> {
             }
         }
 
-        // `@[verify(confidence OP K)]`: runtime gate. Matches codegen, which only
-        // emits `__axon_verify_panic` for the decodable confidence-predicate shape
-        // on an `Uncertain<_>` return; other predicate shapes are no-ops at runtime.
+        // `@[verify(<ident> OP K)]`: runtime gate. Codegen currently only emits
+        // `__axon_verify_panic` for `confidence OP K` on `Uncertain<_>` returns;
+        // the interpreter also enforces `value OP K` on Uncertain values (i64 or
+        // f64) — closing ROADMAP §9.5 F6 for the simple numeric shape. Any
+        // unrecognised ident or non-Uncertain return is a no-op at runtime
+        // (the static checker is the source of truth for those shapes).
         if let Some(spec) = &f.verify {
-            if let Some((op, bound)) = crate::verify::decode_verify_predicate(&spec.predicate) {
+            if let Some((ident, op, bound)) =
+                crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
+            {
                 if let Value::Struct { name, fields } = &result {
                     if name == "Uncertain" {
-                        if let Some(Value::Float(c)) = fields.get("confidence") {
-                            if !cmp_f64(&op, *c, bound) {
+                        // Extract the field the predicate names; coerce i64
+                        // value to f64 for the comparison.
+                        let observed: Option<f64> = match (ident.as_str(), fields.get(ident.as_str())) {
+                            ("confidence", Some(Value::Float(c))) => Some(*c),
+                            ("value", Some(Value::Int(n))) => Some(*n as f64),
+                            ("value", Some(Value::Float(v))) => Some(*v),
+                            _ => None,
+                        };
+                        if let Some(c) = observed {
+                            if !cmp_f64(&op, c, bound) {
                                 // Surface the rejected sample so a downstream
                                 // agent or human can act on it: the value that
                                 // failed the gate, plus the leading input arg
@@ -415,17 +428,23 @@ impl<'p> Interp<'p> {
                                     .get("value")
                                     .map(display)
                                     .unwrap_or_else(|| "?".into());
+                                let conf_str = fields
+                                    .get("confidence")
+                                    .map(display)
+                                    .unwrap_or_else(|| "?".into());
                                 let input_str = input_arg
                                     .map(|n| format!(", input {n}"))
                                     .unwrap_or_default();
                                 return Err(Flow::Panic(format!(
-                                    "verify failed in `{}`: confidence {} {} {} is false \
-                                     (returned value {}{})",
+                                    "verify failed in `{}`: {} {} {} {} is false \
+                                     (value {}, confidence {}{})",
                                     f.name,
+                                    ident,
                                     c,
                                     crate::verify::binop_to_verify_str(&op),
                                     bound,
                                     val_str,
+                                    conf_str,
                                     input_str,
                                 )));
                             }
