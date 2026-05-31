@@ -1705,6 +1705,143 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Array(out));
             }
+            // ── Polymorphic slicing / reordering ──────────────────────────
+            "arr_reverse" => {
+                want(1)?;
+                let mut xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_reverse: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                xs.reverse();
+                ok!(Value::Array(xs));
+            }
+            "arr_take" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_take: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let n = as_int(&args[1])?.max(0) as usize;
+                let take = n.min(xs.len());
+                ok!(Value::Array(xs[..take].to_vec()));
+            }
+            "arr_drop" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_drop: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let n = as_int(&args[1])?.max(0) as usize;
+                let skip = n.min(xs.len());
+                ok!(Value::Array(xs[skip..].to_vec()));
+            }
+
+            // ── f64 array reductions (mirrors arr_*_i64) ──────────────────
+            "arr_sum_f64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_sum_f64: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut s = 0.0_f64;
+                for v in xs {
+                    let f = match v {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        other => return panic(format!(
+                            "arr_sum_f64: element must be numeric, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    s += f;
+                }
+                ok!(Value::Float(s));
+            }
+            "arr_max_f64" | "arr_min_f64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "{name}: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() {
+                    return panic(format!("{name}: array is empty"));
+                }
+                let pick_max = name == "arr_max_f64";
+                let as_f = |v: &Value| -> Result<f64, Flow> {
+                    match v {
+                        Value::Float(f) => Ok(*f),
+                        Value::Int(n) => Ok(*n as f64),
+                        other => Err(Flow::Panic(format!(
+                            "{name}: element must be numeric, got {}",
+                            other.type_name()
+                        ))),
+                    }
+                };
+                let mut best = as_f(&xs[0])?;
+                for v in &xs[1..] {
+                    let f = as_f(v)?;
+                    if (pick_max && f > best) || (!pick_max && f < best) {
+                        best = f;
+                    }
+                }
+                ok!(Value::Float(best));
+            }
+
+            // ── String split / join ───────────────────────────────────────
+            // str_split("a,b,c", ",") → ["a", "b", "c"]. Empty separator
+            // returns the input as a single-element slice (matches Rust's
+            // is-not-allowed semantics by sidestepping the panic).
+            "str_split" => {
+                want(2)?;
+                let s = as_str(&args[0])?;
+                let sep = as_str(&args[1])?;
+                let parts: Vec<Value> = if sep.is_empty() {
+                    vec![Value::Str(s.to_string())]
+                } else {
+                    s.split(sep).map(|p| Value::Str(p.to_string())).collect()
+                };
+                ok!(Value::Array(parts));
+            }
+            // str_join(["a","b","c"], "-") → "a-b-c". Non-string elements
+            // panic — caller should arr_map(to_str(x)) first if needed.
+            "str_join" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "str_join: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let sep = as_str(&args[1])?.to_string();
+                let mut parts = Vec::with_capacity(xs.len());
+                for v in xs {
+                    match v {
+                        Value::Str(s) => parts.push(s.clone()),
+                        other => return panic(format!(
+                            "str_join: element must be str, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Str(parts.join(&sep)));
+            }
+
             // Pair two arrays element-wise into a `[(a, b)]` slice; truncates
             // to the shorter input. Composes with arr_map / arr_filter for
             // dataset zipping (features + labels, etc.).

@@ -361,6 +361,54 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "bool",
         doc: "Linear scan: does `xs` contain a value structurally equal to `v`? Works for any element type — primitives, strings, tuples, nested arrays.",
     },
+    BuiltinFn {
+        name: "arr_reverse",
+        params: &[("xs", "[T]")],
+        ret: "[T]",
+        doc: "Return a fresh array with elements in reverse order. Works for any element type.",
+    },
+    BuiltinFn {
+        name: "arr_take",
+        params: &[("xs", "[T]"), ("n", "i64")],
+        ret: "[T]",
+        doc: "Return the first `n` elements of `xs`. Saturates at `len(xs)`; negative `n` returns empty.",
+    },
+    BuiltinFn {
+        name: "arr_drop",
+        params: &[("xs", "[T]"), ("n", "i64")],
+        ret: "[T]",
+        doc: "Return `xs` with the first `n` elements skipped. Saturates at `len(xs)`; negative `n` returns the full input.",
+    },
+    BuiltinFn {
+        name: "arr_sum_f64",
+        params: &[("xs", "[f64]")],
+        ret: "f64",
+        doc: "Sum of an f64 (or i64-coerced) array. Empty → 0.0.",
+    },
+    BuiltinFn {
+        name: "arr_max_f64",
+        params: &[("xs", "[f64]")],
+        ret: "f64",
+        doc: "Maximum of an f64 array. Accepts i64 elements via coercion. Panics on empty.",
+    },
+    BuiltinFn {
+        name: "arr_min_f64",
+        params: &[("xs", "[f64]")],
+        ret: "f64",
+        doc: "Minimum of an f64 array. Accepts i64 elements via coercion. Panics on empty.",
+    },
+    BuiltinFn {
+        name: "str_split",
+        params: &[("s", "str"), ("sep", "str")],
+        ret: "[str]",
+        doc: "Split `s` on every occurrence of `sep`, returning the parts as a slice. Empty separator returns `[s]` (avoids Rust's panic). Inverse of `str_join`.",
+    },
+    BuiltinFn {
+        name: "str_join",
+        params: &[("parts", "[str]"), ("sep", "str")],
+        ret: "str",
+        doc: "Concatenate `parts` with `sep` between each. Inverse of `str_split`. Non-string elements panic; arr_map(to_str) first if needed.",
+    },
     // ── Phase 6: String builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "str_to_upper",

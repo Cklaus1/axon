@@ -896,6 +896,71 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_reverse_take_drop_polymorphic() {
+    // arr_reverse / arr_take / arr_drop work on any element type. Take + drop
+    // partition cleanly: arr_take(xs, n) ++ arr_drop(xs, n) == xs.
+    let src = "fn main() -> i64 {\n  \
+        let xs = [10, 20, 30, 40, 50]\n  \
+        let r = arr_reverse(xs)\n  \
+        let t = arr_take(xs, 2)\n  \
+        let d = arr_drop(xs, 2)\n  \
+        // r[0]=50, t[0]=10, t[1]=20, d[0]=30, d[1]=40, d[2]=50\n  \
+        // Pin the structural contract: partition + reverse must agree.\n  \
+        let take_drop_ok =\n    \
+            len(t) == 2 && len(d) == 3 && t[0] == 10 && d[0] == 30\n  \
+        let rev_ok = r[0] == 50 && r[4] == 10\n  \
+        // Strings also reverse polymorphically.\n  \
+        let names = [\"a\", \"b\", \"c\"]\n  \
+        let rn = arr_reverse(names)\n  \
+        let str_rev_ok = str_eq(rn[0], \"c\") && str_eq(rn[2], \"a\")\n  \
+        if take_drop_ok && rev_ok && str_rev_ok { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_rev_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "reverse/take/drop polymorphic: {:?}", out);
+}
+
+#[test]
+fn array_f64_reductions_sum_max_min() {
+    // Mirrors arr_sum_i64 / max_i64 / min_i64 for f64. Accepts mixed
+    // i64/f64 arrays via coercion so a [int, float] result of map works.
+    let src = "fn main() -> i64 {\n  \
+        let xs = [1.5, 2.5, 3.5, 4.5]\n  \
+        let s = arr_sum_f64(xs)         // 12.0\n  \
+        let mx = arr_max_f64(xs)        // 4.5\n  \
+        let mn = arr_min_f64(xs)        // 1.5\n  \
+        f64_to_i64(s + mx + mn)         // 18\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_f64red_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(18), "f64 reductions: {:?}", out);
+}
+
+#[test]
+fn str_split_and_join_roundtrip() {
+    // str_split / str_join are the prompt-construction primitives ASI demos
+    // reach for. Roundtripping with a different separator confirms both
+    // directions and proves the array can be re-joined with arbitrary text.
+    let src = "fn main() -> i64 {\n  \
+        let parts = str_split(\"alpha-beta-gamma\", \"-\")\n  \
+        let rejoined = str_join(parts, \",\")\n  \
+        println(\"n={to_str(len(parts))} joined={rejoined}\")\n  \
+        if len(parts) == 3 && str_eq(rejoined, \"alpha,beta,gamma\") { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_sj_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "split/join roundtrip: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("n=3 joined=alpha,beta,gamma"), "stdout: {stdout}");
+}
+
+#[test]
 fn array_higher_order_ops_accept_heterogeneous_element_types() {
     // Element types are deferred in the builtin signatures (`[T]`, `T`, etc),
     // so `arr_map` / `arr_filter` / `arr_fold` / `arr_contains` work across
