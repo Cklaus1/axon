@@ -145,6 +145,7 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
         },
 
         Expr::Array(elems) => Expr::Array(elems.iter().map(|e| subst_expr(e, subst)).collect()),
+        Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| subst_expr(e, subst)).collect()),
 
         Expr::While { cond, body } => Expr::While {
             cond: Box::new(subst_expr(cond, subst)),
@@ -364,6 +365,7 @@ impl MonoContext {
                 self.collect_from_expr(v);
             }
             Expr::Array(elems) => { for e in elems { self.collect_from_expr(e); } }
+            Expr::Tuple(elems) => { for e in elems { self.collect_from_expr(e); } }
             Expr::StructLit { fields, .. } => {
                 for (_, v) in fields { self.collect_from_expr(v); }
             }
@@ -511,6 +513,7 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         Expr::Some(v) => Expr::Some(Box::new(rename_calls_expr(v, rename))),
         Expr::Spawn(v) => Expr::Spawn(Box::new(rename_calls_expr(v, rename))),
         Expr::Array(elems) => Expr::Array(elems.iter().map(|e| rename_calls_expr(e, rename)).collect()),
+        Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| rename_calls_expr(e, rename)).collect()),
         Expr::StructLit { name, fields } => Expr::StructLit {
             name: name.clone(),
             fields: fields.iter().map(|(f, v)| (f.clone(), rename_calls_expr(v, rename))).collect(),

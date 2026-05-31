@@ -235,6 +235,11 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Array literal ─────────────────────────────────────────────────
             ast::Expr::Array(elems) => self.emit_array_lit(elems, fn_val),
 
+            // ── Tuple literal ─────────────────────────────────────────────────
+            // Native codegen for tuples is not yet implemented; the interpreter
+            // path handles them. Keep the arm to satisfy exhaustiveness.
+            ast::Expr::Tuple(_) => None,
+
             // ── Struct literal: Name { field: expr, ... } ─────────────────────
             ast::Expr::StructLit { name, fields } => self.emit_struct_lit(name, fields, fn_val),
 

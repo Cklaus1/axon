@@ -885,6 +885,11 @@ impl InferCtx {
                 Type::Slice(Box::new(first_ty))
             }
 
+            Expr::Tuple(elems) => {
+                // Heterogeneous: each element keeps its own inferred type.
+                Type::Tuple(elems.iter().map(|e| self.infer_expr(e, scope, ret_ty)).collect())
+            }
+
             // ── Struct literal ─────────────────────────────────────────────────
             Expr::StructLit { name, fields } => {
                 // Fix #1: look up the declared fields and constrain each

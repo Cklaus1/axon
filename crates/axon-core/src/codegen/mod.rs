@@ -873,6 +873,13 @@ impl<'ctx> Codegen<'ctx> {
                     .unwrap_or(Type::Unknown);
                 Some(Type::Slice(Box::new(inner)))
             }
+            ast::Expr::Tuple(elems) => {
+                let tys = elems
+                    .iter()
+                    .map(|e| self.infer_expr_sem_type(e).unwrap_or(Type::Unknown))
+                    .collect();
+                Some(Type::Tuple(tys))
+            }
             ast::Expr::Block(stmts) => {
                 stmts.last().and_then(|s| self.infer_expr_sem_type(&s.expr))
             }

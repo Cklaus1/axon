@@ -757,7 +757,7 @@ impl<'a> Resolver<'a> {
             Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
                 self.resolve_expr(inner);
             }
-            Expr::Array(elems) => {
+            Expr::Array(elems) | Expr::Tuple(elems) => {
                 for e in elems {
                     self.resolve_expr(e);
                 }
@@ -1105,7 +1105,7 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
                 fill_captures_expr(v, outer);
             }
         }
-        Expr::Array(elems) => {
+        Expr::Array(elems) | Expr::Tuple(elems) => {
             for e in elems {
                 fill_captures_expr(e, outer);
             }
@@ -1229,7 +1229,7 @@ fn collect_free_vars(
                 collect_free_vars(v, bound, free);
             }
         }
-        Expr::Array(elems) => {
+        Expr::Array(elems) | Expr::Tuple(elems) => {
             for e in elems {
                 collect_free_vars(e, bound, free);
             }

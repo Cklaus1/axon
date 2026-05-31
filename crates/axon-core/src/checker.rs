@@ -155,6 +155,7 @@ fn type_contains_unresolved(ty: &Type) -> bool {
         Type::Result(ok, err) => {
             type_contains_unresolved(ok) || type_contains_unresolved(err)
         }
+        Type::Tuple(elems) => elems.iter().any(type_contains_unresolved),
         _ => false,
     }
 }
@@ -663,7 +664,7 @@ impl CheckCtx {
                     }
                 }
             }
-            Expr::Array(elems) => {
+            Expr::Array(elems) | Expr::Tuple(elems) => {
                 for e in elems {
                     Self::collect_confidence_observed(e, out);
                 }
@@ -1027,6 +1028,7 @@ impl CheckCtx {
             | Expr::Literal(_)
             | Expr::None
             | Expr::Array(_)
+            | Expr::Tuple(_)
             | Expr::StructLit { .. }
             | Expr::Break
             | Expr::Continue => {}
@@ -1705,6 +1707,42 @@ impl CheckCtx {
             _ => {}
         }
 
+        // Tuple field access: numeric index, in-range.
+        if let Type::Tuple(elems) = recv_ty {
+            match field.parse::<usize>() {
+                Ok(i) if i < elems.len() => return,
+                Ok(i) => {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0401,
+                            format!(
+                                "tuple index {i} out of bounds (length {})",
+                                elems.len()
+                            ),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .found(field),
+                    );
+                    return;
+                }
+                Err(_) => {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0401,
+                            format!("tuple field must be a numeric index, got '{field}'"),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .found(field),
+                    );
+                    return;
+                }
+            }
+        }
+
         match recv_ty {
             Type::Struct(struct_name) => {
                 match self.struct_fields.get(struct_name).cloned() {
@@ -1825,6 +1863,18 @@ impl CheckCtx {
                 Type::Unknown
             }
             Expr::Array(_) => Type::Slice(Box::new(Type::Unknown)),
+            Expr::Tuple(elems) => {
+                // Recurse per element so `t.0`, `t.1` can be checked structurally
+                // even when inference didn't register an expr_types entry.
+                let tys: Vec<Type> = elems
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        self.resolve_expr_type(e, &format!("{node_path}.elem_{i}"), scope)
+                    })
+                    .collect();
+                Type::Tuple(tys)
+            }
             Expr::FmtStr { .. } => Type::Str,
             Expr::StructLit { name, .. } => {
                 // Resolve struct literal type by looking up struct fields.

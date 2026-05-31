@@ -1015,6 +1015,23 @@ impl Parser {
             let span = self.current_span();
             let expr = self.parse_expr()?;
             self.eat(&Token::Semi);
+            // Tuple destructuring `let (a, b) = e` was parsed as a Block of
+            // `let __tup = e; let a = __tup.0; …` — splice those stmts into
+            // the enclosing scope so the bindings outlive the inner block.
+            // (Heuristic: any Block-shaped expr whose first stmt is a Let
+            // named `__tup_*`. Cheap and unambiguous — `__tup_` is reserved
+            // for this desugar.)
+            if let Expr::Block(inner) = &expr {
+                if inner.first().is_some_and(|s| matches!(
+                    &s.expr,
+                    Expr::Let { name, .. } if name.starts_with("__tup_")
+                )) {
+                    for s in inner.iter().cloned() {
+                        stmts.push(s);
+                    }
+                    continue;
+                }
+            }
             stmts.push(Stmt { expr, span });
         }
         self.expect(&Token::RBrace)?;
@@ -1205,6 +1222,39 @@ impl Parser {
 
     fn parse_let(&mut self) -> Result<Expr> {
         self.expect(&Token::Let)?;
+        // Tuple destructuring: `let (a, b, ...) = expr` desugars to
+        // `{ let __tup_N = expr   let a = __tup_N.0   let b = __tup_N.1   ... }`.
+        if self.at(&Token::LParen) {
+            self.advance()?;
+            let mut names = Vec::new();
+            while !self.at(&Token::RParen) {
+                names.push(self.expect_ident()?);
+                if !self.eat(&Token::Comma) { break; }
+            }
+            self.expect(&Token::RParen)?;
+            self.expect(&Token::Eq)?;
+            let value = self.parse_expr()?;
+            let tmp = format!("__tup_{}", self.pos);
+            let mut stmts: Vec<Stmt> = Vec::with_capacity(names.len() + 1);
+            stmts.push(Stmt {
+                expr: Expr::Let { name: tmp.clone(), ty: None, value: Box::new(value) },
+                span: Span::dummy(),
+            });
+            for (i, n) in names.into_iter().enumerate() {
+                stmts.push(Stmt {
+                    expr: Expr::Let {
+                        name: n,
+                        ty: None,
+                        value: Box::new(Expr::FieldAccess {
+                            receiver: Box::new(Expr::Ident(tmp.clone())),
+                            field: i.to_string(),
+                        }),
+                    },
+                    span: Span::dummy(),
+                });
+            }
+            return Ok(Expr::Block(stmts));
+        }
         let name = self.expect_ident()?;
         let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
@@ -1532,7 +1582,41 @@ impl Parser {
                 }
                 Some(Token::Dot) => {
                     self.advance()?;
-                    let field = self.expect_ident()?;
+                    // Nested tuple access `t.0.1` lexes as `t` `.` `Float(0.1)`
+                    // (the lexer's float rule greedily eats `0.1`). Split such
+                    // a token into two integer field accesses here.
+                    if let Some(Token::Float(f)) = self.peek().cloned() {
+                        // `{f:?}` keeps the `0.0` form (`{f}` would print `0`).
+                        let s = format!("{f:?}");
+                        if let Some((lhs, rhs)) = s.split_once('.') {
+                            if !lhs.is_empty()
+                                && !rhs.is_empty()
+                                && lhs.chars().all(|c| c.is_ascii_digit())
+                                && rhs.chars().all(|c| c.is_ascii_digit())
+                            {
+                                self.advance()?;
+                                expr = Expr::FieldAccess {
+                                    receiver: Box::new(expr),
+                                    field: lhs.to_string(),
+                                };
+                                expr = Expr::FieldAccess {
+                                    receiver: Box::new(expr),
+                                    field: rhs.to_string(),
+                                };
+                                continue;
+                            }
+                        }
+                    }
+                    // `t.0` / `t.1` — tuple-index access: read the int as the
+                    // field name (the interpreter parses it back as the index).
+                    let field = match self.peek() {
+                        Some(Token::Int(n)) => {
+                            let s = n.to_string();
+                            self.advance()?;
+                            s
+                        }
+                        _ => self.expect_ident()?,
+                    };
                     if self.eat(&Token::LParen) {
                         self.paren_depth += 1;
                         let args = self.parse_args()?;
@@ -1608,10 +1692,24 @@ impl Parser {
                 } else {
                     self.advance()?;
                     self.paren_depth += 1;
-                    let expr = self.parse_expr()?;
-                    self.paren_depth -= 1;
-                    self.expect(&Token::RParen)?;
-                    Ok(expr)
+                    let first = self.parse_expr()?;
+                    // `(a, b, …)` — tuple literal (≥2 elems); `(e)` — grouping.
+                    if self.eat(&Token::Comma) {
+                        let mut elems = vec![first];
+                        while !self.at(&Token::RParen) {
+                            elems.push(self.parse_expr()?);
+                            if !self.eat(&Token::Comma) {
+                                break;
+                            }
+                        }
+                        self.paren_depth -= 1;
+                        self.expect(&Token::RParen)?;
+                        Ok(Expr::Tuple(elems))
+                    } else {
+                        self.paren_depth -= 1;
+                        self.expect(&Token::RParen)?;
+                        Ok(first)
+                    }
                 }
             }
             Some(Token::Int(_))   => {

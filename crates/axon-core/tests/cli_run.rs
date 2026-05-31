@@ -723,3 +723,37 @@ fn run_trait_methods_dispatch() {
     assert!(stdout.contains("Square area = 25"), "stdout: {stdout:?}");
     assert!(stdout.contains("Rect area = 24"), "stdout: {stdout:?}");
 }
+
+#[test]
+fn tuples_literal_access_destructure_and_match() {
+    // Tuples: (a, b) literal, .N access, nested .0.0, `let (a, b) = …`
+    // destructuring (parser desugars to a stmt-level expansion so the bindings
+    // live in the enclosing scope), and `(a, b)` patterns in `match`.
+    let out = axon().args(["run", &ex("tuples.ax")]).output().unwrap();
+    assert!(out.status.success(), "tuples.ax should run cleanly: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.first().copied(), Some("7"), "p.0 + p.1 = 7, got: {stdout:?}");
+    assert!(stdout.contains("answer = 42 (true)"), "heterogeneous tuple, got: {stdout:?}");
+    assert!(stdout.contains("17/5 = 3 rem 2"), "let (q, r) = divmod(...), got: {stdout:?}");
+    assert!(lines.contains(&"6"), "nest.0.0 + nest.0.1 + nest.1 = 6, got: {stdout:?}");
+    assert!(lines.contains(&"21"), "sum of pairs = 21, got: {stdout:?}");
+    assert!(lines.contains(&"30"), "match (a, b) => a + b, got: {stdout:?}");
+}
+
+#[test]
+fn tuple_index_out_of_bounds_is_a_static_error() {
+    // Tuple OOB is caught statically by the checker (E0401), not at runtime.
+    let f = std::env::temp_dir().join(format!("axon_tup_oob_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { let t = (1, 2)   t.5 }\n").unwrap();
+    let bad = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(bad.status.code(), Some(2), "tuple OOB must fail check");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(msg.contains("E0401"), "expected E0401 for tuple OOB, got: {msg}");
+    assert!(msg.contains("tuple index"), "expected tuple-aware message, got: {msg}");
+}

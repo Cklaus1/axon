@@ -1,0 +1,41 @@
+// Tuples — heterogeneous fixed-size product type.
+// Literal:        (a, b, …)        ≥2 elements; `()` is unit, `(x)` is grouping
+// Field access:   t.0, t.1, t.0.1  numeric index (in-bounds, statically checked)
+// Destructure:    let (a, b) = t   pattern in `let` and `match`
+
+fn divmod(n: i64, d: i64) -> (i64, i64) {
+    (n / d, n % d)
+}
+
+fn main() {
+    // Basic literal + access
+    let p = (3, 4)
+    println(to_str(p.0 + p.1))       // 7
+
+    // Heterogeneous
+    let row = (42, "answer", true)
+    println("{row.1} = {to_str(row.0)} ({to_str_bool(row.2)})")
+
+    // Destructuring let
+    let (q, r) = divmod(17, 5)
+    println("17/5 = {to_str(q)} rem {to_str(r)}")   // 3 rem 2
+
+    // Nested tuple, .0.0 / .0.1 access
+    let nest = ((1, 2), 3)
+    println(to_str(nest.0.0 + nest.0.1 + nest.1))   // 6
+
+    // Tuples in arrays
+    let pairs = [(1, 2), (3, 4), (5, 6)]
+    let sum = 0
+    for pair in pairs {
+        sum = sum + pair.0 + pair.1
+    }
+    println(to_str(sum))             // 21
+
+    // Tuple in match
+    let m = (10, 20)
+    let s = match m {
+        (a, b) => a + b
+    }
+    println(to_str(s))               // 30
+}

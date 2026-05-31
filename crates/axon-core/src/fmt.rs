@@ -605,6 +605,14 @@ impl Formatter {
                 }
                 self.write("]");
             }
+            Expr::Tuple(elems) => {
+                self.write("(");
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 { self.write(", "); }
+                    self.emit_expr(e);
+                }
+                self.write(")");
+            }
 
             Expr::StructLit { name, fields } => {
                 self.write(name);

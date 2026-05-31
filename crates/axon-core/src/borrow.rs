@@ -306,7 +306,7 @@ impl OwnershipGraph {
             }
             Expr::FmtStr { .. } | Expr::Literal(_) | Expr::None => {}
             Expr::Ok(v) | Expr::Err(v) | Expr::Some(v) => self.check_read(v),
-            Expr::Array(elems) => {
+            Expr::Array(elems) | Expr::Tuple(elems) => {
                 for e in elems { self.check_read(e); }
             }
             Expr::StructLit { fields, .. } => {

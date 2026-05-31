@@ -195,7 +195,7 @@ fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityErro
         Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
             check_expr(inner, spec, errors);
         }
-        Expr::Array(elems) => {
+        Expr::Array(elems) | Expr::Tuple(elems) => {
             for e in elems { check_expr(e, spec, errors); }
         }
         Expr::StructLit { fields, .. } => {

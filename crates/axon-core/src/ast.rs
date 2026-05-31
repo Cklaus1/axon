@@ -215,6 +215,11 @@ pub enum Expr {
     Return(Option<Box<Expr>>),
     FieldAccess { receiver: Box<Expr>, field: String },
     Index { receiver: Box<Expr>, index: Box<Expr> },
+    /// Tuple literal: `(a, b, …)` (≥2 elements). A 1-elem paren is grouping and
+    /// `()` is the unit literal — neither becomes a Tuple. Tuple elements are
+    /// accessed with `t.0`, `t.1`, … (parsed as `FieldAccess` with a numeric
+    /// field name; the interpreter reads it as a tuple index).
+    Tuple(Vec<Expr>),
     Ident(String),
     Literal(Literal),
     /// String interpolation: `"hello {name}!"` lowered to a series of

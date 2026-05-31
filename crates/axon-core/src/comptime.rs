@@ -381,6 +381,7 @@ fn expr_kind_name(e: &Expr) -> &'static str {
         Expr::Some(_)        => "Some",
         Expr::None           => "None",
         Expr::Array(_)       => "array",
+        Expr::Tuple(_)       => "tuple",
         Expr::StructLit { .. } => "struct_lit",
         Expr::While { .. }   => "while",
         Expr::WhileLet { .. } => "while_let",

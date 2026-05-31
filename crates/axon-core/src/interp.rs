@@ -54,6 +54,8 @@ pub enum Value {
     /// cooperative/single-threaded: `spawn` runs eagerly, so a `send` happens
     /// before the matching `recv`.
     Chan(Rc<RefCell<VecDeque<Value>>>),
+    /// Tuple value `(a, b, …)`. Accessed via `t.0`, `t.1` (numeric field).
+    Tuple(Vec<Value>),
 }
 
 impl Value {
@@ -71,6 +73,7 @@ impl Value {
             Value::Ok(_) | Value::Err(_) => "Result".into(),
             Value::Closure { .. } => "fn".into(),
             Value::Chan(_) => "chan".into(),
+            Value::Tuple(_) => "tuple".into(),
         }
     }
 }
@@ -828,8 +831,26 @@ impl<'p> Interp<'p> {
                         .get(field)
                         .cloned()
                         .ok_or_else(|| Flow::Panic(format!("no field `{field}`"))),
+                    Value::Tuple(items) => {
+                        // `t.0`, `t.1`, … : the parser stores the digit as the
+                        // field name, and the interpreter reads it as the index.
+                        let i: usize = field.parse().map_err(|_| {
+                            Flow::Panic(format!("tuple access expects a numeric index, got `.{field}`"))
+                        })?;
+                        items.get(i).cloned().ok_or_else(|| {
+                            Flow::Panic(format!("tuple index {i} out of bounds (len {})", items.len()))
+                        })
+                    }
                     other => panic(format!("field access on non-struct ({})", other.type_name())),
                 }
+            }
+
+            Expr::Tuple(elems) => {
+                let mut vs = Vec::with_capacity(elems.len());
+                for e in elems {
+                    vs.push(self.eval(e, env)?);
+                }
+                Ok(Value::Tuple(vs))
             }
 
             Expr::Index { receiver, index } => {
@@ -1094,7 +1115,19 @@ impl<'p> Interp<'p> {
                 }
                 Ok(true)
             }
-            Pattern::Tuple(_) => Ok(false), // tuple values are not constructible yet
+            Pattern::Tuple(pats) => {
+                let Value::Tuple(items) = val else { return Ok(false) };
+                if items.len() != pats.len() {
+                    return Ok(false);
+                }
+                for (p, v) in pats.iter().zip(items.iter()) {
+                    let v = v.clone();
+                    if !self.match_pattern(p, &v, env)? {
+                        return Ok(false);
+                    }
+                }
+                Ok(true)
+            }
         }
     }
 
@@ -2143,6 +2176,10 @@ fn display(v: &Value) -> String {
         }
         Value::Closure { .. } => "<fn>".into(),
         Value::Chan(q) => format!("<chan len={}>", q.borrow().len()),
+        Value::Tuple(items) => {
+            let parts: Vec<String> = items.iter().map(display).collect();
+            format!("({})", parts.join(", "))
+        }
     }
 }
 
