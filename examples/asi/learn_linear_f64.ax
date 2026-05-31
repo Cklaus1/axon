@@ -9,13 +9,13 @@
 //   search:  goal_run("neg_loss", 0.0, 3000)
 //   read:    goal_best_inputs_f64("neg_loss", 0.0) -> [slope, intercept]
 //
-// Slope and intercept are correlated (both shift the same y), so cyclic
-// coordinate descent converges slowly — each sweep cuts the residual by
-// a constant factor, not linearly. A few thousand evals get us within
-// ~1e-3 of the analytical optimum, more than enough to demonstrate the
-// f64 path works end-to-end. Powell's-method-style joint moves would
-// converge faster; a future tick can add a `goal_run` strategy
-// parameter that selects between CD and a joint-direction variant.
+// Slope and intercept are correlated (both shift the same y). Plain cyclic
+// coordinate descent converges slowly on such objectives, but after each
+// sweep the optimizer also probes along the net-displacement direction
+// (Powell's heuristic): `cur + k·delta` for k = 1, 2, 4, … while the
+// score improves. That extrapolation collapses the convergence rate
+// from constant-factor to near-linear on quadratic surfaces — a 3000-
+// eval budget here lands within machine precision of (0.5, 1.25).
 
 // Eight data points: y = 0.5*x + 1.25, exact (no noise).
 fn dataset_x(i: i64) -> f64 {
@@ -67,13 +67,11 @@ fn main() -> i64 {
         i = i + 1
     }
 
-    // Exit 1 iff weights are within 0.05 of ground truth and loss < 0.01.
-    // Tolerance is loose because cyclic coordinate descent has a constant-
-    // factor convergence rate on correlated dims like slope/intercept —
-    // we expect ~2 significant figures from a few-thousand-eval budget,
-    // not 6.
+    // Exit 1 iff weights match ground truth to 6 decimals — the Powell
+    // joint-direction step in the optimizer drives convergence to machine
+    // precision on this objective (loss bottoms out around 1e-15).
     let ds = slope - 0.5
     let di = intercept - 1.25
-    let close = (ds > -0.05) && (ds < 0.05) && (di > -0.05) && (di < 0.05)
-    if close && best_loss < 0.01 { 1 } else { 0 }
+    let close = (ds > -0.000001) && (ds < 0.000001) && (di > -0.000001) && (di < 0.000001)
+    if close && best_loss < 0.0000001 { 1 } else { 0 }
 }

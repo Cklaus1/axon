@@ -692,6 +692,7 @@ impl<'p> Interp<'p> {
         // Sweep until no dim improves or budget hits.
         loop {
             let mut any_improvement = false;
+            let cur_at_sweep_start = cur.clone();
             for d in 0..n_dims {
                 if !unlimited && evals >= max_evals {
                     return Ok(best_score);
@@ -743,6 +744,51 @@ impl<'p> Interp<'p> {
             if !any_improvement {
                 return Ok(best_score);
             }
+
+            // Powell's-method joint-direction step. Same heuristic as the
+            // f64 path: extrapolate along `delta = cur - cur_at_sweep_start`
+            // with k = 1, 2, 4, … while the score keeps improving. On a
+            // multi-arg objective where the per-dim sweeps each found
+            // improvements in correlated directions, the joint step can
+            // jump straight to a good neighbourhood that cyclic CD would
+            // crawl toward across many sweeps.
+            let mut delta = vec![0_i64; n_dims];
+            let mut delta_nonzero = false;
+            for d in 0..n_dims {
+                delta[d] = cur[d].saturating_sub(cur_at_sweep_start[d]);
+                if delta[d] != 0 {
+                    delta_nonzero = true;
+                }
+            }
+            if delta_nonzero {
+                let mut k: i64 = 1;
+                loop {
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+                    let probe: Vec<i64> = (0..n_dims)
+                        .map(|d| cur[d].saturating_add(k.saturating_mul(delta[d])))
+                        .collect();
+                    let probe_score = eval_at(&probe)?;
+                    evals += 1;
+                    let probe_dist = (probe_score - target).abs();
+                    if probe_dist < best_dist {
+                        best_dist = probe_dist;
+                        best_score = probe_score;
+                        cur = probe;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                        k = k.saturating_mul(2);
+                        if k > 1 << 30 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             // Re-arm each dim's step for another sweep — a higher-dim move
             // may have opened a new gradient in dim 0.
             for s in steps.iter_mut() {
@@ -797,6 +843,7 @@ impl<'p> Interp<'p> {
 
         loop {
             let mut any_improvement = false;
+            let cur_at_sweep_start = cur.clone();
             for d in 0..n_dims {
                 if !unlimited && evals >= max_evals {
                     return Ok(best_score);
@@ -848,6 +895,50 @@ impl<'p> Interp<'p> {
             if !any_improvement {
                 return Ok(best_score);
             }
+
+            // Powell's-method-style joint-direction step. After a sweep
+            // that improved each dim individually, the net displacement
+            // `delta = cur - cur_at_sweep_start` often points toward the
+            // joint optimum for correlated dims (slope/intercept in a
+            // linear-regression objective being the classic case). Probe
+            // along that direction with k = 1, 2, 4, … while score keeps
+            // improving — a geometric line search. Cuts the constant-
+            // factor convergence rate of cyclic CD on quadratic objectives.
+            let mut delta = vec![0.0_f64; n_dims];
+            let mut delta_norm_sq = 0.0_f64;
+            for d in 0..n_dims {
+                delta[d] = cur[d] - cur_at_sweep_start[d];
+                delta_norm_sq += delta[d] * delta[d];
+            }
+            if delta_norm_sq > resolution * resolution {
+                let mut k: f64 = 1.0;
+                loop {
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+                    let probe: Vec<f64> = (0..n_dims)
+                        .map(|d| cur[d] + k * delta[d])
+                        .collect();
+                    let probe_score = eval_at(&probe)?;
+                    evals += 1;
+                    let probe_dist = (probe_score - target).abs();
+                    if probe_dist < best_dist {
+                        best_dist = probe_dist;
+                        best_score = probe_score;
+                        cur = probe;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                        k *= 2.0;
+                        if k > 1e6 {
+                            break;
+                        }
+                    } else {
+                        break;
+                    }
+                }
+            }
+
             for s in steps.iter_mut() {
                 *s = seed_step;
             }
