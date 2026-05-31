@@ -103,20 +103,17 @@ The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
 Found by building real programs; none block current work (there are working
 idioms) but each is a clean future task:
 
-- **No place assignment.** `xs[i] = v` and `s.field = v` don't parse — assignment
-  targets must be a bare identifier. Mutate by rebuilding + rebinding the whole
-  value (e.g. `s = observe(s, a)`). A real fix adds an lvalue AST node rippling
-  through parser/resolver/infer/checker/codegen — a dedicated effort, not a tick.
 - **Concurrency is cooperative (single-threaded).** `spawn`/`chan`/`send`/`recv`
   now run in the interpreter — `spawn` bodies execute eagerly, so fan-out/collect
   (workers produce, main consumes) works; patterns where a spawned task must
   *block* on a value sent later (request/response) don't — send before recv.
   `select` fires the first arm whose channel is ready (cooperative, value-less).
-- **No tuple expressions.** `(a, b)` doesn't parse (the type system has
-  `Type::Tuple`, but there's no value syntax); use a struct.
 - (Fixed this session: `len` accepts slices; structural `==`/`!=`; `type Name =
   A | B` sum-types; or-patterns; `match`/`if` as operands; `&&`/`||` precedence;
-  nested braces in interpolation; functions returning enums; `for x in coll`.)
+  nested braces in interpolation; functions returning enums; `for x in coll`;
+  place assignment `xs[i] = v` and `s.field = v` (incl. nested); typed bindings
+  `let x: T = ...`; tuples — `(a, b, ...)` literals, `.N` access (inc. nested
+  `.0.0`), `let (a, b) = e` destructuring, `(a, b)` patterns in `match`.)
 
 ## What works now (via the interpreter, no LLVM)
 

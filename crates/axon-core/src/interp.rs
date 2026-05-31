@@ -396,12 +396,26 @@ impl<'p> Interp<'p> {
                     if name == "Uncertain" {
                         if let Some(Value::Float(c)) = fields.get("confidence") {
                             if !cmp_f64(&op, *c, bound) {
+                                // Surface the rejected sample so a downstream
+                                // agent or human can act on it: the value that
+                                // failed the gate, plus the leading input arg
+                                // (the search probe goal_run feeds back).
+                                let val_str = fields
+                                    .get("value")
+                                    .map(display)
+                                    .unwrap_or_else(|| "?".into());
+                                let input_str = input_arg
+                                    .map(|n| format!(", input {n}"))
+                                    .unwrap_or_default();
                                 return Err(Flow::Panic(format!(
-                                    "verify failed in `{}`: confidence {} {} {} is false",
+                                    "verify failed in `{}`: confidence {} {} {} is false \
+                                     (returned value {}{})",
                                     f.name,
                                     c,
                                     crate::verify::binop_to_verify_str(&op),
-                                    bound
+                                    bound,
+                                    val_str,
+                                    input_str,
                                 )));
                             }
                         }

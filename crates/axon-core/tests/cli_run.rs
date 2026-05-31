@@ -757,3 +757,25 @@ fn tuple_index_out_of_bounds_is_a_static_error() {
     assert!(msg.contains("E0401"), "expected E0401 for tuple OOB, got: {msg}");
     assert!(msg.contains("tuple index"), "expected tuple-aware message, got: {msg}");
 }
+
+#[test]
+fn verify_runtime_panic_includes_returned_value_and_input() {
+    // The runtime @[verify] hook reports *which* sample failed: the rejected
+    // `Uncertain.value` plus the leading i64 input arg (the goal-search probe
+    // for `goal_run` and friends). Without this, an ASI iteration loop sees
+    // only "verify failed" and has no signal to refine on.
+    let src = "@[verify(confidence >= 0.9)]\n\
+        fn weak(n: i64, c: f64) -> Uncertain<i64> {\n\
+            uncertain_dyn_i64(n * 2, c)\n\
+        }\n\
+        fn main() { let _ = weak(42, 0.5)  println(\"unreached\") }\n";
+    let f = std::env::temp_dir().join(format!("axon_verify_msg_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "verify breach should panic");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("verify failed in `weak`"), "msg: {stderr}");
+    assert!(stderr.contains("returned value 84"), "must include rejected value: {stderr}");
+    assert!(stderr.contains("input 42"), "must include search input: {stderr}");
+}
