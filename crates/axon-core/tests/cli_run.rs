@@ -896,6 +896,35 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn persistent_learner_demo_carries_state_across_invocations() {
+    // examples/asi/persistent_learner.ax exercises file-backed continuation:
+    // the program loads the prior best (x, score) from a sidecar file,
+    // runs the optimizer, writes back when it improves. We run it twice
+    // with the state file cleared between runs and assert the trajectory:
+    //   run 1 — IMPROVED (or FIRST_RUN), records best to disk
+    //   run 2 — STABLE, the previously-found peak still wins
+    // The file is in /tmp and not in the repo; clear it on entry + exit.
+    let state_file = "/tmp/axon_persistent_learner.txt";
+    let _ = std::fs::remove_file(state_file);
+
+    let run1 = axon().args(["run", &ex("asi/persistent_learner.ax")]).output().unwrap();
+    assert!(run1.status.success(), "run 1 should succeed: {:?}", run1);
+    let out1 = String::from_utf8_lossy(&run1.stdout);
+    assert!(
+        out1.contains("status:  IMPROVED") || out1.contains("status:  FIRST_RUN"),
+        "run 1 should record baseline / improvement: {out1}"
+    );
+    assert!(out1.contains("new:     x=200  score=1000"), "run 1 should find peak: {out1}");
+
+    let run2 = axon().args(["run", &ex("asi/persistent_learner.ax")]).output().unwrap();
+    let _ = std::fs::remove_file(state_file);
+    assert!(run2.status.success(), "run 2 should succeed: {:?}", run2);
+    let out2 = String::from_utf8_lossy(&run2.stdout);
+    assert!(out2.contains("loaded:  x=200  score=1000"), "run 2 should load prior best: {out2}");
+    assert!(out2.contains("status:  STABLE"), "run 2 should be STABLE: {out2}");
+}
+
+#[test]
 fn array_reverse_take_drop_polymorphic() {
     // arr_reverse / arr_take / arr_drop work on any element type. Take + drop
     // partition cleanly: arr_take(xs, n) ++ arr_drop(xs, n) == xs.
