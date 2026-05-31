@@ -17,6 +17,32 @@ type GenericParams = (Vec<String>, Vec<(String, Vec<String>)>);
 /// If the string contains no unescaped `{`, return a plain `Expr::Literal(Literal::Str)`.
 /// Otherwise, split into alternating literal and expression segments and return
 /// `Expr::FmtStr { parts }`.
+/// Push a parsed statement into `stmts`, splicing tuple-destructure desugar
+/// blocks into the enclosing scope so their `let` bindings outlive the
+/// inner Block. Heuristic: an `Expr::Block` whose first stmt is a `Let`
+/// whose name starts with `__tup_` is the destructure desugar from
+/// `parse_let` — splice; anything else passes through as a normal stmt.
+///
+/// Must be used by every site that builds a `Vec<Stmt>` from parsed
+/// `parse_expr` results (parse_block, parse_while, parse_for, parse_if,
+/// parse_while_let body, etc.) — otherwise `let (a, b) = ...` inside that
+/// body would bind into the inner block and the names wouldn't reach the
+/// surrounding statements.
+fn push_stmt_or_splice_destructure(stmts: &mut Vec<Stmt>, expr: Expr, span: Span) {
+    if let Expr::Block(inner) = &expr {
+        if inner.first().is_some_and(|s| matches!(
+            &s.expr,
+            Expr::Let { name, .. } if name.starts_with("__tup_")
+        )) {
+            for s in inner.iter().cloned() {
+                stmts.push(s);
+            }
+            return;
+        }
+    }
+    stmts.push(Stmt { expr, span });
+}
+
 fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
     // Fast path: no braces at all.
     if !raw.contains('{') && !raw.contains('}') {
@@ -1015,24 +1041,7 @@ impl Parser {
             let span = self.current_span();
             let expr = self.parse_expr()?;
             self.eat(&Token::Semi);
-            // Tuple destructuring `let (a, b) = e` was parsed as a Block of
-            // `let __tup = e; let a = __tup.0; …` — splice those stmts into
-            // the enclosing scope so the bindings outlive the inner block.
-            // (Heuristic: any Block-shaped expr whose first stmt is a Let
-            // named `__tup_*`. Cheap and unambiguous — `__tup_` is reserved
-            // for this desugar.)
-            if let Expr::Block(inner) = &expr {
-                if inner.first().is_some_and(|s| matches!(
-                    &s.expr,
-                    Expr::Let { name, .. } if name.starts_with("__tup_")
-                )) {
-                    for s in inner.iter().cloned() {
-                        stmts.push(s);
-                    }
-                    continue;
-                }
-            }
-            stmts.push(Stmt { expr, span });
+            push_stmt_or_splice_destructure(&mut stmts, expr, span);
         }
         self.expect(&Token::RBrace)?;
         Ok(Expr::Block(stmts))
@@ -1097,7 +1106,7 @@ impl Parser {
                 let span = self.current_span();
                 let e = self.parse_expr()?;
                 self.eat(&Token::Semi);
-                body.push(Stmt { expr: e, span });
+                push_stmt_or_splice_destructure(&mut body, e, span);
             }
             self.expect(&Token::RBrace)?;
             return Ok(Expr::WhileLet { pattern, expr: Box::new(expr), body });
@@ -1110,7 +1119,7 @@ impl Parser {
             let span = self.current_span();
             let expr = self.parse_expr()?;
             self.eat(&Token::Semi);
-            body.push(Stmt { expr, span });
+            push_stmt_or_splice_destructure(&mut body, expr, span);
         }
         self.expect(&Token::RBrace)?;
         Ok(Expr::While { cond: Box::new(cond), body })
@@ -1198,7 +1207,7 @@ impl Parser {
             let span = self.current_span();
             let expr = self.parse_expr()?;
             self.eat(&Token::Semi);
-            body.push(Stmt { expr, span });
+            push_stmt_or_splice_destructure(&mut body, expr, span);
         }
         self.expect(&Token::RBrace)?;
         Ok(body)

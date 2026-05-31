@@ -580,6 +580,50 @@ impl<'p> Interp<'p> {
         best
     }
 
+    /// Full `(input, score)` trace for an `@[adaptive]` fn. Walks the
+    /// in-memory provenance store in call order, dropping entries whose
+    /// leading-i64 input was unrecorded. Returned as a Slice of two-element
+    /// tuples so callers can iterate, plot, persist, or compute custom
+    /// aggregates beyond what `goal_run` + `goal_best_input` give.
+    fn history(&self, name: &str) -> Value {
+        let mut out: Vec<Value> = Vec::new();
+        if name.is_empty() {
+            return Value::Array(out);
+        }
+        let scores_store = self.provenance.borrow();
+        let inputs_store = self.provenance_inputs.borrow();
+        if let (Some(scores), Some(inputs)) = (scores_store.get(name), inputs_store.get(name)) {
+            let n = scores.len().min(inputs.len());
+            out.reserve(n);
+            for i in 0..n {
+                if let Some(input) = inputs[i] {
+                    out.push(Value::Tuple(vec![
+                        Value::Int(input),
+                        Value::Float(scores[i]),
+                    ]));
+                }
+            }
+        }
+        Value::Array(out)
+    }
+
+    /// Drop the recorded `(input, score)` history for an `@[adaptive]` fn so
+    /// a follow-up experiment starts from a clean slate. Returns the number
+    /// of records evicted (0 when `name` was absent or already empty).
+    fn clear(&self, name: &str) -> i64 {
+        if name.is_empty() {
+            return 0;
+        }
+        let evicted = self
+            .provenance
+            .borrow_mut()
+            .remove(name)
+            .map(|v| v.len() as i64)
+            .unwrap_or(0);
+        self.provenance_inputs.borrow_mut().remove(name);
+        evicted
+    }
+
     /// Input that produced the score closest to `target` for an `@[adaptive]`
     /// fn. Walks the per-fn `(input, score)` log (in lock-step with the
     /// score store), picks the entry minimizing `|score - target|`, returns
@@ -1711,6 +1755,23 @@ impl<'p> Interp<'p> {
                 let name = as_str(&args[0])?.to_string();
                 let target = as_float(&args[1])?;
                 ok!(Value::Int(self.best_input(&name, target)));
+            }
+
+            // Full optimization trace as a slice of `(input, score)` tuples,
+            // in call order. The companion to goal_run / goal_best_input.
+            "goal_history" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                ok!(self.history(&name));
+            }
+
+            // Reset the @[adaptive] provenance for `name` so the next
+            // goal_run starts fresh. Returns the count of evicted records
+            // (so a caller can sanity-check there was anything to clear).
+            "goal_clear" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                ok!(Value::Int(self.clear(&name)));
             }
 
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────

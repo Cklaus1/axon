@@ -798,3 +798,43 @@ fn goal_best_input_returns_the_winning_probe() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(37), "best input should be the peak at x=37: {:?}", out);
 }
+
+#[test]
+fn goal_history_returns_the_full_input_score_trace() {
+    // `goal_history(name)` returns the per-call (input, score) tuples in
+    // call order, destructurable inside loop bodies (regression: my
+    // splicing helper has to fire from `parse_while`'s body builder, not
+    // just `parse_block`). `goal_clear(name)` evicts the records so a
+    // follow-up `goal_run` starts fresh.
+    let src = "@[adaptive]\n\
+        fn peak(x: i64) -> i64 { 100 - abs_i64(x - 37) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"peak\", 100.0, 30)\n  \
+            let h = goal_history(\"peak\")\n  \
+            let n = len(h)\n  \
+            // verify destructure-in-while binds visibly.\n  \
+            let last_probe = 0\n  \
+            let i = 0\n  \
+            while i < n {\n    \
+                let (probe, _score) = h[i]\n    \
+                last_probe = probe\n    \
+                i = i + 1\n  \
+            }\n  \
+            let cleared = goal_clear(\"peak\")\n  \
+            let after = goal_history(\"peak\")\n  \
+            println(\"trace {to_str(n)} cleared {to_str(cleared)} after {to_str(len(after))} last {to_str(last_probe)}\")\n  \
+            // returns nonzero iff every assertion held.\n  \
+            if n == 30 && cleared == 30 && len(after) == 0 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_hist_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "goal_history+goal_clear contract failed; stdout: {stdout}"
+    );
+    assert!(stdout.contains("trace 30 cleared 30 after 0"), "stdout: {stdout}");
+}

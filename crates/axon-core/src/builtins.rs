@@ -626,6 +626,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Return the leading-i64 input that produced the best observed score (closest to `target`) for the @[adaptive] function `name`. Pairs with `goal_run` so an ASI loop can introspect which probe got it there. Returns 0 when no inputs were recorded.",
     },
+    BuiltinFn {
+        name: "goal_history",
+        params: &[("name", "str")],
+        ret: "[(i64, f64)]",
+        doc: "Return the full optimization trace as a slice of `(input, score)` tuples, in call order, for the @[adaptive] function `name`. Empty when nothing was recorded.",
+    },
+    BuiltinFn {
+        name: "goal_clear",
+        params: &[("name", "str")],
+        ret: "i64",
+        doc: "Drop the recorded provenance for the @[adaptive] function `name` so a follow-up `goal_run` starts fresh. Returns the count of evicted records.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
