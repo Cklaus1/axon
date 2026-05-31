@@ -896,6 +896,32 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn raw_string_literal_disables_interpolation_and_escapes() {
+    // Closes ROADMAP §9.5 F16. `r"…"` lets demos embed literal Axon/Rust/
+    // JSON/regex source that contains `\`, `{`, `}` without `{{`/`}}` or
+    // `\\` doubling. Single-line only — embedded `"` falls back to the
+    // regular string literal with `\"`. The body lands as a plain string,
+    // skipping the format-string interpolation pass entirely.
+    let src = "fn main() {\n  \
+        // Regex pattern — backslashes pass through.\n  \
+        println(r\"\\d+\\.\\d+\")\n  \
+        // Literal braces — no interpolation attempted.\n  \
+        println(r\"hello {name} world\")\n  \
+        // Windows-style path.\n  \
+        println(r\"C:\\Users\\me\")\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_raw_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(out.status.success(), "raw strings should run cleanly: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains(r"\d+\.\d+"), "backslashes pass through, got: {stdout:?}");
+    assert!(stdout.contains("hello {name} world"), "no interpolation, got: {stdout:?}");
+    assert!(stdout.contains(r"C:\Users\me"), "path passes through, got: {stdout:?}");
+}
+
+#[test]
 fn verify_value_predicate_gates_on_uncertain_value() {
     // Closes ROADMAP §9.5 F6 for the simple numeric shape. The interpreter
     // now accepts `@[verify(value OP K)]` in addition to `confidence OP K`,

@@ -536,7 +536,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | F10 | No reward-shaping syntax — score *is* the metric; cannot declaratively say `score = accuracy − 0.1·tokens` | 8 | `Reward<T>` as signed Metric with composition operators. |
 | F11 | ~~`@[adaptive]` records only return values, not inputs — hill-climb cannot warm-start from the best previous input~~ — **closed** in the interpreter. The interp now logs `(input, score)` pairs in lock-step (`provenance_inputs`); exposed via `goal_best_input(name, target) -> i64` and `goal_history(name) -> [(i64, f64)]`. Native codegen still logs scores only. | 7 (codegen) | Interpreter done; codegen ABI extension still scheduled for Phase 7. |
 | F12 | No `Agent` type — the redteam is just another fn; no tools, effects, policy; two agents cannot be composed | 7 + 8 | Tier-1 stdlib type. |
-| F16 | String interpolation parser eagerly treats `{` as an interpolation start — embedding literal Rust/Axon code in a string requires `{{` `}}` escapes (caught at type-check time as "cannot find name") | language | Cheap fix: a `r"…"` raw-string literal that disables `{}` interpolation entirely. Or improve diagnostics so the error names the lexed slot expression rather than the slot's free vars. |
+| F16 | ~~String interpolation parser eagerly treats `{` as an interpolation start~~ — **closed** by the `r"…"` raw-string literal (lexer `Token::RawStr`; parser routes it to `Expr::Literal(Str)` without `parse_fmt_str_raw`). Body passes through untouched — no escape processing, no `{}` interpolation. Single-line only; embedded `"` falls back to a normal string with `\"`. | language | Done. |
 
 ### Strategic (the demo is silent on these)
 

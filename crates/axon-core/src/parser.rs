@@ -1736,6 +1736,13 @@ impl Parser {
                     parse_fmt_str_raw(&s)
                 } else { unreachable!() }
             }
+            // Raw strings skip interpolation entirely — the body lands as a
+            // plain string literal. `{` / `}` / `\` pass through untouched.
+            Some(Token::RawStr(_)) => {
+                if let Token::RawStr(s) = self.advance()?.clone() {
+                    Ok(Expr::Literal(Literal::Str(s)))
+                } else { unreachable!() }
+            }
             Some(Token::True) => { self.advance()?; Ok(Expr::Literal(Literal::Bool(true))) }
             Some(Token::False) => { self.advance()?; Ok(Expr::Literal(Literal::Bool(false))) }
             Some(Token::None) => { self.advance()?; Ok(Expr::None) }

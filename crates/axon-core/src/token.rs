@@ -119,6 +119,21 @@ pub enum Token {
     })]
     Str(String),
 
+    /// Raw string literal `r"…"`: no escape processing, no `{…}` interpolation.
+    /// Lets demos embed literal Axon/Rust/JSON code, regex patterns, or shell
+    /// snippets that contain `\`, `{`, `}` characters without `{{`/`}}` doubling
+    /// or `\\` escaping. Closes ROADMAP §9.5 F16.
+    ///
+    /// Single-line only — a `"` inside the body terminates it; no doubled-quote
+    /// escape. If the body needs a `"`, fall back to a normal string literal
+    /// with `\"`. Anything else (backslash, brace, dollar) passes through
+    /// untouched.
+    #[regex(r#"r"[^"]*""#, |lex| {
+        let raw = lex.slice();
+        std::option::Option::Some(raw[2..raw.len() - 1].to_string())
+    })]
+    RawStr(String),
+
     // Identifiers (must come after keywords)
     #[regex(r"[a-zA-Z_][a-zA-Z0-9_]*", |lex| lex.slice().to_string())]
     Ident(String),
