@@ -896,6 +896,41 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_higher_order_ops_accept_heterogeneous_element_types() {
+    // Element types are deferred in the builtin signatures (`[T]`, `T`, etc),
+    // so `arr_map` / `arr_filter` / `arr_fold` / `arr_contains` work across
+    // any element type — not just i64. Lets ASI demos build feature vectors
+    // (i64 → f64), filter labelled records (str → bool), search membership
+    // by string identity, and reduce mixed types without per-type duplication.
+    let src = "fn main() -> i64 {\n  \
+        // i64 → f64 map, then fold to f64 sum: arr_range(1,5)=[1,2,3,4],\n  \
+        // each halved, summed = 5.0.\n  \
+        let xs = arr_range(1, 5)\n  \
+        let halves = arr_map(xs, |x| i64_to_f64(x) * 0.5)\n  \
+        let total = arr_fold(halves, 0.0, |acc, h| acc + h)  // 5.0\n  \
+        let total_x10 = f64_to_i64(total * 10.0)             // 50\n  \
+        \n  \
+        // String filter: keep words with len > 2.\n  \
+        let words = [\"a\", \"bb\", \"ccc\", \"dddd\"]\n  \
+        let long = arr_filter(words, |s| len(s) > 2)\n  \
+        let n_long = len(long)                               // 2\n  \
+        \n  \
+        // Membership on strings.\n  \
+        let names = [\"alice\", \"bob\", \"carol\"]\n  \
+        let yes = arr_contains(names, \"bob\")               // true\n  \
+        let no  = arr_contains(names, \"dave\")              // false\n  \
+        \n  \
+        println(\"halves_sum_x10={to_str(total_x10)} long={to_str(n_long)}\")\n  \
+        if total_x10 == 50 && n_long == 2 && yes && !no { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_arrheter_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "heterogeneous array ops should pass: {:?}", out);
+}
+
+#[test]
 fn array_stdlib_fold_sort_zip_contains_compose() {
     // Round out the functional array stdlib so ASI programs can write
     // reduce / sort / pair / membership ops as one-liners. `arr_fold`
