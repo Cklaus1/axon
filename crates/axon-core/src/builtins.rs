@@ -784,6 +784,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Return all i64 input dims that produced the best observed score for the @[adaptive] function `name`. The multi-arg companion to `goal_best_input` — for `fn(x: i64, y: i64) -> i64` it returns `[x*, y*]`. Empty slice when the fn was never called.",
     },
     BuiltinFn {
+        name: "goal_best_inputs_f64",
+        params: &[("name", "str"), ("target", "f64")],
+        ret: "[f64]",
+        doc: "Return all f64 input dims that produced the best observed score for an `@[adaptive] fn(f64, …) -> f64`. The continuous-domain companion to `goal_best_inputs`: pairs with the f64 hill-climb path for linear-regression weights, control parameters, and other real-valued search problems.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",

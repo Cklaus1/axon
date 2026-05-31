@@ -896,6 +896,54 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn f64_adaptive_finds_continuous_peak() {
+    // Closes the f64 half of ROADMAP §9.5 F1: the optimizer now coordinate-
+    // descends over real-valued inputs too, not just i64. 1D and 2D peaks
+    // land within f64 epsilon of the analytical optimum.
+    //
+    // 1D: peak at x = 3.14, score = 100. The hill climb halves a wide
+    // initial step until it bottoms out below `resolution = 1e-9`.
+    let src1d = "@[adaptive]\n\
+        fn peak(x: f64) -> f64 { 100.0 - (x - 3.14) * (x - 3.14) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"peak\", 100.0, 200)\n  \
+            let dims = goal_best_inputs_f64(\"peak\", 100.0)\n  \
+            // Pin the contract: exit code = 1 iff |x - 3.14| < 1e-6.\n  \
+            let diff = dims[0] - 3.14\n  \
+            let close = (diff > -0.000001) && (diff < 0.000001)\n  \
+            if close { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_f1d_{}.ax", std::process::id()));
+    std::fs::write(&f, src1d).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "f64 1D peak should land near 3.14: {:?}", out);
+
+    // 2D: peak at (1.5, -2.7), score = 100. Coordinate descent across two
+    // f64 dims must locate the joint optimum.
+    let src2d = "@[adaptive]\n\
+        fn pair(x: f64, y: f64) -> f64 {\n  \
+            let dx = x - 1.5\n  \
+            let dy = y + 2.7\n  \
+            100.0 - dx * dx - dy * dy\n\
+        }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"pair\", 100.0, 400)\n  \
+            let dims = goal_best_inputs_f64(\"pair\", 100.0)\n  \
+            let dx = dims[0] - 1.5\n  \
+            let dy = dims[1] + 2.7\n  \
+            let ok_x = (dx > -0.000001) && (dx < 0.000001)\n  \
+            let ok_y = (dy > -0.000001) && (dy < 0.000001)\n  \
+            if ok_x && ok_y { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_f2d_{}.ax", std::process::id()));
+    std::fs::write(&f, src2d).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "f64 2D peak should land near (1.5, -2.7): {:?}", out);
+}
+
+#[test]
 fn as_cast_operator_lowers_to_polymorphic_builtins() {
     // Closes ROADMAP §9.5 F8. `expr as Type` is parser sugar over the
     // polymorphic `as_<type>` builtins shipped last tick. Higher precedence

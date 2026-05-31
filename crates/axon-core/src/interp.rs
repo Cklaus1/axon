@@ -176,6 +176,12 @@ pub struct Interp<'p> {
     /// (returns the full tuple), and used by the multi-arg coordinate-
     /// descent hill-climb to seed the next sweep.
     provenance_inputs: RefCell<HashMap<String, Vec<Vec<i64>>>>,
+    /// Per-call f64-prefix input tuple, mirror of `provenance_inputs` for
+    /// `@[adaptive] fn(f64, …) -> f64`. Read by `goal_best_input_f64` /
+    /// `goal_best_inputs_f64`. Lets the optimizer cover continuous-domain
+    /// problems (linear-regression weights, control parameters, etc.)
+    /// without forcing the user to discretize via integer indices.
+    provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
     /// Current call-stack depth, bounded by `RECURSION_LIMIT` so runaway
     /// recursion fails with a catchable panic rather than overflowing the
     /// (large but finite) interpreter thread stack and aborting the process.
@@ -308,6 +314,7 @@ impl<'p> Interp<'p> {
             globals: HashMap::new(),
             provenance: RefCell::new(HashMap::new()),
             provenance_inputs: RefCell::new(HashMap::new()),
+            provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
         }
     }
@@ -360,15 +367,21 @@ impl<'p> Interp<'p> {
                 args.len()
             ));
         }
-        // The leading i64 args (if any) form the goal-search input tuple —
-        // recorded so goal_run can resume from the best prior probe and
-        // multi-arg coordinate descent can seed each dim independently.
-        // We collect every leading arg that's an i64; the run stops at
-        // the first non-i64 (subsequent args stay opaque to the optimizer).
+        // The leading i64 / f64 args (if any) form the goal-search input
+        // tuple — recorded so goal_run can resume from the best prior probe
+        // and multi-arg coordinate descent can seed each dim independently.
+        // Two parallel collectors so an i64-prefix fn and an f64-prefix fn
+        // both populate the right store; we choose the right one based on
+        // the fn's signature in `run_goal`.
         let input_args: Vec<i64> = args
             .iter()
             .take_while(|v| matches!(v, Value::Int(_)))
             .map(|v| if let Value::Int(n) = v { *n } else { 0 })
+            .collect();
+        let input_args_f64: Vec<f64> = args
+            .iter()
+            .take_while(|v| matches!(v, Value::Float(_)))
+            .map(|v| if let Value::Float(f) = v { *f } else { 0.0 })
             .collect();
         // First dim, for back-compat with the verify-panic enrichment that
         // reports a single "input N" suffix.
@@ -397,6 +410,11 @@ impl<'p> Interp<'p> {
                     .entry(f.name.clone())
                     .or_default()
                     .push(input_args.clone());
+                self.provenance_inputs_f64
+                    .borrow_mut()
+                    .entry(f.name.clone())
+                    .or_default()
+                    .push(input_args_f64.clone());
                 // Also persist to the provenance JSONL (axon-rt's format) so
                 // `axon trace`/observability tooling see interpreter runs.
                 let payload = match &result {
@@ -503,14 +521,21 @@ impl<'p> Interp<'p> {
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
             let all_i64_params = !f.params.is_empty()
                 && f.params.iter().all(|p| is_i64_type(&p.ty));
+            let all_f64_params = !f.params.is_empty()
+                && f.params.iter().all(|p| is_f64_type(&p.ty));
             let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
-            if is_adaptive && all_i64_params && i64_ret {
-                return if f.params.len() == 1 {
-                    self.hill_climb_i64(f, target, max_evals)
-                } else {
-                    // Multi-arg: coordinate descent over each i64 dim.
-                    self.hill_climb_multi_i64(f, target, max_evals)
-                };
+            let f64_ret = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+            if is_adaptive {
+                if all_i64_params && i64_ret {
+                    return if f.params.len() == 1 {
+                        self.hill_climb_i64(f, target, max_evals)
+                    } else {
+                        self.hill_climb_multi_i64(f, target, max_evals)
+                    };
+                }
+                if all_f64_params && f64_ret {
+                    return self.hill_climb_multi_f64(f, target, max_evals);
+                }
             }
         }
         Ok(self.best_observed(name, target, max_evals))
@@ -726,6 +751,109 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// Coordinate-descent hill climb for an `@[adaptive] fn(f64, …) -> f64`.
+    /// Mirror of `hill_climb_multi_i64` over the continuous domain: per-dim
+    /// halving step starting wide, cycle through dims until a full sweep
+    /// produces no improvement (each dim's step bottomed out below the
+    /// resolution). The resolution floor is `1e-9` — tight enough for
+    /// learned weights, well above f64 precision noise.
+    fn hill_climb_multi_f64(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
+        let n_dims = f.params.len();
+        let unlimited = max_evals <= 0;
+        let mut cur: Vec<f64> = vec![0.0; n_dims];
+        let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
+            let args = xs.iter().map(|&x| Value::Float(x)).collect();
+            match self.call_fn(f, args)? {
+                Value::Float(v) => Ok(v),
+                Value::Int(n) => Ok(n as f64),
+                other => panic(format!(
+                    "@[adaptive] fn `{}` must return a number, got {}",
+                    f.name,
+                    other.type_name()
+                )),
+            }
+        };
+
+        let mut best_score = eval_at(&cur)?;
+        let mut best_dist = (best_score - target).abs();
+        let mut evals: i64 = 1;
+        if best_dist <= f64::EPSILON {
+            return Ok(best_score);
+        }
+
+        // Seed step: wide enough to leap across a few-hundred-unit window
+        // and let halving zero in. Mirrors the i64 path but scales the
+        // budget partition by dim count.
+        let per_dim_budget = if unlimited { 0 } else { std::cmp::max(4, max_evals / (n_dims as i64).max(1)) };
+        let seed_step: f64 = if unlimited { 1024.0 } else { (per_dim_budget as f64 * 4.0).max(16.0) };
+        let resolution: f64 = 1e-9;
+
+        let mut steps: Vec<f64> = vec![seed_step; n_dims];
+
+        loop {
+            let mut any_improvement = false;
+            for d in 0..n_dims {
+                if !unlimited && evals >= max_evals {
+                    return Ok(best_score);
+                }
+                while steps[d] >= resolution {
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+                    let mut improved = false;
+
+                    let mut probe = cur.clone();
+                    probe[d] = cur[d] + steps[d];
+                    let up_score = eval_at(&probe)?;
+                    evals += 1;
+                    if (up_score - target).abs() < best_dist {
+                        best_dist = (up_score - target).abs();
+                        best_score = up_score;
+                        cur[d] = probe[d];
+                        improved = true;
+                        any_improvement = true;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                    }
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+
+                    let mut probe = cur.clone();
+                    probe[d] = cur[d] - steps[d];
+                    let dn_score = eval_at(&probe)?;
+                    evals += 1;
+                    if (dn_score - target).abs() < best_dist {
+                        best_dist = (dn_score - target).abs();
+                        best_score = dn_score;
+                        cur[d] = probe[d];
+                        improved = true;
+                        any_improvement = true;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                    }
+
+                    if !improved {
+                        steps[d] *= 0.5;
+                    }
+                }
+            }
+            if !any_improvement {
+                return Ok(best_score);
+            }
+            for s in steps.iter_mut() {
+                *s = seed_step;
+            }
+        }
+    }
+
     /// Closest recorded score to `target` for `name` (or `target` if none).
     /// `max_evals > 0` keeps only the most recent N records.
     fn best_observed(&self, name: &str, target: f64, max_evals: i64) -> f64 {
@@ -797,22 +925,31 @@ impl<'p> Interp<'p> {
     }
 
     /// Index of the provenance entry whose score is closest to `target`,
-    /// among entries with at least one recorded i64 input. None when nothing
-    /// was recorded for `name`.
+    /// among entries with at least one recorded input (i64 or f64). None
+    /// when nothing was recorded for `name`. The "has at least one input"
+    /// check accepts either store so f64-only fns aren't filtered out.
     fn best_input_index(&self, name: &str, target: f64) -> Option<usize> {
         if name.is_empty() {
             return None;
         }
         let scores_store = self.provenance.borrow();
         let inputs_store = self.provenance_inputs.borrow();
+        let inputs_f64_store = self.provenance_inputs_f64.borrow();
         let scores = scores_store.get(name).filter(|s| !s.is_empty())?;
-        let inputs = inputs_store.get(name)?;
-        let n = scores.len().min(inputs.len());
+        let n = scores.len();
         let mut best_idx: Option<usize> = None;
         let mut best_dist = f64::INFINITY;
-        for i in 0..n {
-            if !inputs[i].is_empty() {
-                let d = (scores[i] - target).abs();
+        for (i, &score) in scores.iter().enumerate().take(n) {
+            let has_i64 = inputs_store
+                .get(name)
+                .and_then(|v| v.get(i))
+                .is_some_and(|t| !t.is_empty());
+            let has_f64 = inputs_f64_store
+                .get(name)
+                .and_then(|v| v.get(i))
+                .is_some_and(|t| !t.is_empty());
+            if has_i64 || has_f64 {
+                let d = (score - target).abs();
                 if d < best_dist {
                     best_dist = d;
                     best_idx = Some(i);
@@ -845,6 +982,21 @@ impl<'p> Interp<'p> {
             .cloned()
             .unwrap_or_default();
         Value::Array(dims.into_iter().map(Value::Int).collect())
+    }
+
+    /// f64-flavored counterpart of `best_inputs`: returns the f64-prefix
+    /// input tuple of the entry whose score is closest to `target`.
+    fn best_inputs_f64(&self, name: &str, target: f64) -> Value {
+        let Some(idx) = self.best_input_index(name, target) else {
+            return Value::Array(Vec::new());
+        };
+        let inputs_store = self.provenance_inputs_f64.borrow();
+        let dims = inputs_store
+            .get(name)
+            .and_then(|v| v.get(idx))
+            .cloned()
+            .unwrap_or_default();
+        Value::Array(dims.into_iter().map(Value::Float).collect())
     }
 
     /// Flatten a place expression (`base.f[i].g …`) into the root variable name
@@ -2462,6 +2614,16 @@ impl<'p> Interp<'p> {
                 ok!(self.best_inputs(&name, target));
             }
 
+            // f64-flavored counterpart: returns the f64-prefix input tuple
+            // of the best-scoring entry. Pairs with the f64 hill climb for
+            // continuous-domain `@[adaptive] fn(f64, …) -> f64` searches.
+            "goal_best_inputs_f64" => {
+                want(2)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                ok!(self.best_inputs_f64(&name, target));
+            }
+
             // Full optimization trace as a slice of `(input, score)` tuples,
             // in call order. The companion to goal_run / goal_best_input.
             "goal_history" => {
@@ -2865,6 +3027,10 @@ fn make_temporal(value: Value, horizon_ms: i64, decay: f64, created_ms: i64) -> 
 
 fn is_i64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "i64")
+}
+
+fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
+    matches!(ty, crate::ast::AxonType::Named(n) if n == "f64")
 }
 
 /// Apply a comparison `BinOp` to two floats (used by the `@[verify]` gate).

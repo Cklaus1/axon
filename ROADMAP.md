@@ -519,7 +519,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
-| F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **partially closed** for `fn(i64, …, i64) -> i64`. The interpreter now coordinate-descends over every i64 dim of an `@[adaptive]` fn; `goal_best_inputs(name, target) -> [i64]` returns the full input tuple. Continuous / string / mixed-type domains still wait on Phase 8 strategy parameter. | 8 | Done for i64^N. |
+| F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **closed for i64^N and f64^N**. The interpreter coordinate-descends over either all-i64 or all-f64 param lists; `goal_best_inputs(name, target) -> [i64]` / `goal_best_inputs_f64 -> [f64]` return the respective full input tuples. Mixed i64/f64 signatures and string / categorical domains still wait on Phase 8 strategy parameter. | 8 | Done for homogeneous numeric. |
 | F2 | `ai_complete` is non-deterministic; `axon trace replay` cannot reproduce a run | 9 | Without this, every "auditable" claim is weaker than advertised. Replay engine + seed capture + LLM-call memoization. |
 | F3 | Provenance log is flat NDJSON `(fn_name, score)` — no Principal, no effect row, no causal link to the goal that triggered the call | 7 + 9 | Typed `AuditEvent` per effect; Principal-tagged; queryable as a stream. |
 | F4 | No budget meter — token cost per `ai_complete` call is invisible; `max_evals` is a poor proxy | 7 | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`, halts on overrun. |
