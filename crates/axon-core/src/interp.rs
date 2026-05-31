@@ -1705,6 +1705,108 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Array(out));
             }
+            // Build an array by repeating `v` `n` times. Common need:
+            // initialize a fresh array with a default value before mutating
+            // it in place. Polymorphic via `T`.
+            "arr_repeat" => {
+                want(2)?;
+                let v = args[0].clone();
+                let n = as_int(&args[1])?.max(0) as usize;
+                ok!(Value::Array(vec![v; n.min(1 << 20)]));
+            }
+            // Concatenate two arrays into a fresh one. Element types must
+            // agree at the runtime — we don't do conversions here. The
+            // result preserves order: `xs ++ ys`.
+            "arr_concat" => {
+                want(2)?;
+                let mut out = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_concat: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let ys = match &args[1] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_concat: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                out.reserve(ys.len());
+                for v in ys {
+                    out.push(v.clone());
+                }
+                ok!(Value::Array(out));
+            }
+            // Flatten `[[T]] -> [T]`. Each inner element must itself be an
+            // array; mixed shapes panic. Useful after `arr_map` produces
+            // nested results.
+            "arr_flatten" => {
+                want(1)?;
+                let xss = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_flatten: expected array of arrays, got {}",
+                        other.type_name()
+                    )),
+                };
+                let total: usize = xss
+                    .iter()
+                    .map(|v| match v {
+                        Value::Array(inner) => inner.len(),
+                        _ => 0,
+                    })
+                    .sum();
+                let mut out = Vec::with_capacity(total);
+                for v in xss {
+                    match v {
+                        Value::Array(inner) => {
+                            for x in inner {
+                                out.push(x.clone());
+                            }
+                        }
+                        other => return panic(format!(
+                            "arr_flatten: inner element must be array, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Array(out));
+            }
+
+            // Numeric `as`-style casts. Concrete builtins that work on
+            // either i64 or f64 input — let the value's runtime type drive.
+            // Pairs with the existing `i64_to_f64` / `f64_to_i64` but is
+            // polymorphic on the source so ASI demos don't need to know
+            // the source type at the call site.
+            "as_f64" => {
+                want(1)?;
+                let f = match &args[0] {
+                    Value::Int(n) => *n as f64,
+                    Value::Float(v) => *v,
+                    Value::Bool(b) => if *b { 1.0 } else { 0.0 },
+                    other => return panic(format!(
+                        "as_f64: expected i64/f64/bool, got {}",
+                        other.type_name()
+                    )),
+                };
+                ok!(Value::Float(f));
+            }
+            "as_i64" => {
+                want(1)?;
+                let n = match &args[0] {
+                    Value::Int(n) => *n,
+                    Value::Float(v) => *v as i64,
+                    Value::Bool(b) => if *b { 1 } else { 0 },
+                    other => return panic(format!(
+                        "as_i64: expected i64/f64/bool, got {}",
+                        other.type_name()
+                    )),
+                };
+                ok!(Value::Int(n));
+            }
+
             // ── Polymorphic slicing / reordering ──────────────────────────
             "arr_reverse" => {
                 want(1)?;

@@ -368,6 +368,36 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Return a fresh array with elements in reverse order. Works for any element type.",
     },
     BuiltinFn {
+        name: "arr_repeat",
+        params: &[("v", "T"), ("n", "i64")],
+        ret: "[T]",
+        doc: "Build an array of `n` copies of `v`. Useful to initialize a default-filled array before in-place mutation. Negative `n` returns empty; saturating cap at ~1M elements.",
+    },
+    BuiltinFn {
+        name: "arr_concat",
+        params: &[("xs", "[T]"), ("ys", "[T]")],
+        ret: "[T]",
+        doc: "Concatenate two arrays into a fresh one (`xs ++ ys`); preserves order. Element runtime types must agree — no coercion.",
+    },
+    BuiltinFn {
+        name: "arr_flatten",
+        params: &[("xss", "[[T]]")],
+        ret: "[T]",
+        doc: "Flatten `[[T]]` to `[T]`. Each inner element must itself be an array. Useful after `arr_map` produces nested results.",
+    },
+    BuiltinFn {
+        name: "as_f64",
+        params: &[("v", "T")],
+        ret: "f64",
+        doc: "Numeric cast to f64. Accepts i64, f64, or bool; other types panic. Polymorphic on the source so call sites don't need to know the runtime type. Pairs with `as_i64` and supplants per-type `i64_to_f64` calls.",
+    },
+    BuiltinFn {
+        name: "as_i64",
+        params: &[("v", "T")],
+        ret: "i64",
+        doc: "Numeric cast to i64. Accepts i64 (identity), f64 (truncating), or bool (0/1); other types panic.",
+    },
+    BuiltinFn {
         name: "arr_take",
         params: &[("xs", "[T]"), ("n", "i64")],
         ret: "[T]",

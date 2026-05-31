@@ -896,6 +896,39 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_repeat_concat_flatten_compose() {
+    // Three new array primitives that round out the construction surface:
+    //   arr_repeat(v, n)  — build a default-filled array
+    //   arr_concat(xs, ys) — append two arrays into a fresh one
+    //   arr_flatten(xss)  — collapse nested arrays
+    // Plus as_f64 / as_i64 polymorphic numeric casts that replace per-source-
+    // type conversion builtins at call sites.
+    let src = "fn main() -> i64 {\n  \
+        // Build [0; 5], concat with [10, 20], flatten [[1], [2,3]]:\n  \
+        let zeros = arr_repeat(0, 5)              // [0,0,0,0,0]\n  \
+        let pair = arr_concat(zeros, [10, 20])    // [0,0,0,0,0,10,20]\n  \
+        let nested = [[1], [2, 3], [4, 5, 6]]\n  \
+        let flat = arr_flatten(nested)            // [1,2,3,4,5,6]\n  \
+        // Numeric casts: 7.9 → 7, true → 1, 5 → 5.0 → 5.\n  \
+        let i = as_i64(7.9)                       // 7\n  \
+        let b = as_i64(true)                      // 1\n  \
+        let r = as_i64(as_f64(5))                 // 5\n  \
+        // Pin contract: len, sums, casts all agree.\n  \
+        // pair has 5 zeros + 10 + 20 = 30 sum, 7 elements.\n  \
+        // flat sums to 1+2+3+4+5+6 = 21, 6 elements.\n  \
+        let pair_ok = len(pair) == 7 && arr_sum_i64(pair) == 30\n  \
+        let flat_ok = len(flat) == 6 && arr_sum_i64(flat) == 21\n  \
+        let cast_ok = i == 7 && b == 1 && r == 5\n  \
+        if pair_ok && flat_ok && cast_ok { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_constr_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "repeat+concat+flatten+casts: {:?}", out);
+}
+
+#[test]
 fn persistent_learner_demo_carries_state_across_invocations() {
     // examples/asi/persistent_learner.ax exercises file-backed continuation:
     // the program loads the prior best (x, score) from a sidecar file,
