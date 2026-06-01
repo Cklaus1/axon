@@ -85,6 +85,17 @@ fn host_matches_glob(host: &str, glob: &str) -> bool {
     }
 }
 
+/// The directory prefix of a file path, used to suggest a minimal allowlist
+/// entry. `"./data/x.txt"` → `"./data/"`; a bare filename → the path itself.
+/// Bug #8: capability errors should suggest the exact clause to add, and the
+/// directory prefix is the least-privilege grant that would permit the call.
+fn dir_prefix(path: &str) -> &str {
+    match path.rfind('/') {
+        Some(i) => &path[..=i], // include the trailing slash
+        None => path,
+    }
+}
+
 // ── Core check ───────────────────────────────────────────────────────────────
 
 /// Run the capability check on all functions in `program` and return diagnostics.
@@ -246,6 +257,7 @@ fn check_call(
     match &kind {
         IoKind::FsRead => {
             if let Some(path) = literal_arg {
+                let pfx = dir_prefix(path);
                 // 1. Check never: rules first (hard violation).
                 for clause in &spec.never {
                     if let NeverClause::Read(prefix) = clause {
@@ -253,7 +265,8 @@ fn check_call(
                             errors.push(CapabilityError::new(
                                 E1004,
                                 format!(
-                                    "`read_file(\"{path}\")` is forbidden by `never: [read(\"{prefix}\")]`"
+                                    "`read_file(\"{path}\")` is forbidden by `never: [read(\"{prefix}\")]`\n  \
+                                     help: remove the `never: [read(\"{prefix}\")]` clause, or remove the read call — a `never` rule is a hard deny that no allowlist can override"
                                 ),
                                 Span::dummy(),
                             ));
@@ -267,7 +280,8 @@ fn check_call(
                     errors.push(CapabilityError::new(
                         E1001,
                         format!(
-                            "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]"
+                            "`read_file(\"{path}\")` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
+                             help: Add `fs: [read(\"{pfx}\")]` to the @[contained(...)] attribute to allow this read"
                         ),
                         Span::dummy(),
                     ));
@@ -276,7 +290,8 @@ fn check_call(
                         E1001,
                         format!(
                             "`read_file(\"{path}\")` is not permitted by @[contained] \
-                             (allowed prefixes: {})",
+                             (allowed prefixes: {})\n  \
+                             help: Add `read(\"{pfx}\")` to the existing `fs: [...]` clause",
                             spec.fs_read.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ")
                         ),
                         Span::dummy(),
@@ -290,6 +305,7 @@ fn check_call(
 
         IoKind::FsWrite => {
             if let Some(path) = literal_arg {
+                let pfx = dir_prefix(path);
                 // 1. never: write check.
                 for clause in &spec.never {
                     if let NeverClause::Write(prefix) = clause {
@@ -297,7 +313,8 @@ fn check_call(
                             errors.push(CapabilityError::new(
                                 E1004,
                                 format!(
-                                    "`write_file(\"{path}\", ...)` is forbidden by `never: [write(\"{prefix}\")]`"
+                                    "`write_file(\"{path}\", ...)` is forbidden by `never: [write(\"{prefix}\")]`\n  \
+                                     help: remove the `never: [write(\"{prefix}\")]` clause, or remove the write call — a `never` rule is a hard deny that no allowlist can override"
                                 ),
                                 Span::dummy(),
                             ));
@@ -310,7 +327,8 @@ fn check_call(
                     errors.push(CapabilityError::new(
                         E1001,
                         format!(
-                            "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]"
+                            "`write_file(\"{path}\", ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
+                             help: Add `fs: [write(\"{pfx}\")]` to the @[contained(...)] attribute to allow this write"
                         ),
                         Span::dummy(),
                     ));
@@ -319,7 +337,8 @@ fn check_call(
                         E1001,
                         format!(
                             "`write_file(\"{path}\", ...)` is not permitted by @[contained] \
-                             (allowed prefixes: {})",
+                             (allowed prefixes: {})\n  \
+                             help: Add `write(\"{pfx}\")` to the existing `fs: [...]` clause",
                             spec.fs_write.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ")
                         ),
                         Span::dummy(),
@@ -337,7 +356,8 @@ fn check_call(
                             errors.push(CapabilityError::new(
                                 E1004,
                                 format!(
-                                    "`{name}(\"{host}\", ...)` is forbidden by `never: [net(\"{glob}\")]`"
+                                    "`{name}(\"{host}\", ...)` is forbidden by `never: [net(\"{glob}\")]`\n  \
+                                     help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override"
                                 ),
                                 Span::dummy(),
                             ));
@@ -350,7 +370,8 @@ fn check_call(
                     errors.push(CapabilityError::new(
                         E1001,
                         format!(
-                            "`{name}(\"{host}\", ...)` is not permitted: no `net: [...]` in @[contained]"
+                            "`{name}(\"{host}\", ...)` is not permitted: no `net: [...]` in @[contained]\n  \
+                             help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)"
                         ),
                         Span::dummy(),
                     ));
@@ -359,7 +380,8 @@ fn check_call(
                         E1001,
                         format!(
                             "`{name}(\"{host}\", ...)` is not permitted by @[contained] \
-                             (allowed: {})",
+                             (allowed: {})\n  \
+                             help: Add `\"{host}\"` to the existing `net: [...]` clause",
                             spec.net_allow.iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", ")
                         ),
                         Span::dummy(),
@@ -373,13 +395,19 @@ fn check_call(
             if spec.never.iter().any(|c| matches!(c, NeverClause::Exec)) {
                 errors.push(CapabilityError::new(
                     E1004,
-                    format!("`{name}(...)` is forbidden by `never: [exec]`"),
+                    format!(
+                        "`{name}(...)` is forbidden by `never: [exec]`\n  \
+                         help: remove the `never: [exec]` clause, or remove the exec call — a `never` rule is a hard deny that no allowlist can override"
+                    ),
                     Span::dummy(),
                 ));
             } else if !spec.exec_allowed {
                 errors.push(CapabilityError::new(
                     E1001,
-                    format!("`{name}(...)` is not permitted: `exec: none` or exec not specified in @[contained]"),
+                    format!(
+                        "`{name}(...)` is not permitted: `exec: none` or exec not specified in @[contained]\n  \
+                         help: Add `exec: any` to the @[contained(...)] attribute to allow process spawning"
+                    ),
                     Span::dummy(),
                 ));
             }
@@ -426,6 +454,9 @@ mod tests {
         check_call("write_file", &args, &spec, &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1001);
+        // Bug #8: the message suggests the exact least-privilege clause.
+        assert!(errors[0].message.contains("help:"), "no help line: {}", errors[0].message);
+        assert!(errors[0].message.contains("write(\"/etc/\")"), "wrong suggestion: {}", errors[0].message);
     }
 
     #[test]
@@ -440,6 +471,18 @@ mod tests {
         check_call("read_file", &args, &spec, &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1004);
+        // Bug #8: never-clause errors explain that no allowlist overrides them.
+        assert!(errors[0].message.contains("help:"), "no help line: {}", errors[0].message);
+        assert!(errors[0].message.contains("remove"), "should suggest removal: {}", errors[0].message);
+    }
+
+    #[test]
+    fn dir_prefix_extracts_directory() {
+        assert_eq!(dir_prefix("./data/x.txt"), "./data/");
+        assert_eq!(dir_prefix("/etc/passwd"), "/etc/");
+        assert_eq!(dir_prefix("bare.txt"), "bare.txt"); // no slash → whole path
+        assert_eq!(dir_prefix("/"), "/");
+        assert_eq!(dir_prefix("a/b/c/d"), "a/b/c/");
     }
 
     #[test]

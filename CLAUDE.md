@@ -154,6 +154,14 @@ fn test_panic() { assert(false) }
 @[adaptive]
 @[agent]
 @[verify]
+
+// Capability sandboxing — @[contained] (enforced by `axon check`, E1001/E1004)
+//   fs:    [read("./data/"), write("./out/")]   allowlist of path prefixes
+//   net:   ["api.example.com", "*.trusted.io"]  allowlist of hosts (leading * glob)
+//   exec:  none | any                           process spawning
+//   never: [read("/etc/"), write("/"), net("*"), exec]   hard deny (overrides allowlist)
+@[contained(fs: [write("./out/")], net: ["api.example.com"], exec: none)]
+fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 }
 ```
 
 ## Key Invariants

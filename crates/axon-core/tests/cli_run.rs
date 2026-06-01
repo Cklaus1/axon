@@ -223,6 +223,46 @@ fn contained_scorer_demo_runs_and_blocks_exfiltration() {
     assert_eq!(r.status.code(), Some(2), "exfiltration via net must be rejected");
     let msg = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
     assert!(msg.contains("E1001"), "expected E1001, got: {msg}");
+    // Bug #8: error messages must suggest the fix.
+    assert!(msg.contains("Add") || msg.contains("try") || msg.contains("use") || msg.contains("specify"),
+        "expected fix suggestion in error message, got: {msg}");
+}
+
+#[test]
+fn contained_error_messages_suggest_fix() {
+    // Bug #8: E1001 and E1004 messages must include a concrete suggestion
+    // showing the @[contained] clause the user should add.
+
+    // Net denial (no net: clause) — should suggest adding one.
+    let bad = std::env::temp_dir().join(format!("axon_cmsg_{}.ax", std::process::id()));
+    std::fs::write(&bad,
+        "@[contained(fs: [write(\"./out/\")], exec: none)]\n\
+         fn s() -> i64 { let _ = write_file(\"/etc/passwd\", \"x\")  0 }\n\
+         fn main() -> i64 { s() }\n",
+    ).unwrap();
+    let r = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    let msg = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+    assert!(msg.contains("E1001"), "expected E1001 for write denial, got: {msg}");
+    assert!(msg.contains("Add") || msg.contains("try") || msg.contains("use") || msg.contains("specify"),
+        "expected fix suggestion for write denial, got: {msg}");
+
+    // never: read denial — should suggest removing the never clause or the call.
+    let bad2 = std::env::temp_dir().join(format!("axon_cmsg2_{}.ax", std::process::id()));
+    std::fs::write(&bad2,
+        "@[contained(fs: [read(\"/etc/\")], never: [read(\"/etc/shadow\")])]\n\
+         fn s() -> i64 {\n  \
+             match read_file(\"/etc/shadow\") { Ok(_) => 1  Err(_) => 0 }\n\
+         }\n\
+         fn main() -> i64 { s() }\n",
+    ).unwrap();
+    let r2 = axon().args(["check", bad2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad2);
+    let msg2 = format!("{}{}", String::from_utf8_lossy(&r2.stdout), String::from_utf8_lossy(&r2.stderr));
+    assert!(msg2.contains("E1004"), "expected E1004 for never clause, got: {msg2}");
+    assert!(msg2.contains("Add") || msg2.contains("try") || msg2.contains("use") || msg2.contains("specify")
+        || msg2.contains("remove"),
+        "expected fix suggestion for never clause, got: {msg2}");
 }
 
 #[test]
