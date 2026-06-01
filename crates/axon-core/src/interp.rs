@@ -3835,23 +3835,26 @@ impl<'p> Interp<'p> {
                 };
                 let mut out = String::new();
                 for (k, v) in d.borrow().iter() {
+                    // Un-representable key/value is a recoverable condition, not
+                    // a host crash: return `Err(msg)` so the caller can react
+                    // (BUG_HUNT #20). `no exceptions — Result everywhere`.
                     if k.contains('=') || k.contains('\n') {
-                        return panic(format!(
+                        ok!(Value::Err(Box::new(Value::Str(format!(
                             "dict_to_str: key '{k}' contains an unrepresentable char (= or newline)"
-                        ));
+                        )))));
                     }
                     let vs = display(v);
                     if vs.contains('\n') {
-                        return panic(format!(
+                        ok!(Value::Err(Box::new(Value::Str(format!(
                             "dict_to_str: value for key '{k}' contains a newline (unsupported)"
-                        ));
+                        )))));
                     }
                     out.push_str(k);
                     out.push('=');
                     out.push_str(&vs);
                     out.push('\n');
                 }
-                ok!(Value::Str(out));
+                ok!(Value::Ok(Box::new(Value::Str(out))));
             }
             // `dict_from_str(s) -> Dict` — inverse of `dict_to_str`.
             // Splits `s` into lines, each line at the FIRST `=` into
@@ -4804,6 +4807,52 @@ mod tests {
             fn main() -> i64 { fib(10) }
         "#;
         assert_eq!(run(src), 55);
+    }
+
+    // BUG_HUNT #20: dict_to_str must return Result<str,str>, not panic the
+    // host, when a key/value can't be represented in the line format. The
+    // caller can then recover.
+    #[test]
+    fn dict_to_str_bad_key_returns_err_not_panic() {
+        let src = r#"
+            fn main() -> i64 {
+                let d = dict_new()
+                dict_set(d, "a=b", "v")
+                match dict_to_str(d) { Ok(_) => 0  Err(_) => 7 }
+            }
+        "#;
+        // 7 = the Err arm ran. A host panic would exit 101 instead.
+        assert_eq!(run(src), 7);
+    }
+
+    #[test]
+    fn dict_to_str_newline_value_returns_err_not_panic() {
+        let src = r#"
+            fn main() -> i64 {
+                let d = dict_new()
+                dict_set(d, "k", "line1\nline2")
+                match dict_to_str(d) { Ok(_) => 0  Err(_) => 7 }
+            }
+        "#;
+        assert_eq!(run(src), 7);
+    }
+
+    #[test]
+    fn dict_to_str_clean_dict_round_trips() {
+        let src = r#"
+            fn main() -> i64 {
+                let d = dict_new()
+                dict_set(d, "k", "v")
+                match dict_to_str(d) {
+                    Ok(s) => {
+                        let back = dict_from_str(s)
+                        match dict_get(back, "k") { Some(_) => 1  None => -1 }
+                    }
+                    Err(_) => -2
+                }
+            }
+        "#;
+        assert_eq!(run(src), 1);
     }
 
     #[test]

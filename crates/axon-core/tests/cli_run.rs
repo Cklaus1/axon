@@ -1180,12 +1180,14 @@ fn dict_filter_to_pairs_from_pairs() {
 fn dict_to_str_round_trips() {
     // dict_to_str / dict_from_str serialize a Dict to a stable
     // line-oriented `key=value\n` payload. Inverse round-trip.
+    // dict_to_str returns Result<str,str> (BUG_HUNT #20); these entries are
+    // all representable, so unwrap the Ok.
     let src = "fn main() -> i64 {\n  \
         let d = dict_new()\n  \
         dict_set(d, \"alpha\", 1)\n  \
         dict_set(d, \"beta\", \"hello\")\n  \
         dict_set(d, \"gamma\", 3.14)\n  \
-        let s = dict_to_str(d)\n  \
+        let s = match dict_to_str(d) { Ok(v) => v  Err(_) => \"\" }\n  \
         let d2 = dict_from_str(s)\n  \
         let alpha_s = match dict_get(d2, \"alpha\") { Some(v) => v  None => \"\" }\n  \
         let beta_s  = match dict_get(d2, \"beta\")  { Some(v) => v  None => \"\" }\n  \

@@ -101,7 +101,12 @@ fn save(b: Bandit, t: i64) {
         i = i + 1
     }
     dict_set(d, "t", to_str(t))
-    let _ = write_file(state_path(), dict_to_str(d))
+    // dict_to_str now returns Result (BUG_HUNT #20). These keys/values are
+    // always representable, but match honestly rather than assume.
+    match dict_to_str(d) {
+        Ok(s) => { let _ = write_file(state_path(), s) }
+        Err(e) => { eprintln("save: could not serialize state: {e}") }
+    }
 }
 
 fn main() -> i64 {

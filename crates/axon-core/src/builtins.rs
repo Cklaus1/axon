@@ -1106,8 +1106,8 @@ pub const BUILTINS: &[BuiltinFn] = &[
     BuiltinFn {
         name: "dict_to_str",
         params: &[("d", "Dict")],
-        ret: "str",
-        doc: "Serialize a dict to a line-oriented `key=value\\n` format. Keys containing `=` or `\\n` are rejected. Values are rendered via `display` (so numeric values stringify; nested values panic on newlines). Deterministic — BTreeMap key order. Round-trips through `dict_from_str`.",
+        ret: "Result<str, str>",
+        doc: "Serialize a dict to a line-oriented `key=value\\n` format. Returns `Err(msg)` when a key contains `=`/`\\n` or a value contains `\\n` (the format can't represent them) — recoverable, never a host panic. Values are rendered via `display` (numeric values stringify). Deterministic — BTreeMap key order. `Ok(s)` round-trips through `dict_from_str`.",
     },
     BuiltinFn {
         name: "dict_from_str",
