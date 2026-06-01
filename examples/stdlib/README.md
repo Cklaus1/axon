@@ -37,6 +37,15 @@ scores/confidences: `normalize_score`, `score_to_confidence` /
 `weighted2`/`mean2`, `bound_i64`/`bound_f64`. (`axon-surface` auto-bundles
 several of these into goals that reference them — see `examples/goals/`.)
 
+`agent.ax` — Tier-1 Agent type bundling the safety quartet + supervisor
+into a single state machine. `Agent { name, principal, budget_used,
+budget_cap, strikes, max_strikes, halted, steps_… }` carries identity,
+resource accounting, and a latching kill-switch. `agent_step(a, action,
+min_quality, min_confidence) -> (Agent, str)` evaluates every safety axis
+in order — `halted → unauthorized → over-budget → under-confident →
+under-quality` — and returns the updated agent plus a decision string.
+Closes ROADMAP §9.5 F12 at the userland layer.
+
 `reward.ax` — composable metric algebra for multi-objective agents.
 `Reward { name, score, max }` carries an explicit upper bound so combinators
 can normalize across metrics on different scales. `reward_unit` maps to
@@ -60,6 +69,7 @@ axon test examples/stdlib/supervisor.ax    # 5
 axon test examples/stdlib/arrays.ax        # 5
 axon test examples/stdlib/asi_prelude.ax   # 8
 axon test examples/stdlib/reward.ax        # 8
+axon test examples/stdlib/agent.ax         # 7
 axon run  examples/stdlib/safe_action.ax   # the composed gate in action
 axon run  examples/stdlib/supervisor.ax    # the kill-switch latching mid-stream
 axon run  examples/stdlib/arrays.ax        # argmax over a candidate score set

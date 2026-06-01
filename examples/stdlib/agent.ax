@@ -1,0 +1,235 @@
+// examples/stdlib/agent.ax — Tier-1 Agent type bundling the safety
+// quartet + supervisor into a single coherent state machine.
+//
+// Closes ROADMAP §9.5 F12 at the userland layer: a named agent
+// carries its own identity (Principal), resource budget, and
+// kill-switch supervisor. `agent_step` is the unified gate — it
+// checks every axis in turn and updates state atomically. Once
+// halted, the agent stays halted for every later step (latching
+// safety).
+//
+// `examples/stdlib/safe_action.ax` gates ONE action; this module
+// chains a sequence and lets the supervisor latch when strikes
+// accumulate. Composes the modules already in stdlib:
+//   • principal.ax — authorization
+//   • budget.ax    — resource accounting
+//   • supervisor.ax — temporal kill-switch
+//   • uncertain.ax — confidence floor on action quality
+//
+//   axon test examples/stdlib/agent.ax  → 7 tests pass
+
+type Principal = {
+    name: str,
+    net: bool,
+    fs_write: bool,
+    exec: bool,
+}
+
+fn principal(name: str, net: bool, fs_write: bool, exec: bool) -> Principal {
+    Principal { name: name, net: net, fs_write: fs_write, exec: exec }
+}
+
+// A scoped Action. `caps_needed` flags which capabilities it must hold
+// to be authorized; matches Principal's three axes.
+type Action = {
+    name: str,
+    cost: i64,
+    quality: i64,
+    confidence: f64,
+    needs_net: bool,
+    needs_fs_write: bool,
+    needs_exec: bool,
+}
+
+fn action(name: str, cost: i64, quality: i64, confidence: f64) -> Action {
+    Action {
+        name: name,
+        cost: cost,
+        quality: quality,
+        confidence: confidence,
+        needs_net: false,
+        needs_fs_write: false,
+        needs_exec: false,
+    }
+}
+
+// Agent state: bundles identity, budget, supervisor counters, and a
+// log of decisions so a trace is available without external storage.
+type Agent = {
+    name: str,
+    principal: Principal,
+    budget_used: i64,
+    budget_cap: i64,
+    strikes: i64,
+    max_strikes: i64,
+    halted: bool,
+    steps_taken: i64,
+    steps_approved: i64,
+    steps_denied: i64,
+}
+
+fn agent_new(
+    name: str,
+    principal: Principal,
+    budget_cap: i64,
+    max_strikes: i64,
+) -> Agent {
+    Agent {
+        name: name,
+        principal: principal,
+        budget_used: 0,
+        budget_cap: budget_cap,
+        strikes: 0,
+        max_strikes: max_strikes,
+        halted: false,
+        steps_taken: 0,
+        steps_approved: 0,
+        steps_denied: 0,
+    }
+}
+
+// ── Step: the unified gate ───────────────────────────────────────────────────
+// Returns the updated agent. The decision string is read via agent_last_status
+// (kept separate from the type to keep Agent immutable in shape).
+
+fn authorized(p: Principal, a: Action) -> bool {
+    let need_net = !a.needs_net || p.net
+    let need_fs = !a.needs_fs_write || p.fs_write
+    let need_exec = !a.needs_exec || p.exec
+    need_net && need_fs && need_exec
+}
+
+// Check every safety axis. Returns a short string naming the first failure,
+// or "approved" when all pass. Order: halted, authorization, budget,
+// confidence, quality.
+fn evaluate(a: Agent, act: Action, min_quality: i64, min_confidence: f64) -> str {
+    if a.halted { "halted" }
+    else if !authorized(a.principal, act) { "unauthorized" }
+    else if a.budget_used + act.cost > a.budget_cap { "over-budget" }
+    else if act.confidence < min_confidence { "under-confident" }
+    else if act.quality < min_quality { "under-quality" }
+    else { "approved" }
+}
+
+// Apply one step. Returns the new agent state; the kill-switch latches
+// on the configured strike count. `last_status` (also returned-shape
+// via a sidecar tuple) lets callers inspect what happened.
+fn agent_step(
+    a: Agent,
+    act: Action,
+    min_quality: i64,
+    min_confidence: f64,
+) -> (Agent, str) {
+    let decision = evaluate(a, act, min_quality, min_confidence)
+    let approved = str_eq(decision, "approved")
+    let new_budget = if approved { a.budget_used + act.cost } else { a.budget_used }
+    let strike_added = !approved && !str_eq(decision, "halted")
+    let new_strikes = if strike_added { a.strikes + 1 } else { a.strikes }
+    let new_halted = a.halted || new_strikes >= a.max_strikes
+    let next = Agent {
+        name: a.name,
+        principal: a.principal,
+        budget_used: new_budget,
+        budget_cap: a.budget_cap,
+        strikes: new_strikes,
+        max_strikes: a.max_strikes,
+        halted: new_halted,
+        steps_taken: a.steps_taken + 1,
+        steps_approved: if approved { a.steps_approved + 1 } else { a.steps_approved },
+        steps_denied: if approved { a.steps_denied } else { a.steps_denied + 1 },
+    }
+    (next, decision)
+}
+
+fn agent_alive(a: Agent) -> bool { !a.halted }
+
+fn agent_budget_remaining(a: Agent) -> i64 { a.budget_cap - a.budget_used }
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_fresh_agent_is_alive() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 100, 2)
+    assert(agent_alive(a))
+    assert_eq(a.budget_used, 0)
+    assert_eq(a.strikes, 0)
+}
+
+@[test]
+fn test_approved_step_debits_budget() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 100, 2)
+    let act = action("safe", 30, 80, 0.9)
+    let (a2, d) = agent_step(a, act, 70, 0.8)
+    assert_eq_str(d, "approved")
+    assert_eq(a2.budget_used, 30)
+    assert_eq(a2.strikes, 0)
+    assert(agent_alive(a2))
+}
+
+@[test]
+fn test_unauthorized_action_strikes_but_doesnt_spend() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 100, 2)
+    let act = Action {
+        name: "exfil", cost: 30, quality: 90, confidence: 0.95,
+        needs_net: true, needs_fs_write: false, needs_exec: false,
+    }
+    let (a2, d) = agent_step(a, act, 70, 0.8)
+    assert_eq_str(d, "unauthorized")
+    assert_eq(a2.budget_used, 0)
+    assert_eq(a2.strikes, 1)
+}
+
+@[test]
+fn test_over_budget_strike() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 50, 2)
+    let act = action("expensive", 100, 80, 0.9)
+    let (a2, d) = agent_step(a, act, 70, 0.8)
+    assert_eq_str(d, "over-budget")
+    assert_eq(a2.strikes, 1)
+}
+
+@[test]
+fn test_kill_switch_latches_after_max_strikes() {
+    let p = principal("scout", false, false, false)
+    let mut_strikes = 2
+    let a = agent_new("a", p, 100, mut_strikes)
+    // Two unsafe actions strike-out the agent.
+    let bad = action("bad", 30, 10, 0.1)
+    let (a1, _) = agent_step(a, bad, 70, 0.8)
+    let (a2, _) = agent_step(a1, bad, 70, 0.8)
+    assert(!agent_alive(a2))
+    // A good action AFTER halt is still refused.
+    let good = action("good", 20, 90, 0.95)
+    let (a3, d) = agent_step(a2, good, 70, 0.8)
+    assert_eq_str(d, "halted")
+    assert(!agent_alive(a3))
+    assert_eq(a3.budget_used, a2.budget_used)
+}
+
+@[test]
+fn test_counters_track_history() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 100, 5)
+    let good = action("g", 20, 90, 0.9)
+    let bad = action("b", 20, 10, 0.1)
+    let (a1, _) = agent_step(a, good, 70, 0.8)
+    let (a2, _) = agent_step(a1, bad, 70, 0.8)
+    let (a3, _) = agent_step(a2, good, 70, 0.8)
+    assert_eq(a3.steps_taken, 3)
+    assert_eq(a3.steps_approved, 2)
+    assert_eq(a3.steps_denied, 1)
+}
+
+@[test]
+fn test_budget_exact_fit_passes() {
+    let p = principal("scout", false, false, false)
+    let a = agent_new("a", p, 30, 1)
+    let act = action("fit", 30, 80, 0.9)
+    let (a2, d) = agent_step(a, act, 70, 0.8)
+    assert_eq_str(d, "approved")
+    assert_eq(agent_budget_remaining(a2), 0)
+}

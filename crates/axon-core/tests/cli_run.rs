@@ -896,6 +896,20 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn agent_stdlib_module_tests_pass() {
+    // Tier-1 Agent userland module: closes ROADMAP §9.5 F12 at the
+    // userland layer. Bundles Principal + Budget + Supervisor into a
+    // latching state machine; agent_step evaluates the full safety
+    // quartet and returns (Agent, decision_str). 7 @[test] cases cover
+    // approval, unauthorized strike, over-budget strike, kill-switch
+    // latching, history counters, exact-budget fit.
+    let out = axon().args(["test", &ex("stdlib/agent.ax")]).output().unwrap();
+    assert!(out.status.success(), "agent.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn array_chunk_unique_index_of_find() {
     // Four more building blocks: arr_chunk (batched processing),
     // arr_unique (dedupe preserving order), arr_index_of (where? as
