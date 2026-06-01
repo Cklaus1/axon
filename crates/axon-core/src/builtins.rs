@@ -362,6 +362,30 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Linear scan: does `xs` contain a value structurally equal to `v`? Works for any element type — primitives, strings, tuples, nested arrays.",
     },
     BuiltinFn {
+        name: "arr_chunk",
+        params: &[("xs", "[T]"), ("n", "i64")],
+        ret: "[[T]]",
+        doc: "Split into consecutive chunks of size `n`; last chunk may be shorter. Panics on `n <= 0`. Useful for batched processing — pair with `arr_map` over the outer array.",
+    },
+    BuiltinFn {
+        name: "arr_unique",
+        params: &[("xs", "[T]")],
+        ret: "[T]",
+        doc: "Dedupe preserving first occurrence and original order. Structural equality so nested values dedupe correctly. O(n²); hash-based version waits on a HashMap primitive.",
+    },
+    BuiltinFn {
+        name: "arr_index_of",
+        params: &[("xs", "[T]"), ("v", "T")],
+        ret: "Option<i64>",
+        doc: "First index where the element structurally equals `v`. `Some(i)` if found, `None` otherwise. Pairs with `arr_contains` for the `where` follow-up to the `whether` question.",
+    },
+    BuiltinFn {
+        name: "arr_find",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "Option<T>",
+        doc: "First element matching the predicate closure. Returns `Some(v)` or `None`. Same closure shape as `arr_filter` but returns a single element with early exit.",
+    },
+    BuiltinFn {
         name: "arr_reverse",
         params: &[("xs", "[T]")],
         ret: "[T]",

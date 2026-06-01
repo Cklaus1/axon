@@ -896,6 +896,38 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_chunk_unique_index_of_find() {
+    // Four more building blocks: arr_chunk (batched processing),
+    // arr_unique (dedupe preserving order), arr_index_of (where? as
+    // Option<i64>), arr_find (first match by predicate as Option<T>).
+    let src = "fn main() -> i64 {\n  \
+        // chunk: 10-element range into chunks of 3 → 4 chunks, last len 1.\n  \
+        let chunks = arr_chunk(arr_range(1, 11), 3)\n  \
+        let chunks_ok = len(chunks) == 4 && len(chunks[3]) == 1\n  \
+        // unique: dedupe preserves first-seen order.\n  \
+        let u = arr_unique([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])\n  \
+        let unique_ok = len(u) == 7 && u[0] == 3 && u[1] == 1 && u[2] == 4\n  \
+        // index_of: Some/None on strings.\n  \
+        let names = [\"alice\", \"bob\", \"carol\"]\n  \
+        let i = arr_index_of(names, \"bob\")\n  \
+        let n = arr_index_of(names, \"dave\")\n  \
+        let i_val = match i { Some(v) => v  None => -1 }\n  \
+        let n_val = match n { Some(v) => v  None => -1 }\n  \
+        let idx_ok = i_val == 1 && n_val == -1\n  \
+        // find: first element with n² > 1000 = 32.\n  \
+        let big = arr_find(arr_range(1, 100), |x| x * x > 1000)\n  \
+        let big_v = match big { Some(v) => v  None => -1 }\n  \
+        let find_ok = big_v == 32\n  \
+        if chunks_ok && unique_ok && idx_ok && find_ok { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_arrbits_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "chunk/unique/index_of/find: {:?}", out);
+}
+
+#[test]
 fn goal_best_score_and_goal_count_are_pure_reads() {
     // `goal_run(name, target, 0)` was overloaded — it claims "no budget"
     // but actually runs an UNLIMITED live optimization, growing

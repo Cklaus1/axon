@@ -2474,6 +2474,109 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Array(out));
             }
+            // Split an array into consecutive chunks of size `n`. The last
+            // chunk may be shorter if `len(xs)` isn't a multiple of `n`.
+            // `n <= 0` panics — caller should guard with their own min.
+            "arr_chunk" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_chunk: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let n = as_int(&args[1])?;
+                if n <= 0 {
+                    return panic(format!("arr_chunk: chunk size must be positive, got {n}"));
+                }
+                let n = n as usize;
+                let mut out: Vec<Value> = Vec::with_capacity(xs.len().div_ceil(n));
+                let mut start = 0;
+                while start < xs.len() {
+                    let end = (start + n).min(xs.len());
+                    out.push(Value::Array(xs[start..end].to_vec()));
+                    start = end;
+                }
+                ok!(Value::Array(out));
+            }
+            // Dedupe an array, preserving first occurrence and order. Uses
+            // structural equality so deeply-nested values dedupe correctly.
+            // O(n²) — fine for ASI-scale arrays; a hash-based version waits
+            // on a HashMap/HashSet primitive.
+            "arr_unique" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_unique: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut out: Vec<Value> = Vec::new();
+                for v in xs {
+                    if !out.iter().any(|seen| values_equal(seen, v)) {
+                        out.push(v.clone());
+                    }
+                }
+                ok!(Value::Array(out));
+            }
+            // First index where the element structurally equals `v`. Returns
+            // `Some(i)` if found, `None` otherwise. Pairs with arr_contains
+            // for "where's the match" follow-ups.
+            "arr_index_of" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_index_of: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let needle = &args[1];
+                let mut found: Option<i64> = None;
+                for (i, v) in xs.iter().enumerate() {
+                    if values_equal(v, needle) {
+                        found = Some(i as i64);
+                        break;
+                    }
+                }
+                ok!(match found {
+                    Some(i) => Value::Some(Box::new(Value::Int(i))),
+                    None => Value::None,
+                });
+            }
+            // First element matching the predicate closure. Returns
+            // `Some(v)` when one is found, `None` otherwise — the
+            // closure shape mirrors arr_filter, but the result is a
+            // single element so callers can early-exit.
+            "arr_find" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_find: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut hit: Option<Value> = None;
+                for x in xs {
+                    let keep = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    match keep {
+                        Value::Bool(true) => { hit = Some(x); break; }
+                        Value::Bool(false) => {}
+                        other => return panic(format!(
+                            "arr_find: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(match hit {
+                    Some(v) => Value::Some(Box::new(v)),
+                    None => Value::None,
+                });
+            }
             // Linear scan: does `xs` contain a value equal to `v`?
             // Structural equality via the existing `values_equal` helper —
             // works for primitives, strings, tuples, nested arrays.
