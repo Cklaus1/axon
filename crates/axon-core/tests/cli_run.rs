@@ -2445,6 +2445,32 @@ fn axon_seed_env_var_makes_runs_reproducible() {
 }
 
 #[test]
+fn version_reports_build_identity() {
+    // BUG_HUNT #30: `--version` must report a reproducible build identity so a
+    // bug report can pin the exact source — the bare semver "0.1.0" can't tell
+    // you which build you're on. We enrich it with the git short SHA (or
+    // "unknown" for a git-less tarball build) in parentheses.
+    let out = axon().arg("--version").output().unwrap();
+    assert_eq!(out.status.code(), Some(0), "--version should exit 0");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Name + semver present.
+    assert!(stdout.contains("axon "), "version should name the tool: {stdout:?}");
+    assert!(stdout.contains("0.1.0"), "version should include the semver: {stdout:?}");
+    // Build identity present: a parenthesized git tag (short SHA or "unknown").
+    assert!(
+        stdout.contains('(') && stdout.contains(')'),
+        "version should include a parenthesized build identity (git SHA): {stdout:?}"
+    );
+    // -V short form agrees with --version.
+    let short = axon().arg("-V").output().unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&short.stdout),
+        stdout,
+        "-V and --version must produce identical output"
+    );
+}
+
+#[test]
 fn random_i64_inverted_bounds_panics_not_silent() {
     // BUG_HUNT #27 / I-9: random_i64(hi, lo) with hi < lo is inverted args —
     // a caller error. It used to silently return `lo`, a plausible-looking

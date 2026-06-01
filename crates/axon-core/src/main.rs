@@ -21,11 +21,21 @@ use inkwell;
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
+/// Version string with build identity: `<semver> (<git-sha>)`, e.g.
+/// `0.1.0 (02cd617)`. `AXON_GIT_SHA` is captured by build.rs (BUG_HUNT #30) and
+/// is "unknown" when git isn't available at build time.
+const VERSION: &str = concat!(
+    env!("CARGO_PKG_VERSION"),
+    " (",
+    env!("AXON_GIT_SHA"),
+    ")"
+);
+
 #[derive(Parser)]
 #[command(
     name = "axon",
     about = "The Axon language toolchain",
-    version,
+    version = VERSION,
     propagate_version = true,
 )]
 struct Cli {

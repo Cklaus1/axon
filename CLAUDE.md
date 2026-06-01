@@ -28,6 +28,7 @@ axon check examples/hello.ax              # type-check only
 axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
 axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
 axon build examples/hello.ax              # native AOT binary   (needs --features codegen; SLOW — see BUILD_DIAGNOSIS.md)
+axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
 ```
 
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
