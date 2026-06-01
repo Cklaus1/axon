@@ -439,6 +439,9 @@ struct BuildOptions {
 /// `axon goal <file.md>` — the Phase-10 two-track flow in one command:
 /// compile structured prose → `.ax` (via `axon-surface`) → type-check → run.
 fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
+    // Stamp provenance with the goal file's identity so `trace` keeps this
+    // run's metrics distinct from other programs' (BUG_HUNT #4).
+    axon_core::interp::set_provenance_source(file.display().to_string());
     let md = read_source(&file);
 
     // Prose → typed-AST `.ax` source via the surface compiler.
@@ -540,6 +543,7 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
 /// Per-fn score-trajectory summary computed from the provenance log.
 struct TraceStat {
     func: String,
+    src: String,
     evals: usize,
     min: f64,
     max: f64,
@@ -556,29 +560,33 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
         process::exit(1);
     };
 
-    // Group by fn, preserving first-seen order. The log is append-only, so each
-    // group's records stay in chronological order.
-    let mut order: Vec<String> = Vec::new();
-    let mut groups: HashMap<&str, Vec<&axon_core::interp::ProvRecord>> = HashMap::new();
+    // Group by (fn, src), preserving first-seen order. Keying on the source
+    // program means two different programs that both define `metric` show as
+    // separate rows instead of blending into one misleading KPI (BUG_HUNT #4).
+    // The log is append-only, so each group's records stay chronological.
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut groups: HashMap<(String, String), Vec<&axon_core::interp::ProvRecord>> = HashMap::new();
     let mut total = 0usize;
     for r in &recs {
         if func.as_ref().is_some_and(|f| f != &r.func) {
             continue;
         }
-        if !groups.contains_key(r.func.as_str()) {
-            order.push(r.func.clone());
+        let key = (r.func.clone(), r.src.clone());
+        if !groups.contains_key(&key) {
+            order.push(key.clone());
         }
-        groups.entry(r.func.as_str()).or_default().push(r);
+        groups.entry(key).or_default().push(r);
         total += 1;
     }
 
     let stats: Vec<TraceStat> = order
         .iter()
-        .map(|f| {
-            let g = &groups[f.as_str()];
+        .map(|key| {
+            let g = &groups[key];
             let best = g.iter().copied().fold(g[0], |a, r| if r.score > a.score { r } else { a });
             TraceStat {
-                func: f.clone(),
+                func: key.0.clone(),
+                src: key.1.clone(),
                 evals: g.len(),
                 min: g.iter().map(|r| r.score).fold(f64::INFINITY, f64::min),
                 max: best.score,
@@ -600,8 +608,8 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
             .map(|s| {
                 let bi = s.best_input.map(|i| i.to_string()).unwrap_or_else(|| "null".into());
                 format!(
-                    "{{\"fn\":\"{}\",\"evals\":{},\"min\":{},\"max\":{},\"best_input\":{bi},\"first\":{},\"last\":{},\"trend\":\"{}\"}}",
-                    s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
+                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"evals\":{},\"min\":{},\"max\":{},\"best_input\":{bi},\"first\":{},\"last\":{},\"trend\":\"{}\"}}",
+                    s.func, s.src, s.evals, s.min, s.max, s.first, s.last, s.trend,
                 )
             })
             .collect();
@@ -613,11 +621,12 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
         println!("# provenance: 0 matching records");
         return;
     }
-    println!("# provenance: {total} record(s) across {} fn(s)", order.len());
+    println!("# provenance: {total} record(s) across {} (fn, source) group(s)", order.len());
     for s in &stats {
         let at = s.best_input.map(|i| format!(" at input {i}")).unwrap_or_default();
+        let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
         println!(
-            "  {}: {} eval(s)  range [{}, {}{at}]  first {} → last {}  [{}]",
+            "  {}{from}: {} eval(s)  range [{}, {}{at}]  first {} → last {}  [{}]",
             s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
         );
     }
@@ -628,6 +637,11 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
 fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
+
+    // Stamp provenance with this program's identity so `trace` keeps its
+    // metrics distinct from other programs that share a function name
+    // (BUG_HUNT #4).
+    axon_core::interp::set_provenance_source(file.display().to_string());
 
     let src = read_source(&file);
     let mut program = match parse_source(&src) {

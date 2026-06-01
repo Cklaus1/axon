@@ -2210,3 +2210,33 @@ fn axon_seed_env_var_makes_runs_reproducible() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(r1.status.code(), r2.status.code(), "AXON_SEED should make runs identical: {:?} vs {:?}", r1, r2);
 }
+
+#[test]
+fn trace_separates_same_named_metrics_from_different_programs() {
+    // BUG_HUNT #4 / I-9: two programs that both define `metric_x` used to
+    // blend into one misleading KPI row. trace now keys on (fn, source) so
+    // they show as separate groups, each tagged with its program path.
+    let cache = std::env::temp_dir().join(format!("axon_trace4_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+
+    let prog_a = "@[adaptive]\nfn metric_x(v: i64) -> i64 { v * 2 }\n\
+                  fn main() -> i64 { let _ = goal_run(\"metric_x\", 100.0, 5)  0 }\n";
+    let prog_b = "@[adaptive]\nfn metric_x(v: i64) -> i64 { 999 }\n\
+                  fn main() -> i64 { let _ = goal_run(\"metric_x\", 100.0, 5)  0 }\n";
+    let fa = std::env::temp_dir().join(format!("axon_4a_{}.ax", std::process::id()));
+    let fb = std::env::temp_dir().join(format!("axon_4b_{}.ax", std::process::id()));
+    std::fs::write(&fa, prog_a).unwrap();
+    std::fs::write(&fb, prog_b).unwrap();
+    axon().args(["run", fa.to_str().unwrap()]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    axon().args(["run", fb.to_str().unwrap()]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+
+    let out = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&fa);
+    let _ = std::fs::remove_file(&fb);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // Two distinct (fn, source) groups, not one blended row.
+    assert!(stdout.contains("2 (fn, source) group(s)"), "should be 2 groups: {stdout}");
+    assert!(stdout.contains("axon_4a"), "should tag program A's source: {stdout}");
+    assert!(stdout.contains("axon_4b"), "should tag program B's source: {stdout}");
+}

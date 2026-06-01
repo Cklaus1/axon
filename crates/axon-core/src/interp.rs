@@ -4251,9 +4251,28 @@ fn provenance_log_path() -> Option<std::path::PathBuf> {
 }
 
 /// Append one `@[adaptive]` return to the provenance JSONL, in the same shape
+/// Source identity of the currently-running program, stamped into every
+/// provenance record so `axon trace` can tell one program's `metric` apart
+/// from another's (BUG_HUNT #4 / I-9). Set once at the CLI boundary via
+/// [`set_provenance_source`]; defaults to "" (unknown) when unset.
+static PROVENANCE_SOURCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// Record the source program's identity (e.g. its file path) for provenance.
+/// Idempotent — only the first call takes effect, matching one program per
+/// process.
+pub fn set_provenance_source(src: impl Into<String>) {
+    let _ = PROVENANCE_SOURCE.set(src.into());
+}
+
+fn provenance_source() -> &'static str {
+    PROVENANCE_SOURCE.get().map(String::as_str).unwrap_or("")
+}
+
 /// axon-rt writes (`ts_ms`/`fn`/`event`/`payload`/`score`), so `axon trace`
-/// and the observability tools see interpreter runs. Best-effort (errors
-/// ignored — provenance is advisory, not load-bearing).
+/// and the observability tools see interpreter runs. We add a `src` field
+/// (the program path) so records from different programs that happen to share
+/// a function name don't blend in `trace`. Best-effort (errors ignored —
+/// provenance is advisory, not load-bearing).
 fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64, input: Option<i64>) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
@@ -4268,8 +4287,14 @@ fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64, input: Opti
         Some(x) => format!(",\"input\":{x}"),
         None => String::new(),
     };
+    let src = provenance_source();
+    let src_field = if src.is_empty() {
+        String::new()
+    } else {
+        format!(",\"src\":{}", json_quote(src))
+    };
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}{inp}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}{inp}{src_field}}}\n",
         f = json_quote(fn_name),
         p = json_quote(payload),
     );
@@ -4356,6 +4381,10 @@ pub struct ProvRecord {
     pub func: String,
     pub score: f64,
     pub input: Option<i64>,
+    /// Source program identity (file path). Empty for records written before
+    /// the field existed, or by tools that don't set it. `trace` groups by
+    /// `(func, src)` so two programs' same-named metrics don't blend.
+    pub src: String,
 }
 
 /// Read and parse the provenance JSONL (best-effort; malformed lines skipped).
@@ -4383,6 +4412,7 @@ pub fn read_provenance(path: Option<&std::path::Path>) -> Option<Vec<ProvRecord>
             func,
             score,
             input: extract_json_num(line, "\"input\":").map(|x| x as i64),
+            src: extract_json_str(line, "\"src\":").unwrap_or_default(),
         });
     }
     Some(out)

@@ -901,7 +901,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "goal_run",
         params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
         ret: "f64",
-        doc: "Read the provenance log for the @[adaptive] function named `name` and return the best observed score (the recorded return value closest to `target`). Returns `target` when no records exist. `max_evals` caps the number of recent records consulted (≤0 = no cap).",
+        doc: "Optimize the @[adaptive] function `name` toward `target` for up to `max_evals` evaluations, then return the best score across ALL accumulated provenance — not just this call's probes. NOTE: because the result is cumulative, comparing two `goal_run` calls with different budgets (A/B testing a budget) will NOT show the budget's effect — the second call sees the first call's best too. To isolate a run, `goal_clear(name)` first. Errors if `name` is neither a defined fn nor previously recorded (typo guard). Returns `target` only when an empty provenance set somehow remains.",
     },
     BuiltinFn {
         name: "goal_run_random",
