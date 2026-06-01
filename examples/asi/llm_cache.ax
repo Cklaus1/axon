@@ -1,0 +1,82 @@
+// Axon ASI demo: memoized LLM calls via the Dict primitive.
+//
+// The simplest real ASI workflow: caching `ai_complete` responses by
+// prompt. Identical prompts return the cached answer, no re-call. This
+// is the pattern every production agent needs but few language demos
+// show concretely. Until this session there was no `Dict` to express it.
+//
+// The demo runs a small batch of prompts where some repeat. Without
+// caching every call would hit the LLM; with the Dict-backed cache,
+// repeats are cheap. The hit/miss counters demonstrate the win.
+//
+// Two modes:
+//   AXON_AI_MOCK=1  — deterministic stub returns; cache is the only
+//                     state; safe to run in CI / tests.
+//   ANTHROPIC_API_KEY=… (+ --features asi-runtime) — real LLM calls;
+//                     the cache then has measurable cost savings.
+//
+//   AXON_AI_MOCK=1 axon run examples/asi/llm_cache.ax
+
+// Look up `prompt` in `cache`; on miss, call ai_complete and stash
+// the response. On error, fall back to "[error]" so the trace shape
+// stays consistent.
+fn cached_complete(cache: Dict, stats: Dict, prompt: str) -> str {
+    match dict_get(cache, prompt) {
+        Some(cached) => {
+            // Increment hit counter via the shared stats dict.
+            let h = match dict_get(stats, "hits") { Some(v) => v  None => 0 }
+            dict_set(stats, "hits", h + 1)
+            cached
+        }
+        None => {
+            let m = match dict_get(stats, "misses") { Some(v) => v  None => 0 }
+            dict_set(stats, "misses", m + 1)
+            let resp = match ai_complete(prompt) {
+                Ok(s) => s
+                Err(_) => "[error]"
+            }
+            dict_set(cache, prompt, resp)
+            resp
+        }
+    }
+}
+
+fn corpus() -> [str] {
+    [
+        "What is 2+2?",
+        "Summarize quantum mechanics in one sentence.",
+        "What is 2+2?",                              // repeat → cache hit
+        "Name a color.",
+        "What is 2+2?",                              // repeat → cache hit
+        "Summarize quantum mechanics in one sentence.", // repeat
+        "Name a color.",                             // repeat
+        "Translate 'hello' to Spanish.",
+    ]
+}
+
+fn main() -> i64 {
+    let cache = dict_new()
+    let stats = dict_new()
+    dict_set(stats, "hits", 0)
+    dict_set(stats, "misses", 0)
+
+    let prompts = corpus()
+    let responses = arr_map(prompts, |p| cached_complete(cache, stats, p))
+
+    let hits = match dict_get(stats, "hits") { Some(v) => v  None => 0 }
+    let misses = match dict_get(stats, "misses") { Some(v) => v  None => 0 }
+    let n = len(prompts)
+    let unique = len(arr_unique(prompts))
+
+    println("=== LLM cache ===")
+    println("prompts requested: {to_str(n)}")
+    println("unique prompts:    {to_str(unique)}")
+    println("cache misses:      {to_str(misses)}   (one LLM call each)")
+    println("cache hits:        {to_str(hits)}    (saved {to_str(hits)} LLM calls)")
+    println("cache size:        {to_str(dict_len(cache))} entries")
+    println("first response:    {responses[0]}")
+
+    // The corpus has 8 prompts but 4 are unique; expect 4 misses + 4 hits.
+    // Exit 1 iff the cache delivered the expected savings.
+    if misses == unique && hits == (n - unique) && dict_len(cache) == unique { 1 } else { 0 }
+}

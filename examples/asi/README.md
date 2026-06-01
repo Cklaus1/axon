@@ -53,6 +53,7 @@ examples/asi/
 ├── word_freq.ax    # demo #19 — text preprocessing via the Dict primitive: arr_group_by, dict_map_values, ranked top-k; key-free
 ├── bandit_ucb.ax   # demo #20 — UCB1 multi-armed bandit: classic exploration-exploitation over 5 arms; key-free
 ├── safe_bandit.ax  # demo #21 — bandit ∩ agent: safety-constrained exploration; mod-imports both userland modules; key-free
+├── llm_cache.ax    # demo #22 — memoize ai_complete via Dict; runs under AXON_AI_MOCK=1 (no LLM cost)
 ├── persistent_learner.ax # demo #15 — cross-process self-improvement: load prior best from disk, optimize, write back; key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file

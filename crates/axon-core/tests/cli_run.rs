@@ -939,6 +939,23 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn llm_cache_demo_memoizes_repeated_prompts() {
+    // Demo #22. First demo this session that uses ai_complete + Dict.
+    // Caches LLM responses by prompt via a Dict so repeated calls hit
+    // the cache. Runs deterministically under AXON_AI_MOCK=1. 8 prompts,
+    // 4 unique → expect 4 misses + 4 hits.
+    let mut cmd = axon();
+    cmd.args(["run", &ex("asi/llm_cache.ax")]);
+    cmd.env("AXON_AI_MOCK", "1");
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "cache should deliver 4 hits: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("cache misses:      4"), "stdout: {stdout}");
+    assert!(stdout.contains("cache hits:        4"), "stdout: {stdout}");
+    assert!(stdout.contains("cache size:        4"), "stdout: {stdout}");
+}
+
+#[test]
 fn safe_bandit_demo_picks_safe_high_reward_arm() {
     // Demo #21. Composes the bandit + agent userland modules:
     // bandit proposes an arm each round, agent_step gates it through
