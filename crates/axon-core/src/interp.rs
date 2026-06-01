@@ -3384,6 +3384,81 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Dict(Rc::new(RefCell::new(out))));
             }
+            // `arr_enumerate(xs)` — turn `[a, b, c]` into `[(0, a), (1, b),
+            // (2, c)]`. The "iterate with index" pattern's primitive
+            // form. Pairs with `arr_map` so closures can see both index
+            // and value without a `let i = 0` + manual increment.
+            "arr_enumerate" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_enumerate: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut out = Vec::with_capacity(xs.len());
+                for (i, v) in xs.iter().enumerate() {
+                    out.push(Value::Tuple(vec![Value::Int(i as i64), v.clone()]));
+                }
+                ok!(Value::Array(out));
+            }
+            // `arr_partition(xs, pred)` — split into `(yes, no)` tuple
+            // where `yes` is the elements satisfying `pred` and `no` is
+            // the rest. One pass over the input; the natural complement
+            // to `arr_filter` (which only keeps the yes side).
+            "arr_partition" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_partition: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut yes = Vec::new();
+                let mut no = Vec::new();
+                for x in xs {
+                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    match r {
+                        Value::Bool(true) => yes.push(x),
+                        Value::Bool(false) => no.push(x),
+                        other => return panic(format!(
+                            "arr_partition: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
+            }
+            // `dict_merge(d1, d2) -> Dict` — union of two dicts. Right-
+            // biased on collision (values in `d2` win when both have the
+            // same key). Returns a fresh dict; the inputs are unchanged.
+            "dict_merge" => {
+                want(2)?;
+                let d1 = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_merge: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let d2 = match &args[1] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_merge: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut out: std::collections::BTreeMap<String, Value> =
+                    d1.borrow().clone();
+                for (k, v) in d2.borrow().iter() {
+                    out.insert(k.clone(), v.clone());
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+
             // `arr_max_by(xs, key_fn)` / `arr_min_by(xs, key_fn)` —
             // pick the element that maximizes / minimizes the closure's
             // numeric output. Folds three calls (arr_map + arr_argmax +

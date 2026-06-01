@@ -939,6 +939,45 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn arr_enumerate_partition_dict_merge() {
+    // Three more combinators + an inference fix found while writing the
+    // test: tuple FieldAccess in infer.rs used to fall to a fresh type
+    // var when the receiver was Tuple, so `let (a, b) = arr_partition(…);
+    // len(a)` would constrain `a` to `str` via len's str-fallback, then
+    // a later `arr_sum_i64(a)` would error. Now `t.N` returns the actual
+    // element type.
+    let src = "fn main() -> i64 {\n  \
+        // enumerate: [a, b, c] → [(0,a), (1,b), (2,c)]\n  \
+        let xs = [\"alpha\", \"beta\", \"gamma\"]\n  \
+        let pairs = arr_enumerate(xs)\n  \
+        let (idx, name) = pairs[2]\n  \
+        let enum_ok = idx == 2 && str_eq(name, \"gamma\")\n  \
+        // partition + the bug-fix path: len + arr_sum_i64 both succeed.\n  \
+        let nums = arr_range(1, 11)\n  \
+        let parts = arr_partition(nums, |x| x % 2 == 0)\n  \
+        let (evens, odds) = parts\n  \
+        let part_ok = len(evens) == 5 && len(odds) == 5 \
+            && arr_sum_i64(evens) == 30 && arr_sum_i64(odds) == 25\n  \
+        // merge: d2 wins on collision.\n  \
+        let d1 = dict_new()\n  \
+        dict_set(d1, \"a\", 1)\n  \
+        dict_set(d1, \"b\", 2)\n  \
+        let d2 = dict_new()\n  \
+        dict_set(d2, \"b\", 20)\n  \
+        dict_set(d2, \"c\", 3)\n  \
+        let merged = dict_merge(d1, d2)\n  \
+        let b = match dict_get(merged, \"b\") { Some(v) => v  None => -1 }\n  \
+        let merge_ok = dict_len(merged) == 3 && b == 20\n  \
+        if enum_ok && part_ok && merge_ok { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_epm_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "enumerate/partition/merge: {:?}", out);
+}
+
+#[test]
 fn bandit_ucb_demo_converges_to_best_arm() {
     // Demo #20. UCB1 multi-armed bandit — the demo now mod-imports
     // examples/stdlib/bandit.ax (the algorithm extracted into a

@@ -163,6 +163,30 @@ fn parse_type_str(s: &str) -> Type {
     if let Some(inner) = strip_wrap(s, "Temporal<", ">") {
         return Type::Temporal(Box::new(parse_type_str(inner)));
     }
+    // Tuple types: `(T1, T2, …)`. Top-level commas split the elements.
+    // Required for builtin sigs like `arr_partition -> ([T], [T])`;
+    // without this the whole string lands as one Deferred name and the
+    // destructure consumer sees an opaque non-tuple, breaking inference.
+    if let Some(inner) = strip_wrap(s, "(", ")") {
+        if top_level_comma(inner).is_some() {
+            let mut parts: Vec<Type> = Vec::new();
+            let mut depth = 0usize;
+            let mut start = 0;
+            for (i, c) in inner.char_indices() {
+                match c {
+                    '<' | '[' | '(' => depth += 1,
+                    '>' | ']' | ')' => depth = depth.saturating_sub(1),
+                    ',' if depth == 0 => {
+                        parts.push(parse_type_str(&inner[start..i]));
+                        start = i + 1;
+                    }
+                    _ => {}
+                }
+            }
+            parts.push(parse_type_str(&inner[start..]));
+            return Type::Tuple(parts);
+        }
+    }
     Type::Deferred(s.to_string())
 }
 
@@ -1047,6 +1071,20 @@ impl InferCtx {
                         } else {
                             self.fresh()
                         }
+                    }
+                    // Tuple field access: `t.0` / `t.1`. The field name is
+                    // a numeric index (the parser stores it as a string).
+                    // Returning the indexed element's actual type avoids the
+                    // "fresh-var leak" bug where `let (a, b) = tup; len(a)`
+                    // would constrain `a` to `str` via len's fallback, then
+                    // unification with a real Slice later fails.
+                    Type::Tuple(elems) => {
+                        if let Ok(i) = field.parse::<usize>() {
+                            if let Some(t) = elems.get(i) {
+                                return t.clone();
+                            }
+                        }
+                        self.fresh()
                     }
                     // Phase 1: unknown receiver type — defer.
                     _ => self.fresh(),

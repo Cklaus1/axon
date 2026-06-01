@@ -1007,6 +1007,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Iterate (k, v) pairs for side effects. The closure's return is ignored. Use this when you don't need a new dict — pair with println, write_file, etc.",
     },
     BuiltinFn {
+        name: "arr_enumerate",
+        params: &[("xs", "[T]")],
+        ret: "[(i64, T)]",
+        doc: "Pair each element with its index. `[a, b, c]` → `[(0,a), (1,b), (2,c)]`. The natural primitive for the iterate-with-index pattern.",
+    },
+    BuiltinFn {
+        name: "arr_partition",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "([T], [T])",
+        doc: "Split into `(yes, no)` tuple — elements satisfying `pred` and the rest. One pass over the input; complement of `arr_filter`.",
+    },
+    BuiltinFn {
+        name: "dict_merge",
+        params: &[("d1", "Dict"), ("d2", "Dict")],
+        ret: "Dict",
+        doc: "Union of two dicts; right-biased on key collision (values in `d2` win). Returns a fresh dict — inputs are unchanged.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",
