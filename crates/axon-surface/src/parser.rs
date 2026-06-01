@@ -86,11 +86,17 @@ impl GoalFile {
             );
         }
 
-        // Verify required sections.
-        for req in REQUIRED {
-            if !sections.contains_key(*req) {
-                return Err(Error::MissingSection((*req).to_string()));
-            }
+        // Verify required sections. Collect ALL missing ones (Bug #3) so the
+        // author sees the complete list in one error instead of discovering
+        // them one re-run at a time. REQUIRED is iterated in declaration order,
+        // so the message reads top-to-bottom as the file should be structured.
+        let missing: Vec<String> = REQUIRED
+            .iter()
+            .filter(|req| !sections.contains_key(**req))
+            .map(|req| (*req).to_string())
+            .collect();
+        if !missing.is_empty() {
+            return Err(Error::MissingSections(missing));
         }
 
         Ok(Self { title, sections })
@@ -331,13 +337,32 @@ Some scoring.
     }
 
     #[test]
-    fn missing_section_errors() {
+    fn missing_sections_lists_all_at_once() {
+        // Bug #3: a goal file with only Intent is missing NINE required
+        // sections. The error must name ALL of them in one message, not just
+        // the first — otherwise the author fixes one, re-runs, learns of the
+        // next, and so on (N-round onboarding friction).
         let bad = "# Goal\n\n## Intent\n\nFoo.\n";
         let err = GoalFile::parse(bad).unwrap_err();
         match err {
-            Error::MissingSection(s) => assert_eq!(s, "Inputs"),
-            other => panic!("expected MissingSection, got {other:?}"),
+            Error::MissingSections(missing) => {
+                // Every required section except Intent must be listed.
+                for req in REQUIRED.iter().filter(|r| **r != "Intent") {
+                    assert!(missing.iter().any(|m| m == req), "missing `{req}` not listed: {missing:?}");
+                }
+                assert!(!missing.contains(&"Intent".to_string()), "Intent is present, must not be listed");
+            }
+            other => panic!("expected MissingSections, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn missing_sections_error_message_names_all() {
+        let bad = "# Goal\n\n## Intent\n\nFoo.\n";
+        let msg = GoalFile::parse(bad).unwrap_err().to_string();
+        // The rendered message lists the sections so the author sees them all.
+        assert!(msg.contains("Inputs"), "msg should list Inputs: {msg}");
+        assert!(msg.contains("Provenance"), "msg should list Provenance: {msg}");
     }
 
     #[test]

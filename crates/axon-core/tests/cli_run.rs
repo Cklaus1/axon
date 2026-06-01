@@ -354,6 +354,22 @@ fn goal_optimize_deploys() {
 }
 
 #[test]
+fn goal_with_missing_sections_lists_them_all() {
+    // Bug #3: an incomplete goal file must report ALL missing required
+    // sections in one error (exit 2), not just the first — so the author
+    // fixes them in a single pass, not N re-runs.
+    let f = std::env::temp_dir().join(format!("axon_incomplete_{}.md", std::process::id()));
+    std::fs::write(&f, "# Goal: incomplete\n\n## Intent\n\nDo a thing.\n").unwrap();
+    let out = axon().args(["goal", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "incomplete goal must be rejected: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    // First and last required sections (minus Intent) both present in one message.
+    assert!(msg.contains("Inputs"), "should list Inputs: {msg}");
+    assert!(msg.contains("Provenance"), "should list Provenance: {msg}");
+}
+
+#[test]
 fn run_typechecks_before_interpreting() {
     // An undefined-name program must be rejected (exit 2) by check-before-run,
     // not surface as a runtime panic.
