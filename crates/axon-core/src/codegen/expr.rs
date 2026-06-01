@@ -238,9 +238,7 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Array(elems) => self.emit_array_lit(elems, fn_val),
 
             // ── Tuple literal ─────────────────────────────────────────────────
-            // Native codegen for tuples is not yet implemented; the interpreter
-            // path handles them. Keep the arm to satisfy exhaustiveness.
-            ast::Expr::Tuple(_) => None,
+            ast::Expr::Tuple(elems) => self.emit_tuple_lit(elems, fn_val),
 
             // ── Struct literal: Name { field: expr, ... } ─────────────────────
             ast::Expr::StructLit { name, fields } => self.emit_struct_lit(name, fields, fn_val),
@@ -1352,9 +1350,73 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             }
         }
+        // ── Tuple field access ───────────────────────────────────────────
+        // For FieldAccess on a tuple, sem_type_of_expr returns None (it falls
+        // through to infer_expr_sem_type). We need to get the type from the
+        // base identifier in local_types.
+        let tuple_ty = self.sem_type_of_expr(receiver).or_else(|| {
+            // For chained field access like `t.0.1`, the receiver is a FieldAccess;
+            // walk down to the base Ident and look it up.
+            let mut base = receiver;
+            loop {
+                base = match base {
+                    ast::Expr::FieldAccess { receiver, .. } => receiver.as_ref(),
+                    _ => break,
+                };
+            }
+            match base {
+                ast::Expr::Ident(name) => self.local_types.get(name).cloned(),
+                _ => None,
+            }
+        });
+        if let Some(Type::Tuple(elts)) = tuple_ty {
+            if let Ok(field_idx) = field.parse::<u32>() {
+                let recv_val = self.emit_expr(receiver, fn_val)?;
+                // Tuple values are anonymous struct types stored on the stack
+                // via alloca.  GEP + load to extract field N.
+                let struct_ty = match recv_val {
+                    BasicValueEnum::StructValue(s) => s.get_type(),
+                    _ => return None,
+                };
+                let recv_alloca = self.ir.builder
+                    .build_alloca(struct_ty, "tup_recv_tmp")
+                    .unwrap();
+                build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
+                let fptr = self.ir.builder
+                    .build_struct_gep(struct_ty, recv_alloca, field_idx, field)
+                    .unwrap();
+                if let Some(field_ty) = struct_ty.get_field_type_at_index(field_idx) {
+                    let fval = build_wrappers::w_load(&self.ir.builder, field_ty.into(), fptr, field);
+                    return Some(fval);
+                }
+            }
+        }
         // Fallback: emit receiver for side-effects only.
         let _ = self.emit_expr(receiver, fn_val);
         None
+    }
+
+    /// Emit a tuple literal as an anonymous LLVM struct value.
+    fn emit_tuple_lit(&mut self, elems: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        let elem_vals: Vec<BasicValueEnum<'ctx>> = elems
+            .iter()
+            .map(|e| self.emit_expr(e, fn_val))
+            .collect::<Option<_>>()?;
+
+        // Build the struct type from the element LLVM types.
+        let elem_types: Vec<BasicTypeEnum<'ctx>> = elem_vals.iter().map(|v| v.get_type()).collect();
+        let struct_ty = self.ir.context.struct_type(&elem_types, false);
+
+        // Allocate stack slot, store each field, load back for callers to use.
+        let alloca = self.ir.builder.build_alloca(struct_ty, "tup_lit").unwrap();
+        for (i, elem_val) in elem_vals.iter().enumerate() {
+            let fptr = self.ir.builder
+                .build_struct_gep(struct_ty, alloca, i as u32, "tup_elem")
+                .unwrap();
+            self.ir.builder.build_store(fptr, *elem_val).unwrap();
+        }
+        let loaded = self.ir.builder.build_load(struct_ty, alloca, "tup_copy").unwrap();
+        Some(loaded.into())
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).

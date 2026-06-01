@@ -945,6 +945,12 @@ impl<'ctx> Codegen<'ctx> {
                     _ => None,
                 }
             }
+            ast::Expr::Index { receiver, .. } => {
+                // `arr[i]` → element type of the slice's inner type
+                self.infer_expr_sem_type(receiver).and_then(|ty| {
+                    if let Type::Slice(inner) = ty { Some(*inner.clone()) } else { None }
+                })
+            }
             _ => None,
         }
     }
@@ -955,23 +961,27 @@ impl<'ctx> Codegen<'ctx> {
         match expr {
             ast::Expr::Ident(name) => self.local_types.get(name).cloned(),
             ast::Expr::FieldAccess { receiver, field } => {
-                // Recursively get the type of the receiver struct, then look up
-                // the field's type within that struct.
                 let recv_ty = self.sem_type_of_expr(receiver)?;
-                let sname = if let Type::Struct(sn) = recv_ty { sn } else { return None; };
-                let field_names = self.struct_fields.get(&sname)?;
+                // Handle tuple field access by numeric index.
+                if let Some(elts) = match &recv_ty {
+                    Type::Tuple(elts) => Some(elts),
+                    _ => None,
+                } {
+                    if let Ok(idx) = field.parse::<u32>() {
+                        return elts.get(idx as usize).cloned();
+                    }
+                }
+                let sname = if let Type::Struct(sn) = &recv_ty { sn } else { return None; };
+                let field_names = self.struct_fields.get(sname.as_str())?;
                 let idx = field_names.iter().position(|n| n == field)?;
                 let struct_ty = self.ir.module.get_struct_type(&sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
-                // Convert the LLVM field type back to a semantic type via local_types heuristics.
-                // For struct fields, we need to look up the LLVM type name.
                 match field_llvm_ty {
                     BasicTypeEnum::IntType(it) => Some(match it.get_bit_width() {
                         1 => Type::Bool, 8 => Type::I8, 16 => Type::I16, 32 => Type::I32, _ => Type::I64,
                     }),
                     BasicTypeEnum::FloatType(ft) => Some(if ft == self.ir.context.f32_type() { Type::F32 } else { Type::F64 }),
                     BasicTypeEnum::StructType(st) => {
-                        // Try to find the struct name in the module.
                         st.get_name().and_then(|n| n.to_str().ok()).map(|n| {
                             if n.ends_with("_enum") {
                                 Type::Enum(n.trim_end_matches("_enum").to_string())
