@@ -2644,133 +2644,32 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_eq".to_string(), Type::Bool);
         }
 
-        // str_contains(s: str, needle: str) -> bool
-        // Uses memmem-like loop: slide needle over s, compare with memcmp.
+        // str_contains(s: str, needle: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_contains", fn_ty, None);
-
-            // We implement via strstr(3) since strings are null-terminated.
-            // strstr returns a non-null pointer if needle is found.
-            let strstr_fn = self.ir.module.get_function("strstr").unwrap_or_else(|| {
-                let strstr_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
-                self.ir.module.add_function("strstr", strstr_ty, None)
-            });
-
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "sc_entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-
-            let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sc_sptr").into_pointer_value();
-            let n_ptr = build_wrappers::w_extract_value(&self.ir.builder,needle, 1, "sc_nptr").into_pointer_value();
-
-            let found = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[s_ptr.into(), n_ptr.into()], "sc_found")
-                .try_as_basic_value().left().unwrap().into_pointer_value();
-            let null = i8_ptr.const_null();
-            let found_int = build_wrappers::w_ptr_to_int(&self.ir.builder,found, i64_ty, "sc_found_int");
-            let null_int  = build_wrappers::w_ptr_to_int(&self.ir.builder,null,  i64_ty, "sc_null_int");
-            let is_found  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, found_int, null_int, "sc_is_found");
-            let result = build_wrappers::w_int_z_extend(&self.ir.builder,is_found, bool_ty, "sc_result");
-            build_wrappers::w_ret(&self.ir.builder, result.into());
-
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_str_contains")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_contains", fn_ty, None));
             self.functions.insert("str_contains".to_string(), fn_val);
             self.fn_return_types.insert("str_contains".to_string(), Type::Bool);
         }
 
-        // str_starts_with(s: str, prefix: str) -> bool
-        // len(s) >= len(prefix) && memcmp(s.ptr, prefix.ptr, len(prefix)) == 0
+        // str_starts_with(s: str, prefix: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_starts_with", fn_ty, None);
-
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "ssw_entry");
-            let cmp_bb   = self.ir.context.append_basic_block(fn_val, "ssw_cmp");
-            let true_bb  = self.ir.context.append_basic_block(fn_val, "ssw_true");
-            let false_bb = self.ir.context.append_basic_block(fn_val, "ssw_false");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-
-            let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let p = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "ssw_slen").into_int_value();
-            let p_len = build_wrappers::w_extract_value(&self.ir.builder,p, 0, "ssw_plen").into_int_value();
-            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "ssw_sptr").into_pointer_value();
-            let p_ptr = build_wrappers::w_extract_value(&self.ir.builder,p, 1, "ssw_pptr").into_pointer_value();
-
-            // s_len >= p_len?
-            let long_enough = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, s_len, p_len, "ssw_longenough");
-            build_wrappers::w_cond_br(&self.ir.builder,long_enough, cmp_bb, false_bb);
-
-            self.ir.builder.position_at_end(cmp_bb);
-            let memcmp_fn = self.ir.module.get_function("memcmp").unwrap_or_else(|| {
-                let memcmp_ty = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
-                self.ir.module.add_function("memcmp", memcmp_ty, None)
-            });
-            let cmp = build_wrappers::w_call(&self.ir.builder,memcmp_fn, &[s_ptr.into(), p_ptr.into(), p_len.into()], "ssw_cmp")
-                .try_as_basic_value().left().unwrap().into_int_value();
-            let is_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "ssw_iszero");
-            build_wrappers::w_cond_br(&self.ir.builder,is_zero, true_bb, false_bb);
-
-            self.ir.builder.position_at_end(true_bb);
-            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(1, false).into());
-            self.ir.builder.position_at_end(false_bb);
-            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(0, false).into());
-
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_str_starts_with")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_starts_with", fn_ty, None));
             self.functions.insert("str_starts_with".to_string(), fn_val);
             self.fn_return_types.insert("str_starts_with".to_string(), Type::Bool);
         }
 
-        // str_ends_with(s: str, suffix: str) -> bool
-        // len(s) >= len(suffix) && memcmp(s.ptr + len(s) - len(suffix), suffix.ptr, len(suffix)) == 0
+        // str_ends_with(s: str, suffix: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_ends_with", fn_ty, None);
-
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "sew_entry");
-            let cmp_bb   = self.ir.context.append_basic_block(fn_val, "sew_cmp");
-            let true_bb  = self.ir.context.append_basic_block(fn_val, "sew_true");
-            let false_bb = self.ir.context.append_basic_block(fn_val, "sew_false");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-
-            let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let sf = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_len  = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "sew_slen").into_int_value();
-            let sf_len = build_wrappers::w_extract_value(&self.ir.builder,sf, 0, "sew_sflen").into_int_value();
-            let s_ptr  = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sew_sptr").into_pointer_value();
-            let sf_ptr = build_wrappers::w_extract_value(&self.ir.builder,sf, 1, "sew_sfptr").into_pointer_value();
-
-            let long_enough = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, s_len, sf_len, "sew_longenough");
-            build_wrappers::w_cond_br(&self.ir.builder,long_enough, cmp_bb, false_bb);
-
-            self.ir.builder.position_at_end(cmp_bb);
-            // offset = s_len - sf_len; start = s.ptr + offset
-            let offset = build_wrappers::w_int_sub(&self.ir.builder,s_len, sf_len, "sew_offset");
-            let start = unsafe {
-                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[offset], "sew_start")
-            };
-            let memcmp_fn = self.ir.module.get_function("memcmp").unwrap_or_else(|| {
-                let memcmp_ty = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
-                self.ir.module.add_function("memcmp", memcmp_ty, None)
-            });
-            let cmp = build_wrappers::w_call(&self.ir.builder,memcmp_fn, &[start.into(), sf_ptr.into(), sf_len.into()], "sew_cmp")
-                .try_as_basic_value().left().unwrap().into_int_value();
-            let is_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::EQ, cmp, i32_ty.const_int(0, false), "sew_iszero");
-            build_wrappers::w_cond_br(&self.ir.builder,is_zero, true_bb, false_bb);
-
-            self.ir.builder.position_at_end(true_bb);
-            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(1, false).into());
-            self.ir.builder.position_at_end(false_bb);
-            build_wrappers::w_ret(&self.ir.builder, bool_ty.const_int(0, false).into());
-
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_str_ends_with")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_ends_with", fn_ty, None));
             self.functions.insert("str_ends_with".to_string(), fn_val);
             self.fn_return_types.insert("str_ends_with".to_string(), Type::Bool);
         }
@@ -2848,88 +2747,22 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_slice".to_string(), Type::Str);
         }
 
-        // str_index_of(s: str, needle: str) -> i64
-        // Returns byte index of first occurrence of needle in s, or -1 if not found.
-        // Uses strstr and pointer arithmetic.
+        // str_index_of(s: str, needle: str) -> i64  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_index_of", fn_ty, None);
-
-            let entry_bb    = self.ir.context.append_basic_block(fn_val, "sio_entry");
-            let found_bb    = self.ir.context.append_basic_block(fn_val, "sio_found");
-            let notfound_bb = self.ir.context.append_basic_block(fn_val, "sio_notfound");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-
-            let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_ptr  = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sio_sptr").into_pointer_value();
-            let n_ptr  = build_wrappers::w_extract_value(&self.ir.builder,needle, 1, "sio_nptr").into_pointer_value();
-
-            let strstr_fn = self.ir.module.get_function("strstr").unwrap_or_else(|| {
-                let strstr_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
-                self.ir.module.add_function("strstr", strstr_ty, None)
-            });
-            let found = build_wrappers::w_call(&self.ir.builder,strstr_fn, &[s_ptr.into(), n_ptr.into()], "sio_found_ptr")
-                .try_as_basic_value().left().unwrap().into_pointer_value();
-            let null = i8_ptr.const_null();
-            let found_int = build_wrappers::w_ptr_to_int(&self.ir.builder,found, i64_ty, "sio_fi");
-            let null_int  = build_wrappers::w_ptr_to_int(&self.ir.builder,null, i64_ty, "sio_ni");
-            let s_int     = build_wrappers::w_ptr_to_int(&self.ir.builder,s_ptr, i64_ty, "sio_si");
-            let is_found  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, found_int, null_int, "sio_is_found");
-            build_wrappers::w_cond_br(&self.ir.builder,is_found, found_bb, notfound_bb);
-
-            self.ir.builder.position_at_end(found_bb);
-            let offset = build_wrappers::w_int_sub(&self.ir.builder,found_int, s_int, "sio_offset");
-            build_wrappers::w_ret(&self.ir.builder, offset.into());
-
-            self.ir.builder.position_at_end(notfound_bb);
-            build_wrappers::w_ret(&self.ir.builder, i64_ty.const_int(u64::MAX, true).into()); // -1 as i64
-
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_str_index_of")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_index_of", fn_ty, None));
             self.functions.insert("str_index_of".to_string(), fn_val);
             self.fn_return_types.insert("str_index_of".to_string(), Type::I64);
         }
 
-        // char_at(s: str, i: i64) -> i64
-        // Returns byte value at index i, or -1 if out of bounds.
+        // char_at(s: str, i: i64) -> i64  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = i64_ty.fn_type(&[str_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("char_at", fn_ty, None);
-
-            let entry_bb   = self.ir.context.append_basic_block(fn_val, "ca_entry");
-            let inbounds_bb = self.ir.context.append_basic_block(fn_val, "ca_inbounds");
-            let oob_bb     = self.ir.context.append_basic_block(fn_val, "ca_oob");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-
-            let s     = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let idx   = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "ca_len").into_int_value();
-            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "ca_ptr").into_pointer_value();
-
-            // Check 0 <= idx < s_len
-            let zero = i64_ty.const_int(0, false);
-            let ge_zero = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, idx, zero, "ca_gez");
-            let lt_len  = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, idx, s_len, "ca_ltl");
-            let in_bounds = build_wrappers::w_and(&self.ir.builder,ge_zero, lt_len, "ca_inb");
-            build_wrappers::w_cond_br(&self.ir.builder,in_bounds, inbounds_bb, oob_bb);
-
-            self.ir.builder.position_at_end(inbounds_bb);
-            let byte_ptr = unsafe {
-                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), s_ptr, &[idx], "ca_byteptr")
-            };
-            let byte_val = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), byte_ptr, "ca_byte").into_int_value();
-            // zero-extend i8 to i64
-            let byte_i64 = build_wrappers::w_int_z_extend(&self.ir.builder,byte_val, i64_ty, "ca_byte_i64");
-            build_wrappers::w_ret(&self.ir.builder, byte_i64.into());
-
-            self.ir.builder.position_at_end(oob_bb);
-            build_wrappers::w_ret(&self.ir.builder, i64_ty.const_int(u64::MAX, true).into()); // -1
-
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_char_at")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_char_at", fn_ty, None));
             self.functions.insert("char_at".to_string(), fn_val);
             self.fn_return_types.insert("char_at".to_string(), Type::I64);
         }
@@ -3610,19 +3443,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("exit".to_string(), Type::Unit);
         }
 
-        // ── Phase 7: str_len(s: str) -> i64 ──────────────────────────────────
-        // Extracts the length field (index 0) from the str struct.
+        // str_len(s: str) -> i64  ─ migrated to axon-rt (R1 Batch 2)
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = i64_ty.fn_type(&[str_ty.into()], false);
-            let fn_val = self.ir.module.add_function("str_len", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "sl_entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "sl_len").into_int_value();
-            build_wrappers::w_ret(&self.ir.builder, len.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_str_len")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_len", fn_ty, None));
             self.functions.insert("str_len".to_string(), fn_val);
             self.fn_return_types.insert("str_len".to_string(), Type::I64);
         }

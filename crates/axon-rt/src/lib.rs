@@ -17,6 +17,32 @@ pub mod provenance;
 pub mod goal;
 pub mod adaptive_registry;
 
+// ── Axon str ABI — mirrors codegen's { i64 len, i8* ptr } ──────────────────────
+
+/// Mirrors codegen's Axon `str` layout: LLVM `{ i64 len, i8* ptr }` by value.
+///
+/// SAFETY/ABI: on the supported targets (x86-64/aarch64 Linux) a 16-byte
+/// `{i64, ptr}` aggregate is passed identically by `repr(C)` Rust and by LLVM,
+/// so codegen's `str_ty.fn_type(&[str_ty, ...])` matches `fn f(s: AxonStr, ...)`.
+/// This ABI match is asserted-by-construction and is RUNTIME-validated only by
+/// the native build (R1-gated) — the unit tests below verify LOGIC, not ABI.
+#[repr(C)]
+pub struct AxonStr {
+    pub len: i64,
+    pub ptr: *const u8,
+}
+
+impl AxonStr {
+    /// Reconstruct a `&str`. Caller guarantees ptr/len came from codegen's str ABI.
+    pub unsafe fn as_str<'a>(&self) -> &'a str {
+        if self.ptr.is_null() || self.len <= 0 {
+            return "";
+        }
+        let bytes = std::slice::from_raw_parts(self.ptr, self.len as usize);
+        std::str::from_utf8(bytes).unwrap_or("")
+    }
+}
+
 // ── Channel ───────────────────────────────────────────────────────────────────
 
 struct Chan {
@@ -214,6 +240,79 @@ pub extern "C" fn __axon_abs_i64(n: i64) -> i64 {
 #[no_mangle]
 pub extern "C" fn __axon_min_i64(a: i64, b: i64) -> i64 {
     a.min(b)
+}
+
+// ── String builtins — scalar-return (R1 Batch 2) ───────────────────────────────
+
+/// Check if haystack contains needle.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `a.contains(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_str_contains(a: AxonStr, b: AxonStr) -> bool {
+    let a = unsafe { a.as_str() };
+    let b = unsafe { b.as_str() };
+    a.contains(b)
+}
+
+/// Check if haystack starts with prefix.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `a.starts_with(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_str_starts_with(a: AxonStr, b: AxonStr) -> bool {
+    let a = unsafe { a.as_str() };
+    let b = unsafe { b.as_str() };
+    a.starts_with(b)
+}
+
+/// Check if haystack ends with suffix.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `a.ends_with(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_str_ends_with(a: AxonStr, b: AxonStr) -> bool {
+    let a = unsafe { a.as_str() };
+    let b = unsafe { b.as_str() };
+    a.ends_with(b)
+}
+
+/// Byte index of first occurrence of needle in haystack, or -1 if not found.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `h.find(needle).map(|i| i as i64).unwrap_or(-1)`.
+#[no_mangle]
+pub extern "C" fn __axon_str_index_of(hay: AxonStr, needle: AxonStr) -> i64 {
+    let hay = unsafe { hay.as_str() };
+    let needle = unsafe { needle.as_str() };
+    hay.find(needle).map(|i| i as i64).unwrap_or(-1)
+}
+
+/// Byte length of the string.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `s.len() as i64` (byte length, not char count).
+#[no_mangle]
+pub extern "C" fn __axon_str_len(s: AxonStr) -> i64 {
+    let s = unsafe { s.as_str() };
+    s.len() as i64
+}
+
+/// Byte value at index i, or -1 if out of bounds.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
+/// interpreter oracle: `s.as_bytes().get(i.max(0) as usize).map(|b| *b as i64).unwrap_or(-1)`.
+#[no_mangle]
+pub extern "C" fn __axon_char_at(s: AxonStr, i: i64) -> i64 {
+    let s = unsafe { s.as_str() };
+    let i = i.max(0) as usize;
+    s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
 }
 
 /// Maximum of two i64 values.
@@ -838,4 +937,168 @@ mod migrated_builtin_tests {
     // Note: __axon_pow_i64(base, neg_exp) aborts (matching the interpreter's
     // panic-exit for negative exponent). Not unit-tested here because
     // process::abort would kill the test runner.
+
+    // ── Helper: build an AxonStr from a Rust &str ─────────────────────
+    fn s(x: &str) -> AxonStr {
+        AxonStr { len: x.len() as i64, ptr: x.as_ptr() }
+    }
+
+    // ── str_contains: matches interp.rs a.contains(b) ─────────────────
+    #[test]
+    fn migrated_str_contains_matches_interpreter() {
+        let oracle = |a: &str, b: &str| a.contains(b);
+        for &a in &["hello world", "", "a", "hello", "abcdef"] {
+            for &b in &["world", "hello", "", "o", "xyz", "lo wo"] {
+                assert_eq!(
+                    __axon_str_contains(s(a), s(b)),
+                    oracle(a, b),
+                    "str_contains({a:?}, {b:?}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_str_contains_common_cases() {
+        assert_eq!(__axon_str_contains(s("hello world"), s("world")), true);
+        assert_eq!(__axon_str_contains(s("hello world"), s("xyz")), false);
+        assert_eq!(__axon_str_contains(s("hello"), s("")), true);      // empty needle always matches
+        assert_eq!(__axon_str_contains(s(""), s("")), true);             // empty haystack, empty needle
+        assert_eq!(__axon_str_contains(s(""), s("a")), false);           // empty haystack
+        // UTF-8 multibyte: "héllo" contains "él"
+        assert_eq!(__axon_str_contains(s("héllo"), s("él")), true);
+        assert_eq!(__axon_str_contains(s("héllo"), s("xyz")), false);
+    }
+
+    // ── str_starts_with: matches interp.rs a.starts_with(b) ───────────
+    #[test]
+    fn migrated_str_starts_with_matches_interpreter() {
+        let oracle = |a: &str, b: &str| a.starts_with(b);
+        for &a in &["hello world", "", "a", "hello"] {
+            for &b in &["hello", "world", "hell", "xyz", "o wo", ""] {
+                assert_eq!(
+                    __axon_str_starts_with(s(a), s(b)),
+                    oracle(a, b),
+                    "str_starts_with({a:?}, {b:?}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_str_starts_with_common_cases() {
+        assert_eq!(__axon_str_starts_with(s("hello world"), s("hello")), true);
+        assert_eq!(__axon_str_starts_with(s("hello world"), s("world")), false);
+        assert_eq!(__axon_str_starts_with(s("hello"), s("")), true);     // empty prefix always matches
+        // UTF-8: "héllo" starts with "hé"
+        assert_eq!(__axon_str_starts_with(s("héllo"), s("hé")), true);
+    }
+
+    // ── str_ends_with: matches interp.rs a.ends_with(b) ───────────────
+    #[test]
+    fn migrated_str_ends_with_matches_interpreter() {
+        let oracle = |a: &str, b: &str| a.ends_with(b);
+        for &a in &["hello world", "", "a", "hello"] {
+            for &b in &["world", "hello", "ld", "xyz", "helo", ""] {
+                assert_eq!(
+                    __axon_str_ends_with(s(a), s(b)),
+                    oracle(a, b),
+                    "str_ends_with({a:?}, {b:?}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_str_ends_with_common_cases() {
+        assert_eq!(__axon_str_ends_with(s("hello world"), s("world")), true);
+        assert_eq!(__axon_str_ends_with(s("hello world"), s("hello")), false);
+        assert_eq!(__axon_str_ends_with(s("hello"), s("")), true);       // empty suffix always matches
+        // UTF-8: "héllo" ends with "llo"
+        assert_eq!(__axon_str_ends_with(s("héllo"), s("llo")), true);
+    }
+
+    // ── str_index_of: matches interp.rs h.find(needle) ────────────────
+    #[test]
+    fn migrated_str_index_of_matches_interpreter() {
+        let oracle = |h: &str, n: &str| h.find(n).map(|i| i as i64).unwrap_or(-1);
+        for &h in &["hello world", "", "a", "ababab", "abcdef"] {
+            for &n in &["world", "ab", "", "xyz", "a", "b", "abc", "bcd"] {
+                assert_eq!(
+                    __axon_str_index_of(s(h), s(n)),
+                    oracle(h, n),
+                    "str_index_of({h:?}, {n:?}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_str_index_of_common_cases() {
+        assert_eq!(__axon_str_index_of(s("hello world"), s("world")), 6);
+        assert_eq!(__axon_str_index_of(s("hello world"), s("xyz")), -1);
+        assert_eq!(__axon_str_index_of(s("hello"), s("")), 0);           // empty needle → 0
+        // UTF-8: "héllo" — "l" first at byte 3 (h=0, é=1..2, l=3)
+        assert_eq!(__axon_str_index_of(s("héllo"), s("l")), 3);
+        assert_eq!(__axon_str_index_of(s("héllo"), s("xyz")), -1);
+    }
+
+    // ── str_len: matches interp.rs s.len() ───────────────────────────
+    #[test]
+    fn migrated_str_len_matches_interpreter() {
+        for s_val in &["hello", "", "a", "abc", "hello world", "héllo"] {
+            assert_eq!(
+                __axon_str_len(s(s_val)),
+                s_val.len() as i64,
+                "str_len({s_val:?}) diverges"
+            );
+        }
+    }
+
+    #[test]
+    fn migrated_str_len_common_cases() {
+        assert_eq!(__axon_str_len(s("")), 0);
+        assert_eq!(__axon_str_len(s("a")), 1);
+        assert_eq!(__axon_str_len(s("hello world")), 11);
+        // UTF-8: "héllo" is 6 bytes (é = 2 bytes)
+        assert_eq!(__axon_str_len(s("héllo")), 6);
+        // Emoji: "🦀" is 4 bytes
+        assert_eq!(__axon_str_len(s("🦀")), 4);
+    }
+
+    // ── char_at: matches interp.rs s.as_bytes().get(i).unwrap_or(-1) ──
+    #[test]
+    fn migrated_char_at_matches_interpreter() {
+        for s_val in &["hello", "a", "", "héllo", "🦀"] {
+            // Test all byte positions and some OOB
+            for i in -3i64..(s_val.len() as i64 + 2) {
+                let expected = {
+                    let bytes = s_val.as_bytes();
+                    let i_clamped = i.max(0) as usize;
+                    bytes.get(i_clamped).map(|b| *b as i64).unwrap_or(-1)
+                };
+                assert_eq!(
+                    __axon_char_at(s(s_val), i),
+                    expected,
+                    "char_at({s_val:?}, {i}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_char_at_common_cases() {
+        // Note: the oracle uses i.max(0) as usize — negative indices clamp to 0
+        // (matching interp.rs). Codegen's separate LLVM path does OOB for negative;
+        // we match the interpreter as specified in R1 Batch 2.
+        assert_eq!(__axon_char_at(s("hello world"), 0), b'h' as i64);   // 104
+        assert_eq!(__axon_char_at(s("hello world"), 6), b'w' as i64);   // 119
+        assert_eq!(__axon_char_at(s("hello world"), 100), -1);          // OOB
+        assert_eq!(__axon_char_at(s("hello world"), -1), b'h' as i64); // -1 clamped to 0 → 'h'=104
+        assert_eq!(__axon_char_at(s(""), 0), -1);                       // empty → -1
+        // UTF-8: first byte of 'é' is 0xc3 (195) at position 1
+        assert_eq!(__axon_char_at(s("héllo"), 1), 195);
+        // Emoji: first byte of '🦀' is 0xf0 (240)
+        assert_eq!(__axon_char_at(s("🦀"), 0), 240);
+    }
 }
