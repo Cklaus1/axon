@@ -102,6 +102,43 @@ fn deep_recursion_fails_gracefully_not_aborts() {
 }
 
 #[test]
+fn axon_max_depth_raises_recursion_limit() {
+    // BUG_HUNT #28: the recursion guard must be configurable via AXON_MAX_DEPTH
+    // for legitimate deep recursion. A depth the default (6000) rejects must
+    // run when the env var raises the ceiling — AND still exit cleanly (the
+    // thread stack scales with the limit, so the guard never gives way to a
+    // process-aborting overflow).
+    let f = std::env::temp_dir().join(format!("axon_maxdepth_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn c(n: i64) -> i64 { if n == 0 { 0 } else { 1 + c(n - 1) } }\n\
+         fn main() -> i64 { c(7000) % 100 }\n",
+    )
+    .unwrap();
+    // Default ceiling (6000): 7000-deep must hit the guard → exit 101.
+    let default_run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(
+        default_run.status.code(),
+        Some(101),
+        "7000-deep should exceed the default 6000 limit: {:?}",
+        String::from_utf8_lossy(&default_run.stderr),
+    );
+    // Raised ceiling: same program runs to completion (7000 % 100 == 0).
+    let raised = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_MAX_DEPTH", "9000")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        raised.status.code(),
+        Some(0),
+        "AXON_MAX_DEPTH=9000 should let 7000-deep recursion run cleanly: {:?}",
+        String::from_utf8_lossy(&raised.stderr),
+    );
+}
+
+#[test]
 fn moderate_recursion_works() {
     // ~5000-deep recursion runs (large interpreter thread stack); was ~64 before.
     let f = std::env::temp_dir().join(format!("axon_modrec_{}.ax", std::process::id()));

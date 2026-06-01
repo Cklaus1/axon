@@ -190,17 +190,69 @@ pub struct Interp<'p> {
     /// problems (linear-regression weights, control parameters, etc.)
     /// without forcing the user to discretize via integer indices.
     provenance_inputs_f64: RefCell<HashMap<String, Vec<Vec<f64>>>>,
-    /// Current call-stack depth, bounded by `RECURSION_LIMIT` so runaway
-    /// recursion fails with a catchable panic rather than overflowing the
-    /// (large but finite) interpreter thread stack and aborting the process.
+    /// Current call-stack depth, bounded by `max_depth` so runaway recursion
+    /// fails with a catchable panic rather than overflowing the (large but
+    /// finite) interpreter thread stack and aborting the process.
     call_depth: Cell<usize>,
+    /// Effective recursion ceiling for this run — `RECURSION_LIMIT` by default,
+    /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
+    /// every `call_fn` sees a consistent value.
+    max_depth: usize,
 }
 
-/// Max interpreter call depth before a graceful "recursion limit" panic. The
-/// debug-build `eval` frame is large (~128 KB/call), so a 1 GiB thread stack
-/// overflows around ~8000 frames; this limit fires first, turning runaway
-/// recursion into a catchable panic instead of a process-aborting overflow.
+/// Default max interpreter call depth before a graceful "recursion limit"
+/// panic. The debug-build `eval` frame is large (~128 KB/call), so a 1 GiB
+/// thread stack overflows around ~8000 frames; this limit fires first, turning
+/// runaway recursion into a catchable panic instead of a process-aborting
+/// overflow. Overridable via `AXON_MAX_DEPTH` — see [`resolve_max_depth`].
 const RECURSION_LIMIT: usize = 6_000;
+
+/// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
+/// clamped to this so a user can't set a value so high the native stack
+/// overflows *before* the guard fires (which would reintroduce the very
+/// process-abort the guard exists to prevent). Paired with the stack-size
+/// scaling in [`stack_size_for_depth`]: at this ceiling the thread stack is
+/// ~8 GiB, leaving ample headroom over the ~256 KB/frame worst case.
+const MAX_DEPTH_CEILING: usize = 1_000_000;
+
+/// Native stack budget per interpreter call frame, used to size the thread
+/// stack so the [`resolve_max_depth`] guard always trips before a real
+/// overflow. Generous (2×) over the observed ~128 KB debug frame.
+const STACK_BYTES_PER_FRAME: usize = 256 * 1024;
+
+/// Minimum interpreter thread stack — the historical 1 GiB floor, so shallow
+/// runs keep their previous generous headroom regardless of the depth setting.
+const MIN_STACK_BYTES: usize = 1024 * 1024 * 1024;
+
+/// Resolve the effective recursion limit: `AXON_MAX_DEPTH` if set to a positive
+/// integer (clamped to [`MAX_DEPTH_CEILING`]), else [`RECURSION_LIMIT`]. A
+/// malformed or zero value falls back to the default rather than failing the
+/// run — the env var is a convenience lever, not load-bearing.
+fn resolve_max_depth() -> usize {
+    max_depth_from_env(std::env::var("AXON_MAX_DEPTH").ok().as_deref())
+}
+
+/// Pure core of [`resolve_max_depth`]: maps an optional raw env value to the
+/// effective ceiling. Split out so the clamping/fallback logic is unit-testable
+/// without mutating process-global environment state.
+fn max_depth_from_env(raw: Option<&str>) -> usize {
+    match raw {
+        Some(s) => match s.trim().parse::<usize>() {
+            Ok(n) if n > 0 => n.min(MAX_DEPTH_CEILING),
+            _ => RECURSION_LIMIT,
+        },
+        None => RECURSION_LIMIT,
+    }
+}
+
+/// Thread stack size that keeps the recursion guard ahead of a real overflow
+/// for the given depth: `depth × per-frame budget`, floored at the historical
+/// 1 GiB so we never shrink below the previous default.
+fn stack_size_for_depth(depth: usize) -> usize {
+    depth
+        .saturating_mul(STACK_BYTES_PER_FRAME)
+        .max(MIN_STACK_BYTES)
+}
 
 /// Decrements the call-depth counter when a `call_fn` frame unwinds (any path).
 struct DepthGuard<'a>(&'a Cell<usize>);
@@ -215,9 +267,12 @@ impl Drop for DepthGuard<'_> {
 /// hundred frames; this lets reasonably deep recursion run, while the
 /// `RECURSION_LIMIT` guard backstops truly runaway recursion with a clean panic.
 fn on_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
+    // Size the stack to the (possibly user-raised) recursion limit so the
+    // RECURSION_LIMIT guard always trips before a real overflow (BUG_HUNT #28).
+    let stack = stack_size_for_depth(resolve_max_depth());
     std::thread::scope(|s| {
         std::thread::Builder::new()
-            .stack_size(1024 * 1024 * 1024)
+            .stack_size(stack)
             .spawn_scoped(s, f)
             .expect("spawn interpreter thread")
             .join()
@@ -324,6 +379,7 @@ impl<'p> Interp<'p> {
             provenance_inputs: RefCell::new(HashMap::new()),
             provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
+            max_depth: resolve_max_depth(),
         }
     }
 
@@ -358,10 +414,11 @@ impl<'p> Interp<'p> {
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
         // any return path (including `?`).
         let depth = self.call_depth.get() + 1;
-        if depth > RECURSION_LIMIT {
+        if depth > self.max_depth {
             return panic(format!(
-                "recursion limit exceeded ({RECURSION_LIMIT}) in `{}` — infinite or excessively deep recursion?",
-                f.name
+                "recursion limit exceeded ({}) in `{}` — infinite or excessively deep recursion? \
+                 (raise with AXON_MAX_DEPTH if this recursion is legitimate)",
+                self.max_depth, f.name
             ));
         }
         self.call_depth.set(depth);
@@ -4807,6 +4864,48 @@ mod tests {
             fn main() -> i64 { fib(10) }
         "#;
         assert_eq!(run(src), 55);
+    }
+
+    // BUG_HUNT #28: AXON_MAX_DEPTH resolution and stack-coupling are pure and
+    // unit-testable without mutating process-global env.
+    #[test]
+    fn max_depth_defaults_when_unset_or_malformed() {
+        assert_eq!(max_depth_from_env(None), RECURSION_LIMIT);
+        assert_eq!(max_depth_from_env(Some("")), RECURSION_LIMIT);
+        assert_eq!(max_depth_from_env(Some("banana")), RECURSION_LIMIT);
+        assert_eq!(max_depth_from_env(Some("0")), RECURSION_LIMIT, "zero is not a useful limit");
+        assert_eq!(max_depth_from_env(Some("-5")), RECURSION_LIMIT, "negatives don't parse as usize");
+    }
+
+    #[test]
+    fn max_depth_honors_valid_value_and_trims() {
+        assert_eq!(max_depth_from_env(Some("9000")), 9000);
+        assert_eq!(max_depth_from_env(Some("  12345  ")), 12345);
+    }
+
+    #[test]
+    fn max_depth_clamps_to_ceiling() {
+        assert_eq!(max_depth_from_env(Some("999999999999")), MAX_DEPTH_CEILING);
+    }
+
+    #[test]
+    fn stack_grows_with_depth_but_never_below_floor() {
+        // Shallow limits keep the historical 1 GiB floor. The crossover is
+        // MIN_STACK_BYTES / STACK_BYTES_PER_FRAME frames; below it, floored.
+        let crossover = MIN_STACK_BYTES / STACK_BYTES_PER_FRAME; // 4096
+        assert_eq!(stack_size_for_depth(1), MIN_STACK_BYTES);
+        assert_eq!(stack_size_for_depth(crossover), MIN_STACK_BYTES);
+        // Past the crossover, the stack scales with depth so the guard stays
+        // ahead of a real overflow.
+        let deep = 100_000;
+        assert!(deep > crossover);
+        assert_eq!(stack_size_for_depth(deep), deep * STACK_BYTES_PER_FRAME);
+        assert!(stack_size_for_depth(deep) > MIN_STACK_BYTES);
+        // The default limit (6000 > 4096) already scales above the floor.
+        assert!(stack_size_for_depth(RECURSION_LIMIT) > MIN_STACK_BYTES);
+        // The ceiling can't overflow the multiply (saturating) — it produces a
+        // finite budget at or above the floor.
+        assert!(stack_size_for_depth(MAX_DEPTH_CEILING) >= MIN_STACK_BYTES);
     }
 
     // BUG_HUNT #20: dict_to_str must return Result<str,str>, not panic the

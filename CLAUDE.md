@@ -38,6 +38,15 @@ relegated to CI/release; develop against `--no-default-features`. Add
 `--features asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 `examples/asi/*` and `axon goal`).
 
+### Interpreter env vars
+
+| Var | Effect |
+|---|---|
+| `AXON_SEED` | Seed the RNG (`u64`) for reproducible `random_*` runs |
+| `AXON_MAX_DEPTH` | Raise the recursion-depth ceiling (default 6000, clamped to 1,000,000). The interpreter thread stack scales with it, so the graceful "recursion limit" panic always fires before a real stack overflow |
+| `AXON_AI_MOCK` | Use deterministic stub AI responses instead of live calls |
+| `AXON_PATH` | Colon-separated module search path for `mod` imports |
+
 ## Compiler Pipeline
 
 ```
