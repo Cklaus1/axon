@@ -1721,8 +1721,17 @@ impl<'ctx> super::Codegen<'ctx> {
                             .map(|f| (f, BasicMetadataValueEnum::from(fv)))
                     }
                     BasicValueEnum::IntValue(iv) => {
+                        // `to_str` takes i64; a narrower int (i8/i16/i32, e.g.
+                        // from `abs_i32`) must be sign-extended first or the
+                        // call fails IR verification (BUG_HUNT #40 i32 case).
+                        let i64_ty = self.ir.context.i64_type();
+                        let widened = if iv.get_type().get_bit_width() < 64 {
+                            build_wrappers::w_int_s_extend(&self.ir.builder, iv, i64_ty, "to_str_sext")
+                        } else {
+                            iv
+                        };
                         self.functions.get("to_str").copied()
-                            .map(|f| (f, BasicMetadataValueEnum::from(iv)))
+                            .map(|f| (f, BasicMetadataValueEnum::from(widened)))
                     }
                     // Non-scalar (shouldn't reach here — checker rejects it):
                     // fall through to the default i64 path for a clean error.

@@ -97,8 +97,17 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Fn<params, ret> → opaque pointer (function pointers in LLVM 17
             // use the opaque pointer representation; typed fn pointers are gone).
+            // A function value (closure) is a `{ fn_ptr, env_ptr }` fat pointer
+            // — see `emit_lambda` (expr.rs), which always builds a 2-field
+            // struct (env_ptr is null for capture-free lambdas). A `(T)->U`
+            // PARAMETER must lower to the SAME struct, or passing a closure to a
+            // higher-order fn fails IR verification: the call supplies
+            // `{ptr,ptr}` while a single-`ptr` param expects one pointer
+            // (BUG_HUNT #41). The interpreter treats a closure as a fat value
+            // (fn + captured env), so this is the faithful lowering.
             Type::Fn(_, _) => {
-                Some(self.ir.context.i8_type().ptr_type(AddressSpace::default()).into())
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                Some(self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
             }
 
             // Named struct — look up the named struct in the LLVM module.
