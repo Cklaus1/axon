@@ -1,0 +1,137 @@
+// Axon ASI demo: bandit state that survives across processes.
+//
+// Composes the bandit module with `dict_to_str` / `dict_from_str` +
+// `read_file` / `write_file` to persist the running averages across
+// program invocations. Each run pulls a fixed budget of arms (40),
+// updates the bandit, writes its state back. After several runs the
+// estimates converge — the cumulative learning IS the run-over-run
+// improvement.
+//
+// State format (`/tmp/axon_persistent_bandit.txt`):
+//   sum-N=<float>           total reward for arm N
+//   count-N=<int>           pulls for arm N
+//   t=<int>                 global pull count (so UCB's ln(t) is correct)
+//
+// One on-disk Dict serves both the sum AND count subsections —
+// prefixed keys keep the namespace flat. The bandit module's own
+// `Bandit { sums, counts }` is reconstituted from the Dict at
+// startup and dumped back at exit.
+//
+//   AXON_PATH=examples/stdlib axon run examples/asi/persistent_bandit.ax
+//   # run multiple times — pulls accumulate, estimates converge.
+
+mod bandit
+use bandit.{Bandit, bandit_new, bandit_select, bandit_update, bandit_pulls, bandit_mean, bandit_best_arm}
+
+fn n_arms() -> i64 { 5 }
+fn budget() -> i64 { 40 }
+fn state_path() -> str { "/tmp/axon_persistent_bandit.txt" }
+
+fn true_mean(arm: i64) -> f64 {
+    let means = [0.30, 0.55, 0.85, 0.40, 0.50]
+    means[arm]
+}
+
+fn pull(arm: i64) -> f64 {
+    true_mean(arm) + (random_f64() - 0.5) * 0.03
+}
+
+fn arm_label(id: i64) -> str {
+    if id == 0 { "arm-0" }
+    else if id == 1 { "arm-1" }
+    else if id == 2 { "arm-2" }
+    else if id == 3 { "arm-3" }
+    else { "arm-4" }
+}
+
+// Restore a bandit from the serialized Dict; returns a fresh bandit
+// when nothing is on disk. Also returns the global pull count `t`.
+fn load_or_fresh() -> (Bandit, i64) {
+    let b = bandit_new(n_arms())
+    let t = match read_file(state_path()) {
+        Ok(content) => {
+            let stored = dict_from_str(content)
+            // Walk every recorded entry; reseed the bandit by replaying
+            // a single update per arm with the historic mean (lossless
+            // for sum / count, since we set them to the loaded totals
+            // by spinning the update API count times).
+            let mut_total = 0
+            let i = 0
+            while i < n_arms() {
+                let k = arm_label(i)
+                let sum_key = "sum-{k}"
+                let count_key = "count-{k}"
+                let sum_s = match dict_get(stored, sum_key) { Some(v) => v  None => "0" }
+                let count_s = match dict_get(stored, count_key) { Some(v) => v  None => "0" }
+                let sum_v = match parse_float(sum_s) { Ok(v) => v  Err(_) => 0.0 }
+                let count_v = match parse_int(count_s) { Ok(n) => n  Err(_) => 0 }
+                if count_v > 0 {
+                    // Replay: a single update with `sum_v` placed at count
+                    // 1 would skew the mean. Instead we cheat — call
+                    // bandit_update count times with the per-pull mean.
+                    let per = sum_v / as_f64(count_v)
+                    let j = 0
+                    while j < count_v {
+                        bandit_update(b, i, per)
+                        j = j + 1
+                    }
+                }
+                i = i + 1
+            }
+            // Total t = sum of counts (each pull increments it).
+            let t_s = match dict_get(stored, "t") { Some(v) => v  None => "0" }
+            match parse_int(t_s) { Ok(n) => n  Err(_) => 0 }
+        }
+        Err(_) => 0
+    }
+    (b, t)
+}
+
+fn save(b: Bandit, t: i64) {
+    let d = dict_new()
+    let i = 0
+    while i < n_arms() {
+        let k = arm_label(i)
+        let n = bandit_pulls(b, i)
+        let m = bandit_mean(b, i)
+        // Store the total reward sum (mean * count) and the count.
+        let sum_v = m * as_f64(n)
+        dict_set(d, "sum-{k}", to_str_f64(sum_v))
+        dict_set(d, "count-{k}", to_str(n))
+        i = i + 1
+    }
+    dict_set(d, "t", to_str(t))
+    let _ = write_file(state_path(), dict_to_str(d))
+}
+
+fn main() -> i64 {
+    let (b, prior_t) = load_or_fresh()
+    let starting_pulls = prior_t
+
+    let local_t = 0
+    while local_t < budget() {
+        let arm = bandit_select(b, prior_t + local_t + 1)
+        let r = pull(arm)
+        bandit_update(b, arm, r)
+        local_t = local_t + 1
+    }
+    let new_t = prior_t + budget()
+
+    println("=== persistent bandit ===")
+    println("prior pulls (loaded): {to_str(starting_pulls)}")
+    println("this run:             {to_str(budget())} pulls")
+    println("total now:            {to_str(new_t)}")
+    let i = 0
+    while i < n_arms() {
+        let k = arm_label(i)
+        let n = bandit_pulls(b, i)
+        let m = bandit_mean(b, i)
+        println("  {k}: pulls={to_str(n)} est_mean={to_str_f64(m)} true_mean={to_str_f64(true_mean(i))}")
+        i = i + 1
+    }
+    println("preferred: arm-{to_str(bandit_best_arm(b))}")
+
+    save(b, new_t)
+    // Exit 0 on success; the cross-run trajectory is the demo.
+    0
+}

@@ -939,6 +939,59 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn dict_to_str_round_trips() {
+    // dict_to_str / dict_from_str serialize a Dict to a stable
+    // line-oriented `key=value\n` payload. Inverse round-trip.
+    let src = "fn main() -> i64 {\n  \
+        let d = dict_new()\n  \
+        dict_set(d, \"alpha\", 1)\n  \
+        dict_set(d, \"beta\", \"hello\")\n  \
+        dict_set(d, \"gamma\", 3.14)\n  \
+        let s = dict_to_str(d)\n  \
+        let d2 = dict_from_str(s)\n  \
+        let alpha_s = match dict_get(d2, \"alpha\") { Some(v) => v  None => \"\" }\n  \
+        let beta_s  = match dict_get(d2, \"beta\")  { Some(v) => v  None => \"\" }\n  \
+        let n = match parse_int(alpha_s) { Ok(v) => v  Err(_) => -1 }\n  \
+        if dict_len(d2) == 3 && n == 1 && str_eq(beta_s, \"hello\") { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_dts_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "dict_to_str/from_str round trip: {:?}", out);
+}
+
+#[test]
+fn persistent_bandit_demo_accumulates_across_runs() {
+    // Demo #23. Composes bandit module + dict_to_str/from_str +
+    // file I/O to persist bandit state across processes. Two
+    // sequential runs: the second loads the first's state, so its
+    // arm-2 pull count is higher than the first's.
+    let state_file = "/tmp/axon_persistent_bandit.txt";
+    let _ = std::fs::remove_file(state_file);
+
+    let mut cmd = axon();
+    cmd.args(["run", &ex("asi/persistent_bandit.ax")]);
+    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    let run1 = cmd.output().unwrap();
+    assert!(run1.status.success(), "run 1: {:?}", run1);
+    let out1 = String::from_utf8_lossy(&run1.stdout);
+    assert!(out1.contains("prior pulls (loaded): 0"), "run 1 should be fresh: {out1}");
+    assert!(out1.contains("total now:            40"), "run 1 totals 40: {out1}");
+
+    let mut cmd2 = axon();
+    cmd2.args(["run", &ex("asi/persistent_bandit.ax")]);
+    cmd2.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    let run2 = cmd2.output().unwrap();
+    let _ = std::fs::remove_file(state_file);
+    assert!(run2.status.success(), "run 2: {:?}", run2);
+    let out2 = String::from_utf8_lossy(&run2.stdout);
+    assert!(out2.contains("prior pulls (loaded): 40"), "run 2 should load prior: {out2}");
+    assert!(out2.contains("total now:            80"), "run 2 totals 80: {out2}");
+    assert!(out2.contains("preferred: arm-2"), "arm-2 should win: {out2}");
+}
+
+#[test]
 fn llm_cache_demo_memoizes_repeated_prompts() {
     // Demo #22. First demo this session that uses ai_complete + Dict.
     // Caches LLM responses by prompt via a Dict so repeated calls hit

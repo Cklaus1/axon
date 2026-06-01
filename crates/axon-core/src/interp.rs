@@ -3432,6 +3432,70 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
             }
+            // `dict_to_str(d) -> str` — serialize a `Dict<str, str>` to a
+            // stable line-oriented text format: `key1=value1\nkey2=value2…`.
+            // Each entry on its own line; BTreeMap key order so the output
+            // is deterministic (round-trippable + diff-friendly). Non-string
+            // values are converted via `display`; keys containing `=` or
+            // `\n` are rejected to keep the format unambiguous.
+            "dict_to_str" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_to_str: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut out = String::new();
+                for (k, v) in d.borrow().iter() {
+                    if k.contains('=') || k.contains('\n') {
+                        return panic(format!(
+                            "dict_to_str: key '{k}' contains an unrepresentable char (= or newline)"
+                        ));
+                    }
+                    let vs = display(v);
+                    if vs.contains('\n') {
+                        return panic(format!(
+                            "dict_to_str: value for key '{k}' contains a newline (unsupported)"
+                        ));
+                    }
+                    out.push_str(k);
+                    out.push('=');
+                    out.push_str(&vs);
+                    out.push('\n');
+                }
+                ok!(Value::Str(out));
+            }
+            // `dict_from_str(s) -> Dict` — inverse of `dict_to_str`.
+            // Splits `s` into lines, each line at the FIRST `=` into
+            // (key, value). All values are stored as `str` — caller
+            // converts via `parse_int` / `parse_float` if needed.
+            // Trailing newline is allowed; empty lines are skipped.
+            // Malformed lines (no `=`) panic — we'd rather fail loud
+            // than silently corrupt state.
+            "dict_from_str" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut out = std::collections::BTreeMap::new();
+                for line in s.lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    match line.split_once('=') {
+                        Some((k, v)) => {
+                            out.insert(k.to_string(), Value::Str(v.to_string()));
+                        }
+                        None => {
+                            return panic(format!(
+                                "dict_from_str: malformed line '{line}' (expected key=value)"
+                            ));
+                        }
+                    }
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+
             // `dict_merge(d1, d2) -> Dict` — union of two dicts. Right-
             // biased on collision (values in `d2` win when both have the
             // same key). Returns a fresh dict; the inputs are unchanged.

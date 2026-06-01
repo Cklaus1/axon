@@ -1025,6 +1025,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Union of two dicts; right-biased on key collision (values in `d2` win). Returns a fresh dict — inputs are unchanged.",
     },
     BuiltinFn {
+        name: "dict_to_str",
+        params: &[("d", "Dict")],
+        ret: "str",
+        doc: "Serialize a dict to a line-oriented `key=value\\n` format. Keys containing `=` or `\\n` are rejected. Values are rendered via `display` (so numeric values stringify; nested values panic on newlines). Deterministic — BTreeMap key order. Round-trips through `dict_from_str`.",
+    },
+    BuiltinFn {
+        name: "dict_from_str",
+        params: &[("s", "str")],
+        ret: "Dict",
+        doc: "Parse a `dict_to_str` payload back into a Dict. Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty lines skipped; malformed lines (no `=`) panic. Inverse of `dict_to_str`.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",
