@@ -711,6 +711,23 @@ impl InferCtx {
                         return Type::I64;
                     }
                 }
+
+                // `to_str` is polymorphic over scalars (i64/i32/.../f64/bool) —
+                // the interpreter dispatches on the runtime value (BUG_HUNT #29),
+                // so picking `to_str_f64`/`to_str_bool` is never required. Accept
+                // any scalar without constraint; a non-scalar arg still flows to
+                // the declared `i64` param below and errors, so `to_str([1,2])`
+                // is rejected.
+                if let Some(ref name) = fn_name {
+                    if name == "to_str" && args.len() == 1 {
+                        let arg_ty = self.infer_expr(&args[0], scope, ret_ty);
+                        if arg_ty.is_scalar() {
+                            return Type::Str;
+                        }
+                        // Non-scalar: fall through so the i64 param constraint
+                        // produces the type error.
+                    }
+                }
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);
 
                 if let Some(name) = fn_name {

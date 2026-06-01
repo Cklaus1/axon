@@ -187,6 +187,16 @@ impl<'ctx> super::Codegen<'ctx> {
         // to_str: i64 → { i64, ptr }
         // Uses malloc-allocated buffer so the returned str is heap-owned and
         // remains valid when returned from a function (no dangling static buffer).
+        //
+        // PARITY GAP (BUG_HUNT #29 / #33): the interpreter made `to_str`
+        // polymorphic over scalars (i64/f64/bool), dispatching on the runtime
+        // value. Codegen still declares only the i64 form, and the generic
+        // float→int arg coercion in expr.rs would truncate `to_str(3.14)` to
+        // "3" instead of "3.14". Closing this needs per-arg-type dispatch here
+        // (select to_str / to_str_f64 / to_str_bool by the inferred arg type)
+        // and is tracked as finding #33 — deferred because the codegen build is
+        // pathologically slow (see BUILD_DIAGNOSIS.md), so it can't be verified
+        // in this loop. The interpreter is the reference semantics.
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = str_ty.fn_type(&[i64_ty.into()], false);

@@ -147,7 +147,8 @@ println("hello {name}, age {to_str(age)}")
 // Operators: + - * / %   == != < > <= >=   && ||
 
 // Builtins: println print eprint eprintln
-//           to_str to_str_f64 parse_int len
+//           to_str (polymorphic over scalars: i64/f64/bool) parse_int len
+//           to_str_f64 to_str_bool (explicit forms; to_str now covers them)
 //           abs_i32 abs_f64 min_i32 max_i32
 //           assert assert_eq assert_err
 

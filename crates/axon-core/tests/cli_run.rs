@@ -52,6 +52,49 @@ fn typed_let_bindings_enforce_the_annotation() {
 }
 
 #[test]
+fn to_str_is_polymorphic_over_scalars() {
+    // BUG_HUNT #29: `to_str` should accept i64, f64, AND bool — picking the
+    // wrong specialized name (to_str_f64 / to_str_bool) is needless onboarding
+    // friction. The output must match the specialized builtins exactly.
+    let f = std::env::temp_dir().join(format!("axon_polystr_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() {\n  \
+           println(to_str(42))\n  \
+           println(to_str(3.14))\n  \
+           println(to_str(true))\n  \
+           println(to_str(false))\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "polymorphic to_str should check + run clean: {:?}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(stdout, "42\n3.14\ntrue\nfalse\n", "to_str output must match specialized builtins: {stdout:?}");
+}
+
+#[test]
+fn to_str_polymorphic_matches_specialized_in_interpolation() {
+    // The win is in string interpolation, where the wrong specialized name is
+    // most often reached for. `{to_str(x)}` must work for any scalar x.
+    let f = std::env::temp_dir().join(format!("axon_polystr2_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() {\n  \
+           let pi = 3.5\n  \
+           let ok = true\n  \
+           println(\"pi={to_str(pi)} ok={to_str(ok)}\")\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "to_str in interpolation should run: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "pi=3.5 ok=true\n");
+}
+
+#[test]
 fn invalid_radix_fails_fast() {
     // i64_to_str_radix with a radix outside 2..=36 must fail fast (graceful
     // panic) rather than silently returning an empty string.

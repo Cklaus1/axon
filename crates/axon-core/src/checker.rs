@@ -1220,6 +1220,11 @@ impl CheckCtx {
                 // `len` accepts a slice/array as well as its declared `str` param
                 // (the interpreter handles both); mirrors the infer special-case.
                 || (name == "len" && matches!(arg_ty, Type::Slice(_)))
+                // `to_str` is polymorphic over scalars (i64/i32/.../f64/bool);
+                // the interpreter dispatches on the runtime value (BUG_HUNT #29).
+                // Mirrors the infer special-case. A non-scalar arg still flows to
+                // the declared `i64` param and errors below.
+                || (name == "to_str" && arg_ty.is_scalar())
             {
                 continue;
             }

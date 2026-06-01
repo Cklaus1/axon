@@ -108,6 +108,12 @@ impl Type {
         self.is_integer() || self.is_float()
     }
 
+    /// A scalar value type: any numeric type or `bool`. These are exactly the
+    /// types the polymorphic `to_str` builtin renders (BUG_HUNT #29).
+    pub fn is_scalar(&self) -> bool {
+        self.is_numeric() || self.is_bool()
+    }
+
     pub fn is_bool(&self) -> bool {
         matches!(self, Type::Bool)
     }
@@ -334,6 +340,21 @@ mod tests {
         assert!(!Type::Bool.is_numeric());
         assert!(!Type::Str.is_numeric());
         assert!(!Type::Unit.is_numeric());
+    }
+
+    #[test]
+    fn scalar_classification() {
+        // BUG_HUNT #29: exactly the types polymorphic `to_str` renders.
+        assert!(Type::I64.is_scalar());
+        assert!(Type::I32.is_scalar());
+        assert!(Type::U8.is_scalar());
+        assert!(Type::F64.is_scalar());
+        assert!(Type::Bool.is_scalar());
+        // Non-scalars must be excluded so `to_str` of them still errors.
+        assert!(!Type::Str.is_scalar());
+        assert!(!Type::Unit.is_scalar());
+        assert!(!Type::Slice(Box::new(Type::I64)).is_scalar());
+        assert!(!Type::Option(Box::new(Type::I64)).is_scalar());
     }
 
     #[test]
