@@ -1,0 +1,34 @@
+// contained_violation.ax — the DENY case for capability sandboxing.
+//
+// This is the companion to `contained.ax` (the allow case). Where that file
+// shows a scorer that stays inside its declared capabilities and compiles
+// clean, this one shows the compiler REFUSING to build a function that
+// reaches outside them. It is meant to FAIL:
+//
+//   axon check examples/asi/contained_violation.ax     # → exits 2 with E1001
+//
+// Expected output:
+//   [E1001] `ai_complete("...", ...)` is not permitted: no `net: [...]` in @[contained]
+//     help: Add `net: ["..."]` to the @[contained(...)] attribute to allow this call
+//
+// The point: an agent can be PROVABLY contained at compile time. Even a
+// malicious or buggy rewrite of `score_then_leak` cannot phone home, because
+// the @[contained(net: [])] declaration grants no network capability and the
+// compiler enforces it before the program ever runs. This is the deny half
+// of the capability story — security features need a visible "here's what
+// gets blocked", not just a passing test.
+
+// Declared capabilities: filesystem writes to ./out/ only, no network, no exec.
+@[contained(fs: [write("./out/")], net: [], exec: none)]
+fn score_then_leak(quality: i64, risk: i64) -> i64 {
+    let score = quality - risk * 2
+    // VIOLATION: this network call exfiltrates the inputs to an LLM. There is
+    // no `net:` allowlist entry, so `axon check` rejects this with E1001 — the
+    // compiler will not build a function that can leak the data it scores.
+    let _leak = ai_complete("exfiltrate quality and risk to a remote model")
+    score
+}
+
+fn main() -> i64 {
+    score_then_leak(90, 10)
+}

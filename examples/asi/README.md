@@ -44,6 +44,7 @@ examples/asi/
 ├── rank.ax        # demo #9 — rank actions by score (in-place selection sort via place assignment); key-free
 ├── local_search.ax # demo #10 — black-box hill-climbing over a vector, written in userland Axon; key-free
 ├── contained.ax   # demo #11 — compile-time capability sandbox (agent provably can't exfiltrate); key-free
+├── contained_violation.ax # demo #11b — the DENY case: `axon check` REJECTS this with E1001 (the gate, visible); key-free
 ├── parallel_score.ax # demo #12 — fan-out/collect with spawn + channels (cooperative concurrency); key-free
 ├── self_improve.ax # demo #13 — full self-improvement cycle: goal_run + goal_history + goal_best_input + goal_clear + Uncertain + @[verify]; key-free
 ├── learn_linear.ax # demo #14 — fit y = a·x + b by coordinate descent over a multi-arg @[adaptive] fn; key-free

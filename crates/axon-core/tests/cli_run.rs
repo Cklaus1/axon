@@ -147,7 +147,18 @@ fn all_examples_typecheck_clean() {
     let mut files = Vec::new();
     collect(std::path::Path::new(&root), &mut files);
     assert!(files.len() >= 20, "expected many examples, found {}", files.len());
+    // Deny-case examples are DESIGNED to fail `check` (they demonstrate the
+    // compiler rejecting a violation). They are guarded by their own tests
+    // (e.g. `contained_violation_demo_is_rejected_by_check`), so exclude them
+    // from the "must check clean" sweep.
+    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax"];
     for f in &files {
+        if f.file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| DENY_CASE_EXAMPLES.contains(&n))
+        {
+            continue;
+        }
         let out = axon()
             .args(["check", f.to_str().unwrap()])
             .env("AXON_PATH", &modpath)
@@ -226,6 +237,18 @@ fn contained_scorer_demo_runs_and_blocks_exfiltration() {
     // Bug #8: error messages must suggest the fix.
     assert!(msg.contains("Add") || msg.contains("try") || msg.contains("use") || msg.contains("specify"),
         "expected fix suggestion in error message, got: {msg}");
+}
+
+#[test]
+fn contained_violation_demo_is_rejected_by_check() {
+    // Bug #9: the deny-case must be a shipped, user-facing example so the
+    // capability gate's enforcement is visible (not just provable in a unit
+    // test). `axon check examples/asi/contained_violation.ax` must FAIL with
+    // E1001, demonstrating the compiler refusing to build an exfiltrating fn.
+    let out = axon().args(["check", &ex("asi/contained_violation.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "violation demo must be rejected by check: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E1001"), "expected E1001 for the violation demo, got: {msg}");
 }
 
 #[test]
