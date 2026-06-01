@@ -964,6 +964,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Number of provenance entries recorded for an @[adaptive] fn. Equivalent to `len(goal_history(name))` but O(1) — avoids materializing the trace just to count it. Returns 0 if the fn has no recorded calls.",
     },
+    BuiltinFn {
+        name: "goal_eval",
+        params: &[("name", "str"), ("input", "i64")],
+        ret: "f64",
+        doc: "HELD-OUT evaluation (R5): run the @[adaptive] metric `name` on a specific `input` and return its score WITHOUT recording it as a training probe (provenance is snapshotted+restored). The eval-hierarchy primitive — optimize with `goal_run` on a training budget, then `goal_eval` the best input on a held-out test set to check the target honestly (no overfitting to probes, no bias to the next goal_run).",
+    },
     // ── Dict (string-keyed map) — ASI workhorse for caches, frequency tables, named state ──
     BuiltinFn {
         name: "dict_new",

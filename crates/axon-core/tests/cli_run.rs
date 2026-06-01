@@ -1221,6 +1221,35 @@ fn goal_run_multistart_nails_the_global_optimum() {
 }
 
 #[test]
+fn goal_eval_held_out_does_not_pollute_provenance() {
+    // R5 eval hierarchy: goal_run optimizes on a training budget; goal_eval
+    // validates the best input on a HELD-OUT point and returns its score
+    // WITHOUT recording it as a training probe (so it can't bias the next
+    // goal_run or inflate goal_count). Metric peaks at x=7 (score 100).
+    let src = "@[adaptive]\n\
+        fn score(x: i64) -> i64 { let d = x - 7\n 100 - d * d }\n\
+        fn main() -> i64 {\n  \
+            srand(1)\n  \
+            let _ = goal_run(\"score\", 100.0, 30)\n  \
+            let bx = goal_best_input(\"score\", 100.0)\n  \
+            let held = goal_eval(\"score\", bx)\n  \
+            let c1 = goal_count(\"score\")\n  \
+            let _ = goal_eval(\"score\", 0)\n  \
+            let _ = goal_eval(\"score\", 99)\n  \
+            let c2 = goal_count(\"score\")\n  \
+            // held-out score at the optimum is 100, and the 2 evals added 0 probes.\n  \
+            if bx == 7 && held > 99.0 && c1 == c2 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_geval_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1),
+        "goal_eval should give held-out=100 at x=7 and not pollute provenance: {:?}",
+        String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn goal_run_random_finds_global_optimum_on_multimodal() {
     // Random-search strategy: 100 samples uniformly over `[-2000, 2000)`
     // on a two-peak objective where hill climb from x=0 gets stuck on

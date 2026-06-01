@@ -3842,6 +3842,52 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(n as i64));
             }
 
+            // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).
+            // Run the @[adaptive] metric `name` on a specific `input` and
+            // return its score, WITHOUT recording it as a training probe. This
+            // is the eval-hierarchy primitive: optimize with `goal_run` on a
+            // training budget, then `goal_eval` the best input on a held-out
+            // test set to check the target HONESTLY (no overfitting to probes,
+            // no provenance pollution that would bias the next `goal_run`).
+            // The metric fn normally auto-records (R4 provenance injection), so
+            // we snapshot the fn's provenance, call it, then restore.
+            "goal_eval" => {
+                want(2)?;
+                let name = as_str(&args[0])?.to_string();
+                let input = as_int(&args[1])?;
+                let Some(f) = self.fns.get(name.as_str()).copied() else {
+                    return panic(format!("goal_eval: `{name}` is not a defined function"));
+                };
+                // Snapshot the three provenance stores for this fn.
+                let snap_scores = self.provenance.borrow().get(&name).cloned();
+                let snap_inputs = self.provenance_inputs.borrow().get(&name).cloned();
+                let snap_inputs_f64 = self.provenance_inputs_f64.borrow().get(&name).cloned();
+                // Call the metric (this records into the stores).
+                let result = self.call_fn(f, vec![Value::Int(input)]);
+                // Restore — the held-out eval must not bias future goal_run.
+                match snap_scores {
+                    Some(v) => { self.provenance.borrow_mut().insert(name.clone(), v); }
+                    None => { self.provenance.borrow_mut().remove(&name); }
+                }
+                match snap_inputs {
+                    Some(v) => { self.provenance_inputs.borrow_mut().insert(name.clone(), v); }
+                    None => { self.provenance_inputs.borrow_mut().remove(&name); }
+                }
+                match snap_inputs_f64 {
+                    Some(v) => { self.provenance_inputs_f64.borrow_mut().insert(name.clone(), v); }
+                    None => { self.provenance_inputs_f64.borrow_mut().remove(&name); }
+                }
+                let score = match result? {
+                    Value::Int(n) => n as f64,
+                    Value::Float(x) => x,
+                    other => return panic(format!(
+                        "goal_eval: metric `{name}` must return a number, got {}",
+                        other.type_name()
+                    )),
+                };
+                ok!(Value::Float(score));
+            }
+
             // Full optimization trace as a slice of `(input, score)` tuples,
             // in call order. The companion to goal_run / goal_best_input.
             "goal_history" => {
