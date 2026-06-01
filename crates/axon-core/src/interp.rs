@@ -226,6 +226,10 @@ pub struct Interp<'p> {
     /// one-way latch is the whole safety property: a kill-switch you can turn
     /// back off is not a kill-switch.
     corrigible_halted: Cell<bool>,
+    /// Name of the Axon function currently executing, for attributing builtin
+    /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
+    /// Set on entry to `call_fn`, restored on exit. Empty at top level.
+    current_fn: RefCell<String>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -287,6 +291,19 @@ struct DepthGuard<'a>(&'a Cell<usize>);
 impl Drop for DepthGuard<'_> {
     fn drop(&mut self) {
         self.0.set(self.0.get().saturating_sub(1));
+    }
+}
+
+/// Saves the caller's `current_fn` and restores it on drop, so builtin side
+/// effects (R3 `ai_call` provenance) are attributed to the nearest enclosing
+/// Axon function even across nested calls.
+struct FnNameGuard<'a> {
+    cell: &'a RefCell<String>,
+    prev: String,
+}
+impl Drop for FnNameGuard<'_> {
+    fn drop(&mut self) {
+        *self.cell.borrow_mut() = std::mem::take(&mut self.prev);
     }
 }
 
@@ -645,6 +662,7 @@ impl<'p> Interp<'p> {
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
             corrigible_halted: Cell::new(false),
+            current_fn: RefCell::new(String::new()),
         }
     }
 
@@ -688,6 +706,12 @@ impl<'p> Interp<'p> {
         }
         self.call_depth.set(depth);
         let _guard = DepthGuard(&self.call_depth);
+        // Track the executing fn so builtins (R3 ai_call provenance) can
+        // attribute their records to the caller; restored on return.
+        let _fn_guard = FnNameGuard {
+            cell: &self.current_fn,
+            prev: self.current_fn.replace(f.name.clone()),
+        };
 
         if f.params.len() != args.len() {
             return panic(format!(
@@ -4562,15 +4586,38 @@ impl<'p> Interp<'p> {
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────
             "ai_complete" => {
                 want(1)?;
+                let prompt = as_str(&args[0])?.to_string();
+                let caller = self.current_fn.borrow().clone();
+                // R3 §4.3: tier/model resolution is the next slice; for now the
+                // record pins the default tier and the engine mode. params_hash
+                // covers the (currently fixed) call params.
+                let params = "max_tokens=default;temperature=default";
                 if ai_mock_enabled() {
+                    // Deterministic stub — but still a fully-stamped provenance
+                    // record (mode:"mock", cost 0) so the audit trail is honest
+                    // about what produced the value.
+                    append_ai_call_jsonl(
+                        &caller, &prompt, "balanced", "mock", "mock-v1", params,
+                        "mock", "", 0.0,
+                    );
                     ok!(Value::Ok(Box::new(Value::Str(
                         "Mock summary: the single most important fact, stated concisely.".to_string()
                     ))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    ok!(match axon_ai::complete(as_str(&args[0])?) {
-                        Ok(s) => Value::Ok(Box::new(Value::Str(s))),
+                    // Concrete model id / metered cost are wired in the routing
+                    // slice (R3 §4.2/§4.4); for now the live record pins the
+                    // provider default and leaves cost at 0 (honestly unmetered).
+                    ok!(match axon_ai::complete(&prompt) {
+                        Ok(s) => {
+                            append_ai_call_jsonl(
+                                &caller, &prompt, "balanced",
+                                "anthropic:default", "unpinned",
+                                params, "live", "", 0.0,
+                            );
+                            Value::Ok(Box::new(Value::Str(s)))
+                        }
                         Err(e) => Value::Err(Box::new(Value::Str(e))),
                     });
                 }
@@ -4787,6 +4834,64 @@ fn append_provenance_jsonl(
         ev = json_quote(&format!("{zone}_return")),
         z = json_quote(zone),
         p = json_quote(payload),
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// Hex SHA-256 of `s` — the `prompt_hash`/`params_hash` scheme for R3's
+/// `ai_call` provenance. Hashing (not the raw text) is what lands in the log,
+/// so a replay can key on the exact prompt without the log leaking it verbatim.
+fn sha256_hex(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(s.as_bytes());
+    format!("{:x}", h.finalize())
+}
+
+/// One AI-call provenance record (R3 §4.3). Every `ai_complete` execution —
+/// live, mock, or fallback — appends exactly one `event:"ai_call"` NDJSON line
+/// to the same provenance log as the score rows, attributed to its caller and
+/// carrying the replay key (model + hashes) without the prompt verbatim.
+#[allow(clippy::too_many_arguments)]
+fn append_ai_call_jsonl(
+    fn_name: &str,
+    prompt: &str,
+    tier: &str,
+    model: &str,
+    model_version: &str,
+    params: &str,
+    mode: &str,
+    reason: &str,
+    cost_usd: f64,
+) {
+    let Some(path) = provenance_log_path() else { return };
+    if let Some(dir) = path.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let ts = now_ms().max(0) as u64;
+    let src = provenance_source();
+    let src_field = if src.is_empty() {
+        String::new()
+    } else {
+        format!(",\"src\":{}", json_quote(src))
+    };
+    let cost = if cost_usd.is_finite() { format!("{cost_usd}") } else { "0".to_string() };
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"ai_call\",\"tier\":{t},\"model\":{m},\
+         \"model_version\":{mv},\"params_hash\":{ph},\"prompt_hash\":{prh},\"mode\":{md},\
+         \"reason\":{rs},\"cost_usd\":{cost}{src_field}}}\n",
+        f = json_quote(fn_name),
+        t = json_quote(tier),
+        m = json_quote(model),
+        mv = json_quote(model_version),
+        ph = json_quote(&sha256_hex(params)),
+        prh = json_quote(&sha256_hex(prompt)),
+        md = json_quote(mode),
+        rs = json_quote(reason),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());

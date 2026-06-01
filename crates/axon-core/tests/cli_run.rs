@@ -2821,3 +2821,110 @@ fn main() -> i64 {
         "trace should still surface the experiment fn's records: {tout}"
     );
 }
+
+#[test]
+fn ai_complete_appends_an_ai_call_provenance_record() {
+    // R3 red test (spec §4.3 — settle the AiCall record FIRST): every
+    // `ai_complete` call must append exactly ONE `event:"ai_call"` NDJSON
+    // record to the provenance log, distinct from the `@[adaptive]` score rows.
+    // Under AXON_AI_MOCK the record is stamped `mode:"mock"` with `cost_usd:0`,
+    // and `prompt_hash` is the SHA-256 of the exact prompt (so a replay can key
+    // on it without logging the prompt verbatim). Fails today: ai_complete
+    // writes no provenance at all.
+    let cache = std::env::temp_dir().join(format!("axon_r3cache_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+fn ask() -> i64 {
+    match ai_complete("Classify: hello world") {
+        Ok(s) => str_len(s)
+        Err(_) => 0 - 1
+    }
+}
+
+fn main() -> i64 {
+    let _ = ask()
+    let _ = ask()
+    0
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "mock ai_complete program should run clean");
+
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let ai_calls: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("\"event\":\"ai_call\""))
+        .collect();
+    assert_eq!(
+        ai_calls.len(), 2,
+        "two ai_complete calls => two ai_call records, got {}. Log:\n{body}",
+        ai_calls.len()
+    );
+    let rec = ai_calls[0];
+    assert!(rec.contains("\"mode\":\"mock\""), "mock mode must be stamped: {rec}");
+    assert!(rec.contains("\"prompt_hash\":\""), "prompt_hash (SHA-256) required: {rec}");
+    assert!(rec.contains("\"cost_usd\":0"), "mock cost must be 0: {rec}");
+    assert!(rec.contains("\"fn\":\"ask\""), "calling fn attributed: {rec}");
+    // The prompt_hash must be the SHA-256 of the exact prompt sent — stable,
+    // and NOT the prompt verbatim (no PII leak).
+    assert!(
+        !rec.contains("hello world"),
+        "the prompt must not be logged verbatim, only its hash: {rec}"
+    );
+}
+
+#[test]
+fn ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts() {
+    // R3 §4.5: provenance is deterministic — the same prompt yields the same
+    // prompt_hash across runs (the replay/memo key), and DIFFERENT prompts
+    // yield different hashes. Two ai_complete calls with distinct prompts must
+    // produce two distinct prompt_hash values; re-running reproduces them.
+    let run_once = || -> Vec<String> {
+        let cache = std::env::temp_dir().join(format!("axon_r3det_{}_{}", std::process::id(), 0));
+        let _ = std::fs::remove_dir_all(&cache);
+        let prog = r#"
+fn a() -> i64 { match ai_complete("prompt ONE") { Ok(s) => str_len(s)  Err(_) => 0 } }
+fn b() -> i64 { match ai_complete("prompt TWO") { Ok(s) => str_len(s)  Err(_) => 0 } }
+fn main() -> i64 { let _ = a()  let _ = b()  0 }
+"#;
+        let f = std::env::temp_dir().join(format!("axon_r3det_{}.ax", std::process::id()));
+        std::fs::write(&f, prog).unwrap();
+        axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        let log = cache.join("axon").join("provenance.jsonl");
+        let body = std::fs::read_to_string(&log).unwrap_or_default();
+        let _ = std::fs::remove_dir_all(&cache);
+        // Extract the prompt_hash value from each ai_call line, in order.
+        body.lines()
+            .filter(|l| l.contains("\"event\":\"ai_call\""))
+            .filter_map(|l| {
+                let key = "\"prompt_hash\":\"";
+                let i = l.find(key)? + key.len();
+                let rest = &l[i..];
+                let end = rest.find('"')?;
+                Some(rest[..end].to_string())
+            })
+            .collect()
+    };
+    let h1 = run_once();
+    let h2 = run_once();
+    assert_eq!(h1.len(), 2, "expected two prompt_hash values, got {h1:?}");
+    assert_ne!(h1[0], h1[1], "distinct prompts must hash differently: {h1:?}");
+    assert_eq!(h1, h2, "the same prompts must hash identically across runs (replay key)");
+    assert_eq!(h1[0].len(), 64, "prompt_hash must be a full hex SHA-256: {}", h1[0]);
+}

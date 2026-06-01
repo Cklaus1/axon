@@ -187,13 +187,13 @@ Red test that must fail first: **`ai_call_appends_provenance_record`** — asser
 
 R3 may move toward DONE on this slice when **all** pass:
 
-- [ ] `ai_call_appends_provenance_record` passes (the schema exists and is written).
-- [ ] `tier_resolution_prefers_call_over_policy_over_default` passes.
-- [ ] `offline_without_fallback_errors_E1300` passes (no silent canned value).
-- [ ] `offline_with_fallback_returns_fallback_mode` passes (total program offline).
-- [ ] `over_budget_call_uses_fallback_or_E1301` passes.
-- [ ] `mock_call_prompt_hash_is_stable` passes (replay memo-key precondition).
-- [ ] `axon ai policy` emits stable JSON (schema versioned).
+- [x] `ai_call_appends_provenance_record` passes (the schema exists and is written). **DONE** — cli_run `ai_complete_appends_an_ai_call_provenance_record`: one `event:"ai_call"` row per call with the full §4.3 schema, `mode:"mock"`, `cost_usd:0`, prompt hashed not verbatim.
+- [ ] `tier_resolution_prefers_call_over_policy_over_default` passes. *(routing slice — needs the `tier:`/`@[ai(policy)]` parser surface)*
+- [ ] `offline_without_fallback_errors_E1300` passes (no silent canned value). *(fallback slice)*
+- [ ] `offline_with_fallback_returns_fallback_mode` passes (total program offline). *(fallback slice)*
+- [ ] `over_budget_call_uses_fallback_or_E1301` passes. *(budget slice — Phase 7)*
+- [x] `mock_call_prompt_hash_is_stable` passes (replay memo-key precondition). **DONE** as `ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts`: same prompt → same 64-hex SHA-256 across runs; distinct prompts → distinct hashes.
+- [ ] `axon ai policy` emits stable JSON (schema versioned). *(CLI slice)*
 
 **Note on `goal_clear` vs the JSONL file:** the existing `goal_clear` builtin clears only the in-memory provenance store (`interp.rs:3775`, `self.provenance` / `self.provenance_inputs`). It does **not** delete or truncate the `provenance.jsonl` file on disk. If implementation follows existing `goal_clear` behavior, the AI `event:"ai_call"` NDJSON rows in the file are append-only and never cleared by `goal_clear`. This is an append-only log by design — the in-memory clear handles `goal_run` isolation; the file serves as an audit trail that is intentionally append-only. If the JSONL file must also be cleared (e.g. for disk-growth management or compliance), a separate `axon provenance trim` CLI command should be built, not entangled with `goal_clear`.
 

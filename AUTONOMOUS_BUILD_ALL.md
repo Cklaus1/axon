@@ -52,7 +52,7 @@ Acceptance: all fn-main examples build native AND match `axon run` (AXON_AI_MOCK
 2. **R5 — `#[goal]` first-class.** ⚠️ goal_eval held-out DONE (`0b4065d`, R5→70%); `Goal` type + `#[goal(...)]` attr sugar still pending.
 3. **R9 — `#[corrigible]` kill-switch.** ✅ DONE (this commit). `corrigible_halt()` one-way latch; engine refuses `@[corrigible]` calls post-halt before the body; `corrigible_halted()` guard; fail-closed exit 4 (`Flow::Halted`); targeted scope. R9→62%. Demo `examples/asi/corrigible.ax`.
 4. **R4 — code zones + provenance.** Spec ✅ Reviewed. ⚠️ `@[experiment]` zone DONE (this commit, R4→62%): injects tagged provenance (I-13) but excluded from goal_run best; JSONL now carries real event/zone/label. Demo `examples/asi/experiment_zone.ax`. Remaining: `@[agent]` mandatory action-log + codegen conformance (R1-gated). **← agent-log NEXT, or move to R3**
-5. **R3 — AI primitive.** Spec drafted. Provenance schema → `#[ai(policy)]` → routing.
+5. **R3 — AI primitive.** Spec ✅ Reviewed. ⚠️ AiCall provenance record DONE (this commit, R3→48%): every `ai_complete` appends one `event:"ai_call"` row (tier/model/params_hash/prompt_hash SHA-256/mode/cost), deterministic. Remaining: `@[ai(policy)]`+`tier:` parser surface → tier→model routing → offline fallback (E1300). **← NEXT slice: policy/fallback**
 6. **R6 — capability/registry.** Spec drafted. `axon.lock` + content hash + audit.
 7. **R7 — targets.** Spec drafted. Slice A interp→wasm first (now also AOT-wasm, R1 unblocked).
 8. **R10 — self-improving harness.** Spec drafted. G1–G3 correctness/safety; G4 perf (R1 now unblocks it).
