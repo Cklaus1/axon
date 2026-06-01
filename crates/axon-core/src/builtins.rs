@@ -897,6 +897,55 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Number of provenance entries recorded for an @[adaptive] fn. Equivalent to `len(goal_history(name))` but O(1) — avoids materializing the trace just to count it. Returns 0 if the fn has no recorded calls.",
     },
+    // ── Dict (string-keyed map) — ASI workhorse for caches, frequency tables, named state ──
+    BuiltinFn {
+        name: "dict_new",
+        params: &[],
+        ret: "Dict",
+        doc: "Fresh empty string-keyed map. Reference-shared like Chan: mutating builtins update the same underlying state every handle sees.",
+    },
+    BuiltinFn {
+        name: "dict_get",
+        params: &[("d", "Dict"), ("k", "str")],
+        ret: "Option<T>",
+        doc: "Return `Some(v)` if key `k` is present in `d`, `None` otherwise. Value type is deferred.",
+    },
+    BuiltinFn {
+        name: "dict_set",
+        params: &[("d", "Dict"), ("k", "str"), ("v", "T")],
+        ret: "()",
+        doc: "Set `d[k] = v` (overwriting any prior value). Mutates `d` in place via its shared RefCell.",
+    },
+    BuiltinFn {
+        name: "dict_has",
+        params: &[("d", "Dict"), ("k", "str")],
+        ret: "bool",
+        doc: "Does `d` contain key `k`?",
+    },
+    BuiltinFn {
+        name: "dict_remove",
+        params: &[("d", "Dict"), ("k", "str")],
+        ret: "Option<T>",
+        doc: "Remove the entry for `k` from `d`; return the prior value as `Some(v)` if present, `None` otherwise.",
+    },
+    BuiltinFn {
+        name: "dict_len",
+        params: &[("d", "Dict")],
+        ret: "i64",
+        doc: "Number of entries in `d`.",
+    },
+    BuiltinFn {
+        name: "dict_keys",
+        params: &[("d", "Dict")],
+        ret: "[str]",
+        doc: "All keys in `d`, in BTreeMap (lexicographic) order. Deterministic.",
+    },
+    BuiltinFn {
+        name: "dict_values",
+        params: &[("d", "Dict")],
+        ret: "[T]",
+        doc: "All values in `d`, in key-sorted order.",
+    },
     BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],

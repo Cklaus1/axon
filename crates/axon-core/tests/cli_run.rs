@@ -939,6 +939,38 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn dict_string_keyed_map_full_lifecycle() {
+    // Closes a real ASI gap: a Dict primitive for caches, frequency tables,
+    // and named state. String-keyed (not full Value-keyed) — covers 95% of
+    // ASI use cases without requiring Hash + Eq on the whole Value enum.
+    // Reference-shared like Chan so mutating calls update one underlying
+    // state. 8 builtins: new/get/set/has/remove/len/keys/values.
+    let src = "fn main() -> i64 {\n  \
+        let d = dict_new()\n  \
+        dict_set(d, \"alice\", 30)\n  \
+        dict_set(d, \"bob\", 25)\n  \
+        dict_set(d, \"carol\", 35)\n  \
+        let len0 = dict_len(d)                       // 3\n  \
+        let bob = match dict_get(d, \"bob\") { Some(v) => v  None => -1 }\n  \
+        let missing = dict_has(d, \"dave\")\n  \
+        let removed = match dict_remove(d, \"alice\") { Some(v) => v  None => -1 }\n  \
+        let keys = dict_keys(d)\n  \
+        let vals = dict_values(d)\n  \
+        // BTreeMap ordering: after removing alice, keys = [\"bob\", \"carol\"].\n  \
+        let first_key_ok = str_eq(keys[0], \"bob\")\n  \
+        // values follow key order: [25, 35]\n  \
+        let vals_ok = vals[0] == 25 && vals[1] == 35\n  \
+        if len0 == 3 && bob == 25 && !missing && removed == 30 \
+           && len(keys) == 2 && first_key_ok && vals_ok { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_dict_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "dict lifecycle: {:?}", out);
+}
+
+#[test]
 fn array_any_all_count_zip_with_close_the_functional_gap() {
     // Four more functional combinators that don't existed before:
     //   arr_any (∃), arr_all (∀ with vacuous-truth on empty),

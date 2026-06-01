@@ -56,6 +56,13 @@ pub enum Value {
     Chan(Rc<RefCell<VecDeque<Value>>>),
     /// Tuple value `(a, b, …)`. Accessed via `t.0`, `t.1` (numeric field).
     Tuple(Vec<Value>),
+    /// String-keyed dictionary — the ASI workhorse for caches, frequency
+    /// tables, named state. Mutating builtins (`dict_set`, `dict_remove`)
+    /// share the inner `RefCell` so a stored handle stays in sync with
+    /// the live state, matching the channel model. Keys are `str` only
+    /// (not arbitrary `Value`) — covers 95% of ASI use cases without
+    /// requiring `Hash + Eq` on the full Value enum.
+    Dict(Rc<RefCell<std::collections::BTreeMap<String, Value>>>),
 }
 
 impl Value {
@@ -74,6 +81,7 @@ impl Value {
             Value::Closure { .. } => "fn".into(),
             Value::Chan(_) => "chan".into(),
             Value::Tuple(_) => "tuple".into(),
+            Value::Dict(_) => "dict".into(),
         }
     }
 }
@@ -3248,6 +3256,110 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(self.clear(&name)));
             }
 
+            // ── Dict (string-keyed map) ──────────────────────────────────────
+            // Reference-shared like Chan: mutating builtins update the same
+            // underlying state every handle sees. The workhorse for caches,
+            // frequency tables, named state.
+            "dict_new" => {
+                want(0)?;
+                ok!(Value::Dict(Rc::new(RefCell::new(std::collections::BTreeMap::new()))));
+            }
+            "dict_get" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_get: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                ok!(match d.borrow().get(&k) {
+                    Some(v) => Value::Some(Box::new(v.clone())),
+                    None => Value::None,
+                });
+            }
+            "dict_set" => {
+                want(3)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_set: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                d.borrow_mut().insert(k, args[2].clone());
+                ok!(Value::Unit);
+            }
+            "dict_has" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_has: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                ok!(Value::Bool(d.borrow().contains_key(&k)));
+            }
+            // `dict_remove(d, k)` — remove entry, return the prior value as
+            // `Option<T>`. Mirrors the Map API of every reasonable language.
+            "dict_remove" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_remove: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                ok!(match d.borrow_mut().remove(&k) {
+                    Some(v) => Value::Some(Box::new(v)),
+                    None => Value::None,
+                });
+            }
+            "dict_len" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_len: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                ok!(Value::Int(d.borrow().len() as i64));
+            }
+            // `dict_keys(d) -> [str]` — sorted by BTreeMap ordering, so
+            // iteration is deterministic.
+            "dict_keys" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_keys: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(k.clone())).collect();
+                ok!(Value::Array(keys));
+            }
+            // `dict_values(d) -> [V]` — values in key-sorted order.
+            "dict_values" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_values: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let vals: Vec<Value> = d.borrow().values().cloned().collect();
+                ok!(Value::Array(vals));
+            }
+
             // ── ASI: live LLM calls (require `--features asi-runtime`) ───────
             "ai_complete" => {
                 want(1)?;
@@ -3750,6 +3862,20 @@ fn values_equal(a: &Value, b: &Value) -> bool {
             Enum { enum_name: e1, variant: v1, fields: f1 },
             Enum { enum_name: e2, variant: v2, fields: f2 },
         ) => e1 == e2 && v1 == v2 && fields_equal(f1, f2),
+        (Tuple(x), Tuple(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(p, q)| values_equal(p, q))
+        }
+        (Dict(d1), Dict(d2)) => {
+            // Two dicts are equal iff they have the same key set and the
+            // values agree pairwise. Iterating BTreeMaps is sorted, so a
+            // direct paired scan suffices.
+            let m1 = d1.borrow();
+            let m2 = d2.borrow();
+            m1.len() == m2.len()
+                && m1.iter().zip(m2.iter()).all(|((k1, v1), (k2, v2))| {
+                    k1 == k2 && values_equal(v1, v2)
+                })
+        }
         _ => false,
     }
 }
@@ -3789,6 +3915,14 @@ fn display(v: &Value) -> String {
         Value::Tuple(items) => {
             let parts: Vec<String> = items.iter().map(display).collect();
             format!("({})", parts.join(", "))
+        }
+        Value::Dict(d) => {
+            let m = d.borrow();
+            let parts: Vec<String> = m
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", display(v)))
+                .collect();
+            format!("{{{}}}", parts.join(", "))
         }
     }
 }
