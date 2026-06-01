@@ -898,6 +898,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Read the provenance log for the @[adaptive] function named `name` and return the best observed score (the recorded return value closest to `target`). Returns `target` when no records exist. `max_evals` caps the number of recent records consulted (≤0 = no cap).",
     },
     BuiltinFn {
+        name: "goal_run_random",
+        params: &[
+            ("name", "str"),
+            ("target", "f64"),
+            ("n_samples", "i64"),
+            ("lo", "i64"),
+            ("hi", "i64"),
+        ],
+        ret: "f64",
+        doc: "Random-search strategy: sample `n_samples` random i64 tuples uniformly in `[lo, hi)` (per-dim independent) and score each via the @[adaptive] function `name`. Returns the best observed score. Baseline against `goal_run`'s hill climb — useful for multi-modal objectives or sanity-checking that the optimizer is actually doing something. Provenance accumulates as a side effect.",
+    },
+    BuiltinFn {
         name: "goal_continue",
         params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
         ret: "f64",

@@ -939,6 +939,32 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn goal_run_random_finds_global_optimum_on_multimodal() {
+    // Random-search strategy: 100 samples uniformly over `[-2000, 2000)`
+    // on a two-peak objective where hill climb from x=0 gets stuck on
+    // the smaller peak (height 100 at x=5). The taller peak (height
+    // 500 at x=1000) is only reachable by sampling wide. With 100
+    // random probes the algorithm should land within ~50 of the
+    // tall peak and report a score > 400.
+    let src = "@[adaptive]\n\
+        fn mm(x: i64) -> i64 {\n  \
+            let small = 100 - abs_i64(x - 5)\n  \
+            let big = 500 - abs_i64(x - 1000)\n  \
+            if small > big { small } else { big }\n\
+        }\n\
+        fn main() -> i64 {\n  \
+            let r = goal_run_random(\"mm\", 500.0, 100, -2000, 2000)\n  \
+            // The tall peak's neighborhood scores > 400.\n  \
+            if r > 400.0 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_grr_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "random search should find tall peak: {:?}", out);
+}
+
+#[test]
 fn parse_int_or_float_or_bool_or_fold_result_match() {
     // Three parse-with-default helpers that fold the Result-match
     // ceremony for load-from-disk paths where bad inputs should silently

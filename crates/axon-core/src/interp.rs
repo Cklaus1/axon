@@ -585,6 +585,86 @@ impl<'p> Interp<'p> {
         Ok(self.best_observed(name, target, max_evals))
     }
 
+    /// Random-search strategy for an `@[adaptive] fn(i64, …) -> i64`.
+    /// Samples `n_samples` random i64 tuples uniformly in `[lo, hi)`
+    /// (per-dim independent) and scores each. Returns the best score
+    /// (closest to target). Provides a baseline against `goal_run`'s
+    /// hill climb — useful for multi-modal objectives where the
+    /// gradient strategy gets stuck in local optima, and for
+    /// "is the optimizer actually doing anything?" sanity checks.
+    /// Each call flows through `call_fn`, so provenance accumulates
+    /// just like the hill-climb path; `goal_best_input` / `_inputs`
+    /// can read the winner back.
+    fn run_goal_random(
+        &self,
+        name: &str,
+        target: f64,
+        n_samples: i64,
+        lo: i64,
+        hi: i64,
+    ) -> Result<f64, Flow> {
+        if hi <= lo {
+            return panic(format!(
+                "goal_run_random: hi ({hi}) must be greater than lo ({lo})"
+            ));
+        }
+        let f = match self.fns.get(name) {
+            Some(f) => *f,
+            None => return Ok(self.best_observed(name, target, n_samples)),
+        };
+        let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+        let all_i64_params = !f.params.is_empty()
+            && f.params.iter().all(|p| is_i64_type(&p.ty));
+        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        if !is_adaptive || !all_i64_params || !i64_ret {
+            return Ok(self.best_observed(name, target, n_samples));
+        }
+        let n_dims = f.params.len();
+        // Start "unset" — first probe wins regardless of its distance,
+        // then every subsequent probe must beat it. Initializing from
+        // `best_observed` is wrong here because that returns `target`
+        // when no provenance exists, locking `best_dist` at 0 and
+        // preventing every later probe from being accepted.
+        let mut best_score: f64 = f64::NAN;
+        let mut best_dist: f64 = f64::INFINITY;
+        let mut i: i64 = 0;
+        while i < n_samples {
+            // Uniform per-dim in `[lo, hi)` via the same `next_rand_u64`
+            // helper the `random_i64` builtin uses — keeps RNG semantics
+            // consistent across calls within one run.
+            let mut probe: Vec<Value> = Vec::with_capacity(n_dims);
+            let range = (hi as i128 - lo as i128) as u128;
+            for _ in 0..n_dims {
+                let v = lo + (next_rand_u64() as u128 % range.max(1)) as i64;
+                probe.push(Value::Int(v));
+            }
+            let score = match self.call_fn(f, probe)? {
+                Value::Int(n) => n as f64,
+                Value::Float(v) => v,
+                other => return panic(format!(
+                    "@[adaptive] fn `{}` must return a number, got {}",
+                    f.name,
+                    other.type_name()
+                )),
+            };
+            let d = (score - target).abs();
+            if d < best_dist {
+                best_dist = d;
+                best_score = score;
+                if best_dist <= f64::EPSILON {
+                    return Ok(best_score);
+                }
+            }
+            i += 1;
+        }
+        // If no probes ran (n_samples <= 0), fall back to "target" so the
+        // caller's contract ("return the best") still makes sense.
+        if best_score.is_nan() {
+            best_score = target;
+        }
+        Ok(best_score)
+    }
+
     fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
@@ -3213,6 +3293,19 @@ impl<'p> Interp<'p> {
                 let target = as_float(&args[1])?;
                 let max_evals = as_int(&args[2])?;
                 ok!(Value::Float(self.run_goal(&name, target, max_evals)?));
+            }
+
+            // Random-search strategy. Baseline against the hill-climb
+            // path; useful for multi-modal objectives where the
+            // gradient gets stuck in a local optimum.
+            "goal_run_random" => {
+                want(5)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                let n_samples = as_int(&args[2])?;
+                let lo = as_int(&args[3])?;
+                let hi = as_int(&args[4])?;
+                ok!(Value::Float(self.run_goal_random(&name, target, n_samples, lo, hi)?));
             }
 
             // Warm-start variant: seeds the optimizer at the best prior
