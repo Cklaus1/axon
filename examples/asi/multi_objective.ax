@@ -1,0 +1,89 @@
+// Axon ASI demo: multi-objective optimization with composable rewards.
+//
+// First demo that exercises `examples/stdlib/reward.ax`. The optimizer
+// trades off two competing metrics — model accuracy and inference cost —
+// using `reward_penalize` to combine them in normalized space instead
+// of inlining a magic-number score expression in the @[adaptive] body.
+//
+// The search space is one integer dim: `policy_id` selects which model
+// to use. Each policy has a known (accuracy, cost) pair pulled from a
+// fixed catalog — the kind of table real agent dispatchers consult.
+//
+//   axon run examples/asi/multi_objective.ax
+
+// ── Reward primitives (mirrors examples/stdlib/reward.ax) ──────────────────
+// Inlined here so the demo runs standalone; a future `use` syntax can
+// import the module directly.
+
+type Reward = { name: str, score: f64, max: f64 }
+
+fn reward_new(name: str, score: f64, max: f64) -> Reward {
+    Reward { name: name, score: score, max: max }
+}
+
+fn reward_unit(r: Reward) -> f64 {
+    if r.max == 0.0 { 0.0 } else { r.score / r.max }
+}
+
+fn reward_penalize(value: Reward, cost: Reward, cost_weight: f64) -> f64 {
+    reward_unit(value) - cost_weight * reward_unit(cost)
+}
+
+// ── Policy catalog ─────────────────────────────────────────────────────────
+// Five hypothetical model/prompt policies with measured accuracy (0..100)
+// and per-call cost in arbitrary units. Ordered worst-to-best on accuracy.
+
+fn policy_accuracy(p: i64) -> f64 {
+    let xs = [50.0, 65.0, 78.0, 88.0, 95.0]
+    if p < 0 || p > 4 { 0.0 } else { xs[p] }
+}
+
+fn policy_cost(p: i64) -> f64 {
+    let xs = [1.0, 3.0, 8.0, 25.0, 100.0]
+    if p < 0 || p > 4 { 1000.0 } else { xs[p] }
+}
+
+// ── Combined score: accuracy minus a weighted cost penalty ─────────────────
+// cost_weight = 0.3 means each unit of normalized cost shaves 30% off the
+// normalized accuracy. Higher weight → cheaper policies win; lower weight →
+// the most accurate wins. The "right" weight is a business call, not a
+// language one — the point of the reward module is keeping it explicit.
+
+@[adaptive]
+fn policy_score(policy_id: i64) -> i64 {
+    let acc = reward_new("accuracy", policy_accuracy(policy_id), 100.0)
+    let cost = reward_new("cost", policy_cost(policy_id), 100.0)
+    let blended = reward_penalize(acc, cost, 0.3)
+    // goal_run wants an integer score (i64 path); scale to 0..1000 so the
+    // halving cascade has resolution. Anything that scales monotonically
+    // with the unit-blended value works.
+    (blended * 1000.0) as i64
+}
+
+fn main() -> i64 {
+    let _ = goal_run("policy_score", 1000.0, 200)
+    let best_policy = goal_best_input("policy_score", 1000.0)
+
+    let acc = policy_accuracy(best_policy)
+    let cost = policy_cost(best_policy)
+    let names = ["nano", "small", "medium", "large", "xl"]
+    println("=== multi-objective policy search ===")
+    println("best policy: {names[best_policy]} (id={to_str(best_policy)})")
+    println("accuracy:    {to_str_f64(acc)} / 100")
+    println("cost:        {to_str_f64(cost)} units")
+
+    // Walk the whole catalog so the trade-off is visible.
+    println("--- full trade-off table ---")
+    for p in arr_range(0, 5) {
+        let a = reward_new("acc", policy_accuracy(p), 100.0)
+        let c = reward_new("cost", policy_cost(p), 100.0)
+        let s = reward_penalize(a, c, 0.3)
+        println("  {names[p]}: acc={to_str_f64(policy_accuracy(p))} cost={to_str_f64(policy_cost(p))} blended={to_str_f64(s)}")
+    }
+
+    // Exit 1 iff we picked "medium" (id=2) — the policy that wins at
+    // cost_weight=0.3 on this catalog (acc/100=0.78, cost penalty=0.024).
+    // Computed manually: nano=0.497, small=0.641, medium=0.756, large=0.805,
+    // xl=0.65. So `large` (id=3) actually wins under that weighting.
+    if best_policy == 3 { 1 } else { 0 }
+}

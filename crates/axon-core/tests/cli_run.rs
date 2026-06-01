@@ -896,6 +896,20 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn multi_objective_demo_picks_pareto_optimal_policy() {
+    // examples/asi/multi_objective.ax — first demo wiring the reward.ax
+    // algebra into a @[adaptive] fn. Trades accuracy vs cost across a
+    // five-policy catalog; at cost_weight=0.3 the Pareto sweet spot is
+    // `large` (id=3): blended score 0.805 beats `xl`'s 0.65 (xl wins on
+    // accuracy but pays a huge cost penalty).
+    let out = axon().args(["run", &ex("asi/multi_objective.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "should pick large: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("best policy: large (id=3)"), "stdout: {stdout}");
+    assert!(stdout.contains("large: acc=88 cost=25 blended=0.805"), "stdout: {stdout}");
+}
+
+#[test]
 fn reward_stdlib_module_tests_pass() {
     // examples/stdlib/reward.ax provides a composable metric algebra
     // (closes ROADMAP §9.5 F10 for the userland surface). 8 @[test]
