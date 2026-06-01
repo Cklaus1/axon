@@ -14,6 +14,14 @@
 **trait solver** (`normalize_projection_term` / `structurally_relate_tys` /
 `Generalizer::tys`) normalizing inkwell's deeply-generic associated types.
 
+> ⚠️ **READ THE ADDENDUM AT THE BOTTOM FIRST.** §4–§5 below proposed that
+> `#[inline(never)]` wrapping (Lever 2) would shrink mono-collection. **A timed
+> build measured after Lever 2 FALSIFIED that** — no reduction. The §5 lever
+> ranking is corrected in the addendum. The mono-collection *root cause* (§1–§3)
+> stands; only the proposed wrapping fix was wrong. Migration-to-axon-rt of the
+> `declare_builtins` core remains the only validated lever, and even it needs a
+> timed build to confirm, not the static proxies.
+
 ---
 
 ## 1. The evidence (three consistent live samples + the full stack)
@@ -161,3 +169,72 @@ deletes instantiation subtrees), and the already-shipped `#[inline(never)]`
 wrappers help more than their IR-line metric showed. The open question is purely
 empirical: how many more builtins must move before collection terminates — which
 `scripts/r1_build_measure.sh` charts per batch.
+
+---
+
+## ADDENDUM (2026-06-01, measured) — Lever 2 did NOT reduce the stall. The hypothesis was wrong.
+
+After completing **Lever 2** (all direct `self.ir.builder.build_*` calls → 0,
+across builtins/expr/asi/match_pat/mod/option_result) **plus** the 13-builtin
+migration (IR-builder calls 951→798), a **timed + gdb-instrumented** native
+build was run on the reference machine (32-core/124 GiB). Result:
+
+- **Still 0 objects emitted** (mono-collection never completed within 20 min) —
+  identical to pre-Lever-2.
+- **`collect_items_rec` recursion depth, sampled live: 1517 → 2822 → 3431 → 3877.**
+  This **fluctuates in the SAME band as the pre-Lever-2 ~3,380** — i.e. the depth
+  is an instantaneous walk position, not a progress metric, and shows **no
+  measurable reduction**.
+
+### Why Lever 2 didn't help (the corrected mechanism)
+
+A deeper live sample showed the hot work is **`normalize_erasing_regions` /
+`try_normalize_generic_arg_after_erasing_regions` / `normalize_projection_term`**
+— per-item *type-argument normalization* that mono-collection runs on **every
+collected monomorphized item**. The earlier hypothesis — "wrapping a generic
+inkwell call collapses N instantiations to 1" — is **insufficient** because:
+
+- A `#[inline(never)]` wrapper is itself a **monomorphized item that still gets
+  collected**, and its body still *calls* the generic inkwell methods, so the
+  projection-normalization of inkwell's associated return types **still happens
+  inside the wrapper**. Wrapping moved *where* the instantiation lives; it did
+  **not remove it** from the collection graph.
+- The `cargo-llvm-lines`-style "instantiation count" (distinct `w_*` symbols) is
+  the wrong proxy. The collection cost is driven by the count of **distinct
+  monomorphized items reachable from the crate's roots and the cost of
+  normalizing each item's generic args** — which wrapping leaves essentially
+  unchanged because the same inkwell generic instantiations are still reachable.
+
+So the corrected verdict: **the direct-call-count / IR-builder-call metrics in
+`scripts/r1_build_measure.sh` are NOT valid proxies for mono-collection time.**
+They track call sites, not the reachable-monomorphized-item set. Lever 2 was a
+reasonable hypothesis from the stack trace, but the measurement falsifies it.
+
+### What this means for the levers (honest re-ranking)
+
+1. **Migration to axon-rt is STILL the only mechanism that actually removes
+   items** — an `extern "C" fn(name, None)` declaration is non-generic and has
+   **no generic args to normalize and no inkwell-typed body to collect**. Each
+   migrated builtin genuinely deletes its subtree from the collection graph.
+   But 13 builtins (~16% of IR calls) was **not enough** to move the needle —
+   the giant `declare_builtins` core (~649 inline inkwell calls, still present)
+   dominates the reachable set. **The migration must reach that core to matter.**
+2. **Wrapping (Lever 2) is NOT a mono-collection lever** — falsified here. It
+   may still help LLVM-IR *size* marginally (the original prototype's measured
+   effect) but does nothing for the collection stall. Do not pursue more wrapping
+   as a build-time fix.
+3. **The real lever may be upstream of all this:** reduce the *number of distinct
+   inkwell generic instantiations reachable at all* — i.e. migrate enough of
+   `declare_builtins` that the remaining inkwell surface is small, OR investigate
+   `-Zshare-generics` / a non-generic facade over inkwell that is collected once.
+   This needs its own measured experiment; do not assume.
+
+### Methodological lesson (logged honestly)
+
+The IR-builder-call % and direct-call % were presented as "the machine-
+independent progress signal." **The measurement shows they are not.** They are
+easy to compute and they trend with effort, but they do not predict mono-
+collection time. The ONLY validated signal is the timed build itself (objects
+emitted / build finishes). Future R1 work must gate on a real timed build on the
+reference machine, not on the static proxies. `scripts/r1_build_measure.sh`'s
+`metrics` phase should be read as "work done," not "stall reduced."
