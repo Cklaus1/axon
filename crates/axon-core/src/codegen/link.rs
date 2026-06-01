@@ -133,7 +133,15 @@ pub(super) fn emit_object_and_link(
             .map_err(|_| "no C compiler found (tried cc, clang, gcc)".to_string())?
     };
 
-    let mut link_args: Vec<&str> = vec![&obj_path, "-o", output_path, "-lpthread"];
+    // `-no-pie`: our emitted object uses non-PIC relocations (R_X86_64_32S),
+    // so the default PIE link fails ("can not be used when making a PIE
+    // object"). Link non-PIE. (R1: surfaced once the native build actually
+    // produced objects — see BUILD_RESOLVED.md.)
+    // `-no-pie`: our emitted object uses non-PIC relocations (R_X86_64_32S),
+    // so the default PIE link fails. `-lm`: axon-rt's math builtins
+    // (`__axon_pow` etc.) reference libm. (R1: both surfaced once the native
+    // build actually produced objects — see BUILD_RESOLVED.md.)
+    let mut link_args: Vec<&str> = vec![&obj_path, "-o", output_path, "-lpthread", "-no-pie", "-lm"];
     if let Some(ref lib) = rt_lib {
         link_args.push(lib.as_str());
     }
