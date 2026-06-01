@@ -124,17 +124,15 @@ ok!(Value::Str(s.get(start..end).unwrap_or("").to_string()));
 ok!(Value::Str(as_str(&args[0])?.replace(as_str(&args[1])?, as_str(&args[2])?)));
 ```
 - `String::replace` semantics: replaces all non-overlapping occurrences of `from` with `to`.
-- `from == ""` → Rust `replace` with empty pattern is a special case: it inserts `to` between every byte and at the beginning/end. The interpreter uses Rust's `str::replace("", to)` which interleaves `to` before every char and at boundaries. The codegen inline block (line 3228) handles this with `from_empty` guard: if `from_len == 0`, it skips the count loop and jumps directly to build — effectively copying `s` unchanged (no `from` found → no replacement). **There is a divergence here:** the interpreter's `s.replace("")` and the codegen's `strstr`-loop with `from_empty` guard produce different results for empty `from`. **This divergence already exists in the inline-IR version** — the spec holds behavior constant. The migrated extern must match the **codegen inline-IR behavior** (skip replacement when `from` is empty), which itself is what the native build currently does. The interpreter parity test (§8) must verify against the **native codegen output** for this edge case.
+- `from == ""` → **the migrated extern matches the INTERPRETER** (`s.replace("", to)`, which interleaves `to` before every char and at boundaries). Codegen's inline block (line 3228) instead *skips* replacement on empty `from` — that is the bug; per **I-2 the interpreter is canonical** and codegen's divergent body is **fixed-by-deletion** in the migration (see §12 Q3, RESOLVED). The port is simply `src.replace(from, to)` for all cases. The existing fixtures only use non-empty `from`, where both engines already agree, so no test changes.
 - Memory: `malloc(result_len + 1)` bytes; caller owns buffer.
 
 **`str_reverse(s)`** — interp.rs:3360-3362:
 ```rust
 ok!(Value::Str(as_str(&args[0])?.chars().rev().collect()));
 ```
-- **IMPORTANT:** The interpreter reverses **characters** (Unicode scalar values), not bytes. `s.chars().rev().collect()` operates on `char` boundaries.
-- The codegen inline block (line 1720-1769) reverses **bytes**: `buf[i] = s_ptr[s_len - 1 - i]` for each byte position. This is a byte-by-byte reversal, character-aware reversal produces a different result for multi-byte UTF-8.
-- **This divergence already exists** — the spec holds behavior constant. The migrated extern must match the **codegen inline-IR behavior** (byte reversal), not the interpreter's character reversal. A parity test must confirm the codegen byte-reversal output is what the native build produces.
-- Memory: `malloc(s.len() + 1)` bytes; caller owns buffer.
+- **The migrated extern matches the INTERPRETER: character reversal** (`s.chars().rev().collect()`, valid UTF-8). Codegen's inline block (line 1720-1769) reverses **bytes** (`buf[i] = s_ptr[s_len-1-i]`), which mangles multibyte UTF-8 into invalid bytes — that is the bug. Per **I-2 the interpreter is canonical**; codegen's byte-reverse is **fixed-by-deletion** in the migration (see §12 Q2, RESOLVED). Existing fixtures use ASCII only (`hello`→`olleh`) where byte==char reverse, so no test changes.
+- Memory: `malloc` the char-reversed string's byte length + 1; caller owns buffer.
 
 **Behavior table:**
 
@@ -142,8 +140,8 @@ ok!(Value::Str(as_str(&args[0])?.chars().rev().collect()));
 |---|---|---|---|---|---|
 | `str_repeat` | `str, i64` | `s.repeat(n.max(0))` | yes, `n*s.len()+1` | yes (no GC) | `n<0` → clamped to 0, no error |
 | `str_slice` | `str, i64, i64` | `s.get(clamped_start..clamped_end) \|\| ""` | yes, `(end-start)+1` | yes (no GC) | out-of-range → empty str (not error) |
-| `str_replace` | `str, str, str` | all `from` replaced with `to` | yes, result_len+1 | yes (no GC) | `from==""` → copy s unchanged |
-| `str_reverse` | `str` | byte-reversed buffer | yes, `s.len()+1` | yes (no GC) | none |
+| `str_replace` | `str, str, str` | `s.replace(from, to)` (interp semantics, incl. empty `from`) | yes, result_len+1 | yes (no GC) | `from==""` → Rust interleave, no error |
+| `str_reverse` | `str` | char-reversed string (interp semantics) | yes, `s.len()+1` | yes (no GC) | none |
 
 #### 4.2 Memory ownership
 
@@ -255,8 +253,10 @@ The net IR cost reduction per builtin is **strongly positive**: ~100–150 IR bl
 
 **Q1 (confirmed — the by-value struct return ABI cannot be proven safe without the native build):** Option A (by-value `repr(C)` AxonStr return) would require that Rust's LLVM codegen's `{i64, *const u8}` struct return convention matches LLVM's `struct { i64, i8* }` return convention **exactly** — in registers (System V AMD64: `rax:rdx`; aarch64: `x0:x1`). Rust's LLVM backend does this on x86-64 and aarch64 Linux, but: (a) the existing codegen type is `struct_type(&[i64_ty, i8_ptr], false)` — **not** `struct_type(&[i64_ty, i8_ptr], true)` (packed), and Rust `repr(C)` struct layout matches this on the targets, but (b) **there is zero axon-rt precedent for by-value struct returns**. All 14 existing str-return externs use out-params precisely because this was unknown. The 38 already-extern builtins confirm the out-param path is safe. **Choose Option B (out-params) because its ABI is proven by 14 existing externs, accepting the small call-site glue cost rather than betting the first str-return migration on an unproven by-value struct return.**
 
-**Q2 (str_reverse byte-vs-char divergence):** The interpreter reverses characters (Unicode scalar values); the codegen inline block reverses bytes. The migrated extern must match codegen output (byte reversal) to preserve native-build behavior. The interp↔codegen drift is a known issue (#33/#36/#37 class) — this spec documents it but does not fix it. A follow-up spec should decide: which is correct, and should the fix go to interp or codegen?
+**Q2 (str_reverse byte-vs-char divergence) — RESOLVED 2026-06-01.** The interpreter reverses characters (`chars().rev()`, valid-UTF-8); the codegen inline block reverses bytes (mangles multibyte UTF-8 into invalid bytes). **Per I-2 the interpreter IS the reference and codegen is the bug.** This spec's original tentative note ("the migrated extern must match codegen") was backwards — it would preserve a bug to avoid changing native output, but native output for multibyte `str_reverse` is *wrong* (produces invalid UTF-8). **Resolution: the migrated `__axon_str_reverse` matches the INTERPRETER (`s.chars().rev().collect()`), and codegen's byte-reverse divergence is fixed-by-deletion — its wrong inline body is removed in the migration.** Verified safe: `str_reverse("héllo")` = `olléh` in the interpreter; all existing fixtures (`phase38_string_processing.ax`) use ASCII only (`hello`→`olleh`), where byte==char reverse, so no existing test changes. This is exactly the interp↔codegen drift-collapse the parent R1 spec (§4.5, findings #33/#36/#37) cites as a *benefit* of migration: two implementations → one.
 
-**Q3 (empty `from` in `str_replace`):** The codegen inline block (line 3228) skips replacement when `from` is empty (via `from_empty` guard jumping to build phase). The interpreter uses Rust's `str::replace("", to)` which interleaves `to` between every character. The migrated extern must match codegen behavior (skip replacement). This divergence is documented but not fixed — a follow-up spec should resolve which semantics are correct.
+**Q3 (empty `from` in `str_replace`) — RESOLVED 2026-06-01.** The interpreter uses Rust `str::replace`, which for empty `from` interleaves `to` (`str_replace("abc","","X")` = `XaXbXcX`); the codegen inline block skips replacement (`from_empty` guard → copies `s`). **Per I-2 the interpreter is canonical.** **Resolution: `__axon_str_replace` matches the INTERPRETER (`s.replace(from, to)` verbatim — Rust's semantics for all cases including empty `from`); codegen's skip-on-empty divergence is fixed-by-deletion.** Verified safe: existing fixtures (`phase48_string_builder.ax`) use only non-empty `from` (`"world"`→`"axon"`, missing-substring→unchanged), where both engines already agree, so no existing test changes. The empty-`from` edge is currently untested in either engine; adopting Rust's well-defined behavior is the least-surprising canonical choice.
+
+**Drift-resolution principle (applies to both):** when a builtin is migrated and the interpreter and codegen disagreed, the interpreter's semantics win (I-2), the port matches the interpreter, and codegen's divergent inline body is *deleted* (not preserved) — so the migration *resolves* the drift rather than freezing it. This reverses the spec's earlier "match codegen" instinct, which was wrong under I-2.
 
 **Q4 (malloc ownership):** The caller owns returned buffers. There is no mechanism in Axon Phase 1–10 to free these (no `free` builtin for heap strings). This is a pre-existing condition, not introduced by migration. A future spec should address string lifetime management.
