@@ -540,6 +540,54 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
 
 // ── trace ─────────────────────────────────────────────────────────────────────
 
+/// Classify a score trajectory as `"improving"`, `"regressing"`, or `"flat"`.
+///
+/// BUG_HUNT #18: comparing only first-vs-last mislabels a noisy run that peaks
+/// then collapses (e.g. `[10, 50, 30, 5, 12]` — last 12 > first 10 reads
+/// "improving" even though the search ended near its worst). Instead we fit a
+/// least-squares line through the whole series and label by the sign of its
+/// slope, so the trend reflects the trajectory, not its endpoints.
+///
+/// The slope's magnitude is normalized against the score spread so the
+/// improving/regressing verdict is scale-invariant; a slope under 1e-9 of the
+/// spread (or a zero spread) is `"flat"`.
+fn trend_label(scores: &[f64]) -> &'static str {
+    let n = scores.len();
+    if n < 2 {
+        return "flat";
+    }
+    // Least-squares slope of score against its index 0..n.
+    let n_f = n as f64;
+    let mean_x = (n_f - 1.0) / 2.0;
+    let mean_y = scores.iter().sum::<f64>() / n_f;
+    let mut num = 0.0; // Σ (x-mean_x)(y-mean_y)
+    let mut den = 0.0; // Σ (x-mean_x)²
+    for (i, &y) in scores.iter().enumerate() {
+        let dx = i as f64 - mean_x;
+        num += dx * (y - mean_y);
+        den += dx * dx;
+    }
+    if den == 0.0 {
+        return "flat";
+    }
+    let slope = num / den;
+    // Scale-invariant dead-zone: ignore slopes negligible vs the score spread.
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for &y in scores {
+        lo = lo.min(y);
+        hi = hi.max(y);
+    }
+    let spread = hi - lo;
+    if spread == 0.0 || slope.abs() < spread * 1e-9 {
+        return "flat";
+    }
+    if slope > 0.0 {
+        "improving"
+    } else {
+        "regressing"
+    }
+}
+
 /// Per-fn score-trajectory summary computed from the provenance log.
 struct TraceStat {
     func: String,
@@ -593,10 +641,12 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
                 best_input: best.input,
                 first: g.first().unwrap().score,
                 last: g.last().unwrap().score,
-                trend: match g.last().unwrap().score.partial_cmp(&g.first().unwrap().score) {
-                    Some(std::cmp::Ordering::Greater) => "improving",
-                    Some(std::cmp::Ordering::Less) => "regressing",
-                    _ => "flat",
+                // Trend reflects the whole trajectory (least-squares slope), not
+                // just first-vs-last, so a peaked-then-collapsed run isn't
+                // mislabeled "improving" (BUG_HUNT #18).
+                trend: {
+                    let series: Vec<f64> = g.iter().map(|r| r.score).collect();
+                    trend_label(&series)
                 },
             }
         })
@@ -1255,5 +1305,65 @@ fn validate_ax_extension(file: &Path) {
         let filename = file.display();
         eprintln!("error: Axon source files must have a .ax extension (got '{filename}')");
         process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // BUG_HUNT #18: the headline regression — a run that climbs to a peak then
+    // collapses ends ABOVE where it started, so first-vs-last reads "improving"
+    // even though the optimizer ended near its worst. Trajectory-aware slope
+    // must not call this improving.
+    #[test]
+    fn peaked_then_collapsed_is_not_improving() {
+        let scores = [10.0, 50.0, 30.0, 5.0, 12.0];
+        assert_ne!(trend_label(&scores), "improving");
+        // Downward overall slope ⇒ regressing.
+        assert_eq!(trend_label(&scores), "regressing");
+    }
+
+    #[test]
+    fn monotonic_climb_is_improving() {
+        assert_eq!(trend_label(&[1.0, 2.0, 3.0, 4.0]), "improving");
+    }
+
+    #[test]
+    fn monotonic_decline_is_regressing() {
+        assert_eq!(trend_label(&[4.0, 3.0, 2.0, 1.0]), "regressing");
+    }
+
+    #[test]
+    fn constant_series_is_flat() {
+        assert_eq!(trend_label(&[7.0, 7.0, 7.0]), "flat");
+    }
+
+    #[test]
+    fn dip_then_recover_above_start_is_improving() {
+        // Ends well above start with an upward overall slope despite a mid dip.
+        assert_eq!(trend_label(&[10.0, 2.0, 20.0, 30.0]), "improving");
+    }
+
+    #[test]
+    fn single_and_empty_series_are_flat() {
+        assert_eq!(trend_label(&[]), "flat");
+        assert_eq!(trend_label(&[42.0]), "flat");
+    }
+
+    #[test]
+    fn noisy_but_net_upward_is_improving() {
+        // Endpoints alone are ambiguous (first 5, last 6) but the line clearly rises.
+        assert_eq!(trend_label(&[5.0, 1.0, 8.0, 3.0, 9.0, 6.0]), "improving");
+    }
+
+    #[test]
+    fn improvement_with_equal_endpoints_is_not_flat_by_endpoints() {
+        // first == last (both 10) would read "flat" under partial_cmp, but the
+        // peak in the middle makes the least-squares line non-trivial. A
+        // symmetric rise-and-fall nets to flat — assert we don't crash and the
+        // verdict is deterministic.
+        let v = trend_label(&[10.0, 20.0, 10.0]);
+        assert_eq!(v, "flat");
     }
 }
