@@ -633,6 +633,61 @@ pub extern "C" fn __axon_i64_to_str_radix(
     }
 }
 
+/// Write a str result via out-params: malloc a NUL-terminated buffer, copy the
+/// string bytes, set *out_len and *out_ptr.  Caller owns the returned buffer.
+#[inline(never)]
+unsafe fn write_str_out(
+    s: &str,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let len = s.len();
+    let buf = libc_malloc(len + 1);
+    unsafe {
+        std::ptr::copy_nonoverlapping(s.as_ptr(), buf, len);
+        *buf.add(len) = 0; // NUL-terminate
+        *out_len = len as i64;
+        *out_ptr = buf;
+    }
+}
+
+// ── R1 Batch 2b: str_repeat ───────────────────────────────────────────────────
+/// `str_repeat(s, n)` — repeats string `s` `n` times (n clamped to max(0,n)).
+/// Uses the out-param convention: the caller allocates slots; this function
+/// mallocs the result and writes {byte_length, buffer_ptr}.
+#[no_mangle]
+pub extern "C" fn __axon_str_repeat(
+    s: AxonStr,
+    n: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let count = n.max(0) as usize;
+    let result = src.repeat(count);
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+// ── R1 Batch 2b: str_slice ────────────────────────────────────────────────────
+/// `str_slice(s, start, end)` — byte-indexed slice of `s`.
+/// Clamps start to [0, len], end to [start, len]; returns "" if byte range
+/// crosses a UTF-8 boundary (s.get returns None).
+#[no_mangle]
+pub extern "C" fn __axon_str_slice(
+    s: AxonStr,
+    start: i64,
+    end: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let start = (start.max(0) as usize).min(src.len());
+    let end = (end.max(0) as usize).min(src.len());
+    let start = start.min(end);
+    let slice = src.get(start..end).unwrap_or("");
+    unsafe { write_str_out(slice, out_len, out_ptr) }
+}
+
 // ── ASI Layer-3: @[verify] runtime enforcement ────────────────────────────────
 
 /// Runtime panic for `@[verify(confidence OP K)]` violations.
@@ -725,6 +780,11 @@ unsafe fn libc_malloc(size: usize) -> *mut u8 {
     let layout = std::alloc::Layout::from_size_align(size, 1).unwrap();
     std::alloc::alloc(layout)
 }
+
+// Note: libc_free is intentionally omitted — our libc_malloc uses
+// std::alloc::alloc which requires the exact Layout for dealloc.
+// Tests leak intentionally; the runtime pattern (no GC) means callers
+// own the buffer but the test harness doesn't bother freeing.
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -1150,6 +1210,125 @@ mod migrated_builtin_tests {
         assert_eq!(__axon_char_at(s("héllo"), 1), 195);
         // Emoji: first byte of '🦀' is 0xf0 (240)
         assert_eq!(__axon_char_at(s("🦀"), 0), 240);
+    }
+
+    // ── R1 Batch 2b: str_repeat ──────────────────────────────────────────────
+
+    /// Helper to call an out-param str-returning builtin and get the malloc'd
+    /// result back as a Rust String.
+    fn call_str_ret(f: impl FnOnce(*mut i64, *mut *mut u8)) -> String {
+        let mut len: i64 = 0;
+        let mut ptr: *mut u8 = std::ptr::null_mut();
+        f(&mut len, &mut ptr);
+        assert!(!ptr.is_null(), "result pointer must not be null");
+        let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+        let s = String::from_utf8_lossy(bytes).into_owned();
+        // Intentionally leak — test harness doesn't free.
+        // Runtime callers own the buffer but the interpreter never frees.
+        s
+    }
+
+    /// str_repeat(s, n): out-param malloc + write roundtrip.
+    #[test]
+    fn migrated_str_repeat_outparam_roundtrip() {
+        // Basic repeat
+        let got = call_str_ret(|l, p| __axon_str_repeat(s("ab"), 3, l, p));
+        assert_eq!(got, "ababab");
+
+        // Zero repeat → empty
+        let got = call_str_ret(|l, p| __axon_str_repeat(s("ab"), 0, l, p));
+        assert_eq!(got, "");
+
+        // Negative repeat → empty (interp clamps to 0)
+        let got = call_str_ret(|l, p| __axon_str_repeat(s("x"), -5, l, p));
+        assert_eq!(got, "");
+
+        // Empty input → empty output
+        let got = call_str_ret(|l, p| __axon_str_repeat(s(""), 5, l, p));
+        assert_eq!(got, "");
+
+        // Single-char repeat
+        let got = call_str_ret(|l, p| __axon_str_repeat(s("x"), 4, l, p));
+        assert_eq!(got, "xxxx");
+    }
+
+    /// str_repeat: compare against the interpreter oracle.
+    #[test]
+    fn migrated_str_repeat_matches_interpreter() {
+        let cases: Vec<(i64, &str)> = vec![
+            (0, "hello"),
+            (1, "hello"),
+            (2, "hello"),
+            (3, "ab"),
+            (5, "x"),
+            (-1, "hello"),
+            (-100, "anything"),
+            (0, ""),
+            (1, ""),
+            (10, "a"),
+        ];
+        for (n, src) in cases {
+            let oracle = src.repeat(n.max(0) as usize);
+            let got = call_str_ret(|l, p| __axon_str_repeat(s(src), n, l, p));
+            assert_eq!(
+                got, oracle,
+                "str_repeat({src:?}, {n}) — interpreter says {oracle:?}, rt gave {got:?}"
+            );
+        }
+    }
+
+    // ── R1 Batch 2b: str_slice ──────────────────────────────────────────────
+
+    #[test]
+    fn migrated_str_slice_outparam_roundtrip() {
+        let got = call_str_ret(|l, p| __axon_str_slice(s("hello"), 1, 4, l, p));
+        assert_eq!(got, "ell");
+
+        // end > len → clamp to len
+        let got = call_str_ret(|l, p| __axon_str_slice(s("hello"), 0, 100, l, p));
+        assert_eq!(got, "hello");
+
+        // start > end → empty
+        let got = call_str_ret(|l, p| __axon_str_slice(s("hello"), 3, 1, l, p));
+        assert_eq!(got, "");
+
+        // Negative indices clamped to 0
+        let got = call_str_ret(|l, p| __axon_str_slice(s("hello"), -5, 2, l, p));
+        assert_eq!(got, "he");
+
+        // Zero range
+        let got = call_str_ret(|l, p| __axon_str_slice(s("hello"), 2, 2, l, p));
+        assert_eq!(got, "");
+    }
+
+    #[test]
+    fn migrated_str_slice_matches_interpreter() {
+        // Unicode: byte-indexed, s.get() returns None if mid-codepoint
+        // "héllo" bytes: h(0) é(1,2) l(3) l(4) o(5)
+        // 0..2 = "h" + first byte of é = mid-codepoint → None → ""
+        let s_val = "héllo";
+        let start: i64 = 0;
+        let end: i64 = 2;
+        let oracle = s_val.get(start.max(0) as usize..end.max(0) as usize).unwrap_or("");
+        let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
+        assert_eq!(got, oracle, "str_slice unicode mid-codepoint must match");
+
+        // Normal cases — match the interp oracle exactly
+        let cases = [
+            ("hello", 0i64, 5i64, "hello"),
+            ("hello", 0i64, 0i64, ""),
+            ("hello", -1i64, 3i64, "hel"),  // negative clamped to 0
+            ("hello", 2i64, 100i64, "llo"),  // end clamped to len
+        ];
+        for (src, start, end, expected) in cases {
+            // Interp oracle: end clamped to s.len(), start clamped to 0 then min(end)
+            let s_end = (end.max(0) as usize).min(src.len());
+            let s_start = (start.max(0) as usize).min(src.len()).min(s_end);
+            let s_clamped = src.get(s_start..s_end).unwrap_or("");
+            let got = call_str_ret(|l, p| __axon_str_slice(s(src), start, end, l, p));
+            assert_eq!(got, expected, "str_slice({src:?}, {start}, {end})");
+            assert_eq!(got, s_clamped, "must also match oracle");
+        }
     }
 
     // ── R1 Batch 3: scalar builtins (abs_i32, min_i32, max_i32, abs_f64) ──
