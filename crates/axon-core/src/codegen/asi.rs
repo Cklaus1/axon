@@ -23,6 +23,8 @@ use inkwell::FloatPredicate;
 use crate::ast;
 use crate::types::Type;
 
+use super::build_wrappers;
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
     /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
@@ -38,16 +40,17 @@ impl<'ctx> super::Codegen<'ctx> {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
-        let name_g = self.ir.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
-        let evt_g  = self.ir.builder.build_global_string_ptr(event,   "prov_event").unwrap();
+        let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, fn_name, "prov_fn_name");
+        let evt_g  = build_wrappers::w_global_string_ptr(&self.ir.builder, event,   "prov_event");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
         let evt_len  = i64_ty.const_int(event.len()    as u64, false);
-        let _ = self.ir.builder.build_call(
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
             prov_fn,
             &[
-                name_g.as_pointer_value().into(),
+                name_g.into(),
                 name_len.into(),
-                evt_g.as_pointer_value().into(),
+                evt_g.into(),
                 evt_len.into(),
             ],
             "",
@@ -67,15 +70,16 @@ impl<'ctx> super::Codegen<'ctx> {
         }
         let i64_ty = self.ir.context.i64_type();
         let f64_ty = self.ir.context.f64_type();
-        let name_g = self.ir.builder.build_global_string_ptr(fn_name, "prov_fn_name").unwrap();
+        let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, fn_name, "prov_fn_name");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
 
         match ret_val {
             BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
                 if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_i64") {
-                    let _ = self.ir.builder.build_call(
+                    let _ = build_wrappers::w_call(
+                        &self.ir.builder,
                         rt,
-                        &[name_g.as_pointer_value().into(), name_len.into(), iv.into()],
+                        &[name_g.into(), name_len.into(), iv.into()],
                         "",
                     );
                     return;
@@ -83,9 +87,10 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => {
                 if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_f64") {
-                    let _ = self.ir.builder.build_call(
+                    let _ = build_wrappers::w_call(
+                        &self.ir.builder,
                         rt,
-                        &[name_g.as_pointer_value().into(), name_len.into(), fv.into()],
+                        &[name_g.into(), name_len.into(), fv.into()],
                         "",
                     );
                     return;
@@ -171,10 +176,7 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let f64_ty = self.ir.context.f64_type();
         // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
-        let conf_ev = match self.ir.builder.build_extract_value(struct_val, 1, "verify_conf") {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        let conf_ev = build_wrappers::w_extract_value(&self.ir.builder, struct_val, 1, "verify_conf");
         // Sanity: must be an f64.  If the struct shape is unexpected, bail.
         let actual = match conf_ev {
             BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
@@ -195,38 +197,36 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         let bound_const = f64_ty.const_float(bound);
-        let cmp = match self.ir.builder.build_float_compare(pred, actual, bound_const, "verify_cmp") {
-            Ok(v) => v,
-            Err(_) => return,
-        };
+        let cmp = build_wrappers::w_float_compare(&self.ir.builder, pred, actual, bound_const, "verify_cmp");
 
         // Build branch: cmp ? continue : panic.  We append two blocks to the
         // current function and route the *current* block into them.
         let panic_bb = self.ir.context.append_basic_block(llvm_fn, "verify_panic");
         let cont_bb  = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
 
-        let _ = self.ir.builder.build_conditional_branch(cmp, cont_bb, panic_bb);
+        let _ = build_wrappers::w_cond_br(&self.ir.builder, cmp, cont_bb, panic_bb);
 
         // ── Panic path ────────────────────────────────────────────────────
         self.ir.builder.position_at_end(panic_bb);
         let i64_ty = self.ir.context.i64_type();
-        let name_g = self.ir.builder.build_global_string_ptr(&fn_name, "verify_fn_name").unwrap();
-        let op_g   = self.ir.builder.build_global_string_ptr(op_str,   "verify_op").unwrap();
+        let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "verify_fn_name");
+        let op_g   = build_wrappers::w_global_string_ptr(&self.ir.builder, op_str,   "verify_op");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
         let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
-        let _ = self.ir.builder.build_call(
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
             panic_fn,
             &[
-                name_g.as_pointer_value().into(),
+                name_g.into(),
                 name_len.into(),
-                op_g.as_pointer_value().into(),
+                op_g.into(),
                 op_len.into(),
                 bound_const.into(),
                 actual.into(),
             ],
             "",
         );
-        let _ = self.ir.builder.build_unreachable();
+        let _ = build_wrappers::w_unreachable(&self.ir.builder);
 
         // ── Continue path: original return falls through here. ────────────
         self.ir.builder.position_at_end(cont_bb);
@@ -257,10 +257,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(f) => f,
                 None => continue,
             };
-            let name_g = self.ir
-                .builder
-                .build_global_string_ptr(name, "adapt_reg_name")
-                .unwrap();
+            let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, name, "adapt_reg_name");
             let name_len = i64_ty.const_int(name.len() as u64, false);
             // Cast the user fn's pointer to i8* for the C ABI.
             let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
@@ -268,10 +265,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 .builder
                 .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
                 .unwrap();
-            let _ = self.ir.builder.build_call(
+            let _ = build_wrappers::w_call(
+                &self.ir.builder,
                 reg_fn,
                 &[
-                    name_g.as_pointer_value().into(),
+                    name_g.into(),
                     name_len.into(),
                     cast_ptr.into(),
                 ],

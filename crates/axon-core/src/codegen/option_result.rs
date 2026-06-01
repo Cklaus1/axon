@@ -14,6 +14,8 @@ use inkwell::AddressSpace;
 
 use crate::types::Type;
 
+use super::build_wrappers;
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Option emission ────────────────────────────────────────────────────────
 
@@ -31,20 +33,12 @@ impl<'ctx> super::Codegen<'ctx> {
                     &[tag_ty.into(), llvm_inner],
                     false,
                 );
-                let alloca = self.ir.builder.build_alloca(opt_ty, "some").unwrap();
-                let tag_ptr = self.ir
-                    .builder
-                    .build_struct_gep(opt_ty, alloca, 0, "tagptr")
-                    .unwrap();
-                let val_ptr = self.ir
-                    .builder
-                    .build_struct_gep(opt_ty, alloca, 1, "valptr")
-                    .unwrap();
-                self.ir.builder
-                    .build_store(tag_ptr, tag_ty.const_int(1, false))
-                    .unwrap();
-                self.ir.builder.build_store(val_ptr, val).unwrap();
-                self.ir.builder.build_load(opt_ty, alloca, "someval").unwrap()
+                let alloca = build_wrappers::w_alloca(&self.ir.builder, opt_ty.into(), "some");
+                let tag_ptr = build_wrappers::w_struct_gep(&self.ir.builder, opt_ty.into(), alloca, 0, "tagptr");
+                let val_ptr = build_wrappers::w_struct_gep(&self.ir.builder, opt_ty.into(), alloca, 1, "valptr");
+                build_wrappers::w_store(&self.ir.builder, tag_ptr, tag_ty.const_int(1, false).into());
+                build_wrappers::w_store(&self.ir.builder, val_ptr, val);
+                build_wrappers::w_load(&self.ir.builder, opt_ty.into(), alloca, "someval")
             }
             None => {
                 // None: if we have a known inner type, build { false, undef }
@@ -54,15 +48,10 @@ impl<'ctx> super::Codegen<'ctx> {
                         &[tag_ty.into(), inner_llvm_ty],
                         false,
                     );
-                    let alloca = self.ir.builder.build_alloca(opt_ty, "none").unwrap();
-                    let tag_ptr = self.ir
-                        .builder
-                        .build_struct_gep(opt_ty, alloca, 0, "tagptr")
-                        .unwrap();
-                    self.ir.builder
-                        .build_store(tag_ptr, tag_ty.const_zero())
-                        .unwrap();
-                    self.ir.builder.build_load(opt_ty, alloca, "noneval").unwrap()
+                    let alloca = build_wrappers::w_alloca(&self.ir.builder, opt_ty.into(), "none");
+                    let tag_ptr = build_wrappers::w_struct_gep(&self.ir.builder, opt_ty.into(), alloca, 0, "tagptr");
+                    build_wrappers::w_store(&self.ir.builder, tag_ptr, tag_ty.const_zero().into());
+                    build_wrappers::w_load(&self.ir.builder, opt_ty.into(), alloca, "noneval")
                 } else {
                     // Unit inner: None is just `false`.
                     tag_ty.const_zero().into()
@@ -93,40 +82,30 @@ impl<'ctx> super::Codegen<'ctx> {
                 &[tag_ty.into(), payload_arr_ty.into()], false,
             );
 
-            let alloca = self.ir.builder.build_alloca(result_ty, "result").unwrap();
-            let tag_ptr = self.ir.builder
-                .build_struct_gep(result_ty, alloca, 0, "tagptr")
-                .unwrap();
-            let pay_ptr = self.ir.builder
-                .build_struct_gep(result_ty, alloca, 1, "payptr")
-                .unwrap();
+            let alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "result");
+            let tag_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), alloca, 0, "tagptr");
+            let pay_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), alloca, 1, "payptr");
 
-            self.ir.builder.build_store(tag_ptr, tag_val).unwrap();
+            build_wrappers::w_store(&self.ir.builder, tag_ptr, tag_val.into());
             // Cast the payload pointer to the value's typed pointer before storing,
             // so the store type matches the pointer's element type.
             let val_ptr_ty = val.get_type().ptr_type(inkwell::AddressSpace::default());
-            let typed_pay_ptr = self.ir.builder
-                .build_pointer_cast(pay_ptr, val_ptr_ty, "pay_typed")
-                .unwrap();
-            self.ir.builder.build_store(typed_pay_ptr, val).unwrap();
+            let typed_pay_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, pay_ptr, val_ptr_ty, "pay_typed");
+            build_wrappers::w_store(&self.ir.builder, typed_pay_ptr, val);
 
-            self.ir.builder.build_load(result_ty, alloca, "resultval").unwrap()
+            build_wrappers::w_load(&self.ir.builder, result_ty.into(), alloca, "resultval")
         } else {
             // Fallback: simple { i1, T } when no type info is available.
             let payload_ty = val.get_type();
             let result_ty = self.ir.context.struct_type(
                 &[tag_ty.into(), payload_ty], false,
             );
-            let alloca = self.ir.builder.build_alloca(result_ty, "result").unwrap();
-            let tag_ptr = self.ir.builder
-                .build_struct_gep(result_ty, alloca, 0, "tagptr")
-                .unwrap();
-            let val_ptr = self.ir.builder
-                .build_struct_gep(result_ty, alloca, 1, "valptr")
-                .unwrap();
-            self.ir.builder.build_store(tag_ptr, tag_val).unwrap();
-            self.ir.builder.build_store(val_ptr, val).unwrap();
-            self.ir.builder.build_load(result_ty, alloca, "resultval").unwrap()
+            let alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "result");
+            let tag_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), alloca, 0, "tagptr");
+            let val_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), alloca, 1, "valptr");
+            build_wrappers::w_store(&self.ir.builder, tag_ptr, tag_val.into());
+            build_wrappers::w_store(&self.ir.builder, val_ptr, val);
+            build_wrappers::w_load(&self.ir.builder, result_ty.into(), alloca, "resultval")
         }
     }
 
@@ -139,12 +118,10 @@ impl<'ctx> super::Codegen<'ctx> {
         let llvm_ty = self.llvm_type(typed_ty)?;
         let arr_ty = payload.get_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let arr_alloca = self.ir.builder.build_alloca(arr_ty, "payloadalc").unwrap();
-        self.ir.builder.build_store(arr_alloca, payload).unwrap();
-        let typed_ptr = self.ir.builder
-            .build_pointer_cast(arr_alloca, ptr_ty, "payloadptr")
-            .unwrap();
-        let val = self.ir.builder.build_load(llvm_ty, typed_ptr, "payloadval").unwrap();
+        let arr_alloca = build_wrappers::w_alloca(&self.ir.builder, arr_ty.into(), "payloadalc");
+        build_wrappers::w_store(&self.ir.builder, arr_alloca, payload);
+        let typed_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, arr_alloca, ptr_ty, "payloadptr");
+        let val = build_wrappers::w_load(&self.ir.builder, llvm_ty, typed_ptr, "payloadval");
         Some(val)
     }
 
@@ -166,10 +143,7 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         // Extract the tag (field 0).
-        let tag = self.ir
-            .builder
-            .build_extract_value(result_val.into_struct_value(), 0, "qtag")
-            .unwrap();
+        let tag = build_wrappers::w_extract_value(&self.ir.builder, result_val.into_struct_value(), 0, "qtag");
 
         let tag_int = match tag {
             BasicValueEnum::IntValue(i) => i,
@@ -180,17 +154,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let ok_bb = self.ir.context.append_basic_block(fn_val, "q_ok");
         let err_bb = self.ir.context.append_basic_block(fn_val, "q_err");
 
-        self.ir.builder
-            .build_conditional_branch(tag_int, ok_bb, err_bb)
-            .unwrap();
+        build_wrappers::w_cond_br(&self.ir.builder, tag_int, ok_bb, err_bb);
 
         // --- Err branch: early return an Err using the *outer* function's Result type.
         // This ensures the return type matches the enclosing function's signature.
         self.ir.builder.position_at_end(err_bb);
-        let err_payload = self.ir
-            .builder
-            .build_extract_value(result_val.into_struct_value(), 1, "qerr_payload")
-            .unwrap();
+        let err_payload = build_wrappers::w_extract_value(&self.ir.builder, result_val.into_struct_value(), 1, "qerr_payload");
         // Re-wrap as Err with the outer function's Result type so the return type matches.
         let err_return_val = if let Some((_, err_ty)) = self.current_result_types.clone() {
             // Extract the typed Err value from the inner result's payload.
@@ -203,14 +172,11 @@ impl<'ctx> super::Codegen<'ctx> {
             result_val
         };
         self.log_return_if_adaptive();
-        self.ir.builder.build_return(Some(&err_return_val)).unwrap();
+        build_wrappers::w_ret(&self.ir.builder, err_return_val);
 
         // --- Ok branch: extract the typed Ok payload using extract_result_payload.
         self.ir.builder.position_at_end(ok_bb);
-        let raw_payload = self.ir
-            .builder
-            .build_extract_value(result_val.into_struct_value(), 1, "qpayload")
-            .unwrap();
+        let raw_payload = build_wrappers::w_extract_value(&self.ir.builder, result_val.into_struct_value(), 1, "qpayload");
         // Use extract_result_payload to get the properly typed Ok value.
         let payload = if let Some((ok_ty, _)) = self.current_result_types.clone() {
             self.extract_result_payload(raw_payload, &ok_ty)

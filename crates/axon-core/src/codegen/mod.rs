@@ -522,7 +522,7 @@ impl<'ctx> Codegen<'ctx> {
 
                 if has_self_param {
                     if let Some(ty) = concrete_llvm_ty {
-                        let self_val = self.ir.builder.build_load(ty, self_ptr, "self_val").unwrap();
+                        let self_val = build_wrappers::w_load(&self.ir.builder, ty, self_ptr, "self_val");
                         call_args.push(self_val.into());
                     } else {
                         // Opaque self — pass the ptr directly.
@@ -538,17 +538,17 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
 
-                let call = self.ir.builder.build_call(concrete_fn, &call_args, "thunk_ret").unwrap();
+                let call = build_wrappers::w_call(&self.ir.builder, concrete_fn, &call_args, "thunk_ret");
                 let ret_sem = tm.return_type.as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
                     .unwrap_or(crate::types::Type::Unit);
 
                 if matches!(ret_sem, crate::types::Type::Unit) {
-                    self.ir.builder.build_return(None).unwrap();
+                    build_wrappers::w_ret_void(&self.ir.builder);
                 } else if let Some(ret_val) = call.try_as_basic_value().left() {
-                    self.ir.builder.build_return(Some(&ret_val)).unwrap();
+                    build_wrappers::w_ret(&self.ir.builder, ret_val);
                 } else {
-                    self.ir.builder.build_return(None).unwrap();
+                    build_wrappers::w_ret_void(&self.ir.builder);
                 }
 
                 if let Some(b) = saved { self.ir.builder.position_at_end(b); }
@@ -668,9 +668,9 @@ impl<'ctx> Codegen<'ctx> {
         for (i, param) in f.params.iter().enumerate() {
             let sem_ty = self.axon_type_to_semantic(&param.ty);
             if let Some(llvm_ty) = self.llvm_type(&sem_ty) {
-                let alloca = self.ir.builder.build_alloca(llvm_ty, &param.name).unwrap();
+                let alloca = build_wrappers::w_alloca(&self.ir.builder, llvm_ty, &param.name);
                 if let Some(arg) = llvm_fn.get_nth_param(i as u32) {
-                    self.ir.builder.build_store(alloca, arg).unwrap();
+                    build_wrappers::w_store(&self.ir.builder, alloca, arg);
                 }
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
                 self.local_types.insert(param.name.clone(), sem_ty);
@@ -690,13 +690,13 @@ impl<'ctx> Codegen<'ctx> {
                 let zero = self.ir.context.i32_type().const_int(0, false);
                 // main() returning 0 isn't an interesting score; use the legacy event log.
                 self.log_return_if_adaptive();
-                self.ir.builder.build_return(Some(&zero)).unwrap();
+                build_wrappers::w_ret(&self.ir.builder, zero.into());
             } else {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
                         self.log_return_if_adaptive_val(v);
                         self.emit_verify_check_if_needed(v, llvm_fn);
-                        self.ir.builder.build_return(Some(&v)).unwrap();
+                        build_wrappers::w_ret(&self.ir.builder, v);
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
                         // No value from body but function has non-void return type:
@@ -705,15 +705,15 @@ impl<'ctx> Codegen<'ctx> {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
                             self.emit_verify_check_if_needed(zero_val, llvm_fn);
-                            self.ir.builder.build_return(Some(&zero_val)).unwrap();
+                            build_wrappers::w_ret(&self.ir.builder, zero_val.into());
                         } else {
                             self.log_return_if_adaptive();
-                            self.ir.builder.build_return(None).unwrap();
+                            build_wrappers::w_ret_void(&self.ir.builder);
                         }
                     }
                     _ => {
                         self.log_return_if_adaptive();
-                        self.ir.builder.build_return(None).unwrap();
+                        build_wrappers::w_ret_void(&self.ir.builder);
                     }
                 }
             }
