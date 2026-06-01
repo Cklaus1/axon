@@ -52,6 +52,7 @@ examples/asi/
 ├── safe_self_improve.ax # demo #18 — FLAGSHIP: agent + optimizer + safety quartet + kill-switch (mod-imports stdlib/agent.ax); key-free
 ├── word_freq.ax    # demo #19 — text preprocessing via the Dict primitive: arr_group_by, dict_map_values, ranked top-k; key-free
 ├── bandit_ucb.ax   # demo #20 — UCB1 multi-armed bandit: classic exploration-exploitation over 5 arms; key-free
+├── safe_bandit.ax  # demo #21 — bandit ∩ agent: safety-constrained exploration; mod-imports both userland modules; key-free
 ├── persistent_learner.ax # demo #15 — cross-process self-improvement: load prior best from disk, optimize, write back; key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file

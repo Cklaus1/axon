@@ -939,6 +939,23 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn safe_bandit_demo_picks_safe_high_reward_arm() {
+    // Demo #21. Composes the bandit + agent userland modules:
+    // bandit proposes an arm each round, agent_step gates it through
+    // the safety quartet, refused actions count as zero-reward. Over
+    // 300 rounds the bandit must converge to a SAFE arm (arms 1, 3, 4
+    // are unsafe — under-quality, under-confident, over-budget) — and
+    // among safe arms (0, 2, 5), arm-2 has the highest true reward.
+    let mut cmd = axon();
+    cmd.args(["run", &ex("asi/safe_bandit.ax")]);
+    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "should pick arm-2: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("preferred: arm-2"), "stdout: {stdout}");
+}
+
+#[test]
 fn arr_enumerate_partition_dict_merge() {
     // Three more combinators + an inference fix found while writing the
     // test: tuple FieldAccess in infer.rs used to fall to a fresh type

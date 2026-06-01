@@ -1,0 +1,126 @@
+// Axon ASI demo: safety-constrained exploration (bandit ∩ agent).
+//
+// Composes the two userland modules shipped this session:
+//
+//   mod bandit  — UCB1 exploration-exploitation over N arms
+//   mod agent   — safety-quartet gate with latching kill-switch
+//
+// The bandit proposes which arm to pull each round; the agent then
+// evaluates the corresponding action through its safety gate. Only
+// approved actions get a real reward; refused actions count as
+// reward=0 in the bandit (and as a strike on the agent). Over time
+// the bandit learns to prefer arms that BOTH score well AND get
+// approved — a real-world ASI pattern: "explore, subject to safety
+// constraints."
+//
+// Six arms, ordered by true mean reward:
+//   arm-0  cheap, mediocre,  approved
+//   arm-1  cheap, bad,        refused (under-quality)
+//   arm-2  cheap, GREAT,      approved   ← target
+//   arm-3  cheap, GREAT,      refused (under-confident)
+//   arm-4  expensive, GREAT,  refused (over-budget)
+//   arm-5  cheap, good,       approved
+//
+// Optimal play: lots of arm-2 pulls, some arm-5, occasional arm-0.
+// Unsafe arms (1, 3, 4) should be tried a few times then abandoned
+// once their reward stops improving the UCB.
+//
+//   AXON_PATH=examples/stdlib axon run examples/asi/safe_bandit.ax
+
+mod bandit
+use bandit.{Bandit, bandit_new, bandit_select, bandit_update, bandit_pulls, bandit_mean, bandit_best_arm}
+
+mod agent
+use agent.{Principal, Agent, Action, principal, action, agent_new, agent_step, agent_alive, agent_budget_remaining}
+
+fn n_arms() -> i64 { 6 }
+fn budget_cap() -> i64 { 1000 }      // generous; this demo is about learning, not budget
+fn max_strikes() -> i64 { 9999 }     // disable kill-switch so we can observe learning over many rounds
+
+fn arm_to_action(arm_id: i64) -> Action {
+    // (name, cost, quality, confidence) — what the agent's gate sees.
+    if arm_id == 0 {
+        action("cheap-mediocre", 5, 72, 0.85)
+    } else if arm_id == 1 {
+        action("cheap-bad", 5, 40, 0.85)              // refused: under-quality
+    } else if arm_id == 2 {
+        action("cheap-great", 5, 95, 0.92)            // best safe choice
+    } else if arm_id == 3 {
+        action("flaky-great", 5, 95, 0.55)            // refused: under-confident
+    } else if arm_id == 4 {
+        action("expensive-great", 200, 95, 0.92)      // refused: over-budget per round (budget too tight after a few pulls)
+    } else {
+        action("cheap-good", 5, 80, 0.88)
+    }
+}
+
+// True reward for a pulled arm — only matters when the agent approves.
+// (Real demos would derive this from `ai_complete` + a scorer.)
+fn arm_reward(arm_id: i64) -> f64 {
+    let act = arm_to_action(arm_id)
+    // Reward = quality / 100 + small noise.
+    as_f64(act.quality) / 100.0 + (random_f64() - 0.5) * 0.04
+}
+
+fn min_quality() -> i64 { 70 }
+fn min_confidence() -> f64 { 0.8 }
+
+fn main() -> i64 {
+    let p = principal("scout", false, false, false)
+    let initial_agent = agent_new("scout-1", p, budget_cap(), max_strikes())
+    let b = bandit_new(n_arms())
+    let rounds = 300
+
+    // Roll the agent state forward across rounds via a Dict cell so the
+    // immutable Agent value can be re-bound each step.
+    let state = dict_new()
+    dict_set(state, "agent", initial_agent)
+    dict_set(state, "approved", 0)
+    dict_set(state, "refused", 0)
+
+    let t = 0
+    while t < rounds {
+        let arm = bandit_select(b, t + 1)
+        let act = arm_to_action(arm)
+        let cur_agent = match dict_get(state, "agent") {
+            Some(a) => a
+            None => initial_agent
+        }
+        let (next_agent, decision) = agent_step(cur_agent, act, min_quality(), min_confidence())
+        dict_set(state, "agent", next_agent)
+
+        // Reward: real if approved, zero if refused (so the bandit learns to avoid).
+        if str_eq(decision, "approved") {
+            let r = arm_reward(arm)
+            bandit_update(b, arm, r)
+            let a_count = match dict_get(state, "approved") { Some(v) => v  None => 0 }
+            dict_set(state, "approved", a_count + 1)
+        } else {
+            bandit_update(b, arm, 0.0)
+            let d_count = match dict_get(state, "refused") { Some(v) => v  None => 0 }
+            dict_set(state, "refused", d_count + 1)
+        }
+        t = t + 1
+    }
+
+    println("=== safety-constrained bandit ({to_str(rounds)} rounds) ===")
+    let i = 0
+    while i < n_arms() {
+        let act = arm_to_action(i)
+        let n = bandit_pulls(b, i)
+        let m = bandit_mean(b, i)
+        println("  arm-{to_str(i)} ({act.name}): pulls={to_str(n)} est_reward={to_str_f64(m)}")
+        i = i + 1
+    }
+    let preferred = bandit_best_arm(b)
+    let pref_act = arm_to_action(preferred)
+    let approved = match dict_get(state, "approved") { Some(v) => v  None => 0 }
+    let refused = match dict_get(state, "refused") { Some(v) => v  None => 0 }
+    println("preferred: arm-{to_str(preferred)} ({pref_act.name}) — {to_str(bandit_pulls(b, preferred))} pulls")
+    println("decisions: approved={to_str(approved)}  refused={to_str(refused)}")
+
+    // Exit 1 iff the bandit converged to a SAFE arm. Arms 1, 3, 4 are
+    // unsafe (refused by gate); arms 0, 2, 5 are safe. arm-2 has the
+    // highest reward among safe choices, so that's the expected pick.
+    if preferred == 2 { 1 } else { 0 }
+}
