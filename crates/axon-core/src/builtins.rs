@@ -838,6 +838,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Return all f64 input dims that produced the best observed score for an `@[adaptive] fn(f64, …) -> f64`. The continuous-domain companion to `goal_best_inputs`: pairs with the f64 hill-climb path for linear-regression weights, control parameters, and other real-valued search problems.",
     },
     BuiltinFn {
+        name: "goal_best_score",
+        params: &[("name", "str"), ("target", "f64")],
+        ret: "f64",
+        doc: "Best observed score for an @[adaptive] fn, read from the in-memory provenance store without running any new optimization. Equivalent to `goal_run(name, target, 0)` but does NOT mutate state — pure query. Returns `target` when no records exist.",
+    },
+    BuiltinFn {
+        name: "goal_count",
+        params: &[("name", "str")],
+        ret: "i64",
+        doc: "Number of provenance entries recorded for an @[adaptive] fn. Equivalent to `len(goal_history(name))` but O(1) — avoids materializing the trace just to count it. Returns 0 if the fn has no recorded calls.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",

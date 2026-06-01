@@ -896,6 +896,34 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn goal_best_score_and_goal_count_are_pure_reads() {
+    // `goal_run(name, target, 0)` was overloaded — it claims "no budget"
+    // but actually runs an UNLIMITED live optimization, growing
+    // provenance. That's surprising. `goal_best_score` and `goal_count`
+    // are pure queries against in-memory provenance; calling them must
+    // not change the trace count or the best score.
+    let src = "@[adaptive]\n\
+        fn peak(x: i64) -> i64 { 100 - abs_i64(x - 50) }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"peak\", 100.0, 30)\n  \
+            let n_before = goal_count(\"peak\")\n  \
+            let s = goal_best_score(\"peak\", 100.0)\n  \
+            let n_after = goal_count(\"peak\")\n  \
+            // Multiple reads still don't move the count.\n  \
+            let _ = goal_best_score(\"peak\", 100.0)\n  \
+            let _ = goal_best_score(\"peak\", 100.0)\n  \
+            let n_after2 = goal_count(\"peak\")\n  \
+            // Pin: trace unchanged AND best score = 100 (peak reached).\n  \
+            if n_before == n_after && n_after == n_after2 && s == 100.0 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_pure_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "goal_best_score / goal_count are pure: {:?}", out);
+}
+
+#[test]
 fn array_numeric_stats_mean_std_argmax_argmin() {
     // Seven new reduction builtins round out the numeric stats stdlib:
     // arr_mean_{i64,f64}, arr_std_f64, arr_argmax_{i64,f64},

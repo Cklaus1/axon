@@ -2990,6 +2990,29 @@ impl<'p> Interp<'p> {
                 ok!(self.best_inputs_f64(&name, target));
             }
 
+            // Read the best observed score WITHOUT running another
+            // optimization. Equivalent to `goal_run(name, target, 0)`
+            // but doesn't mutate provenance — purely a query against
+            // what's already been recorded. The right primitive for
+            // "how am I doing?" checkpoints between rounds.
+            "goal_best_score" => {
+                want(2)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                ok!(Value::Float(self.best_observed(&name, target, 0)));
+            }
+
+            // Number of provenance entries recorded for an @[adaptive] fn.
+            // Equivalent to `len(goal_history(name))` but O(1) — avoids
+            // materializing the trace just to count it. Useful for budget
+            // gates: `if goal_count("score") > 1000 { stop }`.
+            "goal_count" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                let n = self.provenance.borrow().get(&name).map(|v| v.len()).unwrap_or(0);
+                ok!(Value::Int(n as i64));
+            }
+
             // Full optimization trace as a slice of `(input, score)` tuples,
             // in call order. The companion to goal_run / goal_best_input.
             "goal_history" => {
