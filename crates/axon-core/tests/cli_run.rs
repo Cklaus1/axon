@@ -939,6 +939,28 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn parse_int_or_float_or_bool_or_fold_result_match() {
+    // Three parse-with-default helpers that fold the Result-match
+    // ceremony for load-from-disk paths where bad inputs should silently
+    // default rather than propagate an Err.
+    let src = "fn main() -> i64 {\n  \
+        let a = parse_int_or(\"42\", 0)\n  \
+        let b = parse_int_or(\"abc\", -1)\n  \
+        let c = parse_float_or(\"3.14\", 0.0)\n  \
+        let d = parse_float_or(\"bad\", -1.0)\n  \
+        let e = parse_bool_or(\"true\", false)\n  \
+        let f = parse_bool_or(\"maybe\", true)\n  \
+        if a == 42 && b == -1 && c > 3.13 && c < 3.15 && d == -1.0 \
+           && e && f { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_por_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "parse_*_or: {:?}", out);
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:

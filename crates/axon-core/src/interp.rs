@@ -1925,6 +1925,41 @@ impl<'p> Interp<'p> {
                     _ => Value::Err(Box::new(Value::Str("parse error".into()))),
                 });
             }
+            // Parse-with-default variants that fold the Result-match
+            // ceremony away. Useful in load-from-disk paths where
+            // a missing or malformed value should fall back silently
+            // rather than propagate an Err the caller has to unwrap.
+            "parse_int_or" => {
+                want(2)?;
+                let n = as_str(&args[0])?
+                    .trim()
+                    .parse::<i64>()
+                    .unwrap_or(as_int(&args[1])?);
+                ok!(Value::Int(n));
+            }
+            "parse_float_or" => {
+                want(2)?;
+                let f = as_str(&args[0])?
+                    .trim()
+                    .parse::<f64>()
+                    .unwrap_or(as_float(&args[1])?);
+                ok!(Value::Float(f));
+            }
+            "parse_bool_or" => {
+                want(2)?;
+                let b = match as_str(&args[0])?.trim() {
+                    "true" => true,
+                    "false" => false,
+                    _ => match &args[1] {
+                        Value::Bool(b) => *b,
+                        other => return panic(format!(
+                            "parse_bool_or: default must be bool, got {}",
+                            other.type_name()
+                        )),
+                    },
+                };
+                ok!(Value::Bool(b));
+            }
             // Keep only ASCII digits; everything else is dropped. Closes
             // ROADMAP §9.5 F7 — gives string-shape demos (phone numbers,
             // codes, IDs) a one-liner alternative to pushing parsing onto

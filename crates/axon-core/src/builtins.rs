@@ -655,6 +655,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Parse `\"true\"` or `\"false\"`. Returns `Ok(true/false)` or `Err(\"invalid bool\")`.",
     },
     BuiltinFn {
+        name: "parse_int_or",
+        params: &[("s", "str"), ("default", "i64")],
+        ret: "i64",
+        doc: "Parse `s` as i64; fall back to `default` if the string is missing or malformed. Folds the `Result`-match ceremony away — useful in load-from-disk paths where bad inputs should silently default rather than propagate.",
+    },
+    BuiltinFn {
+        name: "parse_float_or",
+        params: &[("s", "str"), ("default", "f64")],
+        ret: "f64",
+        doc: "Parse `s` as f64; fall back to `default` if malformed.",
+    },
+    BuiltinFn {
+        name: "parse_bool_or",
+        params: &[("s", "str"), ("default", "bool")],
+        ret: "bool",
+        doc: "Parse `s` as bool (`\"true\"` / `\"false\"`); fall back to `default` if neither.",
+    },
+    BuiltinFn {
         name: "str_digits_only",
         params: &[("s", "str")],
         ret: "str",
