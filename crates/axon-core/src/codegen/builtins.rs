@@ -413,6 +413,21 @@ impl<'ctx> super::Codegen<'ctx> {
             );
 
             // parse_int takes a str struct { i64 len, ptr data }.
+            //
+            // PARITY GAP (BUG_HUNT #22 / #37): two divergences from the
+            // interpreter, both needing the (pathologically slow, see
+            // BUILD_DIAGNOSIS.md) codegen build to fix + verify:
+            //   1. The Err payload here is an EMPTY string (see err_bb below),
+            //      while the interpreter returns a specific
+            //      "could not parse `<input>` as a base-10 integer" message.
+            //   2. strtoll(base 10) below stops at the first non-digit and
+            //      reports success if it consumed ANY leading digit. So
+            //      "0x1F" consumes the leading "0" → endptr advances → this
+            //      returns Ok(0); the interpreter (Rust `str::parse`) requires
+            //      the WHOLE trimmed string to be a valid integer and Errs.
+            //      Codegen should reject trailing garbage (endptr must reach
+            //      end-of-string, modulo trailing whitespace) to match.
+            // The interpreter is the reference semantics.
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
             let fn_val = self.ir.module.add_function("parse_int", fn_ty, None);

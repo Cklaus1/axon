@@ -114,7 +114,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "parse_int",
         params: &[("s", "str")],
         ret: "Result<i64,str>",
-        doc: "Parse `s` as a base-10 integer. Returns `Err(str)` on failure.",
+        doc: "Parse `s` (surrounding whitespace trimmed) as a base-10 integer. Base-10 only — a radix prefix like `0x1F` returns `Err` with a hint to strip it. The `Err(str)` names the offending input.",
     },
     // ── Math ────────────────────────────────────────────────────────────────
     BuiltinFn {

@@ -1244,6 +1244,27 @@ fn parse_int_or_float_or_bool_or_fold_result_match() {
 }
 
 #[test]
+fn parse_int_error_message_is_specific() {
+    // BUG_HUNT #22: parse_int("0x1F") returned a bare "parse error" — it didn't
+    // name the offending input or explain that only base-10 is accepted (so a
+    // user trying hex has no idea why). The Err message must be specific.
+    let src = "fn main() -> i64 {\n  \
+        match parse_int(\"0x1F\") {\n    \
+            Ok(n) => n\n    \
+            Err(e) => { eprintln(e)  1 }\n  \
+        }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pierr_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "should hit the Err arm: {:?}", out);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("0x1F"), "error should echo the offending input: {err:?}");
+    assert!(err.contains("base-10") || err.contains("base 10"), "error should mention base-10: {err:?}");
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:

@@ -2186,24 +2186,48 @@ impl<'p> Interp<'p> {
             }
             "parse_int" => {
                 want(1)?;
-                ok!(match as_str(&args[0])?.trim().parse::<i64>() {
+                let s = as_str(&args[0])?;
+                let t = s.trim();
+                ok!(match t.parse::<i64>() {
                     Ok(n) => Value::Ok(Box::new(Value::Int(n))),
-                    Err(_) => Value::Err(Box::new(Value::Str("parse error".into()))),
+                    // Specific, actionable message (BUG_HUNT #22): echo the
+                    // input and say what was expected. Radix prefixes are a
+                    // common mistake — `parse_int` is base-10 only, so hint it.
+                    Err(_) => {
+                        let lower = t.to_ascii_lowercase();
+                        let hint = if lower.starts_with("0x")
+                            || lower.starts_with("0o")
+                            || lower.starts_with("0b")
+                        {
+                            " (parse_int is base-10 only; strip the radix prefix)"
+                        } else {
+                            ""
+                        };
+                        Value::Err(Box::new(Value::Str(format!(
+                            "could not parse `{s}` as a base-10 integer{hint}"
+                        ))))
+                    }
                 });
             }
             "parse_float" => {
                 want(1)?;
-                ok!(match as_str(&args[0])?.trim().parse::<f64>() {
+                let s = as_str(&args[0])?;
+                ok!(match s.trim().parse::<f64>() {
                     Ok(f) => Value::Ok(Box::new(Value::Float(f))),
-                    Err(_) => Value::Err(Box::new(Value::Str("parse error".into()))),
+                    Err(_) => Value::Err(Box::new(Value::Str(format!(
+                        "could not parse `{s}` as a float"
+                    )))),
                 });
             }
             "parse_bool" => {
                 want(1)?;
-                ok!(match as_str(&args[0])?.trim() {
+                let s = as_str(&args[0])?;
+                ok!(match s.trim() {
                     "true" => Value::Ok(Box::new(Value::Bool(true))),
                     "false" => Value::Ok(Box::new(Value::Bool(false))),
-                    _ => Value::Err(Box::new(Value::Str("parse error".into()))),
+                    _ => Value::Err(Box::new(Value::Str(format!(
+                        "could not parse `{s}` as a bool (expected `true` or `false`)"
+                    )))),
                 });
             }
             // Parse-with-default variants that fold the Result-match
@@ -4920,6 +4944,28 @@ mod tests {
             fn main() -> i64 { fib(10) }
         "#;
         assert_eq!(run(src), 55);
+    }
+
+    // BUG_HUNT #22: parse_int error messages are specific, not generic.
+    #[test]
+    fn parse_int_radix_prefix_errs_with_hint() {
+        // Returns 1 (Err arm) for hex; the message is checked via the CLI test.
+        let src = r#"
+            fn main() -> i64 {
+                match parse_int("0xFF") { Ok(_) => 0  Err(_) => 1 }
+            }
+        "#;
+        assert_eq!(run(src), 1, "hex literal must Err (base-10 only)");
+    }
+
+    #[test]
+    fn parse_int_still_trims_and_parses_decimal() {
+        let src = r#"
+            fn main() -> i64 {
+                match parse_int("  -123  ") { Ok(n) => n  Err(_) => 0 }
+            }
+        "#;
+        assert_eq!(run(src), -123, "leading/trailing space still trims");
     }
 
     // BUG_HUNT #25: the generated deploy-gate symbol must not leak to users.
