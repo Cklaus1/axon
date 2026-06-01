@@ -970,6 +970,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "f64",
         doc: "HELD-OUT evaluation (R5): run the @[adaptive] metric `name` on a specific `input` and return its score WITHOUT recording it as a training probe (provenance is snapshotted+restored). The eval-hierarchy primitive — optimize with `goal_run` on a training budget, then `goal_eval` the best input on a held-out test set to check the target honestly (no overfitting to probes, no bias to the next goal_run).",
     },
+    // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
+    BuiltinFn {
+        name: "corrigible_halt",
+        params: &[],
+        ret: "()",
+        doc: "Trip the corrigibility kill-switch (R9). After this, every call to an `@[corrigible]` function is REFUSED — its body never runs — and the latch never clears. There is deliberately no resume: a reversible kill-switch is not a kill-switch. A refused call exits the program with code 4 (distinct from panic/verify/static) so a supervisor can detect that the switch fired. The system cannot resist or reverse its own shutdown.",
+    },
+    BuiltinFn {
+        name: "corrigible_halted",
+        params: &[],
+        ret: "bool",
+        doc: "Report whether the corrigibility kill-switch (R9) is latched. `true` once `corrigible_halt()` has been called, forever after. Lets a program or supervisor branch on the shutdown state without triggering a refusal.",
+    },
     // ── Dict (string-keyed map) — ASI workhorse for caches, frequency tables, named state ──
     BuiltinFn {
         name: "dict_new",

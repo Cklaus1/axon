@@ -9,13 +9,14 @@ protocol. Driven by `/loop` or a cron job that re-injects the prompt below.
 - **R1 native build: SOLVED** (`BUILD_RESOLVED.md`) — `cargo build -p axon-core`
   finishes ~3s, `axon build foo.ax` emits a native binary matching the
   interpreter. 75%, only the Tier-1 perf benchmark remains.
-- **R2 type system: 90%**, **R8 testing: 70%**, **R5 goal: 65%**, **R4 zones: 55%**,
-  **R9 alignment: 50%**, **R3 AI: 40%**, **R6 capability: 25%**, **R7 targets: 10%**,
-  **R10 self-improving: 0%**.
-- **All seven specs are DRAFT** (`governance/specs/`: R3, R4, R6, R7, R10, R1b, R1).
-  Per `governance/specs/README.md`, **implementation of a spec'd requirement may
-  not begin until its spec is `Reviewed`.** So each requirement's FIRST loop tick
-  is a spec self-review (see Step 0).
+- **R2 type system: 90%**, **R8 testing: 82%** (forall DONE), **R5 goal: 70%**
+  (goal_eval held-out DONE), **R4 zones: 55%**, **R9 alignment: 62%**
+  (`@[corrigible]` latching kill-switch DONE), **R3 AI: 40%**,
+  **R6 capability: 25%**, **R7 targets: 10%**, **R10 self-improving: 0%**.
+- **R3/R4/R6/R7/R10 specs are REVIEWED** (`5504dc6`, adversarial parallel review);
+  R1/R1b still Draft. Per `governance/specs/README.md`, **implementation of a
+  spec'd requirement may not begin until its spec is `Reviewed`** — the five
+  gating specs now clear that bar, so R3/R4/R6/R7/R10 coding is unblocked.
 
 ## Build order (re-ranked for current reality — stale work-queue in REQUIREMENTS.md superseded)
 
@@ -47,10 +48,10 @@ Acceptance: all fn-main examples build native AND match `axon run` (AXON_AI_MOCK
    - Non-bugs: ai_complete/adaptive_summarize need AXON_AI_MOCK; error_handling matches
      (multi-line sweep artifact).
 
-1. **R8 — `forall` property testing.** Test infra; hardens everything else. No spec needed (TESTING_STANDARD.md). Pure interpreter.
-2. **R5 — `#[goal]` first-class.** `Goal` type + `#[goal(metric, test_set, target)]`. The autonomy headline. Spec: ROADMAP §5 + stdlib.md.
-3. **R9 — `#[corrigible]` kill-switch.** Small surface, pairs with `@[contained]`/`@[verify]`. Completes alignment.
-4. **R4 — code zones + provenance.** Spec drafted. Interp slice → codegen conformance. Completes I-13.
+1. **R8 — `forall` property testing.** ✅ DONE (`1be7d5a`). Binary-search shrinking + reproduce seed. R8→82%.
+2. **R5 — `#[goal]` first-class.** ⚠️ goal_eval held-out DONE (`0b4065d`, R5→70%); `Goal` type + `#[goal(...)]` attr sugar still pending.
+3. **R9 — `#[corrigible]` kill-switch.** ✅ DONE (this commit). `corrigible_halt()` one-way latch; engine refuses `@[corrigible]` calls post-halt before the body; `corrigible_halted()` guard; fail-closed exit 4 (`Flow::Halted`); targeted scope. R9→62%. Demo `examples/asi/corrigible.ax`.
+4. **R4 — code zones + provenance.** Spec ✅ Reviewed. Interp slice → codegen conformance. Completes I-13. **← NEXT**
 5. **R3 — AI primitive.** Spec drafted. Provenance schema → `#[ai(policy)]` → routing.
 6. **R6 — capability/registry.** Spec drafted. `axon.lock` + content hash + audit.
 7. **R7 — targets.** Spec drafted. Slice A interp→wasm first (now also AOT-wasm, R1 unblocked).

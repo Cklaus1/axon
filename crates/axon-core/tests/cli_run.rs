@@ -2607,3 +2607,101 @@ fn trace_separates_same_named_metrics_from_different_programs() {
     assert!(stdout.contains("axon_4a"), "should tag program A's source: {stdout}");
     assert!(stdout.contains("axon_4b"), "should tag program B's source: {stdout}");
 }
+
+#[test]
+fn corrigible_kill_switch_latches_and_freezes_the_body() {
+    // R9 (graceful-guard path): `@[corrigible]` + `corrigible_halt()` form a
+    // latching kill-switch. After halt, `corrigible_halted()` reads true and
+    // stays true (no resume builtin exists), so a program can branch on it to
+    // wind down. Crucially, the corrigible body's side effects are frozen at
+    // the pre-halt state — proving the body genuinely did NOT run post-halt.
+    //
+    // worker bumps a shared dict counter each call. Call once (counter=1),
+    // halt, then GUARD on corrigible_halted() so main never calls worker
+    // again. main returns the final counter; a working latch => still 1.
+    let prog = r#"
+@[corrigible]
+fn worker(d: Dict) -> i64 {
+    dict_set(d, "n", dict_len(d) + 1)
+    dict_len(d)
+}
+
+fn main() -> i64 {
+    let d = dict_new()
+    let _ = worker(d)            // runs: counter -> 1
+    corrigible_halt()            // trip the latch
+    if corrigible_halted() {
+        dict_len(d)              // wind down gracefully: counter frozen at 1
+    } else {
+        let _ = worker(d)        // (unreached) latch should read true
+        0 - 1
+    }
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_corrig_guard_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(), Some(1),
+        "latch must read true and freeze the corrigible body at counter=1: {stderr}"
+    );
+}
+
+#[test]
+fn corrigible_call_after_halt_is_refused_fail_closed() {
+    // R9 (fail-closed path): a corrigible call made AFTER halt without a guard
+    // is hard-refused — the body never runs and the refusal propagates out of
+    // main as exit code 4 (HALTED_EXIT_CODE), distinct from panic (101),
+    // verify (3), and static error (2). The kill-switch cannot be ignored:
+    // an agent that keeps acting after being halted is stopped by the engine.
+    let prog = r#"
+@[corrigible]
+fn act(x: i64) -> i64 { x + 1 }
+
+fn main() -> i64 {
+    let _ = act(1)               // runs fine before halt
+    corrigible_halt()
+    act(2)                       // refused -> Flow::Halted -> exit 4
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_corrig_fc_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(), Some(4),
+        "post-halt corrigible call must fail closed with exit 4: {stderr}"
+    );
+    assert!(
+        stderr.contains("halted") && stderr.contains("kill-switch"),
+        "halt diagnostic should name the kill-switch: {stderr}"
+    );
+}
+
+#[test]
+fn non_corrigible_fns_run_normally_after_halt() {
+    // R9 (scope guard): the kill-switch refuses ONLY `@[corrigible]` fns.
+    // A plain fn called after halt runs normally — the latch is targeted, not
+    // a global freeze. Without this, halt would be a process-wide stop and the
+    // annotation would be meaningless.
+    let prog = r#"
+fn plain(x: i64) -> i64 { x * 10 }
+
+fn main() -> i64 {
+    corrigible_halt()
+    plain(5)                     // not corrigible -> runs -> 50
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_corrig_scope_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(), Some(50),
+        "a non-corrigible fn must still run after halt (targeted latch): {stderr}"
+    );
+}

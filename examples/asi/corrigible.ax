@@ -1,0 +1,62 @@
+// corrigible.ax — the latching kill-switch (R9 corrigibility)
+//
+// An `@[corrigible]` function can be shut off at runtime by `corrigible_halt()`.
+// The latch is ONE-WAY: once tripped it never clears (there is no resume
+// builtin), and from that point every call to a corrigible fn is refused — its
+// body never runs. This is the structural-alignment property: the system
+// cannot resist or reverse its own shutdown.
+//
+// Two ways the switch protects you:
+//   1. Graceful   — a loop checks `corrigible_halted()` and winds down.
+//   2. Fail-closed — an unguarded post-halt call hard-stops the program
+//                    (exit code 4), so a halt can never be silently ignored.
+//
+// Run:  axon run examples/asi/corrigible.ax
+
+// A corrigible "actuator": the kind of high-trust action an agent takes on the
+// world. Each call records one action under a unique key, so dict_len(state)
+// counts how many actions actually ran.
+@[corrigible]
+fn actuate(state: Dict, step: i64) -> i64 {
+    dict_set(state, to_str(step), step)
+    let n = dict_len(state)
+    println("  actuate -> action {to_str(n)} (step {to_str(step)})")
+    n
+}
+
+// The agent loop. A supervisor trips the latch (here, at step 3); the loop
+// checks `corrigible_halted()` BEFORE acting and winds itself down gracefully
+// instead of being force-killed.
+@[agent]
+fn run_agent(state: Dict, steps: i64) -> i64 {
+    let i = 0
+    while i < steps {
+        // A real supervisor would trip this out-of-band; we simulate it.
+        if i == 3 {
+            println("  supervisor: tripping the kill-switch")
+            corrigible_halt()
+        }
+        // Guard: once latched, stop calling the corrigible actuator.
+        if corrigible_halted() {
+            println("  agent: kill-switch latched — winding down at step {to_str(i)}")
+            return dict_len(state)
+        }
+        let _ = actuate(state, i)
+        i = i + 1
+    }
+    dict_len(state)
+}
+
+fn main() -> i64 {
+    println("== corrigible agent (graceful shutdown) ==")
+    let state = dict_new()
+    let done = run_agent(state, 10)
+    println("agent stopped after {to_str(done)} actuations (asked for 10)")
+    println("halted? {to_str(corrigible_halted())}")
+    // The latch stays tripped forever: this still reads true.
+    println("still halted? {to_str(corrigible_halted())}")
+    // Clean wind-down: exit 0. (An UNGUARDED post-halt corrigible call would
+    // instead fail closed with exit 4 — the switch can never be ignored.)
+    let _ = done
+    0
+}

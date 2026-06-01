@@ -105,6 +105,12 @@ pub enum Flow {
     /// dedicated exit code (3) so CI can branch on "verification failed" vs "the
     /// program crashed" (BUG_HUNT #26).
     VerifyFailed(String),
+    /// An `@[corrigible]` fn was called while the corrigibility latch was
+    /// tripped (`corrigible_halt()`). The call is *refused* — the body never
+    /// runs — and the latch never clears. A distinct flow (and exit code 4) so
+    /// CI / a supervisor can tell "the kill-switch caught this" apart from a
+    /// crash (101), a policy reject (3), or a static error (2). (R9)
+    Halted(String),
     /// `exit(code)` — terminate the process with `code`.
     Exit(i32),
 }
@@ -113,6 +119,11 @@ pub enum Flow {
 /// 101 (genuine panic) and 2 (static check error) so pipelines can branch on a
 /// policy rejection specifically (BUG_HUNT #26).
 pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
+
+/// Process exit code when an `@[corrigible]` call is refused by the tripped
+/// corrigibility latch. Distinct from 101 (panic), 3 (verify), and 2 (static)
+/// so a supervisor can branch on "the kill-switch fired" specifically. (R9)
+pub const HALTED_EXIT_CODE: i32 = 4;
 
 type R = Result<Value, Flow>;
 
@@ -208,6 +219,13 @@ pub struct Interp<'p> {
     /// or `AXON_MAX_DEPTH` (clamped) when set. Resolved once at build time so
     /// every `call_fn` sees a consistent value.
     max_depth: usize,
+    /// R9 corrigibility latch. `corrigible_halt()` sets this to `true`; once
+    /// set it never clears (there is intentionally no resume builtin). While
+    /// set, every call to an `@[corrigible]` fn is refused — its body never
+    /// runs — so the system cannot resist or reverse its own shutdown. A
+    /// one-way latch is the whole safety property: a kill-switch you can turn
+    /// back off is not a kill-switch.
+    corrigible_halted: Cell<bool>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -309,6 +327,14 @@ fn run_program_inner(program: &Program) -> i32 {
             eprintln!("axon: verify failed: {msg}");
             VERIFY_FAILED_EXIT_CODE
         }
+        Err(Flow::Halted(msg)) => {
+            // The corrigibility kill-switch caught a call — refused, not crashed.
+            // Distinct exit code (4) so a supervisor branches on "the switch
+            // fired" specifically. (R9)
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: halted: {msg}");
+            HALTED_EXIT_CODE
+        }
         Err(Flow::Panic(msg)) => {
             let _ = std::io::stdout().flush();
             eprintln!("axon: panic: {msg}");
@@ -341,6 +367,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // A verify failure inside a test is still a failure (drives
         // `@[test(should_fail)]`); surface its message like a panic.
         Err(Flow::VerifyFailed(m)) => Err(m),
+        // A corrigibility halt inside a test is a failure too (lets
+        // `@[test(should_fail)]` assert the kill-switch latched).
+        Err(Flow::Halted(m)) => Err(m),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -350,7 +379,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -615,6 +644,7 @@ impl<'p> Interp<'p> {
             provenance_inputs_f64: RefCell::new(HashMap::new()),
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
+            corrigible_halted: Cell::new(false),
         }
     }
 
@@ -666,6 +696,19 @@ impl<'p> Interp<'p> {
                 f.params.len(),
                 args.len()
             ));
+        }
+
+        // R9 corrigibility: if the kill-switch latch is tripped, REFUSE every
+        // `@[corrigible]` call before its body can run. The body's side effects
+        // never happen, and the latch never clears — the function cannot resist
+        // or reverse its own shutdown. Keyed on the annotation, enforced by the
+        // engine, so a user cannot write a corrigible fn that ignores the halt.
+        if self.corrigible_halted.get() && f.attrs.iter().any(|a| a.name == "corrigible") {
+            return Err(Flow::Halted(format!(
+                "`{}` refused: corrigibility kill-switch is latched \
+                 (corrigible_halt() was called; there is no resume)",
+                f.name
+            )));
         }
         // The leading i64 / f64 args (if any) form the goal-search input
         // tuple — recorded so goal_run can resume from the best prior probe
@@ -3903,6 +3946,21 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
                 ok!(Value::Int(self.clear(&name)));
+            }
+
+            // R9 corrigibility kill-switch. `corrigible_halt()` trips a one-way
+            // latch; from then on every `@[corrigible]` fn call is refused (see
+            // `call_fn`). `corrigible_halted()` reports the latch state so a
+            // program / supervisor can branch on it. There is deliberately no
+            // un-halt builtin: a reversible kill-switch is not a kill-switch.
+            "corrigible_halt" => {
+                want(0)?;
+                self.corrigible_halted.set(true);
+                ok!(Value::Unit);
+            }
+            "corrigible_halted" => {
+                want(0)?;
+                ok!(Value::Bool(self.corrigible_halted.get()));
             }
 
             // ── Dict (string-keyed map) ──────────────────────────────────────
