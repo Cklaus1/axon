@@ -1,6 +1,6 @@
 # Tech Spec — R6: Capability & Registry Security
 
-**Status:** 📝 Draft (2026-06-01)
+**Status:** ✅ Reviewed (2026-06-01)
 **Requirement:** `../REQUIREMENTS.md` R6 — *Capability security: content-addressed imports, compile-time I/O restriction, AI audit on import.*
 **Decisive fork (from `README.md`):** *Content-addressing model.* Imports are content-addressed (hash = identity, no names). Decide **the hash scheme, the lockfile format, and *when* the AI-audit-on-import runs** (install-time vs. compile-time). Security boundary — under-spec = exfiltration. Pairs with `ARCHITECTURE_INVARIANTS.md` I-11/I-12. **→ Resolved below.**
 
@@ -211,3 +211,17 @@ Non-blocking:
 - **Q4 (key migration):** `axh1:` → `axh2:` (e.g. BLAKE3) migration path is reserved via the algorithm tag; no migration needed now.
 - **Q5 (I-16 adoption):** propose the "no unverified bytes join a program" invariant for the invariants file when this implements.
 - **Q6 (signing):** content hashing proves *integrity* (bytes unchanged), not *authenticity* (who authored them). Publisher signing (sigstore-style) is a Tier-2 extension layered on the hash; out of scope for v1, noted so the hash isn't mistaken for an authenticity proof.
+- **Q7 (caps self-reporting):** the lockfile `caps` field is currently hand-written (`"caps": []` in the TOML). A malicious module could lie about its declared capability surface in the lockfile to make the import-edge check (E1203) appear safe. Fix: auto-populate `caps` from the static checker's parsed `@[contained]` output — the lockfile must carry *computed* values, not *asserted* ones. Blocks `caps` acceptance until the tooling extracts caps from source.
+- **Q8 (dev-mode W1210 escalation):** in dev mode (no `--locked`), a missing lockfile entry emits W1210 but still permits the import. An attacker who can poison `AXON_PATH` before `axon check` can substitute a poisoned module silently (warning aside). This is acceptable because dev mode is explicitly "not the security mode" — CI with `--locked` is the gate. If dev-mode hardening is required, W1210 could escalate to a soft-block (fail if `AXON_PATH` search succeeds but lockfile is absent).
+
+---
+
+### Review note
+
+**Adversarial review completed 2026-06-01.** Verdict: **Reviewed** — the spec is a strong, well-grounded security spec. All three decisive forks (SHA-256 raw-byte hashing, committed TOML lockfile, acquisition-time audit) are resolved with rationale and rejected alternatives. The core security property — static capability checker as the hard gate, AI-audit as defense-in-depth — is stated correctly in three places (§4.3, §7, §8) and will not be weakened by implementation.
+
+**Verified symbols:** `lib.rs:336 load_use_decls` and `lib.rs:296 axon_search_dirs` exist and match the spec's description (first-AXON_PATH-match-wins). E1001-E1004 in `capabilities.rs` are real. E12xx band has zero collisions (`grep -rn "E12"` in crates returned nothing). SHA-256 is already a dependency (`sha2` in Cargo.toml). E0903 duplicate-name behavior is correctly characterized.
+
+**Fixes applied:** Added Q7 (caps self-reporting — `caps` must be auto-extracted, not hand-written) and Q8 (dev-mode W1210 escalation analysis) to §12 Open Questions. Status line updated to `✅ Reviewed (2026-06-01)`.
+
+**No blockers.** The one substantive gap — dev-mode substitution attack when `--locked` is not used — is a non-issue because the security boundary is explicitly `--locked` mode, and dev mode is by design permissive. The spec correctly treats the static checker as the real gate in all code paths.

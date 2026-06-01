@@ -1,6 +1,6 @@
 # Tech Spec — R4: Three Code Zones + Compiler-Enforced Provenance
 
-**Status:** 📝 Draft (2026-06-01)
+**Status:** ✅ Reviewed (2026-06-01)
 **Requirement:** `../REQUIREMENTS.md` R4 — *Three code zones: Static / Adaptive / Agent + compiler-enforced provenance.*
 **Decisive fork:** *How is provenance made **un-opt-out-able** (I-13), uniformly across the interpreter AND codegen — and what behaviorally distinguishes the three zones (Static / Adaptive / Agent) plus `@[experiment]`?* Today injection is interpreter-only and `@[experiment]` is a no-op synonym. **→ Resolved below.**
 
@@ -10,12 +10,12 @@
 
 ## 1. Motivation
 
-R4 is 55% (⚠️ Partial). What exists: `@[adaptive]`/`@[agent]`/`@[goal]` parse as deferred attrs (`builtins.rs` `DEFERRED_ATTRS`), and the **interpreter** injects provenance for `@[adaptive]` automatically — `call_fn` checks `f.attrs.iter().any(|a| a.name == "adaptive")` (`interp.rs:665`) and records every return into the in-memory `provenance` store (`interp.rs:187`), with on-disk JSONL via `append_provenance_jsonl`. The user cannot turn this off: it is keyed on the *annotation*, not on user cooperation. That is I-13 working — **in one engine.**
+R4 is 55% (⚠️ Partial). What exists: `@[adaptive]`/`@[agent]`/`@[goal]` parse as deferred attrs (`builtins.rs` `DEFERRED_ATTRS`), and the **interpreter** injects provenance for `@[adaptive]` automatically — `call_fn` checks `f.attrs.iter().any(|a| a.name == "adaptive")` (`interp.rs:701`) and records every return into the in-memory `provenance` store (`interp.rs:187`), with on-disk JSONL via `append_provenance_jsonl` (`interp.rs:4663`). The user cannot turn this off: it is keyed on the *annotation*, not on user cooperation. That is I-13 working — **in one engine.**
 
 Three gaps make R4 incomplete, and they are exactly the fork:
 
-1. **Engine non-uniformity (the I-13 hole):** the invariant text itself admits *"Partially true today; codegen-side enforcement is R4 work."* Codegen does not inject provenance. A program built native (option B once R1 lands) silently loses the un-opt-out-able guarantee — the worst kind of gap, because the guarantee *looks* present (it works in the interpreter, the path everyone tests).
-2. **`@[experiment]` is a no-op synonym:** it sits in `DEFERRED_ATTRS` but nothing branches on it (the interp only checks `"adaptive"`). The PRD's "three zones + experiment" distinction does not exist in behavior.
+1. **Engine non-uniformity (the I-13 hole):** the invariant text itself admits *"Partially true today; codegen-side enforcement is R4 work."* Codegen does not inject provenance. A program built native (option B once R1 lands) silently loses the un-opt-out-able guarantee — the worst kind of gap, because the guarantee *looks* present (it works in the interpreter, the path everyone tests). Codegen's `has_adaptive_attr` (codegen/mod.rs:72) is a predicate-only check that gates IR emission, but the injection is still a compile-time IR pattern with no conformance tripwire.
+2. **`@[experiment]` is a no-op synonym:** it sits in `DEFERRED_ATTRS` (builtins.rs:1178) but nothing branches on it — the interp checks `"adaptive"` at interp.rs:701 and never matches `"experiment"`. The PRD's "three zones + experiment" distinction does not exist in behavior.
 3. **`@[agent]` action logging is not mandatory:** agents are the highest-trust zone, yet no compiler-injected action log is enforced; provenance covers `@[adaptive]` returns only.
 
 This spec resolves the fork by defining (a) the **zone taxonomy** precisely, (b) the **injection contract** that both engines must satisfy, and (c) a **conformance test** that fails for either engine if injection is absent — so the guarantee can't silently rot in codegen.
@@ -85,7 +85,7 @@ The distinction `@[experiment]` vs `@[adaptive]` is **behavioral**: both inject 
 
 ### 4.2 The injection contract (fork resolution part 2 — the engine-uniform part)
 
-**Decision:** provenance injection is a **compiler pass over the AST**, run before execution by *both* engines, not a runtime library call. The pass is keyed on the zone annotation (`f.attrs`), exactly as `interp.rs:665` already does for `@[adaptive]` — but lifted to a shared pass both `interp` and `codegen` consume, so neither can skip it.
+**Decision:** provenance injection is a **compiler pass over the AST**, run before execution by *both* engines, not a runtime library call. The pass is keyed on the zone annotation (`f.attrs`), exactly as `interp.rs:701` already does for `@[adaptive]` — but lifted to a shared pass both `interp` and `codegen` consume, so neither can skip it.
 
 - **Interpreter:** already conforms for `@[adaptive]` (the existing `is_adaptive` check). This spec *extends* it to `@[experiment]` (tagged) and `@[agent]` (action log), and *names* the existing behavior as the reference.
 - **Codegen:** must emit the same injection at every call site of a zoned fn. Until R1's native build lands, this is specified-not-built; the **conformance test** (§8) is the guard that codegen, once buildable, matches.
@@ -112,7 +112,7 @@ Agent records share the `AuditEvent` shape R3's `ai_call` record uses — one au
 | Input class | Behavior |
 |---|---|
 | Static fn executes | No provenance. Ordinary code. |
-| `@[adaptive]` fn executes (interp) | Return recorded; `zone:"adaptive"`. **Conforms today** (`interp.rs:672`). |
+| `@[adaptive]` fn executes (interp) | Return recorded; `zone:"adaptive"`. **Conforms today** (`interp.rs:701`). |
 | `@[experiment(l)]` fn executes | Return recorded `zone:"experiment"`, `label:l`; **excluded** from `goal_run` best. |
 | `@[agent]` fn makes a tool call | One `agent_action` audit record per call, with `caps_used`. |
 | `@[adaptive]` fn built via codegen (post-R1) | Must inject identically; **conformance test E15xx guards** (specified-not-built). |
@@ -197,4 +197,14 @@ Blocking the agent slice (overlaps R3/Phase-7):
 Non-blocking:
 - **Q3 (Zone in the type system):** reflecting zone as an effect so a Static fn calling an Agent fn is a checked effect — Phase-6 effect-row work (`R6`/effects spec), not R4. Deferred.
 - **Q4 (I-13 text update):** when this implements, update I-13 to drop its "Partially true today" caveat and cite this spec. Noted.
+
+## Review note (2026-06-01)
+
+Status: **Reviewed** — no blocking issues. All 12 SPEC_TEMPLATE sections substantively filled; decisive fork (I-13 engine-uniform provenance) resolved with decision + rationale + rejected alternative. E15xx band is unused across all crates; codes are consistent with the E10xx–E16xx banding (I-14). All cited source symbols verified present in the codebase: `DEFERRED_ATTRS` (builtins.rs:1175), `"experiment"` at line 1178, `has_adaptive_attr` (codegen/mod.rs:72), `provenance` store (interp.rs:187), `append_provenance_jsonl` (interp.rs:4663).
+
+**Line numbers fixed (stale, codebase shifted ~240 lines):**
+- `interp.rs:665` → `interp.rs:701` (adaptive attribute check in `call_fn`)
+- `interp.rs:672` → `interp.rs:701` (same injection point, different citation)
+
+No changes to the spec's substance were needed beyond the line-number corrections. No new issues were found that would block Reviewed status.
 - **Q5 (provenance log unification):** R3 (`ai_call`), R4 (zone records), R10 (verification records) all append to one NDJSON stream with an `event` discriminator — a unified `AuditEvent` schema should be factored once, not three times. Cross-spec cleanup, noted for whichever lands second.

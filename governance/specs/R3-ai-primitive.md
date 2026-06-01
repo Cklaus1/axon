@@ -1,6 +1,6 @@
 # Tech Spec — R3: AI as a Language Primitive
 
-**Status:** 📝 Draft (2026-06-01)
+**Status:** ✅ Reviewed (2026-06-01)
 **Requirement:** `../REQUIREMENTS.md` R3 — *AI as language primitive: `std.ai`, model routing, `#[ai(policy)]`, deterministic fallback.*
 **Decisive fork (from `README.md`):** *Reproducibility vs. capability.* Does `#[ai(policy)]` + model routing record enough to **replay** a run deterministically? **→ Resolved below: YES. The provenance schema is settled first; routing is built on top of it.**
 
@@ -8,11 +8,11 @@
 
 ## 1. Motivation
 
-Today AI is reachable from Axon only through a fixed family of builtins — `ai_complete`, `ai_extract_uncertain_i64`, `ai_extract_uncertain_f64` (`interp.rs` ~4231–4290; `axon-ai/src/lib.rs`) — each hard-wired to a single model string (`"claude-sonnet-4-6"`, appears 5× in `axon-ai`). There is:
+Today AI is reachable from Axon only through a fixed family of builtins — `ai_complete`, `ai_extract_uncertain_i64`, `ai_extract_uncertain_f64` (`interp.rs` ~4478–4535; `crates/axon-ai/src/lib.rs`) — each hard-wired to a single model string (`"claude-sonnet-4-6"`, appears 6× in `crates/axon-ai`). There is:
 
 - **no model routing** — the program cannot say "use a cheap model for this, a strong one for that";
 - **no `#[ai(policy)]`** — a call cannot be gated by a declared policy (max cost, allowed models, required fallback);
-- **no mandatory deterministic fallback** — offline, the only "fallback" is `AXON_AI_MOCK=1`, a global env toggle that replaces *all* calls with a canned string (`interp.rs:4234`), not a per-call typed default;
+- **no mandatory deterministic fallback** — offline, the only "fallback" is `AXON_AI_MOCK=1`, a global env toggle that replaces *all* calls with a canned string (`interp.rs:4617`, `ai_mock_enabled()`), not a per-call typed default;
 - **no replay** — an AI call records nothing about *which* model/version/prompt produced a value, so `axon trace` (and the PRD's "auditable" claim) cannot reproduce or even explain an AI-derived result.
 
 The last point is the fork. The PRD promises AI **reproducibility**; an AI primitive that doesn't pin its inputs makes every downstream "audit"/"replay" claim hollow. So this spec resolves the **provenance schema for AI calls first**, then defines routing and policy as layers that *populate* that schema. Routing without the schema would have to be retrofitted — expensive once merged.
@@ -109,7 +109,7 @@ The user never writes a raw model string — that is what makes a program reprod
 
 ### 4.3 The `AiCall` provenance record (the fork resolution — settle this FIRST)
 
-Every AI call (live, mock, or fallback) appends **one** NDJSON record to the existing provenance log (same file/format as `append_provenance_jsonl`, `interp.rs:4416`), with `event: "ai_call"` and this payload schema (v1):
+Every AI call (live, mock, or fallback) appends **one** NDJSON record to the existing provenance log (same file/format as `append_provenance_jsonl`, `interp.rs:4663`), with `event: "ai_call"` and this payload schema (v1):
 
 | Field | Meaning | Why it's load-bearing |
 |---|---|---|
@@ -162,6 +162,9 @@ Codes occupy a new `E13xx` / `W13xx` band (AI-primitive), invented here per I-14
 
 - **I-2 (interpreter is reference):** all semantics defined for the interpreter first; codegen AI-call provenance is explicitly deferred (parity gap to be logged, like #33/#36). **Preserved** (interp leads).
 - **I-8/I-9 (success signal / no silent degenerate):** a `fallback` returning a canned value is a **success-signal risk** — it could masquerade as a real model answer. Mitigated by `mode: "fallback"` in provenance + `W1310`; a fallback is never silently indistinguishable from a live answer in the audit trail. **Preserved.**
+- **I-10 (determinism is available):** §4.4 commits to determinism via mock + replay, not by claiming live calls are deterministic. The `seed` field records what we sent but does not claim to force reproducibility. **Preserved.**
+- **I-13 (un-opt-out-able provenance):** this spec *extends* the I-13 invariant from `@[adaptive]`/`@[goal]`/`@[agent]` to AI calls — every AI call appends one NDJSON row. The record is appended by the interpreter at the call site, not by user cooperation. R4 (injection enforcement) handles the codegen side. **Preserved.**
+- **I-11 (capability boundary):** `@[ai(policy)]` works within the existing `@[contained]` capability boundary (`capabilities.rs` lines 59–65 already classify `ai_*` calls as `Net`). The policy adds a cost/timeout gate but does not widen the I/O path. **Preserved.**
 - **I-14 (stable error codes):** new E13xx band, defined here. **Preserved.**
 - **I-2 / R4 overlap (un-opt-out-able provenance):** this spec *defines* the AI record; R4 *enforces* that it cannot be suppressed. This spec must not provide an opt-out flag for the record itself (only for verbatim text). **Preserved.**
 - **New invariant proposed (I-15 candidate):** *Every AI call appears in provenance exactly once, including mock and fallback.* Stated here for adoption when implemented.
@@ -192,6 +195,8 @@ R3 may move toward DONE on this slice when **all** pass:
 - [ ] `mock_call_prompt_hash_is_stable` passes (replay memo-key precondition).
 - [ ] `axon ai policy` emits stable JSON (schema versioned).
 
+**Note on `goal_clear` vs the JSONL file:** the existing `goal_clear` builtin clears only the in-memory provenance store (`interp.rs:3775`, `self.provenance` / `self.provenance_inputs`). It does **not** delete or truncate the `provenance.jsonl` file on disk. If implementation follows existing `goal_clear` behavior, the AI `event:"ai_call"` NDJSON rows in the file are append-only and never cleared by `goal_clear`. This is an append-only log by design — the in-memory clear handles `goal_run` isolation; the file serves as an audit trail that is intentionally append-only. If the JSONL file must also be cleared (e.g. for disk-growth management or compliance), a separate `axon provenance trim` CLI command should be built, not entangled with `goal_clear`.
+
 (Routing-by-*cost* — "router picks the cheapest allowed model that satisfies the tier" — is acceptance for the **R3-routing** follow-slice, which depends on the Phase-7 `Budget`/`LLM<Caps>` cost model; see §12. This spec delivers tier→model + the schema; cost-optimal routing layers on after Phase 7.)
 
 ## 10. Performance budget
@@ -215,3 +220,21 @@ Non-blocking:
 - **Q3 (seed):** providers don't guarantee seeded determinism; the `seed` field records what we sent but we do not claim it forces reproducibility. Revisit if a provider ships deterministic sampling.
 - **Q4 (`??` fallback-or sugar):** the §3.3 `??` operator is ergonomic, not required — the policy `fallback` already covers it. Defer to a language-sugar tick.
 - **Q5 (I-15 adoption):** "every AI call in provenance exactly once" — propose for the invariants file when this implements.
+
+---
+
+## Review note (2026-06-01)
+
+Reviewed against SPEC_TEMPLATE.md 12-section structure, CODE_REVIEW_RUBRIC.md, and ARCHITECTURE_INVARIANTS.md. Verified all claims against the codebase. **Fixes applied:**
+
+1. **Stale line numbers corrected.** `interp.rs` line references were off by ~240 lines due to subsequent commits. Fixed: AI builtins `~4478-4535` (was ~4231-4290), `ai_mock_enabled()` at 4617 (was 4234), `append_provenance_jsonl` at 4663 (was 4416). Also corrected `axon-ai` crate path from `axon-ai/src/lib.rs` to `crates/axon-ai/src/lib.rs` (its workspace location) and `claude-sonnet-4-6` count from 5x to 6x.
+
+2. **Missing invariant citations added.** §7 was missing I-10 (determinism), I-13 (un-opt-out-able provenance), and I-11 (capability boundary). All three are directly relevant: the spec's §4.4 is about determinism, the entire spec is about extending provenance, and `@[ai(policy)]` works within the existing `@[contained]` network gate. Added citations to §7.
+
+3. **`goal_clear` append-only note added.** The existing `goal_clear` builtin clears only in-memory state, not the `provenance.jsonl` file on disk. This means AI call records in the NDJSON file are append-only — a design choice (audit trail), not a gap. Added a clarifying note in §9 (Acceptance criteria) stating the intent so implementation doesn't silently change this.
+
+4. **Error codes verified clean.** E1300-E1303 / W1310 occupy a completely unused band (E12xx and above are reserved by other specs but not yet assigned in code). No conflicts found.
+
+5. **Design claim verified.** `axon-ai/src/lib.rs` exists and contains `claude-sonnet-4-6` hardcoded 6 times across its 3 call sites. `DEFERRED_ATTRS` in `builtins.rs` contains `"ai"` (deferred attr). `append_provenance_jsonl` and `read_provenance` both exist at the (corrected) line numbers cited.
+
+**No substantive gaps remain.** The spec is ready for implementation.
