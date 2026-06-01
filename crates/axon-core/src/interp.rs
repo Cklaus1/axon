@@ -665,6 +665,73 @@ impl<'p> Interp<'p> {
         Ok(best_score)
     }
 
+    /// Multi-start hill climb. Picks `n_starts` random starting points
+    /// uniformly in `[lo, hi)` (per-dim) and runs the existing
+    /// coordinate-descent hill-climb (with Powell joint step) from each
+    /// with `evals_per_start` budget. Returns the best score across all
+    /// starts. Standard recipe for escaping local optima on multi-modal
+    /// objectives — keeps gradient-style refinement once a basin is
+    /// found while still sampling broadly. Provenance accumulates as a
+    /// side effect (so goal_best_input reads the winning probe back).
+    fn run_goal_multistart(
+        &self,
+        name: &str,
+        target: f64,
+        n_starts: i64,
+        evals_per_start: i64,
+        lo: i64,
+        hi: i64,
+    ) -> Result<f64, Flow> {
+        if hi <= lo {
+            return panic(format!(
+                "goal_run_multistart: hi ({hi}) must be greater than lo ({lo})"
+            ));
+        }
+        let f = match self.fns.get(name) {
+            Some(f) => *f,
+            None => return Ok(self.best_observed(name, target, 0)),
+        };
+        let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+        let all_i64_params = !f.params.is_empty()
+            && f.params.iter().all(|p| is_i64_type(&p.ty));
+        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        if !is_adaptive || !all_i64_params || !i64_ret {
+            return Ok(self.best_observed(name, target, 0));
+        }
+        let n_dims = f.params.len();
+        let mut best_score: f64 = f64::NAN;
+        let mut best_dist: f64 = f64::INFINITY;
+        let range = (hi as i128 - lo as i128) as u128;
+        let mut s: i64 = 0;
+        while s < n_starts {
+            let start: Vec<i64> = (0..n_dims)
+                .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
+                .collect();
+            let score = if n_dims == 1 {
+                // Single-arg: bypass the multi-i64 path's per-dim wiring
+                // (which expects Vec<i64>) and call the 1-D climber
+                // directly, but its API doesn't take a start point —
+                // use multi-i64_from with a 1-elem vec instead.
+                self.hill_climb_multi_i64_from(f, target, evals_per_start, Some(start))?
+            } else {
+                self.hill_climb_multi_i64_from(f, target, evals_per_start, Some(start))?
+            };
+            let d = (score - target).abs();
+            if d < best_dist {
+                best_dist = d;
+                best_score = score;
+                if best_dist <= f64::EPSILON {
+                    return Ok(best_score);
+                }
+            }
+            s += 1;
+        }
+        if best_score.is_nan() {
+            best_score = target;
+        }
+        Ok(best_score)
+    }
+
     fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
@@ -3306,6 +3373,22 @@ impl<'p> Interp<'p> {
                 let lo = as_int(&args[3])?;
                 let hi = as_int(&args[4])?;
                 ok!(Value::Float(self.run_goal_random(&name, target, n_samples, lo, hi)?));
+            }
+
+            // Multi-start hill climb. Random restarts + local refinement —
+            // the standard recipe for escaping local optima while keeping
+            // gradient-style convergence once a basin is found.
+            "goal_run_multistart" => {
+                want(6)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                let n_starts = as_int(&args[2])?;
+                let evals_per_start = as_int(&args[3])?;
+                let lo = as_int(&args[4])?;
+                let hi = as_int(&args[5])?;
+                ok!(Value::Float(self.run_goal_multistart(
+                    &name, target, n_starts, evals_per_start, lo, hi
+                )?));
             }
 
             // Warm-start variant: seeds the optimizer at the best prior

@@ -939,6 +939,32 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn goal_run_multistart_nails_the_global_optimum() {
+    // Multi-start hill climb: random restart + local refinement.
+    // The same two-peak objective where vanilla hill-climb-from-0 gets
+    // stuck on the small peak. Six random starts × 30 evals each
+    // virtually guarantees one start lands in the tall-peak basin;
+    // then local descent walks to the exact optimum (score = 500 at
+    // x = 1000).
+    let src = "@[adaptive]\n\
+        fn mm(x: i64) -> i64 {\n  \
+            let small = 100 - abs_i64(x - 5)\n  \
+            let big = 500 - abs_i64(x - 1000)\n  \
+            if small > big { small } else { big }\n\
+        }\n\
+        fn main() -> i64 {\n  \
+            let r = goal_run_multistart(\"mm\", 500.0, 6, 30, -2000, 2000)\n  \
+            // Should land within 1 of the tall peak (score = 500).\n  \
+            if r >= 499.0 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_ms_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "multi-start should nail the tall peak: {:?}", out);
+}
+
+#[test]
 fn goal_run_random_finds_global_optimum_on_multimodal() {
     // Random-search strategy: 100 samples uniformly over `[-2000, 2000)`
     // on a two-peak objective where hill climb from x=0 gets stuck on

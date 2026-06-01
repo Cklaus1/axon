@@ -910,6 +910,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Random-search strategy: sample `n_samples` random i64 tuples uniformly in `[lo, hi)` (per-dim independent) and score each via the @[adaptive] function `name`. Returns the best observed score. Baseline against `goal_run`'s hill climb — useful for multi-modal objectives or sanity-checking that the optimizer is actually doing something. Provenance accumulates as a side effect.",
     },
     BuiltinFn {
+        name: "goal_run_multistart",
+        params: &[
+            ("name", "str"),
+            ("target", "f64"),
+            ("n_starts", "i64"),
+            ("evals_per_start", "i64"),
+            ("lo", "i64"),
+            ("hi", "i64"),
+        ],
+        ret: "f64",
+        doc: "Multi-start hill-climb strategy: pick `n_starts` random starting points in `[lo, hi)` (per-dim) and run coordinate-descent hill-climb (with Powell joint step) from each with `evals_per_start` budget. Returns the best score across all starts. Standard recipe for escaping local optima while preserving gradient-style refinement once a basin is found.",
+    },
+    BuiltinFn {
         name: "goal_continue",
         params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
         ret: "f64",
