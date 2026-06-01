@@ -37,6 +37,15 @@ scores/confidences: `normalize_score`, `score_to_confidence` /
 `weighted2`/`mean2`, `bound_i64`/`bound_f64`. (`axon-surface` auto-bundles
 several of these into goals that reference them — see `examples/goals/`.)
 
+`reward.ax` — composable metric algebra for multi-objective agents.
+`Reward { name, score, max }` carries an explicit upper bound so combinators
+can normalize across metrics on different scales. `reward_unit` maps to
+`[0, 1]`; `reward_blend` does a weighted sum, `reward_scale` re-weights a
+single metric, `reward_penalize` subtracts a cost dimension, `reward_min` /
+`reward_max` give "must do well on BOTH" / "either axis is fine" composition.
+Lets demos drop the magic-number score expressions buried in
+`@[adaptive]` fns.
+
 ## Run them
 
 ```bash
@@ -50,6 +59,7 @@ axon test examples/stdlib/safe_action.ax   # 5
 axon test examples/stdlib/supervisor.ax    # 5
 axon test examples/stdlib/arrays.ax        # 5
 axon test examples/stdlib/asi_prelude.ax   # 8
+axon test examples/stdlib/reward.ax        # 8
 axon run  examples/stdlib/safe_action.ax   # the composed gate in action
 axon run  examples/stdlib/supervisor.ax    # the kill-switch latching mid-stream
 axon run  examples/stdlib/arrays.ax        # argmax over a candidate score set

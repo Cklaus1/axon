@@ -1,0 +1,137 @@
+// examples/stdlib/reward.ax — composable metrics for ASI score functions.
+//
+// Every adaptive demo hand-codes a score expression like:
+//   let s = accuracy * 0.7 - 0.1 * tokens + (passes_redteam as i64) * 30
+// That works but bakes the metric into the optimization loop, making it
+// hard to swap, weight, or compose without rewriting the @[adaptive] fn.
+//
+// This module gives a tiny algebra of named, weight-able metrics that
+// compose without changing the optimizer surface. The score is still an
+// f64 (what `goal_run` / `@[adaptive]` understand); we add structure
+// around it so a multi-objective demo doesn't degenerate to a magic
+// arithmetic expression buried inside the scoring fn.
+//
+//   axon test examples/stdlib/reward.ax  → 8 tests pass
+
+// A scalar metric with a known upper bound. `max` is the value at which
+// the metric is "fully satisfied"; the optimizer should drive `score`
+// toward `max`. Keeping the bound explicit lets combinators normalize
+// across metrics that live on different scales (a 0..100 accuracy score
+// and a 0..1 confidence score should mix as equals, not as 100:1).
+type Reward = { name: str, score: f64, max: f64 }
+
+fn reward_new(name: str, score: f64, max: f64) -> Reward {
+    Reward { name: name, score: score, max: max }
+}
+
+// Normalize to [0, 1]. `max = 0` is treated as "no reward" rather than
+// dividing by zero — a degenerate case callers can branch on.
+fn reward_unit(r: Reward) -> f64 {
+    if r.max == 0.0 { 0.0 }
+    else { r.score / r.max }
+}
+
+// Weighted sum: combine two rewards into a single normalized score in
+// `[0, weight_a + weight_b]`. The weights stay in user space (not
+// baked into the metric) so the same Reward can participate in
+// multiple compositions.
+fn reward_blend(a: Reward, weight_a: f64, b: Reward, weight_b: f64) -> f64 {
+    weight_a * reward_unit(a) + weight_b * reward_unit(b)
+}
+
+// Scale a reward — useful when one metric needs to count more without
+// rewriting its underlying score. Returns a fresh Reward.
+fn reward_scale(r: Reward, factor: f64) -> Reward {
+    Reward { name: r.name, score: r.score * factor, max: r.max * factor }
+}
+
+// Penalize: subtract a fraction of a "cost" reward from a "value"
+// reward in normalized space. `cost_weight` is the discount factor
+// (0.1 means "10% off the value for every unit of cost"). Returns the
+// combined normalized score; negative if cost dominates.
+fn reward_penalize(value: Reward, cost: Reward, cost_weight: f64) -> f64 {
+    reward_unit(value) - cost_weight * reward_unit(cost)
+}
+
+// Take the minimum of two rewards — "agent must do well on BOTH axes".
+// Returns the normalized score of the weaker dim, so the optimizer is
+// forced to lift the laggard.
+fn reward_min(a: Reward, b: Reward) -> f64 {
+    let ua = reward_unit(a)
+    let ub = reward_unit(b)
+    if ua < ub { ua } else { ub }
+}
+
+// Take the max — "any axis is fine".
+fn reward_max(a: Reward, b: Reward) -> f64 {
+    let ua = reward_unit(a)
+    let ub = reward_unit(b)
+    if ua > ub { ua } else { ub }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+// `assert_eq_f64` does exact equality; for everything that isn't bit-exact we
+// fall back to an abs-difference check with `assert` so the tolerance is
+// explicit in the test.
+
+fn approx(a: f64, b: f64, eps: f64) -> bool {
+    let d = a - b
+    let abs_d = if d < 0.0 { -d } else { d }
+    abs_d < eps
+}
+
+@[test]
+fn test_unit_zero_max() {
+    let r = reward_new("empty", 0.0, 0.0)
+    assert_eq_f64(reward_unit(r), 0.0)
+}
+
+@[test]
+fn test_unit_normal() {
+    let r = reward_new("acc", 75.0, 100.0)
+    assert_eq_f64(reward_unit(r), 0.75)
+}
+
+@[test]
+fn test_unit_at_max() {
+    let r = reward_new("perfect", 100.0, 100.0)
+    assert_eq_f64(reward_unit(r), 1.0)
+}
+
+@[test]
+fn test_blend_equal_weights() {
+    let a = reward_new("a", 80.0, 100.0)    // unit = 0.8
+    let b = reward_new("b", 0.5, 1.0)       // unit = 0.5
+    // 0.5 * 0.8 + 0.5 * 0.5 = 0.65
+    assert(approx(reward_blend(a, 0.5, b, 0.5), 0.65, 0.0001))
+}
+
+@[test]
+fn test_scale_preserves_unit_value() {
+    let r = reward_new("x", 75.0, 100.0)
+    let r2 = reward_scale(r, 3.0)
+    // score and max both triple → unit stays 0.75
+    assert(approx(reward_unit(r2), 0.75, 0.0001))
+}
+
+@[test]
+fn test_penalize_subtracts_cost() {
+    let value = reward_new("v", 100.0, 100.0)  // unit = 1.0
+    let cost  = reward_new("c", 5.0, 10.0)     // unit = 0.5
+    // 1.0 - 0.1 * 0.5 = 0.95
+    assert(approx(reward_penalize(value, cost, 0.1), 0.95, 0.0001))
+}
+
+@[test]
+fn test_min_returns_weaker_dim() {
+    let a = reward_new("strong", 90.0, 100.0) // 0.9
+    let b = reward_new("weak",   30.0, 100.0) // 0.3
+    assert(approx(reward_min(a, b), 0.3, 0.0001))
+}
+
+@[test]
+fn test_max_returns_stronger_dim() {
+    let a = reward_new("strong", 90.0, 100.0) // 0.9
+    let b = reward_new("weak",   30.0, 100.0) // 0.3
+    assert(approx(reward_max(a, b), 0.9, 0.0001))
+}

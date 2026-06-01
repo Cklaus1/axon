@@ -896,6 +896,17 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn reward_stdlib_module_tests_pass() {
+    // examples/stdlib/reward.ax provides a composable metric algebra
+    // (closes ROADMAP §9.5 F10 for the userland surface). 8 @[test]
+    // functions cover unit/blend/scale/penalize/min/max combinators.
+    let out = axon().args(["test", &ex("stdlib/reward.ax")]).output().unwrap();
+    assert!(out.status.success(), "reward.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn channel_try_recv_and_len_enable_drain_patterns() {
     // `recv` panics on empty (the eager-spawn model needs send-before-recv).
     // `try_recv` returns `Option<T>` instead, so a drain loop terminates
