@@ -100,9 +100,19 @@ pub enum Flow {
     Continue,
     /// A runtime panic (failed assert, type error, OOB index, …).
     Panic(String),
+    /// An `@[verify]` / deploy-gate rejection — a *policy* failure (the artifact
+    /// didn't meet its declared bound), distinct from a bug-crash. Mapped to a
+    /// dedicated exit code (3) so CI can branch on "verification failed" vs "the
+    /// program crashed" (BUG_HUNT #26).
+    VerifyFailed(String),
     /// `exit(code)` — terminate the process with `code`.
     Exit(i32),
 }
+
+/// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
+/// 101 (genuine panic) and 2 (static check error) so pipelines can branch on a
+/// policy rejection specifically (BUG_HUNT #26).
+pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
 
 type R = Result<Value, Flow>;
 
@@ -292,6 +302,13 @@ fn run_program_inner(program: &Program) -> i32 {
         Ok(Value::Int(n)) => n as i32,
         Ok(_) => 0,
         Err(Flow::Exit(code)) => code,
+        Err(Flow::VerifyFailed(msg)) => {
+            // Policy rejection, not a crash — distinct exit code so CI can tell
+            // "verification failed" apart from "the program panicked" (#26).
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: verify failed: {msg}");
+            VERIFY_FAILED_EXIT_CODE
+        }
         Err(Flow::Panic(msg)) => {
             let _ = std::io::stdout().flush();
             eprintln!("axon: panic: {msg}");
@@ -321,6 +338,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
     match interp.call_fn(f, vec![]) {
         Ok(_) => Ok(()),
         Err(Flow::Panic(m)) => Err(m),
+        // A verify failure inside a test is still a failure (drives
+        // `@[test(should_fail)]`); surface its message like a panic.
+        Err(Flow::VerifyFailed(m)) => Err(m),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -330,7 +350,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -519,7 +539,7 @@ impl<'p> Interp<'p> {
                         };
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
-                                return Err(Flow::Panic(format!(
+                                return Err(Flow::VerifyFailed(format!(
                                     "verify failed in `{}`: {} {} {} {} is false \
                                      (value {}, confidence {}{})",
                                     f.name,
@@ -550,7 +570,7 @@ impl<'p> Interp<'p> {
                         }
                         let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                         if let Value::Bool(false) = outcome {
-                            return Err(Flow::Panic(format!(
+                            return Err(Flow::VerifyFailed(format!(
                                 "verify failed in `{}`: composite predicate did not hold \
                                  (value {}, confidence {}{})",
                                 f.name,
@@ -5137,7 +5157,9 @@ mod tests {
                 u.value
             }
         "#;
-        assert_eq!(run(src), 101); // verify gate fires → panic exit code
+        // verify gate fires → distinct policy exit code 3, NOT a crash 101
+        // (BUG_HUNT #26).
+        assert_eq!(run(src), VERIFY_FAILED_EXIT_CODE);
     }
 
     #[test]
@@ -5198,8 +5220,10 @@ mod tests {
         for (file, expected) in [
             ("optimize-goal.md", 0),   // deploys
             ("compose-goal.md", 0),    // deploys (prelude-composed score)
-            ("verified-goal.md", 101), // enforced confidence gate blocks
-            ("redteam-goal.md", 1),    // redteam gate blocks
+            // enforced confidence gate blocks → distinct verify-failed code 3,
+            // not a crash 101 (BUG_HUNT #26).
+            ("verified-goal.md", VERIFY_FAILED_EXIT_CODE),
+            ("redteam-goal.md", 1),    // redteam gate blocks (explicit exit(1))
         ] {
             let md = std::fs::read_to_string(format!("{base}{file}"))
                 .unwrap_or_else(|e| panic!("read {file}: {e}"));

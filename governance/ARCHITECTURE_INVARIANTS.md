@@ -41,6 +41,9 @@ Each invariant has an **ID** so commits and reviews can cite it (`preserves I-7`
 - **I-8 — Failure exits non-zero; success exits zero (or the program's `i64` return).** Every panic,
   type error, failed verify/deploy-gate, invalid input, and missing-resource path exits non-zero. An
   autonomous loop / CI relies on this absolutely. Diagnostics → **stderr**; program output → **stdout**.
+  Distinct failure *classes* get distinct codes so a pipeline can branch: **2** = static check/parse
+  error, **3** = `@[verify]`/deploy-gate *policy* rejection (the artifact didn't meet its bound),
+  **101** = runtime panic / bug-crash. Interpreter and native runtime agree (BUG_HUNT #26).
 - **I-9 — No silent success on degenerate input.** Overflow, undefined-name lookups, inverted/empty
   arguments must produce an error or a *documented, intentional* sentinel — never a plausible-looking
   wrong value that masquerades as success. (This invariant was *violated* at audit time — see

@@ -107,6 +107,48 @@ fn invalid_radix_fails_fast() {
 }
 
 #[test]
+fn verify_failure_and_crash_have_distinct_exit_codes() {
+    // BUG_HUNT #26: a deploy-gate / @[verify] rejection is a POLICY decision
+    // ("the artifact didn't meet the bar"), not a bug-crash. A CI pipeline must
+    // be able to branch on the two: verify failure exits 3, a genuine runtime
+    // panic (OOB, div-by-zero, …) stays 101.
+    let vfail = std::env::temp_dir().join(format!("axon_vfail_{}.ax", std::process::id()));
+    std::fs::write(
+        &vfail,
+        "@[verify(confidence >= 0.8)]\n\
+         fn low() -> Uncertain<i64> { uncertain_dyn_i64(42, 0.5) }\n\
+         fn main() -> i64 { let x = low()  0 }\n",
+    )
+    .unwrap();
+    let v = axon().args(["run", vfail.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&vfail);
+    assert_eq!(
+        v.status.code(),
+        Some(3),
+        "verify failure should exit 3 (distinct policy code): {:?}",
+        String::from_utf8_lossy(&v.stderr),
+    );
+    // The message must still identify it as a verify violation.
+    assert!(
+        String::from_utf8_lossy(&v.stderr).contains("verify"),
+        "verify-failure stderr should mention verify: {:?}",
+        String::from_utf8_lossy(&v.stderr),
+    );
+
+    // A genuine crash on the same `run` path must remain 101, NOT be reclassified.
+    let crash = std::env::temp_dir().join(format!("axon_crash_{}.ax", std::process::id()));
+    std::fs::write(&crash, "fn main() -> i64 { let a = [1, 2]  a[99] }\n").unwrap();
+    let c = axon().args(["run", crash.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&crash);
+    assert_eq!(
+        c.status.code(),
+        Some(101),
+        "a genuine runtime panic must stay 101, distinct from a verify failure: {:?}",
+        String::from_utf8_lossy(&c.stderr),
+    );
+}
+
+#[test]
 fn deeply_nested_input_fails_gracefully_not_aborts() {
     // Adversarially deep nesting must be a clean parse error (exit 2), not a
     // parser stack overflow (exit 134 / SIGABRT).

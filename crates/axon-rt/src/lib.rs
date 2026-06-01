@@ -409,9 +409,12 @@ pub extern "C" fn __axon_i64_to_str_radix(
 /// catches violations whose source is unknown to the static lattice
 /// (e.g. confidence flowing in from `ai_extract_uncertain_*`).
 ///
-/// Behaviour: writes a one-line error message to stderr and calls
-/// `std::process::abort()`.  We pick `abort()` over `exit(101)` to mirror
-/// Rust's `panic!` (core dump, unambiguous programmer error).
+/// Behaviour: writes a one-line error message to stderr and exits with
+/// [`VERIFY_FAILED_EXIT_CODE`] (3). A `@[verify]` violation is a *policy*
+/// rejection — the artifact didn't meet its declared bound — distinct from a
+/// bug-crash (SIGABRT / 101), so CI can branch on it. This mirrors the
+/// interpreter, which exits 3 on the same condition (BUG_HUNT #26). Previously
+/// this called `abort()`, conflating policy rejection with a programmer error.
 ///
 /// Parameters:
 /// * `fn_name_ptr` / `fn_name_len` — pointer + byte length of the offending
@@ -422,6 +425,11 @@ pub extern "C" fn __axon_i64_to_str_radix(
 /// * `bound` — the literal `f64` from the predicate.
 /// * `actual` — the runtime confidence extracted from the `Uncertain<T>`
 ///   value at the return site.
+/// Exit code for an `@[verify]` / deploy-gate rejection. Must match the
+/// interpreter's `interp::VERIFY_FAILED_EXIT_CODE` (axon-rt has no dependency
+/// on axon-core, so the value is duplicated, not imported) — BUG_HUNT #26.
+pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
+
 #[no_mangle]
 pub extern "C" fn __axon_verify_panic(
     fn_name_ptr: *const u8,
@@ -433,7 +441,7 @@ pub extern "C" fn __axon_verify_panic(
 ) -> ! {
     let msg = format_verify_panic(fn_name_ptr, fn_name_len, op_ptr, op_len, bound, actual);
     eprintln!("{msg}");
-    std::process::abort();
+    std::process::exit(VERIFY_FAILED_EXIT_CODE);
 }
 
 /// Produce the verify-panic message without aborting.  Factored out so unit
