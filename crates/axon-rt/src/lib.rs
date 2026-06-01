@@ -206,6 +206,71 @@ pub extern "C" fn __axon_abs_i64(n: i64) -> i64 {
     }
 }
 
+/// Minimum of two i64 values.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle: `a.min(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_min_i64(a: i64, b: i64) -> i64 {
+    a.min(b)
+}
+
+/// Maximum of two i64 values.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle: `a.max(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_max_i64(a: i64, b: i64) -> i64 {
+    a.max(b)
+}
+
+/// Sign of an i64: -1 if negative, 0 if zero, 1 if positive.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle: `n.signum()`.
+#[no_mangle]
+pub extern "C" fn __axon_sign_i64(n: i64) -> i64 {
+    n.signum()
+}
+
+/// Clamp i64 `n` to `[lo, hi]` — returns `n.max(lo).min(hi)`.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle.
+#[no_mangle]
+pub extern "C" fn __axon_clamp_i64(n: i64, lo: i64, hi: i64) -> i64 {
+    n.max(lo).min(hi)
+}
+
+/// Clamp f64 `n` to `[lo, hi]` — returns `n.max(lo).min(hi)`.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle.
+#[no_mangle]
+pub extern "C" fn __axon_clamp_f64(n: f64, lo: f64, hi: f64) -> f64 {
+    n.max(lo).min(hi)
+}
+
+/// Integer power: `base.wrapping_pow(exp as u32)`.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 1). Matches the
+/// interpreter oracle. Negative exponent aborts (no C-ABI unwind), matching
+/// the interpreter's panic-exit for `pow_i64(base, exp < 0)`.
+#[no_mangle]
+pub extern "C" fn __axon_pow_i64(base: i64, exp: i64) -> i64 {
+    if exp < 0 {
+        eprintln!("axon: panic: pow_i64: negative exponent");
+        std::process::abort();
+    }
+    base.wrapping_pow(exp as u32)
+}
+
 /// Integer square root (returns i64).
 #[no_mangle]
 pub extern "C" fn __axon_sqrt(x: f64) -> f64 {
@@ -605,4 +670,172 @@ mod migrated_builtin_tests {
     // panic-exit on negate-overflow). Not unit-tested here because
     // process::abort would kill the test runner — the behavior is asserted by
     // the interpreter-side test that abs_i64(i64::MIN) exits 101.
+
+    // ── min_i64: matches interp.rs a.min(b) ──────────────────────────
+    #[test]
+    fn migrated_min_i64_matches_interpreter() {
+        let oracle = |a: i64, b: i64| a.min(b);
+        let vals = [
+            0i64, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i64::MAX, i64::MIN,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(
+                    __axon_min_i64(a, b),
+                    oracle(a, b),
+                    "min_i64({a}, {b}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_min_i64_common_cases() {
+        assert_eq!(__axon_min_i64(3, 7), 3);
+        assert_eq!(__axon_min_i64(7, 3), 3);
+        assert_eq!(__axon_min_i64(0, 0), 0);
+        assert_eq!(__axon_min_i64(i64::MIN, i64::MAX), i64::MIN);
+    }
+
+    // ── max_i64: matches interp.rs a.max(b) ──────────────────────────
+    #[test]
+    fn migrated_max_i64_matches_interpreter() {
+        let oracle = |a: i64, b: i64| a.max(b);
+        let vals = [
+            0i64, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i64::MAX, i64::MIN,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(
+                    __axon_max_i64(a, b),
+                    oracle(a, b),
+                    "max_i64({a}, {b}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_max_i64_common_cases() {
+        assert_eq!(__axon_max_i64(3, 7), 7);
+        assert_eq!(__axon_max_i64(7, 3), 7);
+        assert_eq!(__axon_max_i64(0, 0), 0);
+        assert_eq!(__axon_max_i64(i64::MAX, i64::MIN), i64::MAX);
+    }
+
+    // ── sign_i64: matches interp.rs n.signum() ───────────────────────
+    #[test]
+    fn migrated_sign_i64_matches_interpreter() {
+        let oracle = |n: i64| n.signum();
+        for &n in &[0i64, 1, -1, 42, -42, i64::MAX, i64::MIN, i64::MAX - 1, i64::MIN + 1] {
+            assert_eq!(
+                __axon_sign_i64(n),
+                oracle(n),
+                "sign_i64({n}) diverges from interpreter"
+            );
+        }
+    }
+
+    #[test]
+    fn migrated_sign_i64_common_cases() {
+        assert_eq!(__axon_sign_i64(5), 1);
+        assert_eq!(__axon_sign_i64(-3), -1);
+        assert_eq!(__axon_sign_i64(0), 0);
+    }
+
+    // ── clamp_i64: matches interp.rs n.max(lo).min(hi) ───────────────
+    #[test]
+    fn migrated_clamp_i64_matches_interpreter() {
+        let oracle = |n: i64, lo: i64, hi: i64| n.max(lo).min(hi);
+        let vals = [0i64, 1, -1, 42, -42, 100, i64::MAX, i64::MIN];
+        for &n in &vals {
+            for &lo in &vals {
+                for &hi in &vals {
+                    // Skip cases where lo > hi (clamp has undefined semantics for invalid range).
+                    if lo > hi { continue; }
+                    assert_eq!(
+                        __axon_clamp_i64(n, lo, hi),
+                        oracle(n, lo, hi),
+                        "clamp_i64({n}, {lo}, {hi}) diverges"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_clamp_i64_common_cases() {
+        assert_eq!(__axon_clamp_i64(5, 0, 10), 5);
+        assert_eq!(__axon_clamp_i64(-5, 0, 10), 0);
+        assert_eq!(__axon_clamp_i64(15, 0, 10), 10);
+        assert_eq!(__axon_clamp_i64(0, 0, 0), 0);
+    }
+
+    // ── clamp_f64: matches interp.rs n.max(lo).min(hi) ───────────────
+    #[test]
+    fn migrated_clamp_f64_matches_interpreter() {
+        let oracle = |n: f64, lo: f64, hi: f64| n.max(lo).min(hi);
+        let vals: [f64; 8] = [0.0, 1.0, -1.0, 42.0, -42.0, 100.0, f64::INFINITY, f64::NEG_INFINITY];
+        for &n in &vals {
+            for &lo in &vals {
+                for &hi in &vals {
+                    if lo > hi { continue; }
+                    // NaN propagates naturally in both Rust and the LLVM IR version;
+                    // assert_eq handles it since NaN != NaN so both sides diverge equally.
+                    let result = __axon_clamp_f64(n, lo, hi);
+                    let expected = oracle(n, lo, hi);
+                    if n.is_nan() || lo.is_nan() || hi.is_nan() {
+                        assert!(result.is_nan(), "clamp_f64({n}, {lo}, {hi}) expected NaN");
+                    } else {
+                        assert_eq!(
+                            result, expected,
+                            "clamp_f64({n}, {lo}, {hi}) diverges"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_clamp_f64_common_cases() {
+        assert_eq!(__axon_clamp_f64(5.0, 0.0, 10.0), 5.0);
+        assert_eq!(__axon_clamp_f64(-5.0, 0.0, 10.0), 0.0);
+        assert_eq!(__axon_clamp_f64(15.0, 0.0, 10.0), 10.0);
+        assert_eq!(__axon_clamp_f64(0.0, 0.0, 0.0), 0.0);
+    }
+
+    // ── pow_i64: matches interp.rs base.wrapping_pow(exp as u32), exp>=0 ─
+    #[test]
+    fn migrated_pow_i64_matches_interpreter() {
+        // The interpreter oracle: base.wrapping_pow(exp as u32).
+        // Negative exponent is an abort (not testable here).
+        let oracle = |base: i64, exp: i32| base.wrapping_pow(exp as u32);
+        let bases = [0i64, 1, -1, 2, -2, 3, 10, -10];
+        let exps = [0i32, 1, 2, 3, 4, 10, 31];
+        for &base in &bases {
+            for &exp in &exps {
+                assert_eq!(
+                    __axon_pow_i64(base, exp as i64),
+                    oracle(base, exp),
+                    "pow_i64({base}, {exp}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_pow_i64_common_cases() {
+        assert_eq!(__axon_pow_i64(2, 0), 1);
+        assert_eq!(__axon_pow_i64(2, 10), 1024);
+        assert_eq!(__axon_pow_i64(0, 5), 0);
+        assert_eq!(__axon_pow_i64(1, 99), 1);
+        assert_eq!(__axon_pow_i64(-2, 3), -8);
+    }
+
+    // Note: __axon_pow_i64(base, neg_exp) aborts (matching the interpreter's
+    // panic-exit for negative exponent). Not unit-tested here because
+    // process::abort would kill the test runner.
 }

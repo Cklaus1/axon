@@ -1393,44 +1393,22 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 7: clamp_i64(n: i64, lo: i64, hi: i64) -> i64 ─────────────
+        // Migrated to axon-rt `__axon_clamp_i64` (R1 Batch 1).
         {
             let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("clamp_i64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "ci_entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let n  = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let lo = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let hi = fn_val.get_nth_param(2).unwrap().into_int_value();
-            // max(lo, min(n, hi))
-            let lt_hi = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, n, hi, "ci_lthi");
-            let n_or_hi = build_wrappers::w_select(&self.ir.builder,lt_hi, n.into(), hi.into(), "ci_nhi").into_int_value();
-            let gt_lo = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGT, n_or_hi, lo, "ci_gtlo");
-            let result = build_wrappers::w_select(&self.ir.builder,gt_lo, n_or_hi.into(), lo.into(), "ci_result");
-            build_wrappers::w_ret(&self.ir.builder, result.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_clamp_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_clamp_i64", fn_ty, None));
             self.functions.insert("clamp_i64".to_string(), fn_val);
             self.fn_return_types.insert("clamp_i64".to_string(), Type::I64);
         }
 
         // ── Phase 7: clamp_f64(n: f64, lo: f64, hi: f64) -> f64 ─────────────
+        // Migrated to axon-rt `__axon_clamp_f64` (R1 Batch 1).
         {
             let f64_ty = self.ir.context.f64_type();
             let fn_ty = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into(), f64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("clamp_f64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "cf_entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let n  = fn_val.get_nth_param(0).unwrap().into_float_value();
-            let lo = fn_val.get_nth_param(1).unwrap().into_float_value();
-            let hi = fn_val.get_nth_param(2).unwrap().into_float_value();
-            // max(lo, min(n, hi))
-            let lt_hi = build_wrappers::w_float_compare(&self.ir.builder,inkwell::FloatPredicate::OLT, n, hi, "cf_lthi");
-            let n_or_hi = build_wrappers::w_select(&self.ir.builder,lt_hi, n.into(), hi.into(), "cf_nhi").into_float_value();
-            let gt_lo = build_wrappers::w_float_compare(&self.ir.builder,inkwell::FloatPredicate::OGT, n_or_hi, lo, "cf_gtlo");
-            let result = build_wrappers::w_select(&self.ir.builder,gt_lo, n_or_hi.into(), lo.into(), "cf_result");
-            build_wrappers::w_ret(&self.ir.builder, result.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_clamp_f64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_clamp_f64", fn_ty, None));
             self.functions.insert("clamp_f64".to_string(), fn_val);
             self.fn_return_types.insert("clamp_f64".to_string(), Type::F64);
         }
@@ -2555,73 +2533,21 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 9: sign_i64(n: i64) -> i64  (-1 | 0 | 1) ─────────────────
+        // Migrated to axon-rt `__axon_sign_i64` (R1 Batch 1).
         {
-            let i64_ty = self.ir.context.i64_type();
             let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("sign_i64", fn_ty, None);
-            let bb = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(bb);
-            let n = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let zero = i64_ty.const_zero();
-            let is_pos = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::SGT, n, zero, "sg_pos");
-            let is_neg = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::SLT, n, zero, "sg_neg");
-            let one = i64_ty.const_int(1, false);
-            let neg_one = i64_ty.const_int(u64::MAX, true);
-            // if positive → 1, else if negative → -1, else → 0
-            let step1 = build_wrappers::w_select(&self.ir.builder,is_neg, neg_one.into(), zero.into(), "sg_s1").into_int_value();
-            let r     = build_wrappers::w_select(&self.ir.builder,is_pos, one.into(), step1.into(), "sg_r").into_int_value();
-            build_wrappers::w_ret(&self.ir.builder, r.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_sign_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_sign_i64", fn_ty, None));
             self.functions.insert("sign_i64".to_string(), fn_val);
             self.fn_return_types.insert("sign_i64".to_string(), Type::I64);
         }
 
         // ── Phase 9: pow_i64(base: i64, exp: i64) -> i64 ────────────────────
-        // Iterative: result=1; while exp>0 { result*=base; exp-=1 }
+        // Migrated to axon-rt `__axon_pow_i64` (R1 Batch 1).
         {
-            let i64_ty = self.ir.context.i64_type();
             let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("pow_i64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "pi_entry");
-            let cond_bb  = self.ir.context.append_basic_block(fn_val, "pi_cond");
-            let body_bb  = self.ir.context.append_basic_block(fn_val, "pi_body");
-            let exit_bb  = self.ir.context.append_basic_block(fn_val, "pi_exit");
-            let saved = self.ir.builder.get_insert_block();
-
-            self.ir.builder.position_at_end(entry_bb);
-            let base_slot   = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "pi_base");
-            let exp_slot    = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "pi_exp");
-            let result_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "pi_result");
-            let base = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let exp  = fn_val.get_nth_param(1).unwrap().into_int_value();
-            build_wrappers::w_store(&self.ir.builder,base_slot, base.into());
-            build_wrappers::w_store(&self.ir.builder,exp_slot, exp.into());
-            build_wrappers::w_store(&self.ir.builder,result_slot, i64_ty.const_int(1, false).into());
-            build_wrappers::w_br(&self.ir.builder,cond_bb);
-
-            self.ir.builder.position_at_end(cond_bb);
-            let e = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), exp_slot, "pi_e").into_int_value();
-            let cmp = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::SGT, e, i64_ty.const_zero(), "pi_cmp");
-            build_wrappers::w_cond_br(&self.ir.builder,cmp, body_bb, exit_bb);
-
-            self.ir.builder.position_at_end(body_bb);
-            let r = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), result_slot, "pi_r").into_int_value();
-            let b = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), base_slot, "pi_b").into_int_value();
-            let r2 = build_wrappers::w_int_mul(&self.ir.builder,r, b, "pi_r2");
-            build_wrappers::w_store(&self.ir.builder,result_slot, r2.into());
-            let e2 = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), exp_slot, "pi_e2").into_int_value();
-            let e3 = build_wrappers::w_int_sub(&self.ir.builder,e2, i64_ty.const_int(1, false), "pi_e3");
-            build_wrappers::w_store(&self.ir.builder,exp_slot, e3.into());
-            build_wrappers::w_br(&self.ir.builder,cond_bb);
-
-            self.ir.builder.position_at_end(exit_bb);
-            let res = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), result_slot, "pi_res");
-            build_wrappers::w_ret(&self.ir.builder, res.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_pow_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_pow_i64", fn_ty, None));
             self.functions.insert("pow_i64".to_string(), fn_val);
             self.fn_return_types.insert("pow_i64".to_string(), Type::I64);
         }
@@ -3139,46 +3065,20 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
         }
 
+        // min_i64(a: i64, b: i64) -> i64 — migrated to axon-rt `__axon_min_i64` (R1 Batch 1).
         {
-            // min_i64(a: i64, b: i64) -> i64
             let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("min_i64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "mn_entry");
-            let a_bb = self.ir.context.append_basic_block(fn_val, "mn_a");
-            let b_bb = self.ir.context.append_basic_block(fn_val, "mn_b");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let a = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_le_b = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLE, a, b, "mn_ale");
-            build_wrappers::w_cond_br(&self.ir.builder,a_le_b, a_bb, b_bb);
-            self.ir.builder.position_at_end(a_bb);
-            build_wrappers::w_ret(&self.ir.builder, a.into());
-            self.ir.builder.position_at_end(b_bb);
-            build_wrappers::w_ret(&self.ir.builder, b.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_min_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_min_i64", fn_ty, None));
             self.functions.insert("min_i64".to_string(), fn_val);
             self.fn_return_types.insert("min_i64".to_string(), Type::I64);
         }
 
+        // max_i64(a: i64, b: i64) -> i64 — migrated to axon-rt `__axon_max_i64` (R1 Batch 1).
         {
-            // max_i64(a: i64, b: i64) -> i64
             let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("max_i64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "mx_entry");
-            let a_bb = self.ir.context.append_basic_block(fn_val, "mx_a");
-            let b_bb = self.ir.context.append_basic_block(fn_val, "mx_b");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let a = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_ge_b = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SGE, a, b, "mx_age");
-            build_wrappers::w_cond_br(&self.ir.builder,a_ge_b, a_bb, b_bb);
-            self.ir.builder.position_at_end(a_bb);
-            build_wrappers::w_ret(&self.ir.builder, a.into());
-            self.ir.builder.position_at_end(b_bb);
-            build_wrappers::w_ret(&self.ir.builder, b.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_max_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_max_i64", fn_ty, None));
             self.functions.insert("max_i64".to_string(), fn_val);
             self.fn_return_types.insert("max_i64".to_string(), Type::I64);
         }
