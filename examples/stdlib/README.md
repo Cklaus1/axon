@@ -37,6 +37,12 @@ scores/confidences: `normalize_score`, `score_to_confidence` /
 `weighted2`/`mean2`, `bound_i64`/`bound_f64`. (`axon-surface` auto-bundles
 several of these into goals that reference them — see `examples/goals/`.)
 
+`bandit.ax` — UCB1 multi-armed bandit as a reusable userland module.
+`Bandit { n_arms, sums, counts }` carries running state via shared Dicts;
+`bandit_select` picks `argmax(mean + sqrt(2·ln(t)/count))`, `bandit_update`
+mutates the Dicts in place, `bandit_best_arm` returns the most-pulled arm.
+Imported by `examples/asi/bandit_ucb.ax` (demo #20).
+
 `agent.ax` — Tier-1 Agent type bundling the safety quartet + supervisor
 into a single state machine. `Agent { name, principal, budget_used,
 budget_cap, strikes, max_strikes, halted, steps_… }` carries identity,
@@ -70,6 +76,7 @@ axon test examples/stdlib/arrays.ax        # 5
 axon test examples/stdlib/asi_prelude.ax   # 8
 axon test examples/stdlib/reward.ax        # 8
 axon test examples/stdlib/agent.ax         # 7
+axon test examples/stdlib/bandit.ax        # 5
 axon run  examples/stdlib/safe_action.ax   # the composed gate in action
 axon run  examples/stdlib/supervisor.ax    # the kill-switch latching mid-stream
 axon run  examples/stdlib/arrays.ax        # argmax over a candidate score set

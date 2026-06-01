@@ -1,0 +1,159 @@
+// examples/stdlib/bandit.ax — UCB1 multi-armed bandit as a reusable
+// userland module. Importable via `mod bandit` from any program.
+//
+// The bandit's state is two Dict<str, …> handles wrapped in a struct.
+// The Dicts are reference-shared (Rc<RefCell<…>>) so `bandit_update`
+// mutates them in place — passing the Bandit by value to a helper
+// still updates the same underlying running averages.
+//
+//   axon test examples/stdlib/bandit.ax  → 5 tests pass
+
+type Bandit = {
+    n_arms: i64,
+    sums: Dict,        // total reward per arm
+    counts: Dict,      // pull count per arm
+}
+
+fn arm_key(id: i64) -> str {
+    // Stable string key per arm so two Bandits with the same arm count
+    // share a key space (useful for cross-run persistence later).
+    if id == 0 { "arm-0" }
+    else if id == 1 { "arm-1" }
+    else if id == 2 { "arm-2" }
+    else if id == 3 { "arm-3" }
+    else if id == 4 { "arm-4" }
+    else if id == 5 { "arm-5" }
+    else if id == 6 { "arm-6" }
+    else if id == 7 { "arm-7" }
+    else { "arm-x" }     // beyond v1's 8-arm cap
+}
+
+fn bandit_new(n_arms: i64) -> Bandit {
+    Bandit {
+        n_arms: n_arms,
+        sums: dict_new(),
+        counts: dict_new(),
+    }
+}
+
+// UCB score for one arm given total pull count `t`.
+fn bandit_ucb(b: Bandit, id: i64, t: i64) -> f64 {
+    let k = arm_key(id)
+    let n = match dict_get(b.counts, k) {
+        Some(v) => v
+        None => 0
+    }
+    if n == 0 {
+        1.0e9                    // unpulled → infinite UCB, sweep arms first
+    } else {
+        let sum_r = match dict_get(b.sums, k) {
+            Some(v) => v
+            None => 0.0
+        }
+        let mean = sum_r / as_f64(n)
+        let bonus = sqrt(2.0 * ln(as_f64(t)) / as_f64(n))
+        mean + bonus
+    }
+}
+
+// Pick the arm maximizing UCB. Total pull count `t` should be the
+// number of bandit_update calls so far + 1 (the round we're about
+// to run).
+fn bandit_select(b: Bandit, t: i64) -> i64 {
+    let ids = arr_range(0, b.n_arms)
+    let scored = arr_map(ids, |i| (i, bandit_ucb(b, i, t)))
+    let best = arr_max_by(scored, |p| p.1)
+    best.0
+}
+
+// Observe a reward for an arm; mutates the Dicts in place.
+fn bandit_update(b: Bandit, arm: i64, reward: f64) {
+    let k = arm_key(arm)
+    let cur_sum = match dict_get(b.sums, k) { Some(v) => v  None => 0.0 }
+    dict_set(b.sums, k, cur_sum + reward)
+    let cur_n = match dict_get(b.counts, k) { Some(v) => v  None => 0 }
+    dict_set(b.counts, k, cur_n + 1)
+}
+
+// Read-only queries.
+fn bandit_pulls(b: Bandit, arm: i64) -> i64 {
+    match dict_get(b.counts, arm_key(arm)) { Some(v) => v  None => 0 }
+}
+
+fn bandit_mean(b: Bandit, arm: i64) -> f64 {
+    let n = bandit_pulls(b, arm)
+    if n == 0 { 0.0 }
+    else {
+        let s = match dict_get(b.sums, arm_key(arm)) { Some(v) => v  None => 0.0 }
+        s / as_f64(n)
+    }
+}
+
+// Most-pulled arm — UCB's revealed preference at convergence.
+fn bandit_best_arm(b: Bandit) -> i64 {
+    let ids = arr_range(0, b.n_arms)
+    let pulls = arr_map(ids, |i| (i, bandit_pulls(b, i)))
+    let best = arr_max_by(pulls, |p| as_f64(p.1))
+    best.0
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_fresh_bandit_has_zero_pulls() {
+    let b = bandit_new(3)
+    assert_eq(bandit_pulls(b, 0), 0)
+    assert_eq(bandit_pulls(b, 1), 0)
+    assert_eq(bandit_pulls(b, 2), 0)
+}
+
+@[test]
+fn test_update_increments_count_and_sum() {
+    let b = bandit_new(3)
+    bandit_update(b, 1, 0.5)
+    bandit_update(b, 1, 0.7)
+    assert_eq(bandit_pulls(b, 1), 2)
+    // mean = (0.5 + 0.7) / 2 = 0.6
+    let m = bandit_mean(b, 1)
+    assert(m > 0.59 && m < 0.61)
+}
+
+@[test]
+fn test_select_sweeps_unpulled_arms_first() {
+    // First three selects should each return a different arm,
+    // since unpulled arms get an "infinite" UCB.
+    let b = bandit_new(3)
+    let a = bandit_select(b, 1)
+    bandit_update(b, a, 0.1)
+    let c = bandit_select(b, 2)
+    bandit_update(b, c, 0.2)
+    let e = bandit_select(b, 3)
+    bandit_update(b, e, 0.3)
+    // All three pulls happened on distinct arms.
+    let picked = [a, c, e]
+    assert_eq(len(arr_unique(picked)), 3)
+}
+
+@[test]
+fn test_best_arm_is_the_most_pulled() {
+    let b = bandit_new(3)
+    bandit_update(b, 0, 0.1)
+    bandit_update(b, 1, 0.5)
+    bandit_update(b, 1, 0.5)
+    bandit_update(b, 1, 0.5)
+    bandit_update(b, 2, 0.1)
+    bandit_update(b, 2, 0.1)
+    assert_eq(bandit_best_arm(b), 1)
+}
+
+@[test]
+fn test_state_shared_via_rc_refcell() {
+    // The Dicts inside Bandit are Rc<RefCell<…>> so a helper that
+    // takes a `Bandit` by value still mutates the same state.
+    let b = bandit_new(2)
+    bandit_update(b, 0, 1.0)
+    // Read after update via the same handle.
+    assert_eq(bandit_pulls(b, 0), 1)
+    let m = bandit_mean(b, 0)
+    assert(m > 0.99 && m < 1.01)
+}

@@ -940,15 +940,29 @@ fn agent_stdlib_module_tests_pass() {
 
 #[test]
 fn bandit_ucb_demo_converges_to_best_arm() {
-    // Demo #20. Classic UCB1 multi-armed bandit: 5 arms with hidden
-    // means; UCB picks `mean + sqrt(2 ln(t) / count)` each round, and
-    // after 200 rounds settles on arm-2 (the actual best with true
-    // mean 0.78). Exercises Dict<str, f64> + Dict<str, i64> as the
-    // bandit's running state plus the new ln math builtin.
-    let out = axon().args(["run", &ex("asi/bandit_ucb.ax")]).output().unwrap();
+    // Demo #20. UCB1 multi-armed bandit — the demo now mod-imports
+    // examples/stdlib/bandit.ax (the algorithm extracted into a
+    // reusable module). 5 arms with hidden means; after 200 rounds
+    // UCB converges to arm-2 (true_mean=0.78, the actual best).
+    let mut cmd = axon();
+    cmd.args(["run", &ex("asi/bandit_ucb.ax")]);
+    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    let out = cmd.output().unwrap();
     assert_eq!(out.status.code(), Some(1), "UCB should pick arm-2: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("preferred arm: arm-2"), "stdout: {stdout}");
+}
+
+#[test]
+fn bandit_stdlib_module_tests_pass() {
+    // examples/stdlib/bandit.ax is the reusable UCB1 module that
+    // demo #20 imports. 5 @[test]s cover fresh state, update math,
+    // round-robin sweep of unpulled arms, best-arm-by-pulls, and the
+    // Rc<RefCell> sharing semantics of the inner Dicts.
+    let out = axon().args(["test", &ex("stdlib/bandit.ax")]).output().unwrap();
+    assert!(out.status.success(), "bandit.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
 }
 
 #[test]
