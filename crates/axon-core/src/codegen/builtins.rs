@@ -1557,7 +1557,16 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 7: random_i64(lo: i64, hi: i64) -> i64 ─────────────────────
-        // Uses C rand() % (hi - lo) + lo. Behavior undefined if hi <= lo.
+        // Uses C rand() % (hi - lo) + lo.
+        //
+        // PARITY GAP (BUG_HUNT #27 / #36): the interpreter now rejects inverted
+        // bounds (hi < lo) with a graceful panic and returns `lo` for the empty
+        // range hi == lo. This IR does neither: hi == lo makes `range` 0 → a
+        // signed-rem div-by-zero (hard crash), and hi < lo yields garbage. A
+        // matching guard (compare hi<lo → call a trap/abort thunk; hi==lo →
+        // return lo) belongs here but needs the codegen build to verify, which
+        // is pathologically slow (BUILD_DIAGNOSIS.md). Tracked as finding #36;
+        // the interpreter is the reference semantics.
         {
             let rand_fn = self.ir.module.get_function("rand").unwrap_or_else(|| {
                 let ft = self.ir.context.i32_type().fn_type(&[], false);

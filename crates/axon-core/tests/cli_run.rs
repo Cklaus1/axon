@@ -2445,6 +2445,39 @@ fn axon_seed_env_var_makes_runs_reproducible() {
 }
 
 #[test]
+fn random_i64_inverted_bounds_panics_not_silent() {
+    // BUG_HUNT #27 / I-9: random_i64(hi, lo) with hi < lo is inverted args —
+    // a caller error. It used to silently return `lo`, a plausible-looking
+    // wrong value that masquerades as success. It must now fail loudly.
+    let f = std::env::temp_dir().join(format!("axon_rnginv_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { random_i64(10, 5) }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(
+        out.status.code(),
+        Some(101),
+        "inverted random_i64 bounds should panic, not return lo: {:?}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("random_i64"),
+        "panic should name random_i64: {:?}",
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
+#[test]
+fn random_i64_empty_range_returns_lo() {
+    // hi == lo is an empty half-open range [lo, lo); returning lo is the
+    // documented boundary behavior (NOT an error — distinct from inverted args).
+    let f = std::env::temp_dir().join(format!("axon_rngempty_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { random_i64(7, 7) }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(7), "random_i64(7,7) should return 7, not panic: {:?}", String::from_utf8_lossy(&out.stderr));
+}
+
+#[test]
 fn trace_separates_same_named_metrics_from_different_programs() {
     // BUG_HUNT #4 / I-9: two programs that both define `metric_x` used to
     // blend into one misleading KPI row. trace now keys on (fn, source) so

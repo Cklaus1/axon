@@ -683,7 +683,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "random_i64",
         params: &[("lo", "i64"), ("hi", "i64")],
         ret: "i64",
-        doc: "Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs.",
+        doc: "Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs. Inverted bounds (`hi < lo`) panic — they're a caller error, not a silent degenerate. `hi == lo` returns `lo` (empty range).",
     },
     BuiltinFn {
         name: "random_f64",

@@ -3194,7 +3194,19 @@ impl<'p> Interp<'p> {
             "random_i64" => {
                 want(2)?;
                 let (lo, hi) = (as_int(&args[0])?, as_int(&args[1])?);
-                if hi <= lo {
+                // Inverted bounds are a caller error: fail loudly instead of
+                // silently returning `lo`, which masquerades as success
+                // (BUG_HUNT #27 / I-9 — no silent success on degenerate input).
+                if hi < lo {
+                    return panic(format!(
+                        "random_i64: inverted bounds — lo ({lo}) must be <= hi ({hi}); \
+                         the range is [lo, hi). Did you swap the arguments?"
+                    ));
+                }
+                // hi == lo is the empty half-open range [lo, lo); `lo` is the
+                // only sensible return and is not an error (a collapsed loop
+                // bound can legitimately produce it).
+                if hi == lo {
                     ok!(Value::Int(lo));
                 }
                 let range = (hi as i128 - lo as i128) as u128;
@@ -4894,6 +4906,34 @@ mod tests {
             fn main() -> i64 { fib(10) }
         "#;
         assert_eq!(run(src), 55);
+    }
+
+    // BUG_HUNT #27: random_i64 rejects inverted bounds and stays in range.
+    #[test]
+    fn random_i64_valid_bounds_stay_in_range() {
+        // Deterministic via srand; sample several draws, all in [lo, hi).
+        let src = r#"
+            fn main() -> i64 {
+                srand(42)
+                let bad = 0
+                let i = 0
+                while i < 50 {
+                    let r = random_i64(10, 20)
+                    if r < 10 { bad = bad + 1 }
+                    if r >= 20 { bad = bad + 1 }
+                    i = i + 1
+                }
+                bad
+            }
+        "#;
+        assert_eq!(run(src), 0, "all draws must fall in [10, 20)");
+    }
+
+    #[test]
+    fn random_i64_inverted_bounds_is_panic() {
+        let src = "fn main() -> i64 { random_i64(20, 10) }";
+        // Graceful panic → exit 101 (not a silent return of `lo`).
+        assert_eq!(run(src), 101);
     }
 
     // BUG_HUNT #28: AXON_MAX_DEPTH resolution and stack-coupling are pure and
