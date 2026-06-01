@@ -3346,6 +3346,65 @@ impl<'p> Interp<'p> {
                 let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(k.clone())).collect();
                 ok!(Value::Array(keys));
             }
+            // `dict_map_values(d, f) -> Dict` — transform every value via
+            // a closure, keys preserved. Returns a FRESH dict; the input
+            // is not mutated. The dict analogue of arr_map.
+            "dict_map_values" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_map_values: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let f = args[1].clone();
+                let mut out = std::collections::BTreeMap::new();
+                let pairs: Vec<(String, Value)> = d
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                for (k, v) in pairs {
+                    let nv = self.call_closure(f.clone(), vec![v])?;
+                    out.insert(k, nv);
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+            // `arr_group_by(xs, key_fn) -> Dict[str, [T]]` — bucket the
+            // array by a closure that maps each element to a string key.
+            // Stable: elements appear in their input order within each
+            // bucket. The natural "frequency table" / "by-category"
+            // reduction.
+            "arr_group_by" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_group_by: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let key_fn = args[1].clone();
+                let mut out: std::collections::BTreeMap<String, Vec<Value>> =
+                    std::collections::BTreeMap::new();
+                for x in xs {
+                    let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
+                    let key = match k {
+                        Value::Str(s) => s,
+                        other => return panic(format!(
+                            "arr_group_by: key fn must return str, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    out.entry(key).or_default().push(x);
+                }
+                let map = out
+                    .into_iter()
+                    .map(|(k, v)| (k, Value::Array(v)))
+                    .collect();
+                ok!(Value::Dict(Rc::new(RefCell::new(map))));
+            }
             // `dict_values(d) -> [V]` — values in key-sorted order.
             "dict_values" => {
                 want(1)?;

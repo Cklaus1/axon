@@ -1,0 +1,54 @@
+// Axon ASI demo: word-frequency analysis via the Dict primitive.
+//
+// First demo that uses the string-keyed Dict primitive shipped this
+// session. Counts word frequencies in a small corpus, ranks by
+// frequency, picks the most-common word — the kind of preprocessing
+// step a real LLM agent would do before crafting prompts.
+//
+// Showcases:
+//   • dict_new / dict_set / dict_get / dict_keys (state)
+//   • arr_group_by (array → Dict[str, [T]])
+//   • dict_map_values (Dict → Dict, value transform)
+//   • str_split, str_to_lower (text prep)
+//   • arr_sort_by (rank entries)
+//   • Tuple destructuring in for-loop body (top-k display)
+//
+//   axon run examples/asi/word_freq.ax
+
+fn corpus() -> str {
+    "the quick brown fox jumps over the lazy dog the dog sleeps the fox runs"
+}
+
+fn main() -> i64 {
+    let text = corpus()
+    let words = str_split(text, " ")
+    let lowered = arr_map(words, |w| str_to_lower(w))
+
+    // Bucket identical words together, then count each bucket size.
+    let by_word = arr_group_by(lowered, |w| w)
+    let counts = dict_map_values(by_word, |bucket| len(bucket))
+
+    println("=== word frequency ===")
+    println("vocab size: {to_str(dict_len(counts))}")
+
+    // Build [(word, count)] pairs so we can sort by count.
+    let keys = dict_keys(counts)
+    let pairs = arr_map(keys, |k| {
+        let n = match dict_get(counts, k) { Some(v) => v  None => 0 }
+        (k, n)
+    })
+    // Sort descending by count; ties keep input order (stable insertion sort).
+    let ranked = arr_sort_by(pairs, |a, b| b.1 - a.1)
+
+    // Print top 3.
+    let top_k = arr_take(ranked, 3)
+    println("top 3:")
+    for entry in top_k {
+        let (word, n) = entry
+        println("  {word}: {to_str(n)}")
+    }
+
+    // Pin: "the" should be #1 (4 occurrences), "fox" and "dog" tied at 2.
+    let (first_word, first_count) = ranked[0]
+    if str_eq(first_word, "the") && first_count == 4 { 1 } else { 0 }
+}

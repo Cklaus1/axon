@@ -947,6 +947,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "All values in `d`, in key-sorted order.",
     },
     BuiltinFn {
+        name: "dict_map_values",
+        params: &[("d", "Dict"), ("f", "fn(V) -> U")],
+        ret: "Dict",
+        doc: "Transform every value via the closure; keys preserved. Returns a fresh dict — the input is not mutated. The dict analogue of `arr_map`.",
+    },
+    BuiltinFn {
+        name: "arr_group_by",
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> str")],
+        ret: "Dict",
+        doc: "Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural \"frequency table\" / \"by-category\" reduction.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",

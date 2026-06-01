@@ -939,6 +939,18 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn word_freq_demo_uses_dict_and_group_by() {
+    // Demo #19. First demo to use the Dict primitive: count word
+    // frequencies in a 14-word corpus, rank by count, print top-3.
+    // "the" wins with 4 occurrences; "dog"/"fox" tied at 2.
+    let out = axon().args(["run", &ex("asi/word_freq.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "word_freq demo: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("vocab size: 10"), "stdout: {stdout}");
+    assert!(stdout.contains("the: 4"), "the should win: {stdout}");
+}
+
+#[test]
 fn dict_string_keyed_map_full_lifecycle() {
     // Closes a real ASI gap: a Dict primitive for caches, frequency tables,
     // and named state. String-keyed (not full Value-keyed) — covers 95% of
