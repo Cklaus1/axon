@@ -613,76 +613,42 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("axon_concat".to_string(), fn_val);
         }
 
-        // abs_i32(n: i32) -> i32
+        // abs_i32(n: i32) -> i32 — migrated to axon-rt `__axon_abs_i32` (R1 Batch 3).
         {
             let i32_ty = self.ir.context.i32_type();
             let fn_ty = i32_ty.fn_type(&[i32_ty.into()], false);
-            let fn_val = self.ir.module.add_function("abs_i32", fn_ty, None);
-            let entry = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry);
-            let n = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let zero = i32_ty.const_zero();
-            let is_neg = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::SLT, n, zero, "isneg");
-            let neg_n = build_wrappers::w_int_neg(&self.ir.builder,n, "negn");
-            let abs_val = build_wrappers::w_select(&self.ir.builder,is_neg, neg_n.into(), n.into(), "absval");
-            build_wrappers::w_ret(&self.ir.builder, abs_val.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_abs_i32")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i32", fn_ty, None));
             self.functions.insert("abs_i32".to_string(), fn_val);
             self.fn_return_types.insert("abs_i32".to_string(), Type::I32);
         }
 
-        // abs_f64(n: f64) -> f64
+        // abs_f64(n: f64) -> f64 — migrated to axon-rt `__axon_abs_f64` (R1 Batch 3).
         {
             let f64_ty = self.ir.context.f64_type();
             let fn_ty = f64_ty.fn_type(&[f64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("abs_f64", fn_ty, None);
-            let entry = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry);
-            let n = fn_val.get_nth_param(0).unwrap().into_float_value();
-            let zero = f64_ty.const_zero();
-            let is_neg = build_wrappers::w_float_compare(&self.ir.builder,FloatPredicate::OLT, n, zero, "isneg");
-            let neg_n = build_wrappers::w_float_neg(&self.ir.builder,n, "negn");
-            let abs_val = build_wrappers::w_select(&self.ir.builder,is_neg, neg_n.into(), n.into(), "absval");
-            build_wrappers::w_ret(&self.ir.builder, abs_val.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_abs_f64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_f64", fn_ty, None));
             self.functions.insert("abs_f64".to_string(), fn_val);
             self.fn_return_types.insert("abs_f64".to_string(), Type::F64);
         }
 
-        // min_i32(a: i32, b: i32) -> i32
+        // min_i32(a: i32, b: i32) -> i32 — migrated to axon-rt `__axon_min_i32` (R1 Batch 3).
         {
             let i32_ty = self.ir.context.i32_type();
             let fn_ty = i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false);
-            let fn_val = self.ir.module.add_function("min_i32", fn_ty, None);
-            let entry = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry);
-            let a = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_lt_b = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::SLT, a, b, "altb");
-            let min_val = build_wrappers::w_select(&self.ir.builder,a_lt_b, a.into(), b.into(), "minval");
-            build_wrappers::w_ret(&self.ir.builder, min_val.into());
-            if let Some(b2) = saved { self.ir.builder.position_at_end(b2); }
+            let fn_val = self.ir.module.get_function("__axon_min_i32")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_min_i32", fn_ty, None));
             self.functions.insert("min_i32".to_string(), fn_val);
             self.fn_return_types.insert("min_i32".to_string(), Type::I32);
         }
 
-        // max_i32(a: i32, b: i32) -> i32
+        // max_i32(a: i32, b: i32) -> i32 — migrated to axon-rt `__axon_max_i32` (R1 Batch 3).
         {
             let i32_ty = self.ir.context.i32_type();
             let fn_ty = i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false);
-            let fn_val = self.ir.module.add_function("max_i32", fn_ty, None);
-            let entry = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry);
-            let a = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let b = fn_val.get_nth_param(1).unwrap().into_int_value();
-            let a_gt_b = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::SGT, a, b, "agtb");
-            let max_val = build_wrappers::w_select(&self.ir.builder,a_gt_b, a.into(), b.into(), "maxval");
-            build_wrappers::w_ret(&self.ir.builder, max_val.into());
-            if let Some(b2) = saved { self.ir.builder.position_at_end(b2); }
+            let fn_val = self.ir.module.get_function("__axon_max_i32")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_max_i32", fn_ty, None));
             self.functions.insert("max_i32".to_string(), fn_val);
             self.fn_return_types.insert("max_i32".to_string(), Type::I32);
         }
@@ -2513,21 +2479,14 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 9: abs_f64(x: f64) -> f64 ─────────────────────────────────
+        // Migrated to axon-rt `__axon_abs_f64` (R1 Batch 3). Idempotent
+        // get-or-declare — the duplicate block cannot cause LLVM redefinition
+        // because the second call hits the first's get_function.
         {
             let f64_ty = self.ir.context.f64_type();
             let fn_ty = f64_ty.fn_type(&[f64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("abs_f64", fn_ty, None);
-            let bb = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(bb);
-            let x = fn_val.get_nth_param(0).unwrap().into_float_value();
-            let zero = f64_ty.const_float(0.0);
-            let neg = build_wrappers::w_float_neg(&self.ir.builder,x, "abf_neg");
-            let is_neg = build_wrappers::w_float_compare(&self.ir.builder,
-                inkwell::FloatPredicate::OLT, x, zero, "abf_cmp");
-            let r = build_wrappers::w_select(&self.ir.builder,is_neg, neg.into(), x.into(), "abf_r").into_float_value();
-            build_wrappers::w_ret(&self.ir.builder, r.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_abs_f64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_f64", fn_ty, None));
             self.functions.insert("abs_f64".to_string(), fn_val);
             self.fn_return_types.insert("abs_f64".to_string(), Type::F64);
         }

@@ -355,6 +355,56 @@ pub extern "C" fn __axon_clamp_f64(n: f64, lo: f64, hi: f64) -> f64 {
     n.max(lo).min(hi)
 }
 
+/// Absolute value of an i32.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` to cut IR-generation
+/// volume from the native build (R1, `governance/specs/R1-codegen-build-unblock.md`,
+/// Batch 3). Behavior matches the interpreter oracle (`interp.rs` `abs_i32`,
+/// which is Rust's `i64::abs` computed on the i32 value). `abs_i32(i32::MIN)`
+/// overflows. The interpreter turns that into a panic-exit; a C-ABI extern
+/// cannot unwind, so we abort deterministically with the same intent rather
+/// than invoke UB or silently wrap.
+#[no_mangle]
+pub extern "C" fn __axon_abs_i32(n: i32) -> i32 {
+    match n.checked_abs() {
+        Some(v) => v,
+        None => {
+            eprintln!("axon: panic: abs_i32 overflow (i32::MIN has no positive)");
+            std::process::abort();
+        }
+    }
+}
+
+/// Minimum of two i32 values.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 3). Matches the
+/// interpreter oracle: `a.min(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_min_i32(a: i32, b: i32) -> i32 {
+    a.min(b)
+}
+
+/// Maximum of two i32 values.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 3). Matches the
+/// interpreter oracle: `a.max(b)`.
+#[no_mangle]
+pub extern "C" fn __axon_max_i32(a: i32, b: i32) -> i32 {
+    a.max(b)
+}
+
+/// Absolute value of an f64.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
+/// `governance/specs/R1-codegen-build-unblock.md`, Batch 3). Matches the
+/// interpreter oracle: `x.abs()`. No overflow semantics for f64.
+#[no_mangle]
+pub extern "C" fn __axon_abs_f64(x: f64) -> f64 {
+    x.abs()
+}
+
 /// Integer power: `base.wrapping_pow(exp as u32)`.
 ///
 /// Migrated from inline LLVM IR in `codegen/builtins.rs` (R1,
@@ -1100,5 +1150,119 @@ mod migrated_builtin_tests {
         assert_eq!(__axon_char_at(s("héllo"), 1), 195);
         // Emoji: first byte of '🦀' is 0xf0 (240)
         assert_eq!(__axon_char_at(s("🦀"), 0), 240);
+    }
+
+    // ── R1 Batch 3: scalar builtins (abs_i32, min_i32, max_i32, abs_f64) ──
+
+    // ── abs_i32: matches interp.rs i32::abs — computed in i64 then returned ─
+    #[test]
+    fn migrated_abs_i32_matches_interpreter() {
+        // The interpreter oracle: as_int(..).abs() — for i32 values this is
+        // (n as i64).abs() which is safe because the input is i32-range.
+        let oracle = |n: i32| (n as i64).abs() as i32;
+        let sweep = [
+            0i32, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i32::MAX, i32::MAX - 1, i32::MIN + 1,
+        ];
+        for &n in &sweep {
+            assert_eq!(
+                __axon_abs_i32(n),
+                oracle(n),
+                "abs_i32({n}) diverges from the interpreter oracle"
+            );
+        }
+    }
+
+    #[test]
+    fn migrated_abs_i32_common_cases() {
+        assert_eq!(__axon_abs_i32(-5), 5);
+        assert_eq!(__axon_abs_i32(5), 5);
+        assert_eq!(__axon_abs_i32(0), 0);
+        assert_eq!(__axon_abs_i32(i32::MIN + 1), i32::MAX);
+        // Note: __axon_abs_i32(i32::MIN) aborts (matching the interpreter's
+        // panic-exit on negate-overflow). Not unit-tested here because
+        // process::abort would kill the test runner — the behavior is asserted
+        // by the interpreter-side test that abs_i32(i32::MIN) exits 101.
+    }
+
+    // ── min_i32: matches interp.rs a.min(b) ──────────────────────────
+    #[test]
+    fn migrated_min_i32_matches_interpreter() {
+        let oracle = |a: i32, b: i32| a.min(b);
+        let vals = [
+            0i32, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i32::MAX, i32::MIN,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(
+                    __axon_min_i32(a, b),
+                    oracle(a, b),
+                    "min_i32({a}, {b}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_min_i32_common_cases() {
+        assert_eq!(__axon_min_i32(3, 7), 3);
+        assert_eq!(__axon_min_i32(7, 3), 3);
+        assert_eq!(__axon_min_i32(0, 0), 0);
+        assert_eq!(__axon_min_i32(i32::MIN, i32::MAX), i32::MIN);
+    }
+
+    // ── max_i32: matches interp.rs a.max(b) ──────────────────────────
+    #[test]
+    fn migrated_max_i32_matches_interpreter() {
+        let oracle = |a: i32, b: i32| a.max(b);
+        let vals = [
+            0i32, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i32::MAX, i32::MIN,
+        ];
+        for &a in &vals {
+            for &b in &vals {
+                assert_eq!(
+                    __axon_max_i32(a, b),
+                    oracle(a, b),
+                    "max_i32({a}, {b}) diverges"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn migrated_max_i32_common_cases() {
+        assert_eq!(__axon_max_i32(3, 7), 7);
+        assert_eq!(__axon_max_i32(7, 3), 7);
+        assert_eq!(__axon_max_i32(0, 0), 0);
+        assert_eq!(__axon_max_i32(i32::MAX, i32::MIN), i32::MAX);
+    }
+
+    // ── abs_f64: matches interp.rs x.abs() ───────────────────────────
+    #[test]
+    fn migrated_abs_f64_matches_interpreter() {
+        let oracle = |x: f64| x.abs();
+        let vals: [f64; 12] = [
+            0.0, -0.0, 1.0, -1.0, 3.5, -3.5,
+            100.0, -100.0, f64::INFINITY, f64::NEG_INFINITY,
+            f64::MAX, f64::MIN,
+        ];
+        for &x in &vals {
+            assert_eq!(
+                __axon_abs_f64(x),
+                oracle(x),
+                "abs_f64({x}) diverges from the interpreter oracle"
+            );
+        }
+    }
+
+    #[test]
+    fn migrated_abs_f64_common_cases() {
+        assert_eq!(__axon_abs_f64(-3.5), 3.5);
+        assert_eq!(__axon_abs_f64(3.5), 3.5);
+        assert_eq!(__axon_abs_f64(0.0), 0.0);
+        // abs(-0.0) == 0.0 (sign is lost, as expected)
+        assert!(__axon_abs_f64(-0.0).is_sign_positive());
     }
 }
