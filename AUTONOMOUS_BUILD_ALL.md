@@ -1,0 +1,91 @@
+# Axon Autonomous Build — Full R3–R10, end-to-end
+
+The loop prompt for building **everything remaining** in the Axon PRD
+(`governance/REQUIREMENTS.md`) to completion, unbounded, via the gated 8-step
+protocol. Driven by `/loop` or a cron job that re-injects the prompt below.
+
+## Current state (2026-06-01, update as you go)
+
+- **R1 native build: SOLVED** (`BUILD_RESOLVED.md`) — `cargo build -p axon-core`
+  finishes ~3s, `axon build foo.ax` emits a native binary matching the
+  interpreter. 75%, only the Tier-1 perf benchmark remains.
+- **R2 type system: 90%**, **R8 testing: 70%**, **R5 goal: 65%**, **R4 zones: 55%**,
+  **R9 alignment: 50%**, **R3 AI: 40%**, **R6 capability: 25%**, **R7 targets: 10%**,
+  **R10 self-improving: 0%**.
+- **All seven specs are DRAFT** (`governance/specs/`: R3, R4, R6, R7, R10, R1b, R1).
+  Per `governance/specs/README.md`, **implementation of a spec'd requirement may
+  not begin until its spec is `Reviewed`.** So each requirement's FIRST loop tick
+  is a spec self-review (see Step 0).
+
+## Build order (re-ranked for current reality — stale work-queue in REQUIREMENTS.md superseded)
+
+Cheapest-and-compounding first; the PRD "Hello Goal" forcing function
+(`ROADMAP.md` §5) is the integrating target that R5/R3/R4/R9 serve.
+
+1. **R8 — `forall` property testing.** Test infra; hardens everything else. No spec needed (TESTING_STANDARD.md). Pure interpreter.
+2. **R5 — `#[goal]` first-class.** `Goal` type + `#[goal(metric, test_set, target)]`. The autonomy headline. Spec: ROADMAP §5 + stdlib.md.
+3. **R9 — `#[corrigible]` kill-switch.** Small surface, pairs with `@[contained]`/`@[verify]`. Completes alignment.
+4. **R4 — code zones + provenance.** Spec drafted. Interp slice → codegen conformance. Completes I-13.
+5. **R3 — AI primitive.** Spec drafted. Provenance schema → `#[ai(policy)]` → routing.
+6. **R6 — capability/registry.** Spec drafted. `axon.lock` + content hash + audit.
+7. **R7 — targets.** Spec drafted. Slice A interp→wasm first (now also AOT-wasm, R1 unblocked).
+8. **R10 — self-improving harness.** Spec drafted. G1–G3 correctness/safety; G4 perf (R1 now unblocks it).
+9. **R1 perf benchmark + R1b str-return migration + R2 edge cases** — finish the partials.
+10. **THE FORCING FUNCTION:** wire the `axon intent compile → ast review → goal run → trace → improve → redteam → deploy → replay` pipeline end-to-end (ROADMAP §5). "When this works end-to-end, Axon is real."
+
+Work the highest-ranked requirement that is not yet DONE. Within a requirement,
+do one acceptance-criterion-sized slice per tick.
+
+## Per-tick protocol (the 8 gates — BUILD_PROTOCOL.md)
+
+**Step 0 — SPEC GATE (once per requirement, before any code).** If the requirement
+has a spec in `governance/specs/` still marked `📝 Draft`: do an adversarial
+self-review against `SPEC_TEMPLATE.md` + `CODE_REVIEW_RUBRIC.md`. Fix gaps, confirm
+the decisive fork is resolved, all 12 sections sound, error codes real, §12 honest.
+Then mark it `✅ Reviewed` in `specs/README.md` and commit. ONLY THEN write code for
+it. If no spec exists and the requirement is structural, write one first
+(SPEC_TEMPLATE.md). Requirements with an existing non-`specs/` spec (R8→TESTING_STANDARD,
+R5→ROADMAP§5) skip straight to Step 1.
+
+Then, for each acceptance-criterion slice:
+1. **FRAME** — state the acceptance criterion (a named test), risk class.
+2. **RED TEST** — write the failing test first; run it; watch it fail for the right reason.
+3. **IMPLEMENT** — smallest change to green.
+4. **WIDEN** — edge/adversarial/property tests; **interp↔codegen parity** (now that
+   native builds, parity tests can be real, not `#[ignore]`d — un-ignore them).
+5. **REVIEW** — self-review against CODE_REVIEW_RUBRIC.md as an adversary.
+6. **GATE** — `cargo test -p axon-core --no-default-features` (interp) AND
+   `cargo build -p axon-core` (native, ~3s) AND `cargo clippy --no-default-features
+   -p axon-core -- -D warnings` ALL green, &&-chained, BEFORE commit. Commit only on green.
+7. **VERIFY** — run the feature for real (example/native binary/demo); update docs +
+   REQUIREMENTS.md %/Status + the spec + BUG_HUNT ledger if a new bug surfaces.
+8. **PUSH** — push after each green commit.
+
+## Rules (non-negotiable)
+
+- **Commit only on green; never commit red.** &&-chain test && native-build && clippy && commit.
+- **Native parity is now testable** — every dual-path feature gets a real interp↔codegen
+  parity test (un-`#[ignore]` the ones the specs left as tripwires). I-2: interpreter is
+  the oracle; codegen that disagrees is the bug.
+- **Do NOT enable `codegen` + `serde-json` together** (reintroduces the build stall — BUILD_RESOLVED.md). Native = default features; JSON tooling = `--features serde-json` separately.
+- One acceptance slice per tick. Small, verified, reversible. Revert to last green if a tick can't reach Gate 6.
+- Cite the requirement (Rn) + acceptance test in every commit body. Update REQUIREMENTS.md %/Status in the SAME commit that moves the truth.
+- **Honesty rule (load-bearing — see this session's R1 saga):** verify before believing;
+  distinguish confirmed from suspected; when a hypothesis is cheap to test, TEST IT before
+  building on it. If three attempts at a fix fail, STOP and re-diagnose — don't keep pushing
+  a falsified premise. Surface negative results as prominently as positive ones.
+- **Update ARCHITECTURE_INVARIANTS.md** when a spec adopts a proposed invariant (I-15/I-16/I-17).
+- Log any new bug in `BUG_HUNT_2026-05-31.md` with severity + area.
+- **Use subagents (Sonnet) for mechanical multi-site work** (migrations, wrapping,
+  test-fanout); ALWAYS independently verify a subagent's output before committing — they
+  pass `cargo check` but can introduce logic bugs (this session: a match-narrowing bug
+  `cargo check` couldn't catch).
+- **Update this file's "Current state" + build-order** as requirements reach DONE, so the
+  next tick has accurate ground truth.
+
+## Stop condition
+
+The loop ends when every R3–R10 acceptance criterion in REQUIREMENTS.md is met, the
+weighted-completion line reads ~100% language-core, AND the Hello Goal forcing function
+runs end-to-end (the three artifacts of ROADMAP §5 produced from one `signup.intent.md`).
+Until then, there is always a next-highest unfinished slice.
