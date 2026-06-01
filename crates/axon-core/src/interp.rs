@@ -3432,6 +3432,50 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
             }
+            // `dict_get_or(d, k, default)` — get the value at `k`, or
+            // return `default` if absent. Compresses the ubiquitous
+            // `match dict_get(d, k) { Some(v) => v  None => default }`
+            // pattern into one call. The `default` can be any Value.
+            "dict_get_or" => {
+                want(3)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_get_or: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                let default = args[2].clone();
+                let v = d.borrow().get(&k).cloned().unwrap_or(default);
+                ok!(v);
+            }
+            // `dict_inc(d, k)` — atomically bump an i64 counter at `k`.
+            // Initializes to 1 if absent. Returns the new value. The
+            // standard "increment-a-counter" idiom — replaces the
+            // four-line get-default-add-set dance with one call.
+            "dict_inc" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_inc: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let k = as_str(&args[1])?.to_string();
+                let mut m = d.borrow_mut();
+                let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
+                let n = match cur {
+                    Value::Int(n) => n + 1,
+                    other => return panic(format!(
+                        "dict_inc: existing value at '{k}' is {}, not i64",
+                        other.type_name()
+                    )),
+                };
+                m.insert(k, Value::Int(n));
+                ok!(Value::Int(n));
+            }
             // `dict_filter(d, pred)` — keep entries where the predicate
             // `fn(str, V) -> bool` holds. Returns a fresh dict. The dict
             // analogue of arr_filter, with the closure seeing (key, value).

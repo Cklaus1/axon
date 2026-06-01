@@ -939,6 +939,33 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn dict_get_or_and_dict_inc_compress_idioms() {
+    // Two pragmatic dict helpers that compress patterns appearing across
+    // every demo:
+    //   dict_get_or(d, k, default)  — folds `match dict_get { Some => v ; None => d }`
+    //   dict_inc(d, k)              — replaces the get/+1/set dance for counters
+    let src = "fn main() -> i64 {\n  \
+        let counts = dict_new()\n  \
+        let _ = dict_inc(counts, \"apple\")\n  \
+        let _ = dict_inc(counts, \"apple\")\n  \
+        let _ = dict_inc(counts, \"apple\")\n  \
+        let _ = dict_inc(counts, \"banana\")\n  \
+        let apples = dict_get_or(counts, \"apple\", 0)\n  \
+        let bananas = dict_get_or(counts, \"banana\", 0)\n  \
+        let cherries = dict_get_or(counts, \"cherry\", 0)\n  \
+        // Default-value works for any T: str default works too.\n  \
+        let name = dict_get_or(counts, \"name\", \"anon\")\n  \
+        if apples == 3 && bananas == 1 && cherries == 0 \
+           && str_eq(name, \"anon\") { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_dho_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "dict_inc/get_or: {:?}", out);
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

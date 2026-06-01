@@ -1031,6 +1031,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Keep entries where the predicate `(key, value) -> bool` holds. Returns a fresh dict. The dict analogue of `arr_filter`; closure sees both key and value.",
     },
     BuiltinFn {
+        name: "dict_get_or",
+        params: &[("d", "Dict"), ("k", "str"), ("default", "V")],
+        ret: "V",
+        doc: "Get the value at `k` or return `default` if absent. Compresses the `match dict_get(d, k) { Some(v) => v  None => default }` idiom into one call.",
+    },
+    BuiltinFn {
+        name: "dict_inc",
+        params: &[("d", "Dict"), ("k", "str")],
+        ret: "i64",
+        doc: "Atomically bump an i64 counter at `k`. Initializes to 1 if absent. Returns the new value. Replaces the four-line get-default-add-set dance for frequency / counter tables.",
+    },
+    BuiltinFn {
         name: "dict_to_pairs",
         params: &[("d", "Dict")],
         ret: "[(str, V)]",
