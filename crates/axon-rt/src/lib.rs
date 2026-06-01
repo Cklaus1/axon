@@ -185,6 +185,27 @@ pub extern "C" fn __axon_print(ptr: *const u8, len: i64) {
     println!("{s}");
 }
 
+/// Absolute value of an i64.
+///
+/// Migrated from inline LLVM IR in `codegen/builtins.rs` to cut IR-generation
+/// volume from the native build (R1, `governance/specs/R1-codegen-build-unblock.md`,
+/// Batch 1). Behavior matches the interpreter oracle (`interp.rs` `abs_i64`,
+/// which is Rust's `i64::abs`): `abs_i64(i64::MIN)` overflows. The interpreter
+/// turns that into a panic-exit; a C-ABI extern cannot unwind, so we abort
+/// deterministically with the same intent rather than invoke UB or silently
+/// wrap (wrapping would reintroduce the interp↔codegen drift class of
+/// BUG_HUNT #33/#36/#37). The common case is a branchless `i64::abs`.
+#[no_mangle]
+pub extern "C" fn __axon_abs_i64(n: i64) -> i64 {
+    match n.checked_abs() {
+        Some(v) => v,
+        None => {
+            eprintln!("axon: panic: abs_i64 overflow (i64::MIN has no positive)");
+            std::process::abort();
+        }
+    }
+}
+
 /// Integer square root (returns i64).
 #[no_mangle]
 pub extern "C" fn __axon_sqrt(x: f64) -> f64 {
@@ -545,4 +566,43 @@ mod verify_panic_tests {
         // Should not panic; should contain placeholder text.
         assert!(msg.contains("<unknown>"), "msg: {msg}");
     }
+}
+
+// ── R1 Batch 1: migrated-builtin parity (R1-codegen-build-unblock.md §8) ──────
+#[cfg(test)]
+mod migrated_builtin_tests {
+    use super::*;
+
+    /// The interpreter oracle for `abs_i64` is Rust's `i64::abs` (interp.rs:
+    /// `as_int(..).abs()`). The migrated extern must agree across a value sweep
+    /// for every input where the oracle is defined (i.e. not i64::MIN, which
+    /// overflows in both — covered separately).
+    #[test]
+    fn migrated_abs_i64_matches_interpreter() {
+        let oracle = |n: i64| n.abs(); // exactly interp.rs's abs_i64
+        let sweep = [
+            0i64, 1, -1, 42, -42, 7, -7,
+            1000, -1000, i64::MAX, i64::MAX - 1, i64::MIN + 1,
+        ];
+        for &n in &sweep {
+            assert_eq!(
+                __axon_abs_i64(n),
+                oracle(n),
+                "abs_i64({n}) diverges from the interpreter oracle"
+            );
+        }
+    }
+
+    #[test]
+    fn migrated_abs_i64_common_cases() {
+        assert_eq!(__axon_abs_i64(-5), 5);
+        assert_eq!(__axon_abs_i64(5), 5);
+        assert_eq!(__axon_abs_i64(0), 0);
+        assert_eq!(__axon_abs_i64(i64::MIN + 1), i64::MAX);
+    }
+
+    // Note: __axon_abs_i64(i64::MIN) aborts (matching the interpreter's
+    // panic-exit on negate-overflow). Not unit-tested here because
+    // process::abort would kill the test runner — the behavior is asserted by
+    // the interpreter-side test that abs_i64(i64::MIN) exits 101.
 }

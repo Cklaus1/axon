@@ -2520,20 +2520,16 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 9: abs_i64(n: i64) -> i64 ─────────────────────────────────
+        // Migrated to axon-rt as `__axon_abs_i64` (R1 Batch 1,
+        // governance/specs/R1-codegen-build-unblock.md). Declared extern, no
+        // body — the linker resolves it against libaxon_rt.a, so this builtin
+        // costs ~0 LLVM-IR in axon-core. Dispatch key stays the .ax name
+        // `abs_i64` (emit_call resolves via self.functions.get("abs_i64")).
         {
             let i64_ty = self.ir.context.i64_type();
             let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("abs_i64", fn_ty, None);
-            let bb = self.ir.context.append_basic_block(fn_val, "entry");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(bb);
-            let n = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let neg = build_wrappers::w_int_neg(&self.ir.builder,n, "abs_neg");
-            let is_neg = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::SLT, n, i64_ty.const_zero(), "abs_cmp");
-            let r = build_wrappers::w_select(&self.ir.builder,is_neg, neg.into(), n.into(), "abs_r").into_int_value();
-            build_wrappers::w_ret(&self.ir.builder, r.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_abs_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i64", fn_ty, None));
             self.functions.insert("abs_i64".to_string(), fn_val);
             self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
         }
@@ -3131,25 +3127,14 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 5: abs_i64, min_i64, max_i64 ───────────────────────────────
+        // abs_i64 migrated to axon-rt `__axon_abs_i64` (R1 Batch 1). This block
+        // and `declare_phase9_math_builtins` both registered `abs_i64`
+        // (pre-existing duplicate); both now declare the SAME extern, so use a
+        // get-or-declare to avoid an LLVM duplicate-symbol. No IR body.
         {
-            // abs_i64(n: i64) -> i64: if n < 0 then -n else n
             let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.add_function("abs_i64", fn_ty, None);
-            let entry_bb = self.ir.context.append_basic_block(fn_val, "ai_entry");
-            let neg_bb   = self.ir.context.append_basic_block(fn_val, "ai_neg");
-            let pos_bb   = self.ir.context.append_basic_block(fn_val, "ai_pos");
-            let saved = self.ir.builder.get_insert_block();
-            self.ir.builder.position_at_end(entry_bb);
-            let n = fn_val.get_nth_param(0).unwrap().into_int_value();
-            let zero = i64_ty.const_int(0, false);
-            let is_neg = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::SLT, n, zero, "ai_isneg");
-            build_wrappers::w_cond_br(&self.ir.builder,is_neg, neg_bb, pos_bb);
-            self.ir.builder.position_at_end(neg_bb);
-            let negn = build_wrappers::w_int_neg(&self.ir.builder,n, "ai_neg");
-            build_wrappers::w_ret(&self.ir.builder, negn.into());
-            self.ir.builder.position_at_end(pos_bb);
-            build_wrappers::w_ret(&self.ir.builder, n.into());
-            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            let fn_val = self.ir.module.get_function("__axon_abs_i64")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i64", fn_ty, None));
             self.functions.insert("abs_i64".to_string(), fn_val);
             self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
         }
