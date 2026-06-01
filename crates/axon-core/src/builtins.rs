@@ -772,6 +772,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Read the provenance log for the @[adaptive] function named `name` and return the best observed score (the recorded return value closest to `target`). Returns `target` when no records exist. `max_evals` caps the number of recent records consulted (≤0 = no cap).",
     },
     BuiltinFn {
+        name: "goal_continue",
+        params: &[("name", "str"), ("target", "f64"), ("max_evals", "i64")],
+        ret: "f64",
+        doc: "Warm-start variant of `goal_run`: seeds the optimizer at the best prior probe from in-memory provenance rather than the origin. Pair with `goal_run` for iterative refinement — each `goal_continue` call resumes where the last left off. Falls through to a fresh run when no prior best exists, so calling cold is a no-op.",
+    },
+    BuiltinFn {
         name: "goal_best_input",
         params: &[("name", "str"), ("target", "f64")],
         ret: "i64",

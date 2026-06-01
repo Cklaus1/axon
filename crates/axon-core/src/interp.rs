@@ -533,6 +533,50 @@ impl<'p> Interp<'p> {
     /// `@[adaptive] fn(i64) -> i64` in the program; otherwise a retrospective
     /// best-observed lookup over the provenance store. Mirrors `axon-rt`'s
     /// `goal.rs` semantics.
+    /// Warm-start counterpart of `run_goal`. Reads the best prior probe from
+    /// in-memory provenance and seeds the multi-arg hill climb there;
+    /// single-arg paths use the existing on-disk continuation hook unchanged.
+    /// Falls through to fresh start (origin seed) when no prior best exists,
+    /// so calling cold is a no-op.
+    fn run_goal_warm(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        if let Some(f) = self.fns.get(name) {
+            let f = *f;
+            let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+            let all_i64_params = !f.params.is_empty()
+                && f.params.iter().all(|p| is_i64_type(&p.ty));
+            let all_f64_params = !f.params.is_empty()
+                && f.params.iter().all(|p| is_f64_type(&p.ty));
+            let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+            let f64_ret = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+            if is_adaptive {
+                if all_i64_params && i64_ret {
+                    if f.params.len() == 1 {
+                        // Single-arg: already has the on-disk continuation hook.
+                        return self.hill_climb_i64(f, target, max_evals);
+                    }
+                    // Multi-arg: seed from in-memory best prior tuple.
+                    let seed = self.best_input_index(name, target).and_then(|idx| {
+                        self.provenance_inputs
+                            .borrow()
+                            .get(name)
+                            .and_then(|v| v.get(idx).cloned())
+                    });
+                    return self.hill_climb_multi_i64_from(f, target, max_evals, seed);
+                }
+                if all_f64_params && f64_ret {
+                    let seed = self.best_input_index(name, target).and_then(|idx| {
+                        self.provenance_inputs_f64
+                            .borrow()
+                            .get(name)
+                            .and_then(|v| v.get(idx).cloned())
+                    });
+                    return self.hill_climb_multi_f64_from(f, target, max_evals, seed);
+                }
+            }
+        }
+        Ok(self.best_observed(name, target, max_evals))
+    }
+
     fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
@@ -675,9 +719,26 @@ impl<'p> Interp<'p> {
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
+        self.hill_climb_multi_i64_from(f, target, max_evals, None)
+    }
+
+    fn hill_climb_multi_i64_from(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+        start: Option<Vec<i64>>,
+    ) -> Result<f64, Flow> {
         let n_dims = f.params.len();
         let unlimited = max_evals <= 0;
-        let mut cur: Vec<i64> = vec![0; n_dims];
+        // `start = None` means fresh: cur = [0; n_dims]. `start = Some(v)`
+        // (used by `goal_continue`) seeds at a known-good prior probe.
+        // Length-mismatches fall back to zero so a stale store can't crash
+        // the optimizer.
+        let mut cur: Vec<i64> = match start {
+            Some(v) if v.len() == n_dims => v,
+            _ => vec![0; n_dims],
+        };
         let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
             let args = xs.iter().map(|&x| Value::Int(x)).collect();
             match self.call_fn(f, args)? {
@@ -827,9 +888,22 @@ impl<'p> Interp<'p> {
         target: f64,
         max_evals: i64,
     ) -> Result<f64, Flow> {
+        self.hill_climb_multi_f64_from(f, target, max_evals, None)
+    }
+
+    fn hill_climb_multi_f64_from(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+        start: Option<Vec<f64>>,
+    ) -> Result<f64, Flow> {
         let n_dims = f.params.len();
         let unlimited = max_evals <= 0;
-        let mut cur: Vec<f64> = vec![0.0; n_dims];
+        let mut cur: Vec<f64> = match start {
+            Some(v) if v.len() == n_dims => v,
+            _ => vec![0.0; n_dims],
+        };
         let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
             let args = xs.iter().map(|&x| Value::Float(x)).collect();
             match self.call_fn(f, args)? {
@@ -2710,6 +2784,20 @@ impl<'p> Interp<'p> {
                 let target = as_float(&args[1])?;
                 let max_evals = as_int(&args[2])?;
                 ok!(Value::Float(self.run_goal(&name, target, max_evals)?));
+            }
+
+            // Warm-start variant: seeds the optimizer at the best prior
+            // probe from in-memory provenance, rather than starting at the
+            // origin. Pair with a previous goal_run / goal_clear pattern
+            // to do iterative refinement: each call resumes where the last
+            // left off. Falls through to a fresh run when the fn has no
+            // prior provenance entry, so it's safe to call cold.
+            "goal_continue" => {
+                want(3)?;
+                let name = as_str(&args[0])?.to_string();
+                let target = as_float(&args[1])?;
+                let max_evals = as_int(&args[2])?;
+                ok!(Value::Float(self.run_goal_warm(&name, target, max_evals)?));
             }
 
             // Read back the best-scoring leading-i64 input observed for an

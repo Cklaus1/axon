@@ -896,6 +896,29 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn goal_continue_warm_starts_from_in_memory_best() {
+    // `goal_continue(name, target, max_evals)` resumes the multi-arg
+    // optimizer from the best prior probe in the in-memory provenance
+    // store instead of starting fresh at the origin. Verified on a 2D
+    // peak: a small-budget `goal_run` gets us partway; a follow-up
+    // `goal_continue` with the same budget converges to the peak.
+    let src = "@[adaptive]\n\
+        fn pair(x: i64, y: i64) -> i64 { 1000 - abs_i64(x - 500) - abs_i64(y - 300) }\n\
+        fn main() -> i64 {\n  \
+            let r1 = goal_run(\"pair\", 1000.0, 30)\n  \
+            let r2 = goal_continue(\"pair\", 1000.0, 30)\n  \
+            let xs = goal_best_inputs(\"pair\", 1000.0)\n  \
+            // Non-decreasing trajectory + converged to optimum.\n  \
+            if r2 >= r1 && xs[0] == 500 && xs[1] == 300 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_gc_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "goal_continue should converge: {:?}", out);
+}
+
+#[test]
 fn verify_composite_predicates_with_and_or_evaluate_at_runtime() {
     // Closes ROADMAP §9.5 F6: `@[verify]` predicates can now use `&&`, `||`,
     // and arbitrary boolean expressions over the Uncertain return's
