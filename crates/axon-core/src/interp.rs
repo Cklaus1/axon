@@ -3432,6 +3432,96 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
             }
+            // `dict_filter(d, pred)` — keep entries where the predicate
+            // `fn(str, V) -> bool` holds. Returns a fresh dict. The dict
+            // analogue of arr_filter, with the closure seeing (key, value).
+            "dict_filter" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_filter: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let pairs: Vec<(String, Value)> = d
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                let mut out: std::collections::BTreeMap<String, Value> =
+                    std::collections::BTreeMap::new();
+                for (k, v) in pairs {
+                    let keep = self.call_closure(
+                        pred.clone(),
+                        vec![Value::Str(k.clone()), v.clone()],
+                    )?;
+                    match keep {
+                        Value::Bool(true) => { out.insert(k, v); }
+                        Value::Bool(false) => {}
+                        other => return panic(format!(
+                            "dict_filter: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+            // `dict_to_pairs(d) -> [(str, V)]` — entries as a slice of
+            // tuples in BTreeMap key order. The natural primitive for
+            // "sort a dict by value": dict_to_pairs → arr_sort_by →
+            // arr_take. Empty dict → empty slice.
+            "dict_to_pairs" => {
+                want(1)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_to_pairs: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pairs: Vec<Value> = d
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| Value::Tuple(vec![Value::Str(k.clone()), v.clone()]))
+                    .collect();
+                ok!(Value::Array(pairs));
+            }
+            // `dict_from_pairs(xs) -> Dict` — inverse: build a Dict from
+            // a slice of `(str, V)` tuples. Duplicate keys: the LAST
+            // pair wins (matches the conventional construction order).
+            "dict_from_pairs" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "dict_from_pairs: expected array of (str, V) tuples, got {}",
+                        other.type_name()
+                    )),
+                };
+                let mut out: std::collections::BTreeMap<String, Value> =
+                    std::collections::BTreeMap::new();
+                for v in xs {
+                    let pair = match v {
+                        Value::Tuple(t) if t.len() == 2 => t,
+                        other => return panic(format!(
+                            "dict_from_pairs: each element must be a 2-tuple (str, V), got {}",
+                            other.type_name()
+                        )),
+                    };
+                    let k = match &pair[0] {
+                        Value::Str(s) => s.clone(),
+                        other => return panic(format!(
+                            "dict_from_pairs: tuple's first element must be str, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    out.insert(k, pair[1].clone());
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+
             // `dict_to_str(d) -> str` — serialize a `Dict<str, str>` to a
             // stable line-oriented text format: `key1=value1\nkey2=value2…`.
             // Each entry on its own line; BTreeMap key order so the output

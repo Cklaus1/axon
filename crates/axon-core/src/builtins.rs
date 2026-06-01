@@ -1025,6 +1025,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Union of two dicts; right-biased on key collision (values in `d2` win). Returns a fresh dict — inputs are unchanged.",
     },
     BuiltinFn {
+        name: "dict_filter",
+        params: &[("d", "Dict"), ("pred", "fn(str, V) -> bool")],
+        ret: "Dict",
+        doc: "Keep entries where the predicate `(key, value) -> bool` holds. Returns a fresh dict. The dict analogue of `arr_filter`; closure sees both key and value.",
+    },
+    BuiltinFn {
+        name: "dict_to_pairs",
+        params: &[("d", "Dict")],
+        ret: "[(str, V)]",
+        doc: "Entries as a slice of `(str, V)` tuples in BTreeMap key order. The natural primitive for \"sort a dict by value\": `dict_to_pairs → arr_sort_by → arr_take`.",
+    },
+    BuiltinFn {
+        name: "dict_from_pairs",
+        params: &[("xs", "[(str, V)]")],
+        ret: "Dict",
+        doc: "Build a Dict from a slice of `(str, V)` tuples. Duplicate keys: last pair wins.",
+    },
+    BuiltinFn {
         name: "dict_to_str",
         params: &[("d", "Dict")],
         ret: "str",

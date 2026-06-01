@@ -939,6 +939,34 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn dict_filter_to_pairs_from_pairs() {
+    // Three more dict primitives that complete the array↔dict symmetry:
+    //   dict_filter(d, pred)    — keep entries where (k, v) → true
+    //   dict_to_pairs(d)        — entries as `[(str, V)]` for sort_by
+    //   dict_from_pairs(xs)     — inverse; last-write-wins on duplicates
+    let src = "fn main() -> i64 {\n  \
+        let d = dict_new()\n  \
+        dict_set(d, \"alice\", 30)\n  \
+        dict_set(d, \"bob\", 25)\n  \
+        dict_set(d, \"carol\", 35)\n  \
+        dict_set(d, \"dave\", 18)\n  \
+        let adults = dict_filter(d, |_k, v| v >= 21)\n  \
+        let pairs = dict_to_pairs(d)\n  \
+        let sorted = arr_sort_by(pairs, |a, b| b.1 - a.1)\n  \
+        let (top_name, top_age) = sorted[0]\n  \
+        let d2 = dict_from_pairs(pairs)\n  \
+        if dict_len(adults) == 3 \
+           && str_eq(top_name, \"carol\") && top_age == 35 \
+           && dict_len(d2) == dict_len(d) { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_dfp_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "dict_filter/to_pairs/from_pairs: {:?}", out);
+}
+
+#[test]
 fn dict_to_str_round_trips() {
     // dict_to_str / dict_from_str serialize a Dict to a stable
     // line-oriented `key=value\n` payload. Inverse round-trip.
