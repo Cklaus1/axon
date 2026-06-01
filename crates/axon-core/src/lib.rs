@@ -506,9 +506,21 @@ fn load_module_recursive(
             .map(|s| format!("    {s} (not found)"))
             .collect::<Vec<_>>()
             .join("\n");
+        // Bug #10: the search dirs are install locations the user never
+        // created; nearly every in-repo demo is run via AXON_PATH. When it's
+        // unset, point the user at the lever they're actually missing.
+        let hint = if std::env::var_os("AXON_PATH").is_none() {
+            let modfile = rel.display();
+            format!(
+                "\n  hint: AXON_PATH is unset — set it to the directory containing `{modfile}` \
+                 (e.g. `AXON_PATH=examples/stdlib axon run ...`)"
+            )
+        } else {
+            String::new()
+        };
         errors.push(MergeError {
             code: error::E0901,
-            message: format!("module `{path_str}` not found\n  searched:\n{detail}"),
+            message: format!("module `{path_str}` not found\n  searched:\n{detail}{hint}"),
             file: String::new(),
         });
     }

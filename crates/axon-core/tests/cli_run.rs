@@ -381,6 +381,21 @@ fn run_typechecks_before_interpreting() {
 }
 
 #[test]
+fn missing_module_error_hints_axon_path_when_unset() {
+    // Bug #10: running a module-importing demo without AXON_PATH gives an
+    // E0901 listing install-dir search paths the user never created. When
+    // AXON_PATH is unset, the error must point at that lever.
+    let f = std::env::temp_dir().join(format!("axon_modmiss_{}.ax", std::process::id()));
+    std::fs::write(&f, "mod bandit\nuse bandit.{Bandit}\nfn main() -> i64 { 0 }\n").unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).env_remove("AXON_PATH").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "missing module must be rejected: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E0901"), "expected E0901, got: {msg}");
+    assert!(msg.contains("AXON_PATH"), "expected AXON_PATH hint, got: {msg}");
+}
+
+#[test]
 fn parse_error_prefix_is_not_doubled() {
     // Bug #7: a ParseError::Other-class error printed `parse error: parse
     // error: ...` — the prefix was added by both ParseError::Other's own
