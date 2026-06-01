@@ -425,20 +425,27 @@ impl<'p> Interp<'p> {
             }
         }
 
-        // `@[verify(<ident> OP K)]`: runtime gate. Codegen currently only emits
-        // `__axon_verify_panic` for `confidence OP K` on `Uncertain<_>` returns;
-        // the interpreter also enforces `value OP K` on Uncertain values (i64 or
-        // f64) — closing ROADMAP §9.5 F6 for the simple numeric shape. Any
-        // unrecognised ident or non-Uncertain return is a no-op at runtime
-        // (the static checker is the source of truth for those shapes).
+        // `@[verify(predicate)]`: runtime gate. Two paths:
+        //  - For `confidence OP K` / `value OP K` (the codegen-decodable
+        //    shapes), do the comparison directly and emit a rich panic
+        //    naming both fields and the search input. This matches what
+        //    native codegen will emit when the codegen build completes.
+        //  - For anything more complex (`&&`, `||`, multi-field, function
+        //    calls in the predicate), bind `confidence` / `value` /
+        //    `source_tag` into a fresh env and evaluate the predicate as
+        //    a normal Expr. Lets the user write
+        //    `@[verify(value > 0 && confidence >= 0.8)]` and have it
+        //    enforced at runtime — closing ROADMAP §9.5 F6.
         if let Some(spec) = &f.verify {
-            if let Some((ident, op, bound)) =
-                crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
-            {
-                if let Value::Struct { name, fields } = &result {
-                    if name == "Uncertain" {
-                        // Extract the field the predicate names; coerce i64
-                        // value to f64 for the comparison.
+            if let Value::Struct { name, fields } = &result {
+                if name == "Uncertain" {
+                    let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
+                    let val_str = fields.get("value").map(display).unwrap_or_else(|| "?".into());
+                    let conf_str = fields.get("confidence").map(display).unwrap_or_else(|| "?".into());
+                    let input_str = input_arg.map(|n| format!(", input {n}")).unwrap_or_default();
+
+                    if let Some((ident, op, bound)) = decoded {
+                        // Simple shape: do the targeted, well-typed compare.
                         let observed: Option<f64> = match (ident.as_str(), fields.get(ident.as_str())) {
                             ("confidence", Some(Value::Float(c))) => Some(*c),
                             ("value", Some(Value::Int(n))) => Some(*n as f64),
@@ -447,21 +454,6 @@ impl<'p> Interp<'p> {
                         };
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
-                                // Surface the rejected sample so a downstream
-                                // agent or human can act on it: the value that
-                                // failed the gate, plus the leading input arg
-                                // (the search probe goal_run feeds back).
-                                let val_str = fields
-                                    .get("value")
-                                    .map(display)
-                                    .unwrap_or_else(|| "?".into());
-                                let conf_str = fields
-                                    .get("confidence")
-                                    .map(display)
-                                    .unwrap_or_else(|| "?".into());
-                                let input_str = input_arg
-                                    .map(|n| format!(", input {n}"))
-                                    .unwrap_or_default();
                                 return Err(Flow::Panic(format!(
                                     "verify failed in `{}`: {} {} {} {} is false \
                                      (value {}, confidence {}{})",
@@ -475,6 +467,32 @@ impl<'p> Interp<'p> {
                                     input_str,
                                 )));
                             }
+                        }
+                    } else {
+                        // Composite predicate: evaluate as a normal Expr with
+                        // `value`, `confidence`, `source_tag` in scope. Any
+                        // boolean expression Axon understands is accepted —
+                        // `&&`, `||`, comparisons, function calls, you name it.
+                        let mut pred_env = Env::new();
+                        if let Some(v) = fields.get("value") {
+                            pred_env.define("value".into(), v.clone());
+                        }
+                        if let Some(c) = fields.get("confidence") {
+                            pred_env.define("confidence".into(), c.clone());
+                        }
+                        if let Some(s) = fields.get("source_tag") {
+                            pred_env.define("source_tag".into(), s.clone());
+                        }
+                        let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                        if let Value::Bool(false) = outcome {
+                            return Err(Flow::Panic(format!(
+                                "verify failed in `{}`: composite predicate did not hold \
+                                 (value {}, confidence {}{})",
+                                f.name,
+                                val_str,
+                                conf_str,
+                                input_str,
+                            )));
                         }
                     }
                 }

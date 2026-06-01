@@ -896,6 +896,52 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn verify_composite_predicates_with_and_or_evaluate_at_runtime() {
+    // Closes ROADMAP §9.5 F6: `@[verify]` predicates can now use `&&`, `||`,
+    // and arbitrary boolean expressions over the Uncertain return's
+    // `value` / `confidence` / `source_tag` fields. The interpreter falls
+    // back from the codegen-style targeted decoder to evaluating the
+    // predicate as a normal Expr in a fresh env when the simple shape
+    // doesn't match.
+    //
+    // Three cases: AND passes, AND fails on value, OR passes via either branch.
+    let pass_and = "@[verify(value >= 50 && confidence >= 0.8)]\n\
+        fn gate(n: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(n, c) }\n\
+        fn main() -> i64 { gate(75, 0.9).value }\n";
+    let f = std::env::temp_dir().join(format!("axon_v_pass_{}.ax", std::process::id()));
+    std::fs::write(&f, pass_and).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(75), "AND predicate should pass: {:?}", out);
+
+    let fail_and = "@[verify(value >= 50 && confidence >= 0.8)]\n\
+        fn gate(n: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(n, c) }\n\
+        fn main() { let _ = gate(30, 0.9)  println(\"unreached\") }\n";
+    let f = std::env::temp_dir().join(format!("axon_v_fail_{}.ax", std::process::id()));
+    std::fs::write(&f, fail_and).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "AND breach on value should panic");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("composite predicate did not hold"), "msg: {stderr}");
+    assert!(stderr.contains("value 30"), "must name rejected value: {stderr}");
+    assert!(stderr.contains("confidence 0.9"), "must name confidence: {stderr}");
+
+    let or_passes = "@[verify(value >= 90 || confidence >= 0.99)]\n\
+        fn gate(n: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(n, c) }\n\
+        fn main() -> i64 {\n  \
+            let _ = gate(95, 0.5)\n  \
+            let _ = gate(10, 0.999)\n  \
+            0\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_v_or_{}.ax", std::process::id()));
+    std::fs::write(&f, or_passes).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(out.status.success(), "OR passes via either branch: {:?}", out);
+}
+
+#[test]
 fn multi_objective_demo_picks_pareto_optimal_policy() {
     // examples/asi/multi_objective.ax — first demo wiring the reward.ax
     // algebra into a @[adaptive] fn. Trades accuracy vs cost across a
