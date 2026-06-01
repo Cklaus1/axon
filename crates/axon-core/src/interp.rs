@@ -2546,6 +2546,121 @@ impl<'p> Interp<'p> {
                     None => Value::None,
                 });
             }
+            // `arr_any(xs, pred)` — does at least one element satisfy the
+            // predicate? Short-circuits on the first true. The bool dual
+            // of arr_find: arr_find returns the element, arr_any returns
+            // whether one exists.
+            "arr_any" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_any: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut hit = false;
+                for x in xs {
+                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    match r {
+                        Value::Bool(true) => { hit = true; break; }
+                        Value::Bool(false) => {}
+                        other => return panic(format!(
+                            "arr_any: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Bool(hit));
+            }
+            // `arr_all(xs, pred)` — do ALL elements satisfy the predicate?
+            // Short-circuits on the first false. Empty array → true
+            // (vacuous truth, matches mathematical convention).
+            "arr_all" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_all: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut all = true;
+                for x in xs {
+                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    match r {
+                        Value::Bool(true) => {}
+                        Value::Bool(false) => { all = false; break; }
+                        other => return panic(format!(
+                            "arr_all: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Bool(all));
+            }
+            // `arr_count_if(xs, pred)` — count elements where the
+            // predicate returns true. Equivalent to `len(arr_filter(xs,
+            // pred))` but doesn't materialize the filtered array.
+            "arr_count_if" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_count_if: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut n: i64 = 0;
+                for x in xs {
+                    let r = self.call_closure(pred.clone(), vec![x])?;
+                    match r {
+                        Value::Bool(true) => { n += 1; }
+                        Value::Bool(false) => {}
+                        other => return panic(format!(
+                            "arr_count_if: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Int(n));
+            }
+            // `arr_zip_with(xs, ys, f)` — pair element-wise then map via
+            // a 2-arg closure: `f(x, y) -> z`. Truncates to the shorter
+            // input. More efficient than `arr_zip` + `arr_map` (no
+            // intermediate tuple slice) and lets the closure see both
+            // values without destructuring.
+            "arr_zip_with" => {
+                want(3)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_zip_with: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let ys = match &args[1] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_zip_with: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let f = args[2].clone();
+                let n = xs.len().min(ys.len());
+                let mut out = Vec::with_capacity(n);
+                for i in 0..n {
+                    let z = self.call_closure(
+                        f.clone(),
+                        vec![xs[i].clone(), ys[i].clone()],
+                    )?;
+                    out.push(z);
+                }
+                ok!(Value::Array(out));
+            }
             // First element matching the predicate closure. Returns
             // `Some(v)` when one is found, `None` otherwise — the
             // closure shape mirrors arr_filter, but the result is a

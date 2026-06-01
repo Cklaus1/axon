@@ -939,6 +939,35 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn array_any_all_count_zip_with_close_the_functional_gap() {
+    // Four more functional combinators that don't existed before:
+    //   arr_any (∃), arr_all (∀ with vacuous-truth on empty),
+    //   arr_count_if (filter-without-materializing), arr_zip_with
+    //   (zip+map fused, no intermediate tuple slice).
+    let src = "fn main() -> i64 {\n  \
+        let xs = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]\n  \
+        let any_big = arr_any(xs, |x| x > 100)\n  \
+        let any_one = arr_any(xs, |x| x > 5)\n  \
+        let all_pos = arr_all(xs, |x| x > 0)\n  \
+        let all_big = arr_all(xs, |x| x > 5)\n  \
+        let n_evens = arr_count_if(xs, |x| x % 2 == 0)\n  \
+        // Empty-array vacuous truth.\n  \
+        let empty = []\n  \
+        let empty_all = arr_all(empty, |x| x > 0)\n  \
+        let empty_any = arr_any(empty, |x| x > 0)\n  \
+        // Dot product via zip_with.\n  \
+        let dot = arr_sum_i64(arr_zip_with([1, 2, 3], [10, 20, 30], |a, b| a * b))\n  \
+        if !any_big && any_one && all_pos && !all_big && \
+           n_evens == 5 && empty_all && !empty_any && dot == 140 { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_aaczw_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "any/all/count_if/zip_with: {:?}", out);
+}
+
+#[test]
 fn array_chunk_unique_index_of_find() {
     // Four more building blocks: arr_chunk (batched processing),
     // arr_unique (dedupe preserving order), arr_index_of (where? as

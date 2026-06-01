@@ -386,6 +386,30 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "First element matching the predicate closure. Returns `Some(v)` or `None`. Same closure shape as `arr_filter` but returns a single element with early exit.",
     },
     BuiltinFn {
+        name: "arr_any",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "bool",
+        doc: "True if at least one element satisfies the predicate. Short-circuits.",
+    },
+    BuiltinFn {
+        name: "arr_all",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "bool",
+        doc: "True if ALL elements satisfy the predicate. Short-circuits on first false. Empty array → true (vacuous truth).",
+    },
+    BuiltinFn {
+        name: "arr_count_if",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "i64",
+        doc: "Count elements where the predicate returns true. Equivalent to `len(arr_filter(xs, pred))` but doesn't materialize the filtered array.",
+    },
+    BuiltinFn {
+        name: "arr_zip_with",
+        params: &[("xs", "[T]"), ("ys", "[U]"), ("f", "fn(T, U) -> V")],
+        ret: "[V]",
+        doc: "Pair element-wise then map via `f(x, y) -> z`. Truncates to the shorter input. More efficient than `arr_zip` + `arr_map` (no intermediate tuple slice) and the closure sees both values directly.",
+    },
+    BuiltinFn {
         name: "arr_reverse",
         params: &[("xs", "[T]")],
         ret: "[T]",
