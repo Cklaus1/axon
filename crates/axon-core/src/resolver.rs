@@ -596,7 +596,10 @@ impl<'a> Resolver<'a> {
             Expr::Let { name, value, .. } => {
                 self.resolve_expr(value);
                 // Fix #15: warn when a new binding shadows an existing one.
-                if self.table.lookup(name).is_some() {
+                // `_` and `_<rest>` are conventional "ignore" names — Rust
+                // and most ML-family languages treat them specially. We
+                // don't warn on `let _ = …`, `let _unused = …`, etc.
+                if !name.starts_with('_') && self.table.lookup(name).is_some() {
                     self.emit_warning(
                         Diagnostic::warning(
                             "W0002",
@@ -610,8 +613,7 @@ impl<'a> Resolver<'a> {
             }
             Expr::Own { name, value, .. } => {
                 self.resolve_expr(value);
-                // Fix #15: warn on shadowing.
-                if self.table.lookup(name).is_some() {
+                if !name.starts_with('_') && self.table.lookup(name).is_some() {
                     self.emit_warning(
                         Diagnostic::warning(
                             "W0002",
@@ -625,8 +627,7 @@ impl<'a> Resolver<'a> {
             }
             Expr::RefBind { name, value, .. } => {
                 self.resolve_expr(value);
-                // Fix #15: warn on shadowing.
-                if self.table.lookup(name).is_some() {
+                if !name.starts_with('_') && self.table.lookup(name).is_some() {
                     self.emit_warning(
                         Diagnostic::warning(
                             "W0002",
@@ -1724,5 +1725,22 @@ mod tests {
         let result = resolve_program(&prog, "test.ax");
         let w0002s = warnings_with_code(&result, "W0002");
         assert!(!w0002s.is_empty(), "expected W0002 for variable shadowing, got: {:?}", result.warnings);
+    }
+
+    #[test]
+    fn underscore_let_does_not_produce_w0002() {
+        // `let _ = …` (and `let _unused`, `let _x`) is the conventional
+        // ignore pattern. Treating it as a shadow warning floods every
+        // demo that fire-and-forgets a result.
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Let { ty: None, name: "_".into(), value: Box::new(lit_int(1)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "_".into(), value: Box::new(lit_int(2)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "_unused".into(), value: Box::new(lit_int(3)) }),
+            Stmt::simple(Expr::Let { ty: None, name: "_unused".into(), value: Box::new(lit_int(4)) }),
+        ]);
+        let prog = program(vec![simple_fn("f", body)]);
+        let result = resolve_program(&prog, "test.ax");
+        let w0002s = warnings_with_code(&result, "W0002");
+        assert!(w0002s.is_empty(), "underscore-prefixed names must not shadow-warn, got: {:?}", result.warnings);
     }
 }
