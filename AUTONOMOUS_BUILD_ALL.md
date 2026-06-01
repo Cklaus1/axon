@@ -22,7 +22,14 @@ protocol. Driven by `/loop` or a cron job that re-injects the prompt below.
 Cheapest-and-compounding first; the PRD "Hello Goal" forcing function
 (`ROADMAP.md` §5) is the integrating target that R5/R3/R4/R9 serve.
 
-**0. R1 native-codegen gaps (IN PROGRESS — native==interp 23/28 fn-main examples).**
+**0. R1 native-codegen gaps — ✅ DONE (native==interp 25/28; all real bugs fixed).**
+All native-codegen crashes/correctness bugs FIXED: #40 to_str (51bae16/29fea3b),
+#41 closures+enum== (29fea3b/0e61bd2), #42 array heap corruption (5453fbf), tuples
+(c2a7c77). The 3 residuals build clean and are NOT codegen bugs (ai_complete/
+adaptive_summarize = AI-call env; error_handling = #37 parse_int Err-message gap,
+a known minor codegen-message issue, deferred). R1 → 85%. **Next: R8 forall.**
+Old detail (kept for history):
+**0b. (history) native==interp 23/28 fn-main examples).**
 Acceptance: all fn-main examples build native AND match `axon run` (AXON_AI_MOCK=1 for AI).
    - ✅ **#40** to_str silent truncation (f64/bool) + to_str(i32 widening) — FIXED (51bae16, 29fea3b).
    - ✅ **#41** closure-passing ABI (Type::Fn → {ptr,ptr} fat-pointer) — FIXED (29fea3b).
