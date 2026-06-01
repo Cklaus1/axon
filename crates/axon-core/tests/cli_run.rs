@@ -2705,3 +2705,119 @@ fn main() -> i64 {
         "a non-corrigible fn must still run after halt (targeted latch): {stderr}"
     );
 }
+
+#[test]
+fn experiment_zone_is_distinct_from_adaptive() {
+    // R4 red test: `@[experiment(label)]` must be behaviorally distinct from
+    // `@[adaptive]`, not a no-op synonym. TWO properties, both required:
+    //   (I-13) it STILL injects provenance — a zoned fn that executes always
+    //          logs — but tagged `zone:"experiment"` + its label.
+    //   (best)  its records are EXCLUDED from `goal_run`'s in-memory "best"
+    //          store — an experiment is a comparison baseline, not a target.
+    // `goal_count` reads the in-memory best store; the JSONL log is the durable
+    // I-13 record. So a correct experiment fn run N times gives:
+    //   - goal_count("trial") == 0          (excluded from best)
+    //   - N `zone":"experiment"` lines in the provenance log (I-13 holds)
+    // Fails today TWO ways: experiment is a total no-op, so it neither logs
+    // (I-13 violated) nor is distinguishable from adaptive.
+    let cache = std::env::temp_dir().join(format!("axon_r4cache_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[adaptive]
+fn tune(x: i64) -> i64 { x + 1 }
+
+@[experiment("baseline")]
+fn trial(x: i64) -> i64 { x + 2 }
+
+fn main() -> i64 {
+    let _ = tune(1)
+    let _ = tune(2)
+    let _ = tune(3)            // adaptive: 3 recorded for goal_run best
+    let _ = trial(1)
+    let _ = trial(2)           // experiment: runs + logs, but NOT in best store
+    // Encode both counts: adaptive*10 + experiment. Pass => 30
+    // (adaptive=3 in best, experiment=0 in best).
+    goal_count("tune") * 10 + goal_count("trial")
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r4exp_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Property (best): adaptive included (3), experiment excluded (0) => 30.
+    assert_eq!(
+        out.status.code(), Some(30),
+        "adaptive must count 3 (included), experiment 0 (excluded from goal best): {stderr}"
+    );
+    // Property (I-13): the experiment fn still logged, tagged zone:experiment.
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let exp_lines = body.lines().filter(|l| l.contains("\"zone\":\"experiment\"")).count();
+    let exp_labeled = body.lines()
+        .filter(|l| l.contains("\"zone\":\"experiment\"") && l.contains("\"label\":\"baseline\""))
+        .count();
+    assert_eq!(
+        exp_lines, 2,
+        "I-13: experiment fn must log 2 zone:experiment records, got {exp_lines}. Log:\n{body}"
+    );
+    assert_eq!(
+        exp_labeled, 2,
+        "experiment records must carry their label \"baseline\": {body}"
+    );
+    assert!(
+        body.lines().any(|l| l.contains("\"zone\":\"adaptive\"")),
+        "adaptive records must be tagged zone:adaptive: {body}"
+    );
+}
+
+#[test]
+fn experiment_records_survive_axon_trace_and_stay_out_of_best() {
+    // R4 widen: the experiment's JSONL records must be readable by `axon trace`
+    // (the provenance format stays valid — the `event`/`zone`/`label` fields
+    // don't break the parser), yet `goal_run` on an experiment fn cannot
+    // optimize it because nothing landed in the in-memory best store. We run an
+    // experiment fn, then `goal_run` it: with no recorded best, goal_run falls
+    // through to `target` (here 42), proving the optimizer ignores the baseline.
+    let cache = std::env::temp_dir().join(format!("axon_r4trace_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[experiment("probe")]
+fn baseline(x: i64) -> i64 { x * 5 }
+
+fn main() -> i64 {
+    let _ = baseline(1)
+    let _ = baseline(2)
+    // goal_run on an experiment fn: no in-memory probes => returns target.
+    let best = goal_run("baseline", 42.0, 5)
+    f64_to_i64(best)
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r4tr_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(), Some(42),
+        "goal_run on an experiment fn must not optimize it (returns target 42): {stderr}"
+    );
+    // `axon trace` reads the same log without error and sees the function.
+    let tr = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(tr.status.success(), "axon trace must parse the new provenance format");
+    let tout = String::from_utf8_lossy(&tr.stdout);
+    assert!(
+        tout.contains("baseline"),
+        "trace should still surface the experiment fn's records: {tout}"
+    );
+}

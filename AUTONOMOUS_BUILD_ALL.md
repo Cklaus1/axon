@@ -51,7 +51,7 @@ Acceptance: all fn-main examples build native AND match `axon run` (AXON_AI_MOCK
 1. **R8 — `forall` property testing.** ✅ DONE (`1be7d5a`). Binary-search shrinking + reproduce seed. R8→82%.
 2. **R5 — `#[goal]` first-class.** ⚠️ goal_eval held-out DONE (`0b4065d`, R5→70%); `Goal` type + `#[goal(...)]` attr sugar still pending.
 3. **R9 — `#[corrigible]` kill-switch.** ✅ DONE (this commit). `corrigible_halt()` one-way latch; engine refuses `@[corrigible]` calls post-halt before the body; `corrigible_halted()` guard; fail-closed exit 4 (`Flow::Halted`); targeted scope. R9→62%. Demo `examples/asi/corrigible.ax`.
-4. **R4 — code zones + provenance.** Spec ✅ Reviewed. Interp slice → codegen conformance. Completes I-13. **← NEXT**
+4. **R4 — code zones + provenance.** Spec ✅ Reviewed. ⚠️ `@[experiment]` zone DONE (this commit, R4→62%): injects tagged provenance (I-13) but excluded from goal_run best; JSONL now carries real event/zone/label. Demo `examples/asi/experiment_zone.ax`. Remaining: `@[agent]` mandatory action-log + codegen conformance (R1-gated). **← agent-log NEXT, or move to R3**
 5. **R3 — AI primitive.** Spec drafted. Provenance schema → `#[ai(policy)]` → routing.
 6. **R6 — capability/registry.** Spec drafted. `axon.lock` + content hash + audit.
 7. **R7 — targets.** Spec drafted. Slice A interp→wasm first (now also AOT-wasm, R1 unblocked).

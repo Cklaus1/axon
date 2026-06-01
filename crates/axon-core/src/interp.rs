@@ -739,32 +739,59 @@ impl<'p> Interp<'p> {
             Err(other) => return Err(other),
         };
 
-        // `@[adaptive]`: provenance-log each call's numeric return so `goal_run`
-        // can read it back (mirrors the codegen `@[adaptive]` prologue).
-        if f.attrs.iter().any(|a| a.name == "adaptive") {
+        // R4 zone provenance injection. Keyed on the fn's annotation, performed
+        // by the engine — there is no opt-out (I-13). Two adaptive-family zones
+        // record a numeric return:
+        //   - `@[adaptive]`    → logged AND pushed to the in-memory best store
+        //                        that `goal_run`/`goal_count` read (an
+        //                        optimization target).
+        //   - `@[experiment(l)]` → logged tagged `zone:"experiment"` + label,
+        //                        but EXCLUDED from the best store (a comparison
+        //                        baseline, never auto-promoted). This is the
+        //                        behavioral distinction that makes the PRD's
+        //                        third zone real instead of a synonym.
+        // Both still log to the JSONL, so a zoned fn that executes always
+        // leaves a provenance record.
+        let is_adaptive_zone = f.attrs.iter().any(|a| a.name == "adaptive");
+        let experiment_label = f
+            .attrs
+            .iter()
+            .find(|a| a.name == "experiment")
+            .map(|a| a.args.first().cloned().unwrap_or_default());
+        if is_adaptive_zone || experiment_label.is_some() {
             if let Some(score) = numeric_score(&result) {
-                self.provenance
-                    .borrow_mut()
-                    .entry(f.name.clone())
-                    .or_default()
-                    .push(score);
-                self.provenance_inputs
-                    .borrow_mut()
-                    .entry(f.name.clone())
-                    .or_default()
-                    .push(input_args.clone());
-                self.provenance_inputs_f64
-                    .borrow_mut()
-                    .entry(f.name.clone())
-                    .or_default()
-                    .push(input_args_f64.clone());
-                // Also persist to the provenance JSONL (axon-rt's format) so
-                // `axon trace`/observability tooling see interpreter runs.
+                // The in-memory best store feeds `goal_run` — adaptive only.
+                // Experiment records are deliberately withheld so the optimizer
+                // never treats a baseline as a candidate to beat.
+                if is_adaptive_zone {
+                    self.provenance
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(score);
+                    self.provenance_inputs
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args.clone());
+                    self.provenance_inputs_f64
+                        .borrow_mut()
+                        .entry(f.name.clone())
+                        .or_default()
+                        .push(input_args_f64.clone());
+                }
+                // Durable JSONL log (axon-rt's format) — every zoned execution,
+                // tagged with its zone (and label for experiments) so
+                // `axon trace`/observability can separate the streams.
                 let payload = match &result {
                     Value::Int(n) => format!("ret_i64={n}"),
                     _ => format!("ret_f64={score}"),
                 };
-                append_provenance_jsonl(&f.name, &payload, score, input_arg);
+                let (zone, label) = match &experiment_label {
+                    Some(l) => ("experiment", Some(l.as_str())),
+                    None => ("adaptive", None),
+                };
+                append_provenance_jsonl(&f.name, &payload, score, input_arg, zone, label);
             }
         }
 
@@ -4718,7 +4745,14 @@ fn provenance_source() -> &'static str {
 /// (the program path) so records from different programs that happen to share
 /// a function name don't blend in `trace`. Best-effort (errors ignored —
 /// provenance is advisory, not load-bearing).
-fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64, input: Option<i64>) {
+fn append_provenance_jsonl(
+    fn_name: &str,
+    payload: &str,
+    score: f64,
+    input: Option<i64>,
+    zone: &str,
+    label: Option<&str>,
+) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
@@ -4738,9 +4772,20 @@ fn append_provenance_jsonl(fn_name: &str, payload: &str, score: f64, input: Opti
     } else {
         format!(",\"src\":{}", json_quote(src))
     };
+    // R4: the record names its zone and the event type derived from it
+    // (`adaptive_return` / `experiment_return`), replacing the old
+    // placeholder `"event":"event"`. `label` is the `@[experiment(label)]`
+    // tag, omitted for non-experiment zones. Readers ignore unknown fields,
+    // so this is backward-compatible with axon-rt's format.
+    let label_field = match label {
+        Some(l) => format!(",\"label\":{}", json_quote(l)),
+        None => String::new(),
+    };
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"event\",\"payload\":{p},\"score\":{s}{inp}{src_field}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":{ev},\"zone\":{z},\"payload\":{p},\"score\":{s}{inp}{label_field}{src_field}}}\n",
         f = json_quote(fn_name),
+        ev = json_quote(&format!("{zone}_return")),
+        z = json_quote(zone),
         p = json_quote(payload),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {

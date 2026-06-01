@@ -1,0 +1,49 @@
+// experiment_zone.ax — the Experiment code zone (R4)
+//
+// Axon has three code zones beyond plain Static code:
+//   @[adaptive]        — the compiler logs every return AND feeds it to the
+//                        optimizer (goal_run hill-climbs it). An optimization
+//                        TARGET.
+//   @[experiment(lbl)] — the compiler logs every return too (un-opt-out-able
+//                        provenance, I-13), but the optimizer IGNORES it. A
+//                        comparison BASELINE, never auto-promoted.
+//   @[agent]           — highest trust; every action is audit-logged.
+//
+// Both adaptive and experiment leave a durable record in the provenance log
+// (see `axon trace`), tagged with their zone. The difference is purely
+// behavioral: only adaptive records steer goal_run.
+//
+// Run:   axon run examples/asi/experiment_zone.ax
+// Then:  axon trace            # see both zones' records, tagged
+
+// The optimization target: the compiler will hill-climb this toward a goal.
+@[adaptive]
+fn tuned(x: i64) -> i64 {
+    100 - (x - 7) * (x - 7)      // a hill peaking at x = 7
+}
+
+// A fixed baseline we want to MEASURE against the tuned fn, but never optimize.
+// It is logged (provenance), labelled "control", yet kept out of goal_run.
+@[experiment("control")]
+fn baseline(x: i64) -> i64 {
+    50                            // a flat reference line
+}
+
+fn main() -> i64 {
+    // Record a few baseline observations (these LOG but do not optimize).
+    let _ = baseline(1)
+    let _ = baseline(2)
+    let _ = baseline(3)
+    let base_in_store = goal_count("baseline")
+    println("baseline in optimizer store: {to_str(base_in_store)} (expect 0)")
+
+    // Optimize the adaptive fn toward 100. Only its records are in the store.
+    let best = goal_run("tuned", 100.0, 40)
+    let tuned_probes = goal_count("tuned")
+    println("tuned best score: {to_str_f64(best)} (optimized toward 100)")
+    println("tuned probes in store: {to_str(tuned_probes)}")
+
+    // The experiment stayed a baseline: 0 probes drove the optimizer, even
+    // though its returns are in the provenance log for `axon trace` to compare.
+    base_in_store                 // => 0  (clean exit code)
+}

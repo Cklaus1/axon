@@ -166,8 +166,8 @@ Red test that must fail first: **`experiment_zone_is_distinct_from_adaptive`** �
 
 R4 advances from 55% when **all** pass:
 
-- [ ] `experiment_zone_is_distinct_from_adaptive` passes (the no-op-synonym gap closed).
-- [ ] `experiment_records_excluded_from_goal_run_best` passes (W1510 + exclusion).
+- [x] `experiment_zone_is_distinct_from_adaptive` passes (the no-op-synonym gap closed). **DONE** (cli_run.rs, `27e2829`→this slice): experiment injects tagged `zone:"experiment"`+label (I-13) but is excluded from `goal_run`'s in-memory best store.
+- [x] `experiment_records_excluded_from_goal_run_best` passes (exclusion). **DONE** as `experiment_records_survive_axon_trace_and_stay_out_of_best` (goal_run on an experiment fn returns target, not an optimized value; records still readable by `axon trace`). *W1510 explicit warning: deferred — exclusion is silent-correct for now.*
 - [ ] `agent_action_log_is_mandatory` passes (one record per tool call — the requirement's "agent action log mandatory").
 - [ ] `zoned_fn_has_no_opt_out` passes (the I-13 core — no construct suppresses injection).
 - [ ] `conflicting_zones_rejected` passes (E1503).
