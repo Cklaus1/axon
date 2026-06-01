@@ -2125,3 +2125,44 @@ fn hill_climb_exact_landing_on_a_modest_peak() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(37), "peak at x=37: {:?}", out);
 }
+
+// ── Success-signal integrity (governance/BUG_HUNT_2026-05-31.md) ──────────────
+// These guard ARCHITECTURE_INVARIANTS I-8 (failure exits non-zero) and I-9
+// (no silent wrong value on degenerate input). They are the "honest success
+// signal" regression suite an autonomous loop / CI depends on.
+
+#[test]
+fn integer_overflow_panics_not_silently_wraps() {
+    // BUG_HUNT #6 / I-9: `i64::MAX + 1` used to wrap to i64::MIN and exit 0 —
+    // a corrupt value masquerading as success. Must now be a graceful panic
+    // (non-zero exit), like divide-by-zero already is.
+    let src = "fn main() { let b: i64 = 9223372036854775807  println(to_str(b + 1)) }\n";
+    let f = std::env::temp_dir().join(format!("axon_ovf_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "overflow must exit non-zero, got: {:?}", out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("integer overflow"), "should name the overflow: {stderr}");
+}
+
+#[test]
+fn normal_arithmetic_unaffected_by_overflow_check() {
+    // Guard against the checked-arithmetic change breaking ordinary math.
+    let src = "fn main() -> i64 { 2 + 3 * 4 - 1 }\n";
+    let f = std::env::temp_dir().join(format!("axon_arith_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(13), "2+3*4-1 should be 13: {:?}", out);
+}
+
+#[test]
+fn multiplication_overflow_also_panics() {
+    let src = "fn main() { let b: i64 = 9223372036854775807  println(to_str(b * 2)) }\n";
+    let f = std::env::temp_dir().join(format!("axon_mulovf_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "mul overflow must exit non-zero: {:?}", out);
+}

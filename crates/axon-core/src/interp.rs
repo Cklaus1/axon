@@ -4467,10 +4467,24 @@ fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     use BinOp::*;
     use Value::{Bool, Float, Int, Str};
     match (op, l, r) {
-        // Integer arithmetic
-        (Add, Int(a), Int(b)) => Ok(Int(a.wrapping_add(b))),
-        (Sub, Int(a), Int(b)) => Ok(Int(a.wrapping_sub(b))),
-        (Mul, Int(a), Int(b)) => Ok(Int(a.wrapping_mul(b))),
+        // Integer arithmetic — checked by default. Overflow is a *graceful
+        // panic* (catchable, exits non-zero at the CLI), never a silent
+        // wrap: a wrapped value masquerading as success is the worst class
+        // of bug for an autonomous consumer (BUG_HUNT #6, ARCHITECTURE
+        // INVARIANTS I-9). Use the `wrapping_*` builtins for intentional
+        // modular arithmetic.
+        (Add, Int(a), Int(b)) => a
+            .checked_add(b)
+            .map(Int)
+            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} + {b} exceeds i64"))),
+        (Sub, Int(a), Int(b)) => a
+            .checked_sub(b)
+            .map(Int)
+            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} - {b} exceeds i64"))),
+        (Mul, Int(a), Int(b)) => a
+            .checked_mul(b)
+            .map(Int)
+            .ok_or_else(|| Flow::Panic(format!("integer overflow: {a} * {b} exceeds i64"))),
         (Div, Int(a), Int(b)) => {
             if b == 0 {
                 return Err(Flow::Panic("integer division by zero".into()));
