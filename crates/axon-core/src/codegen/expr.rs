@@ -552,6 +552,33 @@ impl<'ctx> super::Codegen<'ctx> {
                 }
             },
 
+            // Enum equality: `a == b` where both are `{name}_enum` = { i32 tag,
+            // [N x i8] payload }. Compare the TAG (discriminant, field 0) as
+            // ints — an enum StructValue would otherwise fall into the str_eq
+            // arm below and fail IR verification (BUG_HUNT #41). The interpreter
+            // oracle compares (enum, variant, fields); tag-compare is exact for
+            // fieldless variants and for any two DIFFERENT-tag variants (the
+            // example usages: `Op::Zero == Op::Zero`, `Op::Add{..} != Op::Zero`).
+            // Payload-field equality for same-tag-different-fields is a follow-up.
+            (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r))
+                if matches!(op, ast::BinOp::Eq | ast::BinOp::NotEq)
+                    && l.get_type().get_name()
+                        .and_then(|n| n.to_str().ok())
+                        .map(|n| n.ends_with("_enum"))
+                        .unwrap_or(false) =>
+            {
+                let lt = build_wrappers::w_extract_value(&self.ir.builder, l, 0, "ltag")
+                    .into_int_value();
+                let rt = build_wrappers::w_extract_value(&self.ir.builder, r, 0, "rtag")
+                    .into_int_value();
+                let pred = if matches!(op, ast::BinOp::NotEq) {
+                    inkwell::IntPredicate::NE
+                } else {
+                    inkwell::IntPredicate::EQ
+                };
+                build_wrappers::w_int_compare(&self.ir.builder, pred, lt, rt, "enumeq").into()
+            }
+
             // String struct equality: `a == b` / `a != b` where both are { i64, i8* }.
             // Delegates to the str_eq builtin function declared in declare_builtins.
             (BasicValueEnum::StructValue(l), BasicValueEnum::StructValue(r))
