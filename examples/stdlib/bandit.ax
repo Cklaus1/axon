@@ -39,17 +39,11 @@ fn bandit_new(n_arms: i64) -> Bandit {
 // UCB score for one arm given total pull count `t`.
 fn bandit_ucb(b: Bandit, id: i64, t: i64) -> f64 {
     let k = arm_key(id)
-    let n = match dict_get(b.counts, k) {
-        Some(v) => v
-        None => 0
-    }
+    let n = dict_get_or(b.counts, k, 0)
     if n == 0 {
         1.0e9                    // unpulled → infinite UCB, sweep arms first
     } else {
-        let sum_r = match dict_get(b.sums, k) {
-            Some(v) => v
-            None => 0.0
-        }
+        let sum_r = dict_get_or(b.sums, k, 0.0)
         let mean = sum_r / as_f64(n)
         let bonus = sqrt(2.0 * ln(as_f64(t)) / as_f64(n))
         mean + bonus
@@ -69,22 +63,21 @@ fn bandit_select(b: Bandit, t: i64) -> i64 {
 // Observe a reward for an arm; mutates the Dicts in place.
 fn bandit_update(b: Bandit, arm: i64, reward: f64) {
     let k = arm_key(arm)
-    let cur_sum = match dict_get(b.sums, k) { Some(v) => v  None => 0.0 }
+    let cur_sum = dict_get_or(b.sums, k, 0.0)
     dict_set(b.sums, k, cur_sum + reward)
-    let cur_n = match dict_get(b.counts, k) { Some(v) => v  None => 0 }
-    dict_set(b.counts, k, cur_n + 1)
+    let _ = dict_inc(b.counts, k)
 }
 
 // Read-only queries.
 fn bandit_pulls(b: Bandit, arm: i64) -> i64 {
-    match dict_get(b.counts, arm_key(arm)) { Some(v) => v  None => 0 }
+    dict_get_or(b.counts, arm_key(arm), 0)
 }
 
 fn bandit_mean(b: Bandit, arm: i64) -> f64 {
     let n = bandit_pulls(b, arm)
     if n == 0 { 0.0 }
     else {
-        let s = match dict_get(b.sums, arm_key(arm)) { Some(v) => v  None => 0.0 }
+        let s = dict_get_or(b.sums, arm_key(arm), 0.0)
         s / as_f64(n)
     }
 }

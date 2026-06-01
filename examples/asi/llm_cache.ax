@@ -23,14 +23,11 @@
 fn cached_complete(cache: Dict, stats: Dict, prompt: str) -> str {
     match dict_get(cache, prompt) {
         Some(cached) => {
-            // Increment hit counter via the shared stats dict.
-            let h = match dict_get(stats, "hits") { Some(v) => v  None => 0 }
-            dict_set(stats, "hits", h + 1)
+            let _ = dict_inc(stats, "hits")
             cached
         }
         None => {
-            let m = match dict_get(stats, "misses") { Some(v) => v  None => 0 }
-            dict_set(stats, "misses", m + 1)
+            let _ = dict_inc(stats, "misses")
             let resp = match ai_complete(prompt) {
                 Ok(s) => s
                 Err(_) => "[error]"
@@ -57,14 +54,13 @@ fn corpus() -> [str] {
 fn main() -> i64 {
     let cache = dict_new()
     let stats = dict_new()
-    dict_set(stats, "hits", 0)
-    dict_set(stats, "misses", 0)
+    // No need to pre-seed counters: dict_inc starts from 0 if absent.
 
     let prompts = corpus()
     let responses = arr_map(prompts, |p| cached_complete(cache, stats, p))
 
-    let hits = match dict_get(stats, "hits") { Some(v) => v  None => 0 }
-    let misses = match dict_get(stats, "misses") { Some(v) => v  None => 0 }
+    let hits = dict_get_or(stats, "hits", 0)
+    let misses = dict_get_or(stats, "misses", 0)
     let n = len(prompts)
     let unique = len(arr_unique(prompts))
 
