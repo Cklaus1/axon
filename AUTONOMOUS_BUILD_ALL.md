@@ -22,15 +22,23 @@ protocol. Driven by `/loop` or a cron job that re-injects the prompt below.
 Cheapest-and-compounding first; the PRD "Hello Goal" forcing function
 (`ROADMAP.md` §5) is the integrating target that R5/R3/R4/R9 serve.
 
-**0. R1 native-codegen gaps (FIRST — now visible since the build works).** `axon build`
-fails IR verification on 4 examples (closures_demo/feature_tour/fibonacci/tuples). Two
-bug classes, BUG_HUNT #40/#41:
-   - **#40 (High):** codegen emits `to_str()` with no arg — the polymorphic `to_str`
-     (#29) is interp-only; codegen must lower `to_str(x)` per arg type. Hits 3 of 4.
-   - **#41 (High):** closure fn-pointer ABI mismatch (`__lambda_N` → `print_sequence`)
-     and enum `==` passed to `str_eq`. Native closure-passing + enum-equality codegen.
-   Acceptance: all 30 `fn main` examples build natively AND match the interpreter
-   (the `native==interp` sweep). This is R1's real remaining acceptance, not just "build finishes."
+**0. R1 native-codegen gaps (IN PROGRESS — native==interp 23/28 fn-main examples).**
+Acceptance: all fn-main examples build native AND match `axon run` (AXON_AI_MOCK=1 for AI).
+   - ✅ **#40** to_str silent truncation (f64/bool) + to_str(i32 widening) — FIXED (51bae16, 29fea3b).
+   - ✅ **#41** closure-passing ABI (Type::Fn → {ptr,ptr} fat-pointer) — FIXED (29fea3b).
+   - ✅ **#41** enum `==` → tag compare (was str_eq) — FIXED (0e61bd2).
+   - ⬜ **TUPLES (net-new feature, not a bug):** `Expr::Tuple` returns `None` in codegen
+     (expr.rs:243) — tuple literals + numeric field access (`t.0`, nested `t.0.0`) are
+     UNIMPLEMENTED. Needs: emit Expr::Tuple as anon LLVM struct; handle numeric
+     FieldAccess on tuple. Edge: `t.0.0` lexes as `Dot Float(0.0)` (tuple-dot quirk).
+     Suitable for a focused subagent slice.
+   - ⬜ **traits_demo MALLOC CORRUPTION (`malloc(): corrupted top size`):** NOT vtables —
+     the file uses enum ADTs (Shape::Circle{radius:f64} etc.) + match destructuring + f64
+     math (Phase-3 traits not built; enums are the idiom). Corruption is in enum-with-
+     **payload** construction or match-field-extraction with f64 fields (heap/GEP/size bug).
+     Memory-unsafe — diagnose with a minimal `enum {V{f64}}` + match repro before fixing.
+   - Non-bugs: ai_complete/adaptive_summarize need AXON_AI_MOCK; error_handling matches
+     (multi-line sweep artifact).
 
 1. **R8 — `forall` property testing.** Test infra; hardens everything else. No spec needed (TESTING_STANDARD.md). Pure interpreter.
 2. **R5 — `#[goal]` first-class.** `Goal` type + `#[goal(metric, test_set, target)]`. The autonomy headline. Spec: ROADMAP §5 + stdlib.md.
