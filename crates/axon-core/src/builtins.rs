@@ -1181,6 +1181,11 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     "ai",
     "layout",
     "temporal",
+    // `forall` marks a `@[test]` fn as a property test: its typed params are
+    // randomized over N cases and a failure is shrunk to a minimal
+    // counterexample (R8). Handled in the test runner (main.rs) +
+    // `interp::run_property_test`.
+    "forall",
 ];
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

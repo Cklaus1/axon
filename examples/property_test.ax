@@ -1,0 +1,38 @@
+// property_test.ax — `forall` property-based testing (R8).
+//
+// A `@[test] @[forall]` function randomizes its typed parameters over N cases
+// (default 100; `@[forall(n: 500)]` to override). On failure, the inputs are
+// SHRUNK to a minimal counterexample and the seed is reported so the failure
+// reproduces (AXON_SEED=<n>). Seeded RNG → deterministic.
+//
+// Run:  axon test examples/property_test.ax
+
+// Addition commutes — holds for all in-range i64 pairs.
+@[test]
+@[forall(n: 300)]
+fn add_commutes(a: i64, b: i64) {
+    assert(a + b == b + a)
+}
+
+// Doubling then halving is identity for even-derived values.
+@[test]
+@[forall]
+fn abs_is_nonneg(a: i64) {
+    assert(abs_i64(a) >= 0 || a == 0 - 9223372036854775807 - 1)
+}
+
+// String length is additive under concatenation.
+@[test]
+@[forall]
+fn concat_len_additive(s: str, t: str) {
+    let joined = axon_concat(s, t)
+    assert(str_len(joined) == str_len(s) + str_len(t))
+}
+
+// A demonstrated FAILURE that shrinks: `@[test(should_fail)]` so the suite
+// stays green while showing the shrinker reaches the boundary (a = 50).
+@[test(should_fail)]
+@[forall]
+fn demo_shrink_to_boundary(a: i64) {
+    assert(a < 50)
+}

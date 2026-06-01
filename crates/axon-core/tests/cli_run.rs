@@ -846,6 +846,31 @@ fn interpolation_allows_nested_braces() {
 }
 
 #[test]
+fn forall_property_test_passes_and_shrinks() {
+    // R8: `@[test] @[forall]` randomizes typed params over N cases; a passing
+    // property reports ok, a failing one shrinks to a MINIMAL counterexample
+    // with a reproduce seed.
+    let f = std::env::temp_dir().join(format!("axon_forall_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[test]\n@[forall(n: 200)]\nfn commutes(a: i64, b: i64) { assert(a + b == b + a) }\n\
+         @[test]\n@[forall]\nfn boundary(a: i64) { assert(a < 50) }\n",
+    )
+    .unwrap();
+    // Seeded for determinism: the shrinker must reach the exact boundary a=50.
+    let out = axon().args(["test", f.to_str().unwrap()]).env("AXON_SEED", "7").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let so = String::from_utf8_lossy(&out.stdout);
+    let se = String::from_utf8_lossy(&out.stderr);
+    let all = format!("{so}{se}");
+    assert!(all.contains("commutes ... ok"), "commutative property should pass: {all}");
+    assert!(all.contains("boundary ... FAILED"), "boundary property should fail: {all}");
+    // Shrunk to the exact minimal failing input + a reproduce seed.
+    assert!(all.contains("a=50"), "should shrink to the minimal counterexample a=50: {all}");
+    assert!(all.contains("AXON_SEED="), "failure must report a reproduce seed: {all}");
+}
+
+#[test]
 fn feature_tour_tests_pass() {
     // The feature tour's @[test]s exercise the session's language fixes together.
     let out = axon().args(["test", &ex("feature_tour.ax")]).output().unwrap();

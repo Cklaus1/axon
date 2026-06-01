@@ -924,30 +924,43 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         process::exit(2);
     }
 
-    // Collect test function metadata: (name, should_fail).
-    let test_meta: Vec<(String, bool)> = program
+    // Collect test function metadata: (name, should_fail, forall_cases).
+    // A `@[test] @[forall(n=N)]` fn with typed params is a PROPERTY test (R8):
+    // its params are randomized over N cases (default 100) and a failure is
+    // shrunk to a minimal counterexample. A plain `@[test]` fn must be 0-arg.
+    let test_meta: Vec<(String, bool, Option<u32>)> = program
         .items
         .iter()
         .filter_map(|item| {
             if let axon_core::ast::Item::FnDef(f) = item {
-                let test_attr = f.attrs.iter().find(|a| a.name == "test");
-                if let Some(attr) = test_attr {
-                    if !f.params.is_empty() {
-                        eprintln!(
-                            "error: test function '{}' must take zero parameters",
-                            f.name
-                        );
-                        return None;
-                    }
-                    let should_fail = attr.args.iter().any(|a| a == "should_fail");
-                    if let Some(ref pat) = filter {
-                        if f.name.contains(pat.as_str()) {
-                            return Some((f.name.clone(), should_fail));
-                        }
-                        return None;
-                    }
-                    return Some((f.name.clone(), should_fail));
+                let test_attr = f.attrs.iter().find(|a| a.name == "test")?;
+                let forall_attr = f.attrs.iter().find(|a| a.name == "forall");
+                let forall_cases = forall_attr.map(|a| {
+                    // `@[forall(n: 250)]` → 250; bare `@[forall]` → default 100.
+                    // Attr args are rendered "key: value" by the parser.
+                    a.args.iter()
+                        .find_map(|arg| {
+                            arg.split_once(':')
+                                .filter(|(k, _)| k.trim() == "n")
+                                .and_then(|(_, v)| v.trim().parse::<u32>().ok())
+                        })
+                        .unwrap_or(100)
+                });
+                if forall_cases.is_none() && !f.params.is_empty() {
+                    eprintln!("error: test function '{}' must take zero parameters (or add @[forall] to property-test its params)", f.name);
+                    return None;
                 }
+                if forall_cases.is_some() && f.params.is_empty() {
+                    eprintln!("error: @[forall] test '{}' has no parameters to randomize", f.name);
+                    return None;
+                }
+                let should_fail = test_attr.args.iter().any(|a| a == "should_fail");
+                if let Some(ref pat) = filter {
+                    if !f.name.contains(pat.as_str()) {
+                        return None;
+                    }
+                }
+                return Some((f.name.clone(), should_fail, forall_cases));
             }
             None
         })
@@ -965,19 +978,39 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     // passes iff it panics.
     let all_results: Vec<TestOutcome> = test_meta
         .iter()
-        .map(|(name, should_fail)| {
+        .map(|(name, should_fail, forall_cases)| {
             let start = Instant::now();
-            let outcome = axon_core::interp::run_test_fn(&program, name);
-            let duration_ms = start.elapsed().as_millis() as u64;
-            let (passed, error) = match outcome {
-                Ok(()) if *should_fail => (
-                    false,
-                    Some(format!("should_fail test '{name}' completed without panicking")),
-                ),
-                Ok(()) => (true, None),
-                Err(_) if *should_fail => (true, None),
-                Err(e) => (false, Some(e)),
+            let (passed, error) = if let Some(cases) = forall_cases {
+                // Property test (R8): randomize params, shrink on failure.
+                use axon_core::interp::PropertyOutcome;
+                match axon_core::interp::run_property_test(&program, name, *cases) {
+                    PropertyOutcome::Passed { cases } if *should_fail => (
+                        false,
+                        Some(format!("should_fail forall '{name}' held over {cases} cases")),
+                    ),
+                    PropertyOutcome::Passed { .. } => (true, None),
+                    PropertyOutcome::Failed { .. } if *should_fail => (true, None),
+                    PropertyOutcome::Failed { counterexample, message, seed } => (
+                        false,
+                        Some(format!(
+                            "property failed at [{counterexample}]: {message} (reproduce: AXON_SEED={seed})"
+                        )),
+                    ),
+                    PropertyOutcome::Unsupported(m) => (false, Some(m)),
+                }
+            } else {
+                // Plain zero-arg @[test].
+                match axon_core::interp::run_test_fn(&program, name) {
+                    Ok(()) if *should_fail => (
+                        false,
+                        Some(format!("should_fail test '{name}' completed without panicking")),
+                    ),
+                    Ok(()) => (true, None),
+                    Err(_) if *should_fail => (true, None),
+                    Err(e) => (false, Some(e)),
+                }
             };
+            let duration_ms = start.elapsed().as_millis() as u64;
             TestOutcome { name: name.clone(), passed, duration_ms, error }
         })
         .collect();
@@ -989,8 +1022,8 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     for r in &all_results {
         let should_fail = test_meta
             .iter()
-            .find(|(name, _)| name == &r.name)
-            .map(|(_, sf)| *sf)
+            .find(|(name, _, _)| name == &r.name)
+            .map(|(_, sf, _)| *sf)
             .unwrap_or(false);
 
         total_ms += r.duration_ms;
