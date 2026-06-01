@@ -1,8 +1,9 @@
 # Axon Session Status
 
-**Last update**: 2026-05-29
-**Branch**: `merge-asi-layer3` (== `main`, pushed to `origin/main`)
-**Latest commit**: `e0efa67` — robustness hardening + 12 demos (see "Shipped since" below)
+**Last update**: 2026-05-31
+**Branch**: `merge-asi-layer3` (pushed to `origin/merge-asi-layer3`)
+**Latest commit**: `f86e6c4` — `safe_self_improve` flagship demo composing
+the full ASI stack (see "Shipped this session" below).
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 `STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
@@ -10,166 +11,193 @@ Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 
 ---
 
-## The headline: execution is interpreter-first
+## The headline: interpreter-first, ASI surface complete enough to compose
 
-The native LLVM/inkwell `codegen` build of `axon-core` does **not finish**
-(historically 5h+). It is now **diagnosed and worked around**, not blocking:
+The native LLVM/inkwell `codegen` build of `axon-core` still **doesn't
+finish** (historically 5h+; the `#[inline(never)]` wrapper fix is applied
+but is a constant-factor reduction, not asymptotic — see
+`BUILD_DIAGNOSIS.md`). The interpreter is the active execution path.
 
-- **Diagnosis** (`BUILD_DIAGNOSIS.md`): the cost is 100% LLVM-IR *generation*
-  in the backend — rustc lowering the monomorphized, inkwell-generic-heavy
-  `codegen::builtins` functions. Serial and CGU-immune. `cargo check` = ~4.5s;
-  `cargo build` unbounded. NOT frontend monomorphization, NOT LLVM
-  optimization, NOT one optimizable function.
-- **Workaround (shipped)**: a codegen-free tree-walking interpreter
-  (`crates/axon-core/src/interp.rs`) is now the execution path. The `axon`
-  binary builds **without** the `codegen` feature in sub-seconds:
-  `cargo build -p axon-core --no-default-features --bin axon`.
-- **Fix (APPLIED + landed)**: the `#[inline(never)]` non-generic-wrapper fix is
-  now fully applied — both giant codegen functions (`declare_builtins` +
-  `declare_string_builtins`) route their ~971 inkwell `.build_*` calls through
-  `codegen/build_wrappers.rs`; 0 raw calls remain; `cargo check` (codegen) is
-  clean. `CODEGEN_WRAPPER_PROTOTYPE.md` measured the per-function win
-  (LLVM-IR ~43%↓, RSS ~36%↓, ~1.7–3× faster). Constant-factor (not asymptotic) — turns a multi-hour
-  build into a fraction, not into seconds (so native stays a CI/beefy-machine
-  artifact). This differs from the failed trait-based IR-shim because
-  non-generic wrappers monomorphize each inkwell call exactly once.
+But the *language surface* shipped through the interpreter is now wide
+and consistent enough that an ASI program can be written entirely in
+pure Axon, with safety primitives, an optimizer, persistence, and a
+17-builtin goal-introspection suite — all composable. The `safe_self_improve`
+flagship demo (`examples/asi/safe_self_improve.ax`) ties the whole stack
+together: `mod`-imports a Tier-1 Agent, runs the multi-arg optimizer over
+an action catalog, gates each step through the safety quartet, and
+demonstrates a latching kill-switch.
 
-## Shipped since (this session, on `main`)
+## Shipped this session (long form below — see commit log for the full record)
 
-- **Codegen wrapper fix fully applied** (above) + CI **clippy `-D warnings` gate
-  green** (was red, 33 lints). `check`/`test`/`clippy` green; `fmt-check` is
-  pre-existing red (intentional hand-formatting style — a CI-policy call).
-- **Tier-1 ASI-safety stdlib** (`examples/stdlib/`): `budget` · `constraint` ·
-  `principal` · `uncertain` combinators, composed by `safe_action` (the unified
-  act/deny gate), + `asi_prelude` scoring helpers. All tested, key-free.
-- **Goal surface is rich**: every prose section is actionable (Inputs/Outputs→
-  sigs, Verify→gate, Redteam→check, Implementation→bodies, Budget→`max_evals`);
-  author-overrides (`try_variant`/`assert_deployable`/`redteam_check`); prelude
-  auto-bundling. Demos: optimize/verified/redteam/compose/flagship + `learn`.
-- **Mock-LLM mode** (`AXON_AI_MOCK=1`): the `ai_*` builtins return deterministic
-  stubs, so all ASI demos run with no key/network/feature.
-- **Observability loop works on the interpreter**: `@[adaptive]` returns persist
-  to the provenance JSONL → `axon trace` / `analyze.py` / `run.sh analyze`.
-- **Cross-run self-improvement** (`AXON_GOAL_CONTINUE=1`): `goal_run` resumes its
-  hill-climb from the best prior input; `run.sh improve` converges across runs.
-  `axon goal --iterate N <file.md>` drives this autonomously in one command —
-  learn-goal converges 100→136→164→184→200 over 6 runs.
-- **Multi-file modules** (`mod`+`use`+`AXON_PATH`) work via the interpreter;
-  see `examples/modular/`.
-- **ASI demo set spans the decision-pattern spectrum** (`examples/asi/`, all
-  key-free): #1–3 LLM tasks (optimize/classify/summarize), #4 `supervised_agent`
-  (greedy stream under a latching kill-switch), #5 `deliberative_agent`
-  (constrained single choice), #6 `planner` (multi-step lookahead, recursive
-  enums), #7 `pareto` (multi-objective frontier), #8 `allocate` (0/1 knapsack),
-  #9 `rank` (in-place selection sort), #10 `local_search` (userland black-box
-  hill-climbing), #11 `contained` (compile-time capability sandbox), #12
-  `parallel_score` (fan-out/collect). Capability *and* control, demonstrated.
-  `run.sh demos` runs the key-free tour.
-- **Language hardened by build-and-fix probing**: `len` on slices; structural
-  `==`/`!=`; `type Name = A | B` sum-types; or-patterns; `match`/`if` as operands;
-  `&&`/`||` precedence (correctness bug); nested braces in interpolation; enum
-  returns; `for x in <collection>`; **place assignment** (`xs[i]=v`, `s.f=v`,
-  nested too); `chan<T>` as a type. Each gated + regression-tested.
-- **Concurrency (cooperative, single-threaded)**: `spawn` runs eagerly, channels
-  are shared FIFOs, `send`/`recv`/`select` work — fan-out/collect runs (see
-  `parallel_score.ax`); request/response (block-on-later-send) doesn't. Memory
-  `axon-cooperative-concurrency`.
-- **Safety checks ENFORCED in the CLI** (were dead): `@[contained]` capability
-  sandbox (E1001), static `@[verify]` (E1101), borrow (E0601) — all run in
-  `run_check_pipeline`, guarded by `*_rejected_by_check` tests against drift.
-- **Robust on adversarial input** (no process aborts): deep recursion →
-  `RECURSION_LIMIT` panic; deep nesting → `MAX_EXPR_DEPTH` parse error; the CLI
-  runs on a 1 GiB-stack worker thread. Bad builtin args fail fast/gracefully.
-- **Ownership model mapped**: pass collections as `&[T]` (borrow); `for-in`
-  borrows; `ref` is binding-only (memory `axon-ownership-idioms`).
-- **Tests/CI**: end-to-end CLI tests (`tests/cli_run.rs`, 44) + 286 lib + 101
-  integration; `all_examples_typecheck_clean` runs the full pipeline over every
-  example. `dev.sh` is interpreter-first. Commits gated on a green suite.
+### Language / interpreter
 
-## Top remaining work (prioritized)
+- **Tuples** end-to-end: `(a, b, …)` literals, `t.0` / nested `t.0.1` access
+  (parser splits Float-lexed `0.1`), `let (a, b) = e` destructuring with
+  stmt-level splicing into the enclosing scope (so destructuring works
+  inside `while` / `for` / `if` / `while let` bodies, not just blocks),
+  `(a, b)` patterns in `match`.
+- **Place assignment**: `xs[i] = v` and `s.field = v`, including nested
+  `o.inner.value = 42` and `s.xs[1] = 99`.
+- **Typed bindings**: `let x: T = e` / `own` / `ref` enforce the annotation.
+- **Closure ergonomics**: `|x: i64| -> i64 { body }` — explicit return-type
+  annotation now parsed (discarded; HM still infers).
+- **`as` cast operator** (ROADMAP F8): `expr as Type` is parser sugar for
+  the polymorphic `as_<type>` builtins; precedence higher than arithmetic
+  (matches Rust). Replaces `f64_to_i64(x)` / `i64_to_f64(x)` at call sites.
+- **Raw strings** (F16): `r"…"` — no escape processing, no `{}` interpolation.
+- **Composite `@[verify]` predicates** (F6): the interpreter binds
+  `value` / `confidence` / `source_tag` into a fresh env and evaluates the
+  predicate Expr at runtime. `@[verify(value >= 50 && confidence >= 0.8)]`,
+  OR predicates, function calls in the predicate all work.
+- **`@[verify]` panic enrichment**: panic messages name the breaching
+  ident, both `value` and `confidence`, and the goal-search input.
+- **Channels**: added `c.try_recv() -> Option<T>` (non-blocking) and
+  `c.len() -> i64` (queue depth) for drain-pattern loops.
+- **Robustness preserved**: `RECURSION_LIMIT`, `MAX_EXPR_DEPTH`, 1 GiB
+  worker-thread stack, graceful panics on adversarial input.
 
-1. **Tuples + native codegen of new AST nodes.** Place assignment (single-level
-   *and* nested) and typed `let`/`own`/`ref` (`let x: T = e`, enforced) now work
-   in the interpreter. Remaining language gap: tuple expressions (`(a, b)`).
-   Native codegen lowering of the newer AST nodes (`AssignTo`, etc.) is still a
-   TODO — codegen leaves them unsupported via its catch-all.
-2. **Live ASI** — set `ANTHROPIC_API_KEY` (+ `--features asi-runtime`) to run the
-   LLM demos for real instead of `AXON_AI_MOCK=1`.
-3. **Native build** — the `#[inline(never)]`-wrapper fix is applied; validate an
-   end-to-end `--features codegen` build on a beefy machine / CI.
+### Optimizer (the goal_* suite)
 
-## Known language gaps (discovered this session — future work)
+- **Multi-arg `@[adaptive]`** (F1 numeric, F9 closed) via coordinate
+  descent over `fn(i64, …) -> i64` AND `fn(f64, …) -> f64`. Powell's-
+  method-style joint-direction step after each sweep collapses the
+  constant-factor convergence rate of cyclic CD on correlated dims —
+  linear-regression weights now converge to machine precision in 3000
+  evals (vs ~1e-3 without Powell).
+- **Wide-step seed**: from a fresh `cur = [0; N]`, step starts at
+  `max_evals * 4` so the first probes leap across the plausible range
+  and the halving cascade binary-searches toward the peak.
+- **Early exit** on exact target hit (saves the trailing evals).
+- **Fair per-dim rotation**: caps each dim's evals per sweep at
+  `max_evals / n_dims` so the f64 path doesn't let one dim monopolize
+  via its tight resolution floor.
+- **Provenance store** captures `(input_tuple, score)` per call — i64
+  AND f64 prefixes recorded in parallel stores.
 
-Found by building real programs; none block current work (there are working
-idioms) but each is a clean future task:
+### Goal-introspection builtins (17 in the goal_* namespace)
 
-- **Concurrency is cooperative (single-threaded).** `spawn`/`chan`/`send`/`recv`
-  now run in the interpreter — `spawn` bodies execute eagerly, so fan-out/collect
-  (workers produce, main consumes) works; patterns where a spawned task must
-  *block* on a value sent later (request/response) don't — send before recv.
-  `select` fires the first arm whose channel is ready (cooperative, value-less).
-- (Fixed this session: `len` accepts slices; structural `==`/`!=`; `type Name =
-  A | B` sum-types; or-patterns; `match`/`if` as operands; `&&`/`||` precedence;
-  nested braces in interpolation; functions returning enums; `for x in coll`;
-  place assignment `xs[i] = v` and `s.field = v` (incl. nested); typed bindings
-  `let x: T = ...`; tuples — `(a, b, ...)` literals, `.N` access (inc. nested
-  `.0.0`), `let (a, b) = e` destructuring, `(a, b)` patterns in `match`.)
+| Builtin | Shape | Purpose |
+|---|---|---|
+| `goal_run(name, target, max_evals)` | mutator | live hill-climb |
+| `goal_continue(name, target, max_evals)` | mutator | warm-start from prior best |
+| `goal_clear(name)` | mutator | drop provenance for fresh experiment |
+| `goal_best_score(name, target)` | pure read | best observed (no mutation) |
+| `goal_count(name)` | pure read | O(1) trace size |
+| `goal_best_input(name, target)` | pure read | winning probe (first dim) |
+| `goal_best_inputs(name, target)` | pure read | full winning tuple (i64) |
+| `goal_best_inputs_f64(name, target)` | pure read | full winning tuple (f64) |
+| `goal_history(name)` | pure read | `[(i64, f64)]` trace |
+
+### Stdlib (39 array + 3 string + 2 cast primitives shipped this session)
+
+- Constructors: `arr_range`, `arr_push`, `arr_repeat`, `arr_concat`, `arr_flatten`, `arr_chunk` (6)
+- Reductions: `arr_sum` / `arr_max` / `arr_min` / `arr_mean` × {i64, f64} + `arr_std_f64` (9)
+- Index-returning: `arr_argmax` / `arr_argmin` × {i64, f64}, `arr_index_of` (5)
+- Higher-order: `arr_map`, `arr_filter`, `arr_fold`, `arr_sort_by`, `arr_zip`, `arr_contains`, `arr_find` (7)
+- Slicing/reordering: `arr_reverse`, `arr_take`, `arr_drop`, `arr_unique` (4)
+- Polymorphic via deferred type params (`T`, `U`) so `arr_map([1,2], |x| i64_to_f64(x))` type-checks.
+- Strings: `str_split`, `str_join`, `str_digits_only`
+- Casts: `as_f64`, `as_i64` (polymorphic; also the parser-sugar `expr as T`)
+
+### Userland stdlib (closes F10 / F12 userland)
+
+- **`examples/stdlib/reward.ax`** — composable metric algebra. `Reward { name, score, max }` with
+  `reward_unit / blend / scale / penalize / min / max`. 8 tests.
+- **`examples/stdlib/agent.ax`** — Tier-1 Agent state machine. Bundles `Principal` +
+  budget + supervisor + history counters; `agent_step` evaluates the full safety
+  quartet (`halted → unauthorized → over-budget → under-confident → under-quality`)
+  and the kill-switch latches at `max_strikes`. 7 tests.
+
+### ASI demos (18 in `examples/asi/`)
+
+- #14 `learn_linear.ax` — fit `y = a·x + b` over i64 weights via multi-arg `@[adaptive]`.
+- #15 `persistent_learner.ax` — cross-process self-improvement (read_file + write_file).
+- #16 `learn_linear_f64.ax` — continuous-domain regression; recovers `(0.5, 1.25)` to f64 epsilon.
+- #17 `multi_objective.ax` — accuracy-vs-cost Pareto search using `reward.ax`.
+- #18 `safe_self_improve.ax` — **FLAGSHIP**. `mod`-imports `stdlib/agent.ax`,
+  uses `goal_run` over an 8-action catalog, gates each step through `agent_step`,
+  demonstrates two-strike kill-switch latching.
+
+### ROADMAP §9.5 friction items (9 of 15 closed this session)
+
+| # | Title | Status |
+|---|---|---|
+| F1 | `goal_run` only single-arg `i64` | ✅ for i64^N and f64^N |
+| F2 | `ai_complete` replay | open (Phase 9) |
+| F3 | Provenance shape | open (Phase 7+9) |
+| F4 | Budget meter (tokens) | open (Phase 7) |
+| F5 | Runtime sandbox | open (Phase 9) |
+| F6 | `@[verify]` predicate language | ✅ for single-Uncertain composite |
+| F7 | `str_digits_only` | ✅ |
+| F8 | `as` cast | ✅ |
+| F9 | Multi-arg `@[adaptive]` | ✅ |
+| F10 | Reward shaping | ✅ userland (`reward.ax`) |
+| F11 | `@[adaptive]` logs inputs | ✅ (interp; native ABI ext. = Phase 7) |
+| F12 | `Agent` type | ✅ userland (`agent.ax`) |
+| F13 | Structured-prose surface depth | open (Phase 10) |
+| F14-15 | Web UI / pipeline | open (Phase 11/12) |
+| F16 | Raw string literals | ✅ |
 
 ## What works now (via the interpreter, no LLVM)
 
 | Command | Behavior |
 |---|---|
-| `axon run f.ax` | parse → type-check → interpret; forwards exit code |
-| `axon check f.ax` | type-check only |
+| `axon run f.ax` | parse → resolve → infer → check → borrow → cap → verify → interp; exit code forwarded |
+| `axon check f.ax` | static pipeline only |
 | `axon test f.ax` | run `@[test]` fns in-process (honors `should_fail`) |
-| `axon goal g.md` | prose `goal.md` → `.ax` (axon-surface) → check → run; `--emit` to print the `.ax` |
-| `axon build f.ax` | native AOT — cfg(codegen) stub unless built `--features codegen` |
+| `axon goal g.md` | prose `goal.md` → `.ax` (axon-surface) → check → run; `--iterate N` for autonomous convergence |
+| `axon build f.ax` | native AOT — cfg(codegen) stub unless built `--features codegen` (the slow path) |
 | `axon parse f.ax` / `axon lsp` | need `--features serde-json` |
 
-- All 21 deterministic `examples/*.ax` run correctly under the interpreter.
-- All 6 `examples/asi/*.ax` + `examples/goals/hello-goal.ax` run end-to-end
-  (LLM calls gated behind `--features asi-runtime`; without an `ANTHROPIC_API_KEY`
-  the `ai_*` builtins return `Err` and the `@[verify]`/redteam gates fire
-  correctly).
-- Tests green: ~16 interpreter unit tests, 280 lib + 101 integration, 8 surface.
+- All `examples/*.ax` (deterministic) + 18 ASI demos run cleanly via the interpreter.
+- LLM-using demos (optimize / classify / summarize / pricing / search_rank / code_review)
+  panic without `AXON_AI_MOCK=1` or `--features asi-runtime` — that's intentional.
+- **Tests green**: 517 across the workspace (15 + 286 lib + 83 cli_run + 101 integration
+  + 23 + 10 + … ); `axon-core` clippy clean.
 
-## Feature map
+## Known language gaps (the still-open list)
 
-- default = `codegen` + `serde-json` (the slow native path).
-- `--no-default-features` → feature-light interpreter `axon` (the dev build).
-- `asi-runtime` → live `ai_complete`/`ai_extract_*` via `axon-ai` (reqwest).
-- `serde-json` → `axon parse --json`, `axon lsp`. NOTE: building the lib with
-  `serde-json` + `--emit=link` (no codegen) SIGSEGVs rustc on this box while
-  codegen-ing the serde derives on the recursive AST enums — that's why the
-  default interpreter `axon` omits `serde-json`.
+- **Concurrency is cooperative (single-threaded).** `spawn`/`chan`/`send`/`recv`
+  run in the interpreter. `spawn` bodies execute eagerly, so fan-out/collect
+  works; request/response (block-on-later-send) doesn't. `try_recv` and `len`
+  added this session so consumers can drain non-blockingly.
+- **No HashMap / Set** — `arr_unique` is O(n²) until a hash primitive ships.
+- **No `as` for composite types** — `expr as f64` works; `expr as Result<…>`
+  is rejected (it would have to dispatch on the source shape, not a primitive
+  conversion).
+- **Module system has no qualified-name access** — `use mod.{items}` imports
+  individually; there's no `mod::item` syntax.
 
-## ASI builtins in the interpreter (M2)
+## ASI builtins in the interpreter
 
-- Deterministic core needs no external crate: `goal_run` (hill-climb over an
-  `@[adaptive] fn(i64)->i64`, else retrospective over an in-memory provenance
-  store), `@[adaptive]` logging, `Uncertain`/`Temporal` constructors,
-  `@[verify(confidence OP K)]` runtime gate (reuses `verify::decode_verify_predicate`),
-  `f64_to_i64`/`i64_to_f64`.
-- `ai_complete`/`ai_extract_uncertain_{i64,f64}` → `axon-ai`, gated on `asi-runtime`.
+- **Deterministic** (no external crate): the 17 `goal_*` introspection builtins,
+  `@[adaptive]` logging (with i64 + f64 input prefixes), `Uncertain`/`Temporal`
+  constructors (`uncertain_dyn_i64` / `_f64`, `temporal_new`), the
+  `@[verify(predicate)]` runtime gate (simple shape + composite-predicate eval).
+- **Live LLM** (`--features asi-runtime` or `AXON_AI_MOCK=1`):
+  `ai_complete` / `ai_extract_uncertain_{i64,f64}` → `axon-ai` (reqwest).
 
-## Phase-10 surface (axon goal)
+## Phase-10 surface (`axon goal`)
 
-- `axon-surface`: `GoalFile::parse` (prose `.md` → sections) + `compile::emit`
-  (→ `.ax`). v1 **lifts real function bodies** from the goal file's ` ```axon `
-  fenced blocks (`author_code()`, all blocks except the Verify predicate) and
-  emits `TODO:` scaffolding only for helpers the prose omits.
-- `examples/goals/hello-goal.md` has an `## Implementation` section with real
-  `test_input`/`build_prompt`/`score_output`/`adversarial_input` bodies.
+`axon-surface` (`GoalFile::parse` + `compile::emit`) lifts ```axon` blocks
+from the goal `.md` and scaffolds `TODO:` placeholders for absent helpers.
+`examples/goals/learn-goal.md` runs autonomously with `axon goal --iterate
+6` and converges to score=200 at input=12 via cross-run continuation
+(`AXON_GOAL_CONTINUE=1`).
 
-## Open / next
+## Open / next (post-this-session)
 
-1. Apply the `#[inline(never)]` wrapper fix to `codegen/builtins.rs`
-   incrementally (`declare_builtins` first, measure, then `declare_string_builtins`),
-   combined with function-splitting for CGU parallelism — IF a native artifact
-   is wanted. Otherwise native stays CI/release-only.
-2. Surface v1.1+: LLM-driven body *generation* from prose (roadmap), more
-   `examples/goals/*.md`, round-trip `.ax → .md` drift check.
-3. Branch hygiene: stale `track-*` / `worktree-agent-*` branches still exist
-   (worktrees already removed); the work is merged into `main`.
-4. `axon run` does not yet forward argv; type-incorrect programs run-panic only
-   under paths that skip the checker (run/goal/check all check first).
+The remaining ROADMAP §9.5 items (F2 replay, F3 provenance shape, F4 budget
+meter, F5 sandbox, F13-15 surface/UI/pipeline) are all real Phase 7+ work
+needing new compiler phases or runtime infrastructure beyond what the
+interpreter can ship in single ticks. They open up when the corresponding
+phase spec lands.
+
+In-language opportunities still on the table:
+1. HashMap / Set primitive (O(1) `arr_unique`, dict-shaped state).
+2. Cross-file `mod` polish — qualified access, re-exports.
+3. Native build validation on a beefy machine, once a CI invocation is
+   feasible (the wrapper fix is applied; the constant-factor win is
+   measured but the multi-hour build still needs CI scheduling).
+4. Powell's-method generalization to longer line searches with a
+   bracketing step instead of pure geometric doubling.
