@@ -27,16 +27,22 @@ axon goal  examples/goals/hello-goal.md   # compile prose goal → .ax → check
 axon check examples/hello.ax              # type-check only
 axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
 axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
-axon build examples/hello.ax              # native AOT binary   (needs --features codegen; SLOW — see BUILD_DIAGNOSIS.md)
+axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
 ```
 
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
 `codegen` feature via the tree-walking interpreter (`interp.rs`). The native
-LLVM/inkwell `codegen` feature is **on by default** but its build is
-pathologically slow (does not finish — see `BUILD_DIAGNOSIS.md`), so it's
-relegated to CI/release; develop against `--no-default-features`. Add
-`--features asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
+LLVM/inkwell `codegen` feature is **on by default and now builds in ~3s** —
+the long-standing "build never finishes" stall was a `serde-json` × `codegen`
+default-feature collision (recursive AST serde derives × codegen
+monomorphization), fixed by dropping `serde-json` from `default`
+(`BUILD_RESOLVED.md`). `cargo build -p axon-core` produces the native `axon`
+compiler; `axon build foo.ax` emits a native binary. **Do not enable
+`codegen` + `serde-json` together** until the AST derives are decoupled — that
+combo reintroduces the stall. `axon parse`/`lsp` (JSON) opt in with
+`--features serde-json` (interpreter build, no codegen). Add `--features
+asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 `examples/asi/*` and `axon goal`).
 
 ### Interpreter env vars
