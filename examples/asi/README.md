@@ -49,6 +49,7 @@ examples/asi/
 ├── learn_linear.ax # demo #14 — fit y = a·x + b by coordinate descent over a multi-arg @[adaptive] fn; key-free
 ├── learn_linear_f64.ax # demo #16 — continuous-domain (f64) linear regression: same shape as #14 with real-valued weights; key-free
 ├── multi_objective.ax # demo #17 — accuracy-vs-cost policy search using the reward.ax algebra; key-free
+├── safe_self_improve.ax # demo #18 — FLAGSHIP: agent + optimizer + safety quartet + kill-switch (mod-imports stdlib/agent.ax); key-free
 ├── persistent_learner.ax # demo #15 — cross-process self-improvement: load prior best from disk, optimize, write back; key-free
 ├── run.sh         # Phase-10 CLI surface, simulated as bash subcommands
 └── README.md      # this file

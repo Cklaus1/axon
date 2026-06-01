@@ -135,7 +135,15 @@ fn all_examples_typecheck_clean() {
         }
     }
     let root = format!("{}/../../examples", env!("CARGO_MANIFEST_DIR"));
-    let modpath = format!("{}/../../examples/modular", env!("CARGO_MANIFEST_DIR"));
+    // Two AXON_PATH entries so the sweep covers both module roots. stdlib
+    // FIRST so the flagship demo's `mod agent` resolves to the no-main
+    // stdlib/agent.ax rather than the tutorial's modular/agent.ax (which
+    // has a `main` that would conflict). modular/scorelib still resolves
+    // because the resolver falls through to the second entry.
+    let modpath = format!(
+        "{0}/../../examples/stdlib:{0}/../../examples/modular",
+        env!("CARGO_MANIFEST_DIR"),
+    );
     let mut files = Vec::new();
     collect(std::path::Path::new(&root), &mut files);
     assert!(files.len() >= 20, "expected many examples, found {}", files.len());
@@ -893,6 +901,27 @@ fn self_improve_demo_completes_the_full_cycle() {
     assert!(stdout.contains("best input:     137"), "stdout: {stdout}");
     assert!(stdout.contains("deploy gate:    PASS"), "stdout: {stdout}");
     assert!(stdout.contains("verified value: 137"), "stdout: {stdout}");
+}
+
+#[test]
+fn safe_self_improve_demo_composes_full_stack() {
+    // Flagship demo (#18): composes optimizer + agent + safety quartet
+    // + kill-switch + mod-imports from examples/stdlib/. Pins every
+    // property the demo claims to demonstrate:
+    //   - optimizer finds an approved action
+    //   - first step is approved
+    //   - two unsafe steps trip the 2-strike kill-switch
+    //   - a safe action AFTER halt is still refused (latching)
+    let mut cmd = axon();
+    cmd.args(["run", &ex("asi/safe_self_improve.ax")]);
+    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    let out = cmd.output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "flagship demo should report all properties: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("chosen action: medium-strong"), "optimizer must pick best safe action: {stdout}");
+    assert!(stdout.contains("step 1: approved"), "first step approved: {stdout}");
+    assert!(stdout.contains("halted=true"), "kill-switch must latch: {stdout}");
+    assert!(stdout.contains("step 4: halted"), "halt latches: {stdout}");
 }
 
 #[test]

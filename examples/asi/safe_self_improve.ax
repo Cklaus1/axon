@@ -1,0 +1,120 @@
+// Axon ASI demo: safe self-improvement — the flagship.
+//
+// Composes everything shipped this session into one program:
+//
+//   * `mod agent` (examples/stdlib/agent.ax) — Tier-1 Agent state machine
+//     with budget, principal, kill-switch, and history counters.
+//   * The optimizer surface (goal_run + goal_best_input + goal_history)
+//     — picks the best action choice from a finite catalog.
+//   * Per-step gating via `agent_step` — every action the optimizer
+//     proposes is run through the full safety quartet (halted →
+//     unauthorized → over-budget → under-confident → under-quality)
+//     before being committed.
+//   * A read-only checkpoint via `goal_best_score` + `goal_count` —
+//     pure introspection between rounds.
+//
+// Run:
+//   AXON_PATH=examples/stdlib axon run examples/asi/safe_self_improve.ax
+//
+// The agent has a strict 80-cost budget and a 2-strike kill switch.
+// The action catalog mixes safe-cheap, safe-expensive, and unsafe
+// choices. The optimizer searches over the catalog; the agent's
+// safety gate filters at runtime. A well-behaved agent should:
+//   - Find the highest-quality affordable safe action.
+//   - Trip its kill-switch if asked to take too many unsafe actions
+//     in a row.
+//   - Stay halted forever once tripped (latching property).
+
+mod agent
+use agent.{Principal, Agent, Action, principal, action, agent_new, agent_step, agent_alive, agent_budget_remaining}
+
+// ── Action catalog ─────────────────────────────────────────────────────────
+// Eight choices: cost, quality, confidence. Some are obviously bad
+// (low quality / under-confident) — the agent's gate refuses them
+// even if the optimizer hands them to it.
+
+fn catalog(i: i64) -> Action {
+    let idx = i % 8
+    let n = if idx < 0 { idx + 8 } else { idx }
+    if n == 0 {
+        action("nano-safe", 10, 60, 0.85)            // approved, cheap, low quality
+    } else if n == 1 {
+        action("small-good", 20, 80, 0.9)            // approved sweet spot
+    } else if n == 2 {
+        action("medium-strong", 30, 90, 0.95)        // approved, best safe action
+    } else if n == 3 {
+        action("flaky", 15, 75, 0.5)                 // refused: under-confident
+    } else if n == 4 {
+        action("low-quality", 20, 50, 0.9)           // refused: under-quality
+    } else if n == 5 {
+        action("expensive", 90, 95, 0.95)            // refused: over-budget
+    } else if n == 6 {
+        action("hallucinator", 25, 60, 0.4)          // refused: both axes
+    } else {
+        action("safe-padding", 15, 78, 0.85)         // approved, average
+    }
+}
+
+// ── Optimizer: pick the highest-quality affordable action ───────────────────
+// Score: action.quality if the gate would approve the action, 0 otherwise.
+// This lets the optimizer learn the SAFE frontier by reward-shaping —
+// no separate enumeration logic, the @[adaptive] body simulates the
+// gate and rewards only approved actions.
+
+fn min_quality() -> i64 { 70 }
+fn min_confidence() -> f64 { 0.8 }
+fn budget_cap() -> i64 { 80 }
+
+@[adaptive]
+fn action_score(i: i64) -> i64 {
+    let act = catalog(i)
+    let conf_ok = act.confidence >= min_confidence()
+    let qual_ok = act.quality >= min_quality()
+    let cost_ok = act.cost <= budget_cap()
+    if conf_ok && qual_ok && cost_ok { act.quality } else { 0 }
+}
+
+fn main() -> i64 {
+    let p = principal("scout", false, false, false)
+    let initial = agent_new("scout-1", p, budget_cap(), 2)
+
+    // ── Phase 1: search for the best action ────────────────────────────
+    let _ = goal_run("action_score", 100.0, 80)
+    let best_id = goal_best_input("action_score", 100.0)
+    let evals = goal_count("action_score")
+    let best_quality = goal_best_score("action_score", 100.0)
+
+    println("=== safe self-improvement ===")
+    println("optimizer: {to_str(evals)} evals, best id = {to_str(best_id)}, score = {to_str_f64(best_quality)}")
+    let chosen = catalog(best_id)
+    println("chosen action: {chosen.name} (cost {to_str(chosen.cost)}, q={to_str(chosen.quality)}, c={to_str_f64(chosen.confidence)})")
+
+    // ── Phase 2: take the chosen action ────────────────────────────────
+    let (after1, d1) = agent_step(initial, chosen, min_quality(), min_confidence())
+    println("step 1: {d1}  budget_remaining={to_str(agent_budget_remaining(after1))}")
+
+    // ── Phase 3: probe the safety gate — propose two unsafe actions ────
+    // The optimizer never would, but a downstream caller might. The agent
+    // must refuse, accumulate strikes, and eventually latch the halt.
+    let bad = catalog(6)   // hallucinator
+    let (after2, d2) = agent_step(after1, bad, min_quality(), min_confidence())
+    let (after3, d3) = agent_step(after2, bad, min_quality(), min_confidence())
+    println("step 2: {d2}  strikes={to_str(after2.strikes)}")
+    println("step 3: {d3}  strikes={to_str(after3.strikes)}  halted={to_str_bool(after3.halted)}")
+
+    // ── Phase 4: after-halt, even a safe action is refused ────────────
+    let (after4, d4) = agent_step(after3, chosen, min_quality(), min_confidence())
+    println("step 4: {d4} (safe action AFTER halt → still refused)")
+    println("counters: taken={to_str(after4.steps_taken)} approved={to_str(after4.steps_approved)} denied={to_str(after4.steps_denied)}")
+
+    // ── Phase 5: pin the contract ──────────────────────────────────────
+    // Exit 1 iff the demo demonstrated every property:
+    //   - optimizer found a good action (score > 0, an approved one)
+    //   - first step approved
+    //   - two strikes latched the agent
+    //   - the after-halt safe action was refused
+    let good_pick = best_quality > 0.0 && str_eq(d1, "approved")
+    let strikes_latched = !agent_alive(after3)
+    let halt_latches = str_eq(d4, "halted")
+    if good_pick && strikes_latched && halt_latches { 1 } else { 0 }
+}
