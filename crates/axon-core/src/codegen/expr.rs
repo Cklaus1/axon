@@ -1701,6 +1701,40 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // `to_str` is polymorphic over scalars (BUG_HUNT #29/#40): the
+        // interpreter dispatches on the runtime value, so codegen must dispatch
+        // on the arg's LLVM type at the CALL SITE — `to_str` is declared
+        // `i64→str`, so passing an f64/bool would otherwise be silently coerced
+        // (float→int truncation; bool reinterpret) producing wrong output.
+        // Mirror the string-interpolation path (`emit_fmt`): bool→to_str_bool,
+        // f64→to_str_f64, i64→to_str. The interpreter is the oracle (I-2).
+        if let ast::Expr::Ident(name) = callee {
+            if name == "to_str" && args.len() == 1 {
+                let v = self.emit_expr(&args[0], fn_val)?;
+                let dispatched = match v {
+                    BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 1 => {
+                        self.functions.get("to_str_bool").copied()
+                            .map(|f| (f, BasicMetadataValueEnum::from(iv)))
+                    }
+                    BasicValueEnum::FloatValue(fv) => {
+                        self.functions.get("to_str_f64").copied()
+                            .map(|f| (f, BasicMetadataValueEnum::from(fv)))
+                    }
+                    BasicValueEnum::IntValue(iv) => {
+                        self.functions.get("to_str").copied()
+                            .map(|f| (f, BasicMetadataValueEnum::from(iv)))
+                    }
+                    // Non-scalar (shouldn't reach here — checker rejects it):
+                    // fall through to the default i64 path for a clean error.
+                    _ => None,
+                };
+                if let Some((f, arg)) = dispatched {
+                    return build_wrappers::w_call(&self.ir.builder, f, &[arg], "to_str_call")
+                        .try_as_basic_value().left();
+                }
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 
