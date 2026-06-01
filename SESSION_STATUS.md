@@ -1,9 +1,9 @@
 # Axon Session Status
 
-**Last update**: 2026-05-31
+**Last update**: 2026-05-31 (second pass — see "Shipped after the first refresh" below)
 **Branch**: `merge-asi-layer3` (pushed to `origin/merge-asi-layer3`)
-**Latest commit**: `f86e6c4` — `safe_self_improve` flagship demo composing
-the full ASI stack (see "Shipped this session" below).
+**Latest commit**: `eea2198` — underscore-prefixed names exempt from W0002
+shadowing (compounds across every demo using `let _ = …`).
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
 `STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
@@ -26,6 +26,93 @@ flagship demo (`examples/asi/safe_self_improve.ax`) ties the whole stack
 together: `mod`-imports a Tier-1 Agent, runs the multi-arg optimizer over
 an action catalog, gates each step through the safety quartet, and
 demonstrates a latching kill-switch.
+
+## Shipped after the first refresh (since `5926377`)
+
+Nine more commits since the first SESSION_STATUS refresh. The two
+new headline pieces:
+
+### Dict primitive + dict stdlib (10 builtins)
+
+The ASI workhorse: string-keyed map backed by
+`Rc<RefCell<BTreeMap<String, Value>>>` — reference-shared like `Chan`
+so mutating calls update one underlying state. Keys are `str` only
+(95% coverage without needing `Hash + Eq` on the full Value enum).
+
+| Builtin | Purpose |
+|---|---|
+| `dict_new() -> Dict` | empty |
+| `dict_get(d, k) -> Option<T>` | lookup |
+| `dict_set(d, k, v)` | insert/overwrite |
+| `dict_has(d, k) -> bool` | membership |
+| `dict_remove(d, k) -> Option<T>` | delete + return prior |
+| `dict_len(d) -> i64` | count |
+| `dict_keys(d) -> [str]` | BTreeMap order |
+| `dict_values(d) -> [T]` | key-sorted |
+| `dict_map_values(d, f) -> Dict` | transform every value |
+| `dict_each(d, f)` | side-effect iterate (k, v) |
+| `dict_merge(d1, d2) -> Dict` | right-biased union |
+| `arr_group_by(xs, key_fn) -> Dict[str, [T]]` | bucket array → dict |
+
+`Dict` allow-listed as a deferred type name so user code can write
+`fn f(d: Dict)` parameter annotations.
+
+### Bandit module + safe_bandit demo (closes UCB1 as Tier-1)
+
+- `examples/stdlib/bandit.ax` — UCB1 multi-armed bandit as a reusable
+  userland module. `Bandit { n_arms, sums, counts }` with the Dicts
+  shared via Rc<RefCell> so `bandit_update` mutates in place.
+  `bandit_select(b, t)` picks argmax(mean + sqrt(2·ln(t)/count)). 5 tests.
+- `examples/asi/bandit_ucb.ax` (demo #20) — pure UCB1, mod-imports the
+  module. Converges to arm-2 (true_mean=0.78) in 200 rounds.
+- `examples/asi/safe_bandit.ax` (demo #21) — first program that mod-
+  imports BOTH `bandit` and `agent`. Each round: bandit proposes, agent
+  gates, refused → zero-reward fed back to bandit (so it learns to
+  avoid). Converges to arm-2 (the only highest-reward safe arm).
+
+### More functional combinators (10 more array + dict builtins)
+
+  arr_any / arr_all / arr_count_if / arr_zip_with
+  arr_max_by / arr_min_by / arr_take_while / arr_drop_while
+  arr_enumerate / arr_partition
+
+Plus math: `ln`, `log10`, `exp` (the bandit's UCB needs ln).
+
+### Bug fixes uncovered while writing tests
+
+1. **`parse_type_str` didn't parse tuple types**. `"([T], [T])"` was a
+   single opaque `Deferred(...)` blob. Added tuple-parsing branch.
+2. **`Expr::FieldAccess` on `Type::Tuple` returned `fresh()`** instead
+   of the indexed element type. So `parts.0` was an unconstrained `?N`;
+   the subsequent `len(parts.0)` fired `len`'s str-fallback (which
+   constrains non-Slice args to `str`), poisoning every later use of
+   that name. Added a `Type::Tuple` branch returning `elems[i].clone()`.
+
+Both bugs had been needed for any builtin returning a tuple — only
+just visible because `arr_partition` is the first tuple-returning
+builtin shipped.
+
+### Ergonomic ticks
+
+- **`let _ = …` no longer warns W0002.** Underscore-prefixed names are
+  exempt from the shadow check; `let _`, `own _`, `ref _` all silent.
+  Real shadowing (`let x = …; let x = …`) still warns. Three demos
+  (`safe_self_improve`, `safe_bandit`, `self_improve`) printed 2-3
+  W0002 lines before useful output — now quiet.
+
+### Updated totals
+
+- **526 workspace tests pass** (was 517 at first refresh).
+- **21 ASI demos** (was 18). New: `multi_objective`, `word_freq`,
+  `bandit_ucb`, `safe_bandit` (and the older `safe_self_improve` /
+  `learn_linear_f64`).
+- **11 userland stdlib modules** (was 10): added `bandit`.
+- **41 array + 10 dict + 17 goal_* + 3 channel + …** builtins. The
+  data-shaping vocabulary is genuinely complete for any in-language
+  ASI program; the gap list (no HashMap → CLOSED via Dict) is empty
+  for sub-Phase-7 work.
+
+---
 
 ## Shipped this session (long form below — see commit log for the full record)
 
