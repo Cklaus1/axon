@@ -2181,3 +2181,32 @@ fn goal_run_typod_name_errors_not_silent_success() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("typo_xyz"), "error should name the unknown fn: {stderr}");
 }
+
+#[test]
+fn rng_is_reproducible_under_seed() {
+    // BUG_HUNT #11 / I-10: random_* was non-deterministic with no seed
+    // control, breaking experiment reproducibility. srand(n) (and the
+    // AXON_SEED env var) must make a run replayable; the same seed yields
+    // the same random_i64.
+    let src = "fn main() -> i64 { srand(12345)  random_i64(0, 1000000) }\n";
+    let f = std::env::temp_dir().join(format!("axon_seed_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let r1 = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let r2 = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(r1.status.code(), r2.status.code(), "srand should make runs identical: {:?} vs {:?}", r1, r2);
+    assert!(r1.status.code().is_some());
+}
+
+#[test]
+fn axon_seed_env_var_makes_runs_reproducible() {
+    // AXON_SEED gives reproducibility without touching the program — the
+    // form a CI / experiment harness uses.
+    let src = "fn main() -> i64 { random_i64(0, 1000000) }\n";
+    let f = std::env::temp_dir().join(format!("axon_envseed_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let r1 = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "777").output().unwrap();
+    let r2 = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "777").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(r1.status.code(), r2.status.code(), "AXON_SEED should make runs identical: {:?} vs {:?}", r1, r2);
+}

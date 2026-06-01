@@ -683,13 +683,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "random_i64",
         params: &[("lo", "i64"), ("hi", "i64")],
         ret: "i64",
-        doc: "Return a pseudo-random `i64` in `[lo, hi)` using C `rand()`.",
+        doc: "Return a pseudo-random `i64` in `[lo, hi)` (xorshift64). Seed via `srand(n)` or the `AXON_SEED` env var for reproducible runs.",
     },
     BuiltinFn {
         name: "random_f64",
         params: &[],
         ret: "f64",
-        doc: "Return a pseudo-random `f64` in `[0.0, 1.0)` using C `rand()`.",
+        doc: "Return a pseudo-random `f64` in `[0.0, 1.0)` (xorshift64). Reproducible via `srand`/`AXON_SEED`.",
+    },
+    BuiltinFn {
+        name: "srand",
+        params: &[("seed", "i64")],
+        ret: "()",
+        doc: "Seed the global RNG for reproducible runs. The same seed yields an identical sequence of `random_*` / `goal_run_random` / `goal_run_multistart` results. The `AXON_SEED` env var does the same without code changes.",
     },
     // ── Phase 9: Numeric type conversions ────────────────────────────────────
     BuiltinFn {

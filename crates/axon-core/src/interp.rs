@@ -3091,6 +3091,14 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.round()));
             }
+            "srand" => {
+                // Seed the RNG for reproducible runs (BUG_HUNT #11 / I-10).
+                // Same seed → identical random_*/goal_run_random sequence.
+                // (The AXON_SEED env var does the same without code changes.)
+                want(1)?;
+                set_rand_seed(as_int(&args[0])?);
+                ok!(Value::Unit);
+            }
             "random_f64" => {
                 want(0)?;
                 // 53-bit mantissa → uniform [0.0, 1.0)
@@ -4401,17 +4409,42 @@ fn extract_json_num(line: &str, key: &str) -> Option<f64> {
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
 /// clock on first use). Single-threaded interpreter, so no CAS needed.
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+
+/// Global xorshift64 RNG state. `0` means "uninitialized" — the first draw
+/// seeds it (see [`rng_seed`]). Explicitly settable via [`set_rand_seed`]
+/// (the `srand` builtin) for reproducible runs.
+static RNG_STATE: AtomicU64 = AtomicU64::new(0);
+
+/// Initial seed for the RNG. Reproducibility (BUG_HUNT #11 / I-10):
+/// uses `AXON_SEED` (parsed as u64) when set for a deterministic run,
+/// otherwise time-based entropy. A fixed seed makes every `random_*`,
+/// `goal_run_random`, and `goal_run_multistart` result replayable.
+fn rng_seed() -> u64 {
+    if let Ok(s) = std::env::var("AXON_SEED") {
+        if let Ok(n) = s.trim().parse::<u64>() {
+            return n | 1; // avoid the 0 "uninitialized" sentinel
+        }
+    }
+    (now_ms() as u64) | 1
+}
+
+/// Explicitly set the RNG seed (the `srand(n)` builtin). `n == 0` is mapped
+/// to a non-zero sentinel so it doesn't read as "uninitialized".
+fn set_rand_seed(n: i64) {
+    let s = (n as u64) | 1;
+    RNG_STATE.store(s, AtomicOrdering::Relaxed);
+}
+
 fn next_rand_u64() -> u64 {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static STATE: AtomicU64 = AtomicU64::new(0);
-    let mut x = STATE.load(Ordering::Relaxed);
+    let mut x = RNG_STATE.load(AtomicOrdering::Relaxed);
     if x == 0 {
-        x = (now_ms() as u64) | 1;
+        x = rng_seed();
     }
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
-    STATE.store(x, Ordering::Relaxed);
+    RNG_STATE.store(x, AtomicOrdering::Relaxed);
     x
 }
 
