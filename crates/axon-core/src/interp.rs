@@ -2809,6 +2809,19 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.exp()));
             }
+            // Natural log. `x <= 0` returns NaN (matches Rust's f64::ln);
+            // callers should guard if zero is plausible — UCB-style
+            // algorithms compute ln(t) where t starts at 1, so this is
+            // fine in practice.
+            "ln" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.ln()));
+            }
+            // Base-10 log, for human-readable scales (orders of magnitude).
+            "log10" => {
+                want(1)?;
+                ok!(Value::Float(as_float(&args[0])?.log10()));
+            }
             "floor" => {
                 want(1)?;
                 ok!(Value::Float(as_float(&args[0])?.floor()));

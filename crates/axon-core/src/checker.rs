@@ -182,7 +182,10 @@ const PRIMITIVE_NAMES: &[&str] = &[
 ];
 
 /// Deferred type name prefixes (R08 / R12): always valid, never emit E0308.
-const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal"];
+/// `Dict` is here because the string-keyed map primitive doesn't have a
+/// first-class generic surface yet — `Dict` annotations type-check as
+/// deferred until that lands.
+const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 
 fn is_known_type_name(
     name: &str,

@@ -1,0 +1,111 @@
+// Axon ASI demo: UCB1 multi-armed bandit.
+//
+// The classic exploration-exploitation primitive. Five arms with hidden
+// reward means; the agent pulls one per round, observes a noisy reward,
+// and updates per-arm running averages. UCB1 picks the arm maximizing
+//
+//     mean(i) + sqrt(2 · ln(t) / count(i))
+//
+// where the second term is the "explore" bonus: arms pulled few times
+// (small count(i)) get an inflated UCB and are tried even if their
+// current mean is poor. As t grows the bonus shrinks; the best-mean
+// arm wins long-term.
+//
+// Showcases:
+//   • Dict<str, f64> + Dict<str, i64> as the bandit's running state
+//   • The new `ln` / `sqrt` math builtins
+//   • Persistence-ready shape (a real demo would save the dicts to disk)
+//
+//   axon run examples/asi/bandit_ucb.ax
+
+// Five arms. The TRUE means are hidden from the agent — the demo
+// fixes them so the test can assert convergence.
+fn true_mean(arm_id: i64) -> f64 {
+    let means = [0.20, 0.45, 0.78, 0.55, 0.35]
+    means[arm_id]
+}
+
+fn n_arms() -> i64 { 5 }
+
+// Pull arm `id`: returns a reward with small uniform noise around the
+// true mean. The agent only sees this value, not the underlying mean.
+fn pull(arm_id: i64) -> f64 {
+    let noise = (random_f64() - 0.5) * 0.05
+    true_mean(arm_id) + noise
+}
+
+fn arm_key(id: i64) -> str {
+    if id == 0 { "arm-0" }
+    else if id == 1 { "arm-1" }
+    else if id == 2 { "arm-2" }
+    else if id == 3 { "arm-3" }
+    else { "arm-4" }
+}
+
+// UCB score for arm `id`. `t` is the total pull count so far.
+fn ucb(sums: Dict, counts: Dict, id: i64, t: i64) -> f64 {
+    let k = arm_key(id)
+    let n = match dict_get(counts, k) {
+        Some(v) => v
+        None => 0
+    }
+    if n == 0 {
+        // Unpulled arm: infinite UCB ensures we sweep each arm at least once.
+        1.0e9
+    } else {
+        let sum_r = match dict_get(sums, k) {
+            Some(v) => v
+            None => 0.0
+        }
+        let mean = sum_r / as_f64(n)
+        let bonus = sqrt(2.0 * ln(as_f64(t)) / as_f64(n))
+        mean + bonus
+    }
+}
+
+fn main() -> i64 {
+    let sums = dict_new()
+    let counts = dict_new()
+    let rounds = 200
+
+    let t = 0
+    while t < rounds {
+        // Score every arm by UCB; pick the highest.
+        let ids = arr_range(0, n_arms())
+        let scored = arr_map(ids, |i| (i, ucb(sums, counts, i, t + 1)))
+        let chosen_pair = arr_max_by(scored, |p| p.1)
+        let chosen = chosen_pair.0
+
+        // Pull, update.
+        let r = pull(chosen)
+        let k = arm_key(chosen)
+        let cur_sum = match dict_get(sums, k) { Some(v) => v  None => 0.0 }
+        dict_set(sums, k, cur_sum + r)
+        let cur_n = match dict_get(counts, k) { Some(v) => v  None => 0 }
+        dict_set(counts, k, cur_n + 1)
+        t = t + 1
+    }
+
+    println("=== UCB1 bandit after {to_str(rounds)} rounds ===")
+    let i = 0
+    while i < n_arms() {
+        let k = arm_key(i)
+        let sum_r = match dict_get(sums, k) { Some(v) => v  None => 0.0 }
+        let n = match dict_get(counts, k) { Some(v) => v  None => 0 }
+        let est_mean = if n > 0 { sum_r / as_f64(n) } else { 0.0 }
+        println("  {k}: pulls={to_str(n)} est_mean={to_str_f64(est_mean)} true_mean={to_str_f64(true_mean(i))}")
+        i = i + 1
+    }
+
+    // Find the arm pulled most — that's UCB's revealed preference.
+    let count_pairs = arr_map(arr_range(0, n_arms()), |id| {
+        let k = arm_key(id)
+        let n = match dict_get(counts, k) { Some(v) => v  None => 0 }
+        (id, n)
+    })
+    let best = arr_max_by(count_pairs, |p| as_f64(p.1))
+    println("preferred arm: {arm_key(best.0)} ({to_str(best.1)} pulls)")
+
+    // Exit 1 iff UCB converged to arm-2 (true_mean=0.78, the actual best).
+    if best.0 == 2 { 1 } else { 0 }
+}

@@ -162,6 +162,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Raise `base` to the power `exp`. Calls C pow.",
     },
     BuiltinFn {
+        name: "exp",
+        params: &[("x", "f64")],
+        ret: "f64",
+        doc: "Natural exponential e^x. Useful for sigmoids, softmax, decay functions.",
+    },
+    BuiltinFn {
+        name: "ln",
+        params: &[("x", "f64")],
+        ret: "f64",
+        doc: "Natural log of `x`. `x <= 0` returns NaN (matches Rust f64::ln). UCB-style algorithms use `ln(t)` where t ≥ 1, so this is fine in practice.",
+    },
+    BuiltinFn {
+        name: "log10",
+        params: &[("x", "f64")],
+        ret: "f64",
+        doc: "Base-10 log of `x`. Use for human-readable scales (orders of magnitude).",
+    },
+    BuiltinFn {
         name: "floor",
         params: &[("n", "f64")],
         ret: "f64",

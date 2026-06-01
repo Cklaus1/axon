@@ -939,6 +939,19 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn bandit_ucb_demo_converges_to_best_arm() {
+    // Demo #20. Classic UCB1 multi-armed bandit: 5 arms with hidden
+    // means; UCB picks `mean + sqrt(2 ln(t) / count)` each round, and
+    // after 200 rounds settles on arm-2 (the actual best with true
+    // mean 0.78). Exercises Dict<str, f64> + Dict<str, i64> as the
+    // bandit's running state plus the new ln math builtin.
+    let out = axon().args(["run", &ex("asi/bandit_ucb.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(1), "UCB should pick arm-2: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("preferred arm: arm-2"), "stdout: {stdout}");
+}
+
+#[test]
 fn arr_max_by_min_by_take_drop_while_dict_each() {
     // Five more functional combinators wrap up the array+dict surface:
     //   arr_max_by / arr_min_by — fold map+argmax+index into one call
