@@ -381,6 +381,21 @@ fn run_typechecks_before_interpreting() {
 }
 
 #[test]
+fn parse_error_prefix_is_not_doubled() {
+    // Bug #7: a ParseError::Other-class error printed `parse error: parse
+    // error: ...` — the prefix was added by both ParseError::Other's own
+    // Display and the outer AxonError::Parse wrapper. Must appear exactly once.
+    let bad = std::env::temp_dir().join(format!("axon_pp_{}.ax", std::process::id()));
+    std::fs::write(&bad, "fn main() { println(\"hello {name\") }\n").unwrap();
+    let out = axon().args(["run", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    assert_eq!(out.status.code(), Some(2), "parse error should exit 2");
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("parse error:"), "should still have one prefix: {msg}");
+    assert!(!msg.contains("parse error: parse error:"), "prefix must not be doubled: {msg}");
+}
+
+#[test]
 fn run_exits_with_main_return_value() {
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();

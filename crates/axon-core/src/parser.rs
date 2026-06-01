@@ -183,7 +183,10 @@ pub enum ParseError {
     Eof,
     #[error("unexpected token: {0:?}, expected {1}")]
     Unexpected(Token, String),
-    #[error("parse error: {0}")]
+    // Bug #7: no "parse error:" prefix here — the outer `AxonError::Parse`
+    // wrapper (`#[error("parse error: {0}")]` in lib.rs) adds it, so a prefix
+    // on this variant too produced "parse error: parse error: ...".
+    #[error("{0}")]
     Other(String),
 }
 
