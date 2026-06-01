@@ -959,6 +959,36 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Bucket `xs` by a closure that maps each element to a string key. Returns `Dict[str, [T]]`; elements appear in input order within each bucket. The natural \"frequency table\" / \"by-category\" reduction.",
     },
     BuiltinFn {
+        name: "arr_max_by",
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        ret: "T",
+        doc: "Element of `xs` that maximizes the numeric key fn. Folds map+argmax+index into one. Panics on empty.",
+    },
+    BuiltinFn {
+        name: "arr_min_by",
+        params: &[("xs", "[T]"), ("key_fn", "fn(T) -> f64")],
+        ret: "T",
+        doc: "Element of `xs` that minimizes the numeric key fn.",
+    },
+    BuiltinFn {
+        name: "arr_take_while",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "[T]",
+        doc: "Prefix of `xs` whose elements satisfy `pred`, up to (not including) the first failing element. The streaming-prefix dual of `arr_filter`.",
+    },
+    BuiltinFn {
+        name: "arr_drop_while",
+        params: &[("xs", "[T]"), ("pred", "fn(T) -> bool")],
+        ret: "[T]",
+        doc: "Skip leading elements satisfying `pred`, keep the rest. Complement of `arr_take_while`.",
+    },
+    BuiltinFn {
+        name: "dict_each",
+        params: &[("d", "Dict"), ("f", "fn(str, V)")],
+        ret: "()",
+        doc: "Iterate (k, v) pairs for side effects. The closure's return is ignored. Use this when you don't need a new dict — pair with println, write_file, etc.",
+    },
+    BuiltinFn {
         name: "goal_history",
         params: &[("name", "str")],
         ret: "[(i64, f64)]",

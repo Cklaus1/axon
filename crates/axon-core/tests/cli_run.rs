@@ -939,6 +939,45 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn arr_max_by_min_by_take_drop_while_dict_each() {
+    // Five more functional combinators wrap up the array+dict surface:
+    //   arr_max_by / arr_min_by — fold map+argmax+index into one call
+    //   arr_take_while / arr_drop_while — streaming prefix/suffix by pred
+    //   dict_each — iterate (k, v) for side effects (no fresh dict)
+    let src = "type Cand = { name: str, score: i64 }\n\
+        fn main() -> i64 {\n  \
+            let cs = [\n    \
+                Cand { name: \"a\", score: 30 },\n    \
+                Cand { name: \"b\", score: 90 },\n    \
+                Cand { name: \"c\", score: 50 },\n  \
+            ]\n  \
+            let best = arr_max_by(cs, |c| as_f64(c.score))\n  \
+            let worst = arr_min_by(cs, |c| as_f64(c.score))\n  \
+            let xs = [1, 2, 3, 4, 5, 1, 2]\n  \
+            let t = arr_take_while(xs, |x| x < 4)\n  \
+            let d = arr_drop_while(xs, |x| x < 4)\n  \
+            let m = dict_new()\n  \
+            dict_set(m, \"alpha\", 1)\n  \
+            dict_set(m, \"beta\", 2)\n  \
+            let total = dict_new()\n  \
+            dict_set(total, \"sum\", 0)\n  \
+            dict_each(m, |_k, v| {\n    \
+                let cur = match dict_get(total, \"sum\") { Some(n) => n  None => 0 }\n    \
+                dict_set(total, \"sum\", cur + v)\n  \
+            })\n  \
+            let s = match dict_get(total, \"sum\") { Some(v) => v  None => -1 }\n  \
+            if str_eq(best.name, \"b\") && str_eq(worst.name, \"a\") \
+               && arr_sum_i64(t) == 6 && arr_sum_i64(d) == 12 \
+               && s == 3 { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_mbtwde_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "max_by/min_by/take_while/drop_while/dict_each: {:?}", out);
+}
+
+#[test]
 fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.

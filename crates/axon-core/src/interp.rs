@@ -3371,6 +3371,136 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Dict(Rc::new(RefCell::new(out))));
             }
+            // `arr_max_by(xs, key_fn)` / `arr_min_by(xs, key_fn)` —
+            // pick the element that maximizes / minimizes the closure's
+            // numeric output. Folds three calls (arr_map + arr_argmax +
+            // index) into one. Panics on an empty array (no sensible
+            // default for an unbounded ordering).
+            "arr_max_by" | "arr_min_by" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "{name}: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() {
+                    return panic(format!("{name}: array is empty"));
+                }
+                let key_fn = args[1].clone();
+                let pick_max = name == "arr_max_by";
+                let to_f = |v: Value| -> Result<f64, Flow> {
+                    match v {
+                        Value::Int(n) => Ok(n as f64),
+                        Value::Float(f) => Ok(f),
+                        other => Err(Flow::Panic(format!(
+                            "{name}: key fn must return numeric, got {}",
+                            other.type_name()
+                        ))),
+                    }
+                };
+                let mut best_idx = 0;
+                let mut best_key = to_f(
+                    self.call_closure(key_fn.clone(), vec![xs[0].clone()])?,
+                )?;
+                for (i, x) in xs.iter().enumerate().skip(1) {
+                    let k = to_f(
+                        self.call_closure(key_fn.clone(), vec![x.clone()])?,
+                    )?;
+                    if (pick_max && k > best_key) || (!pick_max && k < best_key) {
+                        best_key = k;
+                        best_idx = i;
+                    }
+                }
+                ok!(xs[best_idx].clone());
+            }
+            // `arr_take_while(xs, pred)` — prefix that satisfies pred,
+            // up to (not including) the first failing element. The
+            // streaming-prefix dual of arr_filter.
+            "arr_take_while" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_take_while: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut out = Vec::new();
+                for x in xs {
+                    let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                    match r {
+                        Value::Bool(true) => out.push(x),
+                        Value::Bool(false) => break,
+                        other => return panic(format!(
+                            "arr_take_while: predicate must return bool, got {}",
+                            other.type_name()
+                        )),
+                    }
+                }
+                ok!(Value::Array(out));
+            }
+            // `arr_drop_while(xs, pred)` — skip leading elements that
+            // satisfy pred, keep the rest. Complement of arr_take_while.
+            "arr_drop_while" => {
+                want(2)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!(
+                        "arr_drop_while: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                let pred = args[1].clone();
+                let mut still_dropping = true;
+                let mut out = Vec::new();
+                for x in xs {
+                    if still_dropping {
+                        let r = self.call_closure(pred.clone(), vec![x.clone()])?;
+                        match r {
+                            Value::Bool(true) => continue,
+                            Value::Bool(false) => still_dropping = false,
+                            other => return panic(format!(
+                                "arr_drop_while: predicate must return bool, got {}",
+                                other.type_name()
+                            )),
+                        }
+                    }
+                    out.push(x);
+                }
+                ok!(Value::Array(out));
+            }
+            // `dict_each(d, f)` — iterate (k, v) pairs via a closure
+            // for side effects. Closure takes (str, V); return is
+            // ignored. Useful for "print every entry" or "write each
+            // to disk" patterns where you don't want to materialize
+            // a new dict via dict_map_values.
+            "dict_each" => {
+                want(2)?;
+                let d = match &args[0] {
+                    Value::Dict(d) => d.clone(),
+                    other => return panic(format!(
+                        "dict_each: expected dict, got {}",
+                        other.type_name()
+                    )),
+                };
+                let f = args[1].clone();
+                let pairs: Vec<(String, Value)> = d
+                    .borrow()
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+                for (k, v) in pairs {
+                    let _ = self.call_closure(
+                        f.clone(),
+                        vec![Value::Str(k), v],
+                    )?;
+                }
+                ok!(Value::Unit);
+            }
+
             // `arr_group_by(xs, key_fn) -> Dict[str, [T]]` — bucket the
             // array by a closure that maps each element to a string key.
             // Stable: elements appear in their input order within each
