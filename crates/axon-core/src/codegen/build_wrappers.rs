@@ -398,3 +398,140 @@ pub(crate) fn w_phi<'ctx>(
 ) -> PhiValue<'ctx> {
     b.build_phi(ty, name).unwrap()
 }
+
+// ── float add ─────────────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_float_add<'ctx>(
+    b: &Builder<'ctx>,
+    l: FloatValue<'ctx>,
+    r: FloatValue<'ctx>,
+    name: &str,
+) -> FloatValue<'ctx> {
+    b.build_float_add(l, r, name).unwrap()
+}
+
+// ── float rem ─────────────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_float_rem<'ctx>(
+    b: &Builder<'ctx>,
+    l: FloatValue<'ctx>,
+    r: FloatValue<'ctx>,
+    name: &str,
+) -> FloatValue<'ctx> {
+    b.build_float_rem(l, r, name).unwrap()
+}
+
+// ── integer division ──────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_int_signed_div<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_int_signed_div(l, r, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_int_unsigned_div<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_int_unsigned_div(l, r, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_int_unsigned_rem<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_int_unsigned_rem(l, r, name).unwrap()
+}
+
+// ── shift / bitwise ───────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_left_shift<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_left_shift(l, r, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_right_shift<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    asr: bool,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_right_shift(l, r, asr, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_not<'ctx>(
+    b: &Builder<'ctx>,
+    value: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_not(value, name).unwrap()
+}
+
+#[inline(never)]
+pub(crate) fn w_xor<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    b.build_xor(l, r, name).unwrap()
+}
+
+// ── string ────────────────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_global_string_ptr<'ctx>(
+    b: &Builder<'ctx>,
+    s: &str,
+    name: &str,
+) -> PointerValue<'ctx> {
+    b.build_global_string_ptr(s, name).unwrap().as_pointer_value()
+}
+
+// ── switch ────────────────────────────────────────────────────────────────────
+
+/// Non-generic wrapper for `build_switch`.  `cases` is a slice of
+/// `(IntValue, BasicBlock)` pairs — same shape as the caller passes.
+/// Returns `()` because `build_switch` does not return a value.
+#[inline(never)]
+pub(crate) fn w_switch<'ctx>(
+    b: &Builder<'ctx>,
+    int_val: IntValue<'ctx>,
+    default_bb: BasicBlock<'ctx>,
+    cases: &[(IntValue<'ctx>, BasicBlock<'ctx>)],
+) {
+    b.build_switch(int_val, default_bb, cases).unwrap();
+}
+
+// ── indirect call ─────────────────────────────────────────────────────────────
+
+#[inline(never)]
+pub(crate) fn w_indirect_call<'ctx>(
+    b: &Builder<'ctx>,
+    fn_type: inkwell::types::FunctionType<'ctx>,
+    fn_ptr: PointerValue<'ctx>,
+    args: &[BasicMetadataValueEnum<'ctx>],
+    name: &str,
+) -> CallSiteValue<'ctx> {
+    b.build_indirect_call(fn_type, fn_ptr, args, name).unwrap()
+}

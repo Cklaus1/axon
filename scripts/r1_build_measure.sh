@@ -69,8 +69,17 @@ if [[ " $PHASES " == *" metrics "* ]]; then
   printf '  %-28s %8s  %10s  %s%%\n' "inline IR bodies"  "$BASELINE_INLINE_BODIES" "$inline_bodies" "$pct_body"
   printf '  %-28s %8s  %10s\n'       "migrated externs"  "0" "$externs"
   printf '  %-28s %8s  %10s\n'       "builtins.rs lines" "3961" "$total_lines"
-  echo "  → IR-builder-call reduction is the leading indicator. BUILD_DIAGNOSIS pins"
-  echo "    the stall at MIR→LLVM-IR generation volume; this % is the direct lever."
+
+  # Lever 2 metric (BUILD_DIAGNOSIS_2.md): DIRECT unwrapped inkwell builder
+  # calls across ALL codegen. Each is a distinct generic instantiation that
+  # mono-collection must walk; routing through a non-generic #[inline(never)]
+  # wrapper collapses N→1. THIS is the real stall driver (mono-collection),
+  # not LLVM-IR lines.
+  direct_calls=$(grep -rhcE 'self\.ir\.builder\.build_' crates/axon-core/src/codegen/*.rs | awk '{s+=$1} END{print s}')
+  printf '  %-28s %8s  %10s\n'       "DIRECT inkwell calls (lever2)" "~350" "$direct_calls"
+  echo "  → DIRECT-call count is the mono-collection proxy (BUILD_DIAGNOSIS_2.md):"
+  echo "    the live stall is collect_items_rec normalizing inkwell generics, and"
+  echo "    each direct build_* is one instantiation. Wrapping collapses N→1."
   line
 fi
 
