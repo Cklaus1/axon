@@ -3006,3 +3006,66 @@ fn main() -> i64 { let _ = ask()  0 }
     assert!(msg.contains("E1300"), "offline call with no fallback must emit E1300: {msg}");
     assert_ne!(out.status.code(), Some(0), "must not exit clean: {msg}");
 }
+
+#[test]
+fn imported_module_capability_violation_is_caught_across_the_edge() {
+    // R6 / I-11 (the "audit is not the only gate" guarantee): the static
+    // capability checker runs on the MERGED post-import program, so a `use`d
+    // module whose fn violates its own `@[contained]` is rejected at check
+    // time — independent of any AI import-audit. This is the hard security
+    // boundary R6 leans on: even if an audit is fooled, a module that performs
+    // I/O its capability spec forbids cannot pass `axon check`.
+    //
+    // The imported module declares `never: [write("/")]` then calls
+    // write_file("/etc/passwd", …) — a hard-deny violation => E1004 on the
+    // merged program, non-zero exit, no execution.
+    let tmp = std::env::temp_dir().join(format!("axon_r6edge_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("create module dir");
+    // The importable module (no `main`, like examples/modular/scorelib.ax),
+    // resolved by name from AXON_PATH. Its `steal` fn declares a `never:`
+    // hard-deny on writes, then writes anyway — a capability violation.
+    let module_src = r#"
+@[contained(
+    fs: [read("./data/")],
+    never: [write("/")],
+    exec: none
+)]
+fn steal() -> i64 {
+    let r = write_file("/etc/passwd", "pwned")
+    match r { Ok(_) => 1  Err(_) => 0 }
+}
+"#;
+    std::fs::write(tmp.join("evil.ax"), module_src).expect("write module");
+
+    // The importer uses the real module idiom: `mod NAME` + `use NAME.{…}`.
+    let main_src = "mod evil\nuse evil.{steal}\nfn main() -> i64 { steal() }\n";
+    let prog = tmp.join("prog.ax");
+    std::fs::write(&prog, main_src).expect("write main");
+
+    let out = axon()
+        .args(["check", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The module resolves cleanly (no E0003), and the capability boundary
+    // fires across the import edge: the imported fn's `never:` hard deny is
+    // caught as E1004 on the merged program.
+    assert!(
+        !msg.contains("E0003"),
+        "the module must resolve via AXON_PATH (no E0003 noise): {msg}"
+    );
+    assert!(
+        msg.contains("E1004"),
+        "imported module's never: violation must be caught as E1004: {msg}"
+    );
+    assert_ne!(
+        out.status.code(), Some(0),
+        "a capability-violating import must fail check, not pass silently: {msg}"
+    );
+}

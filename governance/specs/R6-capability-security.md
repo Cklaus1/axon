@@ -185,7 +185,7 @@ R6 advances toward DONE on this slice when **all** pass:
 - [ ] `axon_lock_roundtrips_deterministically` passes.
 - [ ] `axon_path_shadow_is_caught_under_locked` passes (the core substitution attack).
 - [ ] `denied_audit_blocks_import` passes (E1204).
-- [ ] `static_capability_checker_still_catches_never_evasion` passes (audit is not the only gate — I-11).
+- [x] `static_capability_checker_still_catches_never_evasion` passes (audit is not the only gate — I-11). **DONE** — cli_run `imported_module_capability_violation_is_caught_across_the_edge`: a `mod`+`use`-imported fn that violates its own `never: [write("/")]` is caught as E1004 on the merged post-import program (the import merge runs before `check_capabilities` in `cmd_check`), with no E0003 noise. Confirms the hard capability gate holds across the import edge regardless of any AI audit — the security floor R6's lockfile/audit layer builds *on top of*. *(The lockfile + `axh1:` hash + `axon add`/`--locked` machinery — the other six items — remain unbuilt; this slice locks in the boundary guarantee they depend on.)*
 
 (The AI-audit *quality* — catching obfuscated exfiltration the static checker can't express — is a follow-slice that depends on R3's AI primitive landing; this spec delivers the lockfile + hash + audit-pinning *mechanism* and the static-checker guarantee. See §12 Q1.)
 
