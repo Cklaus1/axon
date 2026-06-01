@@ -575,7 +575,25 @@ impl Parser {
         let mut args = Vec::new();
         if self.eat(&Token::LParen) {
             while !self.at(&Token::RParen) {
-                args.push(self.parse_attr_arg()?);
+                // A nested group `ident(...)` — e.g. `@[ai(policy(fallback: …))]`
+                // — flattens its inner key:value pairs into the parent attr's
+                // args, so `@[ai(policy(fallback: "x"))]` and the flat form
+                // `@[ai(fallback: "x")]` produce the SAME `args` (["fallback: x"]).
+                // Lets a grouping keyword (`policy`) read naturally without a
+                // bespoke AST node.
+                if matches!(self.peek(), Some(Token::Ident(_)))
+                    && matches!(self.tokens.get(self.pos + 1), Some(Token::LParen))
+                {
+                    let _group = self.expect_ident()?; // the group name (e.g. "policy")
+                    self.expect(&Token::LParen)?;
+                    while !self.at(&Token::RParen) {
+                        args.push(self.parse_attr_arg()?);
+                        self.eat(&Token::Comma);
+                    }
+                    self.expect(&Token::RParen)?;
+                } else {
+                    args.push(self.parse_attr_arg()?);
+                }
                 self.eat(&Token::Comma);
             }
             self.expect(&Token::RParen)?;

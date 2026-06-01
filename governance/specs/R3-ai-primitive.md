@@ -189,8 +189,8 @@ R3 may move toward DONE on this slice when **all** pass:
 
 - [x] `ai_call_appends_provenance_record` passes (the schema exists and is written). **DONE** — cli_run `ai_complete_appends_an_ai_call_provenance_record`: one `event:"ai_call"` row per call with the full §4.3 schema, `mode:"mock"`, `cost_usd:0`, prompt hashed not verbatim.
 - [ ] `tier_resolution_prefers_call_over_policy_over_default` passes. *(routing slice — needs the `tier:`/`@[ai(policy)]` parser surface)*
-- [ ] `offline_without_fallback_errors_E1300` passes (no silent canned value). *(fallback slice)*
-- [ ] `offline_with_fallback_returns_fallback_mode` passes (total program offline). *(fallback slice)*
+- [x] `offline_without_fallback_errors_E1300` passes (no silent canned value). **DONE** — cli_run `offline_ai_complete_without_fallback_errors_e1300`: offline `ai_complete` with no fallback emits coded E1300, non-zero exit.
+- [x] `offline_with_fallback_returns_fallback_mode` passes (total program offline). **DONE** — cli_run `offline_ai_complete_with_policy_fallback_returns_fallback`: `@[ai(policy(fallback: "x"))]` returns `Ok("x")` stamped `mode:"fallback"`. Parser now accepts the nested-group `@[ai(policy(...))]` form AND the flat `@[ai(fallback: "x")]` form. Demo: `examples/asi/ai_fallback.ax`.
 - [ ] `over_budget_call_uses_fallback_or_E1301` passes. *(budget slice — Phase 7)*
 - [x] `mock_call_prompt_hash_is_stable` passes (replay memo-key precondition). **DONE** as `ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts`: same prompt → same 64-hex SHA-256 across runs; distinct prompts → distinct hashes.
 - [ ] `axon ai policy` emits stable JSON (schema versioned). *(CLI slice)*

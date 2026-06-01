@@ -2928,3 +2928,81 @@ fn main() -> i64 { let _ = a()  let _ = b()  0 }
     assert_eq!(h1, h2, "the same prompts must hash identically across runs (replay key)");
     assert_eq!(h1[0].len(), 64, "prompt_hash must be a full hex SHA-256: {}", h1[0]);
 }
+
+#[test]
+fn offline_ai_complete_with_policy_fallback_returns_fallback() {
+    // R3 §3.3/§4.1: offline (no asi-runtime, no AXON_AI_MOCK), an `ai_complete`
+    // in a fn carrying `@[ai(policy(fallback: "..."))]` must return Ok(fallback)
+    // as a NORMAL value — not a panic — so the program stays total offline. The
+    // provenance record is stamped mode:"fallback" + reason, so a fallback is
+    // never silently indistinguishable from a live model answer (I-8/I-9).
+    let cache = std::env::temp_dir().join(format!("axon_r3fb_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[ai(policy(fallback: "neutral"))]
+fn classify(text: str) -> str {
+    match ai_complete("Classify: {text}") {
+        Ok(s) => s
+        Err(_) => "ERR"
+    }
+}
+
+fn main() -> i64 {
+    let label = classify("hello")
+    if str_eq(label, "neutral") { 0 } else { 1 }
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3fb_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_AI_MOCK")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(), Some(0),
+        "offline ai_complete with a declared fallback must return Ok(fallback): {stderr}"
+    );
+    // The fallback is honestly recorded as such.
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(
+        body.lines().any(|l| l.contains("\"event\":\"ai_call\"") && l.contains("\"mode\":\"fallback\"")),
+        "the fallback must be stamped mode:\"fallback\" in provenance: {body}"
+    );
+}
+
+#[test]
+fn offline_ai_complete_without_fallback_errors_e1300() {
+    // R3 §6 E1300: offline `ai_complete` with NO fallback in scope must be a
+    // coded error (E1300), not a generic panic and not a silent canned value.
+    // A program that wants to run offline MUST declare a fallback.
+    let prog = r#"
+fn ask() -> str {
+    match ai_complete("anything") {
+        Ok(s) => s
+        Err(_) => "ERR"
+    }
+}
+fn main() -> i64 { let _ = ask()  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3e1300_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_AI_MOCK")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(msg.contains("E1300"), "offline call with no fallback must emit E1300: {msg}");
+    assert_ne!(out.status.code(), Some(0), "must not exit clean: {msg}");
+}

@@ -1,0 +1,35 @@
+// ai_fallback.ax — deterministic offline fallback (R3 §3.3)
+//
+// An AI call is not always reachable: offline, no API key, over budget, or the
+// policy denies the model. Axon makes the program STAY TOTAL in that case —
+// instead of panicking, a declared fallback is returned as a normal Ok value.
+//
+//   @[ai(policy(fallback: "<value>"))]
+//
+// The fallback is a pure Axon value, never an AI call. Crucially, it is stamped
+// `mode:"fallback"` in the provenance log (see `axon trace`), so an audit can
+// always tell a fallback apart from a real model answer — a fallback is never
+// silently indistinguishable from intelligence (I-8/I-9).
+//
+// Run OFFLINE (no API key, no AXON_AI_MOCK):
+//   axon run examples/asi/ai_fallback.ax        # uses the fallback, exits clean
+// A fn WITHOUT a fallback that goes offline is the error E1300 — declare one.
+
+// Sentiment classifier with a safe default. Offline, `ai_complete` is
+// unreachable, so `classify` returns "neutral" — the program never crashes.
+@[ai(policy(fallback: "neutral"))]
+fn classify(text: str) -> str {
+    match ai_complete("Classify the sentiment of: {text}") {
+        Ok(label) => label
+        Err(_) => "neutral"
+    }
+}
+
+fn main() -> i64 {
+    let a = classify("I love this language")
+    let b = classify("this is terrible")
+    println("classify(positive text) = {a}")
+    println("classify(negative text) = {b}")
+    // Offline, both fall back to "neutral" — total, deterministic, audited.
+    if str_eq(a, "neutral") { 0 } else { 1 }
+}

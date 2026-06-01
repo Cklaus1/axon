@@ -692,6 +692,23 @@ impl<'p> Interp<'p> {
 
     // ── Function / closure calls ─────────────────────────────────────────────
 
+    /// R3 §3.3: the `@[ai(policy(fallback: "…"))]` value declared on the
+    /// currently-executing fn, if any. Accepts both the grouped form and the
+    /// flat `@[ai(fallback: "…")]` (the parser flattens the group), so the arg
+    /// reads as `"fallback: <value>"`. Returns the fallback string when present.
+    /// This is what lets an offline `ai_complete` stay total instead of panicking.
+    fn current_ai_fallback(&self) -> Option<String> {
+        let name = self.current_fn.borrow().clone();
+        let f = self.fns.get(name.as_str())?;
+        let ai = f.attrs.iter().find(|a| a.name == "ai")?;
+        for arg in &ai.args {
+            if let Some(rest) = arg.strip_prefix("fallback:") {
+                return Some(rest.trim().to_string());
+            }
+        }
+        None
+    }
+
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
@@ -4622,9 +4639,27 @@ impl<'p> Interp<'p> {
                     });
                 }
                 #[cfg(not(feature = "asi-runtime"))]
-                return panic(
-                    "ai_complete requires --features asi-runtime (or set AXON_AI_MOCK=1 for a deterministic stub)",
-                );
+                {
+                    // Offline (no live model compiled in, mock not set). R3 §3.3:
+                    // a declared `@[ai(policy(fallback: …))]` keeps the program
+                    // total — return Ok(fallback) stamped mode:"fallback" so the
+                    // audit trail never mistakes it for a model answer. With no
+                    // fallback in scope this is E1300, not a generic panic: a
+                    // program that wants to run offline MUST declare a fallback.
+                    if let Some(fallback) = self.current_ai_fallback() {
+                        append_ai_call_jsonl(
+                            &caller, &prompt, "balanced", "none", "offline", params,
+                            "fallback", "offline: no model reachable", 0.0,
+                        );
+                        ok!(Value::Ok(Box::new(Value::Str(fallback))));
+                    }
+                    panic(format!(
+                        "[{}] `ai_complete` cannot run: no model reachable and no \
+                         @[ai(policy(fallback: …))] in scope — declare a fallback to run \
+                         offline (or set AXON_AI_MOCK=1 / build --features asi-runtime)",
+                        crate::error::E1300,
+                    ))
+                }
             }
             "ai_extract_uncertain_i64" => {
                 want(1)?;
