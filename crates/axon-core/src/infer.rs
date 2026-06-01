@@ -1560,7 +1560,11 @@ impl InferCtx {
             (lhs, rhs) => {
                 if !is_int_widening(&lhs, &rhs) {
                     let span = self.current_stmt_span;
-                    self.errors.push(InferError::mismatch(origin, &lhs, &rhs).with_span(span));
+                    // Convention: every `constrain(found, expected, _)` passes the
+                    // value/actual type as `lhs` and the declared/expected type as
+                    // `rhs`. Report in that order so "expected" is the annotation
+                    // and "found" is the value — not the reverse.
+                    self.errors.push(InferError::mismatch(origin, &rhs, &lhs).with_span(span));
                 }
             }
         }
@@ -1661,6 +1665,25 @@ mod tests {
         let resolved = subst.apply(&ty);
         assert_eq!(resolved, Type::I64);
         assert!(ctx.errors.is_empty());
+    }
+
+    #[test]
+    fn let_annotation_mismatch_reports_annotation_as_expected() {
+        // Regression (BUG_HUNT #14): `let x: i64 = "string"` must report the
+        // annotation (i64) as *expected* and the value (str) as *found*, not
+        // the reverse.
+        let (mut ctx, mut scope) = ctx();
+        let binding = Expr::RefBind {
+            name: "x".to_string(),
+            ty: Some(AxonType::Named("i64".to_string())),
+            value: Box::new(lit_str("string")),
+        };
+        ctx.infer_expr(&binding, &mut scope, &Type::Unit);
+        ctx.solve();
+        let err = ctx.errors.iter().find(|e| e.code == "E0102")
+            .expect("expected an E0102 mismatch");
+        assert_eq!(err.expected.as_deref(), Some("i64"), "annotation is `expected`");
+        assert_eq!(err.found.as_deref(), Some("str"), "value type is `found`");
     }
 
     #[test]

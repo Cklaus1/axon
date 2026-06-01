@@ -1570,9 +1570,11 @@ impl CheckCtx {
             self.errors.push(
                 CheckError::new(
                     E0307,
-                    format!(
-                        "return type mismatch: expected `{expected}`, found `{found}`",
-                    ),
+                    // The expected/found pair is carried by the structured
+                    // `.expected()/.found()` fields below; every renderer
+                    // (CLI JSON, `display()`, LSP) re-appends it, so keep it
+                    // out of the message itself to avoid printing it twice.
+                    "return type mismatch".to_string(),
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
