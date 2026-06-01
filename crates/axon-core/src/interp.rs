@@ -2250,6 +2250,131 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Float(s));
             }
+            // Mean of an i64 array → f64 (almost never an integer). Empty
+            // → 0.0 rather than NaN/panic; caller should guard if zero is
+            // meaningful for them.
+            "arr_mean_i64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_mean_i64: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() { ok!(Value::Float(0.0)); }
+                let mut s: i64 = 0;
+                for v in xs {
+                    let n = match v {
+                        Value::Int(n) => *n,
+                        other => return panic(format!(
+                            "arr_mean_i64: element must be i64, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    s = s.saturating_add(n);
+                }
+                ok!(Value::Float(s as f64 / xs.len() as f64));
+            }
+            // Mean of an f64 (or i64-coerced) array.
+            "arr_mean_f64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_mean_f64: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() { ok!(Value::Float(0.0)); }
+                let mut s = 0.0_f64;
+                for v in xs {
+                    let f = match v {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        other => return panic(format!(
+                            "arr_mean_f64: element must be numeric, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    s += f;
+                }
+                ok!(Value::Float(s / xs.len() as f64));
+            }
+            // Sample standard deviation: sqrt of (sum of squared deviations
+            // / (n - 1)). `n < 2` panics — std on a single sample is
+            // undefined; caller should guard.
+            "arr_std_f64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "arr_std_f64: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.len() < 2 {
+                    return panic("arr_std_f64: need at least 2 samples".to_string());
+                }
+                let mut sum = 0.0_f64;
+                let mut fs: Vec<f64> = Vec::with_capacity(xs.len());
+                for v in xs {
+                    let f = match v {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        other => return panic(format!(
+                            "arr_std_f64: element must be numeric, got {}",
+                            other.type_name()
+                        )),
+                    };
+                    sum += f;
+                    fs.push(f);
+                }
+                let mean = sum / fs.len() as f64;
+                let mut var_acc = 0.0_f64;
+                for f in &fs {
+                    let d = *f - mean;
+                    var_acc += d * d;
+                }
+                let variance = var_acc / (fs.len() - 1) as f64;
+                ok!(Value::Float(variance.sqrt()));
+            }
+            // Index of the largest / smallest element. Empty array panics
+            // (no sensible default). Ties broken by lowest index.
+            "arr_argmax_i64" | "arr_argmin_i64" | "arr_argmax_f64" | "arr_argmin_f64" => {
+                want(1)?;
+                let xs = match &args[0] {
+                    Value::Array(v) => v,
+                    other => return panic(format!(
+                        "{name}: expected array, got {}",
+                        other.type_name()
+                    )),
+                };
+                if xs.is_empty() {
+                    return panic(format!("{name}: array is empty"));
+                }
+                let pick_max = name == "arr_argmax_i64" || name == "arr_argmax_f64";
+                let as_f = |v: &Value| -> Result<f64, Flow> {
+                    match v {
+                        Value::Int(n) => Ok(*n as f64),
+                        Value::Float(f) => Ok(*f),
+                        other => Err(Flow::Panic(format!(
+                            "{name}: element must be numeric, got {}",
+                            other.type_name()
+                        ))),
+                    }
+                };
+                let mut best_idx = 0;
+                let mut best_val = as_f(&xs[0])?;
+                for (i, v) in xs.iter().enumerate().skip(1) {
+                    let f = as_f(v)?;
+                    if (pick_max && f > best_val) || (!pick_max && f < best_val) {
+                        best_val = f;
+                        best_idx = i;
+                    }
+                }
+                ok!(Value::Int(best_idx as i64));
+            }
             "arr_max_f64" | "arr_min_f64" => {
                 want(1)?;
                 let xs = match &args[0] {

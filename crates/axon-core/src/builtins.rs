@@ -428,6 +428,48 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Minimum of an f64 array. Accepts i64 elements via coercion. Panics on empty.",
     },
     BuiltinFn {
+        name: "arr_mean_i64",
+        params: &[("xs", "[i64]")],
+        ret: "f64",
+        doc: "Arithmetic mean of an i64 array as f64. Empty → 0.0 (no NaN).",
+    },
+    BuiltinFn {
+        name: "arr_mean_f64",
+        params: &[("xs", "[f64]")],
+        ret: "f64",
+        doc: "Arithmetic mean of an f64 (or i64-coerced) array. Empty → 0.0.",
+    },
+    BuiltinFn {
+        name: "arr_std_f64",
+        params: &[("xs", "[f64]")],
+        ret: "f64",
+        doc: "Sample standard deviation: sqrt of (sum of squared deviations from mean) / (n - 1). Panics for arrays of length < 2.",
+    },
+    BuiltinFn {
+        name: "arr_argmax_i64",
+        params: &[("xs", "[i64]")],
+        ret: "i64",
+        doc: "Index of the largest element in an i64 array; ties broken by lowest index. Panics on empty.",
+    },
+    BuiltinFn {
+        name: "arr_argmin_i64",
+        params: &[("xs", "[i64]")],
+        ret: "i64",
+        doc: "Index of the smallest element in an i64 array.",
+    },
+    BuiltinFn {
+        name: "arr_argmax_f64",
+        params: &[("xs", "[f64]")],
+        ret: "i64",
+        doc: "Index of the largest element in an f64 (or i64-coerced) array.",
+    },
+    BuiltinFn {
+        name: "arr_argmin_f64",
+        params: &[("xs", "[f64]")],
+        ret: "i64",
+        doc: "Index of the smallest element in an f64 (or i64-coerced) array.",
+    },
+    BuiltinFn {
         name: "str_split",
         params: &[("s", "str"), ("sep", "str")],
         ret: "[str]",

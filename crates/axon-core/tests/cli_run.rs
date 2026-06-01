@@ -896,6 +896,39 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn array_numeric_stats_mean_std_argmax_argmin() {
+    // Seven new reduction builtins round out the numeric stats stdlib:
+    // arr_mean_{i64,f64}, arr_std_f64, arr_argmax_{i64,f64},
+    // arr_argmin_{i64,f64}. ASI programs computing convergence stats,
+    // confidence intervals, or "which item won" reductions now have
+    // them as one-liners rather than hand-rolled loops.
+    let src = "fn main() -> i64 {\n  \
+        let xs = [3, 1, 4, 1, 5, 9, 2, 6]                 // mean=3.875\n  \
+        let mean_i = arr_mean_i64(xs)\n  \
+        let max_idx = arr_argmax_i64(xs)                  // 5 (the 9)\n  \
+        let min_idx = arr_argmin_i64(xs)                  // 1 (first 1 — ties to lowest idx)\n  \
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0]                // mean=3.0, std=sqrt(2.5)\n  \
+        let mean_f = arr_mean_f64(ys)\n  \
+        let std_f = arr_std_f64(ys)\n  \
+        let amax = arr_argmax_f64(ys)                     // 4 (the 5.0)\n  \
+        let amin = arr_argmin_f64(ys)                     // 0 (the 1.0)\n  \
+        println(\"mi={to_str_f64(mean_i)} mf={to_str_f64(mean_f)}\")\n  \
+        // Tolerance check on std (sqrt(2.5) ≈ 1.581139…).\n  \
+        let std_close = std_f > 1.58 && std_f < 1.59\n  \
+        if mean_i > 3.87 && mean_i < 3.88 && \
+           mean_f == 3.0 && \
+           std_close && \
+           max_idx == 5 && min_idx == 1 && \
+           amax == 4 && amin == 0 { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_stats_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "numeric stats should compose: {:?}", out);
+}
+
+#[test]
 fn f64_multi_arg_no_single_dim_monopolizes_budget() {
     // Regression: the f64 hill climb's inner halving cascade (down to a
     // 1e-9 resolution floor) could chew ~74 evals on dim 0 alone, leaving
