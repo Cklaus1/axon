@@ -767,6 +767,15 @@ impl<'p> Interp<'p> {
         let seed_step: i64 = if unlimited { 4096 } else { std::cmp::max(16, per_dim_budget.saturating_mul(4)) };
 
         let mut steps: Vec<i64> = vec![seed_step; n_dims];
+        // Per-dim sweep cap rotates dims fairly so no single dim monopolizes
+        // the budget. Less critical here than in the f64 path (i64 halving
+        // bottoms out in ~log2(seed_step) ≈ 12 steps, well inside a fair
+        // share), but keeps the algorithm symmetric and forward-compatible.
+        let per_dim_sweep_cap = if unlimited {
+            i64::MAX
+        } else {
+            std::cmp::max(4, per_dim_budget)
+        };
 
         // Sweep until no dim improves or budget hits.
         loop {
@@ -776,9 +785,13 @@ impl<'p> Interp<'p> {
                 if !unlimited && evals >= max_evals {
                     return Ok(best_score);
                 }
+                let dim_evals_at_start = evals;
                 while steps[d] >= 1 {
                     if !unlimited && evals >= max_evals {
                         return Ok(best_score);
+                    }
+                    if !unlimited && evals - dim_evals_at_start >= per_dim_sweep_cap {
+                        break;
                     }
                     let mut improved = false;
 
@@ -933,6 +946,19 @@ impl<'p> Interp<'p> {
 
         let mut steps: Vec<f64> = vec![seed_step; n_dims];
 
+        // Cap each dim's evals per sweep so no single dim monopolizes the
+        // budget. Without this, the inner halving cascade on dim 0 (37+
+        // halvings × 2 evals = ~74 evals to fully bottom out at the f64
+        // resolution floor) could eat a small total budget before dim 1
+        // gets a single probe. `per_dim_sweep_cap` rotates dims fairly;
+        // multiple sweeps still let any single dim fully converge, just
+        // not in one greedy pass.
+        let per_dim_sweep_cap = if unlimited {
+            i64::MAX
+        } else {
+            std::cmp::max(4, per_dim_budget)
+        };
+
         loop {
             let mut any_improvement = false;
             let cur_at_sweep_start = cur.clone();
@@ -940,9 +966,13 @@ impl<'p> Interp<'p> {
                 if !unlimited && evals >= max_evals {
                     return Ok(best_score);
                 }
+                let dim_evals_at_start = evals;
                 while steps[d] >= resolution {
                     if !unlimited && evals >= max_evals {
                         return Ok(best_score);
+                    }
+                    if !unlimited && evals - dim_evals_at_start >= per_dim_sweep_cap {
+                        break;
                     }
                     let mut improved = false;
 

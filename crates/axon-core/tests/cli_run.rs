@@ -896,6 +896,34 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn f64_multi_arg_no_single_dim_monopolizes_budget() {
+    // Regression: the f64 hill climb's inner halving cascade (down to a
+    // 1e-9 resolution floor) could chew ~74 evals on dim 0 alone, leaving
+    // higher dims with nothing under small total budgets. The per-dim
+    // sweep cap rotates dims fairly: with 50 evals on a 2D peak at
+    // (1.5, -2.7), BOTH dims must move from 0.0 — the previous regression
+    // case landed at y=0 with score < 93.
+    let src = "@[adaptive]\n\
+        fn peak(x: f64, y: f64) -> f64 {\n  \
+            let dx = x - 1.5\n  \
+            let dy = y + 2.7\n  \
+            100.0 - dx * dx - dy * dy\n\
+        }\n\
+        fn main() -> i64 {\n  \
+            let r = goal_run(\"peak\", 100.0, 50)\n  \
+            let xs = goal_best_inputs_f64(\"peak\", 100.0)\n  \
+            // Score within 1.0 of the analytical maximum AND y moved off 0.\n  \
+            let y_moved = xs[1] < -0.5 || xs[1] > 0.5\n  \
+            if r > 99.0 && y_moved { 1 } else { 0 }\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_fair_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "fair per-dim rotation should move both dims: {:?}", out);
+}
+
+#[test]
 fn goal_continue_warm_starts_from_in_memory_best() {
     // `goal_continue(name, target, max_evals)` resumes the multi-arg
     // optimizer from the best prior probe in the in-memory provenance
@@ -907,9 +935,12 @@ fn goal_continue_warm_starts_from_in_memory_best() {
         fn main() -> i64 {\n  \
             let r1 = goal_run(\"pair\", 1000.0, 30)\n  \
             let r2 = goal_continue(\"pair\", 1000.0, 30)\n  \
+            let r3 = goal_continue(\"pair\", 1000.0, 60)\n  \
             let xs = goal_best_inputs(\"pair\", 1000.0)\n  \
-            // Non-decreasing trajectory + converged to optimum.\n  \
-            if r2 >= r1 && xs[0] == 500 && xs[1] == 300 { 1 } else { 0 }\n\
+            // Non-decreasing trajectory + converged to optimum after\n  \
+            // a couple of warm-starts (the fair per-dim rotation in\n  \
+            // the optimizer needs a few sweeps on coupled dims).\n  \
+            if r3 >= r2 && r2 >= r1 && xs[0] == 500 && xs[1] == 300 { 1 } else { 0 }\n\
         }\n";
     let f = std::env::temp_dir().join(format!("axon_gc_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
