@@ -1479,16 +1479,17 @@ impl<'ctx> super::Codegen<'ctx> {
         // valid if returned from a function (no dangling stack pointer).
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        // Compute element size from the LLVM type bit-width.
-        let elem_size_bytes: u64 = match elem_ty {
-            BasicTypeEnum::IntType(it) => (it.get_bit_width() as u64 + 7) / 8,
-            BasicTypeEnum::FloatType(ft) => {
-                if ft == self.ir.context.f32_type() { 4 } else { 8 }
-            }
-            BasicTypeEnum::StructType(_) | BasicTypeEnum::ArrayType(_)
-            | BasicTypeEnum::PointerType(_) | BasicTypeEnum::VectorType(_) => 8,
-        };
-        let total_bytes = i64_ty.const_int(elem_size_bytes * n as u64, false);
+        // Element size: use the type's REAL ABI size via LLVM `size_of()`, not a
+        // hardcoded guess. The old code used 8 bytes for ANY struct, which
+        // under-allocated an array of enums (`{i32 tag, [N x i8]}`, often 16-24
+        // bytes): the GEP stores then wrote past the buffer → heap corruption
+        // (`malloc(): corrupted top size`, BUG_HUNT #42). `size_of()` returns an
+        // i64 LLVM constant that is exact for every element type (int/float/
+        // struct/array/ptr), so `n * size_of` is the correct malloc size and
+        // matches the GEP stride below.
+        let elem_size = elem_ty.size_of().unwrap_or_else(|| i64_ty.const_int(8, false));
+        let n_val = i64_ty.const_int(n as u64, false);
+        let total_bytes = build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
         let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
             let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
             self.ir.module.add_function("malloc", malloc_ty, None)
