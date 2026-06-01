@@ -546,7 +546,29 @@ impl<'p> Interp<'p> {
     /// single-arg paths use the existing on-disk continuation hook unchanged.
     /// Falls through to fresh start (origin seed) when no prior best exists,
     /// so calling cold is a no-op.
+    /// A goal name is "known" if it names a defined function OR already has
+    /// provenance recorded (legitimate retrospective best-observed lookup).
+    /// A name matching neither is a typo — returning `target` silently
+    /// (BUG_HUNT #19 / I-9) makes a misspelled metric look like an achieved
+    /// goal. Callers error out instead.
+    fn goal_name_is_known(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        self.fns.contains_key(name) || self.provenance.borrow().contains_key(name)
+    }
+
+    fn unknown_goal_name(name: &str) -> Flow {
+        Flow::Panic(format!(
+            "goal function `{name}` is not defined and has no recorded provenance — \
+             check the name matches an @[adaptive] fn (typo?)"
+        ))
+    }
+
     fn run_goal_warm(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        if !self.goal_name_is_known(name) {
+            return Err(Self::unknown_goal_name(name));
+        }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
@@ -610,7 +632,12 @@ impl<'p> Interp<'p> {
         }
         let f = match self.fns.get(name) {
             Some(f) => *f,
-            None => return Ok(self.best_observed(name, target, n_samples)),
+            // Unknown fn but with provenance → retrospective lookup is fine.
+            // Unknown fn and no provenance → typo (BUG_HUNT #19 / I-9).
+            None if self.provenance.borrow().contains_key(name) => {
+                return Ok(self.best_observed(name, target, n_samples));
+            }
+            None => return Err(Self::unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty()
@@ -689,7 +716,10 @@ impl<'p> Interp<'p> {
         }
         let f = match self.fns.get(name) {
             Some(f) => *f,
-            None => return Ok(self.best_observed(name, target, 0)),
+            None if self.provenance.borrow().contains_key(name) => {
+                return Ok(self.best_observed(name, target, 0));
+            }
+            None => return Err(Self::unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty()
@@ -733,6 +763,9 @@ impl<'p> Interp<'p> {
     }
 
     fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        if !self.goal_name_is_known(name) {
+            return Err(Self::unknown_goal_name(name));
+        }
         if let Some(f) = self.fns.get(name) {
             let f = *f;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
@@ -4834,11 +4867,30 @@ mod tests {
     }
 
     #[test]
-    fn goal_run_returns_target_when_no_records() {
+    fn goal_run_errors_on_unknown_name() {
+        // BUG_HUNT #19 / I-9: a name that is neither a defined fn nor in the
+        // provenance store is a typo. It must error (exit 101), NOT silently
+        // return the target as if the goal were achieved. (This test
+        // previously asserted the bug — return-target — as correct.)
         let src = r#"
             fn main() -> i64 { f64_to_i64(goal_run("never_called", 70.0, 20)) }
         "#;
-        assert_eq!(run(src), 70);
+        assert_eq!(run(src), 101);
+    }
+
+    #[test]
+    fn goal_run_retrospective_lookup_still_works() {
+        // The legitimate fallthrough: an adaptive fn that HAS run can be
+        // re-queried by name (max_evals=0) and returns its best observed.
+        let src = r#"
+            @[adaptive]
+            fn s(x: i64) -> i64 { x }
+            fn main() -> i64 {
+                let _ = goal_run("s", 100.0, 20)
+                f64_to_i64(goal_run("s", 100.0, 0))
+            }
+        "#;
+        assert_eq!(run(src), 100);
     }
 
     #[test]

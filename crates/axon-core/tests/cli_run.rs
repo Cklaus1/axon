@@ -2166,3 +2166,18 @@ fn multiplication_overflow_also_panics() {
     let _ = std::fs::remove_file(&f);
     assert!(!out.status.success(), "mul overflow must exit non-zero: {:?}", out);
 }
+
+#[test]
+fn goal_run_typod_name_errors_not_silent_success() {
+    // BUG_HUNT #19 / I-9: goal_run with a misspelled fn name used to print
+    // the target (e.g. 100) and exit 0 — a typo masquerading as an achieved
+    // goal. Must now error with a non-zero exit naming the unknown fn.
+    let src = "fn main() { println(to_str_f64(goal_run(\"typo_xyz\", 100.0, 10))) }\n";
+    let f = std::env::temp_dir().join(format!("axon_gtypo_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(!out.status.success(), "typo'd goal name must exit non-zero: {:?}", out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("typo_xyz"), "error should name the unknown fn: {stderr}");
+}
