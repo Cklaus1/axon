@@ -356,6 +356,20 @@ fn flow_to_msg(f: Flow) -> String {
     }
 }
 
+/// Founder-facing label for a `@[verify]`-armed function in failure messages.
+/// `assert_deployable` is the *generated* deploy-gate symbol the surface
+/// compiler emits (see axon-surface `compile.rs`); leaking that name to a
+/// non-technical user is an impl-detail leak (BUG_HUNT #25). Map it to plain
+/// language; any author-named verify fn keeps its own name (the author chose
+/// it, so it's meaningful to them).
+fn verify_fn_label(fn_name: &str) -> String {
+    if fn_name == "assert_deployable" {
+        "the deploy gate".to_string()
+    } else {
+        format!("`{fn_name}`")
+    }
+}
+
 impl<'p> Interp<'p> {
     pub fn build(program: &'p Program) -> Self {
         let mut fns = HashMap::new();
@@ -540,9 +554,9 @@ impl<'p> Interp<'p> {
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
                                 return Err(Flow::VerifyFailed(format!(
-                                    "verify failed in `{}`: {} {} {} {} is false \
+                                    "verify failed in {}: {} {} {} {} is false \
                                      (value {}, confidence {}{})",
-                                    f.name,
+                                    verify_fn_label(&f.name),
                                     ident,
                                     c,
                                     crate::verify::binop_to_verify_str(&op),
@@ -571,9 +585,9 @@ impl<'p> Interp<'p> {
                         let outcome = self.eval(&spec.predicate, &mut pred_env)?;
                         if let Value::Bool(false) = outcome {
                             return Err(Flow::VerifyFailed(format!(
-                                "verify failed in `{}`: composite predicate did not hold \
+                                "verify failed in {}: composite predicate did not hold \
                                  (value {}, confidence {}{})",
-                                f.name,
+                                verify_fn_label(&f.name),
                                 val_str,
                                 conf_str,
                                 input_str,
@@ -4906,6 +4920,23 @@ mod tests {
             fn main() -> i64 { fib(10) }
         "#;
         assert_eq!(run(src), 55);
+    }
+
+    // BUG_HUNT #25: the generated deploy-gate symbol must not leak to users.
+    #[test]
+    fn verify_label_hides_generated_deploy_gate_name() {
+        assert_eq!(verify_fn_label("assert_deployable"), "the deploy gate");
+        assert!(
+            !verify_fn_label("assert_deployable").contains("assert_deployable"),
+            "the internal symbol must not appear in the founder-facing label"
+        );
+    }
+
+    #[test]
+    fn verify_label_keeps_author_named_functions() {
+        // An author's own @[verify] fn keeps its name — it's meaningful to them.
+        assert_eq!(verify_fn_label("safety_gate"), "`safety_gate`");
+        assert_eq!(verify_fn_label("gate"), "`gate`");
     }
 
     // BUG_HUNT #27: random_i64 rejects inverted bounds and stays in range.

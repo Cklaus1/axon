@@ -457,8 +457,21 @@ fn format_verify_panic(
     let fn_name = verify_slice_to_str(fn_name_ptr, fn_name_len);
     let op = verify_slice_to_str(op_ptr, op_len);
     format!(
-        "axon: verify violation in `{fn_name}`: confidence {op} {bound} failed (actual={actual})"
+        "axon: verify violation in {}: confidence {op} {bound} failed (actual={actual})",
+        verify_fn_label(fn_name)
     )
+}
+
+/// Founder-facing label for a `@[verify]`-armed function. Mirrors
+/// `interp::verify_fn_label` so the native and interpreted paths agree
+/// (BUG_HUNT #25): the generated deploy-gate symbol `assert_deployable` is an
+/// impl detail and must not leak; author-named gates keep their own name.
+fn verify_fn_label(fn_name: &str) -> String {
+    if fn_name == "assert_deployable" {
+        "the deploy gate".to_string()
+    } else {
+        format!("`{fn_name}`")
+    }
 }
 
 fn verify_slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
@@ -501,6 +514,25 @@ mod verify_panic_tests {
         assert!(msg.contains("0.8"),          "msg: {msg}");
         assert!(msg.contains("0.42"),         "msg: {msg}");
         assert!(msg.contains("verify violation"), "msg: {msg}");
+    }
+
+    #[test]
+    fn message_hides_generated_deploy_gate_symbol() {
+        // BUG_HUNT #25: the generated `assert_deployable` gate must read as
+        // "the deploy gate" to founders, not leak the internal symbol —
+        // matching the interpreter path.
+        let fn_name = b"assert_deployable";
+        let op = b">=";
+        let msg = format_verify_panic(
+            fn_name.as_ptr(),
+            fn_name.len() as i64,
+            op.as_ptr(),
+            op.len() as i64,
+            0.9,
+            0.6,
+        );
+        assert!(msg.contains("the deploy gate"), "msg: {msg}");
+        assert!(!msg.contains("assert_deployable"), "internal symbol leaked: {msg}");
     }
 
     #[test]
