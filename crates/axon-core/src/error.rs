@@ -85,6 +85,7 @@ pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fal
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
+pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 
@@ -225,7 +226,7 @@ mod tests {
             E1001, E1002, E1003, E1004,
             E1101,
             E1300,
-            W0001, W0002, W0701,
+            W0001, W0002, W0003, W0701,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();

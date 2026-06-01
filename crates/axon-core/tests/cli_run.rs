@@ -3069,3 +3069,54 @@ fn steal() -> i64 {
         "a capability-violating import must fail check, not pass silently: {msg}"
     );
 }
+
+#[test]
+fn user_fn_shadowing_a_builtin_warns_w0003() {
+    // BUG_HUNT #33: a user fn named after a builtin (e.g. `exp`, the e^x math
+    // builtin) is silently shadowed — the interpreter dispatches to the builtin
+    // (eval_call tries builtins before user fns), so the user's fn never runs
+    // and may even panic on a type mismatch. The compiler must WARN (W0003) at
+    // check time so the user learns to rename, instead of the fn vanishing.
+    let f = std::env::temp_dir().join(format!("axon_shadow_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn exp(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { exp(1) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("W0003"),
+        "a user fn shadowing the `exp` builtin must warn W0003: {msg}"
+    );
+    assert!(
+        msg.contains("exp"),
+        "the warning must name the shadowed builtin `exp`: {msg}"
+    );
+}
+
+#[test]
+fn ordinary_user_fn_name_does_not_warn_w0003() {
+    // Guard: W0003 must fire ONLY on a real builtin collision, not on every
+    // user fn. A normal name produces no W0003.
+    let f = std::env::temp_dir().join(format!("axon_noshadow_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn my_helper(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { my_helper(1) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!msg.contains("W0003"), "a non-colliding fn name must not warn W0003: {msg}");
+    assert_eq!(out.status.code(), Some(0), "clean program should check clean: {msg}");
+}
