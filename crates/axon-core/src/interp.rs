@@ -1342,6 +1342,20 @@ impl<'p> Interp<'p> {
                                     .into(),
                             )
                         }),
+                        // Non-blocking pop. Returns `Some(v)` when a value is
+                        // available, `None` otherwise. Lets ASI loops poll a
+                        // channel without panicking on the empty case — useful
+                        // for fan-out workers where the consumer races the
+                        // producers and needs to know when results have stopped
+                        // coming, not just block on the first miss.
+                        "try_recv" => Ok(match q.borrow_mut().pop_front() {
+                            Some(v) => Value::Some(Box::new(v)),
+                            None => Value::None,
+                        }),
+                        // How many values are queued and unread. Useful with
+                        // try_recv for "drain everything available" loops, or
+                        // as a "did the workers do any work?" probe.
+                        "len" => Ok(Value::Int(q.borrow().len() as i64)),
                         "clone" => Ok(Value::Chan(q.clone())),
                         other => panic(format!("no method `{other}` on a channel")),
                     };

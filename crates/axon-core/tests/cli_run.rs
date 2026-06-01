@@ -896,6 +896,47 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn channel_try_recv_and_len_enable_drain_patterns() {
+    // `recv` panics on empty (the eager-spawn model needs send-before-recv).
+    // `try_recv` returns `Option<T>` instead, so a drain loop terminates
+    // cleanly when the workers stop producing. `chan.len()` lets the consumer
+    // probe how many results are queued — useful for batching or "did the
+    // workers do any work?" checks.
+    //
+    // Fan-out: five workers square 1..=5; main drains via try_recv.
+    let src = "fn main() -> i64 {\n  \
+        let c = chan<i64>()\n  \
+        for x in [1, 2, 3, 4, 5] {\n    \
+            spawn { c.send(x * x) }\n  \
+        }\n  \
+        // Probe len after fan-out (eager spawn = all sends completed).\n  \
+        let queued = c.len()                      // 5\n  \
+        // Drain non-blockingly.\n  \
+        let total = 0\n  \
+        let done = false\n  \
+        while !done {\n    \
+            let r = c.try_recv()\n    \
+            match r {\n      \
+                Some(v) => { total = total + v }\n      \
+                None => { done = true }\n    \
+            }\n  \
+        }\n  \
+        // Re-check len after drain.\n  \
+        let after = c.len()                       // 0\n  \
+        println(\"queued={to_str(queued)} total={to_str(total)} after={to_str(after)}\")\n  \
+        // total = 1+4+9+16+25 = 55. Exit 1 iff everything agrees.\n  \
+        if queued == 5 && total == 55 && after == 0 { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_drain_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(1), "try_recv drain pattern: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("queued=5 total=55 after=0"), "stdout: {stdout}");
+}
+
+#[test]
 fn learn_linear_f64_demo_recovers_weights() {
     // examples/asi/learn_linear_f64.ax exercises multi-arg f64 @[adaptive]
     // on a realistic ML shape: fit y = slope*x + intercept by negating
