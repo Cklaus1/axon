@@ -3884,3 +3884,59 @@ fn parse_int_rejects_trailing_garbage_reference_for_codegen_37() {
     let len = out2.status.code().unwrap_or(0);
     assert!(len > 0, "Err message must be non-empty, got len {len}");
 }
+
+#[test]
+fn per_call_tier_overrides_policy() {
+    // R3b: a trailing `tier:` named arg on an ai_* call overrides the enclosing
+    // @[ai(policy(tier:))]; a call without it falls through to the policy. The
+    // two calls live in the SAME fn, proving the per-call tier doesn't leak.
+    let cache = std::env::temp_dir().join(format!("axon_r3b_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[ai(policy(tier: balanced, fallback: "x"))]
+fn summarize(text: str) -> str {
+    let quick = match ai_complete("tldr {text}", tier: cheap) { Ok(s) => s  Err(_) => "x" }
+    let full = match ai_complete("full {text}") { Ok(s) => s  Err(_) => "x" }
+    full
+}
+fn main() -> i64 { let _ = summarize("hi")  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3b_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0));
+    let body = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    // The two ai_call records: one cheap (per-call), one balanced (policy).
+    assert!(
+        body.contains("\"tier\":\"cheap\"") && body.contains("anthropic:claude-haiku"),
+        "per-call tier:cheap must route to the cheap model: {body}"
+    );
+    assert!(
+        body.contains("\"tier\":\"balanced\""),
+        "the no-tier call must fall through to the policy (balanced): {body}"
+    );
+}
+
+#[test]
+fn unknown_per_call_tier_is_e1302() {
+    // R3b: a per-call tier outside the closed enum is E1302 (same as policy).
+    let f = std::env::temp_dir().join(format!("axon_r3btier_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(fallback: \"x\"))]\n\
+         fn f(t: str) -> str { match ai_complete(\"p\", tier: turbo) { Ok(s) => s  Err(_) => \"x\" } }\n\
+         fn main() -> i64 { let _ = f(\"a\")  0 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E1302"), "unknown per-call tier must be E1302: {msg}");
+}

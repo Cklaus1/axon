@@ -103,7 +103,7 @@ impl<'a> Evaluator<'a> {
                 })
             }
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(name) = callee.as_ref() {
                     // Try a built-in first.
                     if let Some(v) = self.eval_builtin(name, args)? {
@@ -519,6 +519,7 @@ mod tests {
         let e = Expr::Call {
             callee: Box::new(Expr::Ident("str_len".to_string())),
             args: vec![Expr::Literal(Literal::Str("hello".to_string()))],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Int(5));
     }
@@ -531,6 +532,7 @@ mod tests {
                 Expr::Literal(Literal::Str("foo".to_string())),
                 Expr::Literal(Literal::Str("bar".to_string())),
             ],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Str("foobar".to_string()));
     }
@@ -543,6 +545,7 @@ mod tests {
                 Expr::Literal(Literal::Str("abc".to_string())),
                 Expr::Literal(Literal::Str("abc".to_string())),
             ],
+            tier: None,
         };
         assert_eq!(eval(e_eq), ComptimeVal::Bool(true));
         let e_neq = Expr::Call {
@@ -551,6 +554,7 @@ mod tests {
                 Expr::Literal(Literal::Str("abc".to_string())),
                 Expr::Literal(Literal::Str("xyz".to_string())),
             ],
+            tier: None,
         };
         assert_eq!(eval(e_neq), ComptimeVal::Bool(false));
     }
@@ -563,6 +567,7 @@ mod tests {
                 Expr::Literal(Literal::Int(3)),
                 Expr::Literal(Literal::Int(7)),
             ],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Int(3));
     }
@@ -575,6 +580,7 @@ mod tests {
                 Expr::Literal(Literal::Int(3)),
                 Expr::Literal(Literal::Int(7)),
             ],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Int(7));
     }
@@ -584,6 +590,7 @@ mod tests {
         let e = Expr::Call {
             callee: Box::new(Expr::Ident("abs_i64".to_string())),
             args: vec![Expr::Literal(Literal::Int(-42))],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Int(42));
     }
@@ -593,6 +600,7 @@ mod tests {
         let e = Expr::Call {
             callee: Box::new(Expr::Ident("i64_to_str".to_string())),
             args: vec![Expr::Literal(Literal::Int(123))],
+            tier: None,
         };
         assert_eq!(eval(e), ComptimeVal::Str("123".to_string()));
     }
@@ -602,6 +610,7 @@ mod tests {
         let e = Expr::Call {
             callee: Box::new(Expr::Ident("str_len".to_string())),
             args: vec![],
+            tier: None,
         };
         let fns = HashMap::new();
         assert!(matches!(

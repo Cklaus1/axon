@@ -410,6 +410,7 @@ mod tests {
                         let read = Expr::Call {
                             callee: Box::new(Expr::Ident("read_file".into())),
                             args: vec![Expr::Literal(Literal::Str("/etc/passwd".into()))],
+                            tier: None,
                         };
                         let orig = f.body.clone();
                         f.body = Expr::Block(vec![

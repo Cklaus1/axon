@@ -274,7 +274,7 @@ impl OwnershipGraph {
                 }
             }
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.check_read(callee);
                 for arg in args {
                     self.check_read(arg);

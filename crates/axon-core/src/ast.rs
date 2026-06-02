@@ -194,7 +194,15 @@ pub enum Expr {
     Let { name: String, ty: Option<AxonType>, value: Box<Expr> },
     Own { name: String, ty: Option<AxonType>, value: Box<Expr> },
     RefBind { name: String, ty: Option<AxonType>, value: Box<Expr> },
-    Call { callee: Box<Expr>, args: Vec<Expr> },
+    /// A call. `tier` is an optional per-call AI routing tier from a trailing
+    /// `tier:` named arg (R3b) — `None` for every ordinary call; only `ai_*`
+    /// builtins read it. Additive: the default keeps existing call sites valid.
+    Call {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        #[cfg_attr(feature = "serde-json", serde(default))]
+        tier: Option<String>,
+    },
     MethodCall { receiver: Box<Expr>, method: String, args: Vec<Expr> },
     BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
     UnaryOp { op: UnaryOp, operand: Box<Expr> },

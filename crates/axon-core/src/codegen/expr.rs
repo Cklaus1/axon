@@ -173,7 +173,9 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Function call ─────────────────────────────────────────────────
-            ast::Expr::Call { callee, args } => self.emit_call(callee, args, fn_val),
+            // R3b: codegen ignores the per-call `tier:` (it's an interp-side AI
+            // routing concern; native AI calls aren't in the codegen path).
+            ast::Expr::Call { callee, args, .. } => self.emit_call(callee, args, fn_val),
 
             // ── Method call — dispatches to mangled `TypeName__method` fn ──────
             ast::Expr::MethodCall { receiver, method, args } => self.emit_method_call(receiver, method, args, fn_val),

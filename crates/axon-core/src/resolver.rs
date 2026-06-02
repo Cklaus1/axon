@@ -696,7 +696,7 @@ impl<'a> Resolver<'a> {
             }
 
             // ── Call ──────────────────────────────────────────────────────
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.resolve_expr(callee);
                 for arg in args {
                     self.resolve_expr(arg);
@@ -1074,7 +1074,7 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
             fill_captures_expr(right, outer);
         }
         Expr::UnaryOp { operand, .. } => fill_captures_expr(operand, outer),
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             fill_captures_expr(callee, outer);
             for a in args {
                 fill_captures_expr(a, outer);
@@ -1197,7 +1197,7 @@ fn collect_free_vars(
             collect_free_vars(right, bound, free);
         }
         Expr::UnaryOp { operand, .. } => collect_free_vars(operand, bound, free),
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             collect_free_vars(callee, bound, free);
             for a in args {
                 collect_free_vars(a, bound, free);

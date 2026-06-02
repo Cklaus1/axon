@@ -662,7 +662,7 @@ impl InferCtx {
             }
 
             // ── Function call ─────────────────────────────────────────────────
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 let fn_name = match callee.as_ref() {
                     Expr::Ident(n) => Some(n.clone()),
                     // Chan::new(n) / chan<T>() both parse as StructLit { name: ... }
@@ -2018,6 +2018,7 @@ mod tests {
         let call_expr = crate::ast::Expr::Call {
             callee: Box::new(crate::ast::Expr::Ident("identity".into())),
             args: vec![lit_int(42)],
+            tier: None,
         };
         let main_fn = FnDef {
             public: false,
@@ -2071,10 +2072,12 @@ mod tests {
             Stmt::simple(crate::ast::Expr::Call {
                 callee: Box::new(crate::ast::Expr::Ident("double".into())),
                 args: vec![lit_int(1), lit_int(2)],
+                tier: None,
             }),
             Stmt::simple(crate::ast::Expr::Call {
                 callee: Box::new(crate::ast::Expr::Ident("double".into())),
                 args: vec![lit_int(3), lit_int(4)],
+                tier: None,
             }),
         ]);
         let main_fn = FnDef {

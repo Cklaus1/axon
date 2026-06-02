@@ -1203,6 +1203,7 @@ impl Parser {
         let len_call = Expr::Call {
             callee: Box::new(Expr::Ident("len".to_string())),
             args: vec![Expr::Ident(arr_name.clone())],
+            tier: None,
         };
         let inner_for = Expr::For {
             var: idx_name,
@@ -1411,6 +1412,7 @@ impl Parser {
                 fields: Vec::new(),
             }),
             args: vec![Expr::Literal(crate::ast::Literal::Int(16))],
+            tier: None,
         })
     }
 
@@ -1441,6 +1443,7 @@ impl Parser {
                 fields: Vec::new(),
             }),
             args: vec![prompt],
+            tier: None,
         })
     }
 
@@ -1663,10 +1666,10 @@ impl Parser {
                 Some(Token::LParen) if !self.preceded_by_newline() => {
                     self.advance()?;
                     self.paren_depth += 1;
-                    let args = self.parse_args()?;
+                    let (args, tier) = self.parse_args_with_tier()?;
                     self.paren_depth -= 1;
                     self.expect(&Token::RParen)?;
-                    expr = Expr::Call { callee: Box::new(expr), args };
+                    expr = Expr::Call { callee: Box::new(expr), args, tier };
                 }
                 // ASI: `[` on a new line is NOT an index operation.
                 Some(Token::LBracket) if !self.preceded_by_newline() => {
@@ -1699,6 +1702,7 @@ impl Parser {
                     expr = Expr::Call {
                         callee: Box::new(Expr::Ident(callee)),
                         args: vec![expr],
+                        tier: None,
                     };
                 }
                 _ => break,
@@ -1714,6 +1718,38 @@ impl Parser {
             if !self.eat(&Token::Comma) { break; }
         }
         Ok(args)
+    }
+
+    /// Like [`parse_args`] but also recognizes a single TRAILING `tier: <ident>`
+    /// named argument (R3b) — the per-call AI routing tier. Returns the
+    /// positional args plus `Some(tier_name)` if present. Only `tier:` is
+    /// special-cased, and only as the last argument; anything else parses as a
+    /// normal expression (unchanged). A `tier:` arg followed by more args is a
+    /// parse error.
+    fn parse_args_with_tier(&mut self) -> Result<(Vec<Expr>, Option<String>)> {
+        let mut args = Vec::new();
+        let mut tier: Option<String> = None;
+        while !self.at(&Token::RParen) {
+            // Peek for `tier :` — the trailing named arg.
+            if matches!(self.peek(), Some(Token::Ident(s)) if s == "tier")
+                && matches!(self.tokens.get(self.pos + 1), Some(Token::Colon))
+            {
+                self.advance()?; // `tier`
+                self.advance()?; // `:`
+                let name = self.expect_ident()?; // the tier value (cheap|balanced|strong)
+                tier = Some(name);
+                // `tier:` must be the last argument.
+                if self.eat(&Token::Comma) && !self.at(&Token::RParen) {
+                    return Err(ParseError::Other(
+                        "`tier:` must be the last argument".to_string(),
+                    ));
+                }
+                break;
+            }
+            args.push(self.parse_expr()?);
+            if !self.eat(&Token::Comma) { break; }
+        }
+        Ok((args, tier))
     }
 
     fn parse_primary(&mut self) -> Result<Expr> {

@@ -440,7 +440,7 @@ impl Formatter {
                 self.write("?");
             }
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.emit_expr(callee);
                 self.write("(");
                 for (i, a) in args.iter().enumerate() {

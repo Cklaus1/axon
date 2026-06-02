@@ -689,7 +689,7 @@ impl CheckCtx {
                     Self::collect_confidence_observed(&arm.body, out);
                 }
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 Self::collect_confidence_observed(callee, out);
                 for a in args {
                     Self::collect_confidence_observed(a, out);
@@ -838,7 +838,7 @@ impl CheckCtx {
             }
 
             // ── Call ─────────────────────────────────────────────────────────
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.check_expr(callee, &format!("{node_path}.callee"), scope);
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
@@ -2260,6 +2260,7 @@ mod tests {
             block(vec![Expr::Call {
                 callee: Box::new(ident("add_one")),
                 args: vec![ident("opt_val")],
+                tier: None,
             }]),
         )]);
 
@@ -2302,7 +2303,7 @@ mod tests {
             Option::Some(AxonType::Named("()".into())),
             // Block: stmt 0 (non-final) = may_fail(); stmt 1 (final) = 0
             block(vec![
-                Expr::Call { callee: Box::new(ident("may_fail")), args: vec![] },
+                Expr::Call { callee: Box::new(ident("may_fail")), args: vec![], tier: None },
                 lit_int(0),
             ]),
         )]);
@@ -2395,6 +2396,7 @@ mod tests {
             block(vec![Expr::Call {
                 callee: Box::new(ident("two_arg")),
                 args: vec![lit_int(1)],
+                tier: None,
             }]),
         )]);
 
@@ -2426,6 +2428,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("wants_bool")),
                     args: vec![lit_int(42)], // i64 ≠ bool → E0306
+                    tier: None,
                 },
                 // final: bool to keep R07 happy with () return type
                 Expr::Literal(Literal::Bool(true)),
@@ -2537,6 +2540,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("takes_i32")),
                     args: vec![ident("x")],
+                    tier: None,
                 },
                 Expr::Literal(Literal::Bool(true)),
             ]),
@@ -2658,6 +2662,7 @@ mod tests {
                 value: Box::new(Expr::Call {
                     callee: Box::new(ident("may_fail")),
                     args: vec![],
+                    tier: None,
                 }),
             }]),
         )]);
@@ -2811,6 +2816,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("wants_i64")),
                     args: vec![ident("x")],
+                    tier: None,
                 },
                 Expr::Literal(Literal::Bool(true)),
             ]),
@@ -2847,6 +2853,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("wants_i64")),
                     args: vec![Expr::Literal(Literal::Bool(true))],
+                    tier: None,
                 },
                 Expr::Literal(Literal::Bool(false)),
             ]),
@@ -2975,6 +2982,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("show")),
                     args: vec![ident("qux_val")],
+                    tier: None,
                 },
                 lit_int(0),
             ]),
@@ -3016,6 +3024,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("show")),
                     args: vec![ident("qux_val")],
+                    tier: None,
                 },
                 lit_int(0),
             ]),
@@ -3145,6 +3154,7 @@ mod tests {
             block(vec![Expr::Call {
                 callee: Box::new(ident("two_arg")),
                 args: vec![lit_int(1)],
+                tier: None,
             }]),
         )]);
 
@@ -3181,6 +3191,7 @@ mod tests {
                 Expr::Call {
                     callee: Box::new(ident("wants_bool")),
                     args: vec![lit_int(42)],
+                    tier: None,
                 },
                 Expr::Literal(Literal::Bool(true)),
             ]),
@@ -3302,6 +3313,7 @@ mod tests {
         let call_expr = Expr::Call {
             callee: Box::new(ident("two_arg")),
             args: vec![lit_int(1)],
+            tier: None,
         };
         let body = Expr::Block(vec![stmt_with_span(call_expr, crate::span::Span::new(15, 28))]);
 
@@ -3368,6 +3380,7 @@ mod tests {
                         name: "Expr::Lit".into(),
                         fields: vec![("value".into(), lit_int(42))],
                     }],
+                    tier: None,
                 },
             ]),
         );

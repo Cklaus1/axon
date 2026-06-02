@@ -244,7 +244,7 @@ fn collect_caps_stmts(stmts: &[Stmt], caps: &mut std::collections::BTreeSet<Stri
 /// `check_expr`'s traversal but capability-collecting instead of spec-checking.
 fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>) {
     match expr {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             let name = match callee.as_ref() {
                 Expr::Ident(n) => Some(n.as_str()),
                 Expr::StructLit { name, fields } if fields.is_empty() => Some(name.as_str()),
@@ -347,7 +347,7 @@ fn check_stmts(stmts: &[Stmt], spec: &ContainedSpec, errors: &mut Vec<Capability
 
 fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
     match expr {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, .. } => {
             // Plain-ident call sites:    `ai_extract_uncertain_i64(p)`
             // Generic-builtin call sites: `ai_extract::<T>(p)` lowers to
             //   `Call { callee: StructLit { name: "ai_extract::<T>", … } }`

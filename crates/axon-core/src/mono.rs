@@ -67,9 +67,10 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
             value: Box::new(subst_expr(value, subst)),
         },
 
-        Expr::Call { callee, args } => Expr::Call {
+        Expr::Call { callee, args, tier } => Expr::Call {
             callee: Box::new(subst_expr(callee, subst)),
             args: args.iter().map(|a| subst_expr(a, subst)).collect(),
+            tier: tier.clone(),
         },
         Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
             receiver: Box::new(subst_expr(receiver, subst)),
@@ -336,7 +337,7 @@ impl MonoContext {
             Expr::Block(stmts) => {
                 for s in stmts { self.collect_from_expr(&s.expr); }
             }
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 self.collect_from_expr(callee);
                 for a in args { self.collect_from_expr(a); }
             }
@@ -458,7 +459,7 @@ pub fn monomorphise(program: &Program, instantiations: Vec<(String, Vec<AxonType
 /// Recursively rename calls to generic functions to their mangled concrete names.
 fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
     match expr {
-        Expr::Call { callee, args } => {
+        Expr::Call { callee, args, tier } => {
             let new_callee = if let Expr::Ident(name) = callee.as_ref() {
                 if let Some(mangled) = rename.get(name) {
                     Box::new(Expr::Ident(mangled.clone()))
@@ -471,6 +472,7 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
             Expr::Call {
                 callee: new_callee,
                 args: args.iter().map(|a| rename_calls_expr(a, rename)).collect(),
+                tier: tier.clone(),
             }
         }
         Expr::Block(stmts) => Expr::Block(

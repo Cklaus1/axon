@@ -230,6 +230,10 @@ pub struct Interp<'p> {
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. Empty at top level.
     current_fn: RefCell<String>,
+    /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
+    /// the duration of a single builtin dispatch. `ai_complete`'s tier
+    /// resolution reads this first (step 1: per-call > policy > default).
+    current_call_tier: RefCell<Option<String>>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -747,6 +751,7 @@ impl<'p> Interp<'p> {
             max_depth: resolve_max_depth(),
             corrigible_halted: Cell::new(false),
             current_fn: RefCell::new(String::new()),
+            current_call_tier: RefCell::new(None),
         }
     }
 
@@ -824,6 +829,20 @@ impl<'p> Interp<'p> {
     /// covers steps 2-3.) An *unknown* tier name in the policy is **E1302**.
     fn current_ai_tier(&self) -> Result<crate::ai_routing::Tier, Flow> {
         use crate::ai_routing::{Tier, DEFAULT_TIER};
+        // R3b — step 1: a per-call `tier:` arg overrides the policy/default.
+        // `take` it so it applies to exactly this one call and never leaks to a
+        // nested or subsequent call.
+        if let Some(raw) = self.current_call_tier.borrow_mut().take() {
+            return match Tier::parse(&raw) {
+                Some(t) => Ok(t),
+                None => Err(Flow::Panic(format!(
+                    "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                    crate::error::E1302,
+                    Tier::configured()
+                ))),
+            };
+        }
+        // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default.
         let name = self.current_fn.borrow().clone();
         let Some(f) = self.fns.get(name.as_str()) else {
             return Ok(DEFAULT_TIER);
@@ -2250,14 +2269,14 @@ impl<'p> Interp<'p> {
                 other => panic(format!("`?` applied to non-Result/Option ({})", other.type_name())),
             },
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, tier } => {
                 // `chan<T>()` lowers to a call whose callee is `chan::<T>`.
                 if let Expr::StructLit { name, .. } = callee.as_ref() {
                     if name.starts_with("chan::<") {
                         return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
                     }
                 }
-                self.eval_call(callee, args, env)
+                self.eval_call(callee, args, tier.as_deref(), env)
             }
 
             Expr::MethodCall { receiver, method, args } => {
@@ -2474,12 +2493,16 @@ impl<'p> Interp<'p> {
         Ok(LoopStep::Continue)
     }
 
-    fn eval_call(&self, callee: &Expr, args: &[Expr], env: &mut Env) -> R {
+    fn eval_call(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
         // Evaluate arguments left-to-right.
         let mut argv = Vec::with_capacity(args.len());
         for a in args {
             argv.push(self.eval(a, env)?);
         }
+
+        // R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
+        // for the duration of this call (read by `current_ai_tier`).
+        *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
 
         if let Expr::Ident(name) = callee {
             // 1. A local/captured variable holding a closure.

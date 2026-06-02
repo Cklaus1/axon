@@ -347,7 +347,7 @@ impl<'a> Analyzer<'a> {
         match expr {
             Expr::Block(stmts) => self.confidence_of_block(stmts, env),
 
-            Expr::Call { callee, args } => {
+            Expr::Call { callee, args, .. } => {
                 match callee.as_ref() {
                     Expr::Ident(name) => self.confidence_of_call(name, args, env),
                     // Generic builtin lowering: `ai_extract::<T>(prompt)` parses
@@ -584,7 +584,7 @@ mod tests {
     fn lit_i(i: i64) -> Expr { Expr::Literal(Literal::Int(i)) }
 
     fn call(name: &str, args: Vec<Expr>) -> Expr {
-        Expr::Call { callee: Box::new(Expr::Ident(name.into())), args }
+        Expr::Call { callee: Box::new(Expr::Ident(name.into())), args, tier: None }
     }
 
     fn make_fn(name: &str, body: Expr, predicate: Option<Expr>) -> FnDef {
@@ -729,6 +729,7 @@ mod tests {
                 fields: vec![],
             }),
             args: vec![Expr::Literal(Literal::Str("how many?".into()))],
+            tier: None,
         };
         let body = Expr::Block(vec![Stmt::simple(synthetic_call)]);
         let pred = Expr::BinOp {
