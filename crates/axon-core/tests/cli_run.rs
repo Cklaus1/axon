@@ -3470,3 +3470,64 @@ fn import_widening_capabilities_is_rejected_e1203() {
     let _ = std::fs::remove_dir_all(&tmp);
     assert!(!okmsg.contains("E1203"), "an import within grant must NOT be E1203: {okmsg}");
 }
+
+#[test]
+fn locked_mode_enforces_axon_lock() {
+    // R6 §4.2: `axon check --locked` requires every import to match axon.lock.
+    // Dev mode (no flag) only warns (W1210, non-fatal) so back-compat holds.
+    let tmp = std::env::temp_dir().join(format!("axon_r6locked_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("util.ax"), "fn helper(n: i64) -> i64 { n + 1 }\n").unwrap();
+    let prog = tmp.join("prog.ax");
+    std::fs::write(&prog, "mod util\nuse util.{helper}\nfn main() -> i64 { helper(5) }\n").unwrap();
+
+    // 1. Dev mode, no lockfile → W1210 warning, but NOT fatal (check still runs).
+    let dev = axon()
+        .args(["check", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let devmsg = format!("{}{}", String::from_utf8_lossy(&dev.stdout), String::from_utf8_lossy(&dev.stderr));
+    assert!(devmsg.contains("W1210"), "dev mode must warn W1210: {devmsg}");
+    assert_eq!(dev.status.code(), Some(0), "dev-mode unlocked import is non-fatal: {devmsg}");
+
+    // 2. --locked, no lockfile → E1202 fatal.
+    let locked_missing = axon()
+        .args(["check", prog.to_str().unwrap(), "--locked"])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let lmsg = format!("{}{}", String::from_utf8_lossy(&locked_missing.stdout), String::from_utf8_lossy(&locked_missing.stderr));
+    assert!(lmsg.contains("E1202"), "--locked with no lock entry must be E1202: {lmsg}");
+    assert_ne!(locked_missing.status.code(), Some(0), "--locked missing entry is fatal");
+
+    // 3. Write the lock; --locked now passes.
+    let lock_out = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(lock_out.status.success(), "axon lock should succeed");
+    let locked_ok = axon()
+        .args(["check", prog.to_str().unwrap(), "--locked"])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(
+        locked_ok.status.code(), Some(0),
+        "--locked with a matching lock must pass: {}",
+        String::from_utf8_lossy(&locked_ok.stderr)
+    );
+
+    // 4. Tamper the module; --locked → E1201.
+    std::fs::write(tmp.join("util.ax"), "fn helper(n: i64) -> i64 { n + 999 }\n").unwrap();
+    let tampered = axon()
+        .args(["check", prog.to_str().unwrap(), "--locked"])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let tmsg = format!("{}{}", String::from_utf8_lossy(&tampered.stdout), String::from_utf8_lossy(&tampered.stderr));
+    assert!(tmsg.contains("E1201"), "--locked with tampered bytes must be E1201: {tmsg}");
+    assert_ne!(tampered.status.code(), Some(0), "tampered import is fatal under --locked");
+}

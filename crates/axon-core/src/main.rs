@@ -62,6 +62,12 @@ enum Command {
         /// stderr is not a terminal).
         #[arg(long, help = "Emit errors as JSON")]
         json: bool,
+
+        /// CI mode: every imported module MUST have a matching `axon.lock` entry.
+        /// A missing entry is E1202 and a tampered hash is E1201 (both fatal).
+        /// Without this flag (dev mode), a missing lock entry is only W1210.
+        #[arg(long, help = "Require every import to match axon.lock (CI mode)")]
+        locked: bool,
     },
 
     /// Write `axon.lock` pinning each `use`d module to its content hash (R6).
@@ -339,7 +345,7 @@ fn main() {
 fn dispatch(command: Command) {
     match command {
         Command::Parse { file } => cmd_parse(file),
-        Command::Check { file, json } => cmd_check(file, json),
+        Command::Check { file, json, locked } => cmd_check(file, json, locked),
         Command::Lock { file } => cmd_lock(file),
         Command::VerifyLock { file } => cmd_verify_lock(file),
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
@@ -393,7 +399,7 @@ fn cmd_parse(file: PathBuf) {
 
 // ── check ─────────────────────────────────────────────────────────────────────
 
-fn cmd_check(file: PathBuf, json_flag: bool) {
+fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
@@ -431,9 +437,16 @@ fn cmd_check(file: PathBuf, json_flag: bool) {
         }
     }
 
+    // R6 §4.2 — `--locked`: every import must match `axon.lock`. In --locked mode
+    // a missing entry (E1202) or a hash mismatch (E1201) is FATAL. In dev mode a
+    // missing lock entry is only W1210 (a warning — bytes unverified/unaudited),
+    // so existing programs without a lockfile keep working until a user opts in.
+    let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json);
+
     // Type-check pipeline.
     let (mut errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
     errors.extend(import_cap_errors);
+    errors.extend(lock_errors);
 
     if errors.is_empty() {
         // Print nothing on success (Unix convention).
@@ -588,6 +601,83 @@ fn cmd_verify_lock(file: PathBuf) {
     }
     println!("axon: lock verified ({} module{})", resolved.len(), if resolved.len() == 1 { "" } else { "s" });
     process::exit(0);
+}
+
+/// R6 §4.2 — verify a program's resolved imports against `axon.lock`.
+///
+/// In `--locked` (CI) mode every import is FATAL-checked: a module with no lock
+/// entry → **E1202**, a module whose bytes don't match the locked hash →
+/// **E1201**. Returns these as error strings that join the check's error list.
+///
+/// In dev mode (`locked == false`) a missing lock entry is a **W1210** warning
+/// (printed immediately, non-fatal) so existing programs without a lockfile keep
+/// working — the import bytes are simply flagged as unverified/unaudited. A
+/// hash *mismatch* is still surfaced as W1210 in dev mode (the lockfile exists
+/// and disagrees — worth warning), but only `--locked` makes it fatal.
+fn check_locked_imports(
+    file: &Path,
+    resolved: &[axon_core::ResolvedModule],
+    locked: bool,
+    use_json: bool,
+) -> Vec<String> {
+    use axon_core::lockfile::{module_hash, parse_lock};
+    if resolved.is_empty() {
+        return Vec::new();
+    }
+    let lock_path = file.parent().unwrap_or_else(|| Path::new(".")).join("axon.lock");
+    let parsed = match std::fs::read_to_string(&lock_path) {
+        Ok(text) => match parse_lock(&text) {
+            Ok(p) => Some(p),
+            Err((code, msg)) => {
+                // A malformed lockfile is fatal under --locked, a warning in dev.
+                if locked {
+                    return vec![format!("[{code}] {msg}")];
+                }
+                emit_error(&format!("[{}] {msg} (lockfile ignored in dev mode)", axon_core::error::W1210), use_json);
+                None
+            }
+        },
+        Err(_) => None, // no lockfile
+    };
+
+    let mut errors: Vec<String> = Vec::new();
+    for m in resolved {
+        let found = module_hash(&m.bytes);
+        let entry = parsed.as_ref().and_then(|p| p.modules.iter().find(|e| e.name == m.name));
+        match entry {
+            Some(e) if e.hash == found => { /* locked + matching — ok */ }
+            Some(e) => {
+                // Hash mismatch: tamper. Fatal under --locked (E1201), warn in dev.
+                let msg = format!(
+                    "content hash mismatch for `{}`: locked {}, found {} — run `axon lock {}` to accept or restore the file",
+                    m.name, e.hash, found, file.display()
+                );
+                if locked {
+                    errors.push(format!("[{}] {msg}", axon_core::error::E1201));
+                } else {
+                    emit_error(&format!("[{}] {msg}", axon_core::error::W1210), use_json);
+                }
+            }
+            None => {
+                // No lock entry. Fatal under --locked (E1202), warn in dev (W1210).
+                if locked {
+                    errors.push(format!(
+                        "[{}] `{}` is not in axon.lock — run `axon add {} <path>` (or drop --locked for dev)",
+                        axon_core::error::E1202, m.name, m.name
+                    ));
+                } else {
+                    emit_error(
+                        &format!(
+                            "[{}] `{}` imported without a lock entry — bytes are unverified and unaudited; run `axon lock {}`",
+                            axon_core::error::W1210, m.name, file.display()
+                        ),
+                        use_json,
+                    );
+                }
+            }
+        }
+    }
+    errors
 }
 
 // ── improve (R10 self-improving compiler) ────────────────────────────────────────
