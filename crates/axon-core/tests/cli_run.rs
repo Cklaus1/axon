@@ -3804,3 +3804,45 @@ fn host_seam_routes_file_io_through_axonhost() {
     let _ = std::fs::remove_file(&fpath);
     let _ = std::fs::remove_file(&tmp);
 }
+
+#[test]
+fn transitive_imports_are_locked_and_tamper_checked() {
+    // R6: `axon lock` / `verify-lock` cover the whole `use` CLOSURE, not just
+    // the direct edge. prog → mid → leaf: locking prog pins both mid and leaf,
+    // and tampering the deeply-nested leaf is caught (E1201) — a supply-chain
+    // attack can't hide one hop deeper.
+    let tmp = std::env::temp_dir().join(format!("axon_r6trans_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("leaf.ax"), "fn leaf_fn(n: i64) -> i64 { n + 100 }\n").unwrap();
+    std::fs::write(
+        tmp.join("mid.ax"),
+        "mod leaf\nuse leaf.{leaf_fn}\nfn mid_fn(n: i64) -> i64 { leaf_fn(n) + 10 }\n",
+    )
+    .unwrap();
+    let prog = tmp.join("prog.ax");
+    std::fs::write(&prog, "mod mid\nuse mid.{mid_fn}\nfn main() -> i64 { mid_fn(5) }\n").unwrap();
+
+    // Lock: must pin BOTH mid (direct) and leaf (transitive).
+    let lock = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(lock.status.success(), "lock should succeed: {}", String::from_utf8_lossy(&lock.stderr));
+    let lockfile = std::fs::read_to_string(tmp.join("axon.lock")).unwrap();
+    assert!(lockfile.contains("name = \"mid\""), "direct import pinned: {lockfile}");
+    assert!(lockfile.contains("name = \"leaf\""), "TRANSITIVE import pinned: {lockfile}");
+
+    // Tamper the transitive leaf → verify-lock catches it with E1201.
+    std::fs::write(tmp.join("leaf.ax"), "fn leaf_fn(n: i64) -> i64 { n + 999 }\n").unwrap();
+    let bad = axon()
+        .args(["verify-lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let msg = format!("{}{}", String::from_utf8_lossy(&bad.stdout), String::from_utf8_lossy(&bad.stderr));
+    assert!(msg.contains("E1201"), "tampered transitive module must be E1201: {msg}");
+    assert!(msg.contains("leaf"), "names the deep module: {msg}");
+    assert_ne!(bad.status.code(), Some(0), "tamper is fatal");
+}

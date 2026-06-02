@@ -466,7 +466,10 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
     // rejected (the import-edge extension of I-11). Uncontained importers have
     // no ceiling, so this is a no-op for them (back-compat).
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
-    let (resolved_imports, _unresolved) = axon_core::resolve_use_files(&program, &search_dirs);
+    // Transitive: the import-edge cap check + --locked verification cover the
+    // whole `use` closure, so a deeply-nested import can't slip a capability or
+    // a tampered byte past the gate (R6).
+    let (resolved_imports, _unresolved) = axon_core::resolve_use_files_transitive(&program, &search_dirs);
     let mut import_cap_errors: Vec<String> = Vec::new();
     for m in &resolved_imports {
         if let Ok(src) = std::str::from_utf8(&m.bytes) {
@@ -524,7 +527,9 @@ fn resolve_modules_or_exit(file: &PathBuf) -> Vec<axon_core::ResolvedModule> {
         }
     };
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
-    let (resolved, unresolved) = axon_core::resolve_use_files(&program, &search_dirs);
+    // Transitive closure: lock/verify-lock must pin EVERY module that joins the
+    // program (A uses B uses C → all three), not just the direct edge (R6).
+    let (resolved, unresolved) = axon_core::resolve_use_files_transitive(&program, &search_dirs);
     if !unresolved.is_empty() {
         for name in &unresolved {
             emit_error(

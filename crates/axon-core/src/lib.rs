@@ -449,6 +449,84 @@ pub fn resolve_use_files(
     (resolved, unresolved)
 }
 
+/// Resolve a program's `use` declarations to module files **transitively** —
+/// the full import closure, not just the direct edge. When module A `use`s B
+/// and B `use`s C, all three are returned (R6: `axon lock`/`verify-lock`/E1203
+/// must pin/check every byte that joins the program, not only the first hop).
+///
+/// A worklist BFS: resolve the entry program's direct `use`s, parse each
+/// resolved module, enqueue *its* `use`s, and repeat — deduplicating by the
+/// `::`-joined name so a diamond (two modules importing the same third) is
+/// resolved once and a cycle terminates. Modules whose file is missing, or that
+/// fail to parse (so their transitive `use`s can't be read), are reported in
+/// `unresolved`. Resolution order is deterministic (BFS over sorted-encounter
+/// order), so the resulting list — and any hash computed from it — is stable.
+pub fn resolve_use_files_transitive(
+    program: &ast::Program,
+    search_dirs: &[std::path::PathBuf],
+) -> (Vec<ResolvedModule>, Vec<String>) {
+    use std::collections::HashSet;
+
+    // Extract the `use` names from a program as `a::b::c` strings.
+    fn use_names(p: &ast::Program) -> Vec<Vec<String>> {
+        p.items
+            .iter()
+            .filter_map(|it| match it {
+                ast::Item::UseDecl(u) if !u.path.is_empty() => Some(u.path.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    let mut resolved: Vec<ResolvedModule> = Vec::new();
+    let mut unresolved: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+
+    // Worklist seeded with the entry program's direct uses.
+    let mut queue: std::collections::VecDeque<Vec<String>> = use_names(program).into_iter().collect();
+
+    while let Some(use_path) = queue.pop_front() {
+        let name = use_path.join("::");
+        if !seen.insert(name.clone()) {
+            continue; // already resolved (diamond / cycle)
+        }
+        // `a::b::c` → `a/b/c.ax`.
+        let mut rel = std::path::PathBuf::new();
+        for segment in &use_path {
+            rel.push(segment);
+        }
+        rel.set_extension("ax");
+
+        let mut found = false;
+        for dir in search_dirs {
+            let candidate = dir.join(&rel);
+            let Ok(bytes) = std::fs::read(&candidate) else { continue };
+            found = true;
+            // Enqueue this module's own `use`s (the transitive step). A parse
+            // failure means we can't see its imports — report it as unresolved
+            // (its bytes are still pinned via the entry below).
+            if let Ok(src) = std::str::from_utf8(&bytes) {
+                match parse_source(src) {
+                    Ok(modp) => {
+                        for nested in use_names(&modp) {
+                            if !seen.contains(&nested.join("::")) {
+                                queue.push_back(nested);
+                            }
+                        }
+                    }
+                    Err(_) => unresolved.push(format!("{name} (unparseable — transitive uses not followed)")),
+                }
+            }
+            resolved.push(ResolvedModule { name: name.clone(), path: candidate, bytes });
+            break;
+        }
+        if !found {
+            unresolved.push(name);
+        }
+    }
+    (resolved, unresolved)
+}
+
 /// Recursively load a module and all its transitive `use` dependencies.
 ///
 /// `loading_stack` tracks the chain of modules currently being loaded.  If a
