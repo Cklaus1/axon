@@ -182,7 +182,7 @@ R6 advances toward DONE on this slice when **all** pass:
 - [ ] `tampered_module_is_rejected_under_locked` passes (E1201; the requirement's "tampered content hash rejected").
 - [ ] `unlocked_import_fails_under_locked_mode` passes (E1202).
 - [ ] `import_widening_capabilities_is_rejected` passes (E1203; the requirement's "import without declared capability fails compile").
-- [ ] `axon_lock_roundtrips_deterministically` passes.
+- [x] `axon_lock_roundtrips_deterministically` passes. **DONE** — `lockfile.rs` (pure, zero-dep): `module_hash()` = `axh1:`-tagged SHA-256 over raw source bytes (stable, differs on a one-byte change); `write_lock`/`parse_lock` round-trip the TOML schema with sorted-name deterministic order (write∘parse∘write is byte-stable); malformed/unknown-version => E1205. 6 unit tests. *(CLI `axon lock`/`add` + import-time hash check are the next slices.)*
 - [ ] `axon_path_shadow_is_caught_under_locked` passes (the core substitution attack).
 - [ ] `denied_audit_blocks_import` passes (E1204).
 - [x] `static_capability_checker_still_catches_never_evasion` passes (audit is not the only gate — I-11). **DONE** — cli_run `imported_module_capability_violation_is_caught_across_the_edge`: a `mod`+`use`-imported fn that violates its own `never: [write("/")]` is caught as E1004 on the merged post-import program (the import merge runs before `check_capabilities` in `cmd_check`), with no E0003 noise. Confirms the hard capability gate holds across the import edge regardless of any AI audit — the security floor R6's lockfile/audit layer builds *on top of*. *(The lockfile + `axh1:` hash + `axon add`/`--locked` machinery — the other six items — remain unbuilt; this slice locks in the boundary guarantee they depend on.)*

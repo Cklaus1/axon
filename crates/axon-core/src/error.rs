@@ -79,6 +79,13 @@ pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 // Verify errors (ASI Layer-2: @[verify])
 pub const E1101: &str = "E1101"; // verify bound not satisfied
 
+// Capability/registry security errors (R6: content-addressed imports, axon.lock)
+pub const E1201: &str = "E1201"; // on-disk module bytes ≠ axon.lock hash (tamper)
+pub const E1202: &str = "E1202"; // use with no lockfile entry under --locked
+pub const E1203: &str = "E1203"; // import declares capabilities beyond the importer's grant
+pub const E1204: &str = "E1204"; // lockfile audit verdict is `denied`
+pub const E1205: &str = "E1205"; // axon.lock is malformed / unknown version
+
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
 
@@ -88,6 +95,8 @@ pub const W0002: &str = "W0002"; // variable shadowing
 pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
+// R6 registry warnings
+pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
 
 // Info codes
 pub const I0001: &str = "I0001"; // deferred attribute (AI annotations)
@@ -225,8 +234,9 @@ mod tests {
             E0901, E0902, E0903, E0904, E0905, E0906,
             E1001, E1002, E1003, E1004,
             E1101,
+            E1201, E1202, E1203, E1204, E1205,
             E1300,
-            W0001, W0002, W0003, W0701,
+            W0001, W0002, W0003, W0701, W1210,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();

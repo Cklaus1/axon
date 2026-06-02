@@ -8,6 +8,8 @@ pub mod codegen;
 pub mod error;
 pub mod infer;
 pub mod lexer;
+/// `axon.lock` content-addressed import lockfile (R6): hash + format.
+pub mod lockfile;
 pub mod parser;
 pub mod resolver;
 pub mod span;
