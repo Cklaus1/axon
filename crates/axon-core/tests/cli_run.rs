@@ -3371,3 +3371,35 @@ fn improve_list_and_revert_roundtrip() {
     assert_ne!(rev2.status.code(), Some(0), "reverting an absent pass must error");
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+#[test]
+fn check_json_emits_versioned_schema() {
+    // R8: `axon check --json` emits the versioned `axon-diag/1` schema with the
+    // code as a first-class field (parse-without-regex). Note `check` also
+    // auto-switches to JSON when stderr is piped (as under test capture), so the
+    // structured schema is what a tool/agent sees.
+    let f = std::env::temp_dir().join(format!("axon_r8diag_{}.ax", std::process::id()));
+    // A type-mismatched annotation → a real diagnostic with a code.
+    std::fs::write(&f, "fn main() -> i64 { let x: str = 5  0 }\n").unwrap();
+
+    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let jstderr = String::from_utf8_lossy(&json.stderr);
+    assert!(
+        jstderr.contains("\"schema\":\"axon-diag/1\""),
+        "JSON output must carry the versioned schema tag: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"code\":\"E"),
+        "JSON output must expose the diagnostic code as a first-class field: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"severity\":\"error\""),
+        "JSON output must expose severity: {jstderr}"
+    );
+    // The `[CODE]` prefix must be lifted OUT of the message (it's its own field).
+    assert!(
+        !jstderr.contains("\"message\":\"[E"),
+        "the [CODE] prefix must not remain in the message: {jstderr}"
+    );
+}

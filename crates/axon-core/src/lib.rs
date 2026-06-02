@@ -5,6 +5,8 @@ pub mod builtins;
 pub mod checker;
 #[cfg(feature = "codegen")]
 pub mod codegen;
+/// Versioned machine-stable diagnostic JSON (R8): `axon-diag/1` schema.
+pub mod diag_schema;
 pub mod error;
 pub mod infer;
 /// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.

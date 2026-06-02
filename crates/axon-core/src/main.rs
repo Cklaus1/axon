@@ -1807,11 +1807,10 @@ fn read_source(file: &PathBuf) -> String {
 
 fn emit_error(msg: &str, as_json: bool) {
     if as_json {
-        // Newline-delimited JSON — manually escape the message to avoid
-        // pulling serde_json into the binary (would cause trait-solver
-        // explosion combined with inkwell's type universe).
-        let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-        eprintln!("{{\"error\": \"{escaped}\"}}");
+        // R8: a versioned, structured NDJSON object (code/severity/message/help
+        // as first-class fields), not an opaque message blob. Hand-rolled JSON
+        // (no serde_json — it collides with inkwell's trait universe).
+        eprintln!("{}", axon_core::diag_schema::diagnostic_json(msg));
     } else {
         eprintln!("error: {msg}");
     }
