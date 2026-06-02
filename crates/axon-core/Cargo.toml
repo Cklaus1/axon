@@ -39,6 +39,12 @@ serde-json = ["dep:serde", "dep:serde_json"]
 # Pulls in axon-ai (reqwest). Opt-in so the base interpreter stays dependency-light:
 #   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
 asi-runtime = ["dep:axon-ai"]
+# SMT-backed @[verify] static proof (R9). Pulls in the `z3` crate (links the
+# system libz3). OFF by default — the proof path is opt-in so the default
+# codegen/interp build never links z3 (same dependency-isolation discipline as
+# asi-runtime / serde-json):
+#   cargo build -p axon-core --no-default-features --features smt --bin axon
+smt = ["dep:z3"]
 
 [dependencies]
 logos = { workspace = true }
@@ -49,6 +55,8 @@ thiserror = { workspace = true }
 inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
 which = "6"
 sha2  = "0.10"
+# SMT solver bindings (R9, `smt` feature only). Links the system libz3.
+z3 = { version = "0.12", optional = true }
 axon-ai = { path = "../axon-ai", optional = true }
 # Phase-10 surface compiler (goal.md → .ax), for the `axon goal` command.
 axon-surface = { path = "../axon-surface" }

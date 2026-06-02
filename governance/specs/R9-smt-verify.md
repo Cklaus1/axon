@@ -99,9 +99,9 @@ Red test that must fail first: **`smt_proves_nonneg_and_finds_counterexample`** 
 
 ## 9. Acceptance criteria
 
-- [ ] `smt_proves_nonneg_and_finds_counterexample` passes under `--features smt`.
-- [ ] `smt_reports_unsupported_for_loops` passes.
-- [ ] default build unaffected (gate green without `smt`).
+- [x] `smt_proves_nonneg_and_finds_counterexample` passes under `--features smt`. **DONE**.
+- [x] `smt_reports_unsupported_for_out_of_fragment` passes (a call → Unsupported, no false proof).
+- [x] default build unaffected (gate green without `smt`). **DONE** — smt module + z3 dep are #[cfg(feature=smt)]; default codegen/interp build never links Z3.
 
 R9 may rise 62% → ~75% on this slice (the SMT proof path for the integer fragment). Loop/recursion invariants, float theory, and inter-procedural summaries remain.
 

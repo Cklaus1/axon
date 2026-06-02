@@ -79,7 +79,8 @@ pub const E1003: &str = "E1003"; // capability path is not parseable
 pub const E1004: &str = "E1004"; // call hits a never: clause (hard violation)
 
 // Verify errors (ASI Layer-2: @[verify])
-pub const E1101: &str = "E1101"; // verify bound not satisfied
+pub const E1101: &str = "E1101"; // verify bound not satisfied (runtime gate)
+pub const E1102: &str = "E1102"; // verify bound statically VIOLABLE — SMT counterexample (R9)
 
 // Capability/registry security errors (R6: content-addressed imports, axon.lock)
 pub const E1201: &str = "E1201"; // on-disk module bytes ≠ axon.lock hash (tamper)
@@ -111,6 +112,7 @@ pub const W0002: &str = "W0002"; // variable shadowing
 pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
+pub const W1103: &str = "W1103"; // @[verify] outside the SMT-provable fragment (R9); runtime gate applies
 // R6 registry warnings
 pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
 // R10 self-improving warnings
@@ -278,12 +280,12 @@ mod tests {
             E0801, E0802, E0803,
             E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908,
             E1001, E1002, E1003, E1004,
-            E1101,
+            E1101, E1102,
             E1201, E1202, E1203, E1204, E1205,
             E1300, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406,
             E1500, E1503, E1504,
-            W0001, W0002, W0003, W0701, W1210, W1310, W1410,
+            W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1410,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();

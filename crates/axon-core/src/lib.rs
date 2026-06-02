@@ -21,6 +21,9 @@ pub mod lockfile;
 pub mod manifest;
 pub mod parser;
 pub mod resolver;
+/// SMT-backed `@[verify]` static proof (R9, `smt` feature → Z3).
+#[cfg(feature = "smt")]
+pub mod smt;
 pub mod span;
 pub mod token;
 pub mod types;

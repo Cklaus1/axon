@@ -147,6 +147,13 @@ enum Command {
         action: AiAction,
     },
 
+    /// Statically prove each `@[verify]` bound via Z3 (R9). Requires the `smt`
+    /// feature; without it, prints a notice and exits 0.
+    Verify {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+    },
+
     /// Cross-platform targets: list buildable targets / build for one (R7).
     Target {
         #[command(subcommand)]
@@ -398,6 +405,7 @@ fn dispatch(command: Command) {
         Command::Cache { action } => cmd_cache(action),
         Command::Improve { action } => cmd_improve(action),
         Command::Ai { action } => cmd_ai(action),
+        Command::Verify { file } => cmd_verify(file),
         Command::Target { action } => cmd_target(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
         Command::Trace { func, path, json } => cmd_trace(func, path, json),
@@ -1041,6 +1049,69 @@ fn json_lit(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+// ── verify (R9 SMT static proof) ─────────────────────────────────────────────────
+
+/// `axon verify <file>` — statically prove each `@[verify]` bound via Z3.
+/// With the `smt` feature: encodes each annotated fn and reports proven /
+/// counterexample (E1102) / unsupported (W1103). Without it: a clear notice,
+/// exit 0 (the binary still works everywhere; the proof is opt-in).
+#[cfg(feature = "smt")]
+fn cmd_verify(file: PathBuf) {
+    use axon_core::smt::{prove_verify_bounds, ProofResult};
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("{e}"), !std::io::stderr().is_terminal());
+            process::exit(2);
+        }
+    };
+    let results = prove_verify_bounds(&program);
+    if results.is_empty() {
+        println!("axon verify: no @[verify] functions to prove");
+        process::exit(0);
+    }
+    let mut any_violation = false;
+    for r in &results {
+        match r {
+            ProofResult::Proven { function } => {
+                println!("  ✓ proven: `{function}` satisfies its @[verify] bound for all inputs");
+            }
+            ProofResult::Counterexample { function, inputs, predicate } => {
+                any_violation = true;
+                let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
+                emit_error(
+                    &format!(
+                        "[{}] @[verify] bound `{predicate}` is violated for `{function}` at {} (SMT counterexample)",
+                        axon_core::error::E1102,
+                        args.join(", ")
+                    ),
+                    !std::io::stderr().is_terminal(),
+                );
+            }
+            ProofResult::Unsupported { function, reason } => {
+                eprintln!(
+                    "  warning: [{}] @[verify] on `{function}` not statically provable — {reason}; runtime gate still applies",
+                    axon_core::error::W1103
+                );
+            }
+        }
+    }
+    process::exit(if any_violation { 2 } else { 0 });
+}
+
+#[cfg(not(feature = "smt"))]
+fn cmd_verify(file: PathBuf) {
+    validate_ax_extension(&file);
+    eprintln!(
+        "axon verify: SMT static proof of @[verify] bounds requires the `smt` feature.\n  \
+         Build with: cargo build -p axon-core --no-default-features --features smt --bin axon\n  \
+         (The runtime @[verify] gate still applies when you `axon run` the program.)"
+    );
+    process::exit(0);
 }
 
 // ── target (R7 cross-platform) ───────────────────────────────────────────────────
