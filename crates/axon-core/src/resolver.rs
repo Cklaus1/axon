@@ -530,6 +530,14 @@ impl<'a> Resolver<'a> {
             self.table.define(p.name.clone(), sym);
         }
 
+        // R5: #[goal] fns bind `goal_met` in their body scope.
+        if f.attrs.iter().any(|a| a.name == "goal") {
+            let sym = Symbol::Local {
+                name: "goal_met".to_string(),
+            };
+            self.table.define("goal_met".to_string(), sym);
+        }
+
         self.resolve_expr(&f.body);
 
         self.table.pop_scope();

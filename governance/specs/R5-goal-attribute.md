@@ -111,9 +111,9 @@ Red test that must fail first: **`goal_attribute_trains_and_gates_on_holdout`** 
 ## 9. Acceptance criteria
 
 R5 rises toward DONE when **all** pass:
-- [ ] `goal_attribute_trains_and_gates_on_holdout` (the train→holdout→gate loop wired).
+- [x] `goal_attribute_trains_and_gates_on_holdout` (the train→holdout→gate loop wired).
 - [ ] `goal_attribute_gate_is_zero_when_holdout_misses_target`.
-- [ ] `goal_metric_must_be_adaptive_e1500`.
+- [x] `goal_metric_must_be_adaptive_e1500`.
 - [ ] determinism under a fixed seed.
 
 R5 may rise 70% → ~85% on this slice (the attribute sugar; the first-class `Goal` *value type* remains Phase-7).

@@ -912,6 +912,17 @@ impl<'p> Interp<'p> {
         for (p, a) in f.params.iter().zip(args) {
             env.define(p.name.clone(), a);
         }
+        // R5 `#[goal(...)]` sugar: train the metric, evaluate on holdout, gate.
+        let mut goal_met: i64 = 0;
+        if let Some((metric, target, max_evals, holdout)) = self.goal_spec_of(f) {
+            let _ = self.run_goal(&metric, target, max_evals)?;
+            let s = match holdout {
+                Some(h) => self.goal_eval_holdout(&metric, h)?,
+                None => self.best_observed(&metric, target, 0),
+            };
+            goal_met = if s >= target { 1i64 } else { 0i64 };
+        }
+        env.define("goal_met".into(), Value::Int(goal_met));
         let result = match self.eval(&f.body, &mut env) {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
@@ -1909,6 +1920,80 @@ impl<'p> Interp<'p> {
         self.best_input_index(name, target)
             .and_then(|i| self.provenance_inputs.borrow().get(name)?.get(i)?.first().copied())
             .unwrap_or(0)
+    }
+
+    /// Held-out evaluation of an `@[adaptive]` metric: snapshot provenance,
+    /// call the fn on `input`, restore provenance, return the numeric score.
+    /// The provenance must remain unmodified so that `goal_run` is unbiased.
+    fn goal_eval_holdout(&self, name: &str, input: i64) -> Result<f64, Flow> {
+        let Some(f) = self.fns.get(name) else {
+            return Err(Flow::Panic(format!(
+                "goal_eval: `{name}` is not a defined function"
+            )));
+        };
+        // Snapshot the three provenance stores for this fn.
+        let snap_scores = self.provenance.borrow().get(name).cloned();
+        let snap_inputs = self.provenance_inputs.borrow().get(name).cloned();
+        let snap_inputs_f64 = self.provenance_inputs_f64.borrow().get(name).cloned();
+        // Call the metric (this records into the stores).
+        let result = self.call_fn(f, vec![Value::Int(input)]);
+        // Restore — the held-out eval must not bias future goal_run.
+        match snap_scores {
+            Some(v) => { self.provenance.borrow_mut().insert(name.to_string(), v); }
+            None => { self.provenance.borrow_mut().remove(name); }
+        }
+        match snap_inputs {
+            Some(v) => { self.provenance_inputs.borrow_mut().insert(name.to_string(), v); }
+            None => { self.provenance_inputs.borrow_mut().remove(name); }
+        }
+        match snap_inputs_f64 {
+            Some(v) => { self.provenance_inputs_f64.borrow_mut().insert(name.to_string(), v); }
+            None => { self.provenance_inputs_f64.borrow_mut().remove(name); }
+        }
+        let score = match result? {
+            Value::Int(n) => n as f64,
+            Value::Float(x) => x,
+            other => return Err(Flow::Panic(format!(
+                "goal_eval: metric `{name}` must return a number, got {}",
+                other.type_name()
+            ))),
+        };
+        Ok(score)
+    }
+
+    /// Parse the `@[goal(metric:…, target:…, max_evals:…, holdout:…)]`
+    /// attr on `f` and return (metric, target, max_evals, holdout).
+    fn goal_spec_of(&self, f: &FnDef) -> Option<(String, f64, i64, Option<i64>)> {
+        let goal_attr = f.attrs.iter().find(|a| a.name == "goal")?;
+        let mut metric: Option<String> = None;
+        let mut target: Option<f64> = None;
+        let mut max_evals: i64 = 50;
+        let mut holdout: Option<i64> = None;
+        for arg in &goal_attr.args {
+            if let Some((k, v)) = arg.split_once(':') {
+                let k = k.trim().to_lowercase();
+                let v = v.trim();
+                match k.as_str() {
+                    "metric" => metric = Some(v.to_string()),
+                    "target" => {
+                        if let Ok(n) = v.parse::<i64>() {
+                            target = Some(n as f64);
+                        } else if let Ok(fv) = v.parse::<f64>() {
+                            target = Some(fv);
+                        }
+                    }
+                    "max_evals" => {
+                        if let Ok(n) = v.parse::<i64>() { max_evals = n; }
+                    }
+                    "holdout" => {
+                        if let Ok(n) = v.parse::<i64>() { holdout = Some(n); }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        metric
+            .and_then(|m| target.map(|t| (m, t, max_evals, holdout)))
     }
 
     /// All i64 input dims that produced the score closest to `target` for an
@@ -4104,48 +4189,11 @@ impl<'p> Interp<'p> {
             }
 
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).
-            // Run the @[adaptive] metric `name` on a specific `input` and
-            // return its score, WITHOUT recording it as a training probe. This
-            // is the eval-hierarchy primitive: optimize with `goal_run` on a
-            // training budget, then `goal_eval` the best input on a held-out
-            // test set to check the target HONESTLY (no overfitting to probes,
-            // no provenance pollution that would bias the next `goal_run`).
-            // The metric fn normally auto-records (R4 provenance injection), so
-            // we snapshot the fn's provenance, call it, then restore.
             "goal_eval" => {
                 want(2)?;
                 let name = as_str(&args[0])?.to_string();
                 let input = as_int(&args[1])?;
-                let Some(f) = self.fns.get(name.as_str()).copied() else {
-                    return panic(format!("goal_eval: `{name}` is not a defined function"));
-                };
-                // Snapshot the three provenance stores for this fn.
-                let snap_scores = self.provenance.borrow().get(&name).cloned();
-                let snap_inputs = self.provenance_inputs.borrow().get(&name).cloned();
-                let snap_inputs_f64 = self.provenance_inputs_f64.borrow().get(&name).cloned();
-                // Call the metric (this records into the stores).
-                let result = self.call_fn(f, vec![Value::Int(input)]);
-                // Restore — the held-out eval must not bias future goal_run.
-                match snap_scores {
-                    Some(v) => { self.provenance.borrow_mut().insert(name.clone(), v); }
-                    None => { self.provenance.borrow_mut().remove(&name); }
-                }
-                match snap_inputs {
-                    Some(v) => { self.provenance_inputs.borrow_mut().insert(name.clone(), v); }
-                    None => { self.provenance_inputs.borrow_mut().remove(&name); }
-                }
-                match snap_inputs_f64 {
-                    Some(v) => { self.provenance_inputs_f64.borrow_mut().insert(name.clone(), v); }
-                    None => { self.provenance_inputs_f64.borrow_mut().remove(&name); }
-                }
-                let score = match result? {
-                    Value::Int(n) => n as f64,
-                    Value::Float(x) => x,
-                    other => return panic(format!(
-                        "goal_eval: metric `{name}` must return a number, got {}",
-                        other.type_name()
-                    )),
-                };
+                let score = self.goal_eval_holdout(&name, input)?;
                 ok!(Value::Float(score));
             }
 

@@ -3652,3 +3652,69 @@ fn ai_call_without_policy_warns_w1310() {
     assert!(stderr.contains("W1310"), "no-policy AI call must warn W1310: {stderr}");
     assert_eq!(out.status.code(), Some(0), "W1310 is a warning, not fatal: {stderr}");
 }
+
+// ── R5 #[goal] attribute tests ──────────────────────────────────────────────────
+
+#[test]
+fn goal_attribute_trains_and_gates_on_holdout() {
+    // The @[adaptive] quality fn peaks at x=7 → 100.
+    // The #[goal(...)] fn trains on 40 probes, evaluates quality at holdout x=7,
+    // and because 100 >= 100, goal_met = 1 → exit 1.
+    let out = axon()
+        .args(["run", &ex("asi/goal_attribute.ax")])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "goal_met=1, exit 1: stdout={stdout:?} stderr={:?}", out.stderr);
+    assert!(stdout.contains("1"), "goal_met should be 1: {stdout}");
+}
+
+#[test]
+fn goal_attribute_holdout_misses_target() {
+    // A fn that uses holdout=0: quality(0) = 100 - 49 = 51 < 100 → goal_met=0 → exit 0.
+    let src = r#"
+@[adaptive]
+fn quality(x: i64) -> i64 {
+    let dist = if x < 7 { 7 - x } else { x - 7 }
+    100 - dist * dist
+}
+
+#[goal(metric: quality, target: 100, max_evals: 40, holdout: 0)]
+fn main() -> i64 {
+    println(to_str(goal_met))
+    goal_met
+}
+"#;
+    let f = std::env::temp_dir().join(format!("goal_holdout_miss_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "goal_met=0, exit 0: stdout={stdout:?} stderr={:?}", out.stderr);
+    assert!(stdout.contains("0"), "goal_met should be 0: {stdout}");
+}
+
+#[test]
+fn goal_metric_must_be_adaptive_e1500() {
+    // Metric fn lacks @[adaptive] → E1500 on `axon check`.
+    let src = r#"
+#[goal(metric: notadaptive, target: 100, max_evals: 40)]
+fn main() -> i64 {
+    goal_met
+}
+fn notadaptive(x: i64) -> i64 { x }
+"#;
+    let f = std::env::temp_dir().join(format!("goal_e1500_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "check must fail: stderr={}", String::from_utf8_lossy(&out.stderr));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("E1500"), "expected E1500: {stderr}");
+}

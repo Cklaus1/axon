@@ -1,0 +1,20 @@
+// R5 `#[goal(...)]` attribute demo: train a quality metric, gate on holdout.
+//
+// The @[adaptive] fn `quality` peaks at x=7 → 100.
+// The #[goal(...)] fn trains on 40 probes, then evaluates quality at
+// the held-out point x=7.  Because 100 >= 100, goal_met = 1.
+
+// ── The quality metric (must be @[adaptive] for #[goal] to reference it) ──
+@[adaptive]
+fn quality(x: i64) -> i64 {
+    let peak = 7
+    let dist = if x < peak { peak - x } else { x - peak }
+    100 - dist * dist
+}
+
+// ── The goal entry point ──
+#[goal(metric: quality, target: 100, max_evals: 40, holdout: 7)]
+fn main() -> i64 {
+    println(to_str(goal_met))
+    goal_met
+}

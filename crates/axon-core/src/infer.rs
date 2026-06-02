@@ -1457,6 +1457,11 @@ impl InferCtx {
             scope.bind(param.name.clone(), ty);
         }
 
+        // R5: #[goal] fns bind `goal_met` in their body scope.
+        if f.attrs.iter().any(|a| a.name == "goal") {
+            scope.bind("goal_met".to_string(), Type::I64);
+        }
+
         let body_ty = self.infer_expr(&f.body, &mut scope, &ret_ty);
         // Constrain body type to declared return type (explicit return statements
         // also constrain individually; this handles implicit returns).

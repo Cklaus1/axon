@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::levenshtein;
+use crate::error::{levenshtein, E1500, E1503, E1504};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -253,6 +253,8 @@ pub struct CheckCtx {
     /// field is accessed somewhere. Populated on entry to `check_fn` via a
     /// pre-walk, then read in `Expr::FieldAccess` to suppress W0701.
     confidence_observed: HashSet<String>,
+    /// `@[adaptive]` fn names (populated in `check_program`).
+    adaptive_fns: HashSet<String>,
 }
 
 impl CheckCtx {
@@ -276,6 +278,7 @@ impl CheckCtx {
             fn_bounds: HashMap::new(),
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
+            adaptive_fns: HashSet::new(),
         }
     }
 
@@ -323,6 +326,15 @@ impl CheckCtx {
         for item in &program.items {
             if let Item::ImplBlock(blk) = item {
                 self.check_impl_block(blk);
+            }
+        }
+
+        // Collect @[adaptive] fn names for E1500 validation.
+        for item in &program.items {
+            if let Item::FnDef(f) = item {
+                if f.attrs.iter().any(|a| a.name == "adaptive") {
+                    self.adaptive_fns.insert(f.name.clone());
+                }
             }
         }
 
@@ -534,6 +546,65 @@ impl CheckCtx {
             self.current_span = f.span;
         }
 
+        // R5 goal sugar: validate `#[goal(...)]` attributes on the function.
+        if let Some(goal_attr) = f.attrs.iter().find(|a| a.name == "goal") {
+            // E1504: a `#[goal]` fn must have zero params (entry point, not consumer).
+            if !f.params.is_empty() {
+                self.errors.push(
+                    CheckError::new(
+                        E1504,
+                        format!(
+                            "`{}` is a `#[goal]` function — must have zero params (params are reserved for future use)",
+                            f.name
+                        ),
+                    )
+                    .with_span(f.span),
+                );
+            }
+            // E1500: the metric must name an `@[adaptive]` fn.
+            let mut metric_name: Option<String> = None;
+            let mut all_numbers = true;
+            for arg in &goal_attr.args {
+                if let Some((k, v)) = arg.split_once(':') {
+                    let k = k.trim().to_lowercase();
+                    let v = v.trim();
+                    match k.as_str() {
+                        "metric" => metric_name = Some(v.to_string()),
+                        "target" | "max_evals" | "holdout" if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() => {
+                            all_numbers = false;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if let Some(ref m) = metric_name {
+                let is_adaptive = self.adaptive_fns.contains(m.as_str());
+                if !is_adaptive {
+                    self.errors.push(
+                        CheckError::new(
+                            E1500,
+                            format!(
+                                "`#[goal(metric: {})]` — metric fn `{}` must be annotated `@[adaptive]`",
+                                m, m
+                            ),
+                        )
+                        .with_span(f.span),
+                    );
+                }
+            }
+            // E1503: numeric fields must parse.
+            if !all_numbers {
+                self.errors.push(
+                    CheckError::new(
+                        E1503,
+                        "`#[goal(...)]` — target/max_evals/holdout must be numeric values"
+                            .to_string(),
+                    )
+                    .with_span(f.span),
+                );
+            }
+        }
+
         // R08: validate parameter type annotations.
         for param in &f.params {
             let path = format!("#fn_{}.param_{}", f.name, param.name);
@@ -566,6 +637,11 @@ impl CheckCtx {
         // Seed scope with parameters (same enum-aware resolution as the return type).
         for param in &f.params {
             scope.insert(param.name.clone(), enumify(axon_type_to_type(&param.ty), &known_enums));
+        }
+
+        // R5: #[goal] fns bind `goal_met` in their body scope.
+        if f.attrs.iter().any(|a| a.name == "goal") {
+            scope.insert("goal_met".to_string(), Type::I64);
         }
 
         // Layer-1 ASI: pre-walk the body to collect identifier names whose

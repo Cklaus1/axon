@@ -98,6 +98,11 @@ pub const E1404: &str = "E1404"; // graduation requires multi-sig of root Princi
 pub const E1405: &str = "E1405"; // pass manifest hash mismatch at boot (TCB attestation)
 pub const E1406: &str = "E1406"; // correctness judged by AI — forbidden; the oracle is the interpreter
 
+// R5 goal sugar: #[goal(...)] attribute diagnostics
+pub const E1500: &str = "E1500"; // metric must name an @[adaptive] fn
+pub const E1503: &str = "E1503"; // target/max_evals/holdout must parse as numbers
+pub const E1504: &str = "E1504"; // #[goal] fn must have zero params
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -275,6 +280,7 @@ mod tests {
             E1201, E1202, E1203, E1204, E1205,
             E1300, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406,
+            E1500, E1503, E1504,
             W0001, W0002, W0003, W0701, W1210, W1310, W1410,
             I0001,
         ];
