@@ -357,6 +357,58 @@ fn on_deep_stack<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
 
+// ── In-process stdout capture (R10 G1 observable tuple) ──────────────────────
+//
+// The interpreter normally writes `print`/`println` straight to the process
+// stdout. The R10 verification harness needs to compare a program's *observable
+// output* before and after a candidate compiler pass — in-process, over a whole
+// corpus, deterministically. A thread-local sink lets `run_program_capturing`
+// redirect that output into a buffer without spawning a subprocess per program.
+// When the sink is `None` (the normal case) output goes to real stdout, so this
+// is zero-overhead and invisible to every existing run.
+thread_local! {
+    static OUTPUT_SINK: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Route an interpreter `print`/`println` write: into the capture buffer if one
+/// is active on this thread, else to real stdout (the normal path).
+fn emit_stdout(s: &str, newline: bool) {
+    OUTPUT_SINK.with(|sink| {
+        let mut b = sink.borrow_mut();
+        if let Some(buf) = b.as_mut() {
+            buf.push_str(s);
+            if newline {
+                buf.push('\n');
+            }
+        } else {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(s.as_bytes());
+            if newline {
+                let _ = out.write_all(b"\n");
+            }
+            let _ = out.flush();
+        }
+    });
+}
+
+/// Run `program`, capturing its stdout into a buffer instead of the process
+/// stdout, and return the **observable tuple** `(exit_code, stdout)`. This is
+/// the R10 G1 oracle's comparison input: a candidate pass is correct iff this
+/// tuple is identical for the original and transformed program on every corpus
+/// member. Runs on the deep stack like `run_program`. Not thread-safe with
+/// concurrent captures on the same thread (the sink is per-thread, restored on
+/// return).
+pub fn run_program_capturing(program: &Program) -> (i32, String) {
+    on_deep_stack(|| {
+        // Install a fresh capture buffer, restoring any prior one on exit.
+        let prev = OUTPUT_SINK.with(|s| s.replace(Some(String::new())));
+        let code = run_program_inner(program);
+        let captured = OUTPUT_SINK.with(|s| s.replace(prev)).unwrap_or_default();
+        (code, captured)
+    })
+}
+
 /// Parse-and-run convenience: returns the process exit code.
 pub fn run_program(program: &Program) -> i32 {
     on_deep_stack(|| run_program_inner(program))
@@ -2448,13 +2500,12 @@ impl<'p> Interp<'p> {
             // ── I/O ───────────────────────────────────────────────────────────
             "print" => {
                 want(1)?;
-                print!("{}", display(&args[0]));
-                let _ = std::io::stdout().flush();
+                emit_stdout(&display(&args[0]), false);
                 ok!(Value::Unit);
             }
             "println" => {
                 want(1)?;
-                println!("{}", display(&args[0]));
+                emit_stdout(&display(&args[0]), true);
                 ok!(Value::Unit);
             }
             "eprint" => {

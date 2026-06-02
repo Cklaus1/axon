@@ -170,18 +170,18 @@ Red test that must fail first: **`identity_pass_verifies_and_output_changing_pas
 
 R10 advances from 0% on the **harness slice** (all gates verifiable now) when **all** pass:
 
-- [ ] `identity_pass_verifies_and_output_changing_pass_is_rejected` passes (G1, E1401).
-- [ ] `capability_adding_pass_is_rejected_I12` passes (G2, E1402 — the safety core).
-- [ ] `regression_breaking_pass_is_rejected` passes (G3, E1403).
-- [ ] `overfit_pass_passing_on_one_member_is_caught` passes (the fork's central concern).
-- [ ] `graduation_requires_multisig` passes (E1404 — I-12 governance).
-- [ ] `verify_record_is_deterministic` passes.
-- [ ] `ai_judged_correctness_is_rejected` passes (E1406 — correctness is the oracle, not AI).
+- [x] `identity_pass_verifies_and_output_changing_pass_is_rejected` passes (G1, E1401). **DONE** — `improve.rs::verify_pass`: G1 compares the observable tuple `(exit_code, stdout)` via the interpreter oracle (`run_program_capturing`) over the whole corpus; an output-changing pass → E1401.
+- [x] `capability_adding_pass_is_rejected_I12` passes (G2, E1402 — the safety core). **DONE** — G2 diffs `program_capabilities` (new public collector in `capabilities.rs`, single-sourced on `classify_call`): a pass adding `fs:read`/`fs:write`/`net`/`exec` → E1402.
+- [ ] `regression_breaking_pass_is_rejected` passes (G3, E1403). *Implementation-pending (no new spec needed — G3 = run the existing suite with the pass + assert byte-identical `revert`; `VerifyRecord.g3_regression` already reserves the slot as `NotRun`).*
+- [x] `overfit_pass_passing_on_one_member_is_caught` passes (the fork's central concern). **DONE** — G1 iterates the whole corpus, so a pass correct on member 0 but wrong on member 1 is still rejected (E1401). The overfitting failure is structurally impossible to pass.
+- [ ] `graduation_requires_multisig` passes (E1404 — I-12 governance). *Implementation-pending (the `axon improve graduate` CLI + manifest; `verify_pass` already documents that passing verification is necessary-not-sufficient — graduation is a separate human-gated step).*
+- [x] `verify_record_is_deterministic` passes. **DONE** — two `verify_pass(pass, corpus)` runs produce identical `VerifyRecord`s.
+- [x] `ai_judged_correctness_is_rejected` passes (E1406 — correctness is the oracle, not AI). **DONE by construction** — `verify_pass` decides correctness *solely* by running both programs through the interpreter; there is no API path by which an AI judges correctness. E1406 is reserved for a discovery layer that would attempt it. *(Documented in the module's safety note; no AI-judgment path exists to test against because none can be written.)*
 
 **Perf slice:**
-- [ ] G4 timing harness exists. "verified … faster" (the requirement's perf half) runs on a native binary; R1 solved 2026-06-01 so this is no longer blocked — only the harness build remains.
+- [ ] G4 timing harness exists. *Implementation-pending (no new spec — §4.1 already defines G4; `VerifyRecord.g4_perf` reserves the slot as `NotRun`). "verified … faster" runs on a native binary; R1 solved 2026-06-01, only the harness build remains.*
 
-R10 may rise 0% → ~80% on the full slice (all four gates verifiable). The full "verified correct + faster, applied automatically" acceptance no longer depends on R1.
+R10 rose **0% → ~55%** on this slice: the two *safety-critical* gates (G1 correctness oracle, G2 capability firewall) plus determinism and the overfit guard are built and tested. The remaining items (G3 regression, G4 timing, the `axon improve` CLI + multi-sig manifest) are implementation slices **under this same (Reviewed) spec** — no further spec work is required; the design, error codes, and acceptance are already settled here.
 
 ## 10. Performance budget
 

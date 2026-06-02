@@ -89,6 +89,14 @@ pub const E1205: &str = "E1205"; // axon.lock is malformed / unknown version
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
 
+// Self-improving-compiler errors (R10: pass verification harness)
+pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member
+pub const E1402: &str = "E1402"; // G2 safety: pass adds a capability the original lacked (I-12)
+pub const E1403: &str = "E1403"; // G3 regression: pass breaks an existing test
+pub const E1404: &str = "E1404"; // graduation requires multi-sig of root Principals (I-12)
+pub const E1405: &str = "E1405"; // pass manifest hash mismatch at boot (TCB attestation)
+pub const E1406: &str = "E1406"; // correctness judged by AI — forbidden; the oracle is the interpreter
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -236,6 +244,7 @@ mod tests {
             E1101,
             E1201, E1202, E1203, E1204, E1205,
             E1300,
+            E1401, E1402, E1403, E1404, E1405, E1406,
             W0001, W0002, W0003, W0701, W1210,
             I0001,
         ];

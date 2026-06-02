@@ -118,6 +118,138 @@ fn check_fn(fndef: &FnDef, errors: &mut Vec<CapabilityError>) {
     check_expr(&fndef.body, spec, errors);
 }
 
+/// The set of capability *kinds* a program exercises — `"fs:read"`,
+/// `"fs:write"`, `"net"`, `"exec"` — collected from every call site regardless
+/// of `@[contained]`. This is the canonical capability surface used by R10's
+/// G2 safety gate: a candidate compiler pass `P` is unsafe iff
+/// `program_capabilities(P(c))` is NOT a subset of `program_capabilities(c)`,
+/// i.e. the transform introduced a capability the original program lacked
+/// (I-12 — self-modification cannot widen the trusted surface). Reuses
+/// `classify_call` so the capability taxonomy stays single-sourced.
+pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
+    let mut caps = std::collections::BTreeSet::new();
+    for item in &program.items {
+        if let Item::FnDef(f) = item {
+            collect_caps_expr(&f.body, &mut caps);
+        }
+    }
+    caps
+}
+
+fn cap_label(kind: &IoKind) -> &'static str {
+    match kind {
+        IoKind::FsRead => "fs:read",
+        IoKind::FsWrite => "fs:write",
+        IoKind::Net => "net",
+        IoKind::Exec => "exec",
+    }
+}
+
+fn collect_caps_stmts(stmts: &[Stmt], caps: &mut std::collections::BTreeSet<String>) {
+    for stmt in stmts {
+        collect_caps_expr(&stmt.expr, caps);
+    }
+}
+
+/// Walk an expression, recording the capability kind of every call site. Mirrors
+/// `check_expr`'s traversal but capability-collecting instead of spec-checking.
+fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>) {
+    match expr {
+        Expr::Call { callee, args } => {
+            let name = match callee.as_ref() {
+                Expr::Ident(n) => Some(n.as_str()),
+                Expr::StructLit { name, fields } if fields.is_empty() => Some(name.as_str()),
+                _ => None,
+            };
+            if let Some(n) = name {
+                if let Some(kind) = classify_call(n) {
+                    caps.insert(cap_label(&kind).to_string());
+                }
+            }
+            collect_caps_expr(callee, caps);
+            for arg in args {
+                collect_caps_expr(arg, caps);
+            }
+        }
+        Expr::Block(stmts) => collect_caps_stmts(stmts, caps),
+        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+            collect_caps_expr(value, caps)
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_caps_expr(left, caps);
+            collect_caps_expr(right, caps);
+        }
+        Expr::UnaryOp { operand, .. } => collect_caps_expr(operand, caps),
+        Expr::Question(inner) => collect_caps_expr(inner, caps),
+        Expr::MethodCall { receiver, args, .. } => {
+            collect_caps_expr(receiver, caps);
+            for arg in args {
+                collect_caps_expr(arg, caps);
+            }
+        }
+        Expr::If { cond, then, else_ } => {
+            collect_caps_expr(cond, caps);
+            collect_caps_expr(then, caps);
+            if let Some(e) = else_ {
+                collect_caps_expr(e, caps);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            collect_caps_expr(subject, caps);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_caps_expr(g, caps);
+                }
+                collect_caps_expr(&arm.body, caps);
+            }
+        }
+        Expr::While { cond, body } => {
+            collect_caps_expr(cond, caps);
+            collect_caps_stmts(body, caps);
+        }
+        Expr::WhileLet { expr, body, .. } => {
+            collect_caps_expr(expr, caps);
+            collect_caps_stmts(body, caps);
+        }
+        Expr::For { start, end, body, .. } => {
+            collect_caps_expr(start, caps);
+            collect_caps_expr(end, caps);
+            collect_caps_stmts(body, caps);
+        }
+        Expr::Assign { value, .. } => collect_caps_expr(value, caps),
+        Expr::AssignTo { place, value } => {
+            collect_caps_expr(place, caps);
+            collect_caps_expr(value, caps);
+        }
+        Expr::Return(Some(e)) => collect_caps_expr(e, caps),
+        Expr::FieldAccess { receiver, .. } => collect_caps_expr(receiver, caps),
+        Expr::Index { receiver, index } => {
+            collect_caps_expr(receiver, caps);
+            collect_caps_expr(index, caps);
+        }
+        Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => collect_caps_expr(inner, caps),
+        Expr::Array(elems) | Expr::Tuple(elems) => {
+            for e in elems {
+                collect_caps_expr(e, caps);
+            }
+        }
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_caps_expr(v, caps);
+            }
+        }
+        Expr::Lambda { body, .. } => collect_caps_expr(body, caps),
+        Expr::FmtStr { parts } => {
+            for part in parts {
+                if let crate::ast::FmtPart::Expr(e) = part {
+                    collect_caps_expr(e, caps);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 fn check_stmts(stmts: &[Stmt], spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
     for stmt in stmts {
         check_expr(&stmt.expr, spec, errors);

@@ -7,6 +7,8 @@ pub mod checker;
 pub mod codegen;
 pub mod error;
 pub mod infer;
+/// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.
+pub mod improve;
 pub mod lexer;
 /// `axon.lock` content-addressed import lockfile (R6): hash + format.
 pub mod lockfile;
