@@ -412,8 +412,28 @@ fn cmd_check(file: PathBuf, json_flag: bool) {
     // Pipe detection: if stderr is not a terminal, switch to JSON automatically.
     let use_json = json_flag || !std::io::stderr().is_terminal();
 
+    // R6 §4.4 import-edge capability check (E1203): before the pipeline merges
+    // imports into one program, compare the (still-separate) imported modules
+    // against the importer's @[contained] grant ceiling. A `@[contained]`
+    // program that imports a module exercising a capability it doesn't grant is
+    // rejected (the import-edge extension of I-11). Uncontained importers have
+    // no ceiling, so this is a no-op for them (back-compat).
+    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let (resolved_imports, _unresolved) = axon_core::resolve_use_files(&program, &search_dirs);
+    let mut import_cap_errors: Vec<String> = Vec::new();
+    for m in &resolved_imports {
+        if let Ok(src) = std::str::from_utf8(&m.bytes) {
+            if let Ok(imported) = parse_source(src) {
+                for e in axon_core::capabilities::check_import_capabilities(&program, &m.name, &imported) {
+                    import_cap_errors.push(format!("[{}] {}", e.code, e.message));
+                }
+            }
+        }
+    }
+
     // Type-check pipeline.
-    let (errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    let (mut errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
+    errors.extend(import_cap_errors);
 
     if errors.is_empty() {
         // Print nothing on success (Unix convention).

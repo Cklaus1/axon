@@ -18,6 +18,7 @@ pub const E1001: &str = "E1001";
 pub const E1002: &str = "E1002";
 pub const E1003: &str = "E1003";
 pub const E1004: &str = "E1004";
+pub const E1203: &str = "E1203"; // import widens the importer's capability surface (R6 §4.4)
 
 // ── Diagnostic ───────────────────────────────────────────────────────────────
 
@@ -134,6 +135,85 @@ pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<Str
         }
     }
     caps
+}
+
+/// The capability *ceiling* an importer's `@[contained]` declarations grant —
+/// the union of capability kinds any contained fn in the program is allowed to
+/// exercise. Used as the boundary the import-edge check enforces (R6 §4.4).
+///
+/// An importer that declares **no** `@[contained]` has no ceiling (`None`):
+/// it is uncontained, so importing a capability-exercising module is not a
+/// *widening* — there was no declared boundary to widen. This keeps E1203
+/// opt-in: a program only gains import-edge protection once it declares its own
+/// containment, so existing uncontained programs are unaffected (back-compat).
+fn importer_grant_ceiling(importer: &Program) -> Option<std::collections::BTreeSet<String>> {
+    let mut ceiling = std::collections::BTreeSet::new();
+    let mut declared = false;
+    for item in &importer.items {
+        if let Item::FnDef(f) = item {
+            if let Some(spec) = &f.contained {
+                declared = true;
+                if !spec.fs_read.is_empty() {
+                    ceiling.insert("fs:read".to_string());
+                }
+                if !spec.fs_write.is_empty() {
+                    ceiling.insert("fs:write".to_string());
+                }
+                if !spec.net_allow.is_empty() {
+                    ceiling.insert("net".to_string());
+                }
+                if spec.exec_allowed {
+                    ceiling.insert("exec".to_string());
+                }
+            }
+        }
+    }
+    if declared {
+        Some(ceiling)
+    } else {
+        None
+    }
+}
+
+/// R6 §4.4 — the import-edge capability check (E1203, the import-edge extension
+/// of I-11). An imported module may not *widen* the importer's declared
+/// capability surface: if the importer is `@[contained]` and an imported module
+/// **exercises** a capability kind (fs:read/fs:write/net/exec) the importer does
+/// not grant, that is **E1203**.
+///
+/// The importer's grant is the union of its `@[contained]` allowlists
+/// ([`importer_grant_ceiling`]); the import's demand is the capabilities its
+/// code actually calls ([`program_capabilities`]). An *uncontained* importer
+/// has no ceiling, so nothing widens — E1203 is opt-in, gained only when a
+/// program declares its own containment.
+///
+/// This is a **TCB-grade boundary** (I-11): the static capability checker is the
+/// hard gate; an AI import-audit (R6 §4.3) is defense-in-depth layered above it,
+/// never a substitute. Returns one `CapabilityError` per excess capability.
+pub fn check_import_capabilities(
+    importer: &Program,
+    import_name: &str,
+    imported: &Program,
+) -> Vec<CapabilityError> {
+    let Some(ceiling) = importer_grant_ceiling(importer) else {
+        // Uncontained importer — no declared boundary, nothing to widen.
+        return Vec::new();
+    };
+    let demanded = program_capabilities(imported);
+    let mut errors = Vec::new();
+    for cap in demanded.difference(&ceiling) {
+        errors.push(CapabilityError::new(
+            E1203,
+            format!(
+                "import `{import_name}` exercises capability `{cap}`, which the importing \
+                 @[contained] program does not grant — widen the importer's @[contained] \
+                 to permit `{cap}`, or remove the import (R6 §4.4, import-edge boundary)"
+            ),
+            Span::dummy(),
+        ));
+    }
+    // Deterministic order (BTreeSet difference is already sorted, but be explicit).
+    errors
 }
 
 fn cap_label(kind: &IoKind) -> &'static str {
@@ -625,5 +705,82 @@ mod tests {
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
         assert!(errors.is_empty(), "Non-literal path should not produce static error");
+    }
+
+    // ── R6 §4.4 import-edge capability check (E1203) — paired allow+deny (I-11) ──
+
+    fn parse(src: &str) -> Program {
+        crate::parse_source(src).expect("parse test program")
+    }
+
+    #[test]
+    fn import_widening_capabilities_is_rejected() {
+        // DENY: the importer is @[contained(fs: read only)] — it grants fs:read
+        // but NOT net. An imported module that makes a network call widens the
+        // boundary → E1203.
+        let importer = parse(
+            "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        let imported = parse(
+            "fn fetch() -> str { match http_get(\"api.evil.com\") { Ok(s) => s  Err(_) => \"\" } }",
+        );
+        let errs = check_import_capabilities(&importer, "evil::net", &imported);
+        assert_eq!(errs.len(), 1, "exactly one widening (net): {errs:?}");
+        assert_eq!(errs[0].code, E1203);
+        assert!(errs[0].message.contains("net"), "names the widened cap: {}", errs[0].message);
+        assert!(errs[0].message.contains("evil::net"), "names the import: {}", errs[0].message);
+    }
+
+    #[test]
+    fn import_within_grant_is_allowed() {
+        // ALLOW: the importer grants fs:read; the imported module only reads a
+        // file — within the grant, no E1203.
+        let importer = parse(
+            "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        let imported = parse(
+            "fn load() -> str { match read_file(\"./data/x\") { Ok(s) => s  Err(_) => \"\" } }",
+        );
+        let errs = check_import_capabilities(&importer, "lib::loader", &imported);
+        assert!(errs.is_empty(), "read within grant must be allowed: {errs:?}");
+    }
+
+    #[test]
+    fn uncontained_importer_has_no_ceiling() {
+        // BACK-COMPAT: an importer with NO @[contained] declares no boundary, so
+        // importing a capability-exercising module is not a *widening* — E1203 is
+        // opt-in. (This is why existing module-importing examples are unaffected.)
+        let importer = parse("fn main() -> i64 { 0 }");
+        let imported = parse(
+            "fn fetch() -> str { match http_get(\"api.x\") { Ok(s) => s  Err(_) => \"\" } }",
+        );
+        let errs = check_import_capabilities(&importer, "any::net", &imported);
+        assert!(errs.is_empty(), "uncontained importer has no ceiling to widen: {errs:?}");
+    }
+
+    #[test]
+    fn multiple_widenings_each_reported_deterministically() {
+        // The importer grants nothing (empty @[contained]); an import that both
+        // reads files and hits the network widens on two axes → two E1203s, in a
+        // stable (sorted) order.
+        let importer = parse(
+            "@[contained(exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        let imported = parse(
+            "fn act() -> i64 {\n\
+               let _ = read_file(\"/etc/passwd\")\n\
+               let _ = http_get(\"api.x\")\n\
+               0\n\
+             }",
+        );
+        let errs = check_import_capabilities(&importer, "m", &imported);
+        assert_eq!(errs.len(), 2, "two widenings: {errs:?}");
+        assert!(errs.iter().all(|e| e.code == E1203));
+        // BTreeSet difference is sorted: fs:read before net.
+        assert!(errs[0].message.contains("fs:read"), "first: {}", errs[0].message);
+        assert!(errs[1].message.contains("net"), "second: {}", errs[1].message);
     }
 }

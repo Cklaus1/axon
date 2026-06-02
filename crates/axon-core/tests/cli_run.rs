@@ -3403,3 +3403,70 @@ fn check_json_emits_versioned_schema() {
         "the [CODE] prefix must not remain in the message: {jstderr}"
     );
 }
+
+#[test]
+fn import_widening_capabilities_is_rejected_e1203() {
+    // R6 §4.4 (I-11 import edge): a `@[contained]` importer that imports a module
+    // exercising a capability it does not grant is rejected with E1203. Paired
+    // with an ALLOW case (import within grant → clean) so the boundary is shown
+    // to be precise, not blanket. Uses ai_complete (a real net-classified
+    // builtin) to avoid resolver noise from unimplemented names.
+    let tmp = std::env::temp_dir().join(format!("axon_r6e1203_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    // DENY: importer grants fs:read only; the imported module makes an AI (net) call.
+    std::fs::write(
+        tmp.join("netmod.ax"),
+        "fn fetch() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n",
+    )
+    .unwrap();
+    let deny = tmp.join("deny.ax");
+    std::fs::write(
+        &deny,
+        "mod netmod\nuse netmod.{fetch}\n\
+         @[contained(fs: [read(\"./data/\")], exec: none)]\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["check", deny.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(msg.contains("E1203"), "import widening must be E1203: {msg}");
+    assert!(msg.contains("net"), "names the widened capability: {msg}");
+    assert_ne!(out.status.code(), Some(0), "a widening import must fail check");
+
+    // ALLOW: same importer, import only reads a file (within the fs:read grant).
+    std::fs::write(
+        tmp.join("fsmod.ax"),
+        "fn load() -> str { match read_file(\"./data/x\") { Ok(s) => s  Err(_) => \"\" } }\n",
+    )
+    .unwrap();
+    let allow = tmp.join("allow.ax");
+    std::fs::write(
+        &allow,
+        "mod fsmod\nuse fsmod.{load}\n\
+         @[contained(fs: [read(\"./data/\")], exec: none)]\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let ok = axon()
+        .args(["check", allow.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let okmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+    assert!(!okmsg.contains("E1203"), "an import within grant must NOT be E1203: {okmsg}");
+}
