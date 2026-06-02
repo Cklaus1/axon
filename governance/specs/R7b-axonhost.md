@@ -100,9 +100,9 @@ Red test that must fail first: **`host_seam_routes_file_io_through_axonhost`** â
 
 ## 8. Acceptance criteria
 
-- [ ] `host_seam_routes_file_io_through_axonhost` passes.
-- [ ] `default_host_matches_std_behavior` passes.
-- [ ] the full suite is green with the refactor (native behavior unchanged).
+- [x] `host_seam_routes_file_io_through_axonhost` passes. **DONE** (host.rs unit tests).
+- [x] `default_host_matches_std_behavior` passes. **DONE**.
+- [x] the full suite is green with the refactor (native behavior unchanged). **DONE** + nested-override regression guard.
 
 R7 may rise 42% â†’ ~50% on this slice (the host seam is the precondition for any browser/`unknown-unknown` build; the browser host itself + js/mobile/AOT remain).
 

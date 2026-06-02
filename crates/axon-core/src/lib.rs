@@ -11,6 +11,7 @@ pub mod codegen;
 pub mod diag_schema;
 pub mod error;
 pub mod infer;
+pub mod host;
 /// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.
 pub mod improve;
 pub mod lexer;

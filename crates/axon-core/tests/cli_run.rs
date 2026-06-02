@@ -3775,3 +3775,32 @@ fn target_build_aot_wasm_is_e0907() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(ok.status.code(), Some(0), "interp engine on wasm32 must succeed");
 }
+
+#[test]
+fn host_seam_routes_file_io_through_axonhost() {
+    // E2E: a program that write_file's then read_file's a temp path and prints
+    // the content exercises the DefaultHost path through the interp → host
+    // routing. Proves the refactor didn't break real fs I/O.
+    let tmp = format!("/tmp/axon_e2e_{}.txt", std::process::id());
+    let f = format!(
+        "fn main() -> i64 {{ \
+             let _ = write_file(\"{tmp}\", \"hello host seam\"); \
+             let s = match read_file(\"{tmp}\") {{ Ok(v) => v, Err(_) => \"fail\" }}; \
+             println(s); \
+             0 \
+         }}\n",
+    );
+    let fpath = std::env::temp_dir().join(format!("axon_e2e_{}.ax", std::process::id()));
+    std::fs::write(&fpath, &f).unwrap();
+
+    let out = axon().args(["run", fpath.to_str().unwrap()]).output().unwrap();
+    assert!(out.status.success(), "write_file + read_file round-trip should succeed: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("hello host seam"),
+        "stdout should contain the round-tripped content: {stdout:?}"
+    );
+
+    let _ = std::fs::remove_file(&fpath);
+    let _ = std::fs::remove_file(&tmp);
+}

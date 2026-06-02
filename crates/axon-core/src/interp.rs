@@ -2685,16 +2685,19 @@ impl<'p> Interp<'p> {
             }
             "read_file" => {
                 want(1)?;
-                match std::fs::read_to_string(as_str(&args[0])?) {
+                let path = as_str(&args[0])?.to_string();
+                match crate::host::with_host(|h| h.read_file(&path)) {
                     Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
             "write_file" => {
                 want(2)?;
-                match std::fs::write(as_str(&args[0])?, as_str(&args[1])?) {
+                let path = as_str(&args[0])?.to_string();
+                let data = as_str(&args[1])?.to_string();
+                match crate::host::with_host(|h| h.write_file(&path, &data)) {
                     Ok(()) => ok!(Value::Ok(Box::new(Value::Unit))),
-                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
 
@@ -3985,19 +3988,20 @@ impl<'p> Interp<'p> {
             // ── Environment / time / process ──────────────────────────────────
             "env_var" => {
                 want(1)?;
-                ok!(match std::env::var(as_str(&args[0])?) {
-                    Ok(v) => Value::Ok(Box::new(Value::Str(v))),
-                    Err(_) => Value::Err(Box::new(Value::Str("not set".into()))),
+                let key = as_str(&args[0])?.to_string();
+                ok!(match crate::host::with_host(|h| h.env_var(&key)) {
+                    Some(v) => Value::Ok(Box::new(Value::Str(v))),
+                    None => Value::Err(Box::new(Value::Str("not set".into()))),
                 });
             }
             "now_ms" => {
                 want(0)?;
-                ok!(Value::Int(now_ms()));
+                ok!(Value::Int(crate::host::with_host(|h| h.now_ms())));
             }
             "sleep_ms" => {
                 want(1)?;
                 let ms = as_int(&args[0])?.max(0) as u64;
-                std::thread::sleep(std::time::Duration::from_millis(ms));
+                crate::host::with_host(|h| h.sleep_ms(ms));
                 ok!(Value::Unit);
             }
             "exit" => {
