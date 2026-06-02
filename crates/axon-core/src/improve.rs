@@ -34,22 +34,13 @@
 
 use crate::ast::Program;
 use crate::capabilities::program_capabilities;
-use crate::error::{E1401, E1402};
+use crate::error::{E1401, E1402, E1403};
 use crate::interp::run_program_capturing;
 
 /// A candidate compiler pass: a pure AST→AST transform. The harness treats it
 /// as opaque — it only observes the *behavior* of the output, never trusts the
 /// pass to describe itself.
 pub type Pass = dyn Fn(&Program) -> Program;
-
-/// Status of a verification gate that this slice does not yet run, recorded
-/// honestly so a `VerifyRecord` never implies a green it didn't earn.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum GateStatus {
-    Passed,
-    /// Gate not run in this build (G3 suite / G4 timing harness pending).
-    NotRun,
-}
 
 /// Why a pass was rejected. Carries the stable diagnostic code (R10 §6).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,9 +49,45 @@ pub struct VerifyError {
     pub message: String,
 }
 
+/// Outcome of the G4 performance gate (R10 §4.1). A pass advertised as an
+/// optimization may graduate as `Faster` only when timing actually ran and
+/// showed a net speedup; otherwise it is `Unmeasured` and W1410 applies — it
+/// may still graduate (correct + safe) but never *claiming* `faster`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PerfStatus {
+    /// Perf gate was not requested (the common case — most verifications don't
+    /// claim a speedup). Carries W1410 if a pass nonetheless claims `faster`.
+    Unmeasured,
+    /// Timing ran: the transformed program is faster on ≥1 corpus member and
+    /// slower on none, beyond the noise threshold. `improved` = members sped up.
+    Faster { improved: usize, members: usize },
+    /// Timing ran but the pass was not a net win (slower on some member, or no
+    /// member improved beyond noise) — not a perf regression *error* (G4 is a
+    /// claim-check, not a correctness gate), just "did not earn `faster`".
+    NotFaster { regressed: usize, improved: usize },
+}
+
+/// Options for [`verify_pass`]. Defaults run G1–G3 (the correctness/safety
+/// gates); the perf gate (G4) is opt-in because it only matters for passes that
+/// *claim* a speedup, and timing is the most expensive gate.
+#[derive(Debug, Clone)]
+pub struct VerifyOptions {
+    /// Run the G4 wall-clock timing gate.
+    pub measure_perf: bool,
+    /// Timing trials per program (the min over trials is taken to damp noise).
+    pub perf_trials: u32,
+}
+
+impl Default for VerifyOptions {
+    fn default() -> Self {
+        VerifyOptions { measure_perf: false, perf_trials: 5 }
+    }
+}
+
 /// The immutable outcome of verifying a pass against a corpus (R10 §4.4).
-/// `Ok` means G1+G2 held over the whole corpus; `Err` names the first gate
-/// failure with its code. Deterministic for a fixed `(pass, corpus)`.
+/// Every gate that ran has a verdict; `passed()` is true iff G1–G3 all held.
+/// Deterministic for a fixed `(pass, corpus)` on the correctness/safety gates
+/// (G4 timing is wall-clock and therefore advisory, never gating `passed`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyRecord {
     /// Number of corpus members checked.
@@ -69,24 +96,36 @@ pub struct VerifyRecord {
     pub g1_correctness: Result<(), VerifyError>,
     /// G2 capability-safety verdict (caps(P(c)) ⊆ caps(c) for every member).
     pub g2_safety: Result<(), VerifyError>,
-    /// G3 regression suite — pending in this slice.
-    pub g3_regression: GateStatus,
-    /// G4 native perf timing — pending in this slice.
-    pub g4_perf: GateStatus,
+    /// G3 regression verdict — every corpus member's `@[test]` fns keep their
+    /// pass/fail outcome under the pass (E1403 if any flips).
+    pub g3_regression: Result<(), VerifyError>,
+    /// G4 perf verdict (advisory; only gates the `faster` *claim*, not graduation).
+    pub g4_perf: PerfStatus,
 }
 
 impl VerifyRecord {
-    /// The pass is eligible for graduation *only* if every gate that ran
-    /// passed. (Graduation itself additionally requires multi-sig — that is a
-    /// separate, human-gated step; passing verification is necessary, not
-    /// sufficient. R10 §4.5.)
+    /// The pass is eligible for graduation *only* if every correctness/safety
+    /// gate that ran passed (G1–G3). G4 perf is a *claim-check*, not a
+    /// graduation gate — a correct, safe, non-faster pass is still verifiable
+    /// (it just can't advertise `faster`). Graduation itself additionally
+    /// requires multi-sig — a separate, human-gated step; passing verification
+    /// is necessary, not sufficient (R10 §4.5).
     pub fn passed(&self) -> bool {
-        self.g1_correctness.is_ok() && self.g2_safety.is_ok()
+        self.g1_correctness.is_ok() && self.g2_safety.is_ok() && self.g3_regression.is_ok()
     }
 
-    /// The first gate failure, if any.
+    /// The first correctness/safety gate failure, if any (G1 → G2 → G3 order).
     pub fn rejection(&self) -> Option<&VerifyError> {
-        self.g1_correctness.as_ref().err().or(self.g2_safety.as_ref().err())
+        self.g1_correctness
+            .as_ref()
+            .err()
+            .or(self.g2_safety.as_ref().err())
+            .or(self.g3_regression.as_ref().err())
+    }
+
+    /// Whether the pass earned the `faster` claim (G4 ran and showed a net win).
+    pub fn is_faster(&self) -> bool {
+        matches!(self.g4_perf, PerfStatus::Faster { .. })
     }
 }
 
@@ -105,8 +144,14 @@ impl VerifyRecord {
 /// self-improving compiler that trusts an AI to say "this is still correct"
 /// would have no firewall at all.
 pub fn verify_pass(pass: &Pass, corpus: &[Program]) -> VerifyRecord {
+    verify_pass_with(pass, corpus, &VerifyOptions::default())
+}
+
+/// [`verify_pass`] with explicit options (e.g. `measure_perf` to run G4).
+pub fn verify_pass_with(pass: &Pass, corpus: &[Program], opts: &VerifyOptions) -> VerifyRecord {
     let mut g1: Result<(), VerifyError> = Ok(());
     let mut g2: Result<(), VerifyError> = Ok(());
+    let mut g3: Result<(), VerifyError> = Ok(());
 
     for (i, original) in corpus.iter().enumerate() {
         let transformed = pass(original);
@@ -150,21 +195,152 @@ pub fn verify_pass(pass: &Pass, corpus: &[Program]) -> VerifyRecord {
             }
         }
 
-        // Both gates have a verdict (pass or first failure); keep iterating only
-        // to confirm there isn't an *earlier*-indexed issue is unnecessary — we
-        // report the first. Break once both have failed (nothing more to learn).
-        if g1.is_err() && g2.is_err() {
+        // G3: regression. Run each `@[test]` fn in the member before and after
+        // the pass; the pass/fail OUTCOME (normalized by `should_fail`) must be
+        // unchanged. This reaches test entry points G1's `main`-run does not,
+        // catching a pass that silently breaks a unit/property test (E1403).
+        if g3.is_ok() {
+            if let Some((test_name, flip)) = first_test_outcome_flip(original, &transformed) {
+                g3 = Err(VerifyError {
+                    code: E1403,
+                    message: format!(
+                        "G3 regression: pass changes the outcome of test `{test_name}` in corpus \
+                         member #{i} ({flip}) — a pass may not break an existing test"
+                    ),
+                });
+            }
+        }
+
+        if g1.is_err() && g2.is_err() && g3.is_err() {
             break;
         }
     }
+
+    // G4: opt-in wall-clock timing. Only meaningful when G1–G3 held (timing a
+    // miscompiling pass is pointless) and the caller asked to measure.
+    let g4 = if opts.measure_perf && g1.is_ok() && g2.is_ok() && g3.is_ok() {
+        measure_perf(pass, corpus, opts.perf_trials)
+    } else {
+        PerfStatus::Unmeasured
+    };
 
     VerifyRecord {
         members: corpus.len(),
         g1_correctness: g1,
         g2_safety: g2,
-        g3_regression: GateStatus::NotRun,
-        g4_perf: GateStatus::NotRun,
+        g3_regression: g3,
+        g4_perf: g4,
     }
+}
+
+/// The `@[test]` functions in a program, as `(name, should_fail)`. Mirrors the
+/// CLI test-runner's collection so the G3 gate sees exactly the tests `axon
+/// test` would run. (forall property tests are skipped here — they need a seed
+/// harness; outcome-flip on a deterministic `@[test]` is the regression signal.)
+fn test_fns(program: &Program) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for item in &program.items {
+        if let crate::ast::Item::FnDef(f) = item {
+            if let Some(attr) = f.attrs.iter().find(|a| a.name == "test") {
+                // Skip property tests (parameterized) — not a plain pass/fail run.
+                if !f.params.is_empty() {
+                    continue;
+                }
+                let should_fail = attr.args.iter().any(|a| a == "should_fail");
+                out.push((f.name.clone(), should_fail));
+            }
+        }
+    }
+    out
+}
+
+/// Run a single `@[test]` and return its *expected-outcome-normalized* verdict:
+/// `true` = the test behaved as the corpus expects (passed, or failed-as-
+/// `should_fail`). A pass that flips this for any test is a regression.
+fn test_passes_as_expected(program: &Program, name: &str, should_fail: bool) -> bool {
+    let ran_ok = crate::interp::run_test_fn(program, name).is_ok();
+    ran_ok != should_fail
+}
+
+/// First `@[test]` whose normalized outcome differs between `before` and
+/// `after`, with a human-readable description of the flip. Tests are keyed by
+/// name; a pass that *removes* a test is also a flip (the test no longer runs).
+fn first_test_outcome_flip(before: &Program, after: &Program) -> Option<(String, String)> {
+    let after_tests: std::collections::HashMap<String, bool> = test_fns(after).into_iter().collect();
+    for (name, should_fail) in test_fns(before) {
+        let before_ok = test_passes_as_expected(before, &name, should_fail);
+        match after_tests.get(&name) {
+            None => {
+                return Some((name.clone(), "test removed by the pass".to_string()));
+            }
+            Some(&after_should_fail) => {
+                let after_ok = test_passes_as_expected(after, &name, after_should_fail);
+                if before_ok != after_ok {
+                    return Some((
+                        name.clone(),
+                        format!("{} → {}", verdict(before_ok), verdict(after_ok)),
+                    ));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn verdict(ok: bool) -> &'static str {
+    if ok {
+        "passing"
+    } else {
+        "failing"
+    }
+}
+
+/// G4: time `interp(c)` vs `interp(P(c))` over the corpus and classify the pass.
+/// Wall-clock with `trials` repeats per program, taking the MIN (the cleanest
+/// run, least perturbed by scheduler noise). A member is "improved" only if the
+/// transformed min is below the original min beyond a 3% noise threshold, and
+/// "regressed" if it is above it by the same margin. Faster iff ≥1 improved and
+/// 0 regressed (R10 §4.1). Interpreter timing is the portable signal; native
+/// timing has the same shape (the spec's G4 is target-agnostic in structure).
+fn measure_perf(pass: &Pass, corpus: &[Program], trials: u32) -> PerfStatus {
+    const NOISE: f64 = 0.03; // 3% — below this, treat as no change.
+    let trials = trials.max(1);
+    let mut improved = 0usize;
+    let mut regressed = 0usize;
+
+    for original in corpus {
+        let transformed = pass(original);
+        let t_before = min_run_nanos(original, trials);
+        let t_after = min_run_nanos(&transformed, trials);
+        if t_before == 0 {
+            continue;
+        }
+        let ratio = t_after as f64 / t_before as f64;
+        if ratio < 1.0 - NOISE {
+            improved += 1;
+        } else if ratio > 1.0 + NOISE {
+            regressed += 1;
+        }
+    }
+
+    if regressed == 0 && improved > 0 {
+        PerfStatus::Faster { improved, members: corpus.len() }
+    } else {
+        PerfStatus::NotFaster { regressed, improved }
+    }
+}
+
+/// Minimum wall-clock nanoseconds to run a program over `trials` repeats. Output
+/// is captured (and discarded) so timing isn't dominated by terminal I/O.
+fn min_run_nanos(program: &Program, trials: u32) -> u128 {
+    let mut best = u128::MAX;
+    for _ in 0..trials {
+        let start = std::time::Instant::now();
+        let _ = run_program_capturing(program);
+        let elapsed = start.elapsed().as_nanos();
+        best = best.min(elapsed);
+    }
+    best
 }
 
 #[cfg(test)]
@@ -289,5 +465,104 @@ mod tests {
         let rec = verify_pass(overfit, &c);
         assert!(!rec.passed(), "overfit pass (correct on member 0, wrong on 1) must be caught");
         assert_eq!(rec.rejection().unwrap().code, E1401);
+    }
+
+    /// G3 regression (R10 §4.1, E1403): a pass that breaks an existing `@[test]`
+    /// — without changing `main`'s output, so it slips past G1 — is caught.
+    #[test]
+    fn regression_breaking_pass_is_rejected() {
+        // Corpus member has a passing test over a helper, plus a trivial main.
+        let c = vec![prog(
+            "fn double(x: i64) -> i64 { x * 2 }\n\
+             @[test] fn test_double() { assert_eq(double(3), 6) }\n\
+             fn main() -> i64 { 0 }",
+        )];
+
+        // A pass that corrupts `double` (so test_double now fails) but leaves
+        // `main` returning 0 — invisible to G1, caught by G3.
+        let breaker: &Pass = &|p: &Program| {
+            use crate::ast::{Expr, Item, Literal};
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "double" {
+                        f.body = Expr::Literal(Literal::Int(999));
+                    }
+                }
+            }
+            np
+        };
+        let rec = verify_pass(breaker, &c);
+        assert!(rec.g1_correctness.is_ok(), "G1 should pass (main unchanged): {:?}", rec.g1_correctness);
+        assert!(!rec.passed(), "a test-breaking pass must be rejected");
+        let err = rec.rejection().expect("a rejection");
+        assert_eq!(err.code, E1403, "must be G3 regression failure: {}", err.message);
+        assert!(err.message.contains("test_double"), "names the broken test: {}", err.message);
+    }
+
+    /// G3 passes for an identity pass (every test keeps its outcome), and a
+    /// `@[test(should_fail)]` that keeps failing is NOT a regression.
+    #[test]
+    fn regression_gate_passes_for_outcome_preserving_pass() {
+        let c = vec![prog(
+            "fn f(x: i64) -> i64 { x }\n\
+             @[test] fn t_ok() { assert_eq(f(2), 2) }\n\
+             @[test(should_fail)] fn t_fails() { assert(false) }\n\
+             fn main() -> i64 { 0 }",
+        )];
+        let identity: &Pass = &|p: &Program| p.clone();
+        let rec = verify_pass(identity, &c);
+        assert!(rec.passed(), "identity must keep every test outcome: {:?}", rec.rejection());
+        assert!(rec.g3_regression.is_ok());
+    }
+
+    /// G4 perf is opt-in: by default it does not run, and a verified pass is
+    /// `Unmeasured` (it may graduate, but never claiming `faster` — W1410).
+    #[test]
+    fn perf_gate_is_opt_in_and_defaults_unmeasured() {
+        let c = corpus();
+        let identity: &Pass = &|p: &Program| p.clone();
+        let rec = verify_pass(identity, &c);
+        assert_eq!(rec.g4_perf, PerfStatus::Unmeasured);
+        assert!(!rec.is_faster(), "an unmeasured pass never claims faster");
+    }
+
+    /// G4 runs when requested. An identity pass does no real work, so it is not
+    /// a net speedup — it must classify as `NotFaster`/`Unmeasured`, never
+    /// falsely `Faster`. (This guards against the gate rubber-stamping.)
+    #[test]
+    fn perf_gate_does_not_falsely_claim_faster_for_identity() {
+        let c = corpus();
+        let identity: &Pass = &|p: &Program| p.clone();
+        let opts = VerifyOptions { measure_perf: true, perf_trials: 3 };
+        let rec = verify_pass_with(identity, &c, &opts);
+        assert!(rec.passed(), "identity still passes G1–G3");
+        assert!(
+            !rec.is_faster(),
+            "identity is not a speedup; G4 must not claim Faster: {:?}",
+            rec.g4_perf
+        );
+    }
+
+    /// G4 only runs once G1–G3 hold — timing a miscompiling pass is pointless.
+    #[test]
+    fn perf_gate_skipped_when_correctness_fails() {
+        let c = corpus();
+        let breaker: &Pass = &|p: &Program| {
+            use crate::ast::{Expr, Item, Literal};
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "main" {
+                        f.body = Expr::Literal(Literal::Int(123));
+                    }
+                }
+            }
+            np
+        };
+        let opts = VerifyOptions { measure_perf: true, perf_trials: 3 };
+        let rec = verify_pass_with(breaker, &c, &opts);
+        assert!(!rec.passed());
+        assert_eq!(rec.g4_perf, PerfStatus::Unmeasured, "no perf claim on a broken pass");
     }
 }
