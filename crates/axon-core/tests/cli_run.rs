@@ -3581,3 +3581,74 @@ fn main() -> i64 {
     assert!(rec.contains("\"caps_used\":\"net\""), "records the capability: {rec}");
     assert!(rec.contains("\"zone\":\"agent\""), "tagged zone agent: {rec}");
 }
+
+#[test]
+fn ai_tier_routing_pins_real_model_in_provenance() {
+    // R3 §4.2/§4.3: the AiCall provenance records the RESOLVED tier + concrete
+    // model (not a hardcoded placeholder). A `@[ai(policy(tier: cheap))]` fn
+    // routes to the cheap model; a policy with no tier defaults to balanced.
+    let cache = std::env::temp_dir().join(format!("axon_r3tier_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[ai(policy(tier: cheap, fallback: "x"))]
+fn cheapfn(t: str) -> str { match ai_complete("p") { Ok(s) => s  Err(_) => "x" } }
+@[ai(policy(fallback: "y"))]
+fn defaultfn(t: str) -> str { match ai_complete("p") { Ok(s) => s  Err(_) => "y" } }
+fn main() -> i64 { let _ = cheapfn("a")  let _ = defaultfn("b")  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3tier_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0));
+    let body = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    // cheapfn → tier:cheap + a cheap-tier model (distinct from balanced).
+    let cheap = body.lines().find(|l| l.contains("\"fn\":\"cheapfn\"")).unwrap_or("");
+    assert!(cheap.contains("\"tier\":\"cheap\""), "cheap tier recorded: {cheap}");
+    assert!(cheap.contains("\"model\":\"anthropic:claude-haiku\""), "cheap model pinned: {cheap}");
+    // defaultfn (policy, no tier) → balanced.
+    let dflt = body.lines().find(|l| l.contains("\"fn\":\"defaultfn\"")).unwrap_or("");
+    assert!(dflt.contains("\"tier\":\"balanced\""), "default tier balanced: {dflt}");
+}
+
+#[test]
+fn unknown_ai_tier_is_e1302() {
+    // R3 §6 E1302: a policy naming a tier outside the closed enum is rejected.
+    let f = std::env::temp_dir().join(format!("axon_r3badtier_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(tier: turbo, fallback: \"x\"))]\n\
+         fn g(t: str) -> str { match ai_complete(\"p\") { Ok(s) => s  Err(_) => \"x\" } }\n\
+         fn main() -> i64 { let _ = g(\"a\")  0 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E1302"), "unknown tier must be E1302: {msg}");
+    assert!(msg.contains("turbo"), "names the bad tier: {msg}");
+}
+
+#[test]
+fn ai_call_without_policy_warns_w1310() {
+    // R3 §6 W1310: an AI call from a fn with no @[ai(policy)] is allowed but
+    // warns (un-metered / un-pinned). A fn WITH a policy does not warn.
+    let f = std::env::temp_dir().join(format!("axon_r3nopol_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn nopolicy(t: str) -> str { match ai_complete(\"p\") { Ok(s) => s  Err(_) => \"z\" } }\n\
+         fn main() -> i64 { let _ = nopolicy(\"a\")  0 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("W1310"), "no-policy AI call must warn W1310: {stderr}");
+    assert_eq!(out.status.code(), Some(0), "W1310 is a warning, not fatal: {stderr}");
+}

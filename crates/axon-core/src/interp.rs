@@ -806,6 +806,47 @@ impl<'p> Interp<'p> {
         }
     }
 
+    /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
+    /// Used for W1310: a live/mock AI call from a fn with no policy is allowed
+    /// but un-metered and un-pinned, so it warns (R3 §6).
+    fn current_fn_has_ai_policy(&self) -> bool {
+        let name = self.current_fn.borrow().clone();
+        self.fns
+            .get(name.as_str())
+            .map(|f| f.attrs.iter().any(|a| a.name == "ai"))
+            .unwrap_or(false)
+    }
+
+    /// R3 §4.2 — resolve the AI tier for the current call from the enclosing
+    /// `@[ai(policy(tier: …))]`, defaulting to [`crate::ai_routing::DEFAULT_TIER`]
+    /// when the fn has no policy or its policy names no tier. (Per-call `tier:`
+    /// args — step 1 — are deferred until named-arg call syntax lands; this
+    /// covers steps 2-3.) An *unknown* tier name in the policy is **E1302**.
+    fn current_ai_tier(&self) -> Result<crate::ai_routing::Tier, Flow> {
+        use crate::ai_routing::{Tier, DEFAULT_TIER};
+        let name = self.current_fn.borrow().clone();
+        let Some(f) = self.fns.get(name.as_str()) else {
+            return Ok(DEFAULT_TIER);
+        };
+        let Some(ai) = f.attrs.iter().find(|a| a.name == "ai") else {
+            return Ok(DEFAULT_TIER);
+        };
+        for arg in &ai.args {
+            if let Some(rest) = arg.strip_prefix("tier:") {
+                let raw = rest.trim();
+                return match Tier::parse(raw) {
+                    Some(t) => Ok(t),
+                    None => Err(Flow::Panic(format!(
+                        "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                        crate::error::E1302,
+                        Tier::configured()
+                    ))),
+                };
+            }
+        }
+        Ok(DEFAULT_TIER)
+    }
+
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
@@ -4714,16 +4755,34 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let prompt = as_str(&args[0])?.to_string();
                 let caller = self.current_fn.borrow().clone();
-                // R3 §4.3: tier/model resolution is the next slice; for now the
-                // record pins the default tier and the engine mode. params_hash
-                // covers the (currently fixed) call params.
                 let params = "max_tokens=default;temperature=default";
+                // R3 §4.2: resolve the tier from the enclosing @[ai(policy(tier))]
+                // (default balanced); an unknown tier name is E1302. The resolved
+                // tier picks the concrete (model, version) from the host table, so
+                // the provenance record names the REAL routed model, not a
+                // hardcoded placeholder. (Per-call `tier:` args are deferred until
+                // named-arg call syntax — this covers policy + default.)
+                let tier = self.current_ai_tier()?;
+                let tier_name = tier.as_str();
+                let (model_id, model_ver) = tier.model();
+                // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
+                // but its cost is unmetered and the call un-pinned — warn once so
+                // the audit gap is visible (only meaningful for live/mock calls).
+                if !self.current_fn_has_ai_policy() {
+                    let who = if caller.is_empty() { "<main>".to_string() } else { caller.clone() };
+                    eprintln!(
+                        "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
+                        crate::error::W1310
+                    );
+                }
                 if ai_mock_enabled() {
                     // Deterministic stub — but still a fully-stamped provenance
                     // record (mode:"mock", cost 0) so the audit trail is honest
-                    // about what produced the value.
+                    // about what produced the value. The tier/model are the
+                    // RESOLVED routing, even in mock (the routing is real; only
+                    // the response is stubbed).
                     append_ai_call_jsonl(
-                        &caller, &prompt, "balanced", "mock", "mock-v1", params,
+                        &caller, &prompt, tier_name, model_id, model_ver, params,
                         "mock", "", 0.0,
                     );
                     ok!(Value::Ok(Box::new(Value::Str(
@@ -4732,14 +4791,12 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    // Concrete model id / metered cost are wired in the routing
-                    // slice (R3 §4.2/§4.4); for now the live record pins the
-                    // provider default and leaves cost at 0 (honestly unmetered).
+                    // Metered cost is the budget slice (R3 §6 E1301, Phase-7); for
+                    // now the live record pins the routed model and leaves cost 0.
                     ok!(match axon_ai::complete(&prompt) {
                         Ok(s) => {
                             append_ai_call_jsonl(
-                                &caller, &prompt, "balanced",
-                                "anthropic:default", "unpinned",
+                                &caller, &prompt, tier_name, model_id, model_ver,
                                 params, "live", "", 0.0,
                             );
                             Value::Ok(Box::new(Value::Str(s)))
@@ -4757,7 +4814,7 @@ impl<'p> Interp<'p> {
                     // program that wants to run offline MUST declare a fallback.
                     if let Some(fallback) = self.current_ai_fallback() {
                         append_ai_call_jsonl(
-                            &caller, &prompt, "balanced", "none", "offline", params,
+                            &caller, &prompt, tier_name, "none", "offline", params,
                             "fallback", "offline: no model reachable", 0.0,
                         );
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));

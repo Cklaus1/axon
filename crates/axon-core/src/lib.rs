@@ -1,5 +1,7 @@
 #![recursion_limit = "8192"]
 
+/// Tier → model routing for AI calls (R3 §4.2): cheap/balanced/strong.
+pub mod ai_routing;
 pub mod ast;
 pub mod builtins;
 pub mod checker;

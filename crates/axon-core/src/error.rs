@@ -88,6 +88,7 @@ pub const E1205: &str = "E1205"; // axon.lock is malformed / unknown version
 
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
+pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-configured model
 
 // Self-improving-compiler errors (R10: pass verification harness)
 pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member
@@ -107,6 +108,8 @@ pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value us
 pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
 // R10 self-improving warnings
 pub const W1410: &str = "W1410"; // pass claims `faster` but the perf gate (G4) was not run
+// R3 AI-primitive warning
+pub const W1310: &str = "W1310"; // live AI call by a fn with no @[ai(policy)] (un-metered/un-pinned)
 
 // Info codes
 pub const I0001: &str = "I0001"; // deferred attribute (AI annotations)
@@ -270,9 +273,9 @@ mod tests {
             E1001, E1002, E1003, E1004,
             E1101,
             E1201, E1202, E1203, E1204, E1205,
-            E1300,
+            E1300, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406,
-            W0001, W0002, W0003, W0701, W1210, W1410,
+            W0001, W0002, W0003, W0701, W1210, W1310, W1410,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();
