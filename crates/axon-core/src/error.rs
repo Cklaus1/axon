@@ -69,6 +69,8 @@ pub const E0903: &str = "E0903"; // duplicate top-level name across files
 pub const E0904: &str = "E0904"; // --target triple not supported by this LLVM build
 pub const E0905: &str = "E0905"; // cross-compilation needs sysroot (cross.toml missing)
 pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler version
+pub const E0907: &str = "E0907"; // AOT wasm build needs the native codegen backend (R7)
+pub const E0908: &str = "E0908"; // no engine supports the requested target triple (R7, reserved)
 
 // Capability permission errors (Phase 4: @[contained])
 pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
@@ -274,7 +276,7 @@ mod tests {
             E0601, E0602, E0603,
             E0701, E0702, E0703,
             E0801, E0802, E0803,
-            E0901, E0902, E0903, E0904, E0905, E0906,
+            E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908,
             E1001, E1002, E1003, E1004,
             E1101,
             E1201, E1202, E1203, E1204, E1205,

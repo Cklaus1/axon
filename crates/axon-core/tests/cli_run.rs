@@ -3718,3 +3718,60 @@ fn notadaptive(x: i64) -> i64 { x }
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E1500"), "expected E1500: {stderr}");
 }
+
+#[test]
+fn ai_policy_prints_resolved_policy_json() {
+    // R3 §3.4: `axon ai policy` prints the resolved policy per @[ai] fn, using
+    // the SAME tier→model table the interpreter uses (so CLI ⇄ provenance agree).
+    let f = std::env::temp_dir().join(format!("axon_aipol_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(tier: cheap, fallback: \"x\"))]\n\
+         fn classify(t: str) -> str { match ai_complete(\"p\") { Ok(s) => s  Err(_) => \"x\" } }\n\
+         fn plain() -> i64 { 0 }\n\
+         fn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["ai", "policy", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "ai policy should exit 0");
+    assert!(stdout.contains("\"fn\":\"classify\""), "names the @[ai] fn: {stdout}");
+    assert!(stdout.contains("\"tier\":\"cheap\""), "resolved tier: {stdout}");
+    assert!(stdout.contains("anthropic:claude-haiku"), "the cheap-tier model: {stdout}");
+    assert!(!stdout.contains("plain"), "a non-@[ai] fn must be skipped: {stdout}");
+}
+
+#[test]
+fn target_list_shows_engines() {
+    // R7 §3: `axon target list` shows the buildable targets + their engine.
+    let out = axon().args(["target", "list"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(stdout.contains("native"), "lists native: {stdout}");
+    assert!(stdout.contains("wasm32"), "lists wasm32: {stdout}");
+    assert!(stdout.contains("interp"), "names the wasm engine: {stdout}");
+}
+
+#[test]
+fn target_build_aot_wasm_is_e0907() {
+    // R7 §6: the AOT wasm path (no --engine interp) is an honest E0907 block,
+    // pointing at the interpreter engine.
+    let f = std::env::temp_dir().join(format!("axon_tgt_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
+    let out = axon()
+        .args(["target", "build", "--target", "wasm32-wasi", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E0907"), "AOT wasm must be E0907: {msg}");
+    assert_ne!(out.status.code(), Some(0), "E0907 is fatal");
+
+    // But --engine interp on the same target succeeds (the interpreter path).
+    let ok = axon()
+        .args(["target", "build", "--engine", "interp", "--target", "wasm32", f.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(ok.status.code(), Some(0), "interp engine on wasm32 must succeed");
+}

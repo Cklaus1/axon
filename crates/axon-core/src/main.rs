@@ -141,6 +141,18 @@ enum Command {
         action: ImproveAction,
     },
 
+    /// AI primitives: inspect resolved `@[ai(policy)]` settings (R3).
+    Ai {
+        #[command(subcommand)]
+        action: AiAction,
+    },
+
+    /// Cross-platform targets: list buildable targets / build for one (R7).
+    Target {
+        #[command(subcommand)]
+        action: TargetAction,
+    },
+
     /// Compile a structured-prose goal file (`*.md`) to AST and run it.
     ///
     /// The Phase-10 two-track flow in one step: `goal.md` → (axon-surface) →
@@ -325,6 +337,33 @@ enum ImproveAction {
     },
 }
 
+#[derive(Subcommand)]
+enum AiAction {
+    /// Print the resolved AI policy for every `@[ai(...)]` fn in a file (R3 §3.4).
+    Policy {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum TargetAction {
+    /// List buildable targets and their engine (R7 §3).
+    List,
+    /// Build for a cross-target (R7 §4.1). `--engine interp` runs via the
+    /// interpreter (wasm-capable now); the AOT path on a wasm target is E0907.
+    Build {
+        /// Engine: `interp` for the tree-walking interpreter, else AOT codegen.
+        #[arg(long, help = "Engine: interp or (default) codegen/AOT")]
+        engine: Option<String>,
+        /// Target triple / alias (e.g. wasm32, wasm32-wasi).
+        #[arg(long, help = "Target triple or alias")]
+        target: Option<String>,
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+    },
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -358,6 +397,8 @@ fn dispatch(command: Command) {
         Command::Lsp => cmd_lsp(),
         Command::Cache { action } => cmd_cache(action),
         Command::Improve { action } => cmd_improve(action),
+        Command::Ai { action } => cmd_ai(action),
+        Command::Target { action } => cmd_target(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
         Command::Trace { func, path, json } => cmd_trace(func, path, json),
     }
@@ -908,6 +949,145 @@ fn cmd_improve(action: ImproveAction) {
                 eprintln!("axon improve revert: no pass with id {id} in the manifest");
                 process::exit(2);
             }
+        }
+    }
+}
+
+// ── ai (R3 policy inspection) ────────────────────────────────────────────────────
+
+/// Read the value of a flat `key: value` arg from a fn's `@[ai(...)]` attribute
+/// (the parser flattens the nested `policy(...)` group, so `tier`/`fallback`
+/// arrive as `"tier: cheap"` / `"fallback: x"`). Mirrors the interpreter's
+/// `current_ai_tier`/`current_ai_fallback` parsing so the CLI reports exactly
+/// what a run would resolve.
+fn ai_attr_value(fn_def: &axon_core::ast::FnDef, key: &str) -> Option<String> {
+    let ai = fn_def.attrs.iter().find(|a| a.name == "ai")?;
+    for arg in &ai.args {
+        if let Some(rest) = arg.strip_prefix(&format!("{key}:")) {
+            return Some(rest.trim().to_string());
+        }
+    }
+    None
+}
+
+/// `axon ai policy <file>` — print the resolved policy per `@[ai]` fn as one
+/// JSON line each: `{"fn","tier","fallback","model"}` (R3 §3.4). The tier +
+/// model come from the SAME `ai_routing::Tier` table the interpreter uses, so
+/// the CLI and the provenance never disagree. An unknown tier → E1302.
+fn cmd_ai(action: AiAction) {
+    use axon_core::ai_routing::Tier;
+    let AiAction::Policy { file } = action;
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("{e}"), !std::io::stderr().is_terminal());
+            process::exit(2);
+        }
+    };
+    for item in &program.items {
+        let axon_core::ast::Item::FnDef(f) = item else { continue };
+        if !f.attrs.iter().any(|a| a.name == "ai") {
+            continue;
+        }
+        // Resolve the tier (default balanced); an unknown name is E1302.
+        let tier = match ai_attr_value(f, "tier") {
+            None => Tier::Balanced,
+            Some(name) => match Tier::parse(&name) {
+                Some(t) => t,
+                None => {
+                    emit_error(
+                        &format!(
+                            "[{}] unknown AI tier `{name}` on `{}` — configured tiers: {}",
+                            axon_core::error::E1302, f.name, Tier::configured()
+                        ),
+                        !std::io::stderr().is_terminal(),
+                    );
+                    process::exit(2);
+                }
+            },
+        };
+        let (model, _ver) = tier.model();
+        let fallback = ai_attr_value(f, "fallback").unwrap_or_default();
+        println!(
+            "{{\"fn\":{},\"tier\":{},\"fallback\":{},\"model\":{}}}",
+            json_lit(&f.name),
+            json_lit(tier.as_str()),
+            json_lit(&fallback),
+            json_lit(model),
+        );
+    }
+    process::exit(0);
+}
+
+/// Minimal JSON string literal for the CLI's hand-rolled output (no serde_json).
+fn json_lit(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+// ── target (R7 cross-platform) ───────────────────────────────────────────────────
+
+/// The buildable targets and their engine (R7 §3). `native` runs through the
+/// LLVM codegen backend; `wasm32` runs the interpreter compiled to wasm32.
+const TARGETS: &[(&str, &str)] = &[("native", "codegen"), ("wasm32", "interp")];
+
+/// `axon target list` / `axon target build` (R7 §3/§4.1).
+fn cmd_target(action: TargetAction) {
+    match action {
+        TargetAction::List => {
+            for (alias, engine) in TARGETS {
+                println!("{alias} ({engine})");
+            }
+            process::exit(0);
+        }
+        TargetAction::Build { engine, target, file } => {
+            validate_ax_extension(&file);
+            let triple = target.as_deref().unwrap_or("native");
+            let interp = engine.as_deref() == Some("interp");
+            if interp {
+                // The interpreter engine runs any target (wasm included) by
+                // construction (I-2). The actual wasm build is a cargo invocation;
+                // this acknowledges the routing and points at it.
+                println!(
+                    "axon target: engine=interp target={triple} — run via the interpreter \
+                     (build: cargo build -p axon-core --no-default-features --bin axon-run \
+                     --target wasm32-wasip1; see scripts/wasm_parity.sh)"
+                );
+                process::exit(0);
+            }
+            if triple.contains("wasm") {
+                // AOT wasm via the codegen backend — honest block (R7 §6 E0907).
+                emit_error(
+                    &format!(
+                        "[{}] AOT wasm build needs the native codegen backend — use \
+                         `axon target build --engine interp --target {triple} {}` to run via \
+                         the interpreter",
+                        axon_core::error::E0907,
+                        file.display()
+                    ),
+                    !std::io::stderr().is_terminal(),
+                );
+                process::exit(2);
+            }
+            println!(
+                "axon target: engine=codegen target={triple} — use `axon build {}` for the \
+                 native AOT binary",
+                file.display()
+            );
+            process::exit(0);
         }
     }
 }

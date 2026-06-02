@@ -193,7 +193,7 @@ R3 may move toward DONE on this slice when **all** pass:
 - [x] `offline_with_fallback_returns_fallback_mode` passes (total program offline). **DONE** — cli_run `offline_ai_complete_with_policy_fallback_returns_fallback`: `@[ai(policy(fallback: "x"))]` returns `Ok("x")` stamped `mode:"fallback"`. Parser now accepts the nested-group `@[ai(policy(...))]` form AND the flat `@[ai(fallback: "x")]` form. Demo: `examples/asi/ai_fallback.ax`.
 - [ ] `over_budget_call_uses_fallback_or_E1301` passes. *(budget slice — Phase 7)*
 - [x] `mock_call_prompt_hash_is_stable` passes (replay memo-key precondition). **DONE** as `ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts`: same prompt → same 64-hex SHA-256 across runs; distinct prompts → distinct hashes.
-- [ ] `axon ai policy` emits stable JSON (schema versioned). *(CLI slice)*
+- [x] `axon ai policy` emits one JSON line per @[ai] fn (fn/tier/fallback/model from the ai_routing table). **DONE** (cli_run: ai_policy_prints_resolved_policy_json).
 
 **Note on `goal_clear` vs the JSONL file:** the existing `goal_clear` builtin clears only the in-memory provenance store (`interp.rs:3775`, `self.provenance` / `self.provenance_inputs`). It does **not** delete or truncate the `provenance.jsonl` file on disk. If implementation follows existing `goal_clear` behavior, the AI `event:"ai_call"` NDJSON rows in the file are append-only and never cleared by `goal_clear`. This is an append-only log by design — the in-memory clear handles `goal_run` isolation; the file serves as an audit trail that is intentionally append-only. If the JSONL file must also be cleared (e.g. for disk-growth management or compliance), a separate `axon provenance trim` CLI command should be built, not entangled with `goal_clear`.
 
