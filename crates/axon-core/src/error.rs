@@ -224,6 +224,31 @@ impl AxonError {
 
 // ── Levenshtein distance ──────────────────────────────────────────────────────
 
+/// Classic Wagner-Fischer Levenshtein distance using rolling-row DP.
+/// Returns early when the distance exceeds `cutoff` (default 3) to avoid
+/// allocating large matrices for clearly-unrelated names.
+pub fn levenshtein(a: &str, b: &str) -> usize {
+    const CUTOFF: usize = 3;
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    if a.len().abs_diff(b.len()) > CUTOFF {
+        return CUTOFF + 1;
+    }
+    let m = a.len();
+    let n = b.len();
+    let mut prev: Vec<usize> = (0..=n).collect();
+    let mut curr = vec![0usize; n + 1];
+    for i in 1..=m {
+        curr[0] = i;
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[n]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,29 +328,4 @@ mod tests {
         assert!(d.contains("fix:"));
         assert!(d.contains("foo"));
     }
-}
-
-/// Classic Wagner-Fischer Levenshtein distance using rolling-row DP.
-/// Returns early when the distance exceeds `cutoff` (default 3) to avoid
-/// allocating large matrices for clearly-unrelated names.
-pub fn levenshtein(a: &str, b: &str) -> usize {
-    const CUTOFF: usize = 3;
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    if a.len().abs_diff(b.len()) > CUTOFF {
-        return CUTOFF + 1;
-    }
-    let m = a.len();
-    let n = b.len();
-    let mut prev: Vec<usize> = (0..=n).collect();
-    let mut curr = vec![0usize; n + 1];
-    for i in 1..=m {
-        curr[0] = i;
-        for j in 1..=n {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            curr[j] = (prev[j] + 1).min(curr[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut curr);
-    }
-    prev[n]
 }

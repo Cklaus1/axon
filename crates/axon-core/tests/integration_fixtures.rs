@@ -14,7 +14,7 @@ fn check_fixture(name: &str) -> Vec<String> {
         .unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
     // run_check_pipeline is pub(crate); replicate its steps here via the public API.
     let file = path.display().to_string();
-    let resolve_result = axon_core::resolver::resolve_program(&mut program, &file);
+    let resolve_result = axon_core::resolver::resolve_program(&program, &file);
     let mut errors: Vec<String> = resolve_result.errors
         .iter()
         .map(|d| format!("[{}] {}", d.code, d.message))
@@ -22,7 +22,7 @@ fn check_fixture(name: &str) -> Vec<String> {
     axon_core::resolver::fill_captures(&mut program);
     let mut infer_ctx = axon_core::infer::InferCtx::new(&file);
     let source_map = axon_core::span::SourceMap::new(source.clone());
-    let _subst = infer_ctx.infer_program(&mut program);
+    let _subst = infer_ctx.infer_program(&program);
     for e in &infer_ctx.errors {
         if !e.span.is_dummy() {
             let (line, col) = source_map.line_col(e.span.start);
@@ -39,34 +39,31 @@ fn check_fixture(name: &str) -> Vec<String> {
             }))
             .collect();
     let mut check_ctx = axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields);
-    let check_errors = check_ctx.check_program(&mut program, std::collections::HashMap::new());
+    let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
     for e in &check_errors {
         errors.push(format!("[{}] {}", e.code, e.message));
     }
     // Borrow checking
     for item in &program.items {
-        match item {
-            axon_core::ast::Item::FnDef(fndef) => {
-                let param_types: std::collections::HashMap<String, axon_core::types::Type> =
-                    if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
-                        fndef.params.iter()
-                            .zip(sig.params.iter())
-                            .map(|(p, t)| (p.name.clone(), t.clone()))
-                            .collect()
-                    } else {
-                        std::collections::HashMap::new()
-                    };
-                for err in axon_core::borrow::check_fn(fndef, param_types) {
-                    let span = err.span();
-                    if !span.is_dummy() {
-                        let (line, col) = source_map.line_col(span.start);
-                        errors.push(format!("{}:{}:{}: {}", file, line, col, err));
-                    } else {
-                        errors.push(err.to_string());
-                    }
+        if let axon_core::ast::Item::FnDef(fndef) = item {
+            let param_types: std::collections::HashMap<String, axon_core::types::Type> =
+                if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
+                    fndef.params.iter()
+                        .zip(sig.params.iter())
+                        .map(|(p, t)| (p.name.clone(), t.clone()))
+                        .collect()
+                } else {
+                    std::collections::HashMap::new()
+                };
+            for err in axon_core::borrow::check_fn(fndef, param_types) {
+                let span = err.span();
+                if !span.is_dummy() {
+                    let (line, col) = source_map.line_col(span.start);
+                    errors.push(format!("{}:{}:{}: {}", file, line, col, err));
+                } else {
+                    errors.push(err.to_string());
                 }
             }
-            _ => {}
         }
     }
     // Capability checking (@[contained])
@@ -200,7 +197,7 @@ fn multifile_merge_type_checks_cleanly() {
     let file_programs = axon_core::parse_source_files(&paths)
         .unwrap_or_else(|errs| panic!("parse failed: {}", errs.join("; ")));
 
-    let (mut program, merge_errors) = axon_core::merge_programs(file_programs);
+    let (program, merge_errors) = axon_core::merge_programs(file_programs);
     assert!(
         merge_errors.is_empty(),
         "unexpected merge errors: {:?}",
@@ -209,7 +206,7 @@ fn multifile_merge_type_checks_cleanly() {
 
     // Run the check pipeline on the merged program.
     let file = "multifile_merge";
-    let resolve_result = axon_core::resolver::resolve_program(&mut program, file);
+    let resolve_result = axon_core::resolver::resolve_program(&program, file);
     let resolve_errors: Vec<String> = resolve_result.errors
         .iter()
         .map(|d| format!("[{}] {}", d.code, d.message))
@@ -269,7 +266,7 @@ fn axon_path_load_use_decls_missing_module() {
     // Now try with a real (but empty) dir.
     let tmp = std::env::temp_dir().join(format!("axon_test_missing_{}", std::process::id()));
     std::fs::create_dir_all(&tmp).ok();
-    let errors2 = axon_core::load_use_decls(&mut program, &[tmp.clone()]);
+    let errors2 = axon_core::load_use_decls(&mut program, std::slice::from_ref(&tmp));
     let _ = std::fs::remove_dir_all(&tmp);
 
     assert!(
@@ -298,7 +295,7 @@ fn circular_import_produces_e0902() {
     std::fs::write(beta_dir.join("utils.ax"), beta_src).expect("write beta/utils");
 
     let mut program = axon_core::parse_source(alpha_src).expect("parse alpha");
-    let errors = axon_core::load_use_decls(&mut program, &[tmp.clone()]);
+    let errors = axon_core::load_use_decls(&mut program, std::slice::from_ref(&tmp));
 
     let _ = std::fs::remove_dir_all(&tmp);
 

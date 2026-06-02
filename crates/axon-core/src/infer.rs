@@ -1635,7 +1635,7 @@ mod tests {
     #[test]
     fn float_literal_infers_f64() {
         let (mut ctx, mut scope) = ctx();
-        let ty = ctx.infer_expr(&Expr::Literal(AstLit::Float(3.14)), &mut scope, &Type::Unit);
+        let ty = ctx.infer_expr(&Expr::Literal(AstLit::Float(2.5)), &mut scope, &Type::Unit);
         assert_eq!(ty, Type::F64);
     }
 
@@ -1977,7 +1977,7 @@ mod tests {
     #[test]
     fn chan_resolve_from_ast_type() {
         use crate::ast::AxonType;
-        let mut ctx = InferCtx::new("test");
+        let ctx = InferCtx::new("test");
         let ast_chan = AxonType::Chan(Box::new(AxonType::Named("i64".to_string())));
         let resolved = ctx.resolve_ast_type(&ast_chan);
         assert_eq!(resolved, Type::Chan(Box::new(Type::I64)));

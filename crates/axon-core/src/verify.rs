@@ -774,7 +774,7 @@ mod tests {
         // f64 variant — same lattice classification as the i64 form.
         let body = Expr::Block(vec![Stmt::simple(call(
             "uncertain_dyn_f64",
-            vec![lit_f(3.14), lit_f(0.5)],
+            vec![lit_f(2.5), lit_f(0.5)],
         ))]);
         let pred = Expr::BinOp {
             op: BinOp::GtEq,
