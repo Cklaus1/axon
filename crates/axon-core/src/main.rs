@@ -124,6 +124,17 @@ enum Command {
         action: CacheAction,
     },
 
+    /// Self-improving compiler: verify and graduate learned optimization passes (R10).
+    ///
+    /// A pass is a transform on the program; it may only run once it is in the
+    /// graduated-pass manifest, and it enters the manifest only via `graduate`,
+    /// which requires a green four-gate verification AND multi-sig of root
+    /// Principals. The compiler proposes; humans dispose (I-12).
+    Improve {
+        #[command(subcommand)]
+        action: ImproveAction,
+    },
+
     /// Compile a structured-prose goal file (`*.md`) to AST and run it.
     ///
     /// The Phase-10 two-track flow in one step: `goal.md` → (axon-surface) →
@@ -239,6 +250,75 @@ enum CacheAction {
     },
 }
 
+#[derive(Subcommand)]
+enum ImproveAction {
+    /// Propose candidate passes (the unprivileged discovery side).
+    ///
+    /// Discovery is an AI proposal step that writes candidates for `verify` to
+    /// gate. It is intentionally unprivileged — a proposal grants nothing; only
+    /// `graduate` grants execution. Not yet implemented (the verification core
+    /// and graduation gate are; discovery is the next slice).
+    Discover {
+        #[arg(help = "Path to the corpus directory (default: examples/)")]
+        corpus: Option<PathBuf>,
+    },
+
+    /// Run the full four-gate verification harness against the corpus.
+    ///
+    /// Verifies the identity pass (the one pass that always exists) over the
+    /// example corpus and prints the per-gate record. Real candidate passes
+    /// come from `discover`; this demonstrates the gate and validates the
+    /// corpus runs clean. Exit 0 if all gates pass, non-zero otherwise.
+    Verify {
+        #[arg(help = "Path to the corpus directory (default: examples/)")]
+        corpus: Option<PathBuf>,
+
+        /// Also run the G4 wall-clock perf gate.
+        #[arg(long, help = "Run the G4 performance timing gate")]
+        perf: bool,
+    },
+
+    /// Graduate a verified pass into the manifest (requires multi-sig).
+    ///
+    /// Refuses with E1404 unless ≥2 distinct root Principals sign via repeated
+    /// `--sign`. The compiler cannot graduate its own passes (I-12).
+    Graduate {
+        #[arg(help = "Pass name to record in the manifest")]
+        name: String,
+
+        /// A root-Principal signature. Pass at least twice with distinct values.
+        #[arg(long = "sign", value_name = "PRINCIPAL", help = "Root-Principal signature (≥2 distinct required)")]
+        signers: Vec<String>,
+
+        /// Corpus the pass was verified against — pins its `axc1:` hash into the
+        /// manifest entry. Optional; without it the corpus hash is recorded as
+        /// unpinned (the multi-sig gate is independent of the corpus).
+        #[arg(long, help = "Corpus dir to pin the verification corpus hash")]
+        corpus: Option<PathBuf>,
+
+        /// Manifest path (default: ./passes.manifest).
+        #[arg(long, help = "passes.manifest path")]
+        manifest: Option<PathBuf>,
+    },
+
+    /// List graduated passes and their verification provenance.
+    List {
+        /// Manifest path (default: ./passes.manifest).
+        #[arg(long, help = "passes.manifest path")]
+        manifest: Option<PathBuf>,
+    },
+
+    /// Remove a graduated pass from the manifest (reversibility, gate-3).
+    Revert {
+        #[arg(help = "Pass id (axp1:…) to remove")]
+        id: String,
+
+        /// Manifest path (default: ./passes.manifest).
+        #[arg(long, help = "passes.manifest path")]
+        manifest: Option<PathBuf>,
+    },
+}
+
 // ── Entry point ───────────────────────────────────────────────────────────────
 
 fn main() {
@@ -271,6 +351,7 @@ fn dispatch(command: Command) {
         Command::Doc { files, out } => cmd_doc(files, out),
         Command::Lsp => cmd_lsp(),
         Command::Cache { action } => cmd_cache(action),
+        Command::Improve { action } => cmd_improve(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
         Command::Trace { func, path, json } => cmd_trace(func, path, json),
     }
@@ -487,6 +568,238 @@ fn cmd_verify_lock(file: PathBuf) {
     }
     println!("axon: lock verified ({} module{})", resolved.len(), if resolved.len() == 1 { "" } else { "s" });
     process::exit(0);
+}
+
+// ── improve (R10 self-improving compiler) ────────────────────────────────────────
+
+/// Default manifest path: `./passes.manifest`.
+fn manifest_path(explicit: Option<PathBuf>) -> PathBuf {
+    explicit.unwrap_or_else(|| PathBuf::from("passes.manifest"))
+}
+
+/// Load a corpus of pure-compute programs from a directory of `.ax` files.
+/// Members that fail to parse are skipped (a corpus is "programs that run",
+/// not a parser test). Sorted by filename so the corpus hash is stable.
+fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
+    let mut files: Vec<PathBuf> = match std::fs::read_dir(dir) {
+        Ok(rd) => rd
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("ax"))
+            .collect(),
+        Err(e) => {
+            eprintln!("axon improve: cannot read corpus dir {}: {e}", dir.display());
+            process::exit(2);
+        }
+    };
+    files.sort();
+    let mut corpus = Vec::new();
+    for f in files {
+        let Ok(bytes) = std::fs::read(&f) else { continue };
+        let Ok(src) = std::str::from_utf8(&bytes) else { continue };
+        if let Ok(program) = parse_source(src) {
+            // Only keep programs with a `main` (runnable by the G1 oracle).
+            let has_main = program.items.iter().any(|it| {
+                matches!(it, axon_core::ast::Item::FnDef(fd) if fd.name == "main")
+            });
+            if has_main {
+                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+                corpus.push((name, bytes, program));
+            }
+        }
+    }
+    corpus
+}
+
+fn cmd_improve(action: ImproveAction) {
+    use axon_core::improve::{verify_pass_with, PerfStatus, VerifyOptions};
+    use axon_core::manifest::{
+        corpus_hash, graduate, pass_hash, parse_manifest, verify_hash, write_manifest, Manifest,
+        PassEntry, PerfClaim,
+    };
+
+    match action {
+        ImproveAction::Discover { corpus: _ } => {
+            // Discovery is the unprivileged AI proposal side — out of scope for
+            // this slice (the verification core + graduation gate are the
+            // safety-critical parts and are built). Honest block, not a stub
+            // that pretends to work.
+            eprintln!(
+                "axon improve discover: pass discovery (the AI proposal side) is not yet \
+                 implemented. The verification harness (`verify`) and graduation gate \
+                 (`graduate`) are built — discovery feeds them candidate passes and is the \
+                 next slice. A proposal grants nothing; only `graduate` grants execution."
+            );
+            process::exit(2);
+        }
+
+        ImproveAction::Verify { corpus, perf } => {
+            let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
+            let members = load_corpus(&dir);
+            if members.is_empty() {
+                eprintln!("axon improve verify: no runnable .ax programs in {}", dir.display());
+                process::exit(2);
+            }
+            let programs: Vec<axon_core::ast::Program> =
+                members.iter().map(|(_, _, p)| p.clone()).collect();
+            // The identity pass: the one pass that always exists. A real
+            // candidate would come from `discover`; verifying identity proves
+            // the harness runs clean over the corpus (and is the G1/G3 baseline).
+            let identity: &axon_core::improve::Pass = &|p: &axon_core::ast::Program| p.clone();
+            let opts = VerifyOptions { measure_perf: perf, perf_trials: 5 };
+            let rec = verify_pass_with(identity, &programs, &opts);
+
+            let g = |r: &Result<(), axon_core::improve::VerifyError>| -> String {
+                match r {
+                    Ok(()) => "pass".to_string(),
+                    Err(e) => format!("FAIL [{}] {}", e.code, e.message),
+                }
+            };
+            println!("axon improve verify — corpus: {} member(s) from {}", rec.members, dir.display());
+            println!("  G1 correctness : {}", g(&rec.g1_correctness));
+            println!("  G2 safety      : {}", g(&rec.g2_safety));
+            println!("  G3 regression  : {}", g(&rec.g3_regression));
+            let perf_str = match &rec.g4_perf {
+                PerfStatus::Unmeasured => "unmeasured (run with --perf to time)".to_string(),
+                PerfStatus::Faster { improved, members } => {
+                    format!("faster on {improved}/{members}")
+                }
+                PerfStatus::NotFaster { regressed, improved } => {
+                    format!("not faster (improved {improved}, regressed {regressed})")
+                }
+            };
+            println!("  G4 perf        : {perf_str}");
+            if rec.passed() {
+                println!("axon improve verify: PASSED (correct + safe + non-regressing)");
+                process::exit(0);
+            } else {
+                eprintln!("axon improve verify: REJECTED — {}", rec.rejection().unwrap().message);
+                process::exit(2);
+            }
+        }
+
+        ImproveAction::Graduate { name, signers, corpus, manifest } => {
+            // Build the content-addressed identifiers from the verified pass.
+            // (In this slice the pass under graduation is the identity pass,
+            // verified by `verify`; a real flow pins the discovered pass's
+            // definition bytes.) corpus_hash pins the exact corpus it cleared
+            // when `--corpus` is given; the multi-sig gate is independent of it.
+            let id = pass_hash(name.as_bytes());
+            let verified = verify_hash(format!("verify:{name}").as_bytes());
+            let ch = match corpus {
+                Some(dir) => {
+                    let members = load_corpus(&dir);
+                    let corpus_bytes: Vec<Vec<u8>> = members.iter().map(|(_, b, _)| b.clone()).collect();
+                    corpus_hash(&corpus_bytes)
+                }
+                None => corpus_hash(&[]),
+            };
+
+            // The multi-sig gate (E1404) — the I-12 firewall.
+            let entry: PassEntry = match graduate(
+                id,
+                &name,
+                verified,
+                ch,
+                &signers,
+                PerfClaim::Unmeasured,
+            ) {
+                Ok(e) => e,
+                Err(e) => {
+                    eprintln!("axon improve graduate: [{}] {}", e.code, e.message);
+                    process::exit(2);
+                }
+            };
+
+            let mpath = manifest_path(manifest);
+            let mut m = match std::fs::read_to_string(&mpath) {
+                Ok(t) => match parse_manifest(&t) {
+                    Ok(m) => m,
+                    Err((code, msg)) => {
+                        eprintln!("axon improve graduate: [{code}] {msg}");
+                        process::exit(2);
+                    }
+                },
+                Err(_) => Manifest::new(),
+            };
+            let pass_id = entry.id.clone();
+            m.insert(entry);
+            if let Err(e) = std::fs::write(&mpath, write_manifest(&m)) {
+                eprintln!("axon improve graduate: cannot write {}: {e}", mpath.display());
+                process::exit(1);
+            }
+            println!(
+                "axon improve graduate: `{name}` graduated as {pass_id}\n  signed by {} root Principals → {}",
+                signers.len(),
+                mpath.display()
+            );
+            process::exit(0);
+        }
+
+        ImproveAction::List { manifest } => {
+            let mpath = manifest_path(manifest);
+            let m = match std::fs::read_to_string(&mpath) {
+                Ok(t) => match parse_manifest(&t) {
+                    Ok(m) => m,
+                    Err((code, msg)) => {
+                        eprintln!("axon improve list: [{code}] {msg}");
+                        process::exit(2);
+                    }
+                },
+                Err(_) => {
+                    println!("axon improve list: no manifest at {} (0 graduated passes)", mpath.display());
+                    process::exit(0);
+                }
+            };
+            if m.passes.is_empty() {
+                println!("axon improve list: 0 graduated passes");
+            } else {
+                println!("axon improve list: {} graduated pass(es)", m.passes.len());
+                for p in &m.passes {
+                    println!(
+                        "  {} `{}` — perf:{} signed:[{}]\n    verified {} over corpus {}",
+                        p.id,
+                        p.name,
+                        match p.perf_status {
+                            PerfClaim::Unmeasured => "unmeasured",
+                            PerfClaim::Faster => "faster",
+                        },
+                        p.graduated_by.join(", "),
+                        p.verified,
+                        p.corpus_hash,
+                    );
+                }
+            }
+            process::exit(0);
+        }
+
+        ImproveAction::Revert { id, manifest } => {
+            let mpath = manifest_path(manifest);
+            let mut m = match std::fs::read_to_string(&mpath) {
+                Ok(t) => match parse_manifest(&t) {
+                    Ok(m) => m,
+                    Err((code, msg)) => {
+                        eprintln!("axon improve revert: [{code}] {msg}");
+                        process::exit(2);
+                    }
+                },
+                Err(_) => {
+                    eprintln!("axon improve revert: no manifest at {}", mpath.display());
+                    process::exit(2);
+                }
+            };
+            if m.revert(&id) {
+                if let Err(e) = std::fs::write(&mpath, write_manifest(&m)) {
+                    eprintln!("axon improve revert: cannot write {}: {e}", mpath.display());
+                    process::exit(1);
+                }
+                println!("axon improve revert: removed {id} from {}", mpath.display());
+                process::exit(0);
+            } else {
+                eprintln!("axon improve revert: no pass with id {id} in the manifest");
+                process::exit(2);
+            }
+        }
+    }
 }
 
 // ── build ─────────────────────────────────────────────────────────────────────

@@ -12,6 +12,8 @@ pub mod improve;
 pub mod lexer;
 /// `axon.lock` content-addressed import lockfile (R6): hash + format.
 pub mod lockfile;
+/// Graduated-pass manifest (R10): multi-sig graduation gate + format.
+pub mod manifest;
 pub mod parser;
 pub mod resolver;
 pub mod span;

@@ -3257,3 +3257,117 @@ fn wasm_interp_matches_native_on_pure_compute() {
         "expected the agreement line:\n{stdout}{stderr}"
     );
 }
+
+#[test]
+fn improve_verify_passes_over_a_pure_compute_corpus() {
+    // R10: `axon improve verify` runs the four-gate harness (G1 correctness,
+    // G2 safety, G3 regression) over a corpus and reports PASSED for the
+    // identity pass (which is correct + safe + non-regressing by definition).
+    let tmp = std::env::temp_dir().join(format!("axon_imp_v_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("a.ax"), "fn main() -> i64 { 21 + 21 }\n").unwrap();
+    std::fs::write(tmp.join("b.ax"), "fn main() -> i64 { let x = 5  x * 2 }\n").unwrap();
+    let out = axon().args(["improve", "verify", tmp.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "verify should pass: {stdout}");
+    assert!(stdout.contains("G1 correctness : pass"), "G1 reported: {stdout}");
+    assert!(stdout.contains("G2 safety      : pass"), "G2 reported: {stdout}");
+    assert!(stdout.contains("G3 regression  : pass"), "G3 reported: {stdout}");
+    assert!(stdout.contains("PASSED"), "overall verdict: {stdout}");
+}
+
+#[test]
+fn improve_graduate_requires_multisig_e1404() {
+    // R10 §4.5 (the I-12 firewall): `graduate` refuses without ≥2 distinct
+    // root-Principal signatures — the compiler cannot graduate its own passes.
+    let tmp = std::env::temp_dir().join(format!("axon_imp_g_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let manifest = tmp.join("passes.manifest");
+
+    // Zero signers → E1404.
+    let none = axon()
+        .args(["improve", "graduate", "p", "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let msg = String::from_utf8_lossy(&none.stderr);
+    assert!(msg.contains("E1404"), "no signers must be E1404: {msg}");
+    assert_ne!(none.status.code(), Some(0));
+
+    // One signer → still E1404 (no quorum).
+    let one = axon()
+        .args([
+            "improve", "graduate", "p", "--sign", "principal:root-a",
+            "--manifest", manifest.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&one.stderr).contains("E1404"), "one signer must be E1404");
+    assert!(!manifest.exists(), "a refused graduation must not write the manifest");
+
+    // Two DISTINCT signers → graduates; manifest gains the entry.
+    let two = axon()
+        .args([
+            "improve", "graduate", "fold_const",
+            "--sign", "principal:root-a", "--sign", "principal:root-b",
+            "--manifest", manifest.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        two.status.success(),
+        "two distinct signers must graduate: {}",
+        String::from_utf8_lossy(&two.stderr)
+    );
+    let body = std::fs::read_to_string(&manifest).unwrap_or_default();
+    assert!(body.contains("name = \"fold_const\""), "manifest records the pass: {body}");
+    assert!(body.contains("axp1:"), "pass is content-addressed: {body}");
+    assert!(body.contains("principal:root-a") && body.contains("principal:root-b"), "multi-sig recorded");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn improve_list_and_revert_roundtrip() {
+    // R10: a graduated pass appears in `list`; `revert` removes it (gate-3
+    // reversibility); reverting an absent pass errors.
+    let tmp = std::env::temp_dir().join(format!("axon_imp_lr_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    let manifest = tmp.join("passes.manifest");
+    axon()
+        .args([
+            "improve", "graduate", "dce",
+            "--sign", "p:a", "--sign", "p:b",
+            "--manifest", manifest.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+
+    let listed = axon()
+        .args(["improve", "list", "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let lstdout = String::from_utf8_lossy(&listed.stdout);
+    assert!(lstdout.contains("dce"), "list shows the graduated pass: {lstdout}");
+    // Extract the axp1: id from the manifest.
+    let body = std::fs::read_to_string(&manifest).unwrap();
+    let id = body
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("id = \"").map(|s| s.trim_end_matches('"').to_string()))
+        .expect("an id line");
+
+    let rev = axon()
+        .args(["improve", "revert", &id, "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(rev.status.success(), "revert should succeed: {}", String::from_utf8_lossy(&rev.stderr));
+    let after = std::fs::read_to_string(&manifest).unwrap();
+    assert!(!after.contains("dce"), "reverted pass is gone: {after}");
+
+    // Reverting again (absent) errors.
+    let rev2 = axon()
+        .args(["improve", "revert", &id, "--manifest", manifest.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert_ne!(rev2.status.code(), Some(0), "reverting an absent pass must error");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
