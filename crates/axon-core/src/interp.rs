@@ -793,6 +793,19 @@ impl<'p> Interp<'p> {
         None
     }
 
+    /// R4: the name of the currently-executing fn if it is in the `@[agent]`
+    /// zone, else `None`. Used to inject the mandatory agent action log: every
+    /// capability-bearing action an agent takes is audited (I-13).
+    fn current_agent_fn(&self) -> Option<String> {
+        let name = self.current_fn.borrow().clone();
+        let f = self.fns.get(name.as_str())?;
+        if f.attrs.iter().any(|a| a.name == "agent") {
+            Some(name)
+        } else {
+            None
+        }
+    }
+
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
         // Bound recursion: a graceful panic instead of a process-aborting stack
         // overflow on runaway/infinite recursion. `_guard` restores the depth on
@@ -2494,6 +2507,19 @@ impl<'p> Interp<'p> {
             ($v:expr) => {
                 return Ok(Some($v))
             };
+        }
+
+        // R4 §4.3 — mandatory `@[agent]` action log (I-13). When a capability-
+        // bearing builtin is called from inside an `@[agent]` fn, inject one
+        // `agent_action` audit record naming the tool and the capability it
+        // exercises. Compiler-injected at the call site, so an agent cannot act
+        // on the world (fs/net/exec) without the action being logged — the
+        // highest-trust zone's un-opt-out-able audit trail. Pure builtins
+        // (no capability) are not logged; non-agent callers are unaffected.
+        if let Some(cap) = crate::capabilities::capability_of_builtin(name) {
+            if let Some(agent_fn) = self.current_agent_fn() {
+                append_agent_action_jsonl(&agent_fn, name, cap);
+            }
         }
 
         match name {
@@ -4952,6 +4978,37 @@ fn append_provenance_jsonl(
         ev = json_quote(&format!("{zone}_return")),
         z = json_quote(zone),
         p = json_quote(payload),
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// R4 §4.3 — append one `event:"agent_action"` audit record for a capability-
+/// bearing action taken inside an `@[agent]` function. `action` is the tool
+/// (builtin) name; `caps_used` is the capability kind it exercises (the I-11
+/// link). Compiler-injected at the call site, so an agent's actions are logged
+/// whether or not the agent "cooperates" (I-13, the highest-trust zone).
+fn append_agent_action_jsonl(fn_name: &str, action: &str, caps_used: &str) {
+    let Some(path) = provenance_log_path() else { return };
+    if let Some(dir) = path.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let ts = now_ms().max(0) as u64;
+    let src = provenance_source();
+    let src_field = if src.is_empty() {
+        String::new()
+    } else {
+        format!(",\"src\":{}", json_quote(src))
+    };
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\
+         \"action\":{a},\"caps_used\":{c}{src_field}}}\n",
+        f = json_quote(fn_name),
+        a = json_quote(action),
+        c = json_quote(caps_used),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());

@@ -3531,3 +3531,53 @@ fn locked_mode_enforces_axon_lock() {
     assert!(tmsg.contains("E1201"), "--locked with tampered bytes must be E1201: {tmsg}");
     assert_ne!(tampered.status.code(), Some(0), "tampered import is fatal under --locked");
 }
+
+#[test]
+fn agent_actions_are_mandatorily_logged() {
+    // R4 §4.3 (I-13): every capability-bearing action inside an `@[agent]` fn
+    // produces a compiler-injected `event:"agent_action"` audit record (action
+    // = tool name, caps_used = the capability). A non-agent fn doing the
+    // IDENTICAL call produces NO such record — the log is keyed on the zone, not
+    // on cooperation, and only agents are audited at action granularity.
+    let cache = std::env::temp_dir().join(format!("axon_r4agent_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[agent]
+fn planner(goal: str) -> str {
+    match ai_complete("plan {goal}") { Ok(s) => s  Err(_) => "" }
+}
+fn plain(goal: str) -> str {
+    match ai_complete("plan {goal}") { Ok(s) => s  Err(_) => "" }
+}
+fn main() -> i64 {
+    let _ = planner("a")
+    let _ = plain("b")
+    0
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r4agent_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "program should run clean");
+
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let actions: Vec<&str> = body.lines().filter(|l| l.contains("\"event\":\"agent_action\"")).collect();
+    assert_eq!(
+        actions.len(), 1,
+        "exactly one agent_action (from planner, not plain), got {}. Log:\n{body}",
+        actions.len()
+    );
+    let rec = actions[0];
+    assert!(rec.contains("\"fn\":\"planner\""), "attributed to the agent fn: {rec}");
+    assert!(rec.contains("\"action\":\"ai_complete\""), "names the tool: {rec}");
+    assert!(rec.contains("\"caps_used\":\"net\""), "records the capability: {rec}");
+    assert!(rec.contains("\"zone\":\"agent\""), "tagged zone agent: {rec}");
+}

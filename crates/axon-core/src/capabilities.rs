@@ -137,6 +137,15 @@ pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<Str
     caps
 }
 
+/// The capability kind a builtin call exercises (`"fs:read"`, `"fs:write"`,
+/// `"net"`, `"exec"`), or `None` for a pure builtin. Single-sourced on
+/// `classify_call` so the taxonomy is shared by the `@[contained]` checker, the
+/// R10 capability-diff, and R4's `@[agent]` action log (which records the
+/// `caps_used` of each agent action). Public so the interpreter can stamp it.
+pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
+    classify_call(name).map(|k| cap_label(&k))
+}
+
 /// The capability *ceiling* an importer's `@[contained]` declarations grant —
 /// the union of capability kinds any contained fn in the program is allowed to
 /// exercise. Used as the boundary the import-edge check enforces (R6 §4.4).
