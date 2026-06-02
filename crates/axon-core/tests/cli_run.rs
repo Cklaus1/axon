@@ -3846,3 +3846,41 @@ fn transitive_imports_are_locked_and_tamper_checked() {
     assert!(msg.contains("leaf"), "names the deep module: {msg}");
     assert_ne!(bad.status.code(), Some(0), "tamper is fatal");
 }
+
+#[test]
+fn parse_int_rejects_trailing_garbage_reference_for_codegen_37() {
+    // BUG_HUNT #37: `parse_int` must reject trailing garbage — "0x1F", "12abc"
+    // are Err, not Ok of the leading digits. This is the INTERPRETER (reference,
+    // I-2) contract; the codegen `parse_int` was fixed to match it (strtoll
+    // endptr must reach data+len, and the Err carries a real message instead of
+    // an empty string). Native parity verified manually via `axon build`
+    // (interp & native both return the same exit code on the mixed inputs).
+    let f = std::env::temp_dir().join(format!("axon_pi37_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n\
+           let a = match parse_int(\"0x1F\")  { Ok(n) => n  Err(_) => 0 - 1 }\n\
+           let b = match parse_int(\"12abc\") { Ok(n) => n  Err(_) => 0 - 2 }\n\
+           let c = match parse_int(\"42\")    { Ok(n) => n  Err(_) => 0 - 3 }\n\
+           a + b + c\n\
+         }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    // 0x1F → Err(-1), 12abc → Err(-2), 42 → Ok(42); sum = 39. If trailing
+    // garbage were accepted (the old codegen bug), the sum would differ.
+    assert_eq!(out.status.code(), Some(39), "trailing garbage must be rejected: {}", String::from_utf8_lossy(&out.stderr));
+
+    // The Err carries a non-empty, base-10-explaining message (#37 divergence 1).
+    let g = std::env::temp_dir().join(format!("axon_pi37m_{}.ax", std::process::id()));
+    std::fs::write(
+        &g,
+        "fn main() -> i64 { match parse_int(\"0xFF\") { Ok(_) => 0  Err(m) => str_len(m) } }\n",
+    )
+    .unwrap();
+    let out2 = axon().args(["run", g.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&g);
+    let len = out2.status.code().unwrap_or(0);
+    assert!(len > 0, "Err message must be non-empty, got len {len}");
+}
