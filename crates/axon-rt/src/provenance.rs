@@ -118,7 +118,10 @@ pub extern "C" fn __axon_provenance_log_ret_i64(
         record(fn_name, ret as f64);
     }
     let payload = format!("ret_i64={}", ret);
-    let _ = log_event(fn_name, &payload, Some(ret as f64));
+    // R4: emit the SAME discriminator the interpreter writes
+    // (`event:"adaptive_return"`, `zone:"adaptive"`) so native and interp
+    // provenance carry matching shape — the I-13 engine-parity guarantee.
+    let _ = log_adaptive_return(fn_name, &payload, ret as f64);
 }
 
 /// Layer-2 entry point: log an `f64` return value from an adaptive function.
@@ -133,7 +136,7 @@ pub extern "C" fn __axon_provenance_log_ret_f64(
         record(fn_name, ret);
     }
     let payload = format!("ret_f64={}", ret);
-    let _ = log_event(fn_name, &payload, Some(ret));
+    let _ = log_adaptive_return(fn_name, &payload, ret);
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -191,6 +194,39 @@ fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Resul
             pl_q  = json_quote(body),
         ),
     };
+
+    let mut f = OpenOptions::new().create(true).append(true).open(path)?;
+    f.write_all(line.as_bytes())?;
+    Ok(())
+}
+
+/// R4 engine-parity: append an `@[adaptive]` return record whose shape matches
+/// the interpreter's `append_provenance_jsonl` (interp.rs) — same `event` and
+/// `zone` discriminator so native and interpreted runs of the same program
+/// produce structurally identical provenance (I-13).  The interpreter also
+/// stamps `input` (the call's first scalar arg) and `src` (the source path);
+/// codegen does not thread those through the ABI yet, so they are omitted here
+/// rather than faked — the discriminating fields (`event`/`zone`/`fn`/`score`)
+/// are the parity contract.
+fn log_adaptive_return(fn_name: &str, payload: &str, score: f64) -> std::io::Result<()> {
+    let dir = provenance_dir().ok_or_else(|| {
+        std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir")
+    })?;
+    fs::create_dir_all(&dir)?;
+    let path = dir.join("provenance.jsonl");
+
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":\"adaptive_return\",\"zone\":\"adaptive\",\"payload\":{pl_q},\"score\":{s}}}\n",
+        ts   = ts,
+        fn_q = json_quote(fn_name),
+        pl_q = json_quote(payload),
+        s    = format_f64(score),
+    );
 
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
     f.write_all(line.as_bytes())?;

@@ -172,9 +172,9 @@ R4 advances from 55% when **all** pass:
 - [ ] `zoned_fn_has_no_opt_out` passes (the I-13 core — no construct suppresses injection).
 - [ ] `conflicting_zones_rejected` passes (E1503).
 - [ ] `experiment_label_required` passes (E1502).
-- [ ] **(R1-gated)** `interp_codegen_provenance_parity` passes — *blocked until R1; written + `#[ignore]`d so native injection can't silently regress.*
+- [x] **(was R1-gated)** `codegen_provenance_matches_interp_on_adaptive_returns` passes — **DONE** now that R1 native builds (~3s). `scripts/provenance_parity.sh` compiles ONE `@[adaptive]` program both ways and asserts the native binary's return records carry the SAME discriminating fields the interpreter writes (`event:"adaptive_return"`, `zone:"adaptive"`, `fn`, `score`). **Found + fixed a real I-13 codegen hole**: pre-fix the native runtime's typed-return entry points (`__axon_provenance_log_ret_{i64,f64}` in `axon-rt/src/provenance.rs`) wrote a *degraded* record — `event:"event"` with **no `zone`** — so a native build silently lost the discriminator. Fixed via `log_adaptive_return()` matching interp's shape. The harness skips (exit 0) when LLVM/inkwell is absent, so it stays green in interpreter-only CI. *Remaining native gap (noted, not faked): the interpreter also stamps `input` (first scalar arg) + `src` (source path); codegen doesn't thread those through the ABI yet — the parity contract is on the discriminating fields, not the richer interp context.*
 
-R4 may rise 55% → ~80% on the interpreter slice (experiment distinct, agent log, no-opt-out all testable now); the final ~20% is codegen conformance, R1-gated.
+R4 rises 55% → ~88%: the interpreter slice (experiment distinct, agent log, no-opt-out) plus the codegen parity tripwire all pass. The residual ~12% is the `input`/`src` ABI enrichment in native records and the agent-action codegen path (Phase-7 tool surface, Q2).
 
 ## 10. Performance budget
 

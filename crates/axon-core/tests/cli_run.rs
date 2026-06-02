@@ -3259,6 +3259,49 @@ fn wasm_interp_matches_native_on_pure_compute() {
 }
 
 #[test]
+fn codegen_provenance_matches_interp_on_adaptive_returns() {
+    // R4 §8 "Parity" acceptance + the codegen provenance tripwire: I-13
+    // (provenance is not opt-out-able) must hold UNIFORMLY across the
+    // interpreter AND the native codegen build. The fork the R4 spec names is
+    // that native silently loses or degrades the guarantee — it *looks* present
+    // because the interpreter (the tested path) injects, while a native binary
+    // runs the same @[adaptive] fn with a degraded record shape (pre-fix native
+    // wrote `event:"event"` with no `zone`, instead of the interpreter's
+    // `event:"adaptive_return","zone":"adaptive"`).
+    //
+    // Delegates to scripts/provenance_parity.sh, which builds BOTH engines,
+    // runs one @[adaptive] program through each, and asserts the native return
+    // records carry the same discriminating fields (event/zone/fn/score) the
+    // interpreter writes. The harness SKIPS (exit 0 with a notice) when codegen
+    // can't build (LLVM/inkwell absent), so this test stays green in
+    // interpreter-only CI — it asserts "no parity DIFF", not "LLVM is present".
+    let script = format!("{}/../../scripts/provenance_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("provenance_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run provenance_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let skipped = stdout.contains("skipping") || stderr.contains("skipping");
+    if skipped {
+        eprintln!("codegen unavailable — provenance parity test skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native/interp provenance parity must hold for @[adaptive] (I-13 engine-uniform):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("native and interp provenance agree"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn improve_verify_passes_over_a_pure_compute_corpus() {
     // R10: `axon improve verify` runs the four-gate harness (G1 correctness,
     // G2 safety, G3 regression) over a corpus and reports PASSED for the
