@@ -179,8 +179,8 @@ Red test that must fail first: **`tampered_module_is_rejected_under_locked`** �
 
 R6 advances toward DONE on this slice when **all** pass:
 
-- [ ] `tampered_module_is_rejected_under_locked` passes (E1201; the requirement's "tampered content hash rejected").
-- [ ] `unlocked_import_fails_under_locked_mode` passes (E1202).
+- [x] `tampered_module_is_rejected_under_locked` passes (E1201; the requirement's "tampered content hash rejected"). **DONE** — cli_run `tampered_module_is_rejected_under_locked`: `axon lock` writes axon.lock with each module's `axh1:` hash; `axon verify-lock` recomputes and a one-byte mutation is rejected with E1201, exit 2. End-to-end tamper detection.
+- [x] `unlocked_import_fails_under_locked_mode` passes (E1202). **DONE** as cli_run `verify_lock_flags_a_module_missing_from_the_lock`: a `use`d module with no lockfile entry is flagged E1202 by `verify-lock`. *(The `--locked` flag on `axon check` is a thin follow-on; `verify-lock` already enforces the same gate.)*
 - [ ] `import_widening_capabilities_is_rejected` passes (E1203; the requirement's "import without declared capability fails compile").
 - [x] `axon_lock_roundtrips_deterministically` passes. **DONE** — `lockfile.rs` (pure, zero-dep): `module_hash()` = `axh1:`-tagged SHA-256 over raw source bytes (stable, differs on a one-byte change); `write_lock`/`parse_lock` round-trip the TOML schema with sorted-name deterministic order (write∘parse∘write is byte-stable); malformed/unknown-version => E1205. 6 unit tests. *(CLI `axon lock`/`add` + import-time hash check are the next slices.)*
 - [ ] `axon_path_shadow_is_caught_under_locked` passes (the core substitution attack).

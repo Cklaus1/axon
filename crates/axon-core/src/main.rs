@@ -64,6 +64,25 @@ enum Command {
         json: bool,
     },
 
+    /// Write `axon.lock` pinning each `use`d module to its content hash (R6).
+    ///
+    /// Resolves the program's imports via AXON_PATH, hashes each module's raw
+    /// bytes (`axh1:` SHA-256), and writes a deterministic `axon.lock` next to
+    /// the source. Commit the lockfile so later builds can detect tampering.
+    Lock {
+        #[arg(help = "Path to .ax source file whose imports to lock")]
+        file: PathBuf,
+    },
+
+    /// Recompute each module's hash and compare to `axon.lock` (R6 tamper check).
+    ///
+    /// Exits non-zero with E1201 if any module's bytes changed since the lock
+    /// was written, or E1202 if an imported module has no lock entry.
+    VerifyLock {
+        #[arg(help = "Path to .ax source file whose lock to verify")]
+        file: PathBuf,
+    },
+
     /// Compile one or more .ax files to a native binary.
     Build {
         /// Path(s) to .ax source files. All files share a single global namespace.
@@ -241,6 +260,8 @@ fn dispatch(command: Command) {
     match command {
         Command::Parse { file } => cmd_parse(file),
         Command::Check { file, json } => cmd_check(file, json),
+        Command::Lock { file } => cmd_lock(file),
+        Command::VerifyLock { file } => cmd_verify_lock(file),
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
             cmd_build(files, out, release, target, no_cache, cache_dir)
         }
@@ -323,6 +344,149 @@ fn cmd_check(file: PathBuf, json_flag: bool) {
     }
     // Fix 8: exit 2 for compile errors.
     process::exit(2);
+}
+
+// ── lock / verify-lock (R6) ─────────────────────────────────────────────────────
+
+/// Path to the `axon.lock` that sits next to a source file.
+fn lock_path_for(file: &Path) -> PathBuf {
+    file.parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("axon.lock")
+}
+
+/// Resolve a program's direct `use`s to `(name, path, bytes)`, reporting parse
+/// or unresolved-import failures with the right exit code. Shared by lock and
+/// verify-lock.
+fn resolve_modules_or_exit(file: &PathBuf) -> Vec<axon_core::ResolvedModule> {
+    validate_ax_extension(file);
+    let src = read_source(file);
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            emit_error(&format!("{e}"), !std::io::stderr().is_terminal());
+            process::exit(2);
+        }
+    };
+    let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
+    let (resolved, unresolved) = axon_core::resolve_use_files(&program, &search_dirs);
+    if !unresolved.is_empty() {
+        for name in &unresolved {
+            emit_error(
+                &format!(
+                    "[{}] `{name}` could not be resolved from AXON_PATH — cannot lock an import whose file is missing",
+                    axon_core::error::E0901
+                ),
+                !std::io::stderr().is_terminal(),
+            );
+        }
+        process::exit(2);
+    }
+    resolved
+}
+
+/// `axon lock <file>` — hash each imported module and write `axon.lock`.
+fn cmd_lock(file: PathBuf) {
+    use axon_core::lockfile::{module_hash, write_lock, LockEntry};
+    let resolved = resolve_modules_or_exit(&file);
+
+    let entries: Vec<LockEntry> = resolved
+        .iter()
+        .map(|m| {
+            let mut e = LockEntry::new(
+                m.name.clone(),
+                module_hash(&m.bytes),
+                format!("file:{}", m.path.display()),
+            );
+            e.audit = String::new();
+            e
+        })
+        .collect();
+
+    let lock = lock_path_for(&file);
+    let text = write_lock(&entries);
+    if let Err(e) = std::fs::write(&lock, &text) {
+        eprintln!("error writing {}: {e}", lock.display());
+        process::exit(1);
+    }
+    println!(
+        "axon: wrote {} ({} module{})",
+        lock.display(),
+        entries.len(),
+        if entries.len() == 1 { "" } else { "s" }
+    );
+    process::exit(0);
+}
+
+/// `axon verify-lock <file>` — recompute hashes and compare to `axon.lock`.
+/// E1201 on a content mismatch (tamper), E1202 on a missing entry, E1205 on a
+/// malformed lockfile.
+fn cmd_verify_lock(file: PathBuf) {
+    use axon_core::lockfile::{module_hash, parse_lock};
+    let resolved = resolve_modules_or_exit(&file);
+    let lock = lock_path_for(&file);
+
+    let text = match std::fs::read_to_string(&lock) {
+        Ok(t) => t,
+        Err(_) => {
+            emit_error(
+                &format!(
+                    "[{}] no axon.lock next to {} — run `axon lock {}` first",
+                    axon_core::error::E1202,
+                    file.display(),
+                    file.display()
+                ),
+                !std::io::stderr().is_terminal(),
+            );
+            process::exit(2);
+        }
+    };
+    let parsed = match parse_lock(&text) {
+        Ok(p) => p,
+        Err((code, msg)) => {
+            emit_error(&format!("[{code}] {msg}"), !std::io::stderr().is_terminal());
+            process::exit(2);
+        }
+    };
+
+    let mut failed = false;
+    for m in &resolved {
+        let found = module_hash(&m.bytes);
+        match parsed.modules.iter().find(|e| e.name == m.name) {
+            None => {
+                emit_error(
+                    &format!(
+                        "[{}] `{}` is not in axon.lock — run `axon lock {}` (or restore the removed entry)",
+                        axon_core::error::E1202,
+                        m.name,
+                        file.display()
+                    ),
+                    !std::io::stderr().is_terminal(),
+                );
+                failed = true;
+            }
+            Some(entry) if entry.hash != found => {
+                emit_error(
+                    &format!(
+                        "[{}] content hash mismatch for `{}`: locked {}, found {} — the module's bytes changed since axon.lock was written; run `axon lock {}` to accept or restore the file",
+                        axon_core::error::E1201,
+                        m.name,
+                        entry.hash,
+                        found,
+                        file.display()
+                    ),
+                    !std::io::stderr().is_terminal(),
+                );
+                failed = true;
+            }
+            Some(_) => {}
+        }
+    }
+    if failed {
+        process::exit(2);
+    }
+    println!("axon: lock verified ({} module{})", resolved.len(), if resolved.len() == 1 { "" } else { "s" });
+    process::exit(0);
 }
 
 // ── build ─────────────────────────────────────────────────────────────────────

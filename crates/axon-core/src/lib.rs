@@ -383,6 +383,63 @@ pub fn load_use_decls(
     errors
 }
 
+/// A module referenced by a `use`, resolved to its file on disk and its bytes.
+/// Used by `axon lock` / `verify-lock` to content-hash each import (R6).
+pub struct ResolvedModule {
+    /// The `use` path joined with `::`, e.g. `scorelib::metric` (the lockfile name).
+    pub name: String,
+    /// Absolute or search-relative path to the resolved `.ax` file.
+    pub path: std::path::PathBuf,
+    /// The raw source bytes (what gets content-hashed).
+    pub bytes: Vec<u8>,
+}
+
+/// Resolve a program's **direct** `use` declarations to the module files on
+/// disk, returning each one's name + path + raw bytes. Mirrors
+/// `load_use_decls`' search (`a::b::c` → `a/b/c.ax`, first match in
+/// `search_dirs` wins) but does NOT merge or parse — it just locates and reads
+/// the bytes, the input the content hash is computed over.
+///
+/// Returns `(resolved, unresolved_names)`: modules found, and `use` names for
+/// which no file existed in any search dir (so the caller can report them).
+/// Transitive `use`s inside modules are a follow-on slice; this covers the
+/// direct edge the lockfile pins.
+pub fn resolve_use_files(
+    program: &ast::Program,
+    search_dirs: &[std::path::PathBuf],
+) -> (Vec<ResolvedModule>, Vec<String>) {
+    let mut resolved = Vec::new();
+    let mut unresolved = Vec::new();
+
+    for item in &program.items {
+        let ast::Item::UseDecl(u) = item else { continue };
+        if u.path.is_empty() {
+            continue;
+        }
+        let name = u.path.join("::");
+        // `a::b::c` → `a/b/c.ax`.
+        let mut rel = std::path::PathBuf::new();
+        for segment in &u.path {
+            rel.push(segment);
+        }
+        rel.set_extension("ax");
+
+        let mut found = false;
+        for dir in search_dirs {
+            let candidate = dir.join(&rel);
+            if let Ok(bytes) = std::fs::read(&candidate) {
+                resolved.push(ResolvedModule { name: name.clone(), path: candidate, bytes });
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            unresolved.push(name);
+        }
+    }
+    (resolved, unresolved)
+}
+
 /// Recursively load a module and all its transitive `use` dependencies.
 ///
 /// `loading_stack` tracks the chain of modules currently being loaded.  If a

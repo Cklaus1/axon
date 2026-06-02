@@ -3120,3 +3120,98 @@ fn ordinary_user_fn_name_does_not_warn_w0003() {
     assert!(!msg.contains("W0003"), "a non-colliding fn name must not warn W0003: {msg}");
     assert_eq!(out.status.code(), Some(0), "clean program should check clean: {msg}");
 }
+
+#[test]
+fn tampered_module_is_rejected_under_locked() {
+    // R6 headline (spec §8): write a module, `axon lock` it (records its
+    // axh1: hash), mutate one byte, `axon verify-lock` => E1201 (tamper),
+    // non-zero exit. This is "tampered content hash rejected" end to end.
+    let tmp = std::env::temp_dir().join(format!("axon_r6lock_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("mk tmp");
+    // The importable module (real `mod`+`use NAME.{}` idiom), in AXON_PATH.
+    std::fs::write(tmp.join("metric.ax"), "fn score(x: i64) -> i64 { x * 2 }\n").expect("mod");
+    let prog = tmp.join("prog.ax");
+    std::fs::write(&prog, "mod metric\nuse metric.{score}\nfn main() -> i64 { score(5) }\n").expect("prog");
+
+    // 1. Lock — writes axon.lock next to prog.ax.
+    let lock_out = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        lock_out.status.success(),
+        "axon lock should succeed: {}",
+        String::from_utf8_lossy(&lock_out.stderr)
+    );
+    assert!(tmp.join("axon.lock").exists(), "axon.lock must be written");
+
+    // 2. verify-lock on the unchanged module — clean.
+    let ok = axon()
+        .args(["verify-lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "verify-lock on unchanged bytes must pass: {}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+
+    // 3. Tamper: mutate one byte of the module.
+    std::fs::write(tmp.join("metric.ax"), "fn score(x: i64) -> i64 { x * 3 }\n").expect("tamper");
+
+    let bad = axon()
+        .args(["verify-lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(msg.contains("E1201"), "tampered module must be rejected with E1201: {msg}");
+    assert_ne!(bad.status.code(), Some(0), "tamper must fail verify-lock: {msg}");
+}
+
+#[test]
+fn verify_lock_flags_a_module_missing_from_the_lock() {
+    // R6 §4.5: a `use`d module with no lockfile entry is E1202 under verify.
+    // Lock with one module, then add a second import that isn't in the lock.
+    let tmp = std::env::temp_dir().join(format!("axon_r6miss_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("mk tmp");
+    std::fs::write(tmp.join("a.ax"), "fn aa() -> i64 { 1 }\n").expect("a");
+    let prog = tmp.join("prog.ax");
+    std::fs::write(&prog, "mod a\nuse a.{aa}\nfn main() -> i64 { aa() }\n").expect("prog");
+
+    let lock_out = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(lock_out.status.success(), "lock should succeed");
+
+    // Add a second module + import, NOT relocked.
+    std::fs::write(tmp.join("b.ax"), "fn bb() -> i64 { 2 }\n").expect("b");
+    std::fs::write(
+        &prog,
+        "mod a\nmod b\nuse a.{aa}\nuse b.{bb}\nfn main() -> i64 { aa() + bb() }\n",
+    )
+    .expect("prog2");
+
+    let out = axon()
+        .args(["verify-lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(msg.contains("E1202"), "an unlocked import must be flagged E1202: {msg}");
+    assert_ne!(out.status.code(), Some(0), "missing lock entry must fail verify: {msg}");
+}
