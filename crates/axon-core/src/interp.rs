@@ -237,7 +237,21 @@ pub struct Interp<'p> {
 /// thread stack overflows around ~8000 frames; this limit fires first, turning
 /// runaway recursion into a catchable panic instead of a process-aborting
 /// overflow. Overridable via `AXON_MAX_DEPTH` — see [`resolve_max_depth`].
+#[cfg(not(target_arch = "wasm32"))]
 const RECURSION_LIMIT: usize = 6_000;
+
+/// On wasm32 the interpreter runs on the single linear-memory stack (no OS
+/// thread to size up — see [`on_deep_stack`]), so the recursion guard must
+/// trip before that stack overflows or a deep recursion *traps* the module
+/// instead of producing the graceful "recursion limit" panic native gives.
+/// With the 64 MiB wasm stack the build sets (`.cargo/config.toml`
+/// `-zstack-size`) the empirical overflow boundary is ~700 interpreter frames;
+/// 450 leaves a comfortable margin so the failure is the same observable,
+/// catchable panic as native (R7 §4.3 / BUG_HUNT #28). This is the bounded,
+/// documented host divergence: deep recursion fails the same *way*, at a lower
+/// *depth*, on wasm.
+#[cfg(target_arch = "wasm32")]
+const RECURSION_LIMIT: usize = 450;
 
 /// Hard ceiling on the configurable recursion limit. `AXON_MAX_DEPTH` is
 /// clamped to this so a user can't set a value so high the native stack
@@ -279,7 +293,9 @@ fn max_depth_from_env(raw: Option<&str>) -> usize {
 
 /// Thread stack size that keeps the recursion guard ahead of a real overflow
 /// for the given depth: `depth × per-frame budget`, floored at the historical
-/// 1 GiB so we never shrink below the previous default.
+/// 1 GiB so we never shrink below the previous default. Unused on wasm32 (no
+/// OS threads — `on_deep_stack` runs on the single main stack there).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 fn stack_size_for_depth(depth: usize) -> usize {
     depth
         .saturating_mul(STACK_BYTES_PER_FRAME)
@@ -311,6 +327,15 @@ impl Drop for FnNameGuard<'_> {
 /// lot of native stack per call, so an 8 MB main stack overflows at only a few
 /// hundred frames; this lets reasonably deep recursion run, while the
 /// `RECURSION_LIMIT` guard backstops truly runaway recursion with a clean panic.
+///
+/// On `wasm32` there are no OS threads (`std::thread::spawn` traps with
+/// "invalid stack size"), so we run `f` directly on the single wasm stack. The
+/// `RECURSION_LIMIT` / `AXON_MAX_DEPTH` guard still fires its graceful panic
+/// before a wasm stack overflow, so deep recursion fails the same observable
+/// way as native — only the (impossible-on-wasm) extra thread is dropped.
+/// This is R7 §4.3: the one host touchpoint that must change for the
+/// interpreter to run identically in the browser / under wasmtime.
+#[cfg(not(target_arch = "wasm32"))]
 fn on_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
     // Size the stack to the (possibly user-raised) recursion limit so the
     // RECURSION_LIMIT guard always trips before a real overflow (BUG_HUNT #28).
@@ -323,6 +348,13 @@ fn on_deep_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
             .join()
             .expect("interpreter thread panicked")
     })
+}
+
+/// wasm32 has no OS threads — run on the single main stack. The depth guard
+/// (`RECURSION_LIMIT` / `AXON_MAX_DEPTH`) still backstops runaway recursion.
+#[cfg(target_arch = "wasm32")]
+fn on_deep_stack<T>(f: impl FnOnce() -> T) -> T {
+    f()
 }
 
 /// Parse-and-run convenience: returns the process exit code.

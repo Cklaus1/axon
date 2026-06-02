@@ -1,0 +1,18 @@
+# Cargo configuration.
+#
+# R7 (wasm targets): the tree-walking interpreter uses a large native stack per
+# call frame, and wasm32's default linear-memory stack (~1 MiB) overflows after
+# only ~25 interpreter frames — a deep recursion would *trap* the module instead
+# of producing the graceful "recursion limit exceeded" panic that native gives.
+# Raising the wasm stack to 64 MiB pushes the overflow boundary to ~700 frames,
+# comfortably above the wasm `RECURSION_LIMIT` (450 in interp.rs) so the depth
+# guard fires first and the failure is identical in *kind* to native. See
+# governance/specs/R7-targets.md §4.3.
+#
+# Native builds are unaffected (this only applies to the wasm32 targets).
+
+[target.wasm32-wasip1]
+rustflags = ["-C", "link-arg=-zstack-size=67108864"]
+
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "link-arg=-zstack-size=67108864"]

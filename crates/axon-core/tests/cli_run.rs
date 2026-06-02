@@ -3215,3 +3215,45 @@ fn verify_lock_flags_a_module_missing_from_the_lock() {
     assert!(msg.contains("E1202"), "an unlocked import must be flagged E1202: {msg}");
     assert_ne!(out.status.code(), Some(0), "missing lock entry must fail verify: {msg}");
 }
+
+#[test]
+fn wasm_interp_matches_native_on_pure_compute() {
+    // R7 Slice A acceptance: the tree-walking interpreter compiled to
+    // wasm32-wasip1 produces identical exit codes + stdout to native on a
+    // pure-compute corpus — "identical observable results by construction"
+    // (it is the same interp.rs, two targets). Delegates to the parity harness
+    // (scripts/wasm_parity.sh), which builds both engines and runs the corpus
+    // through a wasm runtime. The harness SKIPS (exit 0 with a notice) when the
+    // wasm toolchain is absent, so this test stays green in environments
+    // without wasmtime / the wasm32 target — it asserts "no parity DIFF", not
+    // "wasm is installed".
+    let script = format!("{}/../../scripts/wasm_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_parity.sh not found — skipping");
+        return;
+    }
+    // Make a user-local wasmtime install discoverable.
+    let home = std::env::var("HOME").unwrap_or_default();
+    let path = format!("{home}/.wasmtime/bin:{}", std::env::var("PATH").unwrap_or_default());
+    let out = Command::new("bash")
+        .arg(&script)
+        .env("PATH", path)
+        .output()
+        .expect("run wasm_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Either the toolchain is absent (skip notice) or every file matched.
+    let skipped = stdout.contains("skipping") || stderr.contains("skipping");
+    if skipped {
+        eprintln!("wasm toolchain absent — parity test skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "wasm/native parity must hold on the pure-compute corpus:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("native and wasm interpreters agree"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
