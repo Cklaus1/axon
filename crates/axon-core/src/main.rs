@@ -495,17 +495,28 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
     // so existing programs without a lockfile keep working until a user opts in.
     let lock_errors = check_locked_imports(&file, &resolved_imports, locked, use_json);
 
-    // Type-check pipeline.
-    let (mut errors, _infer_ctx) = run_check_pipeline(&mut program, &file);
-    errors.extend(import_cap_errors);
-    errors.extend(lock_errors);
+    // Type-check pipeline. R8 typed end-to-end: use the LOCATED form so the
+    // JSON a tool/agent consumes carries file/line/col (resolved from each
+    // typed diagnostic's byte-span against the source), not just code+message.
+    let (located, _infer_ctx) = run_check_pipeline_located(&mut program, &src, &file);
+    // Import-cap (E1203) and lock (E1201/E1202/W1210) errors are file-level
+    // strings with no span — they keep the string emit path.
+    let mut string_errors = import_cap_errors;
+    string_errors.extend(lock_errors);
 
-    if errors.is_empty() {
+    if located.is_empty() && string_errors.is_empty() {
         // Print nothing on success (Unix convention).
         process::exit(0);
     }
 
-    for err in &errors {
+    for d in &located {
+        if use_json {
+            eprintln!("{}", d.json());
+        } else {
+            eprintln!("error: {}", d.display());
+        }
+    }
+    for err in &string_errors {
         emit_error(err, use_json);
     }
     // Fix 8: exit 2 for compile errors.
@@ -1915,28 +1926,90 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
 // ── Pipeline ──────────────────────────────────────────────────────────────────
 
 /// Run the type-checking pipeline and return a list of error messages.
+///
+/// Back-compat string view over [`run_check_pipeline_located`]: each located
+/// diagnostic is rendered `[CODE] message` (message already folds in any
+/// expected/found detail). Callers that only need to count/print strings use
+/// this; the `--json` path (R8 typed end-to-end) consumes the located form so
+/// `file`/`line`/`col` survive to the consumer.
+fn run_check_pipeline(
+    program: &mut axon_core::ast::Program,
+    source_path: &Path,
+) -> (Vec<String>, axon_core::infer::InferCtx) {
+    // Source text is only needed to resolve spans → (line,col); the string view
+    // doesn't carry locations, so an empty SourceMap (dummy spans → line 0) is
+    // fine here. The JSON callers pass the real source via the `_src` variant.
+    let (diags, ctx) = run_check_pipeline_located(program, "", source_path);
+    let strings = diags
+        .iter()
+        .map(|d| format!("[{}] {}", d.code, d.message))
+        .collect();
+    (strings, ctx)
+}
+
+/// R8 typed end-to-end: run the pipeline and return **located** diagnostics
+/// (`code`/`message`/`file`/`line`/`col`), resolving each typed error's
+/// byte-offset span against `src` via [`axon_core::span::SourceMap`]. This is
+/// the source of truth; [`run_check_pipeline`] is the flattened string view.
+///
 // NOTE: this must stay in sync with `lib::check_pipeline` re: the safety passes
 // it runs (resolve → infer → check → borrow → capabilities → verify). The two
 // drifted before, silently dropping the @[contained] (E1001) and @[verify]
 // (E1101) checks from the CLI; the `*_rejected_by_check` tests in
 // `tests/cli_run.rs` guard each class against recurrence.
-fn run_check_pipeline(
+fn run_check_pipeline_located(
     program: &mut axon_core::ast::Program,
+    src: &str,
     source_path: &Path,
-) -> (Vec<String>, axon_core::infer::InferCtx) {
+) -> (Vec<axon_core::PipelineDiagnostic>, axon_core::infer::InferCtx) {
+    use axon_core::PipelineDiagnostic;
     let file = source_path.display().to_string();
-    let mut all_errors: Vec<String> = Vec::new();
+    let source_map = axon_core::span::SourceMap::new(src.to_string());
+    let mut diags: Vec<PipelineDiagnostic> = Vec::new();
+
+    // Resolve a span → (line, col); dummy spans (or an empty source) yield 0.
+    let loc = |span: &axon_core::span::Span| -> (u32, u32) {
+        if span.is_dummy() {
+            (0, 0)
+        } else {
+            let (l, c) = source_map.line_col(span.start);
+            (l as u32, c as u32)
+        }
+    };
+    let push = |diags: &mut Vec<PipelineDiagnostic>,
+                code: String,
+                message: String,
+                severity: &str,
+                line: u32,
+                col: u32| {
+        diags.push(PipelineDiagnostic {
+            code,
+            message,
+            file: file.clone(),
+            line,
+            col,
+            severity: severity.to_string(),
+            caret: String::new(),
+        });
+    };
+
+    // The original string body, retained verbatim but rewritten to push located
+    // diagnostics instead of formatted strings. (Below this point `file` is the
+    // same display string the old code computed.)
+    let _ = &file;
 
     // Step 0: load modules referenced by `use` declarations (AXON_PATH search).
+    // MergeErrors carry no span (they're file-level), so line/col stay 0.
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     for e in axon_core::load_use_decls(program, &search_dirs) {
-        all_errors.push(format!("[{}] {}", e.code, e.message));
+        push(&mut diags, e.code.to_string(), e.message.clone(), "error", 0, 0);
     }
 
     // Step 1: name resolution
     let resolve_result = axon_core::resolver::resolve_program(program, &file);
     for diag in &resolve_result.errors {
-        all_errors.push(format!("[{}] {}", diag.code, diag.message));
+        let (line, col) = loc(&diag.span);
+        push(&mut diags, diag.code.to_string(), diag.message.clone(), "error", line, col);
     }
     for warn in &resolve_result.warnings {
         eprintln!("warning: [{}] {}", warn.code, warn.message);
@@ -1949,14 +2022,15 @@ fn run_check_pipeline(
     let mut infer_ctx = axon_core::infer::InferCtx::new(&file);
     let _subst = infer_ctx.infer_program(program);
     for err in &infer_ctx.errors {
-        let mut msg = format!("[{}] {}", err.code, err.message);
+        let mut msg = err.message.clone();
         if let Some(exp) = &err.expected {
             msg.push_str(&format!(" (expected {exp})"));
         }
         if let Some(fnd) = &err.found {
             msg.push_str(&format!(", found {fnd}"));
         }
-        all_errors.push(msg);
+        let (line, col) = loc(&err.span);
+        push(&mut diags, err.code.to_string(), msg, "error", line, col);
     }
 
     // Step 3: type checking (uses infer results)
@@ -1974,14 +2048,21 @@ fn run_check_pipeline(
     );
     let check_errors = check_ctx.check_program(program, std::collections::HashMap::new());
     for err in &check_errors {
-        let mut msg = format!("[{}] {}", err.code, err.message);
+        let mut msg = err.message.clone();
         if let Some(exp) = &err.expected {
             msg.push_str(&format!(" (expected {exp})"));
         }
         if let Some(fnd) = &err.found {
             msg.push_str(&format!(", found {fnd}"));
         }
-        all_errors.push(msg);
+        // CheckError tracks both a byte-span and legacy line/col; prefer the
+        // span (real offset), fall back to the explicit line/col when no span.
+        let (line, col) = if !err.span.is_dummy() {
+            loc(&err.span)
+        } else {
+            (err.line, err.col)
+        };
+        push(&mut diags, err.code.to_string(), msg, "error", line, col);
     }
 
     // Step 4: borrow checking — enforce move semantics within function bodies.
@@ -1998,7 +2079,13 @@ fn run_check_pipeline(
                         std::collections::HashMap::new()
                     };
                 for err in axon_core::borrow::check_fn(fndef, param_types) {
-                    all_errors.push(err.to_string());
+                    let (line, col) = loc(&err.span());
+                    let code = match &err {
+                        axon_core::borrow::BorrowError::UseAfterMove { .. } => axon_core::error::E0601,
+                        axon_core::borrow::BorrowError::MoveBorrowed { .. } => axon_core::error::E0602,
+                        axon_core::borrow::BorrowError::BorrowConflict { .. } => axon_core::error::E0603,
+                    };
+                    push(&mut diags, code.to_string(), err.to_string(), "error", line, col);
                 }
             }
             axon_core::ast::Item::ImplBlock(blk) => {
@@ -2019,7 +2106,13 @@ fn run_check_pipeline(
                             std::collections::HashMap::new()
                         };
                     for err in axon_core::borrow::check_fn(method, param_types) {
-                        all_errors.push(err.to_string());
+                        let (line, col) = loc(&err.span());
+                        let code = match &err {
+                            axon_core::borrow::BorrowError::UseAfterMove { .. } => axon_core::error::E0601,
+                            axon_core::borrow::BorrowError::MoveBorrowed { .. } => axon_core::error::E0602,
+                            axon_core::borrow::BorrowError::BorrowConflict { .. } => axon_core::error::E0603,
+                        };
+                        push(&mut diags, code.to_string(), err.to_string(), "error", line, col);
                     }
                 }
             }
@@ -2031,7 +2124,8 @@ fn run_check_pipeline(
     // (E1001). Previously only run by the library check path, so the CLI did not
     // reject containment violations; wire it in so `axon check`/`run` enforce it.
     for err in axon_core::capabilities::check_capabilities(program) {
-        all_errors.push(format!("[{}] {}", err.code, err.message));
+        let (line, col) = loc(&err.span);
+        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
     }
 
     // Step 6: static `@[verify(...)]` checking — E1101 when a verify postcondition
@@ -2039,10 +2133,11 @@ fn run_check_pipeline(
     // (Same CLI-pipeline gap as the capability check; non-`confidence` predicates
     // are skipped, so runtime-gated verifies are unaffected.)
     for err in axon_core::verify::check_verify(program) {
-        all_errors.push(format!("[{}] {}", err.code, err.message));
+        let (line, col) = loc(&err.span);
+        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
     }
 
-    (all_errors, infer_ctx)
+    (diags, infer_ctx)
 }
 
 /// Compile the program to a native binary at `output`. Native AOT path —

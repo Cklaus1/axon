@@ -132,6 +132,55 @@ impl PipelineDiagnostic {
         }
         s
     }
+
+    /// R8 typed end-to-end: emit one line of the versioned `axon-diag/1` schema
+    /// **with source location** as first-class fields. Unlike
+    /// [`diag_schema::diagnostic_json`] — which regex-recovers a code from a
+    /// flattened string and has no location — this serialises a *typed*
+    /// diagnostic, so `file`/`line`/`col` survive to the consumer (an editor or
+    /// agent can jump to the offending span without re-parsing the source).
+    ///
+    /// Field order is fixed (`schema`, `severity`, `code`, `file`, `line`,
+    /// `col`, `message`); `line`/`col` are omitted when 0 (a file-level
+    /// diagnostic with no span — e.g. a missing-module error), never faked.
+    /// Hand-rolled JSON, no `serde_json` (CLAUDE.md: it collides with inkwell).
+    pub fn json(&self) -> String {
+        fn q(s: &str) -> String {
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('"');
+            for c in s.chars() {
+                match c {
+                    '"' => out.push_str("\\\""),
+                    '\\' => out.push_str("\\\\"),
+                    '\n' => out.push_str("\\n"),
+                    '\t' => out.push_str("\\t"),
+                    c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+                    c => out.push(c),
+                }
+            }
+            out.push('"');
+            out
+        }
+        let mut s = String::with_capacity(self.message.len() + 96);
+        s.push_str("{\"schema\":");
+        s.push_str(&q(diag_schema::DIAG_SCHEMA));
+        s.push_str(",\"severity\":");
+        s.push_str(&q(&self.severity));
+        s.push_str(",\"code\":");
+        s.push_str(&q(&self.code));
+        if !self.file.is_empty() {
+            s.push_str(",\"file\":");
+            s.push_str(&q(&self.file));
+        }
+        if self.line > 0 {
+            s.push_str(&format!(",\"line\":{}", self.line));
+            s.push_str(&format!(",\"col\":{}", self.col));
+        }
+        s.push_str(",\"message\":");
+        s.push_str(&q(&self.message));
+        s.push('}');
+        s
+    }
 }
 
 /// An error detected while merging multiple source files.

@@ -116,9 +116,51 @@ R8 rises toward DONE when **all** pass:
 - [ ] `check_json_emits_versioned_schema` (CLI e2e — real error through `axon check --json`).
 - [ ] human output unchanged (a non-`--json` check still prints `error: …`).
 
-R8 may rise 82% → ~90% on this slice (the emit-side machine-stable schema). A fully *typed* end-to-end diagnostic (structured `AxonError` threaded to emit, location fields populated) is a larger follow-on; this slice delivers the versioned, parse-without-regex shape the gap names.
+R8 rose 82% → ~90% on the emit-side schema slice. The *typed end-to-end* follow-on **is now DONE** (2026-06-02): see §10.
 
 ## 9. Scope / non-goals
 
 - **In:** the `axon-diag/1` schema, `diag_schema.rs`, wiring `emit_error`'s JSON path, tests.
-- **Out:** populating `line`/`col` location fields (errors arrive as strings without them here — a typed-diagnostic refactor); changing any human output; new diagnostic codes.
+- **Out (now IN, see §10):** ~~populating `line`/`col` location fields~~ — done via the typed-diagnostic refactor below.
+
+## 10. Typed end-to-end follow-on (DONE — 2026-06-02)
+
+The §8 slice emitted a versioned schema but flattened every diagnostic to a
+string *before* the JSON layer (`run_check_pipeline` → `Vec<String>` →
+`diagnostic_json` regex-recovers the code), so `line`/`col` were structurally
+unreachable — the gap §9 listed as out-of-scope.
+
+This follow-on threads the typed diagnostic end to end:
+
+- **`run_check_pipeline_located(program, src, path)`** (`main.rs`) is now the
+  source of truth: it runs the same passes (resolve → infer → check → borrow →
+  capabilities → verify) but, for each typed error, resolves its byte-offset
+  `Span` against a `SourceMap::line_col` and returns located
+  `PipelineDiagnostic`s (`code`/`message`/`file`/`line`/`col`). The old
+  string `run_check_pipeline` is retained as a thin back-compat view over it
+  (`[CODE] message`), so the 4 non-JSON callers are untouched.
+- **`PipelineDiagnostic::json()`** (`lib.rs`) emits the `axon-diag/1` schema
+  **with** `file`/`line`/`col` as first-class fields (omitted when 0 — a
+  file-level diagnostic with no span is never faked to line 1). Hand-rolled
+  JSON, no serde.
+- **`cmd_check`'s JSON path** now routes through the located pipeline; the
+  human path prints `PipelineDiagnostic::display()` (file:line:col + caret).
+  Import-cap (E1203) and lock (E120x) errors stay on the string path — they're
+  genuinely file-level with no span.
+
+Acceptance:
+- [x] `check_json_includes_source_location` — `axon check --json` on a
+  line-3 `let x: str = 5` mismatch emits `"line":3,"col":5` + `"file":…`.
+  Verified manually: `E0102` at `line 3, col 5`.
+- [x] `check_json_emits_versioned_schema` still green (schema tag + code field
+  preserved; `[CODE]` prefix still lifted out of the message).
+- [x] strict gate green (lib + cli + clippy --all-targets).
+
+Residual (honest): the located emit covers the **checker pipeline** (the
+`axon check`/`run` diagnostics). The standalone `emit_error(msg, json)` string
+path (used for parse errors and a few one-off CLI emits) still goes through
+`diag_schema::diagnostic_json` without a span — parse errors carry no span in
+the first place. The `help`/`fix` field is on the string `diagnostic_json` but
+not yet mirrored onto `PipelineDiagnostic::json()` (the typed errors fold
+expected/found into `message`); a future bump to `axon-diag/2` could split
+`expected`/`found`/`help` into discrete typed fields.

@@ -3448,6 +3448,48 @@ fn check_json_emits_versioned_schema() {
 }
 
 #[test]
+fn check_json_includes_source_location() {
+    // R8 typed end-to-end: `axon check --json` must carry the diagnostic's
+    // SOURCE LOCATION (file/line/col) as first-class fields, not just code +
+    // message. The typed checker already tracks a byte-offset span per
+    // diagnostic; this asserts that span survives all the way to the JSON a
+    // tool/agent consumes — so it can jump to the offending line without
+    // re-parsing the source. Pre-fix the CLI flattened diagnostics to a string
+    // before emitting JSON, dropping the span entirely.
+    let f = std::env::temp_dir().join(format!("axon_r8loc_{}.ax", std::process::id()));
+    // A type mismatch on line 3 (1-based): the `let x: str = 5` annotation.
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n    let ok = 1\n    let x: str = 5\n    0\n}\n",
+    )
+    .unwrap();
+
+    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let jstderr = String::from_utf8_lossy(&json.stderr);
+
+    assert!(
+        jstderr.contains("\"schema\":\"axon-diag/1\""),
+        "located JSON still carries the versioned schema: {jstderr}"
+    );
+    // The diagnostic must report the file it came from…
+    assert!(
+        jstderr.contains("\"file\":"),
+        "JSON must expose the source file as a first-class field: {jstderr}"
+    );
+    // …and a concrete line number (the mismatch is on line 3). We assert the
+    // line key is present and non-zero — a located diagnostic, not line 0.
+    assert!(
+        jstderr.contains("\"line\":3"),
+        "JSON must carry the diagnostic's 1-based line (expected line 3): {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"col\":"),
+        "JSON must carry the diagnostic's column: {jstderr}"
+    );
+}
+
+#[test]
 fn import_widening_capabilities_is_rejected_e1203() {
     // R6 §4.4 (I-11 import edge): a `@[contained]` importer that imports a module
     // exercising a capability it does not grant is rejected with E1203. Paired
