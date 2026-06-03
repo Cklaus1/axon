@@ -2773,6 +2773,23 @@ fn sensitive_type_into_ai_call_is_e1206() {
 }
 
 #[test]
+fn sensitive_field_into_ai_call_is_e1206() {
+    // PRD §4 ("can't exfiltrate sensitive fields"): a FIELD of a `@[sensitive]`
+    // struct passed to an AI call is just as forbidden as the whole struct.
+    let leak = "@[sensitive(pii)]\n\
+        type User = { name: str, email: str }\n\
+        fn leak(u: User) -> str { match ai_complete(u.email) { Ok(r) => r  Err(e) => e } }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sensfld_{}.ax", std::process::id()));
+    std::fs::write(&f, leak).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1206"), "sensitive field → AI must be E1206: {all}");
+    assert!(all.contains("User.email"), "message names the field source: {all}");
+}
+
+#[test]
 fn sensitive_type_used_locally_is_allowed() {
     // No false positive: a `@[sensitive]` value used OUTSIDE an AI call is fine.
     let ok = "@[sensitive(pii)]\n\

@@ -890,35 +890,32 @@ impl CheckCtx {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
                 }
                 // PRD §4 (privacy): a `@[sensitive]` value may not flow into an
-                // external AI call. v1 catches the direct case — an arg to an AI
-                // builtin (`ai_complete`/`ai_extract_*`) whose resolved type is a
-                // sensitive struct → E1206. (Transitive taint + auto-`to_redacted`
-                // are the follow-on; this is the highest-value direct guard.)
+                // external AI call. Catches an arg to an AI builtin
+                // (`ai_complete`/`ai_extract_*`) that is either (a) a value of a
+                // sensitive struct type, or (b) a FIELD of a sensitive struct
+                // (`u.email` — the "exfiltrate sensitive fields" case) → E1206.
                 if let Expr::Ident(name) = callee.as_ref() {
                     if !self.sensitive_types.is_empty() && is_external_ai_sink(name) {
                         for (i, arg) in args.iter().enumerate() {
                             let apath = format!("{node_path}.arg_{i}");
-                            let ty = self.resolve_expr_type(arg, &apath, scope);
-                            if let Type::Struct(sname) = &ty {
-                                if let Some(cat) = self.sensitive_types.get(sname) {
-                                    let file = self.file.clone();
-                                    self.errors.push(
-                                        CheckError::new(
-                                            E1206,
-                                            format!(
-                                                "a `@[sensitive({cat})]` value of type `{sname}` is passed to \
-                                                 the external AI call `{name}` — sensitive data must never leave \
-                                                 the program boundary"
-                                            ),
-                                        )
-                                        .node(&apath)
-                                        .at(&file, 0, 0)
-                                        .fix(format!(
-                                            "strip the sensitive fields before the call (e.g. build a redacted \
-                                             projection of `{sname}`), or move the call behind a local-only boundary"
-                                        )),
-                                    );
-                                }
+                            if let Some((sname, cat)) = self.sensitive_flow_in(arg, &apath, scope) {
+                                let file = self.file.clone();
+                                self.errors.push(
+                                    CheckError::new(
+                                        E1206,
+                                        format!(
+                                            "a `@[sensitive({cat})]` value from `{sname}` is passed to the \
+                                             external AI call `{name}` — sensitive data must never leave the \
+                                             program boundary"
+                                        ),
+                                    )
+                                    .node(&apath)
+                                    .at(&file, 0, 0)
+                                    .fix(format!(
+                                        "strip the sensitive fields before the call (e.g. build a redacted \
+                                         projection of `{sname}`), or move the call behind a local-only boundary"
+                                    )),
+                                );
                             }
                         }
                     }
@@ -1971,6 +1968,36 @@ impl CheckCtx {
     ///
     /// Primary source: `expr_types` map (populated by inference).
     /// Fallback: lightweight syntactic analysis of the expression itself.
+    /// PRD §4: does `arg` carry sensitive data into a sink? Returns
+    /// `Some((source_name, category))` when the arg's resolved type is a
+    /// `@[sensitive]` struct, OR when the arg is a field access whose receiver
+    /// is a sensitive struct (`u.email`). The field case names the struct as
+    /// the source (a field of a sensitive type inherits its sensitivity — the
+    /// "can't exfiltrate sensitive fields" rule). Returns `None` otherwise.
+    fn sensitive_flow_in(
+        &self,
+        arg: &Expr,
+        apath: &str,
+        scope: &HashMap<String, Type>,
+    ) -> Option<(String, String)> {
+        // (a) The whole value is a sensitive struct.
+        if let Type::Struct(sname) = self.resolve_expr_type(arg, apath, scope) {
+            if let Some(cat) = self.sensitive_types.get(&sname) {
+                return Some((sname, cat.clone()));
+            }
+        }
+        // (b) A field of a sensitive struct: `<receiver>.field`.
+        if let Expr::FieldAccess { receiver, field } = arg {
+            let rpath = format!("{apath}.receiver");
+            if let Type::Struct(sname) = self.resolve_expr_type(receiver, &rpath, scope) {
+                if let Some(cat) = self.sensitive_types.get(&sname) {
+                    return Some((format!("{sname}.{field}"), cat.clone()));
+                }
+            }
+        }
+        None
+    }
+
     fn resolve_expr_type(
         &self,
         expr: &Expr,
