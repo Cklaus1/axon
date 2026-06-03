@@ -1469,7 +1469,13 @@ fn goal_run_multistart_nails_the_global_optimum() {
         }\n";
     let f = std::env::temp_dir().join(format!("axon_ms_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    // Pin the RNG seed so the multi-start (random restarts) is DETERMINISTIC
+    // regardless of ambient env. Without this the test inherits whatever
+    // AXON_SEED the caller set (the gate pins 42, so it passed there) and a
+    // bare `cargo test` ran it unseeded → occasional restart-unlucky failure.
+    // The run is deterministic given a seed; 42 reliably lands a start in the
+    // tall-peak basin and local descent walks to the exact optimum.
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(1), "multi-start should nail the tall peak: {:?}", out);
 }
@@ -1524,7 +1530,10 @@ fn goal_run_random_finds_global_optimum_on_multimodal() {
         }\n";
     let f = std::env::temp_dir().join(format!("axon_grr_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    // Pin the RNG seed so random-search is DETERMINISTIC regardless of ambient
+    // env (same robustness fix as goal_run_multistart_nails_the_global_optimum:
+    // a bare `cargo test` ran this unseeded → occasional sample-unlucky fail).
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(1), "random search should find tall peak: {:?}", out);
 }
