@@ -157,12 +157,13 @@ R7 splits into two slices:
 - [x] `cargo build --target wasm32-wasip1 --no-default-features --bin axon-run` succeeds (host touchpoints handled). **DONE.** *Implementation note: targeted **wasm32-wasip1** (WASI) rather than `unknown-unknown` — WASI provides `std::fs`/`std::env`/exit codes natively and is runnable headless by `wasmtime`, so the only host touchpoint that actually needed changing was `on_deep_stack` (the `std::thread::scope` stack-sizing, which traps on wasm). The full `AxonHost` trait abstraction (for bare `unknown-unknown` / a browser virtual FS) is deferred — WASI covers the I-2 parity acceptance without it.*
 - [x] `wasm_interp_matches_native_on_pure_compute` passes over the examples corpus. **DONE** — `scripts/wasm_parity.sh` + cli_run test: 15/15 pure-compute examples produce identical exit code AND stdout on native and wasm (`wasmtime`). Identical by construction (same `interp.rs`, two targets).
 - [x] `deep_recursion_graceful_on_wasm` passes (#28 stack guard ports). **DONE** — `on_deep_stack` runs on the single wasm stack (`#[cfg(target_arch="wasm32")]`); `.cargo/config.toml` sets a 64 MiB wasm stack and `RECURSION_LIMIT` is 450 on wasm (empirical overflow boundary ~700), so deep recursion fires the same graceful "recursion limit exceeded" panic as native — verified through `wasmtime`, no trap. *Bounded divergence (R7 §4.3): same failure kind, lower max depth on wasm.*
-- [x] `axon target list` / `axon target build --target wasm32-wasi → E0907` emit stable output. **DONE** (cli_run: target_list_shows_engines, target_build_aot_wasm_is_e0907).
+- [x] `axon target list` / `axon target build --target wasm32 → object|E0907` emit stable output. **DONE** (cli_run: target_list_shows_engines, target_build_aot_wasm_object_or_e0907).
 
-**Slice B (AOT wasm codegen — R1 landed, deferred by priority not blocker):**
-- [ ] *Deferred.* R1 native build lands (done — `BUILD_RESOLVED.md`). Acceptance deferred because Slice A already satisfies the R7 acceptance criterion "identical observable results" by construction. Revisit as a follow-spec.
+**Slice B (AOT wasm codegen — object half DONE 2026-06-02):**
+- [x] **AOT wasm OBJECT emission DONE.** `axon target build --engine codegen --target wasm32 <file>` now emits a real WebAssembly object via the inkwell `wasm32-unknown-unknown` backend (`Codegen::compile_to_wasm_object` → `link::emit_wasm_object`), bypassing the native cc link. The emitted file is magic-verified (`\0asm`); manually confirmed a 22 KB `file`-recognized "WebAssembly (wasm) binary module version 0x1 (MVP)" from `examples/math.ax`. This is the real IR→wasm codegen step §3.2 deferred behind E0907 — no longer a stub. cli_run `target_build_aot_wasm_object_or_e0907` asserts object+magic under codegen, honest E0907 without.
+- [ ] **Remaining (the link half):** turning the object into a *runnable* `.wasm` needs a wasm libc sysroot + `wasm-ld` (and, for WASI, the wasi-sdk). Environment-fragile and not wired; documented as the gap. The object-emit half proves the backend works; the link is a packaging step.
 
-R7's REQUIREMENTS row rises from 10% → ~35% on Slice A (native + wasm-via-interp run identically over the corpus); the `AxonHost` trait for `unknown-unknown`/browser, `axon target` CLI, js/mobile/AOT-wasm remain open.
+R7's REQUIREMENTS row rises from 50% → ~62%: Slice A (wasm-via-interp parity, 15/15) + Slice B object emission (real IR→wasm codegen). The `AxonHost` browser host, js/mobile targets, and the wasm *link* step remain open.
 
 ## 10. Performance budget
 

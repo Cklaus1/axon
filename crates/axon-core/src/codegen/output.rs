@@ -67,6 +67,22 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.module.write_bitcode_to_memory().as_slice().to_vec()
     }
 
+    /// R7 Slice B (AOT wasm, object half): verify the IR and emit a WebAssembly
+    /// **object** at `output_path` via the inkwell `wasm32` backend (no link).
+    /// The runnable-`.wasm` link needs a wasm sysroot + `wasm-ld` (the deferred
+    /// remaining gap); this is the verifiable IR→wasm codegen step.
+    pub fn compile_to_wasm_object(
+        &self,
+        output_path: &str,
+        release: bool,
+        target_triple: &str,
+    ) -> Result<(), String> {
+        self.ir.module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::emit_wasm_object(&self.ir.module, output_path, release, target_triple)
+    }
+
     // ── Test runner ───────────────────────────────────────────────────────
 
     /// Run functions tagged `@[test]` via the LLVM JIT and report results.

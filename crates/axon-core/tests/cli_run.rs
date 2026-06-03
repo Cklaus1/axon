@@ -3930,20 +3930,40 @@ fn target_list_shows_engines() {
 }
 
 #[test]
-fn target_build_aot_wasm_is_e0907() {
-    // R7 §6: the AOT wasm path (no --engine interp) is an honest E0907 block,
-    // pointing at the interpreter engine.
+fn target_build_aot_wasm_object_or_e0907() {
+    // R7 §3.2/§6: the AOT wasm path (no --engine interp). Behavior depends on
+    // whether this axon was built with codegen:
+    //   - WITH codegen (Slice B): emits a real wasm OBJECT via the inkwell
+    //     wasm32 backend (magic-verified `\0asm`); exit 0.
+    //   - WITHOUT codegen: an honest E0907 block pointing at the interpreter.
+    // The test accepts either, since CARGO_BIN_EXE_axon is whichever the test
+    // build produced (--no-default-features → interp → E0907; default → object).
     let f = std::env::temp_dir().join(format!("axon_tgt_{}.ax", std::process::id()));
     std::fs::write(&f, "fn main() -> i64 { 0 }\n").unwrap();
     let out = axon()
-        .args(["target", "build", "--target", "wasm32-wasi", f.to_str().unwrap()])
+        .args(["target", "build", "--target", "wasm32", f.to_str().unwrap()])
         .output()
         .unwrap();
     let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("E0907"), "AOT wasm must be E0907: {msg}");
-    assert_ne!(out.status.code(), Some(0), "E0907 is fatal");
+    if out.status.code() == Some(0) {
+        // Codegen build: a real wasm object must have been emitted + verified.
+        assert!(
+            msg.contains("wasm object:") && msg.contains("magic-verified"),
+            "codegen wasm build must emit a magic-verified object: {msg}"
+        );
+        let wasm = f.with_extension("wasm");
+        let bytes = std::fs::read(&wasm).expect("wasm object must exist");
+        assert!(
+            bytes.len() >= 4 && &bytes[0..4] == b"\0asm",
+            "emitted file must start with the wasm magic"
+        );
+        let _ = std::fs::remove_file(&wasm);
+    } else {
+        // Interp-only build: honest E0907.
+        assert!(msg.contains("E0907"), "without codegen, AOT wasm must be E0907: {msg}");
+    }
 
-    // But --engine interp on the same target succeeds (the interpreter path).
+    // --engine interp on the same target always succeeds (the interpreter path).
     let ok = axon()
         .args(["target", "build", "--engine", "interp", "--target", "wasm32", f.to_str().unwrap()])
         .output()

@@ -1201,18 +1201,12 @@ fn cmd_target(action: TargetAction) {
                 process::exit(0);
             }
             if triple.contains("wasm") {
-                // AOT wasm via the codegen backend — honest block (R7 §6 E0907).
-                emit_error(
-                    &format!(
-                        "[{}] AOT wasm build needs the native codegen backend — use \
-                         `axon target build --engine interp --target {triple} {}` to run via \
-                         the interpreter",
-                        axon_core::error::E0907,
-                        file.display()
-                    ),
-                    !std::io::stderr().is_terminal(),
-                );
-                process::exit(2);
+                // R7 Slice B (AOT wasm, object half): emit a real wasm object via
+                // the inkwell wasm32 backend. The runnable-.wasm link needs a wasm
+                // sysroot + wasm-ld (deferred). When codegen is unavailable this
+                // falls back to the E0907 honest block.
+                build_wasm_object_cli(&file, triple);
+                process::exit(0);
             }
             println!(
                 "axon target: engine=codegen target={triple} — use `axon build {}` for the \
@@ -1220,6 +1214,94 @@ fn cmd_target(action: TargetAction) {
                 file.display()
             );
             process::exit(0);
+        }
+    }
+}
+
+// ── R7 Slice B: AOT wasm object emission ─────────────────────────────────────
+
+/// `axon target build --engine codegen --target wasm32 <file>` — without
+/// codegen, the honest E0907 block (R7 §6).
+#[cfg(not(feature = "codegen"))]
+fn build_wasm_object_cli(file: &Path, triple: &str) {
+    emit_error(
+        &format!(
+            "[{}] AOT wasm build needs the native codegen backend (this axon was built \
+             without it) — use `axon target build --engine interp --target {triple} {}` \
+             to run via the interpreter",
+            axon_core::error::E0907,
+            file.display()
+        ),
+        !std::io::stderr().is_terminal(),
+    );
+    process::exit(2);
+}
+
+/// `axon target build --engine codegen --target wasm32 <file>` — emit a real
+/// WebAssembly object via the inkwell wasm32 backend (R7 §3.2 Slice B, object
+/// half). Parses → checks → monomorphizes → emits a `.wasm` object next to the
+/// source, then verifies the wasm magic. The runnable-`.wasm` link (wasm
+/// sysroot + wasm-ld) is the documented remaining gap.
+#[cfg(feature = "codegen")]
+fn build_wasm_object_cli(file: &Path, triple: &str) {
+    validate_ax_extension(file);
+    // Normalise the alias `wasm32` to a concrete LLVM triple.
+    let llvm_triple = if triple == "wasm32" { "wasm32-unknown-unknown" } else { triple };
+
+    let src = read_source(&file.to_path_buf());
+    let mut program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+
+    // Type-check before codegen (same gate as native build).
+    let (errors, mut infer_ctx) = run_check_pipeline(&mut program, file);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        process::exit(2);
+    }
+
+    // Monomorphize, then emit the wasm object.
+    let instantiations = infer_ctx.drain_instantiations();
+    let mono = axon_core::mono::monomorphise(&program, instantiations);
+    let concrete = axon_core::ast::Program {
+        items: mono.other_items.into_iter()
+            .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
+            .collect(),
+    };
+
+    let ctx = inkwell::context::Context::create();
+    let module_name = file.file_stem().unwrap_or_default().to_string_lossy();
+    let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
+    cg.declare_functions(&concrete);
+    cg.emit_program(&concrete);
+
+    let out = file.with_extension("wasm");
+    let out_str = out.to_string_lossy().to_string();
+    match cg.compile_to_wasm_object(&out_str, false, llvm_triple) {
+        Ok(()) => {
+            // Verify the emitted file is genuine wasm (magic `\0asm`).
+            let magic_ok = std::fs::read(&out)
+                .map(|b| b.len() >= 4 && &b[0..4] == b"\0asm")
+                .unwrap_or(false);
+            if !magic_ok {
+                eprintln!("error: emitted {} is not a valid wasm object (bad magic)", out.display());
+                process::exit(2);
+            }
+            eprintln!(
+                "wasm object: {} (target {llvm_triple}) — IR→wasm emitted + magic-verified; \
+                 link to a runnable .wasm needs a wasm sysroot + wasm-ld (deferred, R7 §12)",
+                out.display()
+            );
+        }
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
         }
     }
 }

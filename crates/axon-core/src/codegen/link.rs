@@ -49,6 +49,41 @@ pub fn compile_bitcode_to_binary(
     emit_object_and_link(&module, output_path, release, target_triple)
 }
 
+/// R7 Slice B (AOT wasm, object half): emit a WebAssembly **object file** for
+/// `module` at `output_path` via the inkwell `wasm32` backend, WITHOUT linking.
+///
+/// This is the real IR→wasm codegen step the spec (R7 §3.2) deferred behind
+/// E0907. The *link* into a runnable `.wasm` needs a wasm libc sysroot +
+/// `wasm-ld` (the documented remaining gap, §12), which is environment-fragile;
+/// emitting and validating the object is the verifiable, in-tree half. The
+/// emitted file starts with the wasm magic `\0asm` (0x00 0x61 0x73 0x6d), which
+/// the caller checks to prove the backend produced genuine wasm, not a stub.
+pub fn emit_wasm_object(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: &str,
+) -> Result<(), String> {
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(target_triple);
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
+    })?;
+    let machine = target
+        .create_target_machine(&triple, "generic", "", opt, RelocMode::PIC, CodeModel::Default)
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
+    module.set_triple(&triple);
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("wasm object emit: {e}"))?;
+    Ok(())
+}
+
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
 
 /// Initialize LLVM targets, create a `TargetMachine`, emit an object file, and
