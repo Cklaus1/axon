@@ -103,7 +103,27 @@ pub extern "C" fn __axon_ai_complete(
     }
 }
 
+/// Whether deterministic mock-LLM responses are enabled (`AXON_AI_MOCK` set and
+/// not "0"/empty) — the SAME predicate the interpreter uses
+/// (`interp::ai_mock_enabled`). When on, the native AI path returns the
+/// interpreter's exact deterministic stub instead of hitting the network, so a
+/// program's native and interpreted output match byte-for-byte under mock
+/// (closes the R1 parity gap for the AI examples; the native path previously
+/// ignored AXON_AI_MOCK and errored on a missing API key).
+fn ai_mock_enabled() -> bool {
+    std::env::var("AXON_AI_MOCK").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+}
+
+/// The interpreter's canonical mock `ai_complete` response — must stay
+/// byte-identical to `interp.rs`'s stub for native==interp parity under mock.
+const MOCK_AI_COMPLETE: &str = "Mock summary: the single most important fact, stated concisely.";
+
 fn ai_complete_inner(prompt: &str) -> Result<String, String> {
+    // AXON_AI_MOCK: return the interpreter's deterministic stub (I-2 parity),
+    // no network, no API key. Checked FIRST so a mocked run never needs a key.
+    if ai_mock_enabled() {
+        return Ok(MOCK_AI_COMPLETE.to_string());
+    }
     // Read API key from environment.
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
@@ -963,5 +983,29 @@ mod tests {
         assert!(msg2.contains("invalid prompt pointer/length"), "got: {msg2}");
 
         if let Some(v) = prev { std::env::set_var("ANTHROPIC_API_KEY", v); }
+    }
+
+    /// R1 parity: with AXON_AI_MOCK set, the native AI path returns the
+    /// interpreter's exact deterministic stub — no API key, no network — so a
+    /// native binary's AI output matches the interpreter byte-for-byte (closing
+    /// the last 2-of-28 example-parity gap). Previously native ignored the env
+    /// var and errored on a missing key.
+    #[test]
+    fn ai_complete_honors_axon_ai_mock() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::remove_var("ANTHROPIC_API_KEY"); // prove no key is needed
+        std::env::set_var("AXON_AI_MOCK", "1");
+
+        let got = ai_complete_inner("summarize this").expect("mock must succeed without a key");
+        assert_eq!(got, MOCK_AI_COMPLETE, "native mock must equal the interpreter's stub");
+
+        // AXON_AI_MOCK=0 must NOT mock (falls through to the key check → error).
+        std::env::set_var("AXON_AI_MOCK", "0");
+        assert!(ai_complete_inner("x").is_err(), "AXON_AI_MOCK=0 must not mock");
+
+        match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
+        if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
     }
 }

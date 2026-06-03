@@ -3769,6 +3769,37 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn all_examples_native_match_interp_under_mock() {
+    // R1 acceptance (the headline parity claim): EVERY examples/*.ax with a
+    // `fn main` runs byte-identically under native codegen and the interpreter
+    // (I-2), under AXON_AI_MOCK=1 so the 2 AI examples are deterministic. This
+    // turns the long-standing manual "26/28" into a gated 28/28 — the AI
+    // examples used to differ only because native ignored AXON_AI_MOCK; that
+    // gap is now closed (axon-ai honors the env var). Skips when codegen can't
+    // build (LLVM absent).
+    let script = format!("{}/../../scripts/all_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("all_examples_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run all_examples_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — all-examples parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "every example must run native==interp under mock (R1):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("all_examples_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_goal_run_unknown_name_matches_interp() {
     // BUG_HUNT #19 regression (I-9): `goal_run("typo", …)` against a name that
     // is neither a defined fn nor a recorded provenance key is a misspelled
