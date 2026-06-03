@@ -26,12 +26,12 @@ services) — that remains greenfield, multi-quarter work.
 | **R4** | Three code zones + compiler-enforced provenance | 100 | ✅ Complete |
 | **R5** | Goal-directed optimization (5 strategies, held-out eval) | 94 | ⚠️ kernel `Goal<M>` (Phase-7) remains |
 | **R6** | Capability security (lockfile, audit, `@[sensitive]`) | 91 | ⚠️ AI-audit quality + transitive taint remain |
-| **R7** | Cross-platform (native / wasm / js / mobile) | 74 | ⚠️ interp→wasm byte-identical (compute+fs+env); **AOT-wasm now RUNS int/float/struct/array/string value-identical to interp** (str-ABI + size_t bridges); js/mobile + heap-growth remain |
+| **R7** | Cross-platform (native / wasm / js / mobile) | 80 | ✅ interp→wasm byte-identical; **AOT-wasm runs the whole example corpus — 26/26 byte-identical stdout vs interp** (str-ABI + size_t bridges + void-main entry fix); js/mobile + host-needing programs (AI/thread/goal/fs) remain |
 | **R8** | Built-in testing + structured diagnostics (`forall`) | 100 | ✅ Complete |
 | **R9** | Layer-1/3 alignment (`Uncertain`/`Temporal`/`@[verify]`/causal) | 88 | ⚠️ SMT loop invariants + metacognition trait remain |
 | **R10** | Self-improving compiler (4-gate firewall, AI discoverer) | 99 | ✅ static + live AI discoverer; growing the template menu is the only follow-on |
 
-**Average 92.8% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
+**Average 93.4% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
 
 ## What "done and verified" means here
 
@@ -44,9 +44,10 @@ Every ✅/⚠️ above is backed by passing acceptance tests, not aspiration:
   (`wasm_parity.sh` 28/28, `wasm_fs_parity.sh`). Beyond the interpreter path,
   **AOT-compiled wasm** (inkwell wasm32 → reactor-mode link → `wasmtime`) now
   runs int, float, struct, array, and string programs value-identical to the
-  interpreter (`wasm_aot_run_parity.sh`, `wasm_str_abi_parity.sh`,
-  `wasm_malloc_abi_parity.sh`) — the str/array i64→i32 and libc `size_t` ABI
-  gaps are closed.
+  interpreter — and the **entire example corpus** AOT-compiled to wasm prints
+  stdout byte-identical to the interpreter (`wasm_aot_stdout_parity.sh`, 26/26).
+  The str/array i64→i32 ABI, the libc `size_t` width (malloc/snprintf/memcpy/
+  write), and the void-`main` wasi entry convention are all closed.
 - **Formal verification**: `axon verify` proves `@[verify]` integer + float +
   conjunction bounds via Z3, or reports a concrete counterexample.
 - **Self-improvement safety**: an AI can only *select* optimization templates
