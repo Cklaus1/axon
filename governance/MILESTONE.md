@@ -7,7 +7,7 @@ one-page picture.
 
 ## Headline
 
-The **Axon language core is ~93% complete and stable** — the compiler, type
+The **Axon language core is ~94% complete and stable** — the compiler, type
 system, AI-as-primitive surface, optimization, capability security, testing,
 formal verification, and self-improvement firewall are all built, tested, and
 running with native↔interpreter parity. **~700 tests pass; zero failures.**
@@ -22,16 +22,16 @@ services) — that remains greenfield, multi-quarter work.
 |---|---|---|---|
 | **R1** | Native pipeline (parse→type→borrow→LLVM→native) | 95 | ✅ 28/28 example parity, 6× faster than interp |
 | **R2** | Type system + borrow checker (HM, no-null, ownership) | 90 | ✅ Strong; dyn-trait + refinement types remain |
-| **R3** | AI as a language primitive (routing, policy, budget, cost) | 85 | ⚠️ tier routing live; live token-count + Budget type remain |
+| **R3** | AI as a language primitive (routing, policy, budget, cost) | 87 | ⚠️ tier routing + live token-count live; first-class Budget type remains |
 | **R4** | Three code zones + compiler-enforced provenance | 100 | ✅ Complete |
 | **R5** | Goal-directed optimization (5 strategies, held-out eval) | 94 | ⚠️ kernel `Goal<M>` (Phase-7) remains |
 | **R6** | Capability security (lockfile, audit, `@[sensitive]`) | 91 | ⚠️ AI-audit quality + transitive taint remain |
-| **R7** | Cross-platform (native / wasm / js / mobile) | 68 | ⚠️ interp→wasm verified (compute+fs+env); AOT-wasm ABI retarget remains |
+| **R7** | Cross-platform (native / wasm / js / mobile) | 68 | ⚠️ interp→wasm verified (compute+fs+env, byte-identical); AOT-wasm ABI retarget remains |
 | **R8** | Built-in testing + structured diagnostics (`forall`) | 100 | ✅ Complete |
 | **R9** | Layer-1/3 alignment (`Uncertain`/`Temporal`/`@[verify]`/causal) | 88 | ⚠️ SMT loop invariants + metacognition trait remain |
-| **R10** | Self-improving compiler (4-gate firewall, AI discoverer) | 98 | ⚠️ a live AI discoverer over the static one remains |
+| **R10** | Self-improving compiler (4-gate firewall, AI discoverer) | 99 | ✅ static + live AI discoverer; growing the template menu is the only follow-on |
 
-**Average 91.7% · language-core (R1-6,8-10) ~93% · full-platform vision ~15%.**
+**Average 92.2% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
 
 ## What "done and verified" means here
 
@@ -68,7 +68,7 @@ multi-slice epic with its own spec (where applicable):
 | Epic | Why it's large |
 |---|---|
 | **R7 AOT-wasm retarget** | codegen bakes i64 pointers into the str/array IR; wasm32 needs i32 — a cross-cutting codegen ABI change (`R7-targets.md` §12 Q6) |
-| **Kernel Phase-7 services** | scheduler + durable stores + live token wiring + SMT-checked cap subsets (`R12-kernel-runtime-services.md`) |
+| **Kernel Phase-7 services** | scheduler + durable stores + SMT-checked cap subsets (`R12-kernel-runtime-services.md`) |
 | **SMT loop invariants** | invariant inference past straight-line code (`R9b-smt-loop-invariants.md`) |
 | **Platform vision** | UI/GPU/mobile/3D — entirely greenfield, no foundation yet |
 
