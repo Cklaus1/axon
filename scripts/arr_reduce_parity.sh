@@ -95,7 +95,14 @@ check fmax    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_max_f6
 check fmin    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_min_f64(&a) * 10.0) }'
 check famax   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmax_f64(&a) }'
 check famin   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmin_f64(&a) }'
+check rng_s   'fn main() -> i64 { let a = arr_range(0, 5)  arr_sum_i64(&a) }'
+check rng_ix  'fn main() -> i64 { let a = arr_range(10, 20)  a[3] }'
+check rng_e   'fn main() -> i64 { let a = arr_range(5, 5)  len(a) }'
+check rep_s   'fn main() -> i64 { let a = arr_repeat(7, 3)  arr_sum_i64(&a) }'
+check cat_s   'fn main() -> i64 { let a = [1, 2]  let b = [10, 20, 30]  let c = arr_concat(a, b)  arr_sum_i64(&c) }'
+check cat_ix  'fn main() -> i64 { let a = [1, 2]  let b = [10, 20, 30]  let c = arr_concat(a, b)  c[3] }'
+check cat_eA  'fn main() -> i64 { let a = arr_range(0, 0)  let b = [10, 20]  let c = arr_concat(a, b)  arr_sum_i64(&c) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 sum/mean/max/min/argmax/argmin match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat match the interpreter ✓"
 exit 0

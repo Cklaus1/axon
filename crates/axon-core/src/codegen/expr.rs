@@ -1917,6 +1917,131 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// Build a fresh i64 slice `{i64 len, i8* data}` of length `count`, filling
+    /// each slot via `fill(self, dst_i64_ptr, index)`. Shared backend for the
+    /// constructor builtins. `count` must be ≥ 0 (callers clamp).
+    fn emit_arr_i64_build(
+        &mut self,
+        count: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+        mut fill: impl FnMut(&mut Self, inkwell::values::PointerValue<'ctx>, inkwell::values::IntValue<'ctx>),
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, count, eight, "ab_bytes");
+        let dst_raw = self.emit_malloc(total, "ab_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "ab_di");
+
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ab_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "ab.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "ab.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "ab.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "ab_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, count, "ab_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[i_cur], "ab_dp").unwrap() };
+        fill(self, dp, i_cur);
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "ab_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ab_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "ab_olen").unwrap(), count.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "ab_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "ab_optr").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ab_res"))
+    }
+
+    /// arr_range(start, end) → [start, start+1, …, end-1]. count = max(0,
+    /// end-start); dst[i] = start + i.
+    fn emit_arr_i64_range(
+        &mut self,
+        start: inkwell::values::IntValue<'ctx>,
+        end: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let raw = build_wrappers::w_int_sub(&self.ir.builder, end, start, "rg_raw");
+        let pos = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, raw, i64_ty.const_zero(), "rg_pos");
+        let count = self.ir.builder.build_select(pos, raw, i64_ty.const_zero(), "rg_cnt").unwrap().into_int_value();
+        self.emit_arr_i64_build(count, fn_val, move |slf, dp, i| {
+            let v = build_wrappers::w_int_add(&slf.ir.builder, start, i, "rg_v");
+            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
+        })
+    }
+
+    /// arr_repeat(v, n) → [v; max(0,n)]. dst[i] = v.
+    fn emit_arr_i64_repeat(
+        &mut self,
+        v: inkwell::values::IntValue<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let pos = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, n, i64_ty.const_zero(), "rp_pos");
+        let count = self.ir.builder.build_select(pos, n, i64_ty.const_zero(), "rp_cnt").unwrap().into_int_value();
+        self.emit_arr_i64_build(count, fn_val, move |slf, dp, _i| {
+            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
+        })
+    }
+
+    /// arr_concat(a, b) → a ++ b. count = a_len + b_len; dst[i] = i < a_len ?
+    /// a[i] : b[i - a_len].
+    fn emit_arr_i64_concat(
+        &mut self,
+        a_slice: BasicValueEnum<'ctx>,
+        b_slice: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let unpack = |slf: &mut Self, sv: BasicValueEnum<'ctx>, tag: &str| {
+            let al = build_wrappers::w_alloca(&slf.ir.builder, slice_ty.into(), tag);
+            build_wrappers::w_store(&slf.ir.builder, al, sv);
+            let l = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 0, "ct_lp").unwrap(), "ct_l").into_int_value();
+            let d = build_wrappers::w_load(&slf.ir.builder, ptr_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 1, "ct_dp").unwrap(), "ct_d").into_pointer_value();
+            let di = build_wrappers::w_pointer_cast(&slf.ir.builder, d, i64_ty.ptr_type(AddressSpace::default()), "ct_di");
+            (l, di)
+        };
+        let (a_len, a_data) = unpack(self, a_slice, "ct_a");
+        let (b_len, b_data) = unpack(self, b_slice, "ct_b");
+        let count = build_wrappers::w_int_add(&self.ir.builder, a_len, b_len, "ct_cnt");
+        self.emit_arr_i64_build(count, fn_val, move |slf, dp, i| {
+            // v = i < a_len ? a[i] : b[i - a_len]. Both GEPs are emitted, so the
+            // indices must stay in-bounds for the UNTAKEN branch too: clamp a's
+            // index to a_len-1 and b's to 0 on the wrong side (the select then
+            // discards that load's value).
+            let in_a = build_wrappers::w_int_compare(&slf.ir.builder, inkwell::IntPredicate::SLT, i, a_len, "ct_ina");
+            // a index: i if in_a else 0
+            let a_idx = slf.ir.builder.build_select(in_a, i, i64_ty.const_zero(), "ct_aidx").unwrap().into_int_value();
+            let ai = unsafe { slf.ir.builder.build_gep(i64_ty, a_data, &[a_idx], "ct_ai").unwrap() };
+            let av = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), ai, "ct_av").into_int_value();
+            // b index: 0 if in_a else (i - a_len)
+            let bsub = build_wrappers::w_int_sub(&slf.ir.builder, i, a_len, "ct_bsub");
+            let b_idx = slf.ir.builder.build_select(in_a, i64_ty.const_zero(), bsub, "ct_bidx").unwrap().into_int_value();
+            let bi = unsafe { slf.ir.builder.build_gep(i64_ty, b_data, &[b_idx], "ct_bi").unwrap() };
+            let bv = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(), bi, "ct_bv").into_int_value();
+            let v = slf.ir.builder.build_select(in_a, av, bv, "ct_v").unwrap().into_int_value();
+            build_wrappers::w_store(&slf.ir.builder, dp, v.into());
+        })
+    }
+
     /// f64-element reductions over a slice `{i64 len, f64* data}` (Sum/Mean/
     /// Extreme). len/index stay i64; the element + accumulator are f64. Mean
     /// guards empty→0.0; Extreme panics (exit 101) on empty. Pure IR (native+wasm).
@@ -3018,6 +3143,31 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let Some(r) = self.emit_arr_i64_sort_by(slice_val, lam, fn_val) {
                         return Some(r);
                     }
+                }
+            }
+            // arr_range(start, end) → [start, start+1, …, end-1] (empty if
+            // end<=start). arr_repeat(v, n) → [v; max(0,n)]. Both allocate an
+            // i64 slice; no closure.
+            if name == "arr_range" && args.len() == 2 {
+                if let (Some(BasicValueEnum::IntValue(start)), Some(BasicValueEnum::IntValue(end))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_range(start, end, fn_val);
+                }
+            }
+            if name == "arr_repeat" && args.len() == 2 {
+                if let (Some(BasicValueEnum::IntValue(v)), Some(BasicValueEnum::IntValue(n))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_repeat(v, n, fn_val);
+                }
+            }
+            // arr_concat(a, b) → a ++ b (two i64 slices into one fresh slice).
+            if name == "arr_concat" && args.len() == 2 {
+                if let (Some(a_slice), Some(b_slice)) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_concat(a_slice, b_slice, fn_val);
                 }
             }
             // arr_count_if / arr_all / arr_any — predicate reductions over an i64
