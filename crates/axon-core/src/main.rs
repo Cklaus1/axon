@@ -172,7 +172,19 @@ enum Command {
 
         /// Run the goal N times with cross-run continuation (after run 1), so its
         /// search resumes from its best prior input each time and converges.
-        #[arg(long, value_name = "N", help = "Iterate the goal up to N times, stopping when converged")]
+        #[arg(
+            long,
+            value_name = "N",
+            help = "Iterate the goal up to N times, stopping early when converged",
+            long_help = "Run the goal up to N times in one command. Run 1 establishes a \
+                baseline (continuation off); runs 2..N set AXON_GOAL_CONTINUE=1 so each \
+                resumes the optimizer from the best prior input (via the persisted \
+                provenance log), letting the best score climb run-over-run. Stops EARLY \
+                the first time the best score fails to improve over the previous run \
+                (autonomous \"converged\", printed as `# converged after K runs`) — so N \
+                is a ceiling, not a fixed count. This is the cross-run self-improvement \
+                loop; it is unrelated to the 7-day cap on scheduled `/loop` cron jobs."
+        )]
         iterate: Option<usize>,
     },
 
