@@ -2219,6 +2219,109 @@ impl<'ctx> super::Codegen<'ctx> {
         })
     }
 
+    /// arr_std_f64(&a) → sample standard deviation. <2 elements → 0.0 (no
+    /// spread). Two passes over the f64 slice: Σ → mean; Σ(x-mean)² → var/(n-1);
+    /// sqrt. Pure IR + llvm.sqrt.f64 (native + wasm).
+    fn emit_arr_f64_std(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let s_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "sd_s");
+        build_wrappers::w_store(&self.ir.builder, s_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, s_alloca, 0, "sd_lp").unwrap(), "sd_len").into_int_value();
+        let data_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, s_alloca, 1, "sd_dp").unwrap(), "sd_dat").into_pointer_value();
+        let data = build_wrappers::w_pointer_cast(&self.ir.builder, data_raw, f64_ty.ptr_type(AddressSpace::default()), "sd_fd");
+
+        // <2 elements → return 0.0 immediately.
+        let small_bb = self.ir.context.append_basic_block(fn_val, "sd.small");
+        let ok_bb = self.ir.context.append_basic_block(fn_val, "sd.ok");
+        let done_bb = self.ir.context.append_basic_block(fn_val, "sd.done");
+        let result_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "sd_res");
+        let two = i64_ty.const_int(2, false);
+        let lt2 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, len, two, "sd_lt2");
+        build_wrappers::w_cond_br(&self.ir.builder, lt2, small_bb, ok_bb);
+        self.ir.builder.position_at_end(small_bb);
+        build_wrappers::w_store(&self.ir.builder, result_slot, f64_ty.const_float(0.0).into());
+        build_wrappers::w_br(&self.ir.builder, done_bb);
+
+        self.ir.builder.position_at_end(ok_bb);
+        // helper to run a counted loop accumulating an f64 via a callback.
+        let len_f = build_wrappers::w_signed_int_to_float(&self.ir.builder, len, f64_ty, "sd_lf");
+
+        // Pass 1: sum.
+        let sum_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "sd_sum");
+        build_wrappers::w_store(&self.ir.builder, sum_slot, f64_ty.const_float(0.0).into());
+        let i1s = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sd_i1");
+        build_wrappers::w_store(&self.ir.builder, i1s, i64_ty.const_zero().into());
+        let c1 = self.ir.context.append_basic_block(fn_val, "sd.c1");
+        let b1 = self.ir.context.append_basic_block(fn_val, "sd.b1");
+        let e1 = self.ir.context.append_basic_block(fn_val, "sd.e1");
+        build_wrappers::w_br(&self.ir.builder, c1);
+        self.ir.builder.position_at_end(c1);
+        let i1c = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i1s, "sd_i1c").into_int_value();
+        let g1 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i1c, len, "sd_g1");
+        build_wrappers::w_cond_br(&self.ir.builder, g1, b1, e1);
+        self.ir.builder.position_at_end(b1);
+        let p1 = unsafe { self.ir.builder.build_gep(f64_ty, data, &[i1c], "sd_p1").unwrap() };
+        let v1 = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), p1, "sd_v1").into_float_value();
+        let s1 = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), sum_slot, "sd_s1").into_float_value();
+        let ns1 = build_wrappers::w_float_add(&self.ir.builder, s1, v1, "sd_ns1");
+        build_wrappers::w_store(&self.ir.builder, sum_slot, ns1.into());
+        let n1 = build_wrappers::w_int_add(&self.ir.builder, i1c, i64_ty.const_int(1, false), "sd_n1");
+        build_wrappers::w_store(&self.ir.builder, i1s, n1.into());
+        build_wrappers::w_br(&self.ir.builder, c1);
+        self.ir.builder.position_at_end(e1);
+        let sum = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), sum_slot, "sd_sumf").into_float_value();
+        let mean = self.ir.builder.build_float_div(sum, len_f, "sd_mean").unwrap();
+
+        // Pass 2: Σ(x-mean)².
+        let var_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "sd_var");
+        build_wrappers::w_store(&self.ir.builder, var_slot, f64_ty.const_float(0.0).into());
+        let i2s = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sd_i2");
+        build_wrappers::w_store(&self.ir.builder, i2s, i64_ty.const_zero().into());
+        let c2 = self.ir.context.append_basic_block(fn_val, "sd.c2");
+        let b2 = self.ir.context.append_basic_block(fn_val, "sd.b2");
+        let e2 = self.ir.context.append_basic_block(fn_val, "sd.e2");
+        build_wrappers::w_br(&self.ir.builder, c2);
+        self.ir.builder.position_at_end(c2);
+        let i2c = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i2s, "sd_i2c").into_int_value();
+        let g2 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i2c, len, "sd_g2");
+        build_wrappers::w_cond_br(&self.ir.builder, g2, b2, e2);
+        self.ir.builder.position_at_end(b2);
+        let p2 = unsafe { self.ir.builder.build_gep(f64_ty, data, &[i2c], "sd_p2").unwrap() };
+        let v2 = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), p2, "sd_v2").into_float_value();
+        let d = self.ir.builder.build_float_sub(v2, mean, "sd_d").unwrap();
+        let dd = self.ir.builder.build_float_mul(d, d, "sd_dd").unwrap();
+        let va = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), var_slot, "sd_va").into_float_value();
+        let nva = build_wrappers::w_float_add(&self.ir.builder, va, dd, "sd_nva");
+        build_wrappers::w_store(&self.ir.builder, var_slot, nva.into());
+        let n2 = build_wrappers::w_int_add(&self.ir.builder, i2c, i64_ty.const_int(1, false), "sd_n2");
+        build_wrappers::w_store(&self.ir.builder, i2s, n2.into());
+        build_wrappers::w_br(&self.ir.builder, c2);
+        self.ir.builder.position_at_end(e2);
+        let var_acc = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), var_slot, "sd_vaf").into_float_value();
+        // variance = var_acc / (len - 1); std = sqrt(variance).
+        let lm1 = build_wrappers::w_int_sub(&self.ir.builder, len, i64_ty.const_int(1, false), "sd_lm1");
+        let lm1_f = build_wrappers::w_signed_int_to_float(&self.ir.builder, lm1, f64_ty, "sd_lm1f");
+        let variance = self.ir.builder.build_float_div(var_acc, lm1_f, "sd_variance").unwrap();
+        let sqrt_fn = self.ir.module.get_function("sqrt")?;
+        let std = self.ir.builder.build_call(sqrt_fn, &[variance.into()], "sd_sqrt").unwrap()
+            .try_as_basic_value().left()?.into_float_value();
+        build_wrappers::w_store(&self.ir.builder, result_slot, std.into());
+        build_wrappers::w_br(&self.ir.builder, done_bb);
+
+        self.ir.builder.position_at_end(done_bb);
+        Some(build_wrappers::w_load(&self.ir.builder, f64_ty.into(), result_slot, "sd_final"))
+    }
+
     /// f64-element reductions over a slice `{i64 len, f64* data}` (Sum/Mean/
     /// Extreme). len/index stay i64; the element + accumulator are f64. Mean
     /// guards empty→0.0; Extreme panics (exit 101) on empty. Pure IR (native+wasm).
@@ -3234,6 +3337,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // f64-element reductions: arr_sum_f64 / arr_mean_f64 / arr_max_f64 /
             // arr_min_f64 — same loop shape as the i64 ones but the slice element
             // is f64 (8-byte load/store, float compares).
+            // arr_std_f64(&a) → sample standard deviation (n-1 denominator),
+            // 0.0 for <2 elements. Two-pass: Σ→mean, then Σ(x-mean)²/(n-1), sqrt.
+            if name == "arr_std_f64" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_f64_std(slice_val, fn_val);
+                }
+            }
             if (name == "arr_sum_f64" || name == "arr_mean_f64"
                 || name == "arr_max_f64" || name == "arr_min_f64"
                 || name == "arr_argmax_f64" || name == "arr_argmin_f64") && args.len() == 1
