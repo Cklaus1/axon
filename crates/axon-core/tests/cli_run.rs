@@ -2790,6 +2790,24 @@ fn sensitive_field_into_ai_call_is_e1206() {
 }
 
 #[test]
+fn sensitive_typed_field_into_ai_call_is_e1206() {
+    // A field whose declared TYPE is a sensitive struct (`w.user` where
+    // Wrapper.user: User and User is @[sensitive]) is caught too — the sensitive
+    // value is being extracted out of a plain wrapper and sent to the model.
+    let leak = "@[sensitive(pii)]\n\
+        type User = { name: str }\n\
+        type Wrapper = { user: User }\n\
+        fn f(w: Wrapper) -> str { match ai_complete(w.user) { Ok(r) => r  Err(e) => e } }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sensnest_{}.ax", std::process::id()));
+    std::fs::write(&f, leak).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1206"), "a field of sensitive type → AI must be E1206: {all}");
+}
+
+#[test]
 fn sensitive_type_used_locally_is_allowed() {
     // No false positive: a `@[sensitive]` value used OUTSIDE an AI call is fine.
     let ok = "@[sensitive(pii)]\n\

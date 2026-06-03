@@ -1986,12 +1986,26 @@ impl CheckCtx {
                 return Some((sname, cat.clone()));
             }
         }
-        // (b) A field of a sensitive struct: `<receiver>.field`.
+        // (b) A field access `<receiver>.field`.
         if let Expr::FieldAccess { receiver, field } = arg {
             let rpath = format!("{apath}.receiver");
-            if let Type::Struct(sname) = self.resolve_expr_type(receiver, &rpath, scope) {
-                if let Some(cat) = self.sensitive_types.get(&sname) {
-                    return Some((format!("{sname}.{field}"), cat.clone()));
+            if let Type::Struct(rstruct) = self.resolve_expr_type(receiver, &rpath, scope) {
+                // (b1) The receiver itself is a sensitive struct — reading any of
+                // its fields exfiltrates sensitive data (PRD "can't exfiltrate
+                // sensitive fields").
+                if let Some(cat) = self.sensitive_types.get(&rstruct) {
+                    return Some((format!("{rstruct}.{field}"), cat.clone()));
+                }
+                // (b2) The FIELD's declared type is itself a sensitive struct
+                // (`w.user` where Wrapper.user: User and User is @[sensitive]).
+                // resolve_expr_type doesn't resolve nested field types, so look
+                // the field's type up directly in the struct field map.
+                if let Some(fields) = self.struct_fields.get(&rstruct) {
+                    if let Some((_, Type::Struct(fstruct))) = fields.iter().find(|(n, _)| n == field) {
+                        if let Some(cat) = self.sensitive_types.get(fstruct) {
+                            return Some((fstruct.clone(), cat.clone()));
+                        }
+                    }
                 }
             }
         }
