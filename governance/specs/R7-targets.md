@@ -1,6 +1,6 @@
 # Tech Spec — R7: Cross-Platform Targets
 
-**Status:** 📝 Draft (2026-06-01) — *Slice A specified, Slice B unblocked by R1 (2026-06-01 BUILD_RESOLVED.md); R7 spec reviewed and R1 framing corrected.*
+**Status:** ✅ Reviewed (2026-06-01) — *Slice A landed (interp→wasm, 15/15 parity); Slice B object-emit landed; **Slice B link diagnosis CORRECTED 2026-06-03 (§12 Q6): the gap is undefined libc/runtime symbols, NOT pointer width — link against the on-disk wasi `libc.a` + a `wasm32-wasip1` build of axon-rt.** Link slice specified and ready to build.*
 **Requirement:** `../REQUIREMENTS.md` R7 — *Cross-platform targets: native / wasm / js / mobile from one source.*
 **Decisive fork (from `README.md`):** *Does wasm reuse the LLVM backend or need a separate codegen?* (a) native+wasm share the inkwell path (blocked on R1's stalled build), or (b) wasm gets its own lean backend. *"The native build must be unstalled (R1) before any multi-target work is real."* **→ Resolved below (R1 resolved 2026-06-01; with a third option the fork omitted).**
 
@@ -55,12 +55,22 @@ cargo build -p axon-core --no-default-features --target wasm32-unknown-unknown -
 axon target list                                                   # NEW: show buildable targets + engine
 ```
 
-### 3.2 Option B — AOT wasm binary (R1-resolved, deferred — not built yet)
+### 3.2 Option B — AOT wasm binary (object emits; link reframed 2026-06-03)
 
 ```
-axon build prog.ax --target wasm32-wasi        # reuses codegen/link.rs target_triple seam
-# R1 landed (BUILD_RESOLVED.md). Errors with E0907 (§6) if backend unavailable; otherwise produces AOT wasm.
+axon target build --engine codegen --target wasm32 prog.ax   # emits a wasm OBJECT today
+axon build prog.ax --target wasm32-wasi                       # the runnable-.wasm goal (link, §12 Q6)
 ```
+
+The IR→wasm **object** half is shipped (`compile_to_wasm_object`, magic-verified `\0asm`). The
+remaining gap is the **link** into a runnable module — and the 2026-06-03 empirical test (§12 Q6)
+**corrects the prior diagnosis**: it is *not* a 64→32-bit pointer-width ABI retarget. `rust-lld
+-flavor wasm` accepts the object structurally; it fails on **undefined libc/runtime symbols**
+(`printf`, `puts`, `malloc`, `exit`, `write`, `snprintf`, `strtoll`, `__axon_parse_int_radix`,
+`__axon_parse_int_err`). Even `fn main() -> i64 { 21+21 }` pulls these because codegen declares libc
+externs and axon-rt helpers call them. The real link slice is therefore **providing a wasm libc +
+a wasm build of axon-rt to link against** — a tractable supply-the-symbols problem, not an IR
+retarget. A wasi `libc.a` is already on disk (`…/rustlib/wasm32-wasip1/lib/self-contained/libc.a`).
 
 ### 3.3 The host-capability boundary (option A's real work)
 
@@ -182,6 +192,13 @@ Blocking Slice B/C (engineering decisions, not R1):
 
 Blocking Slice A (must resolve before building A):
 - **Q2 (wasm32-unknown-unknown vs wasm32-wasi for the interp build):** `-wasi` gives `std::fs`/`std::env` "for free" via WASI (less host-trait work) but targets server/CLI wasm, not browsers; `-unknown-unknown` needs the full `AxonHost` but runs in a browser. **Recommendation:** target `-unknown-unknown` with `AxonHost` (the browser is product-v1 per ROADMAP §2.5), and get `-wasi` as a near-free bonus by having `DefaultHost` use real `std::fs` under WASI. Confirm before building.
+
+Blocking Slice B link (resolved diagnosis 2026-06-03):
+- **Q6 (what actually blocks the runnable-.wasm link?):** **RESOLVED — it is the libc/runtime symbol set, NOT pointer width.** Empirical test (`axon target build --engine codegen --target wasm32` on `21+21`, then `rust-lld -flavor wasm`): the link fails only on undefined symbols (`printf`/`puts`/`malloc`/`exit`/`write`/`snprintf`/`strtoll` + `__axon_parse_int_*`). The object itself is structurally accepted. **The link slice (fork resolution):**
+  - **(i) wasi target, not bare wasm32.** Emit for `wasm32-wasip1` (not `-unknown-unknown`) so the on-disk wasi `libc.a` supplies `printf`/`malloc`/`write`/`exit`/etc.; `write`/`exit` map to WASI syscalls. This is the **smallest first runnable** — server/CLI wasm under `wasmtime`, matching the existing `wasm_parity.sh` harness env.
+  - **(ii) axon-rt for wasm.** The `__axon_*` symbols (parse_int_radix, str helpers, provenance, channels…) need a `wasm32-wasip1` build of the axon-rt staticlib to link against (`cargo build -p axon-rt --target wasm32-wasip1`). axon-rt is pure Rust + libc, so this should build; channels (threads) are the one risky area — gate or stub them on wasm (no threads), consistent with Slice A's `on_deep_stack` single-stack cfg.
+  - **(iii) link invocation.** Extend `codegen/link.rs` with a wasm branch: object + `libc.a` + `libaxon_rt.a(wasm)` → `rust-lld -flavor wasm` → runnable `.wasm`; verify by running under `wasmtime` and asserting exit code + stdout == the native/interp oracle (I-2 parity, reuse `wasm_parity.sh` shape). New error band E0908 (wasm link failed) / E0909 (wasm axon-rt unavailable).
+  - **First gated slice:** a pure-integer/`println` program (no str/array) → object → link vs wasi libc + wasm axon-rt → `wasmtime` runs it, exit+stdout == interp. Pointer-bearing programs (str/array) come next and are where any *real* width issue (if one exists) would surface — to be verified empirically, not assumed.
 
 Non-blocking:
 - **Q3 (`@[target(...)]` conditional compilation):** per-target code selection in `.ax` source — deferred; not needed for "same source runs everywhere."
