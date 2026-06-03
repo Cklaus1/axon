@@ -838,18 +838,62 @@ fn cmd_improve(action: ImproveAction) {
     };
 
     match action {
-        ImproveAction::Discover { corpus: _ } => {
-            // Discovery is the unprivileged AI proposal side — out of scope for
-            // this slice (the verification core + graduation gate are the
-            // safety-critical parts and are built). Honest block, not a stub
-            // that pretends to work.
-            eprintln!(
-                "axon improve discover: pass discovery (the AI proposal side) is not yet \
-                 implemented. The verification harness (`verify`) and graduation gate \
-                 (`graduate`) are built — discovery feeds them candidate passes and is the \
-                 next slice. A proposal grants nothing; only `graduate` grants execution."
-            );
-            process::exit(2);
+        ImproveAction::Discover { corpus } => {
+            // Discovery is the UNPRIVILEGED proposal side (R10 §3/§4): scan the
+            // corpus for a candidate optimization and WRITE a proposal. It grants
+            // nothing — only `verify` (four gates) then a multi-sig `graduate`
+            // can turn a proposal into a runnable pass. This slice detects the
+            // canonical safe optimization (arithmetic-identity simplification).
+            let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
+            let members = load_corpus(&dir);
+            if members.is_empty() {
+                eprintln!("axon improve discover: no runnable .ax programs in {}", dir.display());
+                process::exit(2);
+            }
+            let programs: Vec<axon_core::ast::Program> =
+                members.iter().map(|(_, _, p)| p.clone()).collect();
+            match axon_core::improve::discover_arith_identities(&programs) {
+                Some(prop) => {
+                    // Write the proposal (pure data — NOT executable). The
+                    // proposals/ dir is the unprivileged staging area `verify`
+                    // reads; nothing here is added to the pass manifest.
+                    let pdir = PathBuf::from("proposals");
+                    if let Err(e) = std::fs::create_dir_all(&pdir) {
+                        eprintln!("axon improve discover: cannot create proposals/: {e}");
+                        process::exit(1);
+                    }
+                    let ppath = pdir.join(format!("{}.proposal", prop.name));
+                    let body = format!(
+                        "# axon improve proposal (UNPRIVILEGED — grants nothing)\n\
+                         name = {}\n\
+                         description = {}\n\
+                         opportunities = {}\n\
+                         members_affected = {}\n\
+                         corpus = {}\n\
+                         # Next: `axon improve verify` runs the four gates; only a\n\
+                         # multi-sig `axon improve graduate` adds it to the manifest.\n",
+                        prop.name, prop.description, prop.opportunities,
+                        prop.members_affected, dir.display(),
+                    );
+                    if let Err(e) = std::fs::write(&ppath, &body) {
+                        eprintln!("axon improve discover: cannot write {}: {e}", ppath.display());
+                        process::exit(1);
+                    }
+                    println!(
+                        "axon improve discover: proposed `{}` — {} ({} site(s) across {} member(s))",
+                        prop.name, prop.description, prop.opportunities, prop.members_affected
+                    );
+                    println!("  wrote {} (a proposal grants nothing — run `axon improve verify` next)", ppath.display());
+                    process::exit(0);
+                }
+                None => {
+                    println!(
+                        "axon improve discover: no arithmetic-identity opportunities in {} — nothing to propose",
+                        dir.display()
+                    );
+                    process::exit(0);
+                }
+            }
         }
 
         ImproveAction::Verify { corpus, perf } => {

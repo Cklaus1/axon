@@ -3700,6 +3700,58 @@ fn improve_verify_passes_over_a_pure_compute_corpus() {
 }
 
 #[test]
+fn improve_discover_proposes_arith_identities() {
+    // R10 §3/§4: `axon improve discover` is the UNPRIVILEGED proposal side — it
+    // scans the corpus for a candidate optimization (arithmetic-identity
+    // simplification) and writes a proposal that GRANTS NOTHING. Only `verify`
+    // then a multi-sig `graduate` can make a pass runnable. Here a corpus with
+    // x+0 / y*1 / z-0 sites yields a proposal; the run is cwd'd to a temp dir so
+    // the proposals/ dir lands there (and we assert the proposal file exists).
+    let tmp = std::env::temp_dir().join(format!("axon_disc_{}", std::process::id()));
+    let corpus = tmp.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("a.ax"), "fn f(x: i64) -> i64 { x + 0 }\nfn g(y: i64) -> i64 { y * 1 }\nfn main() -> i64 { f(1) + g(2) }\n").unwrap();
+    std::fs::write(corpus.join("b.ax"), "fn main() -> i64 { 2 + 3 }\n").unwrap();
+
+    let out = axon()
+        .args(["improve", "discover", corpus.to_str().unwrap()])
+        .current_dir(&tmp)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "discover should succeed: {stdout}");
+    assert!(stdout.contains("proposed `fold-arith-identities`"), "proposal announced: {stdout}");
+    assert!(stdout.contains("2 site(s)"), "found 2 identity sites (x+0, y*1): {stdout}");
+    // A proposal must have been WRITTEN (the unprivileged staging area), and it
+    // must explicitly grant nothing.
+    let ppath = tmp.join("proposals").join("fold-arith-identities.proposal");
+    assert!(ppath.exists(), "the proposal file must be written: {}", ppath.display());
+    let body = std::fs::read_to_string(&ppath).unwrap();
+    assert!(body.contains("grants nothing"), "the proposal must state it grants nothing: {body}");
+    assert!(body.contains("opportunities = 2"), "proposal records the site count: {body}");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
+fn improve_discover_proposes_nothing_on_clean_corpus() {
+    // No arithmetic identities → discovery proposes nothing (exit 0, no file).
+    let tmp = std::env::temp_dir().join(format!("axon_disc_clean_{}", std::process::id()));
+    let corpus = tmp.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("a.ax"), "fn main() -> i64 { 2 + 3 }\n").unwrap();
+    let out = axon()
+        .args(["improve", "discover", corpus.to_str().unwrap()])
+        .current_dir(&tmp)
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "clean discover still exits 0: {stdout}");
+    assert!(stdout.contains("nothing to propose"), "clean corpus proposes nothing: {stdout}");
+    assert!(!tmp.join("proposals").join("fold-arith-identities.proposal").exists(), "no proposal file on a clean corpus");
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn improve_graduate_requires_multisig_e1404() {
     // R10 §4.5 (the I-12 firewall): `graduate` refuses without ≥2 distinct
     // root-Principal signatures — the compiler cannot graduate its own passes.

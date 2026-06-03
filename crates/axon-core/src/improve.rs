@@ -343,6 +343,137 @@ fn min_run_nanos(program: &Program, trials: u32) -> u128 {
     best
 }
 
+// ── Discovery (R10 §3/§4): the unprivileged proposal side ─────────────────────
+//
+// Discovery SCANS the corpus for a candidate optimization opportunity and
+// PROPOSES it — it grants nothing. Only `verify` (the four gates) and then a
+// multi-sig `graduate` can turn a proposal into a runnable pass. A proposal is
+// pure data: a name, the opportunity it targets, and where it occurs. This slice
+// detects the canonical safe optimization — **arithmetic-identity simplification**
+// (`x + 0`, `0 + x`, `x - 0`, `x * 1`, `1 * x`) — which a `verify` run would
+// confirm preserves observable behavior (G1) and adds no capability (G2). The
+// detector is READ-ONLY (no rewrite here): discovery observes, it does not mutate
+// the compiler.
+
+use crate::ast::{BinOp, Expr, Item, Literal, Stmt};
+
+/// A discovered candidate pass: pure data describing what discovery found. It is
+/// *not* executable — `verify` builds the actual transform; `graduate` (multi-
+/// sig) is the only thing that grants execution. The `opportunities` count is
+/// how many sites in the corpus the candidate would simplify.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Proposal {
+    /// Stable candidate name (the pass it proposes).
+    pub name: String,
+    /// One-line human description of the optimization.
+    pub description: String,
+    /// Number of applicable sites found across the scanned corpus.
+    pub opportunities: usize,
+    /// Number of corpus members (programs) containing ≥1 opportunity.
+    pub members_affected: usize,
+}
+
+/// Scan `corpus` for arithmetic-identity opportunities and return a [`Proposal`]
+/// (or `None` when the corpus has none — discovery proposes nothing rather than
+/// a vacuous pass). Deterministic: a pure function of the corpus ASTs.
+pub fn discover_arith_identities(corpus: &[Program]) -> Option<Proposal> {
+    let mut total = 0usize;
+    let mut members = 0usize;
+    for program in corpus {
+        let n: usize = program
+            .items
+            .iter()
+            .map(|it| match it {
+                Item::FnDef(f) => count_identities_expr(&f.body),
+                Item::ImplBlock(b) => b.methods.iter().map(|m| count_identities_expr(&m.body)).sum(),
+                _ => 0,
+            })
+            .sum();
+        if n > 0 {
+            total += n;
+            members += 1;
+        }
+    }
+    if total == 0 {
+        return None;
+    }
+    Some(Proposal {
+        name: "fold-arith-identities".to_string(),
+        description: "simplify arithmetic identities (x+0, 0+x, x-0, x*1, 1*x → x)".to_string(),
+        opportunities: total,
+        members_affected: members,
+    })
+}
+
+/// Is `e` the integer literal `n`?
+fn is_int_lit(e: &Expr, n: i64) -> bool {
+    matches!(e, Expr::Literal(Literal::Int(v)) if *v == n)
+}
+
+/// Does this `BinOp` node match an arithmetic identity at its top level?
+fn is_arith_identity(op: &BinOp, left: &Expr, right: &Expr) -> bool {
+    match op {
+        // x + 0 | 0 + x
+        BinOp::Add => is_int_lit(right, 0) || is_int_lit(left, 0),
+        // x - 0  (0 - x is NOT identity — it's negation)
+        BinOp::Sub => is_int_lit(right, 0),
+        // x * 1 | 1 * x
+        BinOp::Mul => is_int_lit(right, 1) || is_int_lit(left, 1),
+        _ => false,
+    }
+}
+
+/// Count arithmetic-identity sites in an expression tree (read-only).
+fn count_identities_expr(e: &Expr) -> usize {
+    let here = if let Expr::BinOp { op, left, right } = e {
+        usize::from(is_arith_identity(op, left, right))
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_identities_expr).sum::<usize>()
+}
+
+/// Direct child expressions of `e` (for the read-only identity scan). Covers the
+/// arithmetic-bearing variants; any not enumerated simply contribute no count.
+fn child_exprs(e: &Expr) -> Vec<&Expr> {
+    let mut out: Vec<&Expr> = Vec::new();
+    match e {
+        Expr::BinOp { left, right, .. } => { out.push(left); out.push(right); }
+        Expr::UnaryOp { operand, .. } => out.push(operand),
+        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => out.push(value),
+        Expr::Call { callee, args, .. } => { out.push(callee); out.extend(args.iter()); }
+        Expr::MethodCall { receiver, args, .. } => { out.push(receiver); out.extend(args.iter()); }
+        Expr::Question(inner) | Expr::Spawn(inner) | Expr::Comptime(inner) => out.push(inner),
+        Expr::Return(Some(inner)) => out.push(inner),
+        Expr::FieldAccess { receiver, .. } => out.push(receiver),
+        Expr::Index { receiver, index } => { out.push(receiver); out.push(index); }
+        Expr::If { cond, then, else_ } => {
+            out.push(cond); out.push(then);
+            if let Some(e) = else_ { out.push(e); }
+        }
+        Expr::Match { subject, arms } => {
+            out.push(subject);
+            for a in arms { out.push(&a.body); }
+        }
+        Expr::Tuple(xs) | Expr::Array(xs) => out.extend(xs.iter()),
+        Expr::Block(stmts) | Expr::While { body: stmts, .. } => {
+            for s in stmts { out.extend(stmt_exprs(s)); }
+        }
+        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => out.push(b),
+        Expr::Lambda { body, .. } => out.push(body),
+        Expr::StructLit { fields, .. } => out.extend(fields.iter().map(|(_, v)| v)),
+        _ => {}
+    }
+    out
+}
+
+/// The expression a statement wraps (for the identity scan). `Stmt` is a thin
+/// `{ expr, span }` wrapper — `let`/assignment are themselves `Expr` variants,
+/// so the recursion through `child_exprs` handles them.
+fn stmt_exprs(s: &Stmt) -> Vec<&Expr> {
+    vec![&s.expr]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +702,40 @@ mod tests {
         let rec = verify_pass_with(breaker, &c, &opts);
         assert!(!rec.passed());
         assert_eq!(rec.g4_perf, PerfStatus::Unmeasured, "no perf claim on a broken pass");
+    }
+
+    // ── R10 discovery (the unprivileged proposal side) ────────────────────────
+    #[test]
+    fn discover_finds_arith_identities_and_counts_them() {
+        let c = vec![
+            // 4 identity sites: x+0, y*1, z-0, and the trailing +0.
+            prog("fn f(x: i64) -> i64 { x + 0 }\nfn g(y: i64) -> i64 { y * 1 }\nfn h(z: i64) -> i64 { z - 0 + 0 }"),
+            // none here.
+            prog("fn n(a: i64) -> i64 { a + 5 }"),
+        ];
+        let p = discover_arith_identities(&c).expect("should propose");
+        assert_eq!(p.name, "fold-arith-identities");
+        assert_eq!(p.opportunities, 4);
+        assert_eq!(p.members_affected, 1);
+    }
+
+    #[test]
+    fn discover_proposes_nothing_on_a_clean_corpus() {
+        // No arithmetic identities → discovery proposes nothing (not a vacuous pass).
+        let c = vec![
+            prog("fn main() -> i64 { 2 + 3 }"),
+            prog("fn main() { println(\"hi\") }"),
+        ];
+        assert!(discover_arith_identities(&c).is_none());
+    }
+
+    #[test]
+    fn discover_recurses_into_nested_exprs() {
+        // The identity is buried inside a let + if + call — the scanner must descend.
+        let c = vec![prog(
+            "fn f(x: i64) -> i64 { let y = if x > 0 { x * 1 } else { x }  y }",
+        )];
+        let p = discover_arith_identities(&c).expect("should find the nested x*1");
+        assert_eq!(p.opportunities, 1);
     }
 }
