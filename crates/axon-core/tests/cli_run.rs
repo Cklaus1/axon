@@ -2807,6 +2807,22 @@ fn sensitive_value_into_write_file_is_e1206() {
 }
 
 #[test]
+fn sensitive_value_in_array_arg_is_e1206() {
+    // Wrapping a sensitive value in a container (an array passed to exec) does
+    // not launder it past the sink — the guard recurses into array elements.
+    let leak = "@[sensitive(pii)]\n\
+        type User = { name: str }\n\
+        fn run(u: User) -> i64 { let _ = exec(\"curl\", [u.name])  0 }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sensarr_{}.ax", std::process::id()));
+    std::fs::write(&f, leak).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1206"), "sensitive value in an array → exec must be E1206: {all}");
+}
+
+#[test]
 fn non_sensitive_write_file_is_allowed() {
     // No false positive: an ordinary write_file is fine.
     let ok = "fn main() -> i64 { let _ = write_file(\"/tmp/x.txt\", \"plain note\")  0 }\n";

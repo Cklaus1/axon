@@ -2013,6 +2013,27 @@ impl CheckCtx {
                 }
             }
         }
+        // (c) A composite literal that BUNDLES a sensitive value — an array
+        // (`[u.name]`) or a struct literal (`Wrapper { user: u }`). Recurse into
+        // the elements/field values so wrapping a sensitive value in a container
+        // doesn't launder it past the sink.
+        match arg {
+            Expr::Array(elems) => {
+                for (i, e) in elems.iter().enumerate() {
+                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope) {
+                        return Some(found);
+                    }
+                }
+            }
+            Expr::StructLit { fields, .. } => {
+                for (fname, e) in fields {
+                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.{fname}"), scope) {
+                        return Some(found);
+                    }
+                }
+            }
+            _ => {}
+        }
         None
     }
 
