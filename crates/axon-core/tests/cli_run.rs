@@ -4097,6 +4097,29 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
 }
 
 #[test]
+fn wasm_aot_env_var_runs_on_wasm() {
+    // R7 (AOT-wasm host builtin): env_var lowers to getenv + strlen. strlen
+    // returns size_t (i32 on wasm32) — codegen now declares it at target width
+    // and zero-extends the result to the i64 AxonStr len, so an env_var program
+    // links and runs under `wasmtime --env` with the same value as the interp.
+    // scripts/wasm_aot_env_parity.sh; skips when codegen/wasm toolchain absent.
+    let script = format!("{}/../../scripts/wasm_aot_env_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_aot_env_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_env_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — AOT env parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "env_var must run identically across engines on wasm:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_aot_env_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_object_prunes_dead_externs_and_links_clean() {
     // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
     // ~119 unconditionally-emitted builtin helpers that go unused, so a

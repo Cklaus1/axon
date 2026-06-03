@@ -64,6 +64,17 @@ impl<'ctx> super::Codegen<'ctx> {
             false,
         );
         self.ir.module.add_function("memset", memset_ty0, None);
+        // `size_t strlen(const char*)`: the RESULT is size_t (i32 on wasm32,
+        // i64 native). Callers that feed it into the i64 AxonStr len field
+        // zero-extend on wasm. Declared once at target width so it agrees with
+        // the wasi libc strlen (else: `strlen … (i32)->i64 vs (i32)->i32`).
+        let strlen_ty0 = malloc_size_ty.fn_type(&[i8_ptr.into()], false);
+        self.ir.module.add_function("strlen", strlen_ty0, None);
+        // `int strncmp(const char*, const char*, size_t n)`: the count is
+        // size_t (i32 on wasm32). Declared once at target width; the parse_bool
+        // call sites narrow the count via msize().
+        let strncmp_ty0 = i32_ty.fn_type(&[i8_ptr.into(), i8_ptr.into(), malloc_size_ty.into()], false);
+        self.ir.module.add_function("strncmp", strncmp_ty0, None);
 
         // C stdlib: int puts(const char *s)  — prints string + newline
         let puts_ty = i32_ty.fn_type(&[i8_ptr.into()], false);
@@ -1676,7 +1687,7 @@ impl<'ctx> super::Codegen<'ctx> {
             true_lit_g.set_linkage(inkwell::module::Linkage::Private);
             let true_lit = true_lit_g.as_pointer_value();
             let cmp_t = build_wrappers::w_call(&self.ir.builder,strncmp_fn,
-                &[s_ptr.into(), true_lit.into(), len4.into()], "pb_cmpt")
+                &[s_ptr.into(), true_lit.into(), self.msize(len4, "msz").into()], "pb_cmpt")
                 .try_as_basic_value().left().unwrap().into_int_value();
             let cmp_t_eq = build_wrappers::w_int_compare(&self.ir.builder,
                 inkwell::IntPredicate::EQ, cmp_t,
@@ -1695,7 +1706,7 @@ impl<'ctx> super::Codegen<'ctx> {
             false_lit_g.set_linkage(inkwell::module::Linkage::Private);
             let false_lit = false_lit_g.as_pointer_value();
             let cmp_f = build_wrappers::w_call(&self.ir.builder,strncmp_fn,
-                &[s_ptr.into(), false_lit.into(), len5.into()], "pb_cmpf")
+                &[s_ptr.into(), false_lit.into(), self.msize(len5, "msz").into()], "pb_cmpf")
                 .try_as_basic_value().left().unwrap().into_int_value();
             let cmp_f_eq = build_wrappers::w_int_compare(&self.ir.builder,
                 inkwell::IntPredicate::EQ, cmp_f,
@@ -3469,8 +3480,11 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Ok branch: return { tag=1, payload=str{strlen(val_ptr), val_ptr} }
             self.ir.builder.position_at_end(ok_bb);
-            let val_len = build_wrappers::w_call(&self.ir.builder,strlen_fn, &[val_ptr.into()], "ev_vlen")
+            let val_len_raw = build_wrappers::w_call(&self.ir.builder,strlen_fn, &[val_ptr.into()], "ev_vlen")
                 .try_as_basic_value().left().unwrap().into_int_value();
+            // strlen returns size_t (i32 on wasm32); the AxonStr len field is
+            // i64 — widen before storing.
+            let val_len = self.zext_size_to_i64(val_len_raw, "ev_vlen64");
             let ok_str_ptr = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "ev_ok_r");
             let tag_gep = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_str_ptr, 0, "ev_tag");
             build_wrappers::w_store(&self.ir.builder,tag_gep, bool_ty.const_int(1, false).into());

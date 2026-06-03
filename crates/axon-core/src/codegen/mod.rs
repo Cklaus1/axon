@@ -340,6 +340,26 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// R7: zero-extend a `size_t`-typed value (i32 on wasm32) back to i64 for
+    /// storage in an i64 field (e.g. the AxonStr `len`). Identity on native,
+    /// where `size_t` is already i64. The inverse of `msize` — use on the
+    /// RESULT of a size_t-returning libc call (`strlen`) before it flows into
+    /// the i64 ABI.
+    pub(super) fn zext_size_to_i64(
+        &self,
+        v: inkwell::values::IntValue<'ctx>,
+        name: &str,
+    ) -> inkwell::values::IntValue<'ctx> {
+        if self.target_is_wasm {
+            self.ir
+                .builder
+                .build_int_z_extend(v, self.ir.context.i64_type(), name)
+                .unwrap()
+        } else {
+            v
+        }
+    }
+
     /// R7: get-or-declare `malloc` with the target-correct `size_t` width, and
     /// build a call passing `byte_count` (an i64) truncated to `size_t`. Returns
     /// the raw `i8*` result. Centralizes the 8 ad-hoc malloc declarations so they
