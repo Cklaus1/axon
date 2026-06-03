@@ -1917,6 +1917,86 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_find(&a, pred) → Option<i64>: first element where the predicate
+    /// lambda returns truthy (Some), else None. Loops the whole slice tracking
+    /// a found-flag + found-value (no short-circuit — observably identical for
+    /// pure predicates), then builds the Option via emit_option.
+    fn emit_arr_i64_find(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "fd2_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "fd2_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "fd2_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "fd2_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "fd2_lp").unwrap(), "fd2_len").into_int_value();
+        let src_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "fd2_dp").unwrap(), "fd2_dat").into_pointer_value();
+        let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "fd2_si");
+
+        // found flag (0/1) + found value. Keep the FIRST match: only update when
+        // not-yet-found AND predicate true.
+        let found_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "fd2_f");
+        build_wrappers::w_store(&self.ir.builder, found_slot, i64_ty.const_zero().into());
+        let val_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "fd2_v");
+        build_wrappers::w_store(&self.ir.builder, val_slot, i64_ty.const_zero().into());
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "fd2_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "fd2.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "fd2.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "fd2.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "fd2_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "fd2_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ep = unsafe { self.ir.builder.build_gep(i64_ty, src, &[i_cur], "fd2_ep").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ep, "fd2_e").into_int_value();
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "fd2_call")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        let truthy = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "fd2_t");
+        let cur_found = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), found_slot, "fd2_cf").into_int_value();
+        let not_found = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, cur_found, i64_ty.const_zero(), "fd2_nf");
+        // take = truthy && not-yet-found
+        let take = build_wrappers::w_and(&self.ir.builder, truthy, not_found, "fd2_take");
+        // val = take ? elem : val ; found = take ? 1 : found
+        let cur_val = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), val_slot, "fd2_cv").into_int_value();
+        let nval = self.ir.builder.build_select(take, elem, cur_val, "fd2_nv").unwrap().into_int_value();
+        build_wrappers::w_store(&self.ir.builder, val_slot, nval.into());
+        let take64 = build_wrappers::w_int_z_extend(&self.ir.builder, take, i64_ty, "fd2_t64");
+        let nfound = build_wrappers::w_or(&self.ir.builder, cur_found, take64, "fd2_nfound");
+        build_wrappers::w_store(&self.ir.builder, found_slot, nfound.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "fd2_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // exit: build Some(val) if found, else None — via a select on the
+        // Option struct (both branches built, select picks).
+        self.ir.builder.position_at_end(exit_bb);
+        let found = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), found_slot, "fd2_ff").into_int_value();
+        let val = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), val_slot, "fd2_fv");
+        let found_i1 = self.ir.builder.build_int_truncate(found, self.ir.context.bool_type(), "fd2_fi1").unwrap();
+        let some_v = self.emit_option(Some(val), &Type::I64);
+        let none_v = self.emit_option(None, &Type::I64);
+        let chosen = self.ir.builder.build_select(found_i1, some_v, none_v, "fd2_opt").unwrap();
+        Some(chosen)
+    }
+
     /// arr_unique(&a) — keep the FIRST occurrence of each i64 value. Mallocs a
     /// len-sized buffer; for each src element, linearly scan the already-written
     /// `cnt` entries; if absent, append. O(n²). Result length = cnt.
@@ -3271,6 +3351,15 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_unique" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_unique(slice_val, fn_val);
+                }
+            }
+            // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
+            // the predicate (Some), else None.
+            if name == "arr_find" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_find(slice_val, lam, fn_val);
                 }
             }
             // arr_count_if / arr_all / arr_any — predicate reductions over an i64
