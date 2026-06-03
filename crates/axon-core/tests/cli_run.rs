@@ -4040,6 +4040,30 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
 }
 
 #[test]
+fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
+    // R7 (AOT-wasm size_t ABI): wasm32 is ILP32 — libc malloc/snprintf take an
+    // i32 size, not the i64 the native (LP64) path bakes in. Codegen declares
+    // them target-width and narrows size args via msize() on wasm32, so an array
+    // literal (malloc) and to_str (snprintf) link clean and run with the same
+    // value on interp, native, and AOT-wasm. scripts/wasm_malloc_abi_parity.sh;
+    // skips when codegen/wasm toolchain absent.
+    let script = format!("{}/../../scripts/wasm_malloc_abi_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_malloc_abi_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_malloc_abi_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — malloc ABI parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "array + to_str must run identically across engines on wasm:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_malloc_abi_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_object_prunes_dead_externs_and_links_clean() {
     // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
     // ~119 unconditionally-emitted builtin helpers that go unused, so a

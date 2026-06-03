@@ -1143,7 +1143,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 false,
             );
             let raw = self.ir.builder
-                .build_call(malloc_fn, &[env_size.into()], "env_alloc")
+                .build_call(malloc_fn, &[self.msize(env_size, "msz").into()], "env_alloc")
                 .unwrap()
                 .try_as_basic_value()
                 .left()
@@ -1554,14 +1554,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let elem_size = elem_ty.size_of().unwrap_or_else(|| i64_ty.const_int(8, false));
         let n_val = i64_ty.const_int(n as u64, false);
         let total_bytes = build_wrappers::w_int_mul(&self.ir.builder, elem_size, n_val, "arrbytes");
-        let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
-            let malloc_ty = ptr_ty.fn_type(&[i64_ty.into()], false);
-            self.ir.module.add_function("malloc", malloc_ty, None)
-        });
-        let malloc_call = self.ir.builder
-            .build_call(malloc_fn, &[total_bytes.into()], "arrdata")
-            .unwrap();
-        let raw_ptr = malloc_call.try_as_basic_value().left().unwrap().into_pointer_value();
+        // R7: target-aware malloc (i32 size on wasm32, i64 on native).
+        let raw_ptr = self.emit_malloc(total_bytes, "arrdata");
         // Cast to typed element pointer for GEP.
         let elem_ptr_ty = elem_ty.ptr_type(AddressSpace::default());
         let elem_data_ptr = self.ir.builder

@@ -1529,6 +1529,10 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     let ctx = inkwell::context::Context::create();
     let module_name = file.file_stem().unwrap_or_default().to_string_lossy();
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
+    // R7: wasm32 is ILP32 — malloc/free/realloc take an i32 size. Tell codegen
+    // before emission so the runtime decls + call sites use the right width
+    // (otherwise array allocation traps: `type mismatch: expected i32, found i64`).
+    cg.set_target_is_wasm(llvm_triple.starts_with("wasm32"));
     cg.declare_functions(&concrete);
     cg.emit_program(&concrete);
 

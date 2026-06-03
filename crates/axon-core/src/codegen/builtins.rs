@@ -41,6 +41,16 @@ impl<'ctx> super::Codegen<'ctx> {
         let bool_ty = self.ir.context.bool_type();
         let void_ty = self.ir.context.void_type();
 
+        // R7 (AOT-wasm): declare `malloc` ONCE, up front, with the target-correct
+        // `size_t` width — i32 on wasm32 (ILP32), i64 on native (LP64). Every
+        // later `get_function("malloc").unwrap_or_else(…)` reuses THIS decl (the
+        // fallbacks are now dead), so the module can't end up with the i64 malloc
+        // that traps the wasm32 verifier (`expected i32, found i64`). Call sites
+        // narrow their i64 byte-count to `size_ty()` via `emit_malloc`/`msize`.
+        let malloc_size_ty = self.size_ty();
+        let malloc_ty0 = i8_ptr.fn_type(&[malloc_size_ty.into()], false);
+        self.ir.module.add_function("malloc", malloc_ty0, None);
+
         // C stdlib: int puts(const char *s)  — prints string + newline
         let puts_ty = i32_ty.fn_type(&[i8_ptr.into()], false);
         let puts_fn = self.ir.module.add_function("puts", puts_ty, None);
@@ -179,7 +189,9 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // C stdlib: int snprintf(char *buf, size_t n, const char *fmt, ...)
-        let snprintf_ty = i32_ty.fn_type(&[i8_ptr.into(), i64_ty.into(), i8_ptr.into()], true);
+        // R7: `n` is `size_t` — i32 on wasm32 (ILP32), i64 on native. Call sites
+        // pass the buffer length through `msize` to match this width.
+        let snprintf_ty = i32_ty.fn_type(&[i8_ptr.into(), malloc_size_ty.into(), i8_ptr.into()], true);
         let snprintf_fn = self.ir.module.add_function("snprintf", snprintf_ty, None);
 
         // to_str: i64 → { i64, ptr }
@@ -224,7 +236,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let zero64 = i64_ty.const_int(0, false);
             let snp_len = build_wrappers::w_call(&self.ir.builder,
                     snprintf_fn,
-                    &[null_ptr.into(), zero64.into(), fmt_ptr2.into(), n.into()],
+                    &[null_ptr.into(), self.msize(zero64, "msz").into(), fmt_ptr2.into(), n.into()],
                     "snplen");
             let len_i32 = snp_len.try_as_basic_value().left().unwrap().into_int_value();
             let len_i64 = build_wrappers::w_int_z_extend(&self.ir.builder,len_i32, i64_ty, "len64");
@@ -232,13 +244,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // Allocate len + 1 bytes (room for null terminator).
             let one64 = i64_ty.const_int(1, false);
             let alloc_size = build_wrappers::w_int_add(&self.ir.builder,len_i64, one64, "allocsz");
-            let buf_call = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "buf");
+            let buf_call = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_size, "msz").into()], "buf");
             let buf_ptr = buf_call.try_as_basic_value().left().unwrap().into_pointer_value();
 
             // Pass 2: snprintf(buf, len+1, "%lld", n) → writes the decimal string.
             build_wrappers::w_call(&self.ir.builder,
                     snprintf_fn,
-                    &[buf_ptr.into(), alloc_size.into(), fmt_ptr2.into(), n.into()],
+                    &[buf_ptr.into(), self.msize(alloc_size, "msz").into(), fmt_ptr2.into(), n.into()],
                     "snpwrite");
 
             // Build { i64, ptr } return struct.
@@ -285,7 +297,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let zero64 = i64_ty.const_int(0, false);
             let snp_len = build_wrappers::w_call(&self.ir.builder,
                     snprintf_fn,
-                    &[null_ptr.into(), zero64.into(), fmt_ptr.into(), n.into()],
+                    &[null_ptr.into(), self.msize(zero64, "msz").into(), fmt_ptr.into(), n.into()],
                     "snplen");
             let len_i32 = snp_len.try_as_basic_value().left().unwrap().into_int_value();
             let len_i64 = build_wrappers::w_int_z_extend(&self.ir.builder,len_i32, i64_ty, "len64");
@@ -293,13 +305,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // Allocate len + 1 bytes.
             let one64 = i64_ty.const_int(1, false);
             let alloc_size = build_wrappers::w_int_add(&self.ir.builder,len_i64, one64, "allocsz");
-            let buf_call = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "buf");
+            let buf_call = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_size, "msz").into()], "buf");
             let buf_ptr = buf_call.try_as_basic_value().left().unwrap().into_pointer_value();
 
             // Pass 2: snprintf(buf, len+1, "%.6g", n).
             build_wrappers::w_call(&self.ir.builder,
                     snprintf_fn,
-                    &[buf_ptr.into(), alloc_size.into(), fmt_ptr.into(), n.into()],
+                    &[buf_ptr.into(), self.msize(alloc_size, "msz").into(), fmt_ptr.into(), n.into()],
                     "snpwrite");
 
             let out_alloca = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "out");
@@ -686,7 +698,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let alloc_len = build_wrappers::w_int_add(&self.ir.builder,total_len, one64, "alloc_len");
 
             // buf = malloc(alloc_len)
-            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_len.into()], "buf");
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_len, "msz").into()], "buf");
             let buf_ptr = buf.try_as_basic_value().left().unwrap().into_pointer_value();
 
             // memcpy(buf, a_ptr, a_len)
@@ -3137,7 +3149,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.ir.module.add_function("malloc", ft, None)
             });
             let alloc_size = build_wrappers::w_int_add(&self.ir.builder,s_len, i64_ty.const_int(1, false), "stl_sz");
-            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "stl_buf")
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_size, "msz").into()], "stl_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             let i_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "stl_i");
             build_wrappers::w_store(&self.ir.builder,i_slot, i64_ty.const_zero().into());
@@ -3284,7 +3296,7 @@ impl<'ctx> super::Codegen<'ctx> {
 
                 // malloc(new_len + 1)
                 let alloc_sz = build_wrappers::w_int_add(&self.ir.builder,new_len, i64_ty.const_int(1, false), "stt_az");
-                let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_sz.into()], "stt_buf")
+                let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_sz, "msz").into()], "stt_buf")
                     .try_as_basic_value().left().unwrap().into_pointer_value();
                 // memcpy(buf, orig_ptr+start, new_len)
                 let src_ptr = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), orig_ptr, &[final_start], "stt_src") };
@@ -3565,7 +3577,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let memcpy_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
                 self.ir.module.add_function("memcpy", memcpy_ty, None)
             });
-            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[alloc_size.into()], "sp_buf")
+            let buf = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_size, "msz").into()], "sp_buf")
                 .try_as_basic_value().left().unwrap().into_pointer_value();
             // fill_char = fill_ptr[0]
             let fill_char = build_wrappers::w_load(&self.ir.builder,self.ir.context.i8_type().into(), fill_ptr, "sp_fchar").into_int_value();

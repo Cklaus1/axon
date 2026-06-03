@@ -242,6 +242,13 @@ pub struct Codegen<'ctx> {
     /// source-level operator (`">="`, `">"`, …) and `bound` is the literal K.
     /// `None` whenever the surrounding function has no decodable verify spec.
     pub(super) current_verify_fn: Option<(String, &'static str, f64)>,
+    /// R7 (AOT-wasm): true when emitting for a wasm32 target. wasm32 is an
+    /// ILP32 target — `size_t`/pointers are 32-bit — so the C runtime's
+    /// `malloc`/`free`/`realloc` take an **i32** size, not the i64 the native
+    /// (LP64) path uses. When set, the malloc-family declarations use an i32
+    /// size param and call sites truncate the i64 byte-count to i32. Set by
+    /// `set_target_is_wasm` BEFORE `emit_program`; defaults to false (native).
+    pub(super) target_is_wasm: bool,
     /// IR.3 prep: a parallel inkwell-backed IR backend that codegen
     /// modules can call via `self.ir.*` instead of `self.ir.builder.*` /
     /// `self.ir.context.*` / `self.ir.module.*`.  During the migration phase
@@ -289,7 +296,80 @@ impl<'ctx> Codegen<'ctx> {
             source_path: String::new(),
             current_agent_fn: None,
             current_verify_fn: None,
+            target_is_wasm: false,
         }
+    }
+
+    /// R7: declare the target as wasm32 (ILP32) so the malloc-family runtime
+    /// declarations and their call sites use a 32-bit size. Call BEFORE
+    /// `emit_program`; native builds leave this false (LP64, i64 size).
+    pub fn set_target_is_wasm(&mut self, is_wasm: bool) {
+        self.target_is_wasm = is_wasm;
+    }
+
+    /// R7: the LLVM integer type of a C `size_t` on the current target — i32 on
+    /// wasm32 (ILP32), i64 on native (LP64). Used to declare `malloc`/`free`/
+    /// `realloc` and to size their arguments so the emitted object's signatures
+    /// match the wasm32 libc at link (otherwise: `type mismatch: expected i32,
+    /// found i64`).
+    pub(super) fn size_ty(&self) -> inkwell::types::IntType<'ctx> {
+        if self.target_is_wasm {
+            self.ir.context.i32_type()
+        } else {
+            self.ir.context.i64_type()
+        }
+    }
+
+    /// R7: narrow an i64 byte-count to the target's `size_t` for a malloc/free/
+    /// memcpy-family call. On native (LP64) returns the value unchanged; on
+    /// wasm32 (ILP32) truncates i64→i32 so the arg matches the canonical i32
+    /// malloc declaration. Use at every malloc call site that builds its own
+    /// `build_call(malloc_fn, …)` rather than going through `emit_malloc`.
+    pub(super) fn msize(
+        &self,
+        byte_count: inkwell::values::IntValue<'ctx>,
+        name: &str,
+    ) -> inkwell::values::IntValue<'ctx> {
+        if self.target_is_wasm {
+            self.ir
+                .builder
+                .build_int_truncate(byte_count, self.size_ty(), name)
+                .unwrap()
+        } else {
+            byte_count
+        }
+    }
+
+    /// R7: get-or-declare `malloc` with the target-correct `size_t` width, and
+    /// build a call passing `byte_count` (an i64) truncated to `size_t`. Returns
+    /// the raw `i8*` result. Centralizes the 8 ad-hoc malloc declarations so they
+    /// can't disagree on width (first-declaration-wins per module).
+    pub(super) fn emit_malloc(
+        &self,
+        byte_count: inkwell::values::IntValue<'ctx>,
+        name: &str,
+    ) -> inkwell::values::PointerValue<'ctx> {
+        let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let size_ty = self.size_ty();
+        let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
+            let malloc_ty = i8_ptr.fn_type(&[size_ty.into()], false);
+            self.ir.module.add_function("malloc", malloc_ty, None)
+        });
+        // Narrow the i64 byte-count to size_t when targeting wasm32 (ILP32).
+        let size_arg = if self.target_is_wasm {
+            self.ir
+                .builder
+                .build_int_truncate(byte_count, size_ty, "msize")
+                .unwrap()
+        } else {
+            byte_count
+        };
+        let call = self
+            .ir
+            .builder
+            .build_call(malloc_fn, &[size_arg.into()], name)
+            .unwrap();
+        call.try_as_basic_value().left().unwrap().into_pointer_value()
     }
 
     /// R4: set the program source path stamped into native `@[adaptive]`
