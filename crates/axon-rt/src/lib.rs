@@ -8,6 +8,22 @@
 //! `Mutex<VecDeque<i64>>` + two `Condvar`s (one for senders, one for receivers).
 //! All channel values are `i64`; the codegen is responsible for casting other
 //! integer types through `i64`.
+//!
+//! ## Lint posture (BUG_HUNT #35)
+//!
+//! Every `#[no_mangle] pub extern "C"` symbol here is a **codegen-emitted-IR
+//! entry point**: the LLVM backend synthesizes the call, and the pointer/length
+//! arguments come from codegen's own str/array ABI. The unsafe contract lives at
+//! that ABI boundary (asserted-by-construction in the emitter), not at the Rust
+//! signature — marking each FFI fn `unsafe fn` would not move the obligation to
+//! a real human caller (there is none) and would force `unsafe {}` blocks into
+//! the generated-call story where they add no safety. So we `allow`
+//! `not_unsafe_ptr_arg_deref` and `missing_safety_doc` crate-wide *with this
+//! rationale*, and extend the CI clippy gate to `--workspace` so every OTHER
+//! lint in this crate is enforced (previously the gate was `-p axon-core` only,
+//! hiding ~80 issues). Non-FFI lints are fixed normally, not allowed.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+#![allow(clippy::missing_safety_doc)]
 
 use std::collections::VecDeque;
 use std::ffi::c_void;
@@ -81,6 +97,11 @@ impl Chan {
         val
     }
 
+    // Non-blocking sibling of `recv`. Retained for completeness alongside the
+    // blocking path even though the current codegen only emits blocking recv;
+    // a future `select`/poll lowering will call it. (#35: kept, not deleted —
+    // it's part of the channel's intended surface, not dead cruft.)
+    #[allow(dead_code)]
     fn try_recv(&self) -> Option<i64> {
         let mut q = self.queue.lock().unwrap();
         if q.is_empty() {
@@ -103,8 +124,7 @@ impl Chan {
 pub extern "C" fn __axon_chan_new(capacity: i64) -> *mut c_void {
     let cap = if capacity <= 0 { 1 } else { capacity as usize };
     let arc = Arc::new(Chan::new(cap));
-    let raw = Arc::into_raw(arc) as *mut c_void;
-    raw
+    Arc::into_raw(arc) as *mut c_void
 }
 
 /// Send `val` to the channel.  Blocks if the buffer is full.
@@ -847,6 +867,11 @@ pub extern "C" fn __axon_str_replace(
 
 // ── ASI Layer-3: @[verify] runtime enforcement ────────────────────────────────
 
+/// Exit code for an `@[verify]` / deploy-gate rejection. Must match the
+/// interpreter's `interp::VERIFY_FAILED_EXIT_CODE` (axon-rt has no dependency
+/// on axon-core, so the value is duplicated, not imported) — BUG_HUNT #26.
+pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
+
 /// Runtime panic for `@[verify(confidence OP K)]` violations.
 ///
 /// Codegen injects a call to this symbol at every return site of an
@@ -872,11 +897,6 @@ pub extern "C" fn __axon_str_replace(
 /// * `bound` — the literal `f64` from the predicate.
 /// * `actual` — the runtime confidence extracted from the `Uncertain<T>`
 ///   value at the return site.
-/// Exit code for an `@[verify]` / deploy-gate rejection. Must match the
-/// interpreter's `interp::VERIFY_FAILED_EXIT_CODE` (axon-rt has no dependency
-/// on axon-core, so the value is duplicated, not imported) — BUG_HUNT #26.
-pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
-
 #[no_mangle]
 pub extern "C" fn __axon_verify_panic(
     fn_name_ptr: *const u8,
@@ -1271,14 +1291,14 @@ mod migrated_builtin_tests {
 
     #[test]
     fn migrated_str_contains_common_cases() {
-        assert_eq!(__axon_str_contains(s("hello world"), s("world")), true);
-        assert_eq!(__axon_str_contains(s("hello world"), s("xyz")), false);
-        assert_eq!(__axon_str_contains(s("hello"), s("")), true);      // empty needle always matches
-        assert_eq!(__axon_str_contains(s(""), s("")), true);             // empty haystack, empty needle
-        assert_eq!(__axon_str_contains(s(""), s("a")), false);           // empty haystack
+        assert!(__axon_str_contains(s("hello world"), s("world")));
+        assert!(!(__axon_str_contains(s("hello world"), s("xyz"))));
+        assert!(__axon_str_contains(s("hello"), s("")));      // empty needle always matches
+        assert!(__axon_str_contains(s(""), s("")));             // empty haystack, empty needle
+        assert!(!(__axon_str_contains(s(""), s("a"))));           // empty haystack
         // UTF-8 multibyte: "héllo" contains "él"
-        assert_eq!(__axon_str_contains(s("héllo"), s("él")), true);
-        assert_eq!(__axon_str_contains(s("héllo"), s("xyz")), false);
+        assert!(__axon_str_contains(s("héllo"), s("él")));
+        assert!(!(__axon_str_contains(s("héllo"), s("xyz"))));
     }
 
     // ── str_starts_with: matches interp.rs a.starts_with(b) ───────────
@@ -1298,11 +1318,11 @@ mod migrated_builtin_tests {
 
     #[test]
     fn migrated_str_starts_with_common_cases() {
-        assert_eq!(__axon_str_starts_with(s("hello world"), s("hello")), true);
-        assert_eq!(__axon_str_starts_with(s("hello world"), s("world")), false);
-        assert_eq!(__axon_str_starts_with(s("hello"), s("")), true);     // empty prefix always matches
+        assert!(__axon_str_starts_with(s("hello world"), s("hello")));
+        assert!(!(__axon_str_starts_with(s("hello world"), s("world"))));
+        assert!(__axon_str_starts_with(s("hello"), s("")));     // empty prefix always matches
         // UTF-8: "héllo" starts with "hé"
-        assert_eq!(__axon_str_starts_with(s("héllo"), s("hé")), true);
+        assert!(__axon_str_starts_with(s("héllo"), s("hé")));
     }
 
     // ── str_ends_with: matches interp.rs a.ends_with(b) ───────────────
@@ -1322,11 +1342,11 @@ mod migrated_builtin_tests {
 
     #[test]
     fn migrated_str_ends_with_common_cases() {
-        assert_eq!(__axon_str_ends_with(s("hello world"), s("world")), true);
-        assert_eq!(__axon_str_ends_with(s("hello world"), s("hello")), false);
-        assert_eq!(__axon_str_ends_with(s("hello"), s("")), true);       // empty suffix always matches
+        assert!(__axon_str_ends_with(s("hello world"), s("world")));
+        assert!(!(__axon_str_ends_with(s("hello world"), s("hello"))));
+        assert!(__axon_str_ends_with(s("hello"), s("")));       // empty suffix always matches
         // UTF-8: "héllo" ends with "llo"
-        assert_eq!(__axon_str_ends_with(s("héllo"), s("llo")), true);
+        assert!(__axon_str_ends_with(s("héllo"), s("llo")));
     }
 
     // ── str_index_of: matches interp.rs h.find(needle) ────────────────

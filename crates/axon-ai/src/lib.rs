@@ -5,14 +5,23 @@
 //! LLVM-emitted code can call them directly by name.
 //!
 //! ABI mirrors __axon_read_file from axon-rt:
-//!   - success: *out_len >= 0, *out_ptr points to heap-allocated UTF-8
-//!   - error:   *out_len < 0 (negated message length), *out_ptr points to
-//!              the error message
+//! - success: *out_len >= 0, *out_ptr points to heap-allocated UTF-8
+//! - error:   *out_len < 0 (negated message length), *out_ptr points to
+//!   the error message
 //!
 //! Layer-3 ASI typed-extraction surface (`__axon_ai_extract_uncertain_i64` /
 //! `__axon_ai_extract_uncertain_f64`) uses a different ABI: a return-code
 //! plus typed value/confidence out-params; the err string out-param is only
 //! populated when the return code is 1.  See per-symbol docs.
+//!
+//! ## Lint posture (BUG_HUNT #35)
+//!
+//! Like `axon-rt`, every `#[no_mangle] pub extern "C"` symbol is a
+//! codegen-emitted-IR entry point whose pointer args come from codegen's own
+//! str/out-param ABI — the unsafe contract is at that boundary, not a Rust
+//! caller. We `allow(not_unsafe_ptr_arg_deref)` crate-wide with that rationale
+//! so the gate's `--all-targets` pass enforces every other lint here.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::alloc::Layout;
 
@@ -932,7 +941,7 @@ mod tests {
         assert_eq!(rc, 1);
         assert!(elen3 > 0);
         assert!(!eptr3.is_null());
-        assert_eq!(v_b, false, "out_value must be untouched on error");
+        assert!(!v_b, "out_value must be untouched on error");
 
         // ── null out-params defensive path (i64 bridge as representative) ──
         let rc = __axon_ai_extract_i64(

@@ -62,6 +62,15 @@ cargo build -p axon-core || fail "native build"
 echo "── gate: clippy (lib, -D warnings) ────────────────────────────────"
 cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clippy"
 
+# BUG_HUNT #35: the runtime crates (axon-rt/axon-ai/axon-surface) used to be
+# invisible to the clippy gate (scoped to -p axon-core), hiding ~80 lints. They
+# are now clippy-clean under --all-targets (the intentional C-ABI ptr-deref
+# seams carry a documented crate-level allow), so the gate enforces them. They
+# have no codegen feature, so this is cheap and needs no --no-default-features.
+echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
+cargo clippy -p axon-rt -p axon-ai -p axon-surface --all-targets -- -D warnings \
+  || fail "runtime-crate clippy"
+
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"
   cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings || fail "all-targets clippy"
