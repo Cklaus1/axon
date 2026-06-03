@@ -4073,6 +4073,30 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
 }
 
 #[test]
+fn wasm_aot_stdout_matches_interp_across_corpus() {
+    // R7 (AOT-wasm end-to-end correctness): the whole example corpus, AOT-
+    // compiled to wasm and run under `wasmtime --invoke main`, prints stdout
+    // byte-identical to the interpreter (the I-2 oracle). Exercises the full
+    // size_t ABI bridge (malloc/snprintf/memcpy/write) + the void-`fn main()`
+    // wasm entry fix (i64 return so the wasi C-main convention doesn't bind our
+    // `main`). scripts/wasm_aot_stdout_parity.sh; skips when toolchain absent.
+    let script = format!("{}/../../scripts/wasm_aot_stdout_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_aot_stdout_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_stdout_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — AOT stdout parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "AOT-wasm stdout must match the interpreter across the corpus:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_aot_stdout_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_object_prunes_dead_externs_and_links_clean() {
     // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
     // ~119 unconditionally-emitted builtin helpers that go unused, so a

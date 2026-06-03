@@ -560,7 +560,22 @@ impl<'ctx> Codegen<'ctx> {
             .unwrap_or(Type::Unit);
 
         let fn_val = if name == "main" && matches!(ret_sem, Type::Unit) {
-            let fn_ty = self.ir.context.i32_type().fn_type(&param_tys, false);
+            // A void `fn main()` is emitted as `int main()` (returns 0). On
+            // native that matches the C `int main(void)` the OS startup expects.
+            // R7: on wasm32 the wasi libc provides a C `int main(int, char**)`
+            // startup wrapper (`__original_main`/`_start`) that BINDS any symbol
+            // literally named `main` with the i32 return — so our 0-arg i32
+            // `main` links as that 2-arg convention and `wasmtime --invoke main`
+            // fails with "not enough arguments". Emitting an i64 return (as the
+            // explicit `fn main() -> i64` case already does, which works) avoids
+            // the C-main binding, so the reactor `--export=main` is a clean
+            // 0-arg entry. Native keeps i32.
+            let ret_int = if self.target_is_wasm {
+                self.ir.context.i64_type()
+            } else {
+                self.ir.context.i32_type()
+            };
+            let fn_ty = ret_int.fn_type(&param_tys, false);
             self.ir.module.add_function("main", fn_ty, None)
         } else {
             match self.llvm_type(&ret_sem) {
@@ -907,7 +922,14 @@ impl<'ctx> Codegen<'ctx> {
             .is_none()
         {
             if f.name == "main" && matches!(ret_sem, Type::Unit) {
-                let zero = self.ir.context.i32_type().const_int(0, false);
+                // Match the return width chosen at declaration: i64 on wasm32
+                // (to dodge the wasi C-main binding), i32 on native.
+                let ret_int = if self.target_is_wasm {
+                    self.ir.context.i64_type()
+                } else {
+                    self.ir.context.i32_type()
+                };
+                let zero = ret_int.const_int(0, false);
                 // main() returning 0 isn't an interesting score; use the legacy event log.
                 self.log_return_if_adaptive();
                 build_wrappers::w_ret(&self.ir.builder, zero.into());
