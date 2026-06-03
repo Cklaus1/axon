@@ -1938,6 +1938,32 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // Honest-error guard: if the callee is a KNOWN builtin (in the BUILTINS
+        // table) that reached here unresolved — no registered LLVM fn and no
+        // inline lowering above — it has no native codegen. Emitting None here
+        // would silently drop the call and yield a 0/garbage value (the
+        // arr_*/dict_* "returns 0 natively" divergence class). Record a hard
+        // error so the build pipeline aborts instead of shipping a wrong binary.
+        if maybe_fn_v.is_none() {
+            if let ast::Expr::Ident(name) = callee {
+                if crate::builtins::BUILTINS.iter().any(|b| b.name == name.as_str()) {
+                    let msg = format!(
+                        "codegen error [E0910]: builtin `{name}` is not yet supported by the \
+                         native codegen backend (it runs under the interpreter — use `axon run`). \
+                         Building it would silently compute a wrong value."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    // Return a zero of a best-effort type so emission continues
+                    // (the build aborts afterward on codegen_errors); this avoids
+                    // a cascade of confusing secondary diagnostics.
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                }
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 

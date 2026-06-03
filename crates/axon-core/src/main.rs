@@ -1536,6 +1536,13 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     cg.declare_functions(&concrete);
     cg.emit_program(&concrete);
 
+    // Abort if emission recorded hard errors (e.g. a builtin with no native
+    // lowering — E0910). Better an honest failure than a wrong wasm object.
+    if !cg.codegen_errors().is_empty() {
+        eprintln!("error: {} codegen error(s); wasm build aborted", cg.codegen_errors().len());
+        process::exit(2);
+    }
+
     let out = file.with_extension("wasm");
     let out_str = out.to_string_lossy().to_string();
     match cg.compile_to_wasm_object(&out_str, false, llvm_triple) {
@@ -2787,6 +2794,13 @@ fn build_ir_and_link(
     cg.set_source_path(source_path.display().to_string());
     cg.declare_functions(&concrete_program);
     cg.emit_program(&concrete_program);
+
+    // Abort before linking if emission recorded hard errors (e.g. a known
+    // builtin with no native lowering — E0910). Shipping the binary would
+    // silently compute a wrong value.
+    if !cg.codegen_errors().is_empty() {
+        return Err(format!("{} codegen error(s); build aborted", cg.codegen_errors().len()));
+    }
 
     // Write bitcode to cache before linking (so a link failure doesn't
     // prevent future cache hits for successfully compiled IR).

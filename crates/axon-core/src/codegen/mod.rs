@@ -249,6 +249,12 @@ pub struct Codegen<'ctx> {
     /// size param and call sites truncate the i64 byte-count to i32. Set by
     /// `set_target_is_wasm` BEFORE `emit_program`; defaults to false (native).
     pub(super) target_is_wasm: bool,
+    /// Hard codegen errors collected during emission (e.g. a known builtin that
+    /// has no native lowering). emit_program does not return a Result, so these
+    /// accumulate here; the build pipeline checks `codegen_errors()` after
+    /// emission and aborts rather than shipping a binary that silently computes
+    /// a wrong value (the arr_*/dict_* "returns 0 natively" class).
+    pub(super) codegen_errors: Vec<String>,
     /// IR.3 prep: a parallel inkwell-backed IR backend that codegen
     /// modules can call via `self.ir.*` instead of `self.ir.builder.*` /
     /// `self.ir.context.*` / `self.ir.module.*`.  During the migration phase
@@ -297,7 +303,14 @@ impl<'ctx> Codegen<'ctx> {
             current_agent_fn: None,
             current_verify_fn: None,
             target_is_wasm: false,
+            codegen_errors: Vec::new(),
         }
+    }
+
+    /// Hard errors collected during emission (see `codegen_errors` field). The
+    /// build pipeline calls this after `emit_program` and aborts if non-empty.
+    pub fn codegen_errors(&self) -> &[String] {
+        &self.codegen_errors
     }
 
     /// R7: declare the target as wasm32 (ILP32) so the malloc-family runtime

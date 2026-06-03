@@ -1682,6 +1682,35 @@ fn codegen_bitwise_and_casts_match_interp() {
 }
 
 #[test]
+fn build_aborts_on_codegen_unsupported_builtin_e0910() {
+    // Honest-error guard: a known builtin with no native codegen lowering
+    // (arr_*/dict_* etc.) must ABORT the native build with E0910, not silently
+    // emit a 0/wrong value. (Requires the codegen binary; under
+    // --no-default-features the build path itself is unavailable, so accept the
+    // E0907/feature-required message too.)
+    let f = std::env::temp_dir().join(format!("axon_e0910_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3]\n arr_sum_i64(&a) }\n").unwrap();
+    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_e0910_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    // Either codegen is present and we get the honest E0910 abort, or codegen is
+    // absent (interp-only test binary) and `axon build` is unavailable.
+    let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
+    if codegen_present {
+        assert!(
+            msg.contains("E0910") && msg.contains("arr_sum_i64"),
+            "an unsupported builtin must abort with E0910 naming it, got:\n{msg}"
+        );
+        assert!(!out.status.success(), "build must FAIL (not exit 0) on E0910:\n{msg}");
+    } else {
+        eprintln!("codegen feature absent — E0910 build-abort test skipped");
+    }
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:
