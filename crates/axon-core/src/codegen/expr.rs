@@ -39,6 +39,9 @@ enum ArrReduce<'ctx> {
     /// Max / min of the elements (i64 result). `true` = max. Panics (exit 101,
     /// matching the interpreter) on an empty array.
     Extreme { is_max: bool },
+    /// Arithmetic mean of the elements (f64 result): Σ / len, or 0.0 for empty
+    /// (matching the interpreter, which does NOT panic on an empty mean).
+    Mean,
 }
 
 impl<'ctx> super::Codegen<'ctx> {
@@ -1354,7 +1357,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Sentinel init: 0 for Sum/Contains; i64::MIN for max / i64::MAX for min
         // so the first element always wins the running compare.
         let init: u64 = match &op {
-            ArrReduce::Sum | ArrReduce::Contains(_) => 0,
+            ArrReduce::Sum | ArrReduce::Mean | ArrReduce::Contains(_) => 0,
             ArrReduce::Extreme { is_max: true } => i64::MIN as u64,
             ArrReduce::Extreme { is_max: false } => i64::MAX as u64,
         };
@@ -1381,7 +1384,7 @@ impl<'ctx> super::Codegen<'ctx> {
         };
         let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), elem_ptr, "arr_e").into_int_value();
         match &op {
-            ArrReduce::Sum => {
+            ArrReduce::Sum | ArrReduce::Mean => {
                 let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
                 let nacc = build_wrappers::w_int_add(&self.ir.builder, acc, elem, "arr_na");
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
@@ -1417,6 +1420,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 // acc is 0/1 → truncate to i1 (bool).
                 let b = self.ir.builder.build_int_truncate(acc, i1_ty, "arr_found").unwrap();
                 Some(b.into())
+            }
+            ArrReduce::Mean => {
+                // mean = len == 0 ? 0.0 : (f64)sum / (f64)len. Guard div-by-zero
+                // (interp returns 0.0 for an empty array, never panics).
+                let f64_ty = self.ir.context.f64_type();
+                let is_empty = build_wrappers::w_int_compare(
+                    &self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "arr_meane");
+                let sum_f = build_wrappers::w_signed_int_to_float(&self.ir.builder, acc, f64_ty, "arr_sumf");
+                let len_f = build_wrappers::w_signed_int_to_float(&self.ir.builder, len, f64_ty, "arr_lenf");
+                let div = self.ir.builder.build_float_div(sum_f, len_f, "arr_mean").unwrap();
+                let zero_f = f64_ty.const_float(0.0);
+                let mean = self.ir.builder.build_select(is_empty, zero_f, div, "arr_meansel").unwrap();
+                Some(mean)
             }
         }
     }
@@ -2096,6 +2112,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     let is_max = name == "arr_max_i64";
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Extreme { is_max }, fn_val);
+                }
+            }
+            if name == "arr_mean_i64" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_i64_loop(slice_val, ArrReduce::Mean, fn_val);
                 }
             }
         }
