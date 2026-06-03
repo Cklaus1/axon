@@ -747,10 +747,38 @@ fn load_module_recursive(
             .map(|s| format!("    {s} (not found)"))
             .collect::<Vec<_>>()
             .join("\n");
+        // BUG_HUNT #34: a multi-segment `use a::b` is loaded as the NESTED
+        // module file `a/b.ax`. A common mistake is writing `use a::b` (or
+        // `use a.b`) meaning "import item `b` from the flat module `a`" — the
+        // `mod a` + `use a.{b}` idiom every example uses. When `a/b.ax` isn't
+        // found but the flat `a.ax` IS, say so explicitly instead of leaving the
+        // user staring at a bare not-found for a path they didn't think they
+        // wrote. (Checked before the AXON_PATH hint since it's more specific.)
+        let item_import_hint = if use_path.len() >= 2 {
+            let root = &use_path[0];
+            let root_rel = std::path::PathBuf::from(format!("{root}.ax"));
+            let flat_exists = search_dirs.iter().any(|d| d.join(&root_rel).exists());
+            if flat_exists {
+                let items = use_path[1..].join(", ");
+                Some(format!(
+                    "\n  hint: module `{root}` exists ({root}.ax), but `{path_str}` looks for a \
+                     nested file `{}`. To import item(s) from `{root}`, write `use {root}.{{{items}}}` \
+                     (the dot-brace form), not `use {}`.",
+                    rel.display(),
+                    use_path.join("::"),
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         // Bug #10: the search dirs are install locations the user never
         // created; nearly every in-repo demo is run via AXON_PATH. When it's
         // unset, point the user at the lever they're actually missing.
-        let hint = if std::env::var_os("AXON_PATH").is_none() {
+        let hint = if let Some(h) = item_import_hint {
+            h
+        } else if std::env::var_os("AXON_PATH").is_none() {
             let modfile = rel.display();
             format!(
                 "\n  hint: AXON_PATH is unset — set it to the directory containing `{modfile}` \

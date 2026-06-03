@@ -276,6 +276,61 @@ fn axon_path_load_use_decls_missing_module() {
     );
 }
 
+/// BUG_HUNT #34: a `use a::b` (or `use a.b`) that fails to find the nested file
+/// `a/b.ax` but whose FLAT module `a.ax` exists must hint the canonical
+/// `use a.{b}` dot-brace form — instead of a bare not-found for a nested path
+/// the user didn't think they wrote. The two import surfaces no longer leave
+/// the user guessing.
+#[test]
+fn colon_path_import_of_flat_module_item_hints_dot_brace_form() {
+    let tmp = std::env::temp_dir().join(format!("axon_test_colon34_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("create temp dir");
+    // A FLAT module file `utils.ax` (no nested `utils/` dir).
+    std::fs::write(tmp.join("utils.ax"), "fn helper() -> i64 { 42 }").expect("write utils");
+
+    // The user mistake: `use utils::helper` — parsed as the nested path
+    // `utils/helper.ax`, which doesn't exist, though `utils.ax` does.
+    let main_src = "use utils::helper\nfn main() -> i64 { helper() }";
+    let mut program = axon_core::parse_source(main_src).expect("parse main");
+    let errors = axon_core::load_use_decls(&mut program, std::slice::from_ref(&tmp));
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    let e = errors
+        .iter()
+        .find(|e| e.code == "E0901")
+        .unwrap_or_else(|| panic!("expected E0901, got: {:?}", errors.iter().map(|e| e.code).collect::<Vec<_>>()));
+    assert!(
+        e.message.contains("use utils.{helper}"),
+        "error must hint the dot-brace form; got: {}",
+        e.message
+    );
+    assert!(
+        e.message.contains("module `utils` exists"),
+        "error must note the flat module exists; got: {}",
+        e.message
+    );
+}
+
+/// The #34 hint must NOT fire for a genuinely-missing module (no flat `a.ax`):
+/// that's an ordinary not-found, and adding the dot-brace hint would be wrong.
+#[test]
+fn colon_path_import_without_flat_module_does_not_hint_dot_brace() {
+    let tmp = std::env::temp_dir().join(format!("axon_test_colon34neg_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).expect("create temp dir");
+    // No `ghost.ax` and no `ghost/` dir — genuinely missing.
+    let main_src = "use ghost::thing\nfn main() -> i64 { 0 }";
+    let mut program = axon_core::parse_source(main_src).expect("parse main");
+    let errors = axon_core::load_use_decls(&mut program, std::slice::from_ref(&tmp));
+    let _ = std::fs::remove_dir_all(&tmp);
+
+    let e = errors.iter().find(|e| e.code == "E0901").expect("expected E0901");
+    assert!(
+        !e.message.contains("dot-brace") && !e.message.contains(".{"),
+        "must NOT hint dot-brace for a genuinely-missing module; got: {}",
+        e.message
+    );
+}
+
 /// Verify that circular imports produce E0902.
 #[test]
 fn circular_import_produces_e0902() {
