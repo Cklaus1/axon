@@ -139,3 +139,34 @@ The **decisive design point** is to make the two variants differ in *exactly one
 The headline test (`test_retry_diverges_by_consistency`) applies the *same* retried op to both and asserts the resulting states **disagree** — that divergence is the entire reason the axis exists. `version` gives linearizable a single total order (bumps once per *distinct* applied op, not on a deduped retry); at-least-once maintains none (you cannot read an order out of it).
 
 **Slice status:** userland landed + gated (`store_stdlib_module_tests_pass`, 7 `@[test]`s). The **kernel** `Store<T,C,L>` runtime service — a real persistent store whose consistency variant is *enforced by the runtime* (durable dedup log for linearizable; durable replay for at-least-once) across processes/nodes — is the named Phase-7 follow-on, and the distributed constructors (`Replicated`/`Quorum`/`CRDT`, ROADMAP Tier-2 Phase-14) build on it. No error codes; no invariant changed. This is the safety-relevant *semantics* of the store made explicit and test-pinned ahead of the kernel service.
+
+---
+
+## Appendix C — LLM<Caps> gateway (sibling Phase-7 runtime primitive, `llm_gateway`)
+
+The fourth and final Phase-7 runtime-services primitive (ROADMAP §6 row 7): *"`LLM<Caps>` mediates every AI call with budget metering"*; the `llm_gateway` TCB component. `examples/stdlib/llm_gateway.ax` is the **value-level** counterpart to R3's per-fn `@[ai(policy(...))]` annotations: an `LLM { model, rate_micro, budget_micro, spent_micro, fallback, halted }` you construct, hold, and thread.
+
+The **decisive design point** is what makes this distinct from the already-shipped R3 surface, so it is a genuine new primitive and not a re-skin:
+
+1. **Per-TOKEN cost, not per-call-count.** R3c's `@[ai(policy(budget: N))]` meters the *number* of calls (the N+1th → E1301). This gateway meters `cost = rate × tokens` — the budget that actually tracks spend, since a 10-token and a 10 000-token call are not the same cost. F4 explicitly names per-token cost as the Phase-7 `LLM<Caps>` job, *beyond* R3c's call-count meter. `test_cost_scales_with_tokens_not_call_count` pins the difference (a 10×-token call costs 10×).
+2. **Graceful degradation, not a hard error.** On overrun the gateway returns its `fallback` (the program stays total) and **latches** `halted` so every later call also degrades — the runtime-service posture where an agent keeps running on a cached/default answer. Contrast R3's E1300/E1301, which are hard aborts. `test_overrun_returns_fallback_not_crash` + `test_overrun_latches_every_later_call` pin this.
+3. **Mediates *every* call.** Metering is in `complete` — the single mediated entry point — so there is no un-metered path (the "mediates every call" contract). `test_metering_is_on_every_call`.
+
+Cost is integer µ$ (per 1000 tokens) to keep the arithmetic exact and the tests f64-free/deterministic. The mock response is deterministic for CI; a live binding swaps the response string but keeps the metering identical.
+
+**Slice status:** userland landed + gated (`llm_gateway_stdlib_module_tests_pass`, 7 `@[test]`s). The **kernel** `llm_gateway` — wiring this gateway to the *live* `ai_complete` path so the token count comes from the real model response and the cost is debited by the runtime on every actual call (composing R3's `ai_call` provenance + R3c's metering hooks) — is the named Phase-7 follow-on. No error codes (the userland gateway degrades rather than erroring, by design); no invariant changed.
+
+---
+
+## Phase-7 userland coverage (2026-06-02)
+
+Four Phase-7 runtime-services TCB components now have userland realizations, each landing the safety-relevant *semantics* ahead of the kernel runtime service (the same two-track posture as `agent.ax`/`goal.ax`):
+
+| TCB component | Userland module | Acceptance property landed |
+|---|---|---|
+| `capability_minter` | `principal_mint.ax` | attenuation by construction (child caps ⊆ parent, budget carved) |
+| `supervisor_root` | `supervisor_tree.ax` | OTP strategies (one_for_one/one_for_all/rest_for_one) + intensity backoff |
+| `Store<T,C,L>` consistency | `store.ax` | at-least-once (re-apply) vs linearizable (dedup + total-order version) |
+| `llm_gateway` | `llm_gateway.ax` | per-token cost metering + graceful fallback-on-overrun |
+
+The kernel runtime services (live process/fiber scheduling, durable stores, the live LLM token path, SMT-proven capability subsets) remain the named Phase-7 architectural follow-ons — depending on `scheduler`, `principal_authority`, and the Phase-5 SMT solver — not faked.

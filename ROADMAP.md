@@ -211,7 +211,7 @@ When this works end-to-end, Axon is real.
 | `Supervisor` | OTP tree + strategy | 1 | *(userland landed: `examples/stdlib/supervisor_tree.ax` — the 3 OTP restart strategies (one_for_one/one_for_all/rest_for_one) as a pure `restart_set` core + max-restart-intensity backoff that latches the supervisor halted on a crash loop. Single-agent kill-switch in `supervisor.ax`. Kernel `Supervisor` runtime service Phase-7.)* |
 | `Agent` | input / output / tools / policy / effects | 1 |
 | `Tool` | typed callable with effect signature | 1 |
-| `LLM<Caps>` | model + budget + fallback | 1 |
+| `LLM<Caps>` | model + budget + fallback | 1 | *(userland landed: `examples/stdlib/llm_gateway.ax` — a first-class LLM value mediating every call with per-TOKEN cost metering (distinct from R3c's per-call-count meter) and graceful fallback-on-overrun (latches, doesn't crash). Kernel `llm_gateway` runtime service wiring this to live `ai_complete` token accounting is Phase-7.)* |
 | `Trace` | replayable execution record | 1 |
 | `AuditEvent` | typed effect record | 1 |
 | `Sandbox<P>` | runtime effect-row enforcement | 1.5 |
@@ -242,7 +242,7 @@ TCB = {
     cost_meter,                // Phase 7
     scheduler,                 // Phase 7
     supervisor_root,           // Phase 7 — userland OTP strategies landed (supervisor_tree.ax: one_for_one/one_for_all/rest_for_one + intensity backoff)
-    llm_gateway,               // Phase 7
+    llm_gateway,               // Phase 7 — userland realization landed (llm_gateway.ax: per-token cost meter + graceful fallback-on-overrun)
     sandbox_enforcer,          // Phase 9
     audit_log_writer,          // Phase 9
     replay_engine,             // Phase 9
@@ -522,7 +522,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **closed for i64^N and f64^N**. The interpreter coordinate-descends over either all-i64 or all-f64 param lists; `goal_best_inputs(name, target) -> [i64]` / `goal_best_inputs_f64 -> [f64]` return the respective full input tuples. Mixed i64/f64 signatures and string / categorical domains still wait on Phase 8 strategy parameter. | 8 | Done for homogeneous numeric. |
 | F2 | `ai_complete` is non-deterministic; `axon trace replay` cannot reproduce a run | 9 | Without this, every "auditable" claim is weaker than advertised. Replay engine + seed capture + LLM-call memoization. |
 | F3 | Provenance log is flat NDJSON `(fn_name, score)` — no Principal, no effect row, no causal link to the goal that triggered the call | 7 + 9 | Typed `AuditEvent` per effect; Principal-tagged; queryable as a stream. |
-| F4 | ~~No budget meter — token cost per `ai_complete` call is invisible~~ — **call-budget landed** (R3c): `@[ai(policy(budget: N))]` meters every `ai_complete` and halts the (N+1)th with E1301 (per-fn-activation, deterministic, offline-capable). Per-token *cost* budget still waits on the live `LLM<Caps>` gateway's token accounting. | 7 | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`, halts on overrun. **Call-count meter done; per-token cost = Phase 7.** |
+| F4 | ~~No budget meter — token cost per `ai_complete` call is invisible~~ — **call-budget landed** (R3c): `@[ai(policy(budget: N))]` meters per-call-count, halts the (N+1)th with E1301. **Per-token cost meter landed (userland)**: `llm_gateway.ax`'s `LLM<Caps>` value meters `cost = rate × tokens` on every mediated call and degrades to its fallback on overrun. The remaining gap is wiring this to the *live* `ai_complete` token accounting (kernel `llm_gateway`). | 7 | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`, halts on overrun. **Call-count meter (R3c) + userland per-token cost meter (llm_gateway.ax) done; live token wiring = kernel Phase-7.** |
 | F5 | No runtime sandbox for AI-emitted plans — `@[contained]` is static only | 9 | `Sandbox<P>` enforces effect rows at runtime for tool execution. |
 
 ### Soft (workable today, ergonomically wrong)

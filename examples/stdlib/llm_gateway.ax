@@ -1,0 +1,187 @@
+// Tier-1 stdlib: LLM<Caps> — a first-class gateway that MEDIATES every AI call.
+//
+// ROADMAP §6 row 7 (Phase-7 runtime services): "LLM<Caps> mediates every AI
+// call with budget metering"; the `llm_gateway` TCB component. This is the
+// VALUE-level counterpart to R3's per-fn `@[ai(policy(...))]` annotations: an
+// LLM you construct, hold, pass, and thread, that carries its own model, a
+// per-TOKEN cost budget, and a deterministic fallback.
+//
+// What makes this distinct from the shipped R3 surface (not a re-skin):
+//   • R3c `@[ai(policy(budget: N))]` meters per-CALL-COUNT (the N+1th call →
+//     E1301). This gateway meters per-TOKEN COST — `cost = rate × tokens` —
+//     which is the budget that actually tracks spend (a 10-token call and a
+//     10000-token call are not the same cost). F4 names per-token cost as the
+//     Phase-7 `LLM<Caps>` job, explicitly beyond R3c's call-count meter.
+//   • On overrun the gateway returns its FALLBACK gracefully (the program stays
+//     total) and LATCHES — it does not crash. R3's E1300/E1301 are hard errors;
+//     this is the runtime-service posture where the agent keeps running on a
+//     degraded answer rather than aborting.
+//
+// Cost is in integer MICRO-dollars (µ$) to keep the arithmetic exact and the
+// tests deterministic (no f64 equality). `rate_micro` is µ$ per 1000 tokens.
+//
+//   axon test examples/stdlib/llm_gateway.ax
+//   axon run  examples/stdlib/llm_gateway.ax
+
+type LLM = {
+    model: str,          // the routed model id (cf. R3 ai_routing)
+    rate_micro: i64,     // cost in µ$ per 1000 tokens
+    budget_micro: i64,   // total spend ceiling, µ$
+    spent_micro: i64,    // µ$ spent so far
+    fallback: str,       // deterministic answer returned on overrun
+    halted: bool,        // latched once the budget is exhausted by an over-call
+}
+
+fn new_llm(model: str, rate_micro: i64, budget_micro: i64, fallback: str) -> LLM {
+    LLM {
+        model: model, rate_micro: rate_micro,
+        budget_micro: budget_micro, spent_micro: 0,
+        fallback: fallback, halted: false,
+    }
+}
+
+// µ$ cost of a call estimated at `tokens` tokens. rate_micro is per 1000 tokens.
+fn call_cost(llm: LLM, tokens: i64) -> i64 {
+    let t = if tokens < 0 { 0 } else { tokens }
+    llm.rate_micro * t / 1000
+}
+
+fn budget_left(llm: LLM) -> i64 { llm.budget_micro - llm.spent_micro }
+
+// Would a call of `tokens` tokens fit within the remaining budget?
+fn affords(llm: LLM, tokens: i64) -> bool {
+    !llm.halted && call_cost(llm, tokens) <= budget_left(llm)
+}
+
+// ── complete — the mediated call ─────────────────────────────────────────────
+// Returns (updated_llm, response, used_fallback). Every AI call goes through
+// here, so the budget is metered on EVERY call (the "mediates every call"
+// contract — there is no un-metered path):
+//   • affordable  → debit the token cost, return the (mock) model response.
+//   • over budget → DO NOT spend; return the fallback, flagged; LATCH halted so
+//     every later call also returns the fallback (the agent degrades, not crashes).
+//   • already halted → fallback, no spend.
+// The (mock) response is deterministic so this runs in CI; a live binding would
+// swap the response string but keep the metering identical.
+fn complete(llm: LLM, prompt: str, tokens: i64) -> (LLM, str, bool) {
+    if affords(llm, tokens) {
+        let cost = call_cost(llm, tokens)
+        let next = LLM {
+            model: llm.model, rate_micro: llm.rate_micro,
+            budget_micro: llm.budget_micro, spent_micro: llm.spent_micro + cost,
+            fallback: llm.fallback, halted: false,
+        }
+        let m = llm.model
+        let resp = "[{m}] {prompt}"
+        (next, resp, false)
+    } else {
+        // Over budget (or halted): latch and return the fallback. No spend.
+        let next = LLM {
+            model: llm.model, rate_micro: llm.rate_micro,
+            budget_micro: llm.budget_micro, spent_micro: llm.spent_micro,
+            fallback: llm.fallback, halted: true,
+        }
+        (next, llm.fallback, true)
+    }
+}
+
+fn alive(llm: LLM) -> bool { !llm.halted }
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+@[test]
+fn test_affordable_call_debits_token_cost() {
+    // rate 5000 µ$/1k tokens, 2000-token call = 10000 µ$. Budget 50000 → fits.
+    let llm = new_llm("haiku", 5000, 50000, "[fallback]")
+    let (l2, resp, fb) = complete(llm, "hello", 2000)
+    assert(!fb)
+    assert_eq(l2.spent_micro, 10000)
+    assert_eq(budget_left(l2), 40000)
+    assert(alive(l2))
+    assert(!str_eq(resp, "[fallback]"))   // a real (mock) response, not the fallback
+}
+
+@[test]
+fn test_cost_scales_with_tokens_not_call_count() {
+    // The distinguishing property vs R3c's per-CALL meter: a 10000-token call
+    // costs 10x a 1000-token call. Two cheap calls cost less than one big one.
+    let llm = new_llm("haiku", 1000, 1000000, "[fb]")
+    let (a, _ra, _fa) = complete(llm, "p", 1000)     // 1000 µ$
+    let (b, _rb, _fb) = complete(llm, "p", 10000)    // 10000 µ$
+    assert_eq(a.spent_micro, 1000)
+    assert_eq(b.spent_micro, 10000)
+    assert(b.spent_micro == a.spent_micro * 10)
+}
+
+@[test]
+fn test_overrun_returns_fallback_not_crash() {
+    // A call that exceeds the remaining budget returns the fallback gracefully
+    // (program stays total) and spends nothing — NOT a hard error.
+    let llm = new_llm("opus", 60000, 50000, "[fallback]")  // one call = 60000 > 50000
+    let (l2, resp, fb) = complete(llm, "expensive", 1000)
+    assert(fb)
+    assert(str_eq(resp, "[fallback]"))
+    assert_eq(l2.spent_micro, 0)          // no spend on the refused call
+    assert(!alive(l2))                    // latched
+}
+
+@[test]
+fn test_overrun_latches_every_later_call() {
+    // Once halted by an overrun, EVERY later call returns the fallback, even one
+    // that would have fit — the latch is one-way (degraded mode is sticky).
+    let llm = new_llm("opus", 60000, 50000, "[fb]")
+    let (l2, _r2, _f2) = complete(llm, "big", 1000)      // overruns → halt
+    assert(!alive(l2))
+    let (l3, resp, fb) = complete(l2, "tiny", 1)          // would fit, but latched
+    assert(fb)
+    assert(str_eq(resp, "[fb]"))
+    assert(!alive(l3))
+}
+
+@[test]
+fn test_exact_budget_fit_is_allowed() {
+    // A call costing exactly the remaining budget is allowed (<=, not <).
+    let llm = new_llm("sonnet", 10000, 10000, "[fb]")  // one 1000-token call = 10000 = budget
+    let (l2, _r, fb) = complete(llm, "p", 1000)
+    assert(!fb)
+    assert_eq(budget_left(l2), 0)
+    assert(alive(l2))
+}
+
+@[test]
+fn test_metering_is_on_every_call() {
+    // The "mediates EVERY call" contract: a sequence of affordable calls each
+    // debit; spend is the running sum — there is no un-metered path.
+    let llm = new_llm("haiku", 2000, 100000, "[fb]")
+    let (a, _ra, _fa) = complete(llm, "1", 1000)   // 2000
+    let (b, _rb, _fb) = complete(a, "2", 1000)     // 2000
+    let (c, _rc, _fc) = complete(b, "3", 1000)     // 2000
+    assert_eq(c.spent_micro, 6000)
+    assert_eq(budget_left(c), 94000)
+}
+
+@[test]
+fn test_affords_predicate() {
+    let llm = new_llm("haiku", 5000, 10000, "[fb]")
+    assert(affords(llm, 1000))      // 5000 <= 10000
+    assert(affords(llm, 2000))      // 10000 <= 10000
+    assert(!affords(llm, 3000))     // 15000 > 10000
+}
+
+fn main() {
+    // A gateway with a tight budget: cheap calls succeed, then an expensive one
+    // overruns and the gateway degrades to its fallback for good.
+    let llm = new_llm("haiku", 3000, 20000, "[budget exhausted — using cached default]")
+    let (l1, r1, _f1) = complete(llm, "summarize doc A", 2000)   // 6000 µ$
+    let (l2, r2, _f2) = complete(l1, "summarize doc B", 2000)    // 6000 µ$ (12000 total)
+    let s2 = to_str(l2.spent_micro)
+    println("after 2 calls: spent {s2} µ$, budget left {to_str(budget_left(l2))} µ$")
+    println("  r1: {r1}")
+    println("  r2: {r2}")
+    let (l3, r3, f3) = complete(l2, "summarize huge doc C", 5000) // 15000 µ$ > 8000 left
+    if f3 {
+        println("call 3 OVERRAN budget -> fallback: {r3}")
+        println("gateway halted: {to_str(l3.halted)} (later calls also degrade)")
+    } else {
+        println("call 3 ok: {r3}")
+    }
+}

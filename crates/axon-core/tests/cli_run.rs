@@ -1270,6 +1270,22 @@ fn store_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn llm_gateway_stdlib_module_tests_pass() {
+    // Tier-1 LLM<Caps> userland module (ROADMAP §6 row 7 — the Phase-7 LLM
+    // acceptance: "LLM<Caps> mediates every AI call with budget metering"; the
+    // llm_gateway TCB component). A first-class LLM value {model, per-token cost
+    // rate, budget, fallback} that meters per-TOKEN COST (distinct from R3c's
+    // per-CALL-COUNT meter — F4's named Phase-7 job) and returns its fallback
+    // GRACEFULLY on overrun (latching, not crashing). 7 @[test]s cover token-cost
+    // debit, cost-scales-with-tokens, graceful overrun→fallback, latch, exact-fit,
+    // meter-on-every-call, and the affords predicate.
+    let out = axon().args(["test", &ex("stdlib/llm_gateway.ax")]).output().unwrap();
+    assert!(out.status.success(), "llm_gateway.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets
