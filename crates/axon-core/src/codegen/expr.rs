@@ -1830,6 +1830,43 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // `parse_bool_or(s, default)` — desugared INLINE here rather than as a
+        // hand-built LLVM function. The hand-built form mishandled the i1 (bool)
+        // default *parameter* across the call boundary (it read back as 0 — an
+        // ABI corner that the i64/f64 `*_or` wrappers don't hit). Lowering it
+        // inline keeps the i1 default as an SSA value in THIS frame, so there is
+        // no cross-function i1 param: call `parse_bool(s)` (Result<bool,str>),
+        // read the i1 Ok/Err tag, and `select` the Ok payload (i1) or `default`.
+        // Matches the interpreter `parse_bool_or` (I-2).
+        if let ast::Expr::Ident(name) = callee {
+            if name == "parse_bool_or" && args.len() == 2 {
+                if let Some(parse_bool_fn) = self.functions.get("parse_bool").copied() {
+                    let s_val = self.emit_expr(&args[0], fn_val)?;
+                    let default_val = self.emit_expr(&args[1], fn_val)?.into_int_value();
+                    let result_ty = parse_bool_fn.get_type().get_return_type().unwrap();
+                    let r = build_wrappers::w_call(&self.ir.builder, parse_bool_fn, &[s_val.into()], "pbo_r")
+                        .try_as_basic_value().left()?;
+                    let r_slot = build_wrappers::w_alloca(&self.ir.builder, result_ty, "pbo_rslot");
+                    build_wrappers::w_store(&self.ir.builder, r_slot, r);
+                    // tag (field 0, i1): Ok=1.
+                    let tag_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty, r_slot, 0, "pbo_tagp");
+                    let tag = build_wrappers::w_load(&self.ir.builder, self.ir.context.bool_type().into(), tag_ptr, "pbo_tag")
+                        .into_int_value();
+                    // Ok payload (field 1, reinterpreted as i1).
+                    let pay_ptr = build_wrappers::w_struct_gep(&self.ir.builder, result_ty, r_slot, 1, "pbo_payp");
+                    let pay_i1_ptr = build_wrappers::w_pointer_cast(
+                        &self.ir.builder, pay_ptr,
+                        self.ir.context.bool_type().ptr_type(AddressSpace::default()), "pbo_payvp");
+                    let ok_val = build_wrappers::w_load(&self.ir.builder, self.ir.context.bool_type().into(), pay_i1_ptr, "pbo_okv")
+                        .into_int_value();
+                    let chosen = self.ir.builder
+                        .build_select(tag, ok_val, default_val, "pbo_sel")
+                        .unwrap();
+                    return Some(chosen);
+                }
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 

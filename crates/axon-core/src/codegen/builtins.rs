@@ -3196,13 +3196,13 @@ impl<'ctx> super::Codegen<'ctx> {
 
             build_or(self, "parse_int_or", "parse_int", i64_ty.into(), Type::I64);
             build_or(self, "parse_float_or", "parse_float", f64_ty.into(), Type::F64);
-            // parse_bool_or is intentionally NOT lowered here: the i1 (bool)
-            // default/payload exposed a codegen ABI corner this generic wrapper
-            // mishandles (the i1 default param read back as 0, plus a let-binding
-            // scope error E0701). Shipping it would compute a wrong, !=interp
-            // result, so it is deferred to a dedicated follow-up. parse_int_or
-            // and parse_float_or (i64/f64 payloads) are correct and native==interp.
-            let _ = bool_ty; // (would be parse_bool_or's val_ty)
+            // parse_bool_or is NOT built here as a hand-emitted fn — its i1 (bool)
+            // default *parameter* read back as 0 across the call boundary (an ABI
+            // corner the i64/f64 wrappers don't hit). It is instead lowered INLINE
+            // at the call site (`emit_call`, search "parse_bool_or"), where the i1
+            // default stays an SSA value in the caller's frame — no cross-function
+            // i1 param. That form is native==interp==wasm.
+            let _ = bool_ty;
         }
 
         // ── Phase 5: abs_i64, min_i64, max_i64 ───────────────────────────────

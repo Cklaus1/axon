@@ -1637,12 +1637,12 @@ fn codegen_parse_int_radix_matches_interp() {
 
 #[test]
 fn codegen_parse_int_or_and_float_or_match_interp() {
-    // parse_int_or / parse_float_or had NO codegen lowering — native silently
-    // returned a zero value (real native↔interp divergence). Codegen now lowers
-    // them (call the Result parser, select Ok payload or default). Harness
-    // asserts native==interp across success + default(parse-fail) cases.
-    // (parse_bool_or's i1 payload is a separate, documented codegen gap — not
-    // covered here.) Skips when codegen can't build (LLVM absent).
+    // parse_int_or / parse_float_or / parse_bool_or had NO codegen lowering —
+    // native silently returned a zero value (real native↔interp divergence).
+    // int/float are lowered as hand-built wrappers; parse_bool_or is lowered
+    // INLINE in emit_call (its i1 default can't cross a hand-built fn boundary).
+    // Harness asserts native==interp across success + default(parse-fail) cases
+    // for all three. Skips when codegen can't build (LLVM absent).
     let script = format!("{}/../../scripts/parse_or_parity.sh", env!("CARGO_MANIFEST_DIR"));
     if !std::path::Path::new(&script).exists() {
         eprintln!("parse_or_parity.sh not found — skipping");

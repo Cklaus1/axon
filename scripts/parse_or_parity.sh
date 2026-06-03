@@ -9,9 +9,9 @@
 # caller's default. This harness builds both engines and asserts identical
 # exit values across parse-success and parse-failure (→default) cases.
 #
-# NOTE: parse_bool_or is deliberately excluded — its i1 payload exposed a
-# codegen ABI corner the generic wrapper mishandles, so it is NOT lowered yet
-# (a documented follow-up). Shipping it would compute a wrong result.
+# parse_bool_or is lowered INLINE in emit_call (not a hand-built fn): the i1
+# default stays an SSA value in the caller's frame, sidestepping the i1
+# function-parameter ABI corner that the hand-built form hit.
 #
 # Skips (exit 0) when the codegen toolchain is absent.
 set -u
@@ -49,7 +49,10 @@ check int_dflt  'fn main() -> i64 { parse_int_or("notanint", 77) }'
 check int_neg   'fn main() -> i64 { parse_int_or("-7", 0) }'
 check float_ok  'fn main() -> i64 { let f = parse_float_or("2.5", 1.0)  f64_to_i64(f * 4.0) }'
 check float_df  'fn main() -> i64 { let f = parse_float_or("zzz", 9.0)  f64_to_i64(f) }'
+check bool_ok   'fn main() -> i64 { let b = parse_bool_or("true", false)  if b { 1 } else { 0 } }'
+check bool_dflt 'fn main() -> i64 { let b = parse_bool_or("garbage", true)  if b { 1 } else { 0 } }'
+check bool_false 'fn main() -> i64 { let b = parse_bool_or("false", true)  if b { 1 } else { 0 } }'
 
 [ "$fail" -eq 0 ] || { echo "parse_or_parity: FAIL"; exit 1; }
-echo "parse_or_parity: PASS — parse_int_or / parse_float_or match the interpreter ✓"
+echo "parse_or_parity: PASS — parse_int_or / parse_float_or / parse_bool_or match the interpreter ✓"
 exit 0
