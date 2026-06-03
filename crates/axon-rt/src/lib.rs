@@ -688,6 +688,29 @@ pub extern "C" fn __axon_str_slice(
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 
+// ── BUG_HUNT #37: parse_int Err message (echoes the input, like the interp) ──
+/// Build the `parse_int` error message for a failed input, matching the
+/// interpreter's I-2-canonical form `` could not parse `<input>` as a base-10
+/// integer ``. Codegen calls this from the Err branch (it has the input str)
+/// instead of emitting a static message, so native==interp on the message too.
+#[no_mangle]
+pub extern "C" fn __axon_parse_int_err(
+    input: AxonStr,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { input.as_str() };
+    // Mirror the interpreter (interp.rs): a radix-prefixed input gets a hint.
+    let lower = src.to_ascii_lowercase();
+    let hint = if lower.starts_with("0x") || lower.starts_with("0o") || lower.starts_with("0b") {
+        " (parse_int is base-10 only; strip the radix prefix)"
+    } else {
+        ""
+    };
+    let msg = format!("could not parse `{src}` as a base-10 integer{hint}");
+    unsafe { write_str_out(&msg, out_len, out_ptr) }
+}
+
 // ── BUG_HUNT #38: str_reverse (char-correct, not byte-reverse) ────────────────
 /// `str_reverse(s)` — reverse by Unicode scalar (char), matching the
 /// interpreter (`chars().rev()`). The old inline codegen reversed BYTES, which

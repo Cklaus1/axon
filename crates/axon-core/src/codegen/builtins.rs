@@ -514,20 +514,31 @@ impl<'ctx> super::Codegen<'ctx> {
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pi_ok_val");
             build_wrappers::w_ret(&self.ir.builder, ok_val.into());
 
-            // err_bb: return { tag=0, payload = str { len, ptr } } with a real
-            // message (#37: was an EMPTY string). The interpreter echoes the
-            // input; codegen uses a static, actionable message (building a
-            // dynamic message in IR is disproportionate) — both Err, both
-            // explain base-10-only, closing the "empty Err payload" divergence.
+            // err_bb: return { tag=0, payload = str { len, ptr } } with the same
+            // message the interpreter produces (#37 parity): delegate to axon-rt's
+            // __axon_parse_int_err, which formats `could not parse `<input>` as a
+            // base-10 integer` (+ radix hint) from the INPUT str — so native==interp
+            // on the message, not just both-are-Err.
             self.ir.builder.position_at_end(err_bb);
+            let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            // Runtime: void __axon_parse_int_err(AxonStr input, i64* out_len, i8** out_ptr)
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let pie_ty = void_ty.fn_type(&[err_str_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
+            let pie_fn = self.ir.module.get_function("__axon_parse_int_err")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_int_err", pie_ty, None));
+            // The input str `s` is the param; reassemble it as the AxonStr arg.
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pi_eolen");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pi_eoptr");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pi_eoptrptr");
+            build_wrappers::w_call(&self.ir.builder, pie_fn, &[s.into(), out_len_slot.into(), out_ptr_slot_cast.into()], "pi_err_call");
+            let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pi_emlen").into_int_value();
+            let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pi_emptr").into_pointer_value();
+
             let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pi_err_slot");
             let tag0 = bool_ty.const_int(0, false);
             let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 0, "pi_tagptr_err");
             build_wrappers::w_store(&self.ir.builder,tag_ptr_err, tag0.into());
-            const PI_ERR_MSG: &str = "could not parse as a base-10 integer (parse_int is base-10 only; no trailing characters)";
-            let msg_ptr = build_wrappers::w_global_string_ptr(&self.ir.builder, PI_ERR_MSG, "pi_err_msg");
-            let msg_len = i64_ty.const_int(PI_ERR_MSG.len() as u64, false);
-            let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let payload_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 1, "pi_payptr_err");
             let payload_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ptr_err, err_str_ty.ptr_type(inkwell::AddressSpace::default()), "pi_payload_str_err");
             let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder,err_str_ty.into(), "pi_err_str");

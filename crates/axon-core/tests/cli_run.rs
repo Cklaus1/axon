@@ -3573,6 +3573,35 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_parse_int_err_message_matches_interp() {
+    // BUG_HUNT #37 (message parity): codegen parse_int's Err message used a
+    // static string while the interpreter echoes the input + a radix hint. Now
+    // codegen delegates to axon-rt's __axon_parse_int_err, so native == interp.
+    // scripts/parse_int_err_parity.sh builds a failing-parse program both ways
+    // and asserts identical output. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/parse_int_err_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("parse_int_err_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run parse_int_err_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — parse_int err parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native parse_int Err message must match the interpreter (#37):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("parse_int Err message matches the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_adaptive_provenance_carries_input_f11() {
     // F11 regression: native codegen used to log only the @[adaptive] return
     // SCORE, not the INPUT, so native goal_run always cold-started its hill-climb
