@@ -1403,6 +1403,20 @@ fn supervisor_tree_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn causal_stdlib_module_tests_pass() {
+    // Tier-1 causal module (PRD §"std.causal — Causal Reasoning"): do-calculus
+    // over a small structural causal model. The headline distinction — the whole
+    // reason do-calculus exists — is that under a confounder, the OBSERVATIONAL
+    // association (correlation) OVERSTATES the true CAUSAL effect (the lever a
+    // #[goal] should optimize). 5 @[test]s, headed by
+    // test_do_and_observe_disagree_under_confounding.
+    let out = axon().args(["test", &ex("stdlib/causal.ax")]).output().unwrap();
+    assert!(out.status.success(), "causal.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn store_stdlib_module_tests_pass() {
     // Tier-1 Store userland module (ROADMAP §6 row 7 — the Phase-7 Store
     // acceptance: "Store<T, Consistency, Lifetime> ships with at-least-once and

@@ -1,0 +1,204 @@
+// Tier-1 stdlib: causal — do-calculus over a small structural causal model.
+//
+// PRD §"std.causal — Causal Reasoning": `#[goal]` optimization without
+// causality finds CORRELATIONS, not LEVERS. It can't tell "ad spend causes
+// revenue" from "both are driven by seasonality." This module gives the
+// distinction observable, testable semantics in userland (the PRD's full
+// `causal.model{nodes, edges, confounders}` literal syntax needs language sugar
+// that doesn't exist yet; this is the SEMANTIC CORE, which is the part that
+// matters).
+//
+// The headline (`test_do_and_observe_disagree_under_confounding`): for the SAME
+// model, the OBSERVATIONAL association of revenue with ad_spend is INFLATED by a
+// seasonality confounder, while the INTERVENTIONAL effect (do-calculus: force
+// ad_spend, break the confounder's influence on it) is the true causal lever.
+// They DISAGREE — that gap is the whole reason do-calculus exists.
+//
+// The model (integer arithmetic, all values scaled ×1):
+//
+//        seasonality ─┐ (confounder: also lifts revenue directly)
+//                     ↓
+//   ad_spend ──────> revenue
+//     (causal: each unit of spend adds `spend_effect` to revenue)
+//
+//   revenue = base
+//           + spend_effect * ad_spend          (the CAUSAL path — the lever)
+//           + season_on_revenue * seasonality  (confounder → revenue directly)
+//   ad_spend is itself lifted by seasonality   (confounder → ad_spend):
+//           ad_spend = season_on_spend * seasonality   (in the observed data)
+//
+// OBSERVE: in the observed data, high ad_spend co-occurs with high seasonality
+// (because seasonality drove both), so revenue-given-high-spend is inflated.
+// DO: we SET ad_spend ourselves (an A/B test / forced budget), severing
+// seasonality→ad_spend, so only the true `spend_effect` path remains.
+//
+//   axon test examples/stdlib/causal.ax
+//   axon run  examples/stdlib/causal.ax
+
+// A structural causal model for the ad_spend → revenue example. Coefficients
+// are the structural equations; `season` is the confounder's current level.
+type Causal = {
+    base: i64,                // baseline revenue with zero spend, zero season
+    spend_effect: i64,        // revenue added per unit of ad_spend (the LEVER)
+    season_on_revenue: i64,   // revenue added per unit of seasonality (direct)
+    season_on_spend: i64,     // ad_spend induced per unit of seasonality (the
+                              // confounding back-door; only present in OBSERVED data)
+    season: i64,              // current seasonality level
+}
+
+fn causal_new(base: i64, spend_effect: i64, season_on_revenue: i64,
+              season_on_spend: i64, season: i64) -> Causal {
+    Causal {
+        base: base,
+        spend_effect: spend_effect,
+        season_on_revenue: season_on_revenue,
+        season_on_spend: season_on_spend,
+        season: season,
+    }
+}
+
+// The structural equation for revenue given an ad_spend level and the model's
+// current seasonality. This is the ground truth the world runs on.
+fn revenue_of(m: Causal, ad_spend: i64) -> i64 {
+    m.base + m.spend_effect * ad_spend + m.season_on_revenue * m.season
+}
+
+// ── OBSERVE: the observational association ───────────────────────────────────
+// In the OBSERVED data, ad_spend was not set by us — it was driven by
+// seasonality (the back-door). So `observe(revenue | ad_spend = s)` reflects the
+// world where that level of spend CO-OCCURRED with the seasonality that produced
+// it. The naive analyst reads this slope as "the effect of ad_spend" — and is
+// WRONG, because part of the lift is seasonality leaking through the back door.
+//
+// We report the observed revenue at the spend level that seasonality `season`
+// would naturally have produced.
+fn observe_revenue(m: Causal) -> i64 {
+    let observed_spend = m.season_on_spend * m.season
+    revenue_of(m, observed_spend)
+}
+
+// ── DO: the interventional (causal) effect ───────────────────────────────────
+// `do(ad_spend := s)` SETS the spend ourselves (an experiment), which SEVERS the
+// seasonality→ad_spend edge. The only path left from our intervention to revenue
+// is the true causal lever `spend_effect`. The seasonality→revenue direct path
+// still contributes its baseline, but it no longer RIDES ALONG with spend.
+//
+// We return the revenue when we FORCE `ad_spend = s`, holding seasonality at its
+// level but breaking its influence on spend.
+fn do_revenue(m: Causal, forced_spend: i64) -> i64 {
+    // Under do(), forced_spend is exogenous; revenue uses the structural eq with
+    // the forced value (the confounder no longer determines spend).
+    revenue_of(m, forced_spend)
+}
+
+// The CAUSAL EFFECT of one extra unit of ad_spend, isolated via do-calculus:
+// do(spend = s+1) - do(spend = s). This is the pure lever — what a `#[goal]`
+// SHOULD optimize, free of the confounder.
+fn causal_effect_per_unit(m: Causal) -> i64 {
+    do_revenue(m, 1) - do_revenue(m, 0)
+}
+
+// The NAIVE observational "effect" per unit of spend — the slope a correlational
+// analysis would report, contaminated by the back-door. Computed as the observed
+// revenue change per unit of the seasonality-induced spend.
+fn observational_effect_per_unit(m: Causal) -> i64 {
+    // At season s, observed spend = season_on_spend * s, observed revenue =
+    // observe_revenue. The naive slope attributes ALL of revenue's lift over
+    // baseline to that spend.
+    let observed_spend = m.season_on_spend * m.season
+    if observed_spend == 0 {
+        m.spend_effect
+    } else {
+        let lift = observe_revenue(m) - m.base
+        lift / observed_spend
+    }
+}
+
+// ── COUNTERFACTUAL: "what would revenue have been had we spent X instead?" ────
+// Given an observed (revenue, ad_spend) and a hypothetical spend, return the
+// revenue under the hypothetical, holding the (inferred) seasonality fixed. This
+// is the PRD's "had we spent 50K, revenue would have been 820K" query.
+fn counterfactual_revenue(m: Causal, hypothetical_spend: i64) -> i64 {
+    // Seasonality is held at the model's level (the observed context); only the
+    // causal spend path changes.
+    revenue_of(m, hypothetical_spend)
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests — the do-vs-observe distinction is the contract.
+// ════════════════════════════════════════════════════════════════════════════
+
+// The HEADLINE: under confounding, the observational effect OVERSTATES the true
+// causal effect. A correlational #[goal] would chase the inflated number.
+@[test]
+fn test_do_and_observe_disagree_under_confounding() {
+    // base 100; each unit of spend truly adds 2 to revenue (the lever);
+    // seasonality adds 5/unit to revenue directly AND induces 3 units of spend.
+    let m = causal_new(100, 2, 5, 3, 10)
+    // True causal effect of a unit of spend = spend_effect = 2.
+    assert_eq(causal_effect_per_unit(m), 2)
+    // Observational effect is INFLATED above 2 (seasonality leaks through).
+    let obs = observational_effect_per_unit(m)
+    assert(obs > causal_effect_per_unit(m))
+}
+
+// With NO confounding (seasonality induces no spend), do and observe AGREE —
+// the back-door is closed, so correlation equals causation.
+@[test]
+fn test_do_and_observe_agree_without_confounding() {
+    // season_on_spend = 0 → seasonality no longer drives spend.
+    let m = causal_new(100, 2, 5, 0, 10)
+    assert_eq(causal_effect_per_unit(m), 2)
+    assert_eq(observational_effect_per_unit(m), 2)
+}
+
+// do() severs the confounder: forcing the SAME spend at different seasonality
+// changes revenue ONLY through the direct season→revenue path, not through a
+// spurious spend correlation. The per-unit causal effect is invariant to season.
+@[test]
+fn test_causal_effect_is_invariant_to_the_confounder() {
+    let low = causal_new(100, 2, 5, 3, 1)
+    let high = causal_new(100, 2, 5, 3, 50)
+    // The lever is the same regardless of seasonality — that's what makes it a lever.
+    assert_eq(causal_effect_per_unit(low), causal_effect_per_unit(high))
+}
+
+// Counterfactual: had we spent less, revenue would have been lower by exactly
+// the causal effect × the spend reduction (seasonality held fixed).
+@[test]
+fn test_counterfactual_holds_seasonality_fixed() {
+    let m = causal_new(100, 2, 5, 3, 10)
+    let actual = counterfactual_revenue(m, 100)    // spent 100
+    let hypo = counterfactual_revenue(m, 50)       // had we spent 50
+    // Difference is purely the causal path: 2 * (100 - 50) = 100.
+    assert_eq(actual - hypo, 100)
+}
+
+// do_revenue with zero forced spend isolates the confounder's direct
+// contribution (base + season→revenue), with the causal path zeroed.
+@[test]
+fn test_do_zero_spend_leaves_only_baseline_and_direct_season() {
+    let m = causal_new(100, 2, 5, 3, 10)
+    // base 100 + season_on_revenue 5 * season 10 = 150.
+    assert_eq(do_revenue(m, 0), 150)
+}
+
+fn main() -> i64 {
+    let m = causal_new(100, 2, 5, 3, 10)
+    println("── std.causal: do-calculus vs correlation ─────────────────────")
+    println("model: revenue = 100 + 2*ad_spend + 5*seasonality")
+    println("       (seasonality also induces 3 units of ad_spend — the confounder)")
+    println("")
+    let causal = causal_effect_per_unit(m)
+    let observ = observational_effect_per_unit(m)
+    println("CAUSAL effect per unit of ad_spend (do-calculus): {to_str(causal)}")
+    println("OBSERVED effect per unit (naive correlation):     {to_str(observ)}")
+    if observ > causal {
+        println("→ correlation OVERSTATES the lever by {to_str(observ - causal)}x per unit")
+        println("  a #[goal] without causal_model would chase the inflated number.")
+    }
+    println("")
+    println("counterfactual: had we spent 50 instead of 100, revenue would be")
+    println("  {to_str(counterfactual_revenue(m, 50))} (vs actual {to_str(counterfactual_revenue(m, 100))})")
+    0
+}
