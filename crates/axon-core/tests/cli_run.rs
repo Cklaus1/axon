@@ -1254,6 +1254,22 @@ fn supervisor_tree_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn store_stdlib_module_tests_pass() {
+    // Tier-1 Store userland module (ROADMAP §6 row 7 — the Phase-7 Store
+    // acceptance: "Store<T, Consistency, Lifetime> ships with at-least-once and
+    // linearizable variants"). Models the CONSISTENCY axis over an i64
+    // accumulator: at_least_once RE-APPLIES a retried op (the duplicate hazard);
+    // linearizable DEDUPS it (exactly-once) + bumps a monotonic version (total
+    // order). 7 @[test]s, headed by test_retry_diverges_by_consistency (the same
+    // retried op produces different state under the two variants — the reason the
+    // axis exists).
+    let out = axon().args(["test", &ex("stdlib/store.ax")]).output().unwrap();
+    assert!(out.status.success(), "store.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets

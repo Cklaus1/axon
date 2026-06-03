@@ -122,3 +122,20 @@ Boundary behavior verified by test: `rest_for_one` on the first child ≡ `one_f
 `on_failure(s, failed, n) -> (Supervisor, [i64])` applies the strategy and the **max-restart-intensity backoff**: each failure increments the restart count; once it *exceeds* `max_restarts` the supervisor latches `halted` and restarts nothing — the OTP "too many restarts in the window" rule that abandons a crash loop instead of restarting forever (the corrigibility latch, like `supervisor.ax`'s single-agent kill-switch). The latch is one-way (mirrors R9 `@[corrigible]` / I-13's no-opt-out posture): a halted supervisor's count is frozen and every later failure is a no-op.
 
 **Slice status:** userland landed + gated (`supervisor_tree_stdlib_module_tests_pass`, 8 `@[test]`s; the single-agent `supervisor.ax` is now also gated, 5 tests). The **kernel** `Supervisor` runtime service — actually (re)starting live child processes/fibers under the scheduler, with the restart strategy enforced by the runtime rather than computed by a userland fn — is the named Phase-7 follow-on (depends on `scheduler`, also Phase-7 TCB). No error codes (the userland core is total). No invariant changed; the intensity latch *uses* the same one-way-halt posture as I-13/R9.
+
+---
+
+## Appendix B — Store consistency variants (sibling Phase-7 runtime primitive)
+
+A third Phase-7 runtime-services primitive (ROADMAP §6 row 7): *"`Store<T, Consistency, Lifetime>` ships with at-least-once and linearizable variants."* `examples/stdlib/store.ax` models the **Consistency** axis — the one with observable, testable semantics — over an i64 accumulator. (`T` fixed to i64; **Lifetime** = the persistence backend, orthogonal, already demoed by `persistent_learner.ax`'s on-disk sidecar.)
+
+The **decisive design point** is to make the two variants differ in *exactly one observable*: how they treat a **retried operation** (an op delivered more than once — the everyday hazard whenever delivery is at-least-once and a client resends because it didn't see the ack). Modeling the divergence on op-replay, rather than on some internal flag, is what makes the consistency contract testable in a single assertion:
+
+| Variant | retried `op_id` (already applied) | bookkeeping |
+|---|---|---|
+| `at_least_once` (0) | **re-applied** — double-counts; idempotency is the *caller's* job | none (no exactly-once promise to keep) |
+| `linearizable` (1) | **deduped** — no-op, applied exactly once | `seen` set + monotonic `version` (the total-order stamp) |
+
+The headline test (`test_retry_diverges_by_consistency`) applies the *same* retried op to both and asserts the resulting states **disagree** — that divergence is the entire reason the axis exists. `version` gives linearizable a single total order (bumps once per *distinct* applied op, not on a deduped retry); at-least-once maintains none (you cannot read an order out of it).
+
+**Slice status:** userland landed + gated (`store_stdlib_module_tests_pass`, 7 `@[test]`s). The **kernel** `Store<T,C,L>` runtime service — a real persistent store whose consistency variant is *enforced by the runtime* (durable dedup log for linearizable; durable replay for at-least-once) across processes/nodes — is the named Phase-7 follow-on, and the distributed constructors (`Replicated`/`Quorum`/`CRDT`, ROADMAP Tier-2 Phase-14) build on it. No error codes; no invariant changed. This is the safety-relevant *semantics* of the store made explicit and test-pinned ahead of the kernel service.

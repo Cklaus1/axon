@@ -207,7 +207,7 @@ When this works end-to-end, Axon is real.
 | `Effect` | row-polymorphic effect tag | 1 |
 | `Refinement` | `T where pred` | 1 (kernel-level via Phase 5) |
 | `Source` | `Constant \| User \| AI \| Net \| System` | 1 |
-| `Store<T, C, L>` | typed persistent state | 1 |
+| `Store<T, C, L>` | typed persistent state | 1 | *(userland landed: `examples/stdlib/store.ax` — the Consistency axis: `at_least_once` re-applies a retried op (duplicate hazard) vs `linearizable` dedups it exactly-once + bumps a monotonic total-order version. Lifetime/persistence is demoed by persistent_learner.ax. Kernel `Store<T,C,L>` runtime service Phase-7.)* |
 | `Supervisor` | OTP tree + strategy | 1 | *(userland landed: `examples/stdlib/supervisor_tree.ax` — the 3 OTP restart strategies (one_for_one/one_for_all/rest_for_one) as a pure `restart_set` core + max-restart-intensity backoff that latches the supervisor halted on a crash loop. Single-agent kill-switch in `supervisor.ax`. Kernel `Supervisor` runtime service Phase-7.)* |
 | `Agent` | input / output / tools / policy / effects | 1 |
 | `Tool` | typed callable with effect signature | 1 |

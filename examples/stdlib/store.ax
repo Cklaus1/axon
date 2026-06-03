@@ -1,0 +1,174 @@
+// Tier-1 stdlib: Store — typed persistent state with a CONSISTENCY model.
+//
+// ROADMAP §6 row 7 (Phase-7 runtime services): "Store<T, Consistency, Lifetime>
+// ships with at-least-once and linearizable variants." This module models the
+// CONSISTENCY axis — the one with observable, testable semantics — over a simple
+// i64 accumulator. (T is fixed to i64 here; Lifetime is the persistence backend,
+// orthogonal and demoed by persistent_learner.ax. The kernel `Store<T,C,L>` as a
+// runtime service is the Phase-7 follow-on.)
+//
+// The two variants differ in EXACTLY ONE observable: how they treat a RETRIED
+// operation (an op delivered more than once — the everyday hazard in any
+// distributed/at-least-once delivery system, where a client resends because it
+// didn't see the ack).
+//
+//   • at_least_once — an op may be applied MORE THAN ONCE. A retry with the same
+//     op_id is RE-APPLIED. This is what you get "for free" from at-least-once
+//     delivery: cheap, available, but the effect must be idempotent or you
+//     double-count. The store does NOT dedup; correctness is the caller's job.
+//
+//   • linearizable — every op appears to take effect EXACTLY ONCE, in a single
+//     total order. A retry with a seen op_id is DEDUPLICATED (no-op), and every
+//     applied op bumps a monotonic `version` (the total-order stamp). Stronger
+//     guarantee, more bookkeeping (the `seen` set).
+//
+// The headline test (`test_retry_diverges_by_consistency`) applies the SAME
+// retried op to both and asserts they DISAGREE — the whole point of the axis.
+//
+// Consistency is an i64 tag (0/1) since this is pre-enum-sugar userland.
+//
+//   axon test examples/stdlib/store.ax
+//   axon run  examples/stdlib/store.ax
+
+// Consistency tags.
+fn at_least_once() -> i64 { 0 }
+fn linearizable() -> i64 { 1 }
+
+type Store = {
+    value: i64,        // the accumulated state (T = i64 here)
+    consistency: i64,  // 0=at_least_once, 1=linearizable
+    seen: [i64],       // op_ids already applied (only consulted when linearizable)
+    version: i64,      // monotonic total-order stamp (only bumped when linearizable)
+}
+
+fn new_store(consistency: i64) -> Store {
+    Store { value: 0, consistency: consistency, seen: [], version: 0 }
+}
+
+// Has `id` already been applied to this store?
+fn has_applied(s: Store, id: i64) -> bool {
+    let found = false
+    for i in 0..len(s.seen) { if s.seen[i] == id { found = true } }
+    found
+}
+
+// ── apply — the consistency-defining operation ───────────────────────────────
+// Apply op `op_id` with effect `delta`. The variants diverge ONLY on a retry
+// (an op_id already seen):
+//   • linearizable  — if seen, NO-OP (exactly-once); else apply, record the id,
+//     bump the version (total-order stamp).
+//   • at_least_once — apply unconditionally (a retry re-applies; the duplicate
+//     hazard is real). `seen`/`version` are not maintained — there is no
+//     exactly-once promise to keep.
+fn apply(s: Store, op_id: i64, delta: i64) -> Store {
+    if s.consistency == linearizable() {
+        if has_applied(s, op_id) {
+            s   // dedup: exactly-once
+        } else {
+            Store {
+                value: s.value + delta,
+                consistency: s.consistency,
+                seen: arr_push(s.seen, op_id),
+                version: s.version + 1,
+            }
+        }
+    } else {
+        // at_least_once: apply unconditionally; no dedup, no version.
+        Store {
+            value: s.value + delta,
+            consistency: s.consistency,
+            seen: s.seen,
+            version: s.version,
+        }
+    }
+}
+
+fn store_value(s: Store) -> i64 { s.value }
+fn store_version(s: Store) -> i64 { s.version }
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+@[test]
+fn test_distinct_ops_accumulate_either_way() {
+    // Distinct op_ids → both variants accumulate identically; consistency only
+    // matters on a retry.
+    let a = apply(apply(new_store(at_least_once()), 1, 10), 2, 5)
+    let l = apply(apply(new_store(linearizable()), 1, 10), 2, 5)
+    assert_eq(store_value(a), 15)
+    assert_eq(store_value(l), 15)
+}
+
+@[test]
+fn test_at_least_once_reapplies_a_retry() {
+    // The same op_id applied twice under at-least-once DOUBLE-counts (the
+    // duplicate hazard — apply must be idempotent at the caller, or this happens).
+    let s = apply(apply(new_store(at_least_once()), 1, 10), 1, 10)
+    assert_eq(store_value(s), 20)
+}
+
+@[test]
+fn test_linearizable_dedups_a_retry() {
+    // The same op_id applied twice under linearizable is applied EXACTLY ONCE.
+    let s = apply(apply(new_store(linearizable()), 1, 10), 1, 10)
+    assert_eq(store_value(s), 10)
+}
+
+@[test]
+fn test_retry_diverges_by_consistency() {
+    // THE headline: the same retried op produces DIFFERENT state under the two
+    // variants — that divergence is the entire reason the consistency axis exists.
+    let a = apply(apply(new_store(at_least_once()), 7, 100), 7, 100)
+    let l = apply(apply(new_store(linearizable()), 7, 100), 7, 100)
+    assert_eq(store_value(a), 200)   // re-applied
+    assert_eq(store_value(l), 100)   // deduped
+    assert(store_value(a) != store_value(l))
+}
+
+@[test]
+fn test_linearizable_version_is_total_order() {
+    // Each DISTINCT applied op bumps the version by exactly 1; a deduped retry
+    // does NOT — version counts applied ops, giving a single total order.
+    let s0 = new_store(linearizable())
+    let s1 = apply(s0, 1, 5)
+    let s2 = apply(s1, 2, 5)
+    let s3 = apply(s2, 2, 5)   // retry — deduped
+    assert_eq(store_version(s1), 1)
+    assert_eq(store_version(s2), 2)
+    assert_eq(store_version(s3), 2)   // unchanged by the deduped retry
+}
+
+@[test]
+fn test_at_least_once_keeps_no_version() {
+    // at-least-once makes no exactly-once promise, so it maintains no version
+    // stamp (stays 0) — you cannot read a total order out of it.
+    let s = apply(apply(new_store(at_least_once()), 1, 5), 2, 5)
+    assert_eq(store_version(s), 0)
+}
+
+@[test]
+fn test_has_applied_tracks_linearizable_only() {
+    // Under linearizable, applied ids are remembered; under at-least-once they
+    // are not (it doesn't dedup, so it doesn't track).
+    let l = apply(new_store(linearizable()), 42, 1)
+    assert(has_applied(l, 42))
+    let a = apply(new_store(at_least_once()), 42, 1)
+    assert(!has_applied(a, 42))
+}
+
+fn name_of(consistency: i64) -> str {
+    if consistency == linearizable() { "linearizable" } else { "at_least_once" }
+}
+
+fn demo(consistency: i64) {
+    // Apply ops 1,2 then RETRY op 2 (a duplicate delivery).
+    let s = apply(apply(apply(new_store(consistency), 1, 100), 2, 50), 2, 50)
+    let nm = name_of(consistency)
+    let v = to_str(store_value(s))
+    let ver = to_str(store_version(s))
+    println("{nm}: ops [1:+100, 2:+50, 2:+50(retry)] -> value {v}, version {ver}")
+}
+
+fn main() {
+    println("Store consistency under a retried op (op 2 delivered twice):")
+    demo(at_least_once())   // 200: the retry double-counts op 2
+    demo(linearizable())    // 150: the retry is deduped, version tracks 2 distinct ops
+}
