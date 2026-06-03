@@ -200,7 +200,7 @@ When this works end-to-end, Axon is real.
 
 | Type | Purpose | Tier |
 |---|---|---|
-| `Goal<M>` | metric M, constraints, budget, principal | 1 |
+| `Goal<M>` | metric M, constraints, budget, principal | 1 | *(userland landed: `examples/stdlib/goal.ax` — a first-class Goal **value** bundling metric+target+Budget+Constraint, met only when target reached AND hard guard holds; kernel `Goal<M>` with SMT-checked constraints is Phase-7)* |
 | `Constraint` | `Invariant(pred)` \| `Forbidden(pred)` | 1 |
 | `Budget<R...>` | extensible cost over resource set R | 1 |
 | `Principal` | id, parent, capabilities, audit_log, mintable_subset | 1 |

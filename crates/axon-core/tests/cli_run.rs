@@ -1195,6 +1195,20 @@ fn agent_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn goal_stdlib_module_tests_pass() {
+    // Tier-1 Goal userland module (ROADMAP §6 `Goal<M>` at the userland layer,
+    // the same two-track move as agent.ax/F12): a first-class Goal VALUE you
+    // construct/pass/evaluate, bundling metric + target + Budget + a hard
+    // Constraint. 6 @[test] cases cover: starts un-met; met when target reached
+    // AND guard holds; NOT met when the guard is violated (disqualified → 0);
+    // below-target un-met; keeps the best score; budget runs out.
+    let out = axon().args(["test", &ex("stdlib/goal.ax")]).output().unwrap();
+    assert!(out.status.success(), "goal.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets

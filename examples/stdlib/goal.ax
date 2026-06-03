@@ -1,0 +1,157 @@
+// Tier-1 stdlib: Goal — a first-class, composable optimization goal.
+//
+// Closes ROADMAP §6 `Goal<M>` at the USERLAND layer (the same two-track move
+// that landed `Agent` in `agent.ax` for F12): a Goal is a VALUE you construct,
+// store, pass, and evaluate — not a procedural `goal_run("name", …)` call. It
+// bundles the four things the ROADMAP's `Goal<M>` carries:
+//
+//   • metric  — the name of the @[adaptive] fn whose score we maximize
+//   • target  — the score threshold that means "met"
+//   • budget  — a hard ceiling on optimization spend (composes budget.ax)
+//   • a hard constraint — a must-hold rule that disqualifies a candidate
+//
+// The kernel-level `Goal<M>` (constraints reflected into the type system,
+// SMT-checked, principal-scoped) is Phase-7 architectural work; this is the
+// honest userland form on already-shipped primitives. It composes:
+//   • budget.ax     — bounded optimization spend
+//   • constraint.ax — hard must-hold rules
+//
+//   axon test examples/stdlib/goal.ax     # run the @[test]s
+//   axon run  examples/stdlib/goal.ax     # demo
+
+// ── Budget (inlined from budget.ax so this file is self-contained) ───────────
+type Budget = { used: i64, cap: i64 }
+
+fn budget_new(cap: i64) -> Budget { Budget { used: 0, cap: cap } }
+fn budget_spend(b: Budget, amount: i64) -> Budget { Budget { used: b.used + amount, cap: b.cap } }
+fn budget_remaining(b: Budget) -> i64 { let r = b.cap - b.used  if r < 0 { 0 } else { r } }
+fn budget_exhausted(b: Budget) -> bool { b.used >= b.cap }
+
+// ── Constraint (inlined from constraint.ax) ──────────────────────────────────
+type Constraint = { name: str, satisfied: bool }
+
+fn constraint(name: str, satisfied: bool) -> Constraint { Constraint { name: name, satisfied: satisfied } }
+
+// ── Goal ─────────────────────────────────────────────────────────────────────
+// A first-class goal value. `met` and `score` are filled by evaluation; a fresh
+// Goal starts un-met with score 0.
+type Goal = {
+    metric: str,        // name of the @[adaptive] fn to optimize
+    target: i64,        // score threshold meaning "met"
+    budget: Budget,     // hard ceiling on optimization spend
+    guard: Constraint,  // a must-hold rule; violation disqualifies (score 0)
+    score: i64,         // best score observed so far
+    met: bool,          // whether target was reached AND guard holds
+}
+
+// Construct a goal. The caller supplies the metric fn name, the target, a
+// spend cap, and a hard guard. The goal begins un-evaluated (score 0, un-met).
+fn goal(metric: str, target: i64, spend_cap: i64, guard: Constraint) -> Goal {
+    Goal {
+        metric: metric,
+        target: target,
+        budget: budget_new(spend_cap),
+        guard: guard,
+        score: 0,
+        met: false,
+    }
+}
+
+// Record one unit of optimization spend against the goal's budget, returning the
+// updated goal. An ASI loop calls this each evaluation; once the budget is
+// exhausted, `goal_can_step` returns false and the loop must stop.
+fn goal_step(g: Goal, cost: i64) -> Goal {
+    Goal {
+        metric: g.metric, target: g.target,
+        budget: budget_spend(g.budget, cost),
+        guard: g.guard, score: g.score, met: g.met,
+    }
+}
+
+// Whether the goal still has budget headroom to take another step.
+fn goal_can_step(g: Goal) -> bool {
+    if budget_exhausted(g.budget) { false } else { true }
+}
+
+// Submit an observed `score` for the goal. The goal is MET only when the score
+// reaches the target AND the hard guard holds — a high score that violates the
+// guard never counts as met (safe optimization: a must-hold rule is not
+// tradeable against the objective).
+fn goal_observe(g: Goal, score: i64) -> Goal {
+    let effective = if g.guard.satisfied { score } else { 0 }
+    let best = if effective > g.score { effective } else { g.score }
+    let reached = best >= g.target && g.guard.satisfied
+    Goal {
+        metric: g.metric, target: g.target, budget: g.budget,
+        guard: g.guard, score: best, met: reached,
+    }
+}
+
+// Remaining optimization budget.
+fn goal_budget_left(g: Goal) -> i64 { budget_remaining(g.budget) }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+@[test]
+fn test_goal_starts_unmet() {
+    let g = goal("tune", 90, 10, constraint("safe", true))
+    assert_eq(g.score, 0)
+    assert(g.met == false)
+    assert_eq(goal_budget_left(g), 10)
+}
+
+@[test]
+fn test_goal_met_when_target_reached_and_guard_holds() {
+    let g = goal("tune", 90, 10, constraint("safe", true))
+    let g2 = goal_observe(g, 95)
+    assert_eq(g2.score, 95)
+    assert(g2.met)
+}
+
+@[test]
+fn test_goal_not_met_when_guard_violated() {
+    // A high score that breaks the hard guard does NOT count as met — and the
+    // disqualified candidate scores 0, not 95.
+    let g = goal("tune", 90, 10, constraint("safe", false))
+    let g2 = goal_observe(g, 95)
+    assert_eq(g2.score, 0)
+    assert(g2.met == false)
+}
+
+@[test]
+fn test_goal_below_target_is_unmet() {
+    let g = goal("tune", 90, 10, constraint("safe", true))
+    let g2 = goal_observe(g, 80)
+    assert_eq(g2.score, 80)
+    assert(g2.met == false)
+}
+
+@[test]
+fn test_goal_keeps_best_score() {
+    let g = goal("tune", 90, 10, constraint("safe", true))
+    let g2 = goal_observe(goal_observe(g, 70), 50)
+    assert_eq(g2.score, 70)
+}
+
+@[test]
+fn test_goal_budget_runs_out() {
+    let g = goal("tune", 90, 2, constraint("safe", true))
+    assert(goal_can_step(g))
+    let g2 = goal_step(goal_step(g, 1), 1)
+    assert_eq(goal_budget_left(g2), 0)
+    assert(goal_can_step(g2) == false)
+}
+
+fn main() -> i64 {
+    // Demo: an optimization loop that respects the goal's budget and reports
+    // whether the target was met under the hard guard.
+    let g0 = goal("tune", 90, 3, constraint("no_overflow", true))
+    // Three observations, each costing one budget unit.
+    let g1 = goal_observe(goal_step(g0, 1), 60)
+    let g2 = goal_observe(goal_step(g1, 1), 85)
+    let g3 = goal_observe(goal_step(g2, 1), 92)
+    let best = g3.score
+    let left = goal_budget_left(g3)
+    println("best score {best}, budget left {left}")
+    if g3.met { println("goal MET") } else { println("goal not met") }
+    0
+}
