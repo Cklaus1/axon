@@ -3992,12 +3992,13 @@ fn wasm_interp_matches_native_on_pure_compute() {
 }
 
 #[test]
-fn wasm_file_io_matches_native_via_wasi() {
-    // R7: the cross-platform guarantee extends PAST pure-compute to file I/O.
-    // The interpreter's read_file/write_file route through the AxonHost seam;
-    // DefaultHost uses std::fs, which WASI provides under a capability grant, so
-    // a write+read round-trip is byte-identical on native and wasm32-wasip1.
-    // scripts/wasm_fs_parity.sh proves it; skips when the wasm toolchain is absent.
+fn wasm_host_io_matches_native_via_wasi() {
+    // R7: the cross-platform guarantee extends PAST pure-compute to the host
+    // interface — file I/O AND env vars. The interpreter's read_file/write_file/
+    // env_var route through the AxonHost seam; DefaultHost uses std::fs/std::env,
+    // which WASI provides under capability grants (--dir / --env), so both are
+    // byte-identical on native and wasm32-wasip1. scripts/wasm_fs_parity.sh
+    // proves it; skips when the wasm toolchain is absent.
     let script = format!("{}/../../scripts/wasm_fs_parity.sh", env!("CARGO_MANIFEST_DIR"));
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_fs_parity.sh not found — skipping");
