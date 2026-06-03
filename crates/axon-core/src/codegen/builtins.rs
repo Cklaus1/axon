@@ -1869,6 +1869,15 @@ impl<'ctx> super::Codegen<'ctx> {
             );
             self.ir.module.add_function("__axon_provenance_log_ret_i64", prov_i64_ty, None);
 
+            // F11: __axon_provenance_log_ret_i64_in(name_ptr, name_len,
+            //                                       input: i64, ret: i64)
+            // logs (input, score) so goal_run can warm-start from the best input.
+            let prov_i64_in_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i64_ty.into(), i64_ty.into()],
+                false,
+            );
+            self.ir.module.add_function("__axon_provenance_log_ret_i64_in", prov_i64_in_ty, None);
+
             let prov_f64_ty = void_ty.fn_type(
                 &[i8_ptr.into(), i64_ty.into(), f64_ty.into()],
                 false,

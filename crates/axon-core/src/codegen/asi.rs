@@ -75,6 +75,20 @@ impl<'ctx> super::Codegen<'ctx> {
 
         match ret_val {
             BasicValueEnum::IntValue(iv) if iv.get_type() == i64_ty => {
+                // F11: when the adaptive fn has a leading i64 input, log
+                // (input, score) via the `_in` entry point so goal_run can
+                // warm-start. Otherwise fall back to the score-only log.
+                if let Some(input_iv) = self.current_adaptive_input {
+                    if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_i64_in") {
+                        let _ = build_wrappers::w_call(
+                            &self.ir.builder,
+                            rt,
+                            &[name_g.into(), name_len.into(), input_iv.into(), iv.into()],
+                            "",
+                        );
+                        return;
+                    }
+                }
                 if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_i64") {
                     let _ = build_wrappers::w_call(
                         &self.ir.builder,

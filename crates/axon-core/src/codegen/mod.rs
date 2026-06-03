@@ -134,6 +134,12 @@ pub struct Codegen<'ctx> {
     /// this holds the function name so `log_return_if_adaptive` can log
     /// a "return" event before each early/tail return.
     pub(super) current_adaptive_fn: Option<String>,
+    /// F11: the leading `i64` parameter of the current `@[adaptive]` fn, if it
+    /// has one. Captured at the prologue and passed to the runtime's
+    /// `__axon_provenance_log_ret_i64_in` at each return site, so `goal_run` can
+    /// warm-start its hill-climb from the best prior input. `None` when the fn
+    /// has no leading i64 param (then the score-only log path is used).
+    pub(super) current_adaptive_input: Option<inkwell::values::IntValue<'ctx>>,
     /// ASI Layer-3: names of `@[adaptive] fn(i64) -> i64` functions that
     /// should be registered with the runtime adaptive registry at module
     /// startup.  Populated lazily when each FnDef is declared; consumed in
@@ -190,6 +196,7 @@ impl<'ctx> Codegen<'ctx> {
             loop_stack: Vec::new(),
             current_lambda_env: None,
             current_adaptive_fn: None,
+            current_adaptive_input: None,
             adaptive_registry_targets: Vec::new(),
             current_verify_fn: None,
         }
@@ -609,6 +616,7 @@ impl<'ctx> Codegen<'ctx> {
         let saved_local_types = std::mem::take(&mut self.local_types);
         let saved_result_types = self.current_result_types.take();
         let saved_adaptive = self.current_adaptive_fn.take();
+        let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_verify = self.current_verify_fn.take();
 
         // ── @[adaptive]: emit a "call" event at the prologue. ─────────────────
@@ -617,6 +625,16 @@ impl<'ctx> Codegen<'ctx> {
         if has_adaptive_attr(&f.attrs) {
             self.current_adaptive_fn = Some(f.name.clone());
             self.emit_provenance_log(&f.name, "call");
+            // F11: capture the leading i64 parameter (the optimizer's input) so
+            // the return log can record (input, score). Only when param 0 is an
+            // i64 — matches the runtime's `(i64) -> i64` warm-start narrowing.
+            if let Some(first) = llvm_fn.get_nth_param(0) {
+                if let inkwell::values::BasicValueEnum::IntValue(iv) = first {
+                    if iv.get_type() == self.ir.context.i64_type() {
+                        self.current_adaptive_input = Some(iv);
+                    }
+                }
+            }
         }
 
         // ── ASI Layer-3 @[verify]: arm runtime predicate enforcement. ─────────
@@ -724,6 +742,7 @@ impl<'ctx> Codegen<'ctx> {
         self.local_types = saved_local_types;
         self.current_result_types = saved_result_types;
         self.current_adaptive_fn = saved_adaptive;
+        self.current_adaptive_input = saved_adaptive_input;
         self.current_verify_fn = saved_verify;
     }
 

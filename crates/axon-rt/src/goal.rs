@@ -111,16 +111,19 @@ pub extern "C" fn __axon_goal_run(
 /// prologue / typed-return logging, so the provenance store accumulates
 /// hill-climb data as a side effect.
 fn hill_climb_i64(
-    _name: &str,
+    name: &str,
     f: unsafe extern "C" fn(i64) -> i64,
     target: f64,
     max_evals: i64,
 ) -> f64 {
-    // Starting input.  We don't yet record inputs in the provenance store
-    // (Record::score is the *output*), so v1 always starts at 0.  The
-    // function is responsible for being defined at 0; for the canonical
-    // squared-error fixture this is fine.
-    let mut cur_input: i64 = 0;
+    // F11: warm-start from the best-observed INPUT in the provenance store, if
+    // one was recorded (via `__axon_provenance_log_ret_i64_in`). The store now
+    // carries `(input, score)` pairs, so we seed the climb at the input whose
+    // prior score was closest to `target` instead of always cold-starting at 0
+    // — this is what lets a native goal_run resume a search across calls. Falls
+    // back to 0 when no input-bearing record exists (back-compat with the
+    // score-only path and the canonical squared-error fixture).
+    let mut cur_input: i64 = provenance::best_input_for(name, target).unwrap_or(0);
 
     // Initial call to seed `best_score`.
     let initial: f64 = unsafe { f(cur_input) } as f64;
@@ -235,6 +238,7 @@ mod tests {
     use super::*;
     use crate::provenance::{
         __axon_provenance_log_ret_i64, __axon_provenance_log_ret_f64,
+        __axon_provenance_log_ret_i64_in,
     };
 
     #[test]
@@ -422,6 +426,38 @@ mod tests {
         );
         // Should land exactly on 100 (step-1 hits x = 50 cleanly from 0).
         assert!((out - 100.0).abs() < 1e-9, "got {}", out);
+    }
+
+    #[test]
+    fn goal_run_warm_starts_from_best_recorded_input() {
+        // F11: a quadratic centered far from 0, where a cold start at x=0 with a
+        // tiny eval budget cannot reach the optimum, but a warm start near it
+        // can. f(x) = (x - 1000)^2; optimum x=1000, score 0.
+        extern "C" fn sq_x_minus_1000(x: i64) -> i64 {
+            let d = x - 1000;
+            d * d
+        }
+        let name = b"f11_goal_warmstart";
+        __axon_register_adaptive(
+            name.as_ptr(),
+            name.len() as i64,
+            sq_x_minus_1000 as *const c_void,
+        );
+        // Seed the store with a good prior input near the optimum.
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 990, 100);
+
+        let mut out: f64 = -1.0;
+        // Tiny budget: from x=0 (step 1) this couldn't get near 1000, but warm-
+        // started at 990 the climb reaches the optimum quickly.
+        __axon_goal_run(
+            std::ptr::null(),
+            name.as_ptr(),
+            name.len() as i64,
+            0.0,
+            64,
+            &mut out as *mut f64,
+        );
+        assert!(out < 100.0, "warm-started climb should beat the 990-seed score of 100, got {}", out);
     }
 
     #[test]

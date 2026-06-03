@@ -3498,6 +3498,36 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_adaptive_provenance_carries_input_f11() {
+    // F11 regression: native codegen used to log only the @[adaptive] return
+    // SCORE, not the INPUT, so native goal_run always cold-started its hill-climb
+    // at 0 (the interpreter logs (input,score) and warm-starts). The fix threads
+    // the adaptive fn's leading i64 param into __axon_provenance_log_ret_i64_in.
+    // scripts/goal_input_parity.sh builds a native @[adaptive] fn(i64)->i64 and
+    // asserts its provenance now carries the input. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/goal_input_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("goal_input_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run goal_input_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — F11 input parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native adaptive provenance must carry the input (F11):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("native adaptive provenance carries the input"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_to_str_scalar_dispatch_matches_interp() {
     // BUG_HUNT #40 regression: `to_str` is polymorphic over scalars; codegen
     // must dispatch on the arg's LLVM type at the call site or an f64 is

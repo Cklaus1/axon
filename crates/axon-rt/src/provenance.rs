@@ -47,6 +47,11 @@ pub struct Record {
     pub score: f64,
     /// Wall-clock timestamp when the record was captured (ms since epoch).
     pub ts_ms: u64,
+    /// F11: the i64 input (first scalar arg) that produced this score, when the
+    /// codegen logged it via `__axon_provenance_log_ret_i64_in`. `None` for the
+    /// score-only entry points — so `goal_run` can warm-start its hill-climb
+    /// from the best prior input instead of always cold-starting at 0.
+    pub input: Option<i64>,
 }
 
 fn store() -> &'static Mutex<Vec<Record>> {
@@ -68,13 +73,41 @@ pub fn provenance_records_for(name: &str) -> Vec<Record> {
 }
 
 fn record(fn_name: &str, score: f64) {
+    record_with_input(fn_name, score, None);
+}
+
+/// F11: record a `(input, score)` observation (or score-only when `input` is
+/// `None`). Single insertion point so the store stays consistent.
+fn record_with_input(fn_name: &str, score: f64, input: Option<i64>) {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     if let Ok(mut g) = store().lock() {
-        g.push(Record { fn_name: fn_name.to_string(), score, ts_ms: ts });
+        g.push(Record { fn_name: fn_name.to_string(), score, ts_ms: ts, input });
     }
+}
+
+/// F11: the i64 input whose recorded score is closest to `target` for `name`,
+/// among records that carry an input. `None` when no input-bearing record
+/// exists — the caller (hill-climb) then cold-starts at 0 as before. Ties go to
+/// the earliest record (stable, matches `best_observed`).
+pub fn best_input_for(name: &str, target: f64) -> Option<i64> {
+    let guard = match store().lock() {
+        Ok(g) => g,
+        Err(p) => p.into_inner(),
+    };
+    let mut best: Option<(i64, f64)> = None; // (input, dist)
+    for r in guard.iter().filter(|r| r.fn_name == name) {
+        if let Some(inp) = r.input {
+            let dist = (r.score - target).abs();
+            match best {
+                Some((_, bd)) if dist >= bd => {}
+                _ => best = Some((inp, dist)),
+            }
+        }
+    }
+    best.map(|(inp, _)| inp)
 }
 
 // ── ABI: original event-style log (Layer 1) ───────────────────────────────────
@@ -121,6 +154,28 @@ pub extern "C" fn __axon_provenance_log_ret_i64(
     // R4: emit the SAME discriminator the interpreter writes
     // (`event:"adaptive_return"`, `zone:"adaptive"`) so native and interp
     // provenance carry matching shape — the I-13 engine-parity guarantee.
+    let _ = log_adaptive_return(fn_name, &payload, ret as f64);
+}
+
+/// F11 entry point: log an `i64` return value TOGETHER with the `i64` input
+/// that produced it. Codegen emits a call to this (instead of the score-only
+/// `__axon_provenance_log_ret_i64`) when the enclosing `@[adaptive] fn(i64,…)
+/// -> i64` has a leading i64 parameter, so `goal_run` can warm-start its
+/// hill-climb from the best prior input (F11) rather than always seeding at 0.
+/// The JSONL line gains an `"input":<i64>` field; the in-memory record carries
+/// the input for `best_input_for`.
+#[no_mangle]
+pub extern "C" fn __axon_provenance_log_ret_i64_in(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    input: i64,
+    ret: i64,
+) {
+    let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
+    if !fn_name.is_empty() {
+        record_with_input(fn_name, ret as f64, Some(input));
+    }
+    let payload = format!("ret_i64={} input={}", ret, input);
     let _ = log_adaptive_return(fn_name, &payload, ret as f64);
 }
 
@@ -362,5 +417,36 @@ mod tests {
         // Defence-in-depth — codegen should never pass null, but if it did we
         // must not panic because that would tear down user code.
         __axon_provenance_log_ret_i64(std::ptr::null(), 0, 99);
+    }
+
+    // ── F11: (input, score) logging + best_input_for ──────────────────────────
+    #[test]
+    fn log_ret_in_records_input_and_score() {
+        let name = b"f11_test_in_basic";
+        // (input=10 -> score=100), (input=20 -> score=400)
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 10, 100);
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 20, 400);
+        let recs = provenance_records_for("f11_test_in_basic");
+        assert!(recs.len() >= 2);
+        assert!(recs.iter().any(|r| r.input == Some(10) && (r.score - 100.0).abs() < 1e-9));
+        assert!(recs.iter().any(|r| r.input == Some(20) && (r.score - 400.0).abs() < 1e-9));
+    }
+
+    #[test]
+    fn best_input_for_picks_input_of_closest_score() {
+        let name = b"f11_test_best_input";
+        // scores 100/400/225 at inputs 10/20/15; target 225 → input 15 wins.
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 10, 100);
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 20, 400);
+        __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 15, 225);
+        assert_eq!(best_input_for("f11_test_best_input", 225.0), Some(15));
+    }
+
+    #[test]
+    fn best_input_for_is_none_without_input_records() {
+        // Score-only entry point records no input → no warm-start seed.
+        let name = b"f11_test_no_input";
+        __axon_provenance_log_ret_i64(name.as_ptr(), name.len() as i64, 42);
+        assert_eq!(best_input_for("f11_test_no_input", 42.0), None);
     }
 }
