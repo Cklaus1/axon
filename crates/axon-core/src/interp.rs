@@ -2627,27 +2627,40 @@ impl<'p> Interp<'p> {
     }
 
     fn eval_binop(&self, op: &BinOp, left: &Expr, right: &Expr, env: &mut Env) -> R {
-        // Short-circuit boolean operators.
+        // Short-circuit boolean operators. An `Uncertain<bool>` operand can't
+        // short-circuit (we must combine confidences), so it falls through to
+        // the value-level path which propagates uncertainty.
         match op {
             BinOp::And => {
-                return match self.eval(left, env)? {
-                    Value::Bool(false) => Ok(Value::Bool(false)),
-                    Value::Bool(true) => match self.eval(right, env)? {
+                let lv = self.eval(left, env)?;
+                if let Value::Bool(false) = lv {
+                    return Ok(Value::Bool(false));
+                }
+                if let Value::Bool(true) = lv {
+                    return match self.eval(right, env)? {
                         Value::Bool(b) => Ok(Value::Bool(b)),
+                        other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
                         other => panic(format!("`&&` rhs must be bool, got {}", other.type_name())),
-                    },
-                    other => panic(format!("`&&` lhs must be bool, got {}", other.type_name())),
-                };
+                    };
+                }
+                // lv is Uncertain (or other) — value-level path handles/errors.
+                let rv = self.eval(right, env)?;
+                return eval_binop_vals(op, lv, rv);
             }
             BinOp::Or => {
-                return match self.eval(left, env)? {
-                    Value::Bool(true) => Ok(Value::Bool(true)),
-                    Value::Bool(false) => match self.eval(right, env)? {
+                let lv = self.eval(left, env)?;
+                if let Value::Bool(true) = lv {
+                    return Ok(Value::Bool(true));
+                }
+                if let Value::Bool(false) = lv {
+                    return match self.eval(right, env)? {
                         Value::Bool(b) => Ok(Value::Bool(b)),
+                        other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
                         other => panic(format!("`||` rhs must be bool, got {}", other.type_name())),
-                    },
-                    other => panic(format!("`||` lhs must be bool, got {}", other.type_name())),
-                };
+                    };
+                }
+                let rv = self.eval(right, env)?;
+                return eval_binop_vals(op, lv, rv);
             }
             _ => {}
         }
@@ -5686,9 +5699,52 @@ fn eval_unary(op: &UnaryOp, v: Value) -> R {
     }
 }
 
+/// Pull `(inner_value, confidence)` out of a value that may or may not be an
+/// `Uncertain { value, confidence }` struct. A non-Uncertain value carries an
+/// implicit confidence of 1.0 — so `uncertain(5, 0.8) + 3` treats `3` as
+/// certain. Returns `None` for a value that isn't Uncertain (the caller then
+/// uses it as-is with confidence 1.0). Mirrors codegen's `extract` closure
+/// (`asi.rs::emit_binop_uncertain`) so the interpreter and native agree.
+fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
+    if let Value::Struct { name, fields } = v {
+        if name == "Uncertain" {
+            let inner = fields.get("value").cloned().unwrap_or(Value::Int(0));
+            let conf = match fields.get("confidence") {
+                Some(Value::Float(c)) => *c,
+                _ => 1.0,
+            };
+            return Some((inner, conf));
+        }
+    }
+    None
+}
+
 fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     use BinOp::*;
     use Value::{Bool, Float, Int, Str};
+
+    // ── ASI: Uncertain<T> binary-op propagation ─────────────────────────────
+    // If EITHER side is `Uncertain`, operate on the underlying values and carry
+    // the MINIMUM confidence forward (a chain is only as certain as its least-
+    // certain input). A non-Uncertain side contributes confidence 1.0. The
+    // result is itself `Uncertain` (with a bool inner for comparisons) — so
+    // confidence flows through arithmetic and `@[verify(confidence >= K)]` can
+    // gate it. This is the interpreter counterpart to codegen's
+    // `emit_binop_uncertain`; before this, an `Uncertain + Uncertain` fell
+    // through to the `unsupported binary op` arm and panicked, so confidence-
+    // propagating code could be compiled but not interpreted (PRD gap).
+    {
+        let lu = uncertain_parts(&l);
+        let ru = uncertain_parts(&r);
+        if lu.is_some() || ru.is_some() {
+            let (lv, lc) = lu.unwrap_or_else(|| (l.clone(), 1.0));
+            let (rv, rc) = ru.unwrap_or_else(|| (r.clone(), 1.0));
+            let inner = eval_binop_vals(op, lv, rv)?;
+            let new_conf = lc.min(rc);
+            return Ok(make_uncertain(inner, new_conf));
+        }
+    }
+
     match (op, l, r) {
         // Integer arithmetic — checked by default. Overflow is a *graceful
         // panic* (catchable, exits non-zero at the CLI), never a silent
@@ -5753,6 +5809,12 @@ fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         (BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
         (Shl, Int(a), Int(b)) => Ok(Int(a.wrapping_shl(b as u32))),
         (Shr, Int(a), Int(b)) => Ok(Int(a.wrapping_shr(b as u32))),
+        // Logical and/or on already-evaluated bools. `eval_binop` short-circuits
+        // these for the common case; this value-level arm is reached when an
+        // `Uncertain<bool>` operand routed both sides through here (no
+        // short-circuit possible when combining confidences).
+        (And, Bool(a), Bool(b)) => Ok(Bool(a && b)),
+        (Or, Bool(a), Bool(b)) => Ok(Bool(a || b)),
         // Structural equality for composite values (structs, enums, arrays,
         // Option/Result). Primitives are handled above; this catches the rest,
         // matching the `values_equal` used by `assert_eq`.

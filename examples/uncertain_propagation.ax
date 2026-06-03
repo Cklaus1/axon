@@ -1,0 +1,19 @@
+// Uncertain<T> confidence propagation through arithmetic and comparison.
+// A binary op over an Uncertain value operates on the inner value and carries
+// the MINIMUM confidence forward — a result is only as certain as its least-
+// certain input. A plain (certain) operand counts as confidence 1.0.
+fn main() -> i64 {
+    let a = uncertain_new(10, 0.9)
+    let b = uncertain_new(5, 0.8)
+
+    let sum = a + b                       // 15, confidence min(0.9, 0.8) = 0.8
+    println("sum   = {to_str(sum.value)} @ {to_str_f64(sum.confidence)}")
+
+    let scaled = a + 3                    // 13, confidence 0.9 (3 is certain)
+    println("a + 3 = {to_str(scaled.value)} @ {to_str_f64(scaled.confidence)}")
+
+    let greater = a > b                   // Uncertain<bool> true @ 0.8
+    println("a > b = {to_str_bool(greater.value)} @ {to_str_f64(greater.confidence)}")
+
+    0
+}

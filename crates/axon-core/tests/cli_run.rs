@@ -2695,6 +2695,36 @@ fn verify_value_predicate_gates_on_uncertain_value() {
 }
 
 #[test]
+fn uncertain_binops_propagate_minimum_confidence() {
+    // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
+    // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's
+    // eval_binop_vals did not). A binop over an Uncertain operand operates on
+    // the inner values and carries the MINIMUM confidence forward (a chain is
+    // only as certain as its least-certain input); a non-Uncertain operand
+    // counts as confidence 1.0. Comparisons yield Uncertain<bool>.
+    let src = "fn main() -> i64 {\n  \
+        let a = uncertain_new(10, 0.9)\n  \
+        let b = uncertain_new(5, 0.8)\n  \
+        let sum = a + b\n  \
+        let mixed = a + 3\n  \
+        let gt = a > b\n  \
+        println(\"{to_str(sum.value)} {to_str_f64(sum.confidence)}\")\n  \
+        println(\"{to_str(mixed.value)} {to_str_f64(mixed.confidence)}\")\n  \
+        println(\"{to_str_bool(gt.value)} {to_str_f64(gt.confidence)}\")\n  \
+        0\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_uncbin_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "should run cleanly: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("15 0.8"), "sum: value=15, conf=min(0.9,0.8)=0.8: {stdout}");
+    assert!(stdout.contains("13 0.9"), "a+3: 3 is certain so conf stays 0.9: {stdout}");
+    assert!(stdout.contains("true 0.8"), "a>b is Uncertain<bool> true at conf 0.8: {stdout}");
+}
+
+#[test]
 fn str_digits_only_strips_non_digits() {
     // Closes ROADMAP §9.5 F7. `str_digits_only(s)` keeps only ASCII digits;
     // composes with `parse_int` so demos that parse phone numbers / codes
