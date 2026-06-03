@@ -1871,6 +1871,139 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_sort_by(&a, cmp) — stable insertion sort of an i64 slice using an
+    /// i64-comparator lambda (cmp(x, y) < 0 ⇒ x before y). Builds a fresh sorted
+    /// buffer: for each element x, find lo = first index where cmp(x, dst[lo])<0,
+    /// shift dst[lo..cnt] right, write dst[lo]=x. Matches the interpreter's
+    /// insertion sort (stable). Pure IR + malloc (native AND wasm).
+    fn emit_arr_i64_sort_by(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let one = i64_ty.const_int(1, false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "so_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "so_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "so_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false);
+
+        // Unpack src.
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "so_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "so_lp").unwrap(), "so_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "so_dp").unwrap(), "so_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "so_si");
+
+        // dst buffer (len*8) and a running count.
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "so_bytes");
+        let dst_raw = self.emit_malloc(total, "so_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "so_di");
+        let cnt_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_cnt");
+        build_wrappers::w_store(&self.ir.builder, cnt_slot, i64_ty.const_zero().into());
+
+        // Outer loop: i in 0..len.
+        let i_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_i");
+        build_wrappers::w_store(&self.ir.builder, i_slot, i64_ty.const_zero().into());
+        let o_cond = self.ir.context.append_basic_block(fn_val, "so.ocond");
+        let o_body = self.ir.context.append_basic_block(fn_val, "so.obody");
+        let o_exit = self.ir.context.append_basic_block(fn_val, "so.oexit");
+        build_wrappers::w_br(&self.ir.builder, o_cond);
+
+        self.ir.builder.position_at_end(o_cond);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "so_ic").into_int_value();
+        let o_go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "so_og");
+        build_wrappers::w_cond_br(&self.ir.builder, o_go, o_body, o_exit);
+
+        self.ir.builder.position_at_end(o_body);
+        let xp = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i_cur], "so_xp").unwrap() };
+        let x = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), xp, "so_x").into_int_value();
+        let cnt = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), cnt_slot, "so_c").into_int_value();
+
+        // Find lo: first index in 0..cnt where cmp(x, dst[lo]) < 0. Probe loop.
+        let lo_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_lo");
+        build_wrappers::w_store(&self.ir.builder, lo_slot, i64_ty.const_zero().into());
+        let p_cond = self.ir.context.append_basic_block(fn_val, "so.pcond");
+        let p_body = self.ir.context.append_basic_block(fn_val, "so.pbody");
+        let p_exit = self.ir.context.append_basic_block(fn_val, "so.pexit");
+        build_wrappers::w_br(&self.ir.builder, p_cond);
+
+        self.ir.builder.position_at_end(p_cond);
+        let lo_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), lo_slot, "so_loc").into_int_value();
+        let p_go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, lo_cur, cnt, "so_pg");
+        build_wrappers::w_cond_br(&self.ir.builder, p_go, p_body, p_exit);
+
+        self.ir.builder.position_at_end(p_body);
+        let dlo_p = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[lo_cur], "so_dlop").unwrap() };
+        let dlo = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), dlo_p, "so_dlo").into_int_value();
+        let cmp_r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), x.into(), dlo.into()], "so_cmp")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        // if cmp_r < 0 → break (found position); else lo++.
+        let neg = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, cmp_r, i64_ty.const_zero(), "so_neg");
+        let p_inc = self.ir.context.append_basic_block(fn_val, "so.pinc");
+        build_wrappers::w_cond_br(&self.ir.builder, neg, p_exit, p_inc);
+        self.ir.builder.position_at_end(p_inc);
+        let lo_next = build_wrappers::w_int_add(&self.ir.builder, lo_cur, one, "so_lon");
+        build_wrappers::w_store(&self.ir.builder, lo_slot, lo_next.into());
+        build_wrappers::w_br(&self.ir.builder, p_cond);
+
+        // Shift dst[lo..cnt] right by one: for j = cnt; j > lo; j-- : dst[j]=dst[j-1].
+        self.ir.builder.position_at_end(p_exit);
+        let lo_final = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), lo_slot, "so_lof").into_int_value();
+        let j_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "so_j");
+        build_wrappers::w_store(&self.ir.builder, j_slot, cnt.into());
+        let s_cond = self.ir.context.append_basic_block(fn_val, "so.scond");
+        let s_body = self.ir.context.append_basic_block(fn_val, "so.sbody");
+        let s_exit = self.ir.context.append_basic_block(fn_val, "so.sexit");
+        build_wrappers::w_br(&self.ir.builder, s_cond);
+
+        self.ir.builder.position_at_end(s_cond);
+        let j_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "so_jc").into_int_value();
+        let s_go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, j_cur, lo_final, "so_sg");
+        build_wrappers::w_cond_br(&self.ir.builder, s_go, s_body, s_exit);
+
+        self.ir.builder.position_at_end(s_body);
+        let j_prev = build_wrappers::w_int_sub(&self.ir.builder, j_cur, one, "so_jp");
+        let from_p = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[j_prev], "so_fp2").unwrap() };
+        let from_v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), from_p, "so_fv");
+        let to_p = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[j_cur], "so_tp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, to_p, from_v);
+        build_wrappers::w_store(&self.ir.builder, j_slot, j_prev.into());
+        build_wrappers::w_br(&self.ir.builder, s_cond);
+
+        // Insert x at lo, cnt++, i++.
+        self.ir.builder.position_at_end(s_exit);
+        let ins_p = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[lo_final], "so_insp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, ins_p, x.into());
+        let cnt2 = build_wrappers::w_int_add(&self.ir.builder, cnt, one, "so_c2");
+        build_wrappers::w_store(&self.ir.builder, cnt_slot, cnt2.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, one, "so_in");
+        build_wrappers::w_store(&self.ir.builder, i_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, o_cond);
+
+        // Result slice { len, dst }.
+        self.ir.builder.position_at_end(o_exit);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "so_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "so_olen").unwrap(), len.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "so_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "so_optr").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "so_res"))
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -2609,6 +2742,18 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val), self.emit_expr(&args[2], fn_val))
                 {
                     if let Some(r) = self.emit_arr_i64_zip_with(a_slice, b_slice, lam, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_sort_by(&a, |x, y| cmp) — stable insertion sort with an i64
+            // comparator (negative ⇒ x sorts before y). Builds a fresh sorted
+            // slice by inserting each element at its position.
+            if name == "arr_sort_by" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    if let Some(r) = self.emit_arr_i64_sort_by(slice_val, lam, fn_val) {
                         return Some(r);
                     }
                 }

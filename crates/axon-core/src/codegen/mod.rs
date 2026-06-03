@@ -1130,6 +1130,7 @@ impl<'ctx> Codegen<'ctx> {
                     // indexable (b[i]). The arg may be `&a` (UnaryOp::Ref), peel it.
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
                         || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
+                        || name == "arr_sort_by"
                     {
                         if let Some(arg0) = args.first() {
                             let inner = match arg0 {

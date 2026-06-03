@@ -76,7 +76,11 @@ check fold_p  'fn main() -> i64 { let a = [1, 2, 3, 4]  arr_fold(&a, 1, |acc, x|
 check zw_sum  'fn main() -> i64 { let a = [1, 2, 3]  let b = [10, 20, 30]  let c = arr_zip_with(a, b, |x, y| x + y)  arr_sum_i64(&c) }'
 check zw_un   'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = [10, 20]  let c = arr_zip_with(a, b, |x, y| x + y)  arr_sum_i64(&c) }'
 check zw_dot  'fn main() -> i64 { let a = [1, 2, 3]  let b = [4, 5, 6]  let c = arr_zip_with(a, b, |x, y| x * y)  arr_sum_i64(&c) }'
+check sort_lo 'fn main() -> i64 { let a = [3, 1, 2]  let b = arr_sort_by(&a, |x, y| x - y)  b[0] }'
+check sort_hi 'fn main() -> i64 { let a = [5, 3, 8, 1, 9, 2]  let b = arr_sort_by(&a, |x, y| x - y)  b[5] }'
+check sort_dc 'fn main() -> i64 { let a = [3, 1, 2]  let b = arr_sort_by(&a, |x, y| y - x)  b[0] }'
+check sort_sm 'fn main() -> i64 { let a = [5, 3, 8, 1]  let b = arr_sort_by(&a, |x, y| x - y)  arr_sum_i64(&b) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by match the interpreter ✓"
 exit 0
