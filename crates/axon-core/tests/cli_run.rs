@@ -3766,6 +3766,29 @@ fn improve_verify_passes_over_a_pure_compute_corpus() {
 }
 
 #[test]
+fn improve_verify_runs_the_real_fold_pass_through_the_gates() {
+    // R10: `axon improve verify --pass fold-arith-identities` runs the REAL
+    // discovered optimization (the rewrite, not the identity baseline) through
+    // the four gates. A corpus with x+0 / 1*y sites must still pass G1 (the
+    // interpreter oracle confirms the rewrite preserves behavior) + G2 (no new
+    // capability) — closing the discover→verify pipeline with a real pass.
+    let tmp = std::env::temp_dir().join(format!("axon_fold_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+    std::fs::write(tmp.join("a.ax"), "fn main() -> i64 { let x = 5  x + 0 }\n").unwrap();
+    std::fs::write(tmp.join("b.ax"), "fn main() -> i64 { let y = 3  1 * y }\n").unwrap();
+    let out = axon()
+        .args(["improve", "verify", tmp.to_str().unwrap(), "--pass", "fold-arith-identities"])
+        .output().unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "the real fold pass must verify clean: {stdout}");
+    assert!(stdout.contains("pass: fold-arith-identities"), "names the pass: {stdout}");
+    assert!(stdout.contains("G1 correctness : pass"), "G1 (behavior preserved): {stdout}");
+    assert!(stdout.contains("G2 safety      : pass"), "G2 (no new cap): {stdout}");
+    assert!(stdout.contains("PASSED"), "the real optimization passes: {stdout}");
+}
+
+#[test]
 fn improve_discover_proposes_arith_identities() {
     // R10 §3/§4: `axon improve discover` is the UNPRIVILEGED proposal side — it
     // scans the corpus for a candidate optimization (arithmetic-identity

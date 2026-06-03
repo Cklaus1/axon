@@ -474,6 +474,121 @@ fn stmt_exprs(s: &Stmt) -> Vec<&Expr> {
     vec![&s.expr]
 }
 
+// ── The fold-arith-identities REWRITE PASS (R10) ──────────────────────────────
+//
+// The executable counterpart to the `discover_arith_identities` detector: a
+// pure `Program -> Program` transform that simplifies `x+0`/`0+x`/`x-0`/`x*1`/
+// `1*x` to `x`, recursively. This is a candidate Pass `verify` runs through the
+// four gates — and it passes G1 (correctness) by construction, because removing
+// a provable arithmetic no-op preserves observable behavior, and G2 (safety)
+// because it adds no capability. Conservative: variants it does not descend into
+// are returned unchanged, so it can only ever simplify, never miscompile.
+
+/// The discovered optimization as a runnable [`Pass`]: fold arithmetic
+/// identities throughout the program. Pair with `discover_arith_identities`
+/// (which proposes it) and `verify_pass` (which proves it correct + safe).
+pub fn fold_arith_identities_pass(program: &Program) -> Program {
+    Program {
+        items: program.items.iter().map(fold_item).collect(),
+    }
+}
+
+fn fold_item(item: &Item) -> Item {
+    match item {
+        Item::FnDef(f) => {
+            let mut nf = f.clone();
+            nf.body = fold_expr(&f.body);
+            Item::FnDef(nf)
+        }
+        Item::ImplBlock(b) => {
+            let mut nb = b.clone();
+            nb.methods = b.methods.iter().map(|m| {
+                let mut nm = m.clone();
+                nm.body = fold_expr(&m.body);
+                nm
+            }).collect();
+            Item::ImplBlock(nb)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Recursively simplify arithmetic identities in `e`. First folds the children,
+/// then collapses a top-level identity `BinOp` to its surviving operand.
+fn fold_expr(e: &Expr) -> Expr {
+    // 1. Fold children.
+    let folded = map_child_exprs(e, fold_expr);
+    // 2. Collapse a top-level identity.
+    if let Expr::BinOp { op, left, right } = &folded {
+        if is_arith_identity(op, left, right) {
+            // The surviving operand is whichever side is NOT the identity literal.
+            let survivor: &Expr = match op {
+                BinOp::Add => if is_int_lit(right, 0) { left } else { right },
+                BinOp::Sub => left, // x - 0 → x
+                BinOp::Mul => if is_int_lit(right, 1) { left } else { right },
+                _ => return folded,
+            };
+            return survivor.clone();
+        }
+    }
+    folded
+}
+
+/// Rebuild `e` with each direct child expression replaced by `f(child)`. The
+/// structural dual of [`child_exprs`] — same variant coverage, so the rewrite
+/// descends exactly where the detector counts. Variants not listed are returned
+/// as-is (conservative: no transform, no risk).
+fn map_child_exprs(e: &Expr, f: fn(&Expr) -> Expr) -> Expr {
+    // `&Box<Expr>` arguments deref-coerce to `&Expr`, so this accepts both.
+    let fb = |b: &Expr| Box::new(f(b));
+    match e {
+        Expr::BinOp { op, left, right } => Expr::BinOp { op: op.clone(), left: fb(left), right: fb(right) },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp { op: op.clone(), operand: fb(operand) },
+        Expr::Let { name, ty, value } => Expr::Let { name: name.clone(), ty: ty.clone(), value: fb(value) },
+        Expr::Own { name, ty, value } => Expr::Own { name: name.clone(), ty: ty.clone(), value: fb(value) },
+        Expr::RefBind { name, ty, value } => Expr::RefBind { name: name.clone(), ty: ty.clone(), value: fb(value) },
+        Expr::Call { callee, args, tier } => Expr::Call { callee: fb(callee), args: args.iter().map(&f).collect(), tier: tier.clone() },
+        Expr::MethodCall { receiver, method, args } => Expr::MethodCall { receiver: fb(receiver), method: method.clone(), args: args.iter().map(&f).collect() },
+        Expr::Question(b) => Expr::Question(fb(b)),
+        Expr::Spawn(b) => Expr::Spawn(fb(b)),
+        Expr::Comptime(b) => Expr::Comptime(fb(b)),
+        Expr::Return(Some(b)) => Expr::Return(Some(fb(b))),
+        Expr::FieldAccess { receiver, field } => Expr::FieldAccess { receiver: fb(receiver), field: field.clone() },
+        Expr::Index { receiver, index } => Expr::Index { receiver: fb(receiver), index: fb(index) },
+        Expr::If { cond, then, else_ } => Expr::If { cond: fb(cond), then: fb(then), else_: else_.as_ref().map(|b| fb(b.as_ref())) },
+        Expr::Match { subject, arms } => Expr::Match {
+            subject: fb(subject),
+            arms: arms.iter().map(|a| {
+                let mut na = a.clone();
+                na.body = f(&a.body);
+                na
+            }).collect(),
+        },
+        Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(&f).collect()),
+        Expr::Array(xs) => Expr::Array(xs.iter().map(&f).collect()),
+        Expr::Block(stmts) => Expr::Block(stmts.iter().map(|s| {
+            let mut ns = s.clone();
+            ns.expr = f(&s.expr);
+            ns
+        }).collect()),
+        Expr::While { cond, body } => Expr::While {
+            cond: fb(cond),
+            body: body.iter().map(|s| {
+                let mut ns = s.clone();
+                ns.expr = f(&s.expr);
+                ns
+            }).collect(),
+        },
+        Expr::Ok(b) => Expr::Ok(fb(b)),
+        Expr::Err(b) => Expr::Err(fb(b)),
+        Expr::Some(b) => Expr::Some(fb(b)),
+        Expr::Lambda { params, body, captures } => Expr::Lambda { params: params.clone(), body: fb(body), captures: captures.clone() },
+        Expr::StructLit { name, fields } => Expr::StructLit { name: name.clone(), fields: fields.iter().map(|(k, v)| (k.clone(), f(v))).collect() },
+        // Leaf / not-descended variants: returned unchanged (conservative).
+        other => other.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,5 +852,59 @@ mod tests {
         )];
         let p = discover_arith_identities(&c).expect("should find the nested x*1");
         assert_eq!(p.opportunities, 1);
+    }
+
+    // ── R10 the fold-arith-identities REWRITE pass ────────────────────────────
+    #[test]
+    fn fold_pass_removes_identities_and_preserves_behavior() {
+        // The rewrite must (a) eliminate the identity sites the detector counts,
+        // and (b) keep the program behaviorally identical (G1 — proven here by
+        // re-counting: 0 identities remain, and the interp oracle agrees via the
+        // verify harness test below).
+        let before = prog("fn f(x: i64) -> i64 { x + 0 }\nfn g(y: i64) -> i64 { 1 * y - 0 }\nfn h(z: i64) -> i64 { z * 2 + 0 }");
+        // Before: x+0, 1*y, -0, +0 = 4 sites.
+        let n_before: usize = before.items.iter().map(|it| match it {
+            Item::FnDef(fd) => count_identities_expr(&fd.body),
+            _ => 0,
+        }).sum();
+        assert_eq!(n_before, 4);
+        let after = fold_arith_identities_pass(&before);
+        let n_after: usize = after.items.iter().map(|it| match it {
+            Item::FnDef(fd) => count_identities_expr(&fd.body),
+            _ => 0,
+        }).sum();
+        assert_eq!(n_after, 0, "all identities folded away");
+    }
+
+    #[test]
+    fn fold_pass_verifies_correct_and_safe() {
+        // The discovered pass run through the harness: G1 (interp oracle says
+        // behavior unchanged) + G2 (no new capability) must PASS — a real,
+        // semantics-preserving optimization, not just the identity baseline.
+        let c = vec![
+            prog("fn main() -> i64 { let x = 5  x + 0 }"),
+            prog("fn main() -> i64 { let y = 3  1 * y }"),
+            prog("fn main() -> i64 { 21 + 21 }"),
+        ];
+        let pass: &Pass = &fold_arith_identities_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.g1_correctness.is_ok(), "fold must preserve behavior (G1): {:?}", rec.g1_correctness);
+        assert!(rec.g2_safety.is_ok(), "fold adds no capability (G2): {:?}", rec.g2_safety);
+        assert!(rec.passed(), "the real optimization passes the gates");
+    }
+
+    #[test]
+    fn fold_pass_is_a_noop_on_a_clean_program() {
+        // No identities → the rewrite returns a behaviorally identical program
+        // and still verifies clean.
+        let c = vec![prog("fn main() -> i64 { 2 + 3 * 4 }")];
+        let after = fold_arith_identities_pass(&c[0]);
+        let n: usize = after.items.iter().map(|it| match it {
+            Item::FnDef(fd) => count_identities_expr(&fd.body),
+            _ => 0,
+        }).sum();
+        assert_eq!(n, 0);
+        let pass: &Pass = &fold_arith_identities_pass;
+        assert!(verify_pass(pass, &c).passed());
     }
 }

@@ -301,6 +301,11 @@ enum ImproveAction {
         /// Also run the G4 wall-clock perf gate.
         #[arg(long, help = "Run the G4 performance timing gate")]
         perf: bool,
+
+        /// The candidate pass to verify. `identity` (default) is the baseline;
+        /// `fold-arith-identities` is the discovered real optimization.
+        #[arg(long, value_name = "PASS", help = "Pass to verify: identity | fold-arith-identities")]
+        pass: Option<String>,
     },
 
     /// Graduate a verified pass into the manifest (requires multi-sig).
@@ -916,7 +921,7 @@ fn cmd_improve(action: ImproveAction) {
             }
         }
 
-        ImproveAction::Verify { corpus, perf } => {
+        ImproveAction::Verify { corpus, perf, pass } => {
             let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
             let members = load_corpus(&dir);
             if members.is_empty() {
@@ -925,12 +930,24 @@ fn cmd_improve(action: ImproveAction) {
             }
             let programs: Vec<axon_core::ast::Program> =
                 members.iter().map(|(_, _, p)| p.clone()).collect();
-            // The identity pass: the one pass that always exists. A real
-            // candidate would come from `discover`; verifying identity proves
-            // the harness runs clean over the corpus (and is the G1/G3 baseline).
+            // Select the candidate pass. `identity` (default) is the G1/G3
+            // baseline; `fold-arith-identities` is the REAL discovered
+            // optimization (from `discover`) — verifying it runs the actual
+            // rewrite through all four gates, proving it correct + safe.
+            let pass_name = pass.unwrap_or_else(|| "identity".to_string());
             let identity: &axon_core::improve::Pass = &|p: &axon_core::ast::Program| p.clone();
+            let fold: &axon_core::improve::Pass = &axon_core::improve::fold_arith_identities_pass;
+            let the_pass: &axon_core::improve::Pass = match pass_name.as_str() {
+                "fold-arith-identities" => fold,
+                "identity" => identity,
+                other => {
+                    eprintln!("axon improve verify: unknown pass `{other}` (expected: identity | fold-arith-identities)");
+                    process::exit(2);
+                }
+            };
+            println!("axon improve verify — pass: {pass_name}");
             let opts = VerifyOptions { measure_perf: perf, perf_trials: 5 };
-            let rec = verify_pass_with(identity, &programs, &opts);
+            let rec = verify_pass_with(the_pass, &programs, &opts);
 
             let g = |r: &Result<(), axon_core::improve::VerifyError>| -> String {
                 match r {
