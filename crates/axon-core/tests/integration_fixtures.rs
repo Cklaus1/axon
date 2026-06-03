@@ -1447,22 +1447,30 @@ fn uncertain_propagation_f64_fixture_clean() {
 
 // ── End-to-end runtime-fail test (requires codegen feature) ───────────────────
 
-/// ASI Layer-3.6: end-to-end test of `__axon_verify_panic`.
+/// ASI Layer-3.6: end-to-end test that an `@[verify]` predicate is enforced at
+/// RUNTIME (not just statically), via the `axon` binary on `verify_runtime_fail.ax`.
 ///
-/// Compiles `verify_runtime_fail.ax` via the `axon` binary in `test` mode and
-/// asserts that:
-///   1. `axon test` exits successfully (the should_fail subprocess panicked
-///      as expected, which means the test passed).
-///   2. The runtime panic message — written to the inner subprocess's stderr
-///      and forwarded to `axon test`'s stderr — appears somewhere in the
-///      parent's combined stderr.  Concretely we check for `"verify violation"`
-///      (the literal phrase from `format_verify_panic` in axon-rt) and the
-///      function name `produces_low_confidence` as a defensive cross-check.
+/// Two complementary contracts, matching how execution actually works today
+/// (the interpreter is the reference engine — `axon test`/`run` execute via
+/// `interp.rs`, in-process, not a per-test subprocess):
+///   1. `axon test` exits 0 — the `@[test(should_fail)]` passes BECAUSE the
+///      verify gate fired (interp returns `Flow::VerifyFailed`, surfaced by
+///      `run_test_fn` as the expected failure).
+///   2. `axon run` on the same fixture exits 3 (policy rejection) and prints
+///      `axon: verify failed: … produces_low_confidence …` to stderr — the
+///      user-visible diagnostic, which `axon test` intentionally swallows for
+///      an *expected* should_fail failure.
 ///
-/// Why this is gated on the codegen feature: it requires a real `axon` binary,
-/// which only builds when `codegen` (the `inkwell` LLVM backend) is enabled.
-/// For no-default-features test runs, the static-silence half of the contract
-/// is covered by `verify_runtime_fail_fixture_static_silent` above.
+/// Historical note: an earlier revision asserted the codegen/axon-rt phrasing
+/// `"verify violation"` in `axon test` stderr. That predated the move to
+/// in-process interpreter execution, which both renamed the message to
+/// `verify failed` and routed should_fail failures in-process rather than
+/// through a stderr-inheriting subprocess — so the old assertion could no
+/// longer hold. This test now pins the contract that actually holds.
+///
+/// Why codegen-gated: it needs a real `axon` binary (only built with the
+/// `codegen` feature). The static-silence half is covered by
+/// `verify_runtime_fail_fixture_static_silent` above (no-default-features).
 #[cfg(feature = "codegen")]
 #[test]
 fn verify_runtime_panic_fires_on_violation() {
@@ -1471,41 +1479,65 @@ fn verify_runtime_panic_fires_on_violation() {
     let axon_bin = env!("CARGO_BIN_EXE_axon");
     let fixture = fixtures_dir().join("verify_runtime_fail.ax");
 
-    // Run the test as a single-job sequential run so the fixture's one
-    // should_fail test is exercised deterministically.  `--jobs 1` keeps
-    // stderr ordering predictable.
-    let out = Command::new(axon_bin)
+    // ── Contract 1: `axon test` passes because the runtime verify gate fired ──
+    // Execution is interpreter-first (interp.rs is the I-2 reference engine);
+    // `axon test` runs the @[test(should_fail)] in-process. The verify gate
+    // returns Flow::VerifyFailed, which run_test_fn surfaces as the expected
+    // failure → the should_fail test PASSES (exit 0). That pass IS the
+    // "runtime verify fired" signal: without enforcement the body would run to
+    // completion and the should_fail test would itself fail.
+    let test_out = Command::new(axon_bin)
         .args(["test", "--jobs", "1"])
         .arg(&fixture)
         .output()
         .expect("failed to spawn axon binary");
-
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-
-    // The should_fail test must pass (i.e. the subprocess aborted).
+    let test_stdout = String::from_utf8_lossy(&test_out.stdout);
+    let test_stderr = String::from_utf8_lossy(&test_out.stderr);
     assert!(
-        out.status.success(),
-        "`axon test` should exit 0 (should_fail test passed via runtime abort).\n\
+        test_out.status.success(),
+        "`axon test` should exit 0 (should_fail test passed via the runtime verify gate).\n\
          exit: {:?}\nstdout:\n{}\nstderr:\n{}",
-        out.status.code(),
-        stdout,
-        stderr,
+        test_out.status.code(),
+        test_stdout,
+        test_stderr,
+    );
+    assert!(
+        test_stdout.contains("runtime_verify_panics") && test_stdout.contains("ok"),
+        "the should_fail test must be reported as passing:\nstdout:\n{test_stdout}",
     );
 
-    // The runtime panic message must surface in the parent's stderr.
-    // `__axon_verify_panic` writes via `eprintln!` and the inner subprocess's
-    // stderr is inherited by `axon test`, which is in turn inherited by us.
-    assert!(
-        stderr.contains("verify violation"),
-        "expected 'verify violation' in stderr, got:\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr,
+    // ── Contract 2: `axon run` surfaces the verify diagnostic to stderr ───────
+    // `axon test`'s should_fail harness intentionally swallows the caught
+    // message (it's an *expected* failure), so the user-visible diagnostic is
+    // asserted on the `run` path: a verify failure aborts with exit 3 (policy
+    // rejection) and prints `axon: verify failed: … produces_low_confidence …`.
+    // The fixture's own `main` is empty (it exists to host the should_fail
+    // test), so we run an equivalent program whose `main` actually calls the
+    // verify-failing fn — same `@[verify]` + `uncertain_dyn_i64(_, 0.5)` shape.
+    let run_src = "@[verify(confidence >= 0.8)]\n\
+        fn produces_low_confidence() -> Uncertain<i64> { uncertain_dyn_i64(42, 0.5) }\n\
+        fn main() -> i64 { let _ = produces_low_confidence()\n 0 }\n";
+    let run_file = std::env::temp_dir().join(format!("axon_verify_run_{}.ax", std::process::id()));
+    std::fs::write(&run_file, run_src).unwrap();
+    let run_out = Command::new(axon_bin)
+        .arg("run")
+        .arg(&run_file)
+        .output()
+        .expect("failed to spawn axon binary");
+    let _ = std::fs::remove_file(&run_file);
+    let run_stdout = String::from_utf8_lossy(&run_out.stdout);
+    let run_stderr = String::from_utf8_lossy(&run_out.stderr);
+    assert_eq!(
+        run_out.status.code(),
+        Some(3),
+        "a runtime verify failure should exit 3 (policy rejection).\nstdout:\n{run_stdout}\nstderr:\n{run_stderr}",
     );
     assert!(
-        stderr.contains("produces_low_confidence"),
-        "expected offending fn name in stderr, got:\nstdout:\n{}\nstderr:\n{}",
-        stdout,
-        stderr,
+        run_stderr.contains("verify failed"),
+        "expected 'verify failed' in stderr, got:\nstdout:\n{run_stdout}\nstderr:\n{run_stderr}",
+    );
+    assert!(
+        run_stderr.contains("produces_low_confidence"),
+        "expected the offending fn name in stderr, got:\nstdout:\n{run_stdout}\nstderr:\n{run_stderr}",
     );
 }

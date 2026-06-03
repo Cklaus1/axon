@@ -83,6 +83,16 @@ if [ "$STRICT" = 1 ]; then
   # --strict because it links LLVM (slower than the interp-only passes).
   echo "── gate: clippy codegen feature (--all-targets, -D warnings) ─────"
   cargo clippy -p axon-core --all-targets -- -D warnings || fail "codegen-feature clippy"
+
+  # Coverage gap closed: the test stage above runs --no-default-features, so any
+  # `#[cfg(feature = "codegen")]` integration test (e.g. the end-to-end runtime
+  # `@[verify]` enforcement test) was NEVER executed by the gate — a regression
+  # there stayed green. --strict now also runs the codegen-gated integration
+  # tests. Scoped to the integration_fixtures target (the only home of codegen-
+  # gated tests today); the rest already run under the interp pass / via the
+  # CARGO_BIN_EXE harnesses. Under --strict only because it links LLVM.
+  echo "── gate: codegen-gated integration tests ────────────────────────"
+  cargo test -p axon-core --test integration_fixtures || fail "codegen integration tests"
 fi
 
 echo ""
