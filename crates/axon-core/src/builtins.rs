@@ -116,6 +116,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<i64,str>",
         doc: "Parse `s` (surrounding whitespace trimmed) as a base-10 integer. Base-10 only — a radix prefix like `0x1F` returns `Err` with a hint to strip it. The `Err(str)` names the offending input.",
     },
+    BuiltinFn {
+        name: "parse_int_radix",
+        params: &[("s", "str"), ("base", "i64")],
+        ret: "Result<i64,str>",
+        doc: "Parse `s` (whitespace trimmed) as an integer in the given `base` (2–36); the radix-aware counterpart to `parse_int` (base 10) and the input-side inverse of `i64_to_str_radix`. A matching radix prefix is accepted and stripped (`0x`/`0X` for base 16, `0o`/`0O` for 8, `0b`/`0B` for 2); a leading `-` is allowed. `Err(str)` names the offending input on a bad digit; a `base` outside 2–36 is `Err`, never a panic.",
+    },
     // ── Math ────────────────────────────────────────────────────────────────
     BuiltinFn {
         name: "abs_i32",

@@ -756,6 +756,58 @@ pub extern "C" fn __axon_parse_int_err(
     unsafe { write_str_out(&msg, out_len, out_ptr) }
 }
 
+// ── BUG_HUNT #22: parse_int_radix (radix-aware integer parse) ─────────────────
+/// `parse_int_radix(s, base) -> Result<i64, str>`. The whole parse lives here
+/// (the delegate-to-rt pattern, like #37/#38/#39) so codegen only assembles the
+/// Result struct. On success writes `*out_ok = 1` and `*out_val = n`. On failure
+/// writes `*out_ok = 0` and the error message via `out_len`/`out_ptr` (the same
+/// ±/buffer convention `write_str_out` uses). Semantics are byte-identical to
+/// the interpreter (`interp.rs` `parse_int_radix`): a matching radix prefix
+/// (`0x`/`0o`/`0b`) is stripped, a leading `-` is preserved, an out-of-range
+/// base or bad digit is a recoverable Err — never a panic.
+#[no_mangle]
+pub extern "C" fn __axon_parse_int_radix(
+    s: AxonStr,
+    base: i64,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let set_ok = |n: i64| unsafe {
+        *out_ok = 1;
+        *out_val = n;
+    };
+    let set_err = |msg: &str| unsafe {
+        *out_ok = 0;
+        *out_val = 0;
+        write_str_out(msg, out_len, out_ptr);
+    };
+
+    if !(2..=36).contains(&base) {
+        set_err(&format!("parse_int_radix: base must be 2..=36, got {base}"));
+        return;
+    }
+    let t = src.trim();
+    let (sign, rest) = match t.strip_prefix('-') {
+        Some(r) => ("-", r),
+        None => ("", t),
+    };
+    let lower = rest.to_ascii_lowercase();
+    let digits = match base {
+        16 if lower.starts_with("0x") => &rest[2..],
+        8 if lower.starts_with("0o") => &rest[2..],
+        2 if lower.starts_with("0b") => &rest[2..],
+        _ => rest,
+    };
+    let normalized = format!("{sign}{digits}");
+    match i64::from_str_radix(&normalized, base as u32) {
+        Ok(n) => set_ok(n),
+        Err(_) => set_err(&format!("could not parse `{src}` as a base-{base} integer")),
+    }
+}
+
 // ── BUG_HUNT #38: str_reverse (char-correct, not byte-reverse) ────────────────
 /// `str_reverse(s)` — reverse by Unicode scalar (char), matching the
 /// interpreter (`chars().rev()`). The old inline codegen reversed BYTES, which
@@ -1156,6 +1208,50 @@ mod migrated_builtin_tests {
     // ── Helper: build an AxonStr from a Rust &str ─────────────────────
     fn s(x: &str) -> AxonStr {
         AxonStr { len: x.len() as i64, ptr: x.as_ptr() }
+    }
+
+    // ── parse_int_radix (BUG_HUNT #22): matches interp.rs semantics ───
+    /// Call __axon_parse_int_radix and decode the out-params into a
+    /// `Result<i64, String>` mirroring the Axon `Result<i64, str>`.
+    fn parse_radix(input: &str, base: i64) -> Result<i64, String> {
+        let mut ok: i64 = -1;
+        let mut val: i64 = 0;
+        let mut len: i64 = 0;
+        let mut ptr: *mut u8 = std::ptr::null_mut();
+        __axon_parse_int_radix(s(input), base, &mut ok, &mut val, &mut len, &mut ptr);
+        if ok == 1 {
+            Ok(val)
+        } else {
+            let msg = unsafe {
+                String::from_utf8_lossy(std::slice::from_raw_parts(ptr, len as usize)).into_owned()
+            };
+            Err(msg)
+        }
+    }
+
+    #[test]
+    fn parse_int_radix_matches_interpreter_semantics() {
+        // Prefix-stripping per base.
+        assert_eq!(parse_radix("0x1F", 16), Ok(31));
+        assert_eq!(parse_radix("1F", 16), Ok(31));
+        assert_eq!(parse_radix("0b1010", 2), Ok(10));
+        assert_eq!(parse_radix("0o17", 8), Ok(15));
+        // Sign preserved.
+        assert_eq!(parse_radix("-2A", 16), Ok(-42));
+        // Whitespace trimmed.
+        assert_eq!(parse_radix("  ff  ", 16), Ok(255));
+        // Base 10 rejects hex digits.
+        assert!(parse_radix("ff", 10).is_err());
+        // Bad digit for the base → Err naming the input, not a panic.
+        let e = parse_radix("zzz", 16).unwrap_err();
+        assert!(e.contains("zzz") && e.contains("base-16"), "got {e}");
+        // Out-of-range base → Err, not a panic.
+        let e = parse_radix("10", 99).unwrap_err();
+        assert!(e.contains("base must be 2..=36"), "got {e}");
+        let e = parse_radix("10", 1).unwrap_err();
+        assert!(e.contains("base must be 2..=36"), "got {e}");
+        // The 0x prefix is NOT stripped for a non-16 base (it's just bad digits).
+        assert!(parse_radix("0x1F", 10).is_err());
     }
 
     // ── str_contains: matches interp.rs a.contains(b) ─────────────────

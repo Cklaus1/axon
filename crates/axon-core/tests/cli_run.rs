@@ -1462,6 +1462,60 @@ fn parse_int_error_message_is_specific() {
 }
 
 #[test]
+fn parse_int_radix_parses_and_errs_recoverably() {
+    // BUG_HUNT #22: parse_int is base-10 only; parse_int_radix(s, base) is the
+    // radix-aware counterpart (input-side inverse of i64_to_str_radix). It must
+    // strip a matching prefix, honor a sign, and return a recoverable Err (never
+    // panic) on a bad digit or out-of-range base.
+    let src = "fn main() -> i64 {\n  \
+        let a = match parse_int_radix(\"0x1F\", 16) { Ok(n) => n  Err(_) => -1 }\n  \
+        let b = match parse_int_radix(\"-2A\", 16) { Ok(n) => n  Err(_) => -1 }\n  \
+        let c = match parse_int_radix(\"0b1010\", 2) { Ok(n) => n  Err(_) => -1 }\n  \
+        let d = match parse_int_radix(\"zzz\", 16) { Ok(_) => 0  Err(_) => 999 }\n  \
+        let e = match parse_int_radix(\"10\", 99) { Ok(_) => 0  Err(_) => 999 }\n  \
+        println(\"{to_str(a)} {to_str(b)} {to_str(c)} {to_str(d)} {to_str(e)}\")\n  \
+        0\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_pir_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // 0x1F=31, -2A=-42, 0b1010=10, bad digit → Err (999), bad base → Err (999).
+    assert!(stdout.contains("31 -42 10 999 999"), "parse_int_radix results: {stdout:?}");
+}
+
+#[test]
+fn codegen_parse_int_radix_matches_interp() {
+    // BUG_HUNT #22: parse_int_radix must compute identically under the native
+    // codegen backend (delegates to axon-rt __axon_parse_int_radix). The parity
+    // harness builds the same program both ways and asserts byte-identical
+    // stdout across the prefix/sign/bad-digit/bad-base cases. Skips when codegen
+    // can't build (LLVM absent).
+    let script = format!("{}/../../scripts/parse_int_radix_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("parse_int_radix_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run parse_int_radix_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — parse_int_radix parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native parse_int_radix must match the interpreter (#22):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("parse_int_radix_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:

@@ -555,6 +555,94 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("parse_int".to_string(), fn_val);
         }
 
+        // parse_int_radix(s: str, base: i64) -> Result<i64, str>  (BUG_HUNT #22)
+        //
+        // Delegate-to-rt pattern (like #37/#38/#39): the whole radix parse lives
+        // in axon-rt's __axon_parse_int_radix; codegen just calls it and
+        // assembles the Result<i64,str> = { i1 tag, [16 x i8] payload } struct
+        // from the out-params. Byte-identical to the interpreter by construction.
+        {
+            let i8_arr16_ty = self.ir.context.i8_type().array_type(16);
+            let result_ty = self.ir.context.struct_type(
+                &[bool_ty.into(), i8_arr16_ty.into()],
+                false,
+            );
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let fn_ty = result_ty.fn_type(&[str_ty.into(), i64_ty.into()], false);
+            let fn_val = self.ir.module.add_function("parse_int_radix", fn_ty, None);
+
+            let entry_bb = self.ir.context.append_basic_block(fn_val, "pir_entry");
+            let ok_bb    = self.ir.context.append_basic_block(fn_val, "pir_ok");
+            let err_bb   = self.ir.context.append_basic_block(fn_val, "pir_err");
+            let saved = self.ir.builder.get_insert_block();
+            self.ir.builder.position_at_end(entry_bb);
+
+            let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let base = fn_val.get_nth_param(1).unwrap().into_int_value();
+
+            // Runtime: void __axon_parse_int_radix(AxonStr s, i64 base,
+            //   i64* out_ok, i64* out_val, i64* out_len, i8** out_ptr)
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let rt_ty = void_ty.fn_type(
+                &[str_ty.into(), i64_ty.into(), i64_ptr.into(), i64_ptr.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false,
+            );
+            let rt_fn = self.ir.module.get_function("__axon_parse_int_radix")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_int_radix", rt_ty, None));
+
+            let out_ok_slot  = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pir_ok_slot");
+            let out_val_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pir_val_slot");
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pir_len_slot");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pir_ptr_slot");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pir_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn,
+                &[s.into(), base.into(), out_ok_slot.into(), out_val_slot.into(), out_len_slot.into(), out_ptr_slot_cast.into()],
+                "");
+
+            let ok_flag = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_ok_slot, "pir_okflag").into_int_value();
+            let zero = i64_ty.const_int(0, false);
+            let is_ok = build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::NE, ok_flag, zero, "pir_isok");
+            build_wrappers::w_cond_br(&self.ir.builder, is_ok, ok_bb, err_bb);
+
+            // ok_bb: { tag=1, payload = out_val as i64 }
+            self.ir.builder.position_at_end(ok_bb);
+            let parsed = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_val_slot, "pir_parsed").into_int_value();
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pir_ok_alloca");
+            let tag1 = bool_ty.const_int(1, false);
+            let tag_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 0, "pir_tagok");
+            build_wrappers::w_store(&self.ir.builder, tag_ptr_ok, tag1.into());
+            let payload_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 1, "pir_payok");
+            let payload_i64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ptr_ok, i64_ty.ptr_type(inkwell::AddressSpace::default()), "pir_payi64");
+            build_wrappers::w_store(&self.ir.builder, payload_i64_ptr, parsed.into());
+            let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "pir_okval");
+            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+
+            // err_bb: { tag=0, payload = str { out_len, out_ptr } }
+            self.ir.builder.position_at_end(err_bb);
+            let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pir_emlen").into_int_value();
+            let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pir_emptr").into_pointer_value();
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pir_err_alloca");
+            let tag0 = bool_ty.const_int(0, false);
+            let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 0, "pir_tagerr");
+            build_wrappers::w_store(&self.ir.builder, tag_ptr_err, tag0.into());
+            let payload_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 1, "pir_payerr");
+            let payload_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ptr_err, err_str_ty.ptr_type(inkwell::AddressSpace::default()), "pir_paystr");
+            let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder, err_str_ty.into(), "pir_errstr");
+            let esl = build_wrappers::w_struct_gep(&self.ir.builder, err_str_ty.into(), err_str_alloca, 0, "pir_esl");
+            let esd = build_wrappers::w_struct_gep(&self.ir.builder, err_str_ty.into(), err_str_alloca, 1, "pir_esd");
+            build_wrappers::w_store(&self.ir.builder, esl, msg_len.into());
+            build_wrappers::w_store(&self.ir.builder, esd, msg_ptr.into());
+            let err_str_val = build_wrappers::w_load(&self.ir.builder, err_str_ty.into(), err_str_alloca, "pir_errstrval");
+            build_wrappers::w_store(&self.ir.builder, payload_str_ptr, err_str_val.into());
+            let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "pir_errval");
+            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+
+            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            self.functions.insert("parse_int_radix".to_string(), fn_val);
+        }
+
         // axon_concat(a: str, b: str) -> str
         // Used by string interpolation lowering.
         // Allocates a new buffer via malloc, copies both strings, null-terminates.
@@ -767,6 +855,8 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         self.fn_return_types.insert("parse_int".to_string(),
+            Type::Result(Box::new(Type::I64), Box::new(Type::Str)));
+        self.fn_return_types.insert("parse_int_radix".to_string(),
             Type::Result(Box::new(Type::I64), Box::new(Type::Str)));
         self.fn_return_types.insert("read_file".to_string(),
             Type::Result(Box::new(Type::Str), Box::new(Type::Str)));

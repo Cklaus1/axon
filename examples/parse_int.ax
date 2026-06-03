@@ -16,4 +16,25 @@ fn main() {
         Ok(n) => println(to_str(n))
         Err(e) => println("error")
     }
+
+    // parse_int_radix: the radix-aware counterpart (base 2..=36). A matching
+    // radix prefix (0x/0o/0b) is stripped; a leading '-' is honored.
+    let hex = parse_int_radix("0x1F", 16)
+    match hex {
+        Ok(n) => println(to_str(n))      // 31
+        Err(e) => println("error")
+    }
+
+    let bin = parse_int_radix("0b1010", 2)
+    match bin {
+        Ok(n) => println(to_str(n))      // 10
+        Err(e) => println("error")
+    }
+
+    // A bad digit for the base is a recoverable Err, never a panic.
+    let bad = parse_int_radix("ff", 10)
+    match bad {
+        Ok(n) => println("unexpected ok")
+        Err(e) => println("correctly failed")
+    }
 }

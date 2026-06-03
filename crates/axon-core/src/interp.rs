@@ -2896,6 +2896,41 @@ impl<'p> Interp<'p> {
                     }
                 });
             }
+            // `parse_int_radix(s, base) -> Result<i64, str>` (BUG_HUNT #22):
+            // the radix-aware counterpart to `parse_int` and the input-side
+            // inverse of `i64_to_str_radix`. An out-of-range base or a bad
+            // digit is a recoverable `Err`, never a panic.
+            "parse_int_radix" => {
+                want(2)?;
+                let s = as_str(&args[0])?;
+                let base = as_int(&args[1])?;
+                if !(2..=36).contains(&base) {
+                    ok!(Value::Err(Box::new(Value::Str(format!(
+                        "parse_int_radix: base must be 2..=36, got {base}"
+                    )))));
+                }
+                let t = s.trim();
+                // Accept and strip a radix prefix that matches `base`
+                // (0x→16, 0o→8, 0b→2), preserving a leading sign.
+                let (sign, rest) = match t.strip_prefix('-') {
+                    Some(r) => ("-", r),
+                    None => ("", t),
+                };
+                let lower = rest.to_ascii_lowercase();
+                let digits = match base {
+                    16 if lower.starts_with("0x") => &rest[2..],
+                    8 if lower.starts_with("0o") => &rest[2..],
+                    2 if lower.starts_with("0b") => &rest[2..],
+                    _ => rest,
+                };
+                let normalized = format!("{sign}{digits}");
+                ok!(match i64::from_str_radix(&normalized, base as u32) {
+                    Ok(n) => Value::Ok(Box::new(Value::Int(n))),
+                    Err(_) => Value::Err(Box::new(Value::Str(format!(
+                        "could not parse `{s}` as a base-{base} integer"
+                    )))),
+                });
+            }
             "parse_float" => {
                 want(1)?;
                 let s = as_str(&args[0])?;
