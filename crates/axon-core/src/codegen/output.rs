@@ -12,6 +12,7 @@
 use std::path::Path;
 
 use inkwell::OptimizationLevel;
+use inkwell::values::BasicValue;
 
 use super::link::emit_object_and_link;
 
@@ -42,6 +43,51 @@ impl<'ctx> super::Codegen<'ctx> {
         self.compile_to_binary_target(output_path, release, None)
     }
 
+    /// Dead-function elimination (R7 + general hygiene): `declare_builtins`
+    /// emits ~119 builtin helper functions (to_str, parse_int, temporal_new,
+    /// the str ops, …) with bodies, UNCONDITIONALLY — so even a trivial program
+    /// drags every one, and every `__axon_*` runtime extern they call. On wasm32
+    /// the unused str/array helpers carry the i64-pointer ABI that clashes with
+    /// wasm's i32 libc (a `function signature mismatch` at link). This deletes
+    /// every function with a body and ZERO uses, to a fixpoint — `main` and any
+    /// address-taken function (a vtable thunk, a lambda, an `@[adaptive]` fn in
+    /// the registry — all of which have a `use`) are KEPT. So a pure-integer
+    /// program emerges with NO `__axon_*` imports at all. Precise + safe: only a
+    /// genuinely-unreferenced definition is removed; an extern declaration with
+    /// no callers is dropped too once its callers are gone.
+    ///
+    /// Returns the number of functions deleted (for logging/tests).
+    pub fn prune_dead_functions(&self) -> usize {
+        let mut total = 0;
+        loop {
+            // Collect deletable functions this round: a DEFINITION (has a body)
+            // that is not `main` and has no uses. We snapshot first because
+            // deleting mutates the module's function list.
+            let mut to_delete = Vec::new();
+            let mut f = self.ir.module.get_first_function();
+            while let Some(func) = f {
+                let next = func.get_next_function();
+                let name = func.get_name().to_string_lossy().to_string();
+                let has_body = func.count_basic_blocks() > 0;
+                let used = func.as_global_value().get_first_use().is_some();
+                if has_body && !used && name != "main" {
+                    to_delete.push(func);
+                }
+                f = next;
+            }
+            if to_delete.is_empty() {
+                break;
+            }
+            for func in to_delete {
+                // Deleting a definition drops its instructions (and thus the uses
+                // of any extern it called), enabling the next round to prune those.
+                unsafe { func.delete(); }
+                total += 1;
+            }
+        }
+        total
+    }
+
     /// Compile the module to a binary for an optional target triple.
     ///
     /// Steps:
@@ -56,6 +102,12 @@ impl<'ctx> super::Codegen<'ctx> {
         release: bool,
         target_triple: Option<&str>,
     ) -> Result<(), String> {
+        // NOTE: dead-function pruning is applied on the WASM object path
+        // (`compile_to_wasm_object`), where dropping the unused i64-ABI `__axon_*`
+        // helpers is the prerequisite for linking. It is intentionally NOT run
+        // here: the native link tolerates the unused helpers, and pruning them
+        // exposed a latent libm (`pow`) link-order fragility on the native path
+        // (axon-rt's f64::powf → undefined `pow`). Keeping native unchanged.
         self.ir.module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
@@ -77,6 +129,10 @@ impl<'ctx> super::Codegen<'ctx> {
         release: bool,
         target_triple: &str,
     ) -> Result<(), String> {
+        // Prune unused builtin helpers FIRST (R7): drops the unused str/array
+        // helpers and their i64-ABI `__axon_*` imports, so a pure-integer
+        // program emits a wasm object with no clashing externs.
+        let _pruned = self.prune_dead_functions();
         self.ir.module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;

@@ -3992,6 +3992,31 @@ fn wasm_interp_matches_native_on_pure_compute() {
 }
 
 #[test]
+fn wasm_object_prunes_dead_externs_and_links_clean() {
+    // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
+    // ~119 unconditionally-emitted builtin helpers that go unused, so a
+    // pure-integer program's wasm object has ZERO __axon_* imports (was 19) and
+    // rust-lld links it with NO `function signature mismatch` (the unused
+    // i64-ABI str/array helpers were the clash). The remaining wasm gap is only
+    // the wasi entry-point ABI. scripts/wasm_object_prune.sh proves it; skips
+    // when codegen/the wasm toolchain is absent.
+    let script = format!("{}/../../scripts/wasm_object_prune.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_object_prune.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_object_prune.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — prune test skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "pruning must leave 0 externs + 0 link mismatches:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_object_prune: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_host_io_matches_native_via_wasi() {
     // R7: the cross-platform guarantee extends PAST pure-compute to the host
     // interface — file I/O AND env vars. The interpreter's read_file/write_file/
