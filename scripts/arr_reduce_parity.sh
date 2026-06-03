@@ -102,7 +102,10 @@ check rep_s   'fn main() -> i64 { let a = arr_repeat(7, 3)  arr_sum_i64(&a) }'
 check cat_s   'fn main() -> i64 { let a = [1, 2]  let b = [10, 20, 30]  let c = arr_concat(a, b)  arr_sum_i64(&c) }'
 check cat_ix  'fn main() -> i64 { let a = [1, 2]  let b = [10, 20, 30]  let c = arr_concat(a, b)  c[3] }'
 check cat_eA  'fn main() -> i64 { let a = arr_range(0, 0)  let b = [10, 20]  let c = arr_concat(a, b)  arr_sum_i64(&c) }'
+check uq_l    'fn main() -> i64 { let a = [1, 2, 2, 3, 3, 3]  let b = arr_unique(&a)  len(b) }'
+check uq_s    'fn main() -> i64 { let a = [1, 2, 2, 3, 3, 3]  let b = arr_unique(&a)  arr_sum_i64(&b) }'
+check uq_o    'fn main() -> i64 { let a = [3, 1, 3, 2, 1]  let b = arr_unique(&a)  b[1] }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique match the interpreter ✓"
 exit 0

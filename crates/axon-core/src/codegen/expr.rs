@@ -1917,6 +1917,103 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_unique(&a) — keep the FIRST occurrence of each i64 value. Mallocs a
+    /// len-sized buffer; for each src element, linearly scan the already-written
+    /// `cnt` entries; if absent, append. O(n²). Result length = cnt.
+    fn emit_arr_i64_unique(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let one = i64_ty.const_int(1, false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "uq_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "uq_lp").unwrap(), "uq_len").into_int_value();
+        let src_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "uq_dp").unwrap(), "uq_dat").into_pointer_value();
+        let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "uq_si");
+
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "uq_bytes");
+        let dst_raw = self.emit_malloc(total, "uq_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "uq_di");
+        let cnt_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "uq_cnt");
+        build_wrappers::w_store(&self.ir.builder, cnt_slot, i64_ty.const_zero().into());
+
+        // Outer i in 0..len.
+        let i_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "uq_i");
+        build_wrappers::w_store(&self.ir.builder, i_slot, i64_ty.const_zero().into());
+        let o_cond = self.ir.context.append_basic_block(fn_val, "uq.ocond");
+        let o_body = self.ir.context.append_basic_block(fn_val, "uq.obody");
+        let o_exit = self.ir.context.append_basic_block(fn_val, "uq.oexit");
+        build_wrappers::w_br(&self.ir.builder, o_cond);
+        self.ir.builder.position_at_end(o_cond);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), i_slot, "uq_ic").into_int_value();
+        let o_go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "uq_og");
+        build_wrappers::w_cond_br(&self.ir.builder, o_go, o_body, o_exit);
+
+        self.ir.builder.position_at_end(o_body);
+        let xp = unsafe { self.ir.builder.build_gep(i64_ty, src, &[i_cur], "uq_xp").unwrap() };
+        let x = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), xp, "uq_x").into_int_value();
+        let cnt = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), cnt_slot, "uq_c").into_int_value();
+        // Inner scan j in 0..cnt: found = any(dst[j] == x). Use a found-slot.
+        let found_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "uq_f");
+        build_wrappers::w_store(&self.ir.builder, found_slot, i64_ty.const_zero().into());
+        let j_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "uq_j");
+        build_wrappers::w_store(&self.ir.builder, j_slot, i64_ty.const_zero().into());
+        let s_cond = self.ir.context.append_basic_block(fn_val, "uq.scond");
+        let s_body = self.ir.context.append_basic_block(fn_val, "uq.sbody");
+        let s_exit = self.ir.context.append_basic_block(fn_val, "uq.sexit");
+        build_wrappers::w_br(&self.ir.builder, s_cond);
+        self.ir.builder.position_at_end(s_cond);
+        let j_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), j_slot, "uq_jc").into_int_value();
+        let s_go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, j_cur, cnt, "uq_sg");
+        build_wrappers::w_cond_br(&self.ir.builder, s_go, s_body, s_exit);
+        self.ir.builder.position_at_end(s_body);
+        let djp = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[j_cur], "uq_djp").unwrap() };
+        let dj = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), djp, "uq_dj").into_int_value();
+        let eq = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, dj, x, "uq_eq");
+        let eq64 = build_wrappers::w_int_z_extend(&self.ir.builder, eq, i64_ty, "uq_eq64");
+        let cur_f = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), found_slot, "uq_cf").into_int_value();
+        let nf = build_wrappers::w_or(&self.ir.builder, cur_f, eq64, "uq_nf");
+        build_wrappers::w_store(&self.ir.builder, found_slot, nf.into());
+        let j_next = build_wrappers::w_int_add(&self.ir.builder, j_cur, one, "uq_jn");
+        build_wrappers::w_store(&self.ir.builder, j_slot, j_next.into());
+        build_wrappers::w_br(&self.ir.builder, s_cond);
+        // After scan: if !found → dst[cnt] = x; cnt++.
+        self.ir.builder.position_at_end(s_exit);
+        let found = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), found_slot, "uq_ff").into_int_value();
+        let is_new = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, found, i64_ty.const_zero(), "uq_new");
+        let app_bb = self.ir.context.append_basic_block(fn_val, "uq.app");
+        let skip_bb = self.ir.context.append_basic_block(fn_val, "uq.skip");
+        build_wrappers::w_cond_br(&self.ir.builder, is_new, app_bb, skip_bb);
+        self.ir.builder.position_at_end(app_bb);
+        let wp = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[cnt], "uq_wp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, wp, x.into());
+        let cnt2 = build_wrappers::w_int_add(&self.ir.builder, cnt, one, "uq_c2");
+        build_wrappers::w_store(&self.ir.builder, cnt_slot, cnt2.into());
+        build_wrappers::w_br(&self.ir.builder, skip_bb);
+        self.ir.builder.position_at_end(skip_bb);
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, one, "uq_in");
+        build_wrappers::w_store(&self.ir.builder, i_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, o_cond);
+
+        self.ir.builder.position_at_end(o_exit);
+        let final_cnt = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), cnt_slot, "uq_fc").into_int_value();
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "uq_out");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "uq_ol").unwrap(), final_cnt.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "uq_di8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "uq_op").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "uq_res"))
+    }
+
     /// Build a fresh i64 slice `{i64 len, i8* data}` of length `count`, filling
     /// each slot via `fill(self, dst_i64_ptr, index)`. Shared backend for the
     /// constructor builtins. `count` must be ≥ 0 (callers clamp).
@@ -3168,6 +3265,12 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     return self.emit_arr_i64_concat(a_slice, b_slice, fn_val);
+                }
+            }
+            // arr_unique(&a) → first occurrence of each value (O(n²) seen-scan).
+            if name == "arr_unique" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_i64_unique(slice_val, fn_val);
                 }
             }
             // arr_count_if / arr_all / arr_any — predicate reductions over an i64
