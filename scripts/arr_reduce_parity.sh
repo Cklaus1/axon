@@ -57,7 +57,10 @@ check min3    'fn main() -> i64 { let a = [3, 7, 2]  arr_min_i64(&a) }'
 check minneg  'fn main() -> i64 { let a = [0 - 5, 0 - 2, 0 - 9]  arr_min_i64(&a) }'
 check mean    'fn main() -> i64 { let a = [10, 20, 30]  f64_to_i64(arr_mean_i64(&a)) }'
 check mean_fr 'fn main() -> i64 { let a = [1, 2]  f64_to_i64(arr_mean_i64(&a) * 10.0) }'
+check rev_0   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_reverse(&a)  b[0] }'
+check rev_2   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_reverse(&a)  b[2] }'
+check rev_sum 'fn main() -> i64 { let a = [10, 20, 30, 40]  let b = arr_reverse(&a)  arr_sum_i64(&b) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr_sum_i64 / arr_contains / arr_max_i64 / arr_min_i64 / arr_mean_i64 match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr_sum/contains/max/min/mean_i64 + arr_reverse match the interpreter ✓"
 exit 0

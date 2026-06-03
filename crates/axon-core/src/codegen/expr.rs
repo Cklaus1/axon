@@ -1437,6 +1437,80 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// Reverse an i64 slice into a freshly malloc'd buffer, returning a new
+    /// `{i64 len, i8* data}` slice. Pure IR + malloc (target-size-aware via
+    /// `emit_malloc`), so it works native AND wasm. dst[i] = src[len-1-i].
+    fn emit_arr_i64_reverse(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        // Unpack src len + data ptr.
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "rev_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "rev_lenp").unwrap(),
+            "rev_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "rev_datp").unwrap(),
+            "rev_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "rev_srci");
+
+        // Malloc len*8 bytes for the destination (target-size-aware).
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "rev_bytes");
+        let dst_raw = self.emit_malloc(total, "rev_dst");
+        let dst_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "rev_dsti");
+
+        // for i in 0..len: dst[i] = src[len-1-i]
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "rev_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "rev.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "rev.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "rev.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "rev_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(
+            &self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "rev_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        // src index = len - 1 - i
+        let len_m1 = build_wrappers::w_int_sub(&self.ir.builder, len, i64_ty.const_int(1, false), "rev_lm1");
+        let src_idx = build_wrappers::w_int_sub(&self.ir.builder, len_m1, i_cur, "rev_si");
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[src_idx], "rev_sp").unwrap() };
+        let v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "rev_v");
+        let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[i_cur], "rev_dp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, dp, v);
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "rev_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // Build the result slice { len, dst_raw(as i8*) }.
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "rev_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "rev_olen").unwrap(),
+            len.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "rev_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "rev_optr").unwrap(),
+            dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "rev_res"))
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -2117,6 +2191,17 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_mean_i64" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Mean, fn_val);
+                }
+            }
+            // arr_reverse(&a) — the first ALLOCATING arr_* lowering: malloc a new
+            // i64 buffer of the same length and copy src[len-1-i] → dst[i].
+            // Returns a fresh `{len, ptr}` slice (i64-element arrays; the common
+            // case — other element types stay E0910-gated below).
+            if name == "arr_reverse" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
+                        return Some(r);
+                    }
                 }
             }
         }
