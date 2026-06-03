@@ -50,6 +50,20 @@ impl<'ctx> super::Codegen<'ctx> {
         let malloc_size_ty = self.size_ty();
         let malloc_ty0 = i8_ptr.fn_type(&[malloc_size_ty.into()], false);
         self.ir.module.add_function("malloc", malloc_ty0, None);
+        // Same size_t story for memcpy/memset (`void* memcpy(dst, src, size_t)`,
+        // `void* memset(dst, int, size_t)`): declare once at target width so
+        // every later get_function reuses it; call sites narrow the count via
+        // msize(). Used by axon_concat (string interpolation), str_slice/pad.
+        let memcpy_ty0 = i8_ptr.fn_type(
+            &[i8_ptr.into(), i8_ptr.into(), malloc_size_ty.into()],
+            false,
+        );
+        self.ir.module.add_function("memcpy", memcpy_ty0, None);
+        let memset_ty0 = i8_ptr.fn_type(
+            &[i8_ptr.into(), i32_ty.into(), malloc_size_ty.into()],
+            false,
+        );
+        self.ir.module.add_function("memset", memset_ty0, None);
 
         // C stdlib: int puts(const char *s)  — prints string + newline
         let puts_ty = i32_ty.fn_type(&[i8_ptr.into()], false);
@@ -704,7 +718,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // memcpy(buf, a_ptr, a_len)
             build_wrappers::w_call(&self.ir.builder,
                 memcpy_fn,
-                &[buf_ptr.into(), a_ptr.into(), a_len.into()],
+                &[buf_ptr.into(), a_ptr.into(), self.msize(a_len, "msz").into()],
                 "");
 
             // buf_b = buf + a_len  (GEP to offset into buf)
@@ -719,7 +733,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // memcpy(buf_b, b_ptr, b_len)
             build_wrappers::w_call(&self.ir.builder,
                 memcpy_fn,
-                &[buf_b_ptr.into(), b_ptr.into(), b_len.into()],
+                &[buf_b_ptr.into(), b_ptr.into(), self.msize(b_len, "msz").into()],
                 "");
 
             // null-terminate: *(buf + total_len) = 0
@@ -3300,7 +3314,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .try_as_basic_value().left().unwrap().into_pointer_value();
                 // memcpy(buf, orig_ptr+start, new_len)
                 let src_ptr = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), orig_ptr, &[final_start], "stt_src") };
-                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), src_ptr.into(), new_len.into()], "stt_cpy");
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), src_ptr.into(), self.msize(new_len, "msz").into()], "stt_cpy");
                 // null-terminate
                 let null_gep = unsafe { build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[new_len], "stt_nul") };
                 build_wrappers::w_store(&self.ir.builder,null_gep, self.ir.context.i8_type().const_zero().into());
@@ -3590,18 +3604,18 @@ impl<'ctx> super::Codegen<'ctx> {
             let fill_char_i32 = build_wrappers::w_int_z_extend(&self.ir.builder,fill_char, self.ir.context.i32_type(), "sp_fc32");
             if *pad_start {
                 // Pad bytes at start, then s
-                build_wrappers::w_call(&self.ir.builder,memset_fn, &[buf.into(), fill_char_i32.into(), pad_len.into()], "");
+                build_wrappers::w_call(&self.ir.builder,memset_fn, &[buf.into(), fill_char_i32.into(), self.msize(pad_len, "msz").into()], "");
                 let s_dest = unsafe {
                     build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[pad_len], "sp_sdest")
                 };
-                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[s_dest.into(), s_ptr.into(), s_len.into()], "");
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[s_dest.into(), s_ptr.into(), self.msize(s_len, "msz").into()], "");
             } else {
                 // s then pad bytes
-                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), s_ptr.into(), s_len.into()], "");
+                build_wrappers::w_call(&self.ir.builder,memcpy_fn, &[buf.into(), s_ptr.into(), self.msize(s_len, "msz").into()], "");
                 let pad_dest = unsafe {
                     build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), buf, &[s_len], "sp_pdest")
                 };
-                build_wrappers::w_call(&self.ir.builder,memset_fn, &[pad_dest.into(), fill_char_i32.into(), pad_len.into()], "");
+                build_wrappers::w_call(&self.ir.builder,memset_fn, &[pad_dest.into(), fill_char_i32.into(), self.msize(pad_len, "msz").into()], "");
             }
             // null-terminate
             let null_pos = unsafe {

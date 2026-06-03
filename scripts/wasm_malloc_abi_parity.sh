@@ -37,18 +37,22 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 #   arr   — array literal → malloc(n * elem_size)
 #   tostr — to_str(i64)   → snprintf(NULL,0,…) then malloc + snprintf(buf,len,…)
 #   combo — both + a float to_str (snprintf %.6g path)
+# interp — string interpolation lowers to `axon_concat`, which malloc's a buffer
+# and memcpy's both halves: exercises the memcpy/memset size_t path too.
 declare -A PROGS
 PROGS[arr]='fn main() -> i64 { let a = [10, 20, 12]  a[0] + a[1] + a[2] }'
 PROGS[tostr]='fn main() -> i64 { let s = to_str(12345)  str_len(s) }'
+PROGS[interp]='fn main() -> i64 { let a = "foo"  let b = "bar"  let c = "{a}{b}"  str_len(c) }'
 PROGS[combo]='fn main() -> i64 {
     let a = [10, 20, 12]
     let s = to_str(a[0] + a[1] + a[2])
     let f = to_str(3.5)
-    str_len(s) + str_len(f) + a[2]
+    let msg = "n={s}"
+    str_len(s) + str_len(f) + a[2] + str_len(msg)
 }'
 
 fail=0; ran=0
-for name in arr tostr combo; do
+for name in arr tostr interp combo; do
   SRC="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$SRC"
   "$INTERP" "$SRC" >/dev/null 2>&1; I=$?
   # native
@@ -74,5 +78,5 @@ done
 
 if [ "$ran" -eq 0 ]; then echo "wasm_malloc_abi_parity: nothing linked — skipping"; exit 0; fi
 [ "$fail" -eq 0 ] || { echo "wasm_malloc_abi_parity: FAIL"; exit 1; }
-echo "wasm_malloc_abi_parity: PASS — array + to_str (malloc/snprintf size_t) run identically on interp, native, AOT-wasm ✓"
+echo "wasm_malloc_abi_parity: PASS — array + to_str + string-interpolation (malloc/snprintf/memcpy size_t) run identically on interp, native, AOT-wasm ✓"
 exit 0
