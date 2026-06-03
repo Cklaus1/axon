@@ -5082,9 +5082,13 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    // Live call: charge the per-token cost to the meter and stamp
-                    // it into the provenance (Phase-7 cost_meter / F4 — was 0).
-                    ok!(match axon_ai::complete(&prompt) {
+                    // Live call: route to the RESOLVED tier's model (R3 — the
+                    // live request now actually honors the tier; `strong` reaches
+                    // the strong model, not the hardcoded sonnet). The model is
+                    // env-overridable per tier for a proxy/gateway deployment.
+                    // Charge the per-token cost to the meter and stamp it into the
+                    // provenance (Phase-7 cost_meter / F4 — was 0).
+                    ok!(match axon_ai::complete_with_model(&prompt, &tier.api_model()) {
                         Ok(s) => {
                             self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                             append_ai_call_jsonl(

@@ -118,7 +118,19 @@ fn ai_mock_enabled() -> bool {
 /// byte-identical to `interp.rs`'s stub for native==interp parity under mock.
 const MOCK_AI_COMPLETE: &str = "Mock summary: the single most important fact, stated concisely.";
 
+/// The default model when a caller doesn't pin one (back-compat with the
+/// original hardcoded value). Tier-aware callers pass the resolved tier's model.
+const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
+
 fn ai_complete_inner(prompt: &str) -> Result<String, String> {
+    ai_complete_inner_model(prompt, DEFAULT_MODEL)
+}
+
+/// `ai_complete` with an explicit model string (R3 tier routing): the live
+/// request sends `model`, so selecting the `strong` tier actually routes to the
+/// strong model instead of the hardcoded sonnet. The interpreter passes
+/// `Tier::api_model()` (itself env-overridable for a proxy/gateway deployment).
+fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> {
     // AXON_AI_MOCK: return the interpreter's deterministic stub (I-2 parity),
     // no network, no API key. Checked FIRST so a mocked run never needs a key.
     if ai_mock_enabled() {
@@ -130,7 +142,7 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
 
     // Build request body.
     let body = serde_json::json!({
-        "model": "claude-sonnet-4-6",
+        "model": model,
         "max_tokens": 1024,
         "messages": [
             { "role": "user", "content": prompt }
@@ -178,6 +190,13 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
 /// through the pointer/length C ABI.
 pub fn complete(prompt: &str) -> Result<String, String> {
     ai_complete_inner(prompt)
+}
+
+/// `complete` with the model pinned by the resolved tier (R3 tier routing).
+/// `model` is the wire model string (e.g. `claude-opus-4-8` for `strong`); the
+/// interpreter sources it from `ai_routing::Tier::api_model()`.
+pub fn complete_with_model(prompt: &str, model: &str) -> Result<String, String> {
+    ai_complete_inner_model(prompt, model)
 }
 
 // -- Layer-3 ASI: typed structured-output ("Uncertain<T>") ---------------------

@@ -59,6 +59,25 @@ impl Tier {
         }
     }
 
+    /// The concrete Anthropic Messages-API model string for this tier — the
+    /// `"model"` field a live request actually sends. The `model()` pair above
+    /// is the provenance form (`anthropic:claude-opus` + `4.8`); this is the
+    /// wire form (`claude-opus-4-8`). Overridable per-tier by env
+    /// (`AXON_AI_MODEL_CHEAP` / `_BALANCED` / `_STRONG`) so a deployment — e.g.
+    /// a TrainLoop/proxy gateway — can pin whatever concrete model it has
+    /// provisioned without a recompile; the env value wins when set+non-empty.
+    pub fn api_model(self) -> String {
+        let (env_key, default) = match self {
+            Tier::Cheap => ("AXON_AI_MODEL_CHEAP", "claude-haiku-4-5"),
+            Tier::Balanced => ("AXON_AI_MODEL_BALANCED", "claude-sonnet-4-6"),
+            Tier::Strong => ("AXON_AI_MODEL_STRONG", "claude-opus-4-8"),
+        };
+        std::env::var(env_key)
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| default.to_string())
+    }
+
     /// The comma-separated list of valid tier names, for the E1302 message.
     pub fn configured() -> &'static str {
         "cheap, balanced, strong"
@@ -102,6 +121,33 @@ mod tests {
     fn unknown_tier_is_none() {
         assert_eq!(Tier::parse("turbo"), None);
         assert_eq!(Tier::parse(""), None);
+    }
+
+    #[test]
+    fn api_model_is_tier_specific_and_distinct() {
+        // R3 routing bug fix: the live request's `model` follows the tier, so
+        // `strong` (t3) actually reaches the strong model — not a hardcoded one.
+        // (Env vars are process-global; only assert the defaults when unset.)
+        if std::env::var_os("AXON_AI_MODEL_CHEAP").is_none()
+            && std::env::var_os("AXON_AI_MODEL_BALANCED").is_none()
+            && std::env::var_os("AXON_AI_MODEL_STRONG").is_none()
+        {
+            assert_eq!(Tier::Cheap.api_model(), "claude-haiku-4-5");
+            assert_eq!(Tier::Balanced.api_model(), "claude-sonnet-4-6");
+            assert_eq!(Tier::Strong.api_model(), "claude-opus-4-8");
+            // All three distinct — selecting a tier changes the model.
+            assert_ne!(Tier::Cheap.api_model(), Tier::Strong.api_model());
+            assert_ne!(Tier::Balanced.api_model(), Tier::Strong.api_model());
+        }
+    }
+
+    #[test]
+    fn api_model_honors_env_override() {
+        // A deployment (e.g. a TrainLoop/proxy gateway) pins a tier's concrete
+        // model via env without a recompile.
+        std::env::set_var("AXON_AI_MODEL_STRONG", "my-gateway-opus");
+        assert_eq!(Tier::Strong.api_model(), "my-gateway-opus");
+        std::env::remove_var("AXON_AI_MODEL_STRONG");
     }
 
     #[test]
