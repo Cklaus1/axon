@@ -1,0 +1,215 @@
+// Tier-1 stdlib: Supervisor tree — OTP-style restart strategies + intensity backoff.
+//
+// supervisor.ax watches ONE agent's action stream and trips a kill-switch.
+// This module models a SUPERVISION TREE: a supervisor overseeing N ordered
+// child workers (started in order, index 0..N). When a child fails, the
+// supervisor's RESTART STRATEGY decides which siblings restart with it —
+// the three OTP strategies (Erlang/OTP supervisor behaviours):
+//
+//   • one_for_one  — restart ONLY the failed child. Siblings are independent.
+//   • one_for_all  — restart ALL children. They share fate (a crash means the
+//     whole group's state is suspect, so the group is torn down + rebuilt).
+//   • rest_for_one — restart the failed child AND every child started AFTER it
+//     (index >= failed). Later children depend on earlier ones, so the tail is
+//     rebuilt while the prefix is left running.
+//
+// Plus MAX RESTART INTENSITY: if the supervisor restarts more than
+// `max_restarts` times, it gives up and HALTS (latched) rather than restarting
+// forever — the OTP "too many restarts in the window" backoff, which stops a
+// crash-loop from burning resources. Once halted, `on_failure` restarts nothing.
+//
+// Strategies are encoded as i64 (0/1/2) since this is pre-enum-sugar userland.
+// `restart_set` is the pure OTP core: which child indices restart, given the
+// strategy + the failed index + the child count.
+//
+//   axon test examples/stdlib/supervisor_tree.ax
+//   axon run  examples/stdlib/supervisor_tree.ax
+
+// Strategy tags.
+fn one_for_one() -> i64 { 0 }
+fn one_for_all() -> i64 { 1 }
+fn rest_for_one() -> i64 { 2 }
+
+type Supervisor = {
+    strategy: i64,      // 0=one_for_one, 1=one_for_all, 2=rest_for_one
+    restarts: i64,      // cumulative restart events observed
+    max_restarts: i64,  // halt once restarts EXCEEDS this (intensity backoff)
+    halted: bool,       // latched: once true, stays true
+}
+
+fn new_supervisor(strategy: i64, max_restarts: i64) -> Supervisor {
+    Supervisor { strategy: strategy, restarts: 0, max_restarts: max_restarts, halted: false }
+}
+
+// ── The OTP core: which child indices restart when `failed` crashes? ─────────
+// Pure function of (strategy, failed index, number of children). Returns the
+// ascending list of indices to restart. Out-of-range `failed` restarts nothing.
+fn restart_set(strategy: i64, failed: i64, n_children: i64) -> [i64] {
+    let out = []
+    if failed < 0 || failed >= n_children {
+        out
+    } else if strategy == one_for_all() {
+        // every child
+        let acc = out
+        for i in 0..n_children { acc = arr_push(acc, i) }
+        acc
+    } else if strategy == rest_for_one() {
+        // the failed child and everything started after it
+        let acc = out
+        for i in failed..n_children { acc = arr_push(acc, i) }
+        acc
+    } else {
+        // one_for_one (default): just the failed child
+        arr_push(out, failed)
+    }
+}
+
+// ── Observe one child failure ────────────────────────────────────────────────
+// Returns (updated_supervisor, indices_to_restart). A halted supervisor
+// restarts nothing (empty set). Otherwise the restart count increments by 1
+// (one failure = one restart event, regardless of how many siblings it takes
+// down — OTP counts supervisor restarts, not child restarts); if that pushes
+// the count OVER max_restarts the supervisor latches halted and restarts
+// nothing this round (the crash-loop is abandoned).
+fn on_failure(s: Supervisor, failed: i64, n_children: i64) -> (Supervisor, [i64]) {
+    if s.halted {
+        let empty = []
+        (s, empty)
+    } else {
+        let next_restarts = s.restarts + 1
+        let trip = next_restarts > s.max_restarts
+        let ns = Supervisor {
+            strategy: s.strategy,
+            restarts: next_restarts,
+            max_restarts: s.max_restarts,
+            halted: trip,
+        }
+        if trip {
+            let empty = []
+            (ns, empty)
+        } else {
+            (ns, restart_set(s.strategy, failed, n_children))
+        }
+    }
+}
+
+fn alive(s: Supervisor) -> bool { !s.halted }
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+@[test]
+fn test_one_for_one_restarts_only_failed() {
+    // 4 children, child 1 fails → only [1] restarts.
+    let rs = restart_set(one_for_one(), 1, 4)
+    assert_eq(len(rs), 1)
+    assert_eq(rs[0], 1)
+}
+
+@[test]
+fn test_one_for_all_restarts_everyone() {
+    // 4 children, child 2 fails → all [0,1,2,3] restart (shared fate).
+    let rs = restart_set(one_for_all(), 2, 4)
+    assert_eq(len(rs), 4)
+    assert_eq(rs[0], 0)
+    assert_eq(rs[3], 3)
+}
+
+@[test]
+fn test_rest_for_one_restarts_failed_and_later() {
+    // 5 children, child 2 fails → [2,3,4] restart; the prefix [0,1] keeps running.
+    let rs = restart_set(rest_for_one(), 2, 5)
+    assert_eq(len(rs), 3)
+    assert_eq(rs[0], 2)
+    assert_eq(rs[1], 3)
+    assert_eq(rs[2], 4)
+}
+
+@[test]
+fn test_rest_for_one_on_first_is_all() {
+    // Failing the FIRST child under rest_for_one restarts everyone (nothing
+    // started before it), so it coincides with one_for_all here.
+    let rs = restart_set(rest_for_one(), 0, 3)
+    assert_eq(len(rs), 3)
+    assert_eq(rs[0], 0)
+    assert_eq(rs[2], 2)
+}
+
+@[test]
+fn test_rest_for_one_on_last_is_just_last() {
+    // Failing the LAST child restarts only it (nothing started after).
+    let rs = restart_set(rest_for_one(), 3, 4)
+    assert_eq(len(rs), 1)
+    assert_eq(rs[0], 3)
+}
+
+@[test]
+fn test_out_of_range_failure_restarts_nothing() {
+    // A failed index outside [0, n) is a no-op set.
+    assert_eq(len(restart_set(one_for_one(), 9, 4)), 0)
+    assert_eq(len(restart_set(one_for_all(), 0 - 1, 4)), 0)
+}
+
+@[test]
+fn test_on_failure_counts_and_restarts() {
+    // A live supervisor restarts per strategy and bumps the count.
+    let s = new_supervisor(one_for_one(), 3)
+    let (s1, r1) = on_failure(s, 0, 3)
+    assert_eq(s1.restarts, 1)
+    assert(alive(s1))
+    assert_eq(len(r1), 1)
+    assert_eq(r1[0], 0)
+}
+
+@[test]
+fn test_max_intensity_halts_and_latches() {
+    // max_restarts=2: the 3rd failure trips the kill-switch and restarts nothing.
+    let s0 = new_supervisor(one_for_all(), 2)
+    let (s1, _r1) = on_failure(s0, 0, 3)   // restart 1
+    let (s2, _r2) = on_failure(s1, 0, 3)   // restart 2
+    assert(alive(s2))
+    let (s3, r3) = on_failure(s2, 0, 3)    // restart 3 > 2 → halt
+    assert(!alive(s3))
+    assert_eq(len(r3), 0)                  // nothing restarted on the tripping failure
+    // Latched: a later failure still restarts nothing.
+    let (s4, r4) = on_failure(s3, 1, 3)
+    assert(!alive(s4))
+    assert_eq(len(r4), 0)
+    assert_eq(s4.restarts, 3)              // count frozen at the trip
+}
+
+fn strategy_name(strategy: i64) -> str {
+    if strategy == one_for_all() { "one_for_all" }
+    else if strategy == rest_for_one() { "rest_for_one" }
+    else { "one_for_one" }
+}
+
+fn report(s: Supervisor, failed: i64) {
+    let (ns, rs) = on_failure(s, failed, 4)
+    let nm = strategy_name(s.strategy)
+    let f = to_str(failed)
+    let count = to_str(len(rs))
+    if ns.halted {
+        println("{nm}: child {f} failed -> HALTED (restart intensity exceeded)")
+    } else {
+        println("{nm}: child {f} failed -> restart {count} child(ren)")
+    }
+}
+
+fn main() {
+    // A tree of 4 children under each strategy; show the restart set when child 1 fails.
+    println("supervision tree: 4 children (0..3), child 1 fails")
+    report(new_supervisor(one_for_one(), 5), 1)
+    report(new_supervisor(one_for_all(), 5), 1)
+    report(new_supervisor(rest_for_one(), 5), 1)
+
+    // Crash loop under one_for_one with max_restarts=2: the 3rd failure halts.
+    println("crash loop (max_restarts=2):")
+    let s0 = new_supervisor(one_for_one(), 2)
+    let (s1, _a) = on_failure(s0, 0, 4)
+    let (s2, _b) = on_failure(s1, 0, 4)
+    let (s3, _c) = on_failure(s2, 0, 4)
+    if s3.halted {
+        println("supervisor HALTED after {to_str(s3.restarts)} restarts")
+    } else {
+        println("supervisor still running")
+    }
+}

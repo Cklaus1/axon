@@ -102,3 +102,23 @@ Additive: a single self-contained `.ax` module + one cli test. `git revert` leav
 ## Review note (2026-06-02)
 
 Status: **Reviewed** — the decisive fork (*attenuation by construction vs checked after the fact*) is resolved **by construction**: a post-hoc checker is a second mechanism that can be bypassed/skipped — exactly the I-12 failure mode — so escalation is made unrepresentable (`want_X && parent.X`, `min(grant, remaining)`) and there is nothing to verify or disable. This mirrors R4 ("no opt-out construct, rejected by design") and R10's G2 capability-diff. The after-the-fact check is kept only as future defense-in-depth (E1210), never the sole boundary — the same posture R6 takes (static checker is the hard gate; audit is defense-in-depth). Userland slice landed + gated; kernel form is the named Phase-7 follow-on.
+
+---
+
+## Appendix A — Supervisor tree (sibling Phase-7 runtime primitive, `supervisor_root`)
+
+A second Phase-7 TCB component (ROADMAP §7 `supervisor_root`) lands at the userland layer alongside the minter, same two-track posture. ROADMAP §6 row 7 requires the `Supervisor` to run *"OTP-style trees (one_for_one / one_for_all / rest_for_one + backoff)."*
+
+`examples/stdlib/supervisor_tree.ax` models a supervisor over N ordered child workers. The **decisive design point** is to factor the OTP semantics into a *pure* core — `restart_set(strategy, failed, n_children) -> [i64]`, the ascending list of child indices that restart when `failed` crashes — so each strategy is a precise, independently-testable rule rather than entangled with restart bookkeeping:
+
+| Strategy (tag) | restart set when child `f` of `n` fails |
+|---|---|
+| `one_for_one` (0) | `[f]` — only the failed child; siblings are independent |
+| `one_for_all` (1) | `[0..n)` — all children; shared fate |
+| `rest_for_one` (2) | `[f..n)` — the failed child + everything started after it (later children depend on earlier) |
+
+Boundary behavior verified by test: `rest_for_one` on the first child ≡ `one_for_all`; on the last ≡ `one_for_one`; an out-of-range `failed` restarts nothing.
+
+`on_failure(s, failed, n) -> (Supervisor, [i64])` applies the strategy and the **max-restart-intensity backoff**: each failure increments the restart count; once it *exceeds* `max_restarts` the supervisor latches `halted` and restarts nothing — the OTP "too many restarts in the window" rule that abandons a crash loop instead of restarting forever (the corrigibility latch, like `supervisor.ax`'s single-agent kill-switch). The latch is one-way (mirrors R9 `@[corrigible]` / I-13's no-opt-out posture): a halted supervisor's count is frozen and every later failure is a no-op.
+
+**Slice status:** userland landed + gated (`supervisor_tree_stdlib_module_tests_pass`, 8 `@[test]`s; the single-agent `supervisor.ax` is now also gated, 5 tests). The **kernel** `Supervisor` runtime service — actually (re)starting live child processes/fibers under the scheduler, with the restart strategy enforced by the runtime rather than computed by a userland fn — is the named Phase-7 follow-on (depends on `scheduler`, also Phase-7 TCB). No error codes (the userland core is total). No invariant changed; the intensity latch *uses* the same one-way-halt posture as I-13/R9.

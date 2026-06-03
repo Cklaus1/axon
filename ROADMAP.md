@@ -208,7 +208,7 @@ When this works end-to-end, Axon is real.
 | `Refinement` | `T where pred` | 1 (kernel-level via Phase 5) |
 | `Source` | `Constant \| User \| AI \| Net \| System` | 1 |
 | `Store<T, C, L>` | typed persistent state | 1 |
-| `Supervisor` | OTP tree + strategy | 1 |
+| `Supervisor` | OTP tree + strategy | 1 | *(userland landed: `examples/stdlib/supervisor_tree.ax` — the 3 OTP restart strategies (one_for_one/one_for_all/rest_for_one) as a pure `restart_set` core + max-restart-intensity backoff that latches the supervisor halted on a crash loop. Single-agent kill-switch in `supervisor.ax`. Kernel `Supervisor` runtime service Phase-7.)* |
 | `Agent` | input / output / tools / policy / effects | 1 |
 | `Tool` | typed callable with effect signature | 1 |
 | `LLM<Caps>` | model + budget + fallback | 1 |
@@ -241,7 +241,7 @@ TCB = {
     capability_minter,         // Phase 7 — userland realization landed (principal_mint.ax: attenuation by construction)
     cost_meter,                // Phase 7
     scheduler,                 // Phase 7
-    supervisor_root,           // Phase 7
+    supervisor_root,           // Phase 7 — userland OTP strategies landed (supervisor_tree.ax: one_for_one/one_for_all/rest_for_one + intensity backoff)
     llm_gateway,               // Phase 7
     sandbox_enforcer,          // Phase 9
     audit_log_writer,          // Phase 9

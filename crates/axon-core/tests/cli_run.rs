@@ -1226,6 +1226,34 @@ fn principal_mint_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn supervisor_stdlib_module_tests_pass() {
+    // Tier-1 single-agent Supervisor userland module (corrigibility primitive):
+    // watches one agent's action stream, debits budget on approved actions,
+    // strikes on unsafe/unaffordable ones, and LATCHES a kill-switch at
+    // max_strikes (a halted supervisor refuses everything, even safe actions).
+    // 5 @[test]s. (Backfilled gate — the module shipped ungated.)
+    let out = axon().args(["test", &ex("stdlib/supervisor.ax")]).output().unwrap();
+    assert!(out.status.success(), "supervisor.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
+fn supervisor_tree_stdlib_module_tests_pass() {
+    // Tier-1 Supervisor-TREE userland module (ROADMAP §6 row 7 — the Phase-7
+    // Supervisor acceptance: "OTP-style trees one_for_one / one_for_all /
+    // rest_for_one + backoff"). `restart_set` is the pure OTP core (which child
+    // indices restart when one fails); `on_failure` applies it + the max-restart-
+    // intensity backoff that latches the supervisor halted on a crash loop.
+    // 8 @[test]s cover each strategy's restart set, the rest_for_one boundaries,
+    // out-of-range no-op, the restart counter, and the intensity halt+latch.
+    let out = axon().args(["test", &ex("stdlib/supervisor_tree.ax")]).output().unwrap();
+    assert!(out.status.success(), "supervisor_tree.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets
