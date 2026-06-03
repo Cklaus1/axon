@@ -234,6 +234,10 @@ pub struct Interp<'p> {
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
     current_call_tier: RefCell<Option<String>>,
+    /// R3c: count of `ai_complete` calls made by the current fn activation, used
+    /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to `call_fn`,
+    /// restored on exit (so the budget is per-activation, not global).
+    ai_calls_this_fn: Cell<u64>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -324,6 +328,19 @@ struct FnNameGuard<'a> {
 impl Drop for FnNameGuard<'_> {
     fn drop(&mut self) {
         *self.cell.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// R3c: saves the caller's `ai_calls_this_fn` count and restores it on drop, so
+/// each fn activation meters its own `ai_complete` calls against its own
+/// `@[ai(policy(budget))]` (the budget is per-activation, not global).
+struct AiBudgetGuard<'a> {
+    cell: &'a Cell<u64>,
+    prev: u64,
+}
+impl Drop for AiBudgetGuard<'_> {
+    fn drop(&mut self) {
+        self.cell.set(self.prev);
     }
 }
 
@@ -752,6 +769,7 @@ impl<'p> Interp<'p> {
             corrigible_halted: Cell::new(false),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
+            ai_calls_this_fn: Cell::new(0),
         }
     }
 
@@ -793,6 +811,34 @@ impl<'p> Interp<'p> {
         for arg in &ai.args {
             if let Some(rest) = arg.strip_prefix("fallback:") {
                 return Some(rest.trim().to_string());
+            }
+        }
+        None
+    }
+
+    /// R3c: the `@[ai(policy(budget: N))]` ceiling declared on the
+    /// currently-executing fn, if any. Returns `Some(N)` for a well-formed
+    /// non-negative integer; `None` when no `budget:` field is present **or** the
+    /// value is malformed (in which case a `W1311` is emitted once and the fn
+    /// runs unmetered — a bad budget must never silently enforce a wrong number).
+    fn current_ai_budget(&self) -> Option<u64> {
+        let name = self.current_fn.borrow().clone();
+        let f = self.fns.get(name.as_str())?;
+        let ai = f.attrs.iter().find(|a| a.name == "ai")?;
+        for arg in &ai.args {
+            if let Some(rest) = arg.strip_prefix("budget:") {
+                let raw = rest.trim();
+                return match raw.parse::<u64>() {
+                    Ok(n) => Some(n),
+                    Err(_) => {
+                        eprintln!(
+                            "warning: [{}] @[ai(policy(budget: {raw}))] on `{name}` is not a \
+                             non-negative integer — ignored (fn runs unmetered)",
+                            crate::error::W1311
+                        );
+                        None
+                    }
+                };
             }
         }
         None
@@ -885,6 +931,12 @@ impl<'p> Interp<'p> {
         let _fn_guard = FnNameGuard {
             cell: &self.current_fn,
             prev: self.current_fn.replace(f.name.clone()),
+        };
+        // R3c: each fn activation meters its own ai_complete calls — reset to 0
+        // on entry, restore the caller's count on exit.
+        let _ai_budget_guard = AiBudgetGuard {
+            cell: &self.ai_calls_this_fn,
+            prev: self.ai_calls_this_fn.replace(0),
         };
 
         if f.params.len() != args.len() {
@@ -4840,6 +4892,23 @@ impl<'p> Interp<'p> {
                 let tier = self.current_ai_tier()?;
                 let tier_name = tier.as_str();
                 let (model_id, model_ver) = tier.model();
+                // R3c: meter this call against the fn's @[ai(policy(budget: N))].
+                // The (N+1)th call halts with E1301 BEFORE any model dispatch
+                // (mock/live/fallback) and before the W1310 warning — an
+                // over-budget call is a hard failure, not a stray response. A fn
+                // with no budget is unmetered (current_ai_budget → None).
+                if let Some(budget) = self.current_ai_budget() {
+                    let used = self.ai_calls_this_fn.get();
+                    if used >= budget {
+                        let who = if caller.is_empty() { "<main>".to_string() } else { caller.clone() };
+                        return panic(format!(
+                            "[{}] `{who}` exceeded its AI budget of {budget} call(s) — \
+                             raise the budget or reduce ai_complete calls",
+                            crate::error::E1301,
+                        ));
+                    }
+                    self.ai_calls_this_fn.set(used + 1);
+                }
                 // W1310: a fn making an AI call with no @[ai(policy)] is allowed,
                 // but its cost is unmetered and the call un-pinned — warn once so
                 // the audit gap is visible (only meaningful for live/mock calls).

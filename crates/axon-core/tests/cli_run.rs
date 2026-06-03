@@ -2884,6 +2884,124 @@ fn main() -> i64 {
 }
 
 #[test]
+fn ai_budget_halts_third_call_e1301() {
+    // R3c headline: a fn @[ai(policy(budget: 2))] may make at most 2 ai_complete
+    // calls; the 3rd halts with E1301. The first two still execute (the budget
+    // halts the over-budget call, not the run from the start) — proven by their
+    // two ai_call provenance records being present.
+    let cache = std::env::temp_dir().join(format!("axon_r3c_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+@[ai(policy(tier: cheap, budget: 2))]
+fn over() -> str {
+    let a = match ai_complete("one") { Ok(s) => s  Err(_) => "" }
+    let b = match ai_complete("two") { Ok(s) => s  Err(_) => "" }
+    let c = match ai_complete("three") { Ok(s) => s  Err(_) => "" }
+    c
+}
+fn main() -> i64 { let _ = over()  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3c_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_ne!(out.status.code(), Some(0), "over-budget run must fail: {msg}");
+    assert!(msg.contains("E1301"), "the 3rd AI call must halt with E1301: {msg}");
+    assert!(msg.contains("budget of 2"), "the message names the budget: {msg}");
+
+    // The first two calls executed (their provenance was written before the halt).
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let ai_calls = body.lines().filter(|l| l.contains("\"event\":\"ai_call\"")).count();
+    assert_eq!(ai_calls, 2, "exactly 2 calls executed before the budget halt; log:\n{body}");
+}
+
+#[test]
+fn ai_budget_zero_blocks_first_call() {
+    // R3c boundary: budget: 0 means no AI calls allowed — the FIRST ai_complete
+    // is E1301.
+    let prog = r#"
+@[ai(policy(budget: 0))]
+fn zero() -> str { match ai_complete("x") { Ok(s) => s  Err(_) => "" } }
+fn main() -> i64 { let _ = zero()  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3c0_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_ne!(out.status.code(), Some(0), "budget 0 must block the first call: {msg}");
+    assert!(msg.contains("E1301"), "budget 0 → E1301 on the first call: {msg}");
+}
+
+#[test]
+fn ai_budget_absent_is_unmetered() {
+    // R3c back-compat: a fn with @[ai(policy)] but NO budget: is unmetered —
+    // unbounded ai_complete calls, today's behavior. 5 calls run clean.
+    let prog = r#"
+@[ai(policy(tier: cheap))]
+fn many() -> str {
+    let a = match ai_complete("1") { Ok(s) => s  Err(_) => "" }
+    let b = match ai_complete("2") { Ok(s) => s  Err(_) => "" }
+    let c = match ai_complete("3") { Ok(s) => s  Err(_) => "" }
+    let d = match ai_complete("4") { Ok(s) => s  Err(_) => "" }
+    let e = match ai_complete("5") { Ok(s) => s  Err(_) => "" }
+    e
+}
+fn main() -> i64 { let _ = many()  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3cu_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "an unmetered fn must run unbounded: {msg}");
+    assert!(!msg.contains("E1301"), "no budget → no E1301: {msg}");
+}
+
+#[test]
+fn ai_budget_malformed_warns_w1311_and_runs_unmetered() {
+    // R3c adversarial: a non-integer budget must NOT silently enforce a wrong
+    // number nor crash — it warns W1311 and runs unmetered.
+    let prog = r#"
+@[ai(policy(budget: foo))]
+fn bad() -> str {
+    let a = match ai_complete("x") { Ok(s) => s  Err(_) => "" }
+    let b = match ai_complete("y") { Ok(s) => s  Err(_) => "" }
+    b
+}
+fn main() -> i64 { let _ = bad()  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r3cm_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "a malformed budget must run unmetered, not crash: {msg}");
+    assert!(msg.contains("W1311"), "malformed budget must warn W1311: {msg}");
+    assert!(!msg.contains("E1301"), "malformed budget must NOT enforce a wrong number: {msg}");
+}
+
+#[test]
 fn ai_call_prompt_hash_is_deterministic_and_distinguishes_prompts() {
     // R3 §4.5: provenance is deterministic — the same prompt yields the same
     // prompt_hash across runs (the replay/memo key), and DIFFERENT prompts

@@ -91,6 +91,7 @@ pub const E1205: &str = "E1205"; // axon.lock is malformed / unknown version
 
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
+pub const E1301: &str = "E1301"; // ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)
 pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-configured model
 
 // Self-improving-compiler errors (R10: pass verification harness)
@@ -113,6 +114,8 @@ pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes pre
 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 pub const W1103: &str = "W1103"; // @[verify] outside the SMT-provable fragment (R9); runtime gate applies
+// R3c AI-budget warning
+pub const W1311: &str = "W1311"; // @[ai(policy(budget: N))] value is not a non-negative integer; ignored
 // R6 registry warnings
 pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
 // R10 self-improving warnings
@@ -282,10 +285,10 @@ mod tests {
             E1001, E1002, E1003, E1004,
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205,
-            E1300, E1302,
+            E1300, E1301, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406,
             E1500, E1503, E1504,
-            W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1410,
+            W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1311, W1410,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();
