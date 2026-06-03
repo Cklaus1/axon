@@ -1144,7 +1144,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "dict_from_str",
         params: &[("s", "str")],
         ret: "Dict",
-        doc: "Parse a `dict_to_str` payload back into a Dict. Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty lines skipped; malformed lines (no `=`) panic. Inverse of `dict_to_str`.",
+        doc: "Parse a `dict_to_str` payload back into a Dict (lenient). Values come back as `str`; caller converts via `parse_int` / `parse_float` if numeric. Empty AND malformed lines (no `=`) are skipped — never panics. Use `dict_try_from_str` to reject malformed input as a `Result` instead. Inverse of `dict_to_str`.",
+    },
+    BuiltinFn {
+        name: "dict_try_from_str",
+        params: &[("s", "str")],
+        ret: "Result<Dict, str>",
+        doc: "Strict `dict_from_str` (BUG_HUNT #31): parse a `dict_to_str` payload, returning `Err(message)` on the first malformed line (no `=`) instead of skipping it. The Result-returning form for parsing untrusted input — a malformed line is recoverable, not a crash.",
     },
     BuiltinFn {
         name: "goal_history",

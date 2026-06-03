@@ -1527,6 +1527,38 @@ fn dict_to_str_round_trips() {
 }
 
 #[test]
+fn dict_from_str_malformed_is_recoverable_not_a_panic() {
+    // BUG_HUNT #31: parsing untrusted input must not abort the program. A
+    // malformed line (no `=`) is now SKIPPED by the lenient `dict_from_str`
+    // (no panic), and rejected as a recoverable Err by `dict_try_from_str`.
+    // (1) lenient: a 3-line input with one bad line yields a 2-entry dict, exit 0.
+    let lenient = "fn main() -> i64 {\n  \
+        let d = dict_from_str(\"a=1\\nbad_line\\nb=2\")\n  \
+        dict_len(d)\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_d31a_{}.ax", std::process::id()));
+    std::fs::write(&f, lenient).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    // dict_from_str is lenient: 2 well-formed lines kept, the bad one skipped, no panic.
+    assert_eq!(out.status.code(), Some(2), "lenient parse keeps 2 entries, no panic: {:?}", out);
+
+    // (2) strict: dict_try_from_str returns Err on the malformed line.
+    let strict = "fn main() -> i64 {\n  \
+        match dict_try_from_str(\"a=1\\nbad_line\\nb=2\") {\n    \
+            Ok(_) => 0\n    \
+            Err(_) => 7\n  \
+        }\n\
+    }\n";
+    let f2 = std::env::temp_dir().join(format!("axon_d31b_{}.ax", std::process::id()));
+    std::fs::write(&f2, strict).unwrap();
+    let out2 = axon().args(["run", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    // Err arm → 7; crucially exit is NOT 101 (panic) — it's a recoverable Result.
+    assert_eq!(out2.status.code(), Some(7), "strict parse returns Err recoverably (not panic 101): {:?}", out2);
+}
+
+#[test]
 fn persistent_bandit_demo_accumulates_across_runs() {
     // Demo #23. Composes bandit module + dict_to_str/from_str +
     // file I/O to persist bandit state across processes. Two

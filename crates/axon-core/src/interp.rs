@@ -4712,10 +4712,33 @@ impl<'p> Interp<'p> {
             // Splits `s` into lines, each line at the FIRST `=` into
             // (key, value). All values are stored as `str` — caller
             // converts via `parse_int` / `parse_float` if needed.
-            // Trailing newline is allowed; empty lines are skipped.
-            // Malformed lines (no `=`) panic — we'd rather fail loud
-            // than silently corrupt state.
+            // Trailing newline is allowed; empty AND malformed lines are
+            // skipped (lenient, #31). Use `dict_try_from_str` for strict
+            // Result-returning parsing.
             "dict_from_str" => {
+                // BUG_HUNT #31: a malformed line no longer PANICS (aborting the
+                // whole program on untrusted input). `dict_from_str` is lenient —
+                // it SKIPS malformed lines (like it already skips empty lines) —
+                // and `dict_try_from_str` is the strict, Result-returning sibling
+                // for callers that want to reject malformed input recoverably.
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut out = std::collections::BTreeMap::new();
+                for line in s.lines() {
+                    if line.is_empty() {
+                        continue;
+                    }
+                    if let Some((k, v)) = line.split_once('=') {
+                        out.insert(k.to_string(), Value::Str(v.to_string()));
+                    }
+                    // malformed (no '=') → skipped (lenient).
+                }
+                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+            }
+            // BUG_HUNT #31: strict variant — a malformed line is a recoverable
+            // `Err(message)`, not a panic. The language's "Result, not
+            // exceptions" parse-on-untrusted-input form.
+            "dict_try_from_str" => {
                 want(1)?;
                 let s = as_str(&args[0])?;
                 let mut out = std::collections::BTreeMap::new();
@@ -4724,17 +4747,15 @@ impl<'p> Interp<'p> {
                         continue;
                     }
                     match line.split_once('=') {
-                        Some((k, v)) => {
-                            out.insert(k.to_string(), Value::Str(v.to_string()));
-                        }
+                        Some((k, v)) => { out.insert(k.to_string(), Value::Str(v.to_string())); }
                         None => {
-                            return panic(format!(
-                                "dict_from_str: malformed line '{line}' (expected key=value)"
-                            ));
+                            ok!(Value::Err(Box::new(Value::Str(format!(
+                                "dict_try_from_str: malformed line '{line}' (expected key=value)"
+                            )))));
                         }
                     }
                 }
-                ok!(Value::Dict(Rc::new(RefCell::new(out))));
+                ok!(Value::Ok(Box::new(Value::Dict(Rc::new(RefCell::new(out))))));
             }
 
             // `dict_merge(d1, d2) -> Dict` — union of two dicts. Right-
