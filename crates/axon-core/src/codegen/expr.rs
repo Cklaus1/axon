@@ -30,6 +30,16 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// Predicate-reduction kind for `emit_arr_i64_pred`.
+enum PredReduce {
+    /// Count elements where the predicate is true (i64 result).
+    Count,
+    /// True iff ALL elements satisfy the predicate (i1; short-circuits false).
+    All,
+    /// True iff ANY element satisfies the predicate (i1; short-circuits true).
+    Any,
+}
+
 /// Reduction kind for `emit_arr_i64_loop` — a counted loop over an i64 slice.
 enum ArrReduce<'ctx> {
     /// Σ of all elements (i64 result).
@@ -1871,6 +1881,88 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_count_if / arr_all / arr_any — a predicate reduction over an i64
+    /// slice. Per element calls the lambda `i64 fn(env, elem)` (predicate, i64-
+    /// widened) and folds: Count sums the truthy count; All accumulates AND;
+    /// Any accumulates OR. (A full loop — no short-circuit — is observably
+    /// identical for pure predicates and keeps the IR simple.) Returns i64 for
+    /// Count, i1 for All/Any.
+    fn emit_arr_i64_pred(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        kind: PredReduce,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let i1_ty = self.ir.context.bool_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "pr_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "pr_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "pr_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "pr_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "pr_lp").unwrap(), "pr_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "pr_dp").unwrap(), "pr_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "pr_si");
+
+        // acc: Count starts 0; All starts 1 (true); Any starts 0 (false).
+        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pr_acc");
+        let init: u64 = match kind { PredReduce::Count | PredReduce::Any => 0, PredReduce::All => 1 };
+        build_wrappers::w_store(&self.ir.builder, acc_slot, i64_ty.const_int(init, false).into());
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pr_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "pr.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "pr.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "pr.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "pr_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "pr_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ep = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i_cur], "pr_ep").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ep, "pr_e").into_int_value();
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "pr_call")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        // truthy = (r != 0) as i64 0/1.
+        let truthy = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "pr_t");
+        let truthy64 = build_wrappers::w_int_z_extend(&self.ir.builder, truthy, i64_ty, "pr_t64");
+        let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "pr_a").into_int_value();
+        let nacc = match kind {
+            PredReduce::Count => build_wrappers::w_int_add(&self.ir.builder, acc, truthy64, "pr_na"),
+            PredReduce::All => build_wrappers::w_and(&self.ir.builder, acc, truthy64, "pr_na"),
+            PredReduce::Any => build_wrappers::w_or(&self.ir.builder, acc, truthy64, "pr_na"),
+        };
+        build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "pr_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "pr_res").into_int_value();
+        match kind {
+            PredReduce::Count => Some(acc.into()),
+            PredReduce::All | PredReduce::Any => {
+                // acc is 0/1 → truncate to i1.
+                let b = self.ir.builder.build_int_truncate(acc, i1_ty, "pr_b").unwrap();
+                Some(b.into())
+            }
+        }
+    }
+
     /// arr_sort_by(&a, cmp) — stable insertion sort of an i64 slice using an
     /// i64-comparator lambda (cmp(x, y) < 0 ⇒ x before y). Builds a fresh sorted
     /// buffer: for each element x, find lo = first index where cmp(x, dst[lo])<0,
@@ -2754,6 +2846,23 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     if let Some(r) = self.emit_arr_i64_sort_by(slice_val, lam, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_count_if / arr_all / arr_any — predicate reductions over an i64
+            // slice. count_if → i64 count of true; all → i1 (false on first
+            // false, short-circuits); any → i1 (true on first true).
+            if (name == "arr_count_if" || name == "arr_all" || name == "arr_any") && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    let kind = match name.as_str() {
+                        "arr_count_if" => PredReduce::Count,
+                        "arr_all" => PredReduce::All,
+                        _ => PredReduce::Any,
+                    };
+                    if let Some(r) = self.emit_arr_i64_pred(slice_val, lam, kind, fn_val) {
                         return Some(r);
                     }
                 }

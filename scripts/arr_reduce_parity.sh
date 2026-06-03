@@ -80,7 +80,13 @@ check sort_lo 'fn main() -> i64 { let a = [3, 1, 2]  let b = arr_sort_by(&a, |x,
 check sort_hi 'fn main() -> i64 { let a = [5, 3, 8, 1, 9, 2]  let b = arr_sort_by(&a, |x, y| x - y)  b[5] }'
 check sort_dc 'fn main() -> i64 { let a = [3, 1, 2]  let b = arr_sort_by(&a, |x, y| y - x)  b[0] }'
 check sort_sm 'fn main() -> i64 { let a = [5, 3, 8, 1]  let b = arr_sort_by(&a, |x, y| x - y)  arr_sum_i64(&b) }'
+check cnt_if  'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  arr_count_if(&a, |x| x > 2) }'
+check cnt_0   'fn main() -> i64 { let a = [1, 2, 3]  arr_count_if(&a, |x| x > 100) }'
+check all_t   'fn main() -> i64 { let a = [2, 4, 6]  if arr_all(&a, |x| x > 0) { 1 } else { 0 } }'
+check all_f   'fn main() -> i64 { let a = [2, 4, 6]  if arr_all(&a, |x| x > 3) { 1 } else { 0 } }'
+check any_t   'fn main() -> i64 { let a = [1, 2, 3]  if arr_any(&a, |x| x > 2) { 1 } else { 0 } }'
+check any_f   'fn main() -> i64 { let a = [1, 2, 3]  if arr_any(&a, |x| x > 100) { 1 } else { 0 } }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any match the interpreter ✓"
 exit 0
