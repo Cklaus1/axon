@@ -1931,6 +1931,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 false,
             );
             self.ir.module.add_function("__axon_register_adaptive", reg_ty, None);
+
+            // R4: __axon_set_provenance_source(path_ptr, path_len) — called once
+            // in main's prologue to stamp the program's source path into native
+            // @[adaptive] provenance (`"src"` field, interp parity).
+            let set_src_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+            self.ir.module.add_function("__axon_set_provenance_source", set_src_ty, None);
         }
 
         // ── goal_run(name: str, target: f64, max_evals: i64) -> f64 ───────────

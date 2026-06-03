@@ -292,6 +292,33 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// R4: emit a one-time `__axon_set_provenance_source(path_ptr, path_len)` in
+    /// main's prologue so native `@[adaptive]` provenance carries the program's
+    /// `"src"` path — parity with the interpreter (`set_provenance_source`).
+    /// No-op when the source path is unknown or the runtime extern is absent.
+    pub(super) fn emit_provenance_source_init(&mut self) {
+        if self.source_path.is_empty() {
+            return;
+        }
+        let set_fn = match self.ir.module.get_function("__axon_set_provenance_source") {
+            Some(f) => f,
+            None => return,
+        };
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let path = self.source_path.clone();
+        let path_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &path, "prov_src_path");
+        let path_len = i64_ty.const_int(path.len() as u64, false);
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            set_fn,
+            &[path_g.into(), path_len.into()],
+            "",
+        );
+    }
+
     // ── Uncertain<T> binary operation emission (ASI Layer 2) ─────────────────
     //
     // V1 design choice: even multiplication uses `min` rather than `c1 * c2`.

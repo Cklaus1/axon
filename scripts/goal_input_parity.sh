@@ -74,6 +74,14 @@ if ! grep -q '"score":84,"input":3' "$NLOG"; then
   exit 1
 fi
 
+# R4: the native record must also carry the structured "src" field (the source
+# path), matching the interpreter — the input/src ABI-enrichment parity.
+if ! grep -q '"src":' "$NLOG"; then
+  echo "goal_input_parity: FAIL — native provenance is missing the structured src field (R4 parity)"
+  echo "--- native log ---"; cat "$NLOG"
+  exit 1
+fi
+
 echo "goal_input_parity: OK — native provenance carries (input, score), matching the interpreter:"
 grep "adaptive_return" "$NLOG" | sed 's/^/  /'
 echo "native adaptive provenance carries the input"

@@ -148,6 +148,11 @@ pub struct Codegen<'ctx> {
     /// signatures (multi-arg, f64 input, str input, …) silently fall
     /// through and rely on the Layer-2 retrospective `goal_run` path.
     pub(super) adaptive_registry_targets: Vec<String>,
+    /// R4: the program's source path, stamped into native `@[adaptive]`
+    /// provenance as the `"src"` field (parity with the interpreter, which sets
+    /// it via `set_provenance_source`). Emitted in `main`'s prologue as a
+    /// one-time `__axon_set_provenance_source` call. Empty ⇒ no call emitted.
+    pub(super) source_path: String,
     /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries
     /// `@[verify(confidence OP K)]` *and* whose return type is `Uncertain<T>`,
     /// this holds `(fn_name, op_str, bound)` so each return site can inject
@@ -198,8 +203,16 @@ impl<'ctx> Codegen<'ctx> {
             current_adaptive_fn: None,
             current_adaptive_input: None,
             adaptive_registry_targets: Vec::new(),
+            source_path: String::new(),
             current_verify_fn: None,
         }
+    }
+
+    /// R4: set the program source path stamped into native `@[adaptive]`
+    /// provenance (`"src"` field), for parity with the interpreter. Call after
+    /// `new` and before `emit_program`.
+    pub fn set_source_path(&mut self, path: impl Into<String>) {
+        self.source_path = path.into();
     }
 
     /// Forward-declare every top-level function so mutual recursion resolves.
@@ -668,6 +681,9 @@ impl<'ctx> Codegen<'ctx> {
         // programs pay nothing.
         if f.name == "main" {
             self.emit_adaptive_registry_init();
+            // R4: stamp the source path into the runtime so native @[adaptive]
+            // provenance carries the `"src"` field (interp parity).
+            self.emit_provenance_source_init();
         }
 
         // Determine return semantic type early (needed for current_result_types).

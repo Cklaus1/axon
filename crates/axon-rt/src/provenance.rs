@@ -60,6 +60,29 @@ fn store() -> &'static Mutex<Vec<Record>> {
     STORE.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+// ── R4: program source path (the `"src"` provenance field) ────────────────────
+fn source_cell() -> &'static Mutex<String> {
+    use std::sync::OnceLock;
+    static SRC: OnceLock<Mutex<String>> = OnceLock::new();
+    SRC.get_or_init(|| Mutex::new(String::new()))
+}
+
+/// R4: set the program's source path, stamped into `@[adaptive]` provenance as
+/// the `"src"` field (parity with the interpreter's `set_provenance_source`).
+/// Codegen emits one call to this in `main`'s prologue.
+#[no_mangle]
+pub extern "C" fn __axon_set_provenance_source(path_ptr: *const u8, path_len: i64) {
+    let path = slice_to_str(path_ptr, path_len);
+    if let Ok(mut g) = source_cell().lock() {
+        *g = path.to_string();
+    }
+}
+
+/// The configured source path, or "" when unset.
+fn provenance_source() -> String {
+    source_cell().lock().map(|g| g.clone()).unwrap_or_default()
+}
+
 /// Return a snapshot of all records whose `fn_name` exactly matches `name`.
 ///
 /// The returned vector is independent of the global store; callers may iterate
@@ -289,14 +312,23 @@ fn log_adaptive_return(
         Some(n) => format!(",\"input\":{n}"),
         None => String::new(),
     };
+    // R4: `"src"` field (the program path) when set via
+    // __axon_set_provenance_source; omitted otherwise — parity with interp.
+    let src = provenance_source();
+    let src_field = if src.is_empty() {
+        String::new()
+    } else {
+        format!(",\"src\":{}", json_quote(&src))
+    };
 
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":\"adaptive_return\",\"zone\":\"adaptive\",\"payload\":{pl_q},\"score\":{s}{input_field}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":\"adaptive_return\",\"zone\":\"adaptive\",\"payload\":{pl_q},\"score\":{s}{input_field}{src_field}}}\n",
         ts   = ts,
         fn_q = json_quote(fn_name),
         pl_q = json_quote(payload),
         s    = format_f64(score),
         input_field = input_field,
+        src_field = src_field,
     );
 
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;

@@ -2376,6 +2376,8 @@ fn build_ir_and_link(
     let module_name = source_path.file_stem()
         .unwrap_or_default().to_string_lossy();
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
+    // R4: stamp the source path into native @[adaptive] provenance (`"src"`).
+    cg.set_source_path(source_path.display().to_string());
     cg.declare_functions(&concrete_program);
     cg.emit_program(&concrete_program);
 
