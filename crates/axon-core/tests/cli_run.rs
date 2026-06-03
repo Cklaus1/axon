@@ -1209,6 +1209,23 @@ fn goal_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn principal_mint_stdlib_module_tests_pass() {
+    // Tier-1 capability-minting userland module: the `capability_minter` TCB
+    // component at the userland layer (ROADMAP §6 row 7), realizing the hard
+    // half of invariant I-12 — a minted sub-Principal can never hold a
+    // capability or budget its parent lacks. Attenuation is enforced BY
+    // CONSTRUCTION in `mint` (child cap = want_X && parent.X; grant clamped to
+    // parent remaining and debited). 8 @[test] cases cover: subset mint; cap
+    // escalation is impossible; budget carved from parent; over-grant clamped;
+    // a root→child→grandchild chain stays attenuated; a no-cap root mints only
+    // no-cap children; the can_mint gate; the authorize action gate.
+    let out = axon().args(["test", &ex("stdlib/principal_mint.ax")]).output().unwrap();
+    assert!(out.status.success(), "principal_mint.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets

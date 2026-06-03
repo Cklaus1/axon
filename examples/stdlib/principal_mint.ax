@@ -1,0 +1,240 @@
+// Tier-1 stdlib: Principal minting with attenuation — the capability_minter TCB
+// component at the USERLAND layer. Realizes ROADMAP §6 row 7 ("A Principal can
+// mint a sub-Principal with a strict subset of capabilities + budget") and the
+// hard half of invariant I-12 ("self-modification cannot weaken the TCB — may
+// never grant itself a capability it didn't already hold").
+//
+// The safety property is ATTENUATION, enforced BY CONSTRUCTION in `mint`:
+//   • each child cap = (want_X && parent.X) — a child can hold C only if the
+//     parent holds C; escalation is unrepresentable, not merely rejected.
+//   • the child's budget is CARVED from the parent's remaining budget: the grant
+//     is clamped to what the parent has left, debited from the parent, and the
+//     child can never spend past it. The sum of live budgets stays bounded by
+//     the root cap — minting cannot manufacture authority.
+//
+// Self-contained: Budget is inlined from budget.ax (same move as goal.ax).
+//
+//   axon test examples/stdlib/principal_mint.ax   # run the @[test]s
+//   axon run  examples/stdlib/principal_mint.ax   # demo
+
+// ── Budget (inlined from budget.ax) ──────────────────────────────────────────
+type Budget = { used: i64, cap: i64 }
+
+fn budget_new(cap: i64) -> Budget { Budget { used: 0, cap: cap } }
+fn budget_spend(b: Budget, amount: i64) -> Budget { Budget { used: b.used + amount, cap: b.cap } }
+fn budget_remaining(b: Budget) -> i64 { let r = b.cap - b.used  if r < 0 { 0 } else { r } }
+fn budget_exhausted(b: Budget) -> bool { b.used >= b.cap }
+
+// ── Principal ────────────────────────────────────────────────────────────────
+// Capabilities (net/fs_write/exec) and a budget travel together. `parent` is the
+// name of the minting principal ("-" for a root), kept for audit lineage.
+type Principal = {
+    name: str,
+    parent: str,
+    net: bool,
+    fs_write: bool,
+    exec: bool,
+    budget: Budget,
+}
+
+// A root Principal: the originating authority. Holds exactly the caps it is given
+// and the full budget. Everything below it can only attenuate from here.
+fn root(name: str, net: bool, fs_write: bool, exec: bool, budget_cap: i64) -> Principal {
+    Principal {
+        name: name, parent: "-",
+        net: net, fs_write: fs_write, exec: exec,
+        budget: budget_new(budget_cap),
+    }
+}
+
+// ── Accessors / predicates ───────────────────────────────────────────────────
+fn p_budget_remaining(p: Principal) -> i64 { budget_remaining(p.budget) }
+
+// Does `p` hold the named capability? Unknown names answer false (deny by default).
+fn holds(p: Principal, cap: str) -> bool {
+    if str_eq(cap, "net") { p.net }
+    else if str_eq(cap, "fs_write") { p.fs_write }
+    else if str_eq(cap, "exec") { p.exec }
+    else { false }
+}
+
+// Whether `p` could mint a child wanting these caps + this budget at all — i.e.
+// it holds every requested cap and has at least 1 unit of budget left to carve.
+// (mint() is total and still safe without this; can_mint is the explicit gate.)
+fn can_mint(p: Principal, want_net: bool, want_fs_write: bool, want_exec: bool, budget_grant: i64) -> bool {
+    let caps_ok = (!want_net || p.net) && (!want_fs_write || p.fs_write) && (!want_exec || p.exec)
+    let budget_ok = budget_grant > 0 && p_budget_remaining(p) > 0
+    caps_ok && budget_ok
+}
+
+// ── MINT — the attenuating constructor ───────────────────────────────────────
+// Returns (updated_parent_with_debited_budget, child). ATTENUATION is enforced
+// here by construction:
+//   • child cap_X = want_X && parent.X      → never more than the parent holds
+//   • grant      = clamp(budget_grant, 0, parent_remaining)  → never over-grant
+//   • parent.budget.used += grant            → the grant is carved, not conjured
+fn mint(
+    parent: Principal,
+    child_name: str,
+    want_net: bool,
+    want_fs_write: bool,
+    want_exec: bool,
+    budget_grant: i64,
+) -> (Principal, Principal) {
+    let c_net = want_net && parent.net
+    let c_fs = want_fs_write && parent.fs_write
+    let c_exec = want_exec && parent.exec
+    let grant = min_i64(max_i64(budget_grant, 0), p_budget_remaining(parent))
+    let new_parent = Principal {
+        name: parent.name, parent: parent.parent,
+        net: parent.net, fs_write: parent.fs_write, exec: parent.exec,
+        budget: budget_spend(parent.budget, grant),
+    }
+    let child = Principal {
+        name: child_name, parent: parent.name,
+        net: c_net, fs_write: c_fs, exec: c_exec,
+        budget: budget_new(grant),
+    }
+    (new_parent, child)
+}
+
+// ── Spend on a Principal ─────────────────────────────────────────────────────
+// Debit `amount` from the principal's own budget, returning the updated principal.
+// Caps are untouched; only its carved budget can be consumed.
+fn p_spend(p: Principal, amount: i64) -> Principal {
+    Principal {
+        name: p.name, parent: p.parent,
+        net: p.net, fs_write: p.fs_write, exec: p.exec,
+        budget: budget_spend(p.budget, amount),
+    }
+}
+
+// ── Authorization gate ───────────────────────────────────────────────────────
+// An action declaring which caps it needs is authorized only if `p` holds every
+// one of them AND still has budget headroom. Mirrors agent.ax `authorized`.
+fn authorize(p: Principal, needs_net: bool, needs_fs_write: bool, needs_exec: bool) -> bool {
+    let caps = (!needs_net || p.net) && (!needs_fs_write || p.fs_write) && (!needs_exec || p.exec)
+    caps && !budget_exhausted(p.budget)
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+@[test]
+fn test_mint_subset_works() {
+    // A full-cap root mints a child asking for a strict subset; the child gets
+    // exactly the subset and a carved budget.
+    let r = root("root", true, true, true, 100)
+    let (_r2, c) = mint(r, "child", true, false, true, 40)
+    assert(c.net)
+    assert(!c.fs_write)
+    assert(c.exec)
+    assert_eq(c.budget.cap, 40)
+    assert_eq_str(c.parent, "root")
+}
+
+@[test]
+fn test_mint_cannot_escalate_caps() {
+    // Parent lacks net. Child requests net → child does NOT get net. Escalation
+    // is impossible by construction (want_net && parent.net == false).
+    let r = root("root", false, true, false, 100)
+    let (_r2, c) = mint(r, "child", true, true, true, 30)
+    assert(!c.net)        // requested but denied — parent had no net
+    assert(c.fs_write)    // requested and parent held it
+    assert(!c.exec)       // requested but denied — parent had no exec
+    assert(!holds(c, "net"))
+}
+
+@[test]
+fn test_budget_is_carved_from_parent() {
+    // The grant is debited from the parent and capped in the child; the two
+    // live budgets sum to no more than the original (carve, not conjure).
+    let r = root("root", true, false, false, 100)
+    let (r2, c) = mint(r, "child", true, false, false, 40)
+    assert_eq(p_budget_remaining(r2), 60)   // parent debited by exactly 40
+    assert_eq(c.budget.cap, 40)             // child capped at the grant
+    assert_eq(c.budget.used, 0)
+    // child can spend up to the grant but no further
+    let c2 = p_spend(c, 40)
+    assert(budget_exhausted(c2.budget))
+    assert_eq(budget_remaining(c2.budget), 0)
+    // remaining child budget + remaining parent budget <= original root cap
+    assert(budget_remaining(c.budget) + p_budget_remaining(r2) <= 100)
+}
+
+@[test]
+fn test_overgrant_is_clamped_to_parent_remaining() {
+    // Root with only 50 left is asked to grant 200 → clamped to 50; parent
+    // drops to 0, child capped at 50. Authority cannot be manufactured.
+    let r = root("root", true, true, true, 50)
+    let (r2, c) = mint(r, "greedy", true, true, true, 200)
+    assert_eq(c.budget.cap, 50)
+    assert_eq(p_budget_remaining(r2), 0)
+}
+
+@[test]
+fn test_chain_stays_attenuated() {
+    // root(net,fs,exec) → child(net,fs) → grandchild(net). At each hop a cap can
+    // only be dropped, never regained: grandchild ⊆ child ⊆ root. The grandchild
+    // re-requesting exec/fs gets neither, because the middle child never held them.
+    let r = root("root", true, true, true, 100)
+    let (_r2, c) = mint(r, "child", true, true, false, 60)
+    assert(c.net && c.fs_write && !c.exec)
+    let (_c2, g) = mint(c, "grand", true, true, true, 30)
+    assert(g.net)        // child had net
+    assert(g.fs_write)   // child had fs
+    assert(!g.exec)      // child never had exec → grandchild can't get it
+    assert_eq(g.budget.cap, 30)   // budget attenuates too
+}
+
+@[test]
+fn test_no_cap_root_mints_only_no_cap_children() {
+    // A sandboxed root holds nothing; every child it mints — whatever it asks —
+    // holds nothing. The floor is sealed.
+    let r = root("sandbox", false, false, false, 100)
+    let (_r2, c) = mint(r, "child", true, true, true, 50)
+    assert(!c.net)
+    assert(!c.fs_write)
+    assert(!c.exec)
+    assert(!holds(c, "net") && !holds(c, "fs_write") && !holds(c, "exec"))
+}
+
+@[test]
+fn test_can_mint_gate() {
+    // can_mint reflects whether mint would actually grant anything: true when the
+    // parent holds the requested caps and has budget, false when it lacks a cap.
+    let r = root("root", true, false, false, 100)
+    assert(can_mint(r, true, false, false, 10))    // wants net, has net, has budget
+    assert(!can_mint(r, true, true, false, 10))    // wants fs_write, lacks it
+    let drained = p_spend(r, 100)
+    assert(!can_mint(drained, true, false, false, 10))  // no budget left
+}
+
+@[test]
+fn test_authorize_requires_caps_and_budget() {
+    // The action gate: needs net → must hold net AND not be budget-exhausted.
+    let r = root("root", true, false, false, 100)
+    assert(authorize(r, true, false, false))     // has net, has budget
+    assert(!authorize(r, false, true, false))    // needs fs_write, lacks it
+    let drained = p_spend(r, 100)
+    assert(!authorize(drained, true, false, false))  // budget exhausted → denied
+}
+
+fn main() {
+    // Demo: a full-authority root delegates a strict subset to a worker, which
+    // re-delegates a still-smaller subset to a sub-task. Authority only shrinks.
+    let r = root("orchestrator", true, true, true, 1000)
+    let (r2, worker) = mint(r, "fetch-worker", true, false, false, 300)
+    let wn = to_str(worker.net)
+    let wf = to_str(worker.fs_write)
+    let we = to_str(worker.exec)
+    let wb = to_str(worker.budget.cap)
+    println("worker caps: net={wn} fs={wf} exec={we}, budget={wb}")
+    let rem = to_str(p_budget_remaining(r2))
+    println("orchestrator budget left: {rem}")
+    let (_w2, sub) = mint(worker, "fetch-sub", true, true, true, 500)
+    let sn = to_str(sub.net)
+    let sf = to_str(sub.fs_write)
+    let se = to_str(sub.exec)
+    let sb = to_str(sub.budget.cap)
+    println("sub caps: net={sn} fs={sf} exec={se} (fs/exec denied — worker never held them)")
+    println("sub budget: {sb} (clamped to worker's 300)")
+}

@@ -203,7 +203,7 @@ When this works end-to-end, Axon is real.
 | `Goal<M>` | metric M, constraints, budget, principal | 1 | *(userland landed: `examples/stdlib/goal.ax` — a first-class Goal **value** bundling metric+target+Budget+Constraint, met only when target reached AND hard guard holds; kernel `Goal<M>` with SMT-checked constraints is Phase-7)* |
 | `Constraint` | `Invariant(pred)` \| `Forbidden(pred)` | 1 |
 | `Budget<R...>` | extensible cost over resource set R | 1 |
-| `Principal` | id, parent, capabilities, audit_log, mintable_subset | 1 |
+| `Principal` | id, parent, capabilities, audit_log, mintable_subset | 1 | *(userland minting landed: `examples/stdlib/principal_mint.ax` — `mint` carves a strict capability+budget subset BY CONSTRUCTION (`want_X && parent.X`, budget clamped+debited), realizing I-12 at the delegation edge; the `capability_minter` TCB component. Kernel `Principal<Caps>` with SMT-proven subset relation is Phase-7. Spec: `governance/specs/R11-capability-minting.md`.)* |
 | `Effect` | row-polymorphic effect tag | 1 |
 | `Refinement` | `T where pred` | 1 (kernel-level via Phase 5) |
 | `Source` | `Constant \| User \| AI \| Net \| System` | 1 |
@@ -238,7 +238,7 @@ TCB = {
     smt_solver,                // Phase 5 (Z3)
     effect_enforcer,           // Phase 6
     principal_authority,       // Phase 7
-    capability_minter,         // Phase 7
+    capability_minter,         // Phase 7 — userland realization landed (principal_mint.ax: attenuation by construction)
     cost_meter,                // Phase 7
     scheduler,                 // Phase 7
     supervisor_root,           // Phase 7
