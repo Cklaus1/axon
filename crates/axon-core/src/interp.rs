@@ -238,6 +238,12 @@ pub struct Interp<'p> {
     /// to enforce `@[ai(policy(budget: N))]`. Reset on entry to `call_fn`,
     /// restored on exit (so the budget is per-activation, not global).
     ai_calls_this_fn: Cell<u64>,
+    /// Phase-7 `cost_meter` / F4: cumulative AI spend across the whole run, in
+    /// integer micro-dollars (µ$). Every `ai_complete` adds `tier.cost_micro(est
+    /// tokens)` — the real per-token cost, stamped into the `ai_call` provenance
+    /// (replacing the hardcoded 0). Read by the `ai_cost_spent()` builtin. This
+    /// is per-TOKEN cost, distinct from R3c's per-CALL-count budget.
+    ai_cost_micro: Cell<i64>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -770,6 +776,7 @@ impl<'p> Interp<'p> {
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
+            ai_cost_micro: Cell::new(0),
         }
     }
 
@@ -4267,6 +4274,18 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(n as i64));
             }
 
+            // `ai_cost_spent() -> i64` — Phase-7 cost_meter / F4: the cumulative
+            // AI spend so far this run, in integer micro-dollars (µ$). Every
+            // dispatched `ai_complete` (mock or live) adds its per-token cost
+            // (`tier.cost_micro(est_tokens)`); a fallback (no model reached)
+            // adds nothing. This is the kernel cost meter that the userland
+            // `llm_gateway.ax` modeled — a program can read its real spend and
+            // gate on a cost budget, distinct from R3c's per-call-count budget.
+            "ai_cost_spent" => {
+                want(0)?;
+                ok!(Value::Int(self.ai_cost_micro.get()));
+            }
+
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).
             "goal_eval" => {
                 want(2)?;
@@ -4892,6 +4911,17 @@ impl<'p> Interp<'p> {
                 let tier = self.current_ai_tier()?;
                 let tier_name = tier.as_str();
                 let (model_id, model_ver) = tier.model();
+                // Phase-7 cost_meter / F4: estimate the call's tokens
+                // deterministically from the prompt length (~4 chars/token, a
+                // standard rule of thumb, +1 so an empty prompt still costs a
+                // token) and compute the real per-token cost at this tier's
+                // rate. Deterministic ⇒ mock/offline runs meter the same as
+                // live. The meter is only CHARGED after the R3c budget gate
+                // below (an over-budget call that panics dispatches nothing, so
+                // it must not charge cost).
+                let est_tokens = (prompt.len() as i64) / 4 + 1;
+                let cost_micro = tier.cost_micro(est_tokens);
+                let cost_usd = cost_micro as f64 / 1_000_000.0;
                 // R3c: meter this call against the fn's @[ai(policy(budget: N))].
                 // The (N+1)th call halts with E1301 BEFORE any model dispatch
                 // (mock/live/fallback) and before the W1310 warning — an
@@ -4920,14 +4950,16 @@ impl<'p> Interp<'p> {
                     );
                 }
                 if ai_mock_enabled() {
-                    // Deterministic stub — but still a fully-stamped provenance
-                    // record (mode:"mock", cost 0) so the audit trail is honest
-                    // about what produced the value. The tier/model are the
-                    // RESOLVED routing, even in mock (the routing is real; only
-                    // the response is stubbed).
+                    // Deterministic stub — but a fully-stamped provenance record
+                    // (mode:"mock") with the REAL per-token cost charged to the
+                    // meter, so the audit trail and the cost budget are honest
+                    // about what a call costs even under mock. The tier/model are
+                    // the RESOLVED routing (the routing is real; only the
+                    // response is stubbed), so the cost is the routing's cost.
+                    self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "mock", "", 0.0,
+                        "mock", "", cost_usd,
                     );
                     ok!(Value::Ok(Box::new(Value::Str(
                         "Mock summary: the single most important fact, stated concisely.".to_string()
@@ -4935,13 +4967,14 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    // Metered cost is the budget slice (R3 §6 E1301, Phase-7); for
-                    // now the live record pins the routed model and leaves cost 0.
+                    // Live call: charge the per-token cost to the meter and stamp
+                    // it into the provenance (Phase-7 cost_meter / F4 — was 0).
                     ok!(match axon_ai::complete(&prompt) {
                         Ok(s) => {
+                            self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                             append_ai_call_jsonl(
                                 &caller, &prompt, tier_name, model_id, model_ver,
-                                params, "live", "", 0.0,
+                                params, "live", "", cost_usd,
                             );
                             Value::Ok(Box::new(Value::Str(s)))
                         }
@@ -4957,6 +4990,10 @@ impl<'p> Interp<'p> {
                     // fallback in scope this is E1300, not a generic panic: a
                     // program that wants to run offline MUST declare a fallback.
                     if let Some(fallback) = self.current_ai_fallback() {
+                        // Fallback: NO model was reached, so NO cost is charged
+                        // (cost_usd stays the unused estimate; the record is 0).
+                        // The cost meter only reflects calls that actually
+                        // dispatched to a (mock or live) model.
                         append_ai_call_jsonl(
                             &caller, &prompt, tier_name, "none", "offline", params,
                             "fallback", "offline: no model reachable", 0.0,

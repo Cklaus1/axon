@@ -2964,13 +2964,51 @@ fn main() -> i64 {
     let rec = ai_calls[0];
     assert!(rec.contains("\"mode\":\"mock\""), "mock mode must be stamped: {rec}");
     assert!(rec.contains("\"prompt_hash\":\""), "prompt_hash (SHA-256) required: {rec}");
-    assert!(rec.contains("\"cost_usd\":0"), "mock cost must be 0: {rec}");
+    // Phase-7 cost_meter / F4: the record now carries the REAL per-token cost
+    // (was hardcoded 0). The prompt is 21 chars → ~6 tokens at the default
+    // balanced tier (3000 µ$/1k) → 18 µ$ = 0.000018 USD.
+    assert!(rec.contains("\"cost_usd\":0.000018"), "real per-token cost must be stamped: {rec}");
     assert!(rec.contains("\"fn\":\"ask\""), "calling fn attributed: {rec}");
     // The prompt_hash must be the SHA-256 of the exact prompt sent — stable,
     // and NOT the prompt verbatim (no PII leak).
     assert!(
         !rec.contains("hello world"),
         "the prompt must not be logged verbatim, only its hash: {rec}"
+    );
+}
+
+#[test]
+fn ai_cost_meter_accumulates_real_per_token_cost() {
+    // Phase-7 cost_meter / F4 (kernel llm_gateway): every dispatched ai_complete
+    // charges its real per-token cost (tier rate × est tokens) to a run-global
+    // meter, readable via ai_cost_spent(). A `strong`-tier call on the same
+    // prompt costs strictly more than a `cheap`-tier one (tier cost is
+    // monotonic), and the meter is the running sum. Deterministic under mock.
+    let prog = r#"
+@[ai(policy(tier: cheap))]
+fn cheap() -> str { match ai_complete("Summarize the distributed systems doc") { Ok(s) => s  Err(_) => "" } }
+@[ai(policy(tier: strong))]
+fn strong() -> str { match ai_complete("Summarize the distributed systems doc") { Ok(s) => s  Err(_) => "" } }
+fn main() -> i64 {
+    let _ = cheap()
+    let a = ai_cost_spent()
+    let _ = strong()
+    let b = ai_cost_spent()
+    println("cheap_total={a}")
+    println("after_strong_total={b}")
+    if b > a { 0 } else { 1 }
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_cost_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "strong must cost more than cheap (b>a): {stdout}");
+    // The cheap total is nonzero (real cost, not the old hardcoded 0).
+    assert!(
+        stdout.contains("cheap_total=") && !stdout.contains("cheap_total=0\n"),
+        "the cost meter must accumulate a nonzero cheap-tier cost: {stdout}"
     );
 }
 

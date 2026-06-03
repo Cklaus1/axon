@@ -965,6 +965,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Number of provenance entries recorded for an @[adaptive] fn. Equivalent to `len(goal_history(name))` but O(1) — avoids materializing the trace just to count it. Returns 0 if the fn has no recorded calls.",
     },
     BuiltinFn {
+        name: "ai_cost_spent",
+        params: &[],
+        ret: "i64",
+        doc: "Phase-7 cost_meter / F4: cumulative AI spend so far this run, in integer micro-dollars (µ$). Every dispatched `ai_complete` (mock or live) adds its per-token cost (tier rate × estimated tokens); an offline fallback adds nothing. The kernel cost meter that `llm_gateway.ax` modeled — read it to gate on a real cost budget (distinct from R3c's per-call-count `@[ai(policy(budget:N))]`). Deterministic, so it works under AXON_AI_MOCK.",
+    },
+    BuiltinFn {
         name: "goal_eval",
         params: &[("name", "str"), ("input", "i64")],
         ret: "f64",

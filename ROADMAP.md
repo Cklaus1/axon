@@ -239,7 +239,7 @@ TCB = {
     effect_enforcer,           // Phase 6
     principal_authority,       // Phase 7
     capability_minter,         // Phase 7 — userland realization landed (principal_mint.ax: attenuation by construction)
-    cost_meter,                // Phase 7
+    cost_meter,                // Phase 7 — kernel meter landed (interp charges real per-token cost_usd; ai_cost_spent() builtin)
     scheduler,                 // Phase 7
     supervisor_root,           // Phase 7 — userland OTP strategies landed (supervisor_tree.ax: one_for_one/one_for_all/rest_for_one + intensity backoff)
     llm_gateway,               // Phase 7 — userland realization landed (llm_gateway.ax: per-token cost meter + graceful fallback-on-overrun)
@@ -522,7 +522,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **closed for i64^N and f64^N**. The interpreter coordinate-descends over either all-i64 or all-f64 param lists; `goal_best_inputs(name, target) -> [i64]` / `goal_best_inputs_f64 -> [f64]` return the respective full input tuples. Mixed i64/f64 signatures and string / categorical domains still wait on Phase 8 strategy parameter. | 8 | Done for homogeneous numeric. |
 | F2 | `ai_complete` is non-deterministic; `axon trace replay` cannot reproduce a run | 9 | Without this, every "auditable" claim is weaker than advertised. Replay engine + seed capture + LLM-call memoization. |
 | F3 | Provenance log is flat NDJSON `(fn_name, score)` — no Principal, no effect row, no causal link to the goal that triggered the call | 7 + 9 | Typed `AuditEvent` per effect; Principal-tagged; queryable as a stream. |
-| F4 | ~~No budget meter — token cost per `ai_complete` call is invisible~~ — **call-budget landed** (R3c): `@[ai(policy(budget: N))]` meters per-call-count, halts the (N+1)th with E1301. **Per-token cost meter landed (userland)**: `llm_gateway.ax`'s `LLM<Caps>` value meters `cost = rate × tokens` on every mediated call and degrades to its fallback on overrun. The remaining gap is wiring this to the *live* `ai_complete` token accounting (kernel `llm_gateway`). | 7 | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`, halts on overrun. **Call-count meter (R3c) + userland per-token cost meter (llm_gateway.ax) done; live token wiring = kernel Phase-7.** |
+| F4 | ~~No budget meter — token cost per `ai_complete` call is invisible~~ — **CLOSED (kernel cost_meter landed).** R3c metered per-call-count (E1301); `llm_gateway.ax` modeled per-token cost in userland; **now the KERNEL interpreter meters it**: every dispatched `ai_complete` charges `tier.cost_micro(est_tokens)` (`ai_routing::Tier::rate_micro`, cheap<balanced<strong) to a run-global meter, stamps the REAL `cost_usd` into the `ai_call` provenance (was hardcoded 0), and exposes the running total via the `ai_cost_spent() -> i64` (µ$) builtin. Deterministic ⇒ works under mock. | ✅ | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`. **Call-count meter (R3c) + per-token kernel cost meter (cost_usd real, ai_cost_spent) done; only the *live* token-count-from-model-response remains (uses a deterministic length estimate today).** |
 | F5 | No runtime sandbox for AI-emitted plans — `@[contained]` is static only | 9 | `Sandbox<P>` enforces effect rows at runtime for tool execution. |
 
 ### Soft (workable today, ergonomically wrong)

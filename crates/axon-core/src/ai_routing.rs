@@ -63,6 +63,28 @@ impl Tier {
     pub fn configured() -> &'static str {
         "cheap, balanced, strong"
     }
+
+    /// Phase-7 `cost_meter` / F4: the per-token cost RATE for this tier, in
+    /// integer micro-dollars (µ$) per 1000 tokens. Integer µ$ keeps the cost
+    /// arithmetic exact and deterministic (no f64 in the meter). Like
+    /// [`Self::model`], these are illustrative host defaults a real deployment
+    /// overrides via config; the language guarantees only that the *tier* is
+    /// stable and that `cheap < balanced < strong` in cost (stronger models cost
+    /// more), so a cost budget behaves monotonically across tiers.
+    pub fn rate_micro(self) -> i64 {
+        match self {
+            Tier::Cheap => 250,      // µ$ / 1k tokens  (e.g. haiku-class)
+            Tier::Balanced => 3000,  // µ$ / 1k tokens  (e.g. sonnet-class)
+            Tier::Strong => 15000,   // µ$ / 1k tokens  (e.g. opus-class)
+        }
+    }
+
+    /// µ$ cost of a call estimated at `tokens` tokens at this tier's rate.
+    /// `rate_micro` is per 1000 tokens; negative token counts clamp to 0.
+    pub fn cost_micro(self, tokens: i64) -> i64 {
+        let t = if tokens < 0 { 0 } else { tokens };
+        self.rate_micro() * t / 1000
+    }
 }
 
 #[cfg(test)]
@@ -96,5 +118,22 @@ mod tests {
     fn default_tier_is_balanced() {
         assert_eq!(DEFAULT_TIER, Tier::Balanced);
         assert_eq!(DEFAULT_TIER.as_str(), "balanced");
+    }
+
+    #[test]
+    fn cost_rates_are_monotonic_by_tier() {
+        // cheap < balanced < strong — a cost budget behaves monotonically.
+        assert!(Tier::Cheap.rate_micro() < Tier::Balanced.rate_micro());
+        assert!(Tier::Balanced.rate_micro() < Tier::Strong.rate_micro());
+    }
+
+    #[test]
+    fn cost_micro_scales_with_tokens() {
+        // 2000 tokens costs 2× 1000 tokens at the same tier.
+        assert_eq!(Tier::Cheap.cost_micro(2000), Tier::Cheap.cost_micro(1000) * 2);
+        // Balanced rate 3000 µ$/1k → 1000 tokens = 3000 µ$.
+        assert_eq!(Tier::Balanced.cost_micro(1000), 3000);
+        // Negative clamps to 0.
+        assert_eq!(Tier::Strong.cost_micro(-5), 0);
     }
 }
