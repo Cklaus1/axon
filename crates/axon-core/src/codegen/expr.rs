@@ -1867,6 +1867,77 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // Bitwise / shift builtins — had NO codegen lowering, so native silently
+        // returned 0 (a real native↔interp divergence). They are trivial integer
+        // ops, lowered INLINE here. Semantics match the interpreter (interp.rs):
+        // bit_and/or/xor → a&b / a|b / a^b ; bit_not → ~n ; shl/shr → wrapping
+        // left / ARITHMETIC right shift (i64 is signed). The interpreter is I-2.
+        if let ast::Expr::Ident(name) = callee {
+            let bin = |s: &str| -> bool { name == s && args.len() == 2 };
+            if bin("bit_and") || bin("bit_or") || bin("bit_xor") || bin("shl") || bin("shr") {
+                let a = self.emit_expr(&args[0], fn_val)?.into_int_value();
+                let b = self.emit_expr(&args[1], fn_val)?.into_int_value();
+                let r = match name.as_str() {
+                    "bit_and" => build_wrappers::w_and(&self.ir.builder, a, b, "band"),
+                    "bit_or"  => build_wrappers::w_or(&self.ir.builder, a, b, "bor"),
+                    "bit_xor" => build_wrappers::w_xor(&self.ir.builder, a, b, "bxor"),
+                    "shl"     => build_wrappers::w_left_shift(&self.ir.builder, a, b, "shl"),
+                    // i64 is signed → arithmetic shift right (asr=true), matching
+                    // the interpreter's `wrapping_shr` on i64.
+                    "shr"     => build_wrappers::w_right_shift(&self.ir.builder, a, b, true, "shr"),
+                    _ => unreachable!(),
+                };
+                return Some(r.into());
+            }
+            if name == "bit_not" && args.len() == 1 {
+                let a = self.emit_expr(&args[0], fn_val)?.into_int_value();
+                return Some(build_wrappers::w_not(&self.ir.builder, a, "bnot").into());
+            }
+        }
+
+        // Polymorphic numeric casts as_i64 / as_f64 — like to_str, the
+        // interpreter dispatches on the runtime value, so codegen dispatches on
+        // the arg's LLVM type at the CALL SITE. Without a lowering native
+        // returned 0 (silent divergence). Semantics (interp.rs): as_i64 accepts
+        // i64 (identity), f64 (truncating), bool (0/1); as_f64 accepts i64/f64/
+        // bool → f64. i1(bool) is sign-irrelevant (0/1) so zero-extend to i64.
+        if let ast::Expr::Ident(name) = callee {
+            if (name == "as_i64" || name == "as_f64") && args.len() == 1 {
+                let v = self.emit_expr(&args[0], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let f64_ty = self.ir.context.f64_type();
+                if name == "as_i64" {
+                    let out = match v {
+                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() == 64 => iv,
+                        // bool / narrow int → zero-extend (bool is 0/1).
+                        BasicValueEnum::IntValue(iv) => {
+                            build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "as_i64_zext")
+                        }
+                        BasicValueEnum::FloatValue(fv) => {
+                            build_wrappers::w_float_to_signed_int(&self.ir.builder, fv, i64_ty, "as_i64_ftoi")
+                        }
+                        _ => return None,
+                    };
+                    return Some(out.into());
+                } else {
+                    let out = match v {
+                        BasicValueEnum::FloatValue(fv) => fv,
+                        // i64 / bool → signed-int-to-float (bool 0/1 widens fine).
+                        BasicValueEnum::IntValue(iv) => {
+                            let widened = if iv.get_type().get_bit_width() < 64 {
+                                build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "as_f64_zext")
+                            } else {
+                                iv
+                            };
+                            build_wrappers::w_signed_int_to_float(&self.ir.builder, widened, f64_ty, "as_f64_itof")
+                        }
+                        _ => return None,
+                    };
+                    return Some(out.into());
+                }
+            }
+        }
+
         // Resolve the callee to an LLVM FunctionValue (direct call).
         let fn_v = maybe_fn_v?;
 

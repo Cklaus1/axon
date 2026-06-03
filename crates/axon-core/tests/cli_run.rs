@@ -1660,6 +1660,28 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
 }
 
 #[test]
+fn codegen_bitwise_and_casts_match_interp() {
+    // bit_and/bit_or/bit_xor/bit_not/shl/shr and the polymorphic casts
+    // as_i64/as_f64 had NO codegen lowering — native silently returned 0 (real
+    // native↔interp divergence on simple, common builtins). Now lowered inline
+    // in emit_call. Harness asserts native==interp. Skips when codegen absent.
+    let script = format!("{}/../../scripts/bitwise_cast_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("bitwise_cast_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run bitwise_cast_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — bitwise/cast parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "native bitwise/cast builtins must match interp:\n{stdout}{stderr}");
+    assert!(stdout.contains("bitwise_cast_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:
