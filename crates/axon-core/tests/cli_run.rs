@@ -4820,6 +4820,46 @@ fn main() -> i64 { println(to_str(opt()))  0 }
 }
 
 #[test]
+fn goal_strategy_attribute_dispatches_all_five() {
+    // R5 (PRD L889-899): `#[goal(strategy: …)]` selects the search strategy.
+    // All five (hill_climb default, random, multistart, tournament, bayesian)
+    // optimize the same metric (peak 100 at x=7) and reach the target → met=1.
+    for strat in ["hill_climb", "random", "multistart", "tournament", "bayesian"] {
+        let src = format!(
+            "@[adaptive]\n\
+             fn score(x: i64) -> i64 {{ 100 - (x - 7) * (x - 7) }}\n\
+             @[goal(metric: score, target: 90, strategy: {strat}, lo: 0, hi: 20, max_evals: 40)]\n\
+             fn optimize() -> i64 {{ goal_met }}\n\
+             fn main() -> i64 {{ println(to_str(optimize()))  0 }}\n"
+        );
+        let f = std::env::temp_dir().join(format!("goal_strat_{strat}_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "{strat} should run clean: {:?}", out);
+        assert_eq!(stdout.trim(), "1", "strategy `{strat}` must reach the target (goal_met=1): {stdout:?}");
+    }
+}
+
+#[test]
+fn goal_unknown_strategy_is_e1505() {
+    // R5: an unknown `strategy:` is rejected at check (E1505), before any run.
+    let src = "@[adaptive]\n\
+        fn score(x: i64) -> i64 { 100 - (x - 7) * (x - 7) }\n\
+        @[goal(metric: score, target: 90, strategy: quantum)]\n\
+        fn optimize() -> i64 { goal_met }\n\
+        fn main() -> i64 { optimize() }\n";
+    let f = std::env::temp_dir().join(format!("goal_strat_bad_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1505"), "unknown strategy must be E1505: {all}");
+    assert!(all.contains("quantum"), "the error should name the bad strategy: {all}");
+}
+
+#[test]
 fn goal_test_set_non_integer_element_is_e1503() {
     // R5: a `test_set` with a non-integer element is rejected at check (E1503).
     let src = "@[adaptive]\nfn q(x: i64) -> i64 { x }\n@[goal(metric: q, target: 5, test_set: [3, foo])]\nfn opt() -> i64 { goal_met }\nfn main() -> i64 { opt() }\n";

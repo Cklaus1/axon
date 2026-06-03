@@ -1006,19 +1006,41 @@ impl<'p> Interp<'p> {
         // overfitting one point. With no held-out set, fall back to the best
         // observed training score.
         let mut goal_met: i64 = 0;
-        if let Some((metric, target, max_evals, holdout_set)) = self.goal_spec_of(f) {
-            let _ = self.run_goal(&metric, target, max_evals)?;
-            let s = if holdout_set.is_empty() {
-                self.best_observed(&metric, target, 0)
+        if let Some(spec) = self.goal_spec_of(f) {
+            // Dispatch on the selected strategy (PRD L889-899). All run the
+            // metric and accumulate provenance the same way; they differ only in
+            // HOW they explore. The held-out gate below is strategy-agnostic.
+            let me = spec.max_evals;
+            match spec.strategy {
+                GoalStrategy::HillClimb => {
+                    let _ = self.run_goal(&spec.metric, spec.target, me)?;
+                }
+                GoalStrategy::Random => {
+                    let _ = self.run_goal_random(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi)?;
+                }
+                GoalStrategy::Multistart => {
+                    let (starts, per) = split_budget(me);
+                    let _ = self.run_goal_multistart(&spec.metric, spec.target, starts, per, spec.lo, spec.hi)?;
+                }
+                GoalStrategy::Tournament => {
+                    let _ = self.run_goal_tournament(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi, false)?;
+                }
+                GoalStrategy::Bayesian => {
+                    // Exploit-biased tournament (single elite + heavy refine).
+                    let _ = self.run_goal_tournament(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi, true)?;
+                }
+            }
+            let s = if spec.holdout_set.is_empty() {
+                self.best_observed(&spec.metric, spec.target, 0)
             } else {
                 let mut worst = f64::INFINITY;
-                for h in &holdout_set {
-                    let score = self.goal_eval_holdout(&metric, *h)?;
+                for h in &spec.holdout_set {
+                    let score = self.goal_eval_holdout(&spec.metric, *h)?;
                     if score < worst { worst = score; }
                 }
                 worst
             };
-            goal_met = if s >= target { 1i64 } else { 0i64 };
+            goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
         env.define("goal_met".into(), Value::Int(goal_met));
         let result = match self.eval(&f.body, &mut env) {
@@ -1406,6 +1428,128 @@ impl<'p> Interp<'p> {
             }
             s += 1;
         }
+        if best_score.is_nan() {
+            best_score = target;
+        }
+        Ok(best_score)
+    }
+
+    /// Tournament / evolutionary strategy (PRD L889-893): sample a population in
+    /// `[lo, hi)`, score each, keep the top-K elites, then breed the next
+    /// generation by mutating around the elites (Gaussian-ish integer jitter
+    /// that shrinks each generation), repeating until the budget is spent.
+    /// Direction-agnostic: returns the score closest to `target`. Each eval
+    /// flows through `call_fn`, so provenance accumulates exactly like the other
+    /// strategies. `exploit` (the `bayesian` mapping) keeps a SINGLE elite and
+    /// spends the budget refining its basin — the honest exploit-heavy
+    /// approximation of a surrogate search (no GP model is built).
+    fn run_goal_tournament(
+        &self,
+        name: &str,
+        target: f64,
+        max_evals: i64,
+        lo: i64,
+        hi: i64,
+        exploit: bool,
+    ) -> Result<f64, Flow> {
+        if hi <= lo {
+            return panic(format!(
+                "goal tournament: hi ({hi}) must be greater than lo ({lo})"
+            ));
+        }
+        let f = match self.fns.get(name) {
+            Some(f) => *f,
+            None if self.provenance.borrow().contains_key(name) => {
+                return Ok(self.best_observed(name, target, 0));
+            }
+            None => return Err(Self::unknown_goal_name(name)),
+        };
+        let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+        let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
+        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        if !is_adaptive || !all_i64_params || !i64_ret {
+            return Ok(self.best_observed(name, target, 0));
+        }
+        let n_dims = f.params.len();
+        let range = (hi as i128 - lo as i128) as u128;
+
+        let eval = |probe: &[i64]| -> Result<f64, Flow> {
+            let args: Vec<Value> = probe.iter().map(|&x| Value::Int(x)).collect();
+            match self.call_fn(f, args)? {
+                Value::Int(n) => Ok(n as f64),
+                Value::Float(v) => Ok(v),
+                other => panic(format!(
+                    "@[adaptive] fn `{}` must return a number, got {}",
+                    f.name, other.type_name()
+                )),
+            }
+        };
+
+        // Population + elite sizing from the budget. exploit → 1 elite (refine).
+        let total = max_evals.max(1);
+        let pop: i64 = if exploit { 4 } else { 8 }.min(total.max(1));
+        let elites: usize = if exploit { 1 } else { 3 };
+        let mut best_score = f64::NAN;
+        let mut best_dist = f64::INFINITY;
+
+        // Generation 0: uniform random population.
+        let mut population: Vec<Vec<i64>> = (0..pop)
+            .map(|_| {
+                (0..n_dims)
+                    .map(|_| lo + (next_rand_u64() as u128 % range.max(1)) as i64)
+                    .collect()
+            })
+            .collect();
+
+        let mut spent: i64 = 0;
+        let mut step = (range / 4).max(1) as i64;
+        while spent < total {
+            // Score the population.
+            let mut scored: Vec<(f64, Vec<i64>)> = Vec::with_capacity(population.len());
+            for probe in &population {
+                if spent >= total {
+                    break;
+                }
+                let s = eval(probe)?;
+                spent += 1;
+                let d = (s - target).abs();
+                if d < best_dist {
+                    best_dist = d;
+                    best_score = s;
+                    if best_dist <= f64::EPSILON {
+                        return Ok(best_score);
+                    }
+                }
+                scored.push((d, probe.clone()));
+            }
+            if scored.is_empty() {
+                break;
+            }
+            // Keep the top-K closest to target (smallest distance).
+            scored.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+            scored.truncate(elites);
+
+            // Breed the next generation by mutating around the elites; shrink
+            // the mutation step each generation (coarse → fine).
+            let mut next: Vec<Vec<i64>> = Vec::with_capacity(pop as usize);
+            for (_, elite) in &scored {
+                next.push(elite.clone()); // carry the elite forward (elitism)
+            }
+            while (next.len() as i64) < pop {
+                let (_, parent) = &scored[(next_rand_u64() as usize) % scored.len()];
+                let child: Vec<i64> = parent
+                    .iter()
+                    .map(|&g| {
+                        let jitter = (next_rand_u64() as i64 % (2 * step + 1)) - step;
+                        (g + jitter).clamp(lo, hi - 1)
+                    })
+                    .collect();
+                next.push(child);
+            }
+            population = next;
+            step = (step / 2).max(1);
+        }
+
         if best_score.is_nan() {
             best_score = target;
         }
@@ -2065,12 +2209,15 @@ impl<'p> Interp<'p> {
     /// `holdout: N` (single point) and `test_set: [a, b, c]` (a set) both feed it;
     /// `test_set` is the R5 multi-point form, the parser renders `[a,b,c]` as the
     /// flat string `"a,b,c"` which we split here.
-    fn goal_spec_of(&self, f: &FnDef) -> Option<(String, f64, i64, Vec<i64>)> {
+    fn goal_spec_of(&self, f: &FnDef) -> Option<GoalSpec> {
         let goal_attr = f.attrs.iter().find(|a| a.name == "goal")?;
         let mut metric: Option<String> = None;
         let mut target: Option<f64> = None;
         let mut max_evals: i64 = 50;
         let mut holdout_set: Vec<i64> = Vec::new();
+        let mut strategy = GoalStrategy::HillClimb;
+        let mut lo: i64 = 0;
+        let mut hi: i64 = 100;
         for arg in &goal_attr.args {
             if let Some((k, v)) = arg.split_once(':') {
                 let k = k.trim().to_lowercase();
@@ -2101,12 +2248,32 @@ impl<'p> Interp<'p> {
                             }
                         }
                     }
+                    // R5 (PRD L889-899): the search strategy. `hill_climb`
+                    // (default), `random`, `multistart`, `tournament`, and
+                    // `bayesian` are the closed set; an unknown name is E1505
+                    // (validated by the checker). `random`/`multistart`/
+                    // `tournament`/`bayesian` search the `[lo, hi)` box (default
+                    // 0..100), overridable via `lo:`/`hi:`.
+                    "strategy" => {
+                        strategy = GoalStrategy::parse(v).unwrap_or(GoalStrategy::HillClimb);
+                    }
+                    "lo" => { if let Ok(n) = v.parse::<i64>() { lo = n; } }
+                    "hi" => { if let Ok(n) = v.parse::<i64>() { hi = n; } }
                     _ => {}
                 }
             }
         }
-        metric
-            .and_then(|m| target.map(|t| (m, t, max_evals, holdout_set)))
+        metric.and_then(|m| {
+            target.map(|t| GoalSpec {
+                metric: m,
+                target: t,
+                max_evals,
+                holdout_set,
+                strategy,
+                lo,
+                hi,
+            })
+        })
     }
 
     /// All i64 input dims that produced the score closest to `target` for an
@@ -5646,6 +5813,60 @@ fn numeric_score(v: &Value) -> Option<f64> {
         Value::Float(f) => Some(*f),
         _ => None,
     }
+}
+
+/// Split a total eval budget into (n_starts, evals_per_start) for multistart —
+/// roughly sqrt(N) starts so each gets a meaningful local refinement budget.
+fn split_budget(total: i64) -> (i64, i64) {
+    let t = total.max(1);
+    let starts = ((t as f64).sqrt().floor() as i64).max(2).min(t);
+    let per = (t / starts).max(1);
+    (starts, per)
+}
+
+/// The optimization strategy a `#[goal(strategy: …)]` selects (PRD L889-899).
+/// A closed set — an unknown name is E1505 (validated by the checker).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoalStrategy {
+    /// Gradient-style local search (the default). Maps to `run_goal`.
+    HillClimb,
+    /// Uniform random sampling of the `[lo, hi)` box. Maps to `run_goal_random`.
+    Random,
+    /// Random restarts + local refinement. Maps to `run_goal_multistart`.
+    Multistart,
+    /// Generational: sample a population, keep the top-K, mutate around them,
+    /// repeat. Good for multi-modal objectives. Maps to `run_goal_tournament`.
+    Tournament,
+    /// Exploit-biased search: multistart that spends most of its budget
+    /// refining the best basin found. (A true Gaussian-process surrogate is
+    /// out of v1 scope; this is the honest exploit-heavy approximation —
+    /// documented as such, never claimed to be a GP.) Maps to a tournament with
+    /// a single elite + heavy local refinement.
+    Bayesian,
+}
+
+impl GoalStrategy {
+    fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_lowercase().as_str() {
+            "hill_climb" | "hillclimb" => Some(GoalStrategy::HillClimb),
+            "random" => Some(GoalStrategy::Random),
+            "multistart" => Some(GoalStrategy::Multistart),
+            "tournament" => Some(GoalStrategy::Tournament),
+            "bayesian" => Some(GoalStrategy::Bayesian),
+            _ => None,
+        }
+    }
+}
+
+/// The parsed `#[goal(...)]` attribute (R5 sugar).
+struct GoalSpec {
+    metric: String,
+    target: f64,
+    max_evals: i64,
+    holdout_set: Vec<i64>,
+    strategy: GoalStrategy,
+    lo: i64,
+    hi: i64,
 }
 
 /// Build an `Uncertain { value, confidence }` struct value.

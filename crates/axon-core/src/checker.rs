@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::{levenshtein, E1500, E1503, E1504};
+use crate::error::{levenshtein, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -564,19 +564,31 @@ impl CheckCtx {
             // E1500: the metric must name an `@[adaptive]` fn.
             let mut metric_name: Option<String> = None;
             let mut all_numbers = true;
+            let mut bad_strategy: Option<String> = None;
             for arg in &goal_attr.args {
                 if let Some((k, v)) = arg.split_once(':') {
                     let k = k.trim().to_lowercase();
                     let v = v.trim();
                     match k.as_str() {
                         "metric" => metric_name = Some(v.to_string()),
-                        "target" | "max_evals" | "holdout" if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() => {
+                        "target" | "max_evals" | "holdout" | "lo" | "hi" if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() => {
                             all_numbers = false;
                         }
                         // R5: `test_set: [a, b, c]` (rendered `"a,b,c"`) — every
                         // element must parse as an integer.
                         "test_set" if v.split(',').any(|p| p.trim().parse::<i64>().is_err()) => {
                             all_numbers = false;
+                        }
+                        // R5 (PRD L889-899): `strategy:` must be one of the
+                        // closed set; an unknown name is E1505.
+                        "strategy" => {
+                            let known = matches!(
+                                v.to_lowercase().as_str(),
+                                "hill_climb" | "hillclimb" | "random" | "multistart" | "tournament" | "bayesian"
+                            );
+                            if !known {
+                                bad_strategy = Some(v.to_string());
+                            }
                         }
                         _ => {}
                     }
@@ -602,8 +614,21 @@ impl CheckCtx {
                 self.errors.push(
                     CheckError::new(
                         E1503,
-                        "`#[goal(...)]` — target/max_evals/holdout must be numeric values, and test_set must be a list of integers"
+                        "`#[goal(...)]` — target/max_evals/holdout/lo/hi must be numeric values, and test_set must be a list of integers"
                             .to_string(),
+                    )
+                    .with_span(f.span),
+                );
+            }
+            // E1505: the strategy must be one of the closed set.
+            if let Some(bad) = bad_strategy {
+                self.errors.push(
+                    CheckError::new(
+                        E1505,
+                        format!(
+                            "`#[goal(strategy: {bad})]` — unknown strategy; expected one of \
+                             hill_climb | random | multistart | tournament | bayesian"
+                        ),
                     )
                     .with_span(f.span),
                 );

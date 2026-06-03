@@ -108,6 +108,7 @@ pub const E1408: &str = "E1408"; // a graduated/verified pass name is absent fro
 pub const E1500: &str = "E1500"; // metric must name an @[adaptive] fn
 pub const E1503: &str = "E1503"; // target/max_evals/holdout must parse as numbers
 pub const E1504: &str = "E1504"; // #[goal] fn must have zero params
+pub const E1505: &str = "E1505"; // unknown #[goal(strategy: …)] — not hill_climb|random|multistart|tournament|bayesian
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
@@ -289,7 +290,7 @@ mod tests {
             E1201, E1202, E1203, E1204, E1205,
             E1300, E1301, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
-            E1500, E1503, E1504,
+            E1500, E1503, E1504, E1505,
             W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1311, W1410,
             I0001,
         ];
