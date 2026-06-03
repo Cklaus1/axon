@@ -108,7 +108,7 @@ pub fn program_to_json(program: &ast::Program) -> Result<String, String> {
 }
 
 /// A single structured diagnostic from any pipeline stage.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PipelineDiagnostic {
     pub code: String,
     pub message: String,
@@ -117,6 +117,13 @@ pub struct PipelineDiagnostic {
     pub col: u32,
     pub severity: String,
     pub caret: String,
+    /// R8 axon-diag/2: structured `expected` type, when the diagnostic is a type
+    /// mismatch that carries one (else `None`, omitted from JSON).
+    pub expected: Option<String>,
+    /// R8 axon-diag/2: structured `found` type, paired with `expected`.
+    pub found: Option<String>,
+    /// R8 axon-diag/2: structured fix hint (`help`), when the error carries one.
+    pub help: Option<String>,
 }
 
 impl PipelineDiagnostic {
@@ -179,6 +186,21 @@ impl PipelineDiagnostic {
         }
         s.push_str(",\"message\":");
         s.push_str(&q(&self.message));
+        // R8: structured type-mismatch + fix fields, each omitted when absent
+        // (additive — consumers ignore unknown keys, so the schema stays
+        // axon-diag/1; this is not a breaking change).
+        if let Some(exp) = &self.expected {
+            s.push_str(",\"expected\":");
+            s.push_str(&q(exp));
+        }
+        if let Some(found) = &self.found {
+            s.push_str(",\"found\":");
+            s.push_str(&q(found));
+        }
+        if let Some(help) = &self.help {
+            s.push_str(",\"help\":");
+            s.push_str(&q(help));
+        }
         s.push('}');
         s
     }
@@ -745,6 +767,9 @@ pub fn check_pipeline(
                 col: 0,
                 severity: "error".into(),
                 caret: String::new(),
+                expected: None,
+                found: None,
+                help: None,
             });
             return out;
         }
@@ -776,6 +801,9 @@ pub fn check_pipeline(
             col,
             severity: severity.into(),
             caret,
+            expected: None,
+            found: None,
+            help: None,
         });
     }
 
@@ -802,6 +830,9 @@ pub fn check_pipeline(
             col,
             severity: "error".into(),
             caret,
+            expected: None,
+            found: None,
+            help: None,
         });
     }
 
@@ -836,6 +867,9 @@ pub fn check_pipeline(
             col,
             severity: severity.into(),
             caret,
+            expected: None,
+            found: None,
+            help: None,
         });
     }
 
@@ -877,6 +911,9 @@ pub fn check_pipeline(
                     col,
                     severity: "error".into(),
                     caret,
+                    expected: None,
+                    found: None,
+                    help: None,
                 });
             }
         }
@@ -903,6 +940,9 @@ pub fn check_pipeline(
             col,
             severity: "error".into(),
             caret,
+            expected: None,
+            found: None,
+            help: None,
         });
     }
 
@@ -927,6 +967,9 @@ pub fn check_pipeline(
             col,
             severity: "error".into(),
             caret,
+            expected: None,
+            found: None,
+            help: None,
         });
     }
 

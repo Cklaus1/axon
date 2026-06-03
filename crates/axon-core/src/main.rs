@@ -2161,6 +2161,33 @@ fn run_check_pipeline_located(
             col,
             severity: severity.to_string(),
             caret: String::new(),
+            expected: None,
+            found: None,
+            help: None,
+        });
+    };
+    // R8 axon-diag/2: like `push` but carrying the structured type-mismatch +
+    // fix fields (the infer/check errors that have them), so the JSON exposes
+    // `expected`/`found`/`help` as discrete keys, not folded into `message`.
+    let push_typed = |diags: &mut Vec<PipelineDiagnostic>,
+                      code: String,
+                      message: String,
+                      line: u32,
+                      col: u32,
+                      expected: Option<String>,
+                      found: Option<String>,
+                      help: Option<String>| {
+        diags.push(PipelineDiagnostic {
+            code,
+            message,
+            file: file.clone(),
+            line,
+            col,
+            severity: "error".to_string(),
+            caret: String::new(),
+            expected,
+            found,
+            help,
         });
     };
 
@@ -2201,7 +2228,9 @@ fn run_check_pipeline_located(
             msg.push_str(&format!(", found {fnd}"));
         }
         let (line, col) = loc(&err.span);
-        push(&mut diags, err.code.to_string(), msg, "error", line, col);
+        // R8: also expose expected/found as discrete fields (InferError has no fix).
+        push_typed(&mut diags, err.code.to_string(), msg, line, col,
+            err.expected.clone(), err.found.clone(), None);
     }
 
     // Step 3: type checking (uses infer results)
@@ -2233,7 +2262,9 @@ fn run_check_pipeline_located(
         } else {
             (err.line, err.col)
         };
-        push(&mut diags, err.code.to_string(), msg, "error", line, col);
+        // R8: expose expected/found/fix(help) as discrete structured fields.
+        push_typed(&mut diags, err.code.to_string(), msg, line, col,
+            err.expected.clone(), err.found.clone(), err.fix.clone());
     }
 
     // Step 4: borrow checking — enforce move semantics within function bodies.

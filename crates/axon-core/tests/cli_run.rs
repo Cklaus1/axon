@@ -3958,6 +3958,26 @@ fn check_json_includes_source_location() {
 }
 
 #[test]
+fn check_json_splits_expected_found_into_typed_fields() {
+    // R8 (axon-diag/2 enrichment): a type-mismatch diagnostic exposes the
+    // `expected`/`found` types as DISCRETE structured fields, not only folded
+    // into the prose `message` — so a tool can branch on the type pair without
+    // re-parsing English. Additive: the schema stays axon-diag/1 (unknown keys
+    // are ignored by consumers).
+    let f = std::env::temp_dir().join(format!("axon_r8ef_{}.ax", std::process::id()));
+    // `let x: str = 5` → expected str, found i64.
+    std::fs::write(&f, "fn main() -> i64 {\n    let x: str = 5\n    0\n}\n").unwrap();
+    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let jstderr = String::from_utf8_lossy(&json.stderr);
+    assert!(jstderr.contains("\"schema\":\"axon-diag/1\""), "schema tag preserved: {jstderr}");
+    assert!(jstderr.contains("\"expected\":\"str\""), "discrete expected field: {jstderr}");
+    assert!(jstderr.contains("\"found\":\"i64\""), "discrete found field: {jstderr}");
+    // The message still carries the human form (back-compat for text consumers).
+    assert!(jstderr.contains("\"message\":"), "message field still present: {jstderr}");
+}
+
+#[test]
 fn import_widening_capabilities_is_rejected_e1203() {
     // R6 §4.4 (I-11 import edge): a `@[contained]` importer that imports a module
     // exercising a capability it does not grant is rejected with E1203. Paired
