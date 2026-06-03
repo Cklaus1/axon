@@ -1894,6 +1894,25 @@ fn array_numeric_stats_mean_std_argmax_argmin() {
 }
 
 #[test]
+fn arr_std_f64_on_small_arrays_is_zero_not_a_panic() {
+    // BUG_HUNT #21: arr_std_f64 on fewer than 2 samples must not PANIC — a
+    // single point (or empty) has no spread, so std = 0 (a legitimate input
+    // a stats loop can collapse to). Returns 0.0; the normal case is unchanged.
+    let src = "fn main() -> i64 {\n  \
+        let one = arr_std_f64([5.0])\n  \
+        let zero = arr_std_f64([])\n  \
+        let many = arr_std_f64([1.0, 2.0, 3.0, 4.0, 5.0])  // sqrt(2.5) ≈ 1.5811\n  \
+        if one == 0.0 && zero == 0.0 && many > 1.58 && many < 1.59 { 1 } else { 0 }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_std21_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    // exit 1 = the program returned 1 (all checks passed); crucially NOT 101 (panic).
+    assert_eq!(out.status.code(), Some(1), "std of <2 samples is 0, not a panic: {:?}", out);
+}
+
+#[test]
 fn f64_multi_arg_no_single_dim_monopolizes_budget() {
     // Regression: the f64 hill climb's inner halving cascade (down to a
     // 1e-9 resolution floor) could chew ~74 evals on dim 0 alone, leaving

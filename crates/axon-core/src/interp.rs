@@ -3339,8 +3339,12 @@ impl<'p> Interp<'p> {
                         other.type_name()
                     )),
                 };
+                // BUG_HUNT #21: an array of fewer than 2 elements has no spread,
+                // so its standard deviation is 0 — return it rather than PANIC.
+                // A single sample (or empty) is a legitimate input (a stats loop
+                // can collapse to one point); aborting the program is wrong.
                 if xs.len() < 2 {
-                    return panic("arr_std_f64: need at least 2 samples".to_string());
+                    ok!(Value::Float(0.0));
                 }
                 let mut sum = 0.0_f64;
                 let mut fs: Vec<f64> = Vec::with_capacity(xs.len());
