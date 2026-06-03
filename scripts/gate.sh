@@ -74,6 +74,15 @@ cargo clippy -p axon-rt -p axon-ai -p axon-surface --all-targets -- -D warnings 
 if [ "$STRICT" = 1 ]; then
   echo "── gate: clippy (--all-targets, -D warnings) ─────────────────────"
   cargo clippy --no-default-features -p axon-core --all-targets -- -D warnings || fail "all-targets clippy"
+
+  # BUG_HUNT #35 follow-on: the codegen feature (axon-core WITH default features)
+  # was never clippy-gated — the lib clippy above uses --no-default-features, so
+  # the entire IR-emitter path (codegen/*.rs) was invisible. It is now clean
+  # (~86 mechanical .into()/let-_/&Path lints fixed, verified native==interp via
+  # the parity harnesses), so --strict enforces it going forward. Only under
+  # --strict because it links LLVM (slower than the interp-only passes).
+  echo "── gate: clippy codegen feature (--all-targets, -D warnings) ─────"
+  cargo clippy -p axon-core --all-targets -- -D warnings || fail "codegen-feature clippy"
 fi
 
 echo ""

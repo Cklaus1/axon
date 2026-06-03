@@ -250,7 +250,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let panic_bb = self.ir.context.append_basic_block(llvm_fn, "verify_panic");
         let cont_bb  = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
 
-        let _ = build_wrappers::w_cond_br(&self.ir.builder, cmp, cont_bb, panic_bb);
+        build_wrappers::w_cond_br(&self.ir.builder, cmp, cont_bb, panic_bb);
 
         // ── Panic path ────────────────────────────────────────────────────
         self.ir.builder.position_at_end(panic_bb);
@@ -272,7 +272,7 @@ impl<'ctx> super::Codegen<'ctx> {
             ],
             "",
         );
-        let _ = build_wrappers::w_unreachable(&self.ir.builder);
+        build_wrappers::w_unreachable(&self.ir.builder);
 
         // ── Continue path: original return falls through here. ────────────
         self.ir.builder.position_at_end(cont_bb);

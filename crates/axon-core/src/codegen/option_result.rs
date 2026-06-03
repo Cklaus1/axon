@@ -118,7 +118,7 @@ impl<'ctx> super::Codegen<'ctx> {
         let llvm_ty = self.llvm_type(typed_ty)?;
         let arr_ty = payload.get_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-        let arr_alloca = build_wrappers::w_alloca(&self.ir.builder, arr_ty.into(), "payloadalc");
+        let arr_alloca = build_wrappers::w_alloca(&self.ir.builder, arr_ty, "payloadalc");
         build_wrappers::w_store(&self.ir.builder, arr_alloca, payload);
         let typed_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, arr_alloca, ptr_ty, "payloadptr");
         let val = build_wrappers::w_load(&self.ir.builder, llvm_ty, typed_ptr, "payloadval");

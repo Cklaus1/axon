@@ -17,13 +17,11 @@
 #[allow(unused_imports)]
 use std::collections::HashMap;
 
-use inkwell::types::{BasicTypeEnum, BasicMetadataTypeEnum};
-use inkwell::values::{BasicMetadataValueEnum, FunctionValue};
+use inkwell::types::BasicTypeEnum;
 use inkwell::AddressSpace;
 use inkwell::FloatPredicate;
 use inkwell::IntPredicate;
 
-use crate::ast;
 use crate::types::Type;
 
 // Non-generic `#[inline(never)]` inkwell builder wrappers (see build_wrappers.rs):
@@ -250,7 +248,7 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,len_ptr, len_i64.into());
             build_wrappers::w_store(&self.ir.builder,dat_ptr, buf_ptr.into());
             let out = build_wrappers::w_load(&self.ir.builder,str_ty.into(), out_alloca, "outval");
-            build_wrappers::w_ret(&self.ir.builder, out.into());
+            build_wrappers::w_ret(&self.ir.builder, out);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("to_str".to_string(), fn_val);
@@ -310,7 +308,7 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,len_ptr, len_i64.into());
             build_wrappers::w_store(&self.ir.builder,dat_ptr, buf_ptr.into());
             let out = build_wrappers::w_load(&self.ir.builder,str_ty.into(), out_alloca, "outval");
-            build_wrappers::w_ret(&self.ir.builder, out.into());
+            build_wrappers::w_ret(&self.ir.builder, out);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("to_str_f64".to_string(), fn_val);
@@ -512,7 +510,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_i64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ptr_ok, i64_ty.ptr_type(inkwell::AddressSpace::default()), "pi_payload_i64");
             build_wrappers::w_store(&self.ir.builder,payload_i64_ptr, parsed_i64.into());
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pi_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: return { tag=0, payload = str { len, ptr } } with the same
             // message the interpreter produces (#37 parity): delegate to axon-rt's
@@ -547,9 +545,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,err_str_len_ptr, msg_len.into());
             build_wrappers::w_store(&self.ir.builder,err_str_dat_ptr, msg_ptr.into());
             let err_str_val = build_wrappers::w_load(&self.ir.builder,err_str_ty.into(), err_str_alloca, "pi_err_str_val");
-            build_wrappers::w_store(&self.ir.builder,payload_str_ptr, err_str_val.into());
+            build_wrappers::w_store(&self.ir.builder,payload_str_ptr, err_str_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pi_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("parse_int".to_string(), fn_val);
@@ -616,7 +614,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let payload_i64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ptr_ok, i64_ty.ptr_type(inkwell::AddressSpace::default()), "pir_payi64");
             build_wrappers::w_store(&self.ir.builder, payload_i64_ptr, parsed.into());
             let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "pir_okval");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: { tag=0, payload = str { out_len, out_ptr } }
             self.ir.builder.position_at_end(err_bb);
@@ -635,9 +633,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder, esl, msg_len.into());
             build_wrappers::w_store(&self.ir.builder, esd, msg_ptr.into());
             let err_str_val = build_wrappers::w_load(&self.ir.builder, err_str_ty.into(), err_str_alloca, "pir_errstrval");
-            build_wrappers::w_store(&self.ir.builder, payload_str_ptr, err_str_val.into());
+            build_wrappers::w_store(&self.ir.builder, payload_str_ptr, err_str_val);
             let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "pir_errval");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("parse_int_radix".to_string(), fn_val);
@@ -729,7 +727,7 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,len_ptr, total_len.into());
             build_wrappers::w_store(&self.ir.builder,dat_ptr, buf_ptr.into());
             let out = build_wrappers::w_load(&self.ir.builder,str_ty.into(), out_alloca, "concat_val");
-            build_wrappers::w_ret(&self.ir.builder, out.into());
+            build_wrappers::w_ret(&self.ir.builder, out);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("axon_concat".to_string(), fn_val);
@@ -848,7 +846,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(bb);
             let s = fn_val.get_nth_param(0).unwrap();
-            build_wrappers::w_ret(&self.ir.builder, s.into());
+            build_wrappers::w_ret(&self.ir.builder, s);
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("format".to_string(), fn_val);
             self.fn_return_types.insert("format".to_string(), Type::Str);
@@ -1362,9 +1360,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_ok_slot, 0, ""), out_len.into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_ok_slot, 1, ""), out_ptr.into());
             let str_ok_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_ok_slot, "rf_str_ok_val");
-            build_wrappers::w_store(&self.ir.builder,str_ok_ptr, str_ok_val.into());
+            build_wrappers::w_store(&self.ir.builder,str_ok_ptr, str_ok_val);
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "rf_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: negate len, { tag=0, payload=str{|len|, out_ptr} }
             self.ir.builder.position_at_end(err_bb);
@@ -1378,9 +1376,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), actual_len.into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), out_ptr.into());
             let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "rf_str_err_val");
-            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "rf_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("read_file".to_string(), fn_val);
@@ -1440,9 +1438,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_ok_slot, 0, ""), out_len.into());
             build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_ok_slot, 1, ""), out_ptr.into());
             let str_ok_val = build_wrappers::w_load(&self.ir.builder, str_ty.into(), str_ok_slot, "ex_str_ok_val");
-            build_wrappers::w_store(&self.ir.builder, str_ok_ptr, str_ok_val.into());
+            build_wrappers::w_store(&self.ir.builder, str_ok_ptr, str_ok_val);
             let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "ex_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: negate len, { tag=0, payload=str{|len|, out_ptr} }
             self.ir.builder.position_at_end(err_bb);
@@ -1455,9 +1453,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_err_slot, 0, ""), actual_len.into());
             build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_err_slot, 1, ""), out_ptr.into());
             let str_err_val = build_wrappers::w_load(&self.ir.builder, str_ty.into(), str_err_slot, "ex_str_err_val");
-            build_wrappers::w_store(&self.ir.builder, str_err_ptr, str_err_val.into());
+            build_wrappers::w_store(&self.ir.builder, str_err_ptr, str_err_val);
             let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "ex_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("exec".to_string(), fn_val);
@@ -1518,7 +1516,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let zero_arr = self.ir.context.i8_type().array_type(16).const_zero();
             build_wrappers::w_store(&self.ir.builder,payload_ok, zero_arr.into());
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "wf_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: { tag=0, payload=str{err_len, err_ptr} }
             self.ir.builder.position_at_end(err_bb);
@@ -1532,9 +1530,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), err_len.into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), err_ptr.into());
             let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "wf_str_err_val");
-            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "wf_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("write_file".to_string(), fn_val);
@@ -1554,7 +1552,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let pred = if *is_min { inkwell::FloatPredicate::OLT } else { inkwell::FloatPredicate::OGT };
             let cmp = build_wrappers::w_float_compare(&self.ir.builder,pred, a, b, "mf_cmp");
             let result = build_wrappers::w_select(&self.ir.builder,cmp, a.into(), b.into(), "mf_result");
-            build_wrappers::w_ret(&self.ir.builder, result.into());
+            build_wrappers::w_ret(&self.ir.builder, result);
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert(fname.to_string(), fn_val);
             self.fn_return_types.insert(fname.to_string(), Type::F64);
@@ -1663,7 +1661,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     payload_ptr, i1_ty.ptr_type(inkwell::AddressSpace::default()), "pb_ot_bptr");
                 build_wrappers::w_store(&self.ir.builder,bool_ptr, i1_ty.const_int(1, false).into());
                 let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pb_ot_val");
-                build_wrappers::w_ret(&self.ir.builder, val.into());
+                build_wrappers::w_ret(&self.ir.builder, val);
             }
 
             // ok_false_bb: tag=1, payload = i1 false cast to [16 x i8]
@@ -1678,7 +1676,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     payload_ptr, i1_ty.ptr_type(inkwell::AddressSpace::default()), "pb_of_bptr");
                 build_wrappers::w_store(&self.ir.builder,bool_ptr, i1_ty.const_int(0, false).into());
                 let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pb_of_val");
-                build_wrappers::w_ret(&self.ir.builder, val.into());
+                build_wrappers::w_ret(&self.ir.builder, val);
             }
 
             // err_bb: tag=0, payload = str{"invalid bool"} cast to [16 x i8]
@@ -1706,9 +1704,9 @@ impl<'ctx> super::Codegen<'ctx> {
                     build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_alloca, 1, "pb_esp"),
                     err_lit.into());
                 let err_str_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), err_str_alloca, "pb_esv");
-                build_wrappers::w_store(&self.ir.builder,str_ptr, err_str_val.into());
+                build_wrappers::w_store(&self.ir.builder,str_ptr, err_str_val);
                 let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pb_err_val");
-                build_wrappers::w_ret(&self.ir.builder, val.into());
+                build_wrappers::w_ret(&self.ir.builder, val);
             }
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
@@ -2191,7 +2189,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 "");
 
             let score = build_wrappers::w_load(&self.ir.builder,f64_ty.into(), out_slot, "gr_score");
-            build_wrappers::w_ret(&self.ir.builder, score.into());
+            build_wrappers::w_ret(&self.ir.builder, score);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("goal_run".to_string(), fn_val);
@@ -2260,9 +2258,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_ok_slot, 0, ""), out_len.into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_ok_slot, 1, ""), out_ptr.into());
             let str_ok_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_ok_slot, "aic_str_ok_val");
-            build_wrappers::w_store(&self.ir.builder,str_ok_ptr, str_ok_val.into());
+            build_wrappers::w_store(&self.ir.builder,str_ok_ptr, str_ok_val);
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "aic_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: negate len, { tag=0, payload=str{|len|, out_ptr} }
             self.ir.builder.position_at_end(err_bb);
@@ -2276,9 +2274,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), actual_len.into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), out_ptr.into());
             let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "aic_str_err_val");
-            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+            build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "aic_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("ai_complete".to_string(), fn_val);
@@ -2400,7 +2398,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let unc_payload_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, unc_i64_ty.ptr_type(inkwell::AddressSpace::default()), "aei_unc_pp");
                 build_wrappers::w_store(&self.ir.builder,unc_payload_ptr, unc_sv.into());
                 let ok_val = build_wrappers::w_load(&self.ir.builder,result_unc_i64_ty.into(), ok_alloca, "aei_ok_val");
-                build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+                build_wrappers::w_ret(&self.ir.builder, ok_val);
 
                 // err_bb: read err_len/err_ptr, build str payload, wrap Result::Err.
                 self.ir.builder.position_at_end(err_bb);
@@ -2415,9 +2413,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), err_len.into());
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), err_ptr.into());
                 let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "aei_str_err_val");
-                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
                 let err_val = build_wrappers::w_load(&self.ir.builder,result_unc_i64_ty.into(), err_alloca, "aei_err_val");
-                build_wrappers::w_ret(&self.ir.builder, err_val.into());
+                build_wrappers::w_ret(&self.ir.builder, err_val);
 
                 if let Some(b) = saved { self.ir.builder.position_at_end(b); }
                 self.functions.insert("ai_extract_uncertain_i64".to_string(), fn_val);
@@ -2489,7 +2487,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let unc_payload_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, unc_f64_ty.ptr_type(inkwell::AddressSpace::default()), "aef_unc_pp");
                 build_wrappers::w_store(&self.ir.builder,unc_payload_ptr, unc_sv.into());
                 let ok_val = build_wrappers::w_load(&self.ir.builder,result_unc_f64_ty.into(), ok_alloca, "aef_ok_val");
-                build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+                build_wrappers::w_ret(&self.ir.builder, ok_val);
 
                 // err_bb
                 self.ir.builder.position_at_end(err_bb);
@@ -2504,9 +2502,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), err_len.into());
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), err_ptr.into());
                 let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "aef_str_err_val");
-                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
                 let err_val = build_wrappers::w_load(&self.ir.builder,result_unc_f64_ty.into(), err_alloca, "aef_err_val");
-                build_wrappers::w_ret(&self.ir.builder, err_val.into());
+                build_wrappers::w_ret(&self.ir.builder, err_val);
 
                 if let Some(b) = saved { self.ir.builder.position_at_end(b); }
                 self.functions.insert("ai_extract_uncertain_f64".to_string(), fn_val);
@@ -2595,7 +2593,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let prompt_len   = build_wrappers::w_extract_value(&self.ir.builder,prompt_str, 0, "aex_plen").into_int_value();
                 let prompt_ptr_v = build_wrappers::w_extract_value(&self.ir.builder,prompt_str, 1, "aex_pptr").into_pointer_value();
 
-                let out_val_slot     = build_wrappers::w_alloca(&self.ir.builder,val_llvm_ty.into(), "aex_out_val");
+                let out_val_slot     = build_wrappers::w_alloca(&self.ir.builder,val_llvm_ty, "aex_out_val");
                 let out_err_len_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(),     "aex_out_err_len");
                 let out_err_ptr_slot = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(),     "aex_out_err_ptr");
                 let out_err_ptr_cast = build_wrappers::w_pointer_cast(&self.ir.builder,out_err_ptr_slot, i8_ptr_ptr, "aex_eptrptr");
@@ -2623,10 +2621,10 @@ impl<'ctx> super::Codegen<'ctx> {
                 build_wrappers::w_store(&self.ir.builder,tag_ptr_ok, bool_ty.const_int(1, false).into());
                 let payload_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_flat_ty.into(), ok_alloca, 1, "aex_pay_ok");
                 let typed_payload_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, val_ptr_ty, "aex_typed_pp");
-                let val_loaded = build_wrappers::w_load(&self.ir.builder,val_llvm_ty.into(), out_val_slot, "aex_val");
-                build_wrappers::w_store(&self.ir.builder,typed_payload_ptr, val_loaded.into());
+                let val_loaded = build_wrappers::w_load(&self.ir.builder,val_llvm_ty, out_val_slot, "aex_val");
+                build_wrappers::w_store(&self.ir.builder,typed_payload_ptr, val_loaded);
                 let ok_val = build_wrappers::w_load(&self.ir.builder,result_flat_ty.into(), ok_alloca, "aex_ok_val");
-                build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+                build_wrappers::w_ret(&self.ir.builder, ok_val);
 
                 // err_bb: read err_len/err_ptr, build str payload, set tag=0, return.
                 self.ir.builder.position_at_end(err_bb);
@@ -2641,9 +2639,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 0, ""), err_len.into());
                 build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), str_err_slot, 1, ""), err_ptr.into());
                 let str_err_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), str_err_slot, "aex_str_err_val");
-                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val.into());
+                build_wrappers::w_store(&self.ir.builder,str_err_ptr, str_err_val);
                 let err_val = build_wrappers::w_load(&self.ir.builder,result_flat_ty.into(), err_alloca, "aex_err_val");
-                build_wrappers::w_ret(&self.ir.builder, err_val.into());
+                build_wrappers::w_ret(&self.ir.builder, err_val);
 
                 if let Some(b) = saved { self.ir.builder.position_at_end(b); }
                 self.functions.insert(helper_name.to_string(), fn_val);
@@ -3038,7 +3036,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let f64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, f64_ty.ptr_type(inkwell::AddressSpace::default()), "pf_f64_ptr");
             build_wrappers::w_store(&self.ir.builder,f64_ptr, parsed_f64.into());
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pf_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
             // err_bb: { tag=0, payload=str{len=0, ptr=null} }
             self.ir.builder.position_at_end(err_bb);
@@ -3051,9 +3049,9 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 0, ""), i64_ty.const_int(0, false).into());
             build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 1, ""), i8_ptr.const_null().into());
             let err_str_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), err_str_slot, "pf_err_str_val");
-            build_wrappers::w_store(&self.ir.builder,err_str_ptr, err_str_val.into());
+            build_wrappers::w_store(&self.ir.builder,err_str_ptr, err_str_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pf_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_val.into());
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("parse_float".to_string(), fn_val);
@@ -3432,7 +3430,7 @@ impl<'ctx> super::Codegen<'ctx> {
             };
             build_wrappers::w_store(&self.ir.builder,payload_as_str, ok_str.into());
             let ok_result = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_str_ptr, "ev_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_result.into());
+            build_wrappers::w_ret(&self.ir.builder, ok_result);
 
             // Err branch: return { tag=0, payload=str{"not set"} }
             self.ir.builder.position_at_end(err_bb);
@@ -3460,7 +3458,7 @@ impl<'ctx> super::Codegen<'ctx> {
             };
             build_wrappers::w_store(&self.ir.builder,payload_as_str2, err_str.into());
             let err_result = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_str_ptr, "ev_err_val");
-            build_wrappers::w_ret(&self.ir.builder, err_result.into());
+            build_wrappers::w_ret(&self.ir.builder, err_result);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("env_var".to_string(), fn_val);

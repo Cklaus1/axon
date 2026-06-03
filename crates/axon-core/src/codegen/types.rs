@@ -4,10 +4,10 @@
 //! from the monolithic `codegen.rs`.  All three are methods on
 //! `super::Codegen<'ctx>`, so this file declares its own impl block on the
 //! parent struct.  Visibility:
-//!   * `llvm_type`        — `pub` (re-exported public API; many callers)
-//!   * `llvm_sizeof`      — `pub(super)` (called from mod.rs internally)
-//!   * `llvm_align_of`    — `pub(super)` (only called from `llvm_sizeof` today
-//!                          but kept reachable from mod.rs in case of future use)
+//! - `llvm_type`     — `pub` (re-exported public API; many callers)
+//! - `llvm_sizeof`   — `pub(super)` (called from mod.rs internally)
+//! - `llvm_align_of` — `pub(super)` (only called from `llvm_sizeof` today but
+//!   kept reachable from mod.rs in case of future use)
 //!
 //! No state is mutated by any of these methods — they are pure functions of
 //! `&self` and the input `Type`.

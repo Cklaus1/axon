@@ -12,21 +12,11 @@
 //! - `Unit`       → treated as void; functions returning Unit use `build_return_void`.
 
 use std::collections::HashMap;
-use std::path::Path;
-use std::process::Command;
 
-use inkwell::builder::Builder;
 use inkwell::context::Context;
-use inkwell::module::Module;
-use inkwell::targets::{
-    CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine, TargetTriple,
-};
 use inkwell::types::{BasicMetadataTypeEnum, BasicType, BasicTypeEnum, StructType};
-use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue, InstructionOpcode};
+use inkwell::values::{BasicMetadataValueEnum, BasicValueEnum, FunctionValue, PointerValue};
 use inkwell::AddressSpace;
-use inkwell::IntPredicate;
-use inkwell::FloatPredicate;
-use inkwell::OptimizationLevel;
 
 use crate::ast;
 use crate::ast::AxonType;
@@ -756,11 +746,9 @@ impl<'ctx> Codegen<'ctx> {
             // F11: capture the leading i64 parameter (the optimizer's input) so
             // the return log can record (input, score). Only when param 0 is an
             // i64 — matches the runtime's `(i64) -> i64` warm-start narrowing.
-            if let Some(first) = llvm_fn.get_nth_param(0) {
-                if let inkwell::values::BasicValueEnum::IntValue(iv) = first {
-                    if iv.get_type() == self.ir.context.i64_type() {
-                        self.current_adaptive_input = Some(iv);
-                    }
+            if let Some(inkwell::values::BasicValueEnum::IntValue(iv)) = llvm_fn.get_nth_param(0) {
+                if iv.get_type() == self.ir.context.i64_type() {
+                    self.current_adaptive_input = Some(iv);
                 }
             }
         }
@@ -857,7 +845,7 @@ impl<'ctx> Codegen<'ctx> {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
                             self.emit_verify_check_if_needed(zero_val, llvm_fn);
-                            build_wrappers::w_ret(&self.ir.builder, zero_val.into());
+                            build_wrappers::w_ret(&self.ir.builder, zero_val);
                         } else {
                             self.log_return_if_adaptive();
                             build_wrappers::w_ret_void(&self.ir.builder);
@@ -1014,7 +1002,7 @@ impl<'ctx> Codegen<'ctx> {
             ast::Expr::StructLit { name, .. } => {
                 if name.contains("::") {
                     // "EnumName::Variant" → Type::Enum("EnumName")
-                    let enum_name = name.splitn(2, "::").next().unwrap_or(name).to_string();
+                    let enum_name = name.split("::").next().unwrap_or(name).to_string();
                     Some(Type::Enum(enum_name))
                 } else {
                     Some(Type::Struct(name.clone()))
@@ -1128,7 +1116,7 @@ impl<'ctx> Codegen<'ctx> {
                 let sname = if let Type::Struct(sn) = &recv_ty { sn } else { return None; };
                 let field_names = self.struct_fields.get(sname.as_str())?;
                 let idx = field_names.iter().position(|n| n == field)?;
-                let struct_ty = self.ir.module.get_struct_type(&sname)?;
+                let struct_ty = self.ir.module.get_struct_type(sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
                 match field_llvm_ty {
                     BasicTypeEnum::IntType(it) => Some(match it.get_bit_width() {

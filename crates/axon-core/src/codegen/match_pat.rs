@@ -2,10 +2,10 @@
 //!
 //! Phase 2.4 of the §7.5 module split.  These three methods cooperate
 //! tightly to compile `match` expressions:
-//!   * `emit_match`            walks arms, builds cond/body/merge blocks
-//!   * `emit_pattern_test`     emits the `cmp` for each pattern
-//!   * `emit_pattern_bindings` introduces locals for variables bound
-//!                             inside a pattern (e.g. `Some(x) => …`).
+//! - `emit_match`            walks arms, builds cond/body/merge blocks
+//! - `emit_pattern_test`     emits the `cmp` for each pattern
+//! - `emit_pattern_bindings` introduces locals for variables bound inside a
+//!   pattern (e.g. `Some(x) => …`).
 //!
 //! All `pub(super)` so the parent `codegen::mod` can call `emit_match`
 //! from inside `emit_expr`'s `Expr::Match` arm.
@@ -118,7 +118,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // we must add an `undef` incoming for that predecessor to keep the phi valid.
         if arm_results.len() == arms.len() && !arm_results.is_empty() {
             let val_ty = arm_results[0].0.get_type();
-            let phi = build_wrappers::w_phi(&self.ir.builder, val_ty.into(), "match_val");
+            let phi = build_wrappers::w_phi(&self.ir.builder, val_ty, "match_val");
             for (v, bb) in &arm_results {
                 phi.add_incoming(&[(v, *bb)]);
             }
@@ -305,9 +305,9 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // Enum variant struct pattern: "EnumName::Variant { ... }" — check tag.
             ast::Pattern::Struct { name, .. } if name.contains("::") => {
-                let mut parts = name.splitn(2, "::");
-                let enum_name = parts.next().unwrap();
-                let variant_name = parts.next().unwrap();
+                let (enum_name, variant_name) = name.split_once("::").unwrap();
+                
+                
 
                 // Find the tag for this variant.
                 let tag_int = self.enum_variants
@@ -457,7 +457,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             let field_val = self.ir.builder
                                 .build_load(llvm_fty, typed_ptr, "fieldval")
                                 .unwrap();
-                            self.emit_pattern_bindings(pat, field_val.into());
+                            self.emit_pattern_bindings(pat, field_val);
                         }
 
                         byte_offset += fsize;

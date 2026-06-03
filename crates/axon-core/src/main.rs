@@ -16,8 +16,6 @@ use std::time::Instant;
 
 use clap::{Parser, Subcommand};
 use axon_core::parse_source;
-#[cfg(feature = "codegen")]
-use inkwell;
 
 // ── CLI definition ────────────────────────────────────────────────────────────
 
@@ -2384,8 +2382,8 @@ fn run_check_pipeline_located(
 #[cfg(feature = "codegen")]
 fn run_build_pipeline(
     program: &mut axon_core::ast::Program,
-    source_path: &PathBuf,
-    output: &PathBuf,
+    source_path: &Path,
+    output: &Path,
     opts: &BuildOptions,
 ) -> Result<(), String> {
     // Check first, fail fast on errors.
@@ -2466,8 +2464,8 @@ fn run_build_pipeline(
 #[cfg(feature = "codegen")]
 fn build_ir_and_link(
     program: &mut axon_core::ast::Program,
-    source_path: &PathBuf,
-    output: &PathBuf,
+    source_path: &std::path::Path,
+    output: &std::path::Path,
     release: bool,
     target_triple: Option<&str>,
     infer_ctx: &mut axon_core::infer::InferCtx,

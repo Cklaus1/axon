@@ -46,7 +46,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Identifier (load from local) ─────────────────────────────────
             ast::Expr::Ident(name) => {
                 if let Some((ptr, llvm_ty)) = self.locals.get(name).cloned() {
-                    let val = build_wrappers::w_load(&self.ir.builder, llvm_ty.into(), ptr, name);
+                    let val = build_wrappers::w_load(&self.ir.builder, llvm_ty, ptr, name);
                     return Some(val);
                 }
                 // Fall back to checking module-level comptime constants.
@@ -983,7 +983,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         &self.ir.builder,
                         arr_ty.into(),
                         chans_alloca,
-                        &[i64_ty.const_int(0, false).into(), i64_ty.const_int(i as u64, false).into()],
+                        &[i64_ty.const_int(0, false), i64_ty.const_int(i as u64, false)],
                         "chan_slot",
                     )
                 };
@@ -1045,7 +1045,7 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    pub(super) fn emit_lambda(&mut self, params: &[ast::LambdaParam], body: &ast::Expr, captures: &[(String, Option<crate::types::Type>)], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+    pub(super) fn emit_lambda(&mut self, params: &[ast::LambdaParam], body: &ast::Expr, captures: &[(String, Option<crate::types::Type>)], _fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
 
@@ -1155,7 +1155,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 // Load current value of the captured variable from caller scope
                 // (self.locals has been restored to the caller's locals at this point).
                 let cap_val = if let Some(&(alloca, ty)) = self.locals.get(cap_name.as_str()) {
-                    build_wrappers::w_load(&self.ir.builder, ty.into(), alloca, cap_name)
+                    build_wrappers::w_load(&self.ir.builder, ty, alloca, cap_name)
                 } else {
                     i64_ty.const_zero().into()
                 };
@@ -1285,7 +1285,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 .build_gep(elem_ty, data_ptr, &[idx_int], "elemptr")
                 .unwrap()
         };
-        let elem = build_wrappers::w_load(&self.ir.builder, elem_ty.into(), elem_ptr, "elemval");
+        let elem = build_wrappers::w_load(&self.ir.builder, elem_ty, elem_ptr, "elemval");
         Some(elem)
     }
 
@@ -1307,20 +1307,20 @@ impl<'ctx> super::Codegen<'ctx> {
                 (Type::Temporal(_), "valid_until_ms") => Some(4),
                 _ => None,
             };
-            if let (Some(idx), Some(struct_be)) = (idx_opt, self.llvm_type(&ty)) {
-                if let BasicTypeEnum::StructType(struct_ty) = struct_be {
-                    let recv_val = self.emit_expr(receiver, fn_val)?;
-                    let recv_alloca = self.ir.builder
-                        .build_alloca(struct_ty, "asi_recv_tmp")
-                        .unwrap();
-                    build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
-                    let fptr = self.ir.builder
-                        .build_struct_gep(struct_ty, recv_alloca, idx, field)
-                        .unwrap();
-                    if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
-                        let fval = build_wrappers::w_load(&self.ir.builder, fty.into(), fptr, field);
-                        return Some(fval);
-                    }
+            if let (Some(idx), Some(BasicTypeEnum::StructType(struct_ty))) =
+                (idx_opt, self.llvm_type(&ty))
+            {
+                let recv_val = self.emit_expr(receiver, fn_val)?;
+                let recv_alloca = self.ir.builder
+                    .build_alloca(struct_ty, "asi_recv_tmp")
+                    .unwrap();
+                build_wrappers::w_store(&self.ir.builder, recv_alloca, recv_val);
+                let fptr = self.ir.builder
+                    .build_struct_gep(struct_ty, recv_alloca, idx, field)
+                    .unwrap();
+                if let Some(fty) = struct_ty.get_field_type_at_index(idx) {
+                    let fval = build_wrappers::w_load(&self.ir.builder, fty, fptr, field);
+                    return Some(fval);
                 }
             }
         }
@@ -1346,7 +1346,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         .build_struct_gep(struct_ty, recv_alloca, idx as u32, field)
                         .unwrap();
                     if let Some(field_ty) = struct_ty.get_field_type_at_index(idx as u32) {
-                        let fval = build_wrappers::w_load(&self.ir.builder, field_ty.into(), fptr, field);
+                        let fval = build_wrappers::w_load(&self.ir.builder, field_ty, fptr, field);
                         return Some(fval);
                     }
                 }
@@ -1371,7 +1371,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 _ => None,
             }
         });
-        if let Some(Type::Tuple(elts)) = tuple_ty {
+        if let Some(Type::Tuple(_elts)) = tuple_ty {
             if let Ok(field_idx) = field.parse::<u32>() {
                 let recv_val = self.emit_expr(receiver, fn_val)?;
                 // Tuple values are anonymous struct types stored on the stack
@@ -1388,7 +1388,7 @@ impl<'ctx> super::Codegen<'ctx> {
                     .build_struct_gep(struct_ty, recv_alloca, field_idx, field)
                     .unwrap();
                 if let Some(field_ty) = struct_ty.get_field_type_at_index(field_idx) {
-                    let fval = build_wrappers::w_load(&self.ir.builder, field_ty.into(), fptr, field);
+                    let fval = build_wrappers::w_load(&self.ir.builder, field_ty, fptr, field);
                     return Some(fval);
                 }
             }
@@ -1418,7 +1418,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.build_store(fptr, *elem_val).unwrap();
         }
         let loaded = self.ir.builder.build_load(struct_ty, alloca, "tup_copy").unwrap();
-        Some(loaded.into())
+        Some(loaded)
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
@@ -1757,7 +1757,7 @@ impl<'ctx> super::Codegen<'ctx> {
         if maybe_fn_v.is_none() {
             if let ast::Expr::Ident(name) = callee {
                 if let Some(&(alloca, ty)) = self.locals.get(name.as_str()) {
-                    let fat = build_wrappers::w_load(&self.ir.builder, ty.into(), alloca, "closure");
+                    let fat = build_wrappers::w_load(&self.ir.builder, ty, alloca, "closure");
                     if let BasicValueEnum::StructValue(sv) = fat {
                         let fp = build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "cfp");
                         let ep = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "cep");
@@ -1874,7 +1874,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         if let Some(val) = concrete_val {
                             // Alloca the concrete value; store it so we have a data ptr.
                             let concrete_llvm_ty = val.get_type();
-                            let data_alloca = build_wrappers::w_alloca(&self.ir.builder, concrete_llvm_ty.into(), "dyn_data");
+                            let data_alloca = build_wrappers::w_alloca(&self.ir.builder, concrete_llvm_ty, "dyn_data");
                             build_wrappers::w_store(&self.ir.builder, data_alloca, val);
 
                             // Build fat pointer { data_ptr, vtable_ptr }.
