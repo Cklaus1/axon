@@ -36,6 +36,9 @@ enum ArrReduce<'ctx> {
     Sum,
     /// Whether any element equals the needle (i1 result).
     Contains(inkwell::values::IntValue<'ctx>),
+    /// Max / min of the elements (i64 result). `true` = max. Panics (exit 101,
+    /// matching the interpreter) on an empty array.
+    Extreme { is_max: bool },
 }
 
 impl<'ctx> super::Codegen<'ctx> {
@@ -1326,9 +1329,35 @@ impl<'ctx> super::Codegen<'ctx> {
             &self.ir.builder, data_ptr,
             i64_ty.ptr_type(AddressSpace::default()), "arr_i64p");
 
+        // Max/min panic on an empty array (interp parity, exit 101). Emit the
+        // check before the loop: if len == 0, call exit(101).
+        if let ArrReduce::Extreme { .. } = op {
+            let empty_bb = self.ir.context.append_basic_block(fn_val, "arr.empty");
+            let nonempty_bb = self.ir.context.append_basic_block(fn_val, "arr.nonempty");
+            let is_empty = build_wrappers::w_int_compare(
+                &self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "arr_isempty");
+            build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, nonempty_bb);
+            self.ir.builder.position_at_end(empty_bb);
+            // Use the C `exit(i32)` (declared in declare_builtins), NOT the
+            // Axon-source `exit` wrapper in self.functions (which is `exit_axon`
+            // and takes an i64). Matches the interpreter's panic exit code 101.
+            if let Some(exit_fn) = self.ir.module.get_function("exit") {
+                let code = self.ir.context.i32_type().const_int(101, false);
+                build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
+            }
+            self.ir.builder.build_unreachable().unwrap();
+            self.ir.builder.position_at_end(nonempty_bb);
+        }
+
         // Accumulator + index slots.
         let acc_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_acc");
-        let init = match &op { ArrReduce::Sum => 0, ArrReduce::Contains(_) => 0 };
+        // Sentinel init: 0 for Sum/Contains; i64::MIN for max / i64::MAX for min
+        // so the first element always wins the running compare.
+        let init: u64 = match &op {
+            ArrReduce::Sum | ArrReduce::Contains(_) => 0,
+            ArrReduce::Extreme { is_max: true } => i64::MIN as u64,
+            ArrReduce::Extreme { is_max: false } => i64::MAX as u64,
+        };
         build_wrappers::w_store(&self.ir.builder, acc_slot, i64_ty.const_int(init, false).into());
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_i");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
@@ -1366,6 +1395,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 let nacc = build_wrappers::w_or(&self.ir.builder, acc, eq64, "arr_or");
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
             }
+            ArrReduce::Extreme { is_max } => {
+                let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
+                // pick = (is_max ? elem > acc : elem < acc) ? elem : acc
+                let pred = if *is_max { inkwell::IntPredicate::SGT } else { inkwell::IntPredicate::SLT };
+                let better = build_wrappers::w_int_compare(&self.ir.builder, pred, elem, acc, "arr_better");
+                let nacc = self.ir.builder.build_select(better, elem, acc, "arr_pick").unwrap().into_int_value();
+                build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+            }
         }
         let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "arr_inext");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
@@ -1375,7 +1412,7 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.builder.position_at_end(exit_bb);
         let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_res").into_int_value();
         match op {
-            ArrReduce::Sum => Some(acc.into()),
+            ArrReduce::Sum | ArrReduce::Extreme { .. } => Some(acc.into()),
             ArrReduce::Contains(_) => {
                 // acc is 0/1 → truncate to i1 (bool).
                 let b = self.ir.builder.build_int_truncate(acc, i1_ty, "arr_found").unwrap();
@@ -2053,6 +2090,12 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Contains(n), fn_val);
+                }
+            }
+            if (name == "arr_max_i64" || name == "arr_min_i64") && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    let is_max = name == "arr_max_i64";
+                    return self.emit_arr_i64_loop(slice_val, ArrReduce::Extreme { is_max }, fn_val);
                 }
             }
         }

@@ -50,7 +50,12 @@ check sumneg  'fn main() -> i64 { let a = [100, 0 - 58]  arr_sum_i64(&a) }'
 check cont_y  'fn main() -> i64 { let a = [1, 2, 3]  if arr_contains(&a, 2) { 1 } else { 0 } }'
 check cont_n  'fn main() -> i64 { let a = [1, 2, 3]  if arr_contains(&a, 9) { 1 } else { 0 } }'
 check cont_1st 'fn main() -> i64 { let a = [7, 2, 3]  if arr_contains(&a, 7) { 1 } else { 0 } }'
+check max3    'fn main() -> i64 { let a = [3, 7, 2]  arr_max_i64(&a) }'
+check max1    'fn main() -> i64 { let a = [5]  arr_max_i64(&a) }'
+check maxneg  'fn main() -> i64 { let a = [0 - 5, 0 - 2, 0 - 9]  arr_max_i64(&a) }'
+check min3    'fn main() -> i64 { let a = [3, 7, 2]  arr_min_i64(&a) }'
+check minneg  'fn main() -> i64 { let a = [0 - 5, 0 - 2, 0 - 9]  arr_min_i64(&a) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr_sum_i64 / arr_contains match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr_sum_i64 / arr_contains / arr_max_i64 / arr_min_i64 match the interpreter ✓"
 exit 0
