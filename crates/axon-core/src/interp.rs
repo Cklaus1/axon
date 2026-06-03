@@ -6323,7 +6323,10 @@ mod tests {
             // enforced confidence gate blocks → distinct verify-failed code 3,
             // not a crash 101 (BUG_HUNT #26).
             ("verified-goal.md", VERIFY_FAILED_EXIT_CODE),
-            ("redteam-goal.md", 1),    // redteam gate blocks (explicit exit(1))
+            // redteam gate blocks → the SAME policy-rejection code as the verify
+            // gate (3), not 1 — every deploy-gate rejection is one exit class
+            // (BUG_HUNT #34 surface follow-on to #26).
+            ("redteam-goal.md", VERIFY_FAILED_EXIT_CODE),
         ] {
             let md = std::fs::read_to_string(format!("{base}{file}"))
                 .unwrap_or_else(|e| panic!("read {file}: {e}"));

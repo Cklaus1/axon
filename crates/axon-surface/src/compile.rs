@@ -195,7 +195,14 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
         let _ = writeln!(out, "        0");
         let _ = writeln!(out, "    }} else {{");
         let _ = writeln!(out, "        println(\"REDTEAM FAILED: blocking deploy\")");
-        let _ = writeln!(out, "        1");
+        // BUG_HUNT #34 (surface): a redteam rejection is a *policy* rejection,
+        // the same class as a failed `@[verify]` deploy-gate — so it exits 3
+        // (VERIFY_FAILED_EXIT_CODE), NOT 1. This unifies every goal deploy-gate
+        // rejection (verify, redteam, future gates) under one exit class so a
+        // supervisor can branch on "policy blocked deploy" (3) vs "the program
+        // crashed" (101) vs clean (0). Pre-#34 this returned 1, conflated with
+        // an ordinary failure.
+        let _ = writeln!(out, "        3");
         let _ = writeln!(out, "    }}");
     } else {
         let _ = writeln!(out, "    println(\"deploy gate: passed\")");
@@ -314,6 +321,33 @@ Some scoring.
         assert!(ax.contains("fn build_prompt(variant_id: i64) -> str"));
         // With no author code blocks, the score scaffold is emitted.
         assert!(ax.contains("// TODO: implement the score formula"));
+    }
+
+    #[test]
+    fn redteam_rejection_exits_with_the_policy_code_3() {
+        // BUG_HUNT #34 (surface): a redteam-check failure is a POLICY rejection,
+        // the same class as a failed @[verify] deploy-gate, so the generated
+        // `main` must return 3 (VERIFY_FAILED_EXIT_CODE) on the fail branch —
+        // NOT 1 (which conflated it with an ordinary failure). The deploy/pass
+        // branch still returns 0.
+        let md = format!(
+            "{SAMPLE}\n## Implementation\n\n```axon\n\
+             fn redteam_check() -> bool {{ false }}\n```\n"
+        );
+        let g = GoalFile::parse(&md).unwrap();
+        let ax = emit(&g).unwrap();
+        assert!(ax.contains("if redteam_check() {"), "redteam gate must be wired: {ax}");
+        // The fail branch returns the policy code 3, not 1.
+        let fail_idx = ax.find("REDTEAM FAILED").expect("fail branch present");
+        let after = &ax[fail_idx..];
+        assert!(
+            after.contains("\n        3\n"),
+            "redteam fail branch must return 3 (policy code), not 1: {after}"
+        );
+        assert!(
+            !after[..after.find("}}").unwrap_or(after.len()).min(80)].contains('1'),
+            "redteam fail branch must not return 1"
+        );
     }
 
     #[test]
