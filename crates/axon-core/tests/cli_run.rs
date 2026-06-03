@@ -1711,9 +1711,9 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // --no-default-features the build path itself is unavailable, so accept the
     // E0907/feature-required message too.)
     let f = std::env::temp_dir().join(format!("axon_e0910_{}.ax", std::process::id()));
-    // arr_fold is a known builtin that is NOT yet codegen-lowered (map/filter now
-    // are; fold/sort/zip/… are not).
-    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3]\n arr_fold(&a, 0, |acc, x| acc + x) }\n").unwrap();
+    // arr_zip_with is a known builtin that is NOT yet codegen-lowered (the
+    // single-slice closure ops map/filter/fold now are; zip/sort/… are not).
+    std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3]\n let b = [10, 20, 30]\n let c = arr_zip_with(a, b, |x, y| x + y)\n arr_sum_i64(&c) }\n").unwrap();
     let out = axon().args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_e0910_{}.bin", std::process::id())))
         .output()
@@ -1725,7 +1725,7 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
     if codegen_present {
         assert!(
-            msg.contains("E0910") && msg.contains("arr_fold"),
+            msg.contains("E0910") && msg.contains("arr_zip_with"),
             "an unsupported builtin must abort with E0910 naming it, got:\n{msg}"
         );
         assert!(!out.status.success(), "build must FAIL (not exit 0) on E0910:\n{msg}");

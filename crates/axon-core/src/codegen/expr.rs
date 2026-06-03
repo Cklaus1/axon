@@ -1724,6 +1724,71 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "cl_res"))
     }
 
+    /// arr_fold on an i64 slice with a 2-arg lambda fat-pointer: acc starts at
+    /// `init`, then per element `acc = fn(env, acc, elem)`. Returns the final
+    /// i64 acc. Pure IR (no allocation), native AND wasm.
+    fn emit_arr_i64_fold(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        init: inkwell::values::IntValue<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "fd_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "fd_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "fd_fp");
+        // i64 fn(i8* env, i64 acc, i64 elem).
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "fd_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "fd_lenp").unwrap(),
+            "fd_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "fd_datp").unwrap(),
+            "fd_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "fd_srci");
+
+        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "fd_acc");
+        build_wrappers::w_store(&self.ir.builder, acc_slot, init.into());
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "fd_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "fd.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "fd.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "fd.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "fd_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "fd_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i_cur], "fd_sp").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "fd_e").into_int_value();
+        let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "fd_a").into_int_value();
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), acc.into(), elem.into()], "fd_call")
+            .unwrap()
+            .try_as_basic_value().left()?.into_int_value();
+        build_wrappers::w_store(&self.ir.builder, acc_slot, r.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "fd_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        Some(build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "fd_res"))
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -2439,6 +2504,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 {
                     let is_map = name == "arr_map";
                     if let Some(r) = self.emit_arr_i64_closure(slice_val, lam, is_map, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_fold(&a, init, |acc, x| ...) — reduce with a 2-arg i64 closure.
+            // acc starts at `init`; per element acc = f(acc, elem). Returns the
+            // final i64 acc (no allocation).
+            if name == "arr_fold" && args.len() == 3 {
+                if let (Some(slice_val), Some(BasicValueEnum::IntValue(init)), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val), self.emit_expr(&args[2], fn_val))
+                {
+                    if let Some(r) = self.emit_arr_i64_fold(slice_val, init, lam, fn_val) {
                         return Some(r);
                     }
                 }
