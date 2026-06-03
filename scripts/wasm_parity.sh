@@ -40,12 +40,20 @@ cargo build -q -p axon-core --no-default-features --bin axon-run --target wasm32
 NATIVE="target/debug/axon-run"
 WASM="target/wasm32-wasip1/debug/axon-run.wasm"
 
-# Pure-compute corpus: examples that use no fs/env/AI/threads (R7 §4.1 row 1).
-CORPUS=(
-  hello.ax math.ax while.ax algorithms.ax modulo.ax
-  logical_ops.ax floats.ax comprehensive.ax structs.ax enums.ax
-  options.ax slices.ax interpolation.ax escapes.ax math_builtins.ax
-)
+# Pure-compute corpus (R7 §4.1 row 1): AUTO-DISCOVERED — every examples/*.ax with
+# a `fn main` that touches NONE of the host interface (fs/env/AI/threads/exec/
+# random/time). Those are the programs whose only divergence surface (the host
+# interface, R7 §4.3) is empty, so the native and wasm interpreters MUST agree by
+# construction (I-2: same interp.rs, two targets). Auto-discovery means a new
+# pure-compute example is covered automatically — no hand-maintained list to drift.
+HOST_BUILTINS='read_file|write_file|read_line|ai_complete|ai_extract|exec|spawn|chan_|random_|now_ms|temporal_now|goal_run|agent_detect|agent_uncertainty|agent_trace'
+CORPUS=()
+for f in examples/*.ax; do
+  grep -q "fn main" "$f" || continue
+  grep -qE "$HOST_BUILTINS" "$f" && continue
+  CORPUS+=("$(basename "$f")")
+done
+echo "wasm_parity: ${#CORPUS[@]} pure-compute examples auto-discovered"
 
 pass=0; fail=0
 for name in "${CORPUS[@]}"; do
