@@ -43,6 +43,9 @@ declare -A PROGS
 PROGS[arr]='fn main() -> i64 { let a = [10, 20, 12]  a[0] + a[1] + a[2] }'
 PROGS[tostr]='fn main() -> i64 { let s = to_str(12345)  str_len(s) }'
 PROGS[interp]='fn main() -> i64 { let a = "foo"  let b = "bar"  let c = "{a}{b}"  str_len(c) }'
+# eprintln writes to stderr via `write(2, buf, count)` — count is size_t (i32 on
+# wasm32). Exercises the write() size_t width. Returns 0 (stderr is side-effect).
+PROGS[eprint]='fn main() -> i64 { eprintln("to stderr")  0 }'
 PROGS[combo]='fn main() -> i64 {
     let a = [10, 20, 12]
     let s = to_str(a[0] + a[1] + a[2])
@@ -52,7 +55,7 @@ PROGS[combo]='fn main() -> i64 {
 }'
 
 fail=0; ran=0
-for name in arr tostr interp combo; do
+for name in arr tostr interp eprint combo; do
   SRC="$WORK/$name.ax"; printf '%s\n' "${PROGS[$name]}" > "$SRC"
   "$INTERP" "$SRC" >/dev/null 2>&1; I=$?
   # native
@@ -78,5 +81,5 @@ done
 
 if [ "$ran" -eq 0 ]; then echo "wasm_malloc_abi_parity: nothing linked — skipping"; exit 0; fi
 [ "$fail" -eq 0 ] || { echo "wasm_malloc_abi_parity: FAIL"; exit 1; }
-echo "wasm_malloc_abi_parity: PASS — array + to_str + string-interpolation (malloc/snprintf/memcpy size_t) run identically on interp, native, AOT-wasm ✓"
+echo "wasm_malloc_abi_parity: PASS — array + to_str + string-interpolation + eprintln (malloc/snprintf/memcpy/write size_t) run identically on interp, native, AOT-wasm ✓"
 exit 0

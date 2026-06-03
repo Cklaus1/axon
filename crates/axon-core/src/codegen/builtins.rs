@@ -149,8 +149,12 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("assert".to_string(), fn_val);
         }
 
-        // Declare write(fd: i32, buf: ptr, count: i64) -> i64 for stderr output.
-        let write_ty = i64_ty.fn_type(&[i32_ty.into(), i8_ptr.into(), i64_ty.into()], false);
+        // Declare `ssize_t write(int fd, const void *buf, size_t count)` for
+        // stderr output. R7: `count` is `size_t` and the result `ssize_t` — both
+        // i32 on wasm32 (ILP32), i64 on native (LP64). Call sites narrow the
+        // count via msize(); the result is discarded by eprintln/eprint.
+        let write_ret_ty = self.size_ty();
+        let write_ty = write_ret_ty.fn_type(&[i32_ty.into(), i8_ptr.into(), malloc_size_ty.into()], false);
         let write_fn = self.ir.module.add_function("write", write_ty, None);
 
         // eprintln: writes string + newline to stderr (fd=2) using write(2, ...).
@@ -168,7 +172,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 .into_int_value();
             let fd2 = i32_ty.const_int(2, false);
             // Write the string content.
-            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), data_ptr.into(), length.into()], "");
+            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), data_ptr.into(), self.msize(length, "msz").into()], "");
             // Write the newline.
             let nl_arr = self.ir.context.i8_type().array_type(1);
             let nl_g = self.ir.module.add_global(nl_arr, None, "eprintln_nl");
@@ -176,7 +180,7 @@ impl<'ctx> super::Codegen<'ctx> {
             nl_g.set_constant(true);
             let nl_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,nl_g.as_pointer_value(), i8_ptr, "nlptr");
             let one64 = i64_ty.const_int(1, false);
-            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), nl_ptr.into(), one64.into()], "");
+            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), nl_ptr.into(), self.msize(one64, "msz").into()], "");
             build_wrappers::w_ret_void(&self.ir.builder);
             if let Some(b) = saved_block { self.ir.builder.position_at_end(b); }
             self.functions.insert("eprintln".to_string(), fn_val);
@@ -196,7 +200,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let length = build_wrappers::w_extract_value(&self.ir.builder,str_arg, 0, "ep_len")
                 .into_int_value();
             let fd2 = i32_ty.const_int(2, false);
-            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), data_ptr.into(), length.into()], "");
+            build_wrappers::w_call(&self.ir.builder,write_fn, &[fd2.into(), data_ptr.into(), self.msize(length, "msz").into()], "");
             build_wrappers::w_ret_void(&self.ir.builder);
             if let Some(b) = saved_block { self.ir.builder.position_at_end(b); }
             self.functions.insert("eprint".to_string(), fn_val);
