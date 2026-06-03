@@ -93,7 +93,9 @@ check fsum    'fn main() -> i64 { let a = [1.5, 2.5, 3.0]  f64_to_i64(arr_sum_f6
 check fmean   'fn main() -> i64 { let a = [1.0, 2.0]  f64_to_i64(arr_mean_f64(&a) * 10.0) }'
 check fmax    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_max_f64(&a)) }'
 check fmin    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_min_f64(&a) * 10.0) }'
+check famax   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmax_f64(&a) }'
+check famin   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmin_f64(&a) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 sum/mean/max/min match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 sum/mean/max/min/argmax/argmin match the interpreter ✓"
 exit 0

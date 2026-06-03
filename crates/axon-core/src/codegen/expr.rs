@@ -38,6 +38,9 @@ enum ArrReduceF64 {
     Mean,
     /// Max/min element (f64). `true` = max. Panics (exit 101) on empty.
     Extreme { is_max: bool },
+    /// Index of the max/min element (i64 result). `true` = argmax. Panics
+    /// (exit 101) on empty. First index wins ties (strict compare).
+    ArgExtreme { is_max: bool },
 }
 
 /// Predicate-reduction kind for `emit_arr_i64_pred`.
@@ -1938,8 +1941,8 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.build_struct_gep(slice_ty, s_alloca, 1, "af_dp").unwrap(), "af_dat").into_pointer_value();
         let f64_data = build_wrappers::w_pointer_cast(&self.ir.builder, data_raw, f64_ty.ptr_type(AddressSpace::default()), "af_fd");
 
-        // Extreme panics on empty (interp parity). Sum/Mean do not.
-        if matches!(op, ArrReduceF64::Extreme { .. }) {
+        // Extreme/ArgExtreme panic on empty (interp parity). Sum/Mean do not.
+        if matches!(op, ArrReduceF64::Extreme { .. } | ArrReduceF64::ArgExtreme { .. }) {
             let empty_bb = self.ir.context.append_basic_block(fn_val, "af.empty");
             let ne_bb = self.ir.context.append_basic_block(fn_val, "af.ne");
             let is_empty = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "af_e");
@@ -1959,12 +1962,15 @@ impl<'ctx> super::Codegen<'ctx> {
         let acc_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "af_acc");
         let init = match &op {
             ArrReduceF64::Sum | ArrReduceF64::Mean => f64_ty.const_float(0.0),
-            ArrReduceF64::Extreme { is_max: true } => f64_ty.const_float(f64::NEG_INFINITY),
-            ArrReduceF64::Extreme { is_max: false } => f64_ty.const_float(f64::INFINITY),
+            ArrReduceF64::Extreme { is_max: true } | ArrReduceF64::ArgExtreme { is_max: true } => f64_ty.const_float(f64::NEG_INFINITY),
+            ArrReduceF64::Extreme { is_max: false } | ArrReduceF64::ArgExtreme { is_max: false } => f64_ty.const_float(f64::INFINITY),
         };
         build_wrappers::w_store(&self.ir.builder, acc_slot, init.into());
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "af_i");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        // For argmax/argmin_f64: track the best element's INDEX.
+        let best_idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "af_bidx");
+        build_wrappers::w_store(&self.ir.builder, best_idx_slot, i64_ty.const_zero().into());
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "af.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "af.body");
@@ -1987,6 +1993,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 let better = build_wrappers::w_float_compare(&self.ir.builder, pred, elem, acc, "af_b");
                 self.ir.builder.build_select(better, elem, acc, "af_pick").unwrap().into_float_value()
             }
+            ArrReduceF64::ArgExtreme { is_max } => {
+                let pred = if *is_max { inkwell::FloatPredicate::OGT } else { inkwell::FloatPredicate::OLT };
+                let better = build_wrappers::w_float_compare(&self.ir.builder, pred, elem, acc, "af_argb");
+                let cur_best = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "af_cb").into_int_value();
+                let nbest = self.ir.builder.build_select(better, i_cur, cur_best, "af_argidx").unwrap().into_int_value();
+                build_wrappers::w_store(&self.ir.builder, best_idx_slot, nbest.into());
+                self.ir.builder.build_select(better, elem, acc, "af_argval").unwrap().into_float_value()
+            }
         };
         build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
         let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "af_in");
@@ -1997,6 +2011,10 @@ impl<'ctx> super::Codegen<'ctx> {
         let acc = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), acc_slot, "af_res").into_float_value();
         match op {
             ArrReduceF64::Sum | ArrReduceF64::Extreme { .. } => Some(acc.into()),
+            ArrReduceF64::ArgExtreme { .. } => {
+                let bidx = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "af_bres").into_int_value();
+                Some(bidx.into())
+            }
             ArrReduceF64::Mean => {
                 // mean = len==0 ? 0.0 : acc / (f64)len.
                 let is_empty = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "af_me");
@@ -2915,14 +2933,17 @@ impl<'ctx> super::Codegen<'ctx> {
             // arr_min_f64 — same loop shape as the i64 ones but the slice element
             // is f64 (8-byte load/store, float compares).
             if (name == "arr_sum_f64" || name == "arr_mean_f64"
-                || name == "arr_max_f64" || name == "arr_min_f64") && args.len() == 1
+                || name == "arr_max_f64" || name == "arr_min_f64"
+                || name == "arr_argmax_f64" || name == "arr_argmin_f64") && args.len() == 1
             {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     let kind = match name.as_str() {
                         "arr_sum_f64" => ArrReduceF64::Sum,
                         "arr_mean_f64" => ArrReduceF64::Mean,
                         "arr_max_f64" => ArrReduceF64::Extreme { is_max: true },
-                        _ => ArrReduceF64::Extreme { is_max: false },
+                        "arr_min_f64" => ArrReduceF64::Extreme { is_max: false },
+                        "arr_argmax_f64" => ArrReduceF64::ArgExtreme { is_max: true },
+                        _ => ArrReduceF64::ArgExtreme { is_max: false },
                     };
                     return self.emit_arr_f64_loop(slice_val, kind, fn_val);
                 }
