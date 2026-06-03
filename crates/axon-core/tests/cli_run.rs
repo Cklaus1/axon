@@ -4016,6 +4016,30 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
 }
 
 #[test]
+fn wasm_str_abi_bridge_runs_str_builtins() {
+    // R7 (AOT-wasm str/array ABI): LLVM expands a by-value AxonStr arg into
+    // scalars (i64 len, i32 ptr); axon-rt's wasm build declares that expanded
+    // form for every str-taking extern, so a STRING-using program links clean
+    // and runs. A program through 7 distinct str builtins must yield the same
+    // value on interp, native, and AOT-wasm. scripts/wasm_str_abi_parity.sh;
+    // skips when codegen/wasm toolchain absent.
+    let script = format!("{}/../../scripts/wasm_str_abi_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_str_abi_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_str_abi_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — str ABI parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "str builtins must run identically across engines on wasm:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_str_abi_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_object_prunes_dead_externs_and_links_clean() {
     // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
     // ~119 unconditionally-emitted builtin helpers that go unused, so a
@@ -5240,11 +5264,17 @@ fn target_build_aot_wasm_object_or_e0907() {
         .unwrap();
     let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     if out.status.code() == Some(0) {
-        // Codegen build: a real wasm object must have been emitted + verified.
+        // Codegen build: a real wasm object must have been emitted. Since the
+        // str/array i64→i32 ABI bridge landed (R7), the CLI goes further and
+        // links a RUNNABLE module — so accept either the object-only message
+        // ("wasm object:" / "magic-verified") or the linked-RUNNABLE message.
         assert!(
-            msg.contains("wasm object:") && msg.contains("magic-verified"),
-            "codegen wasm build must emit a magic-verified object: {msg}"
+            (msg.contains("wasm object:") && msg.contains("magic-verified"))
+                || (msg.contains("wasm:") && msg.contains("RUNNABLE")),
+            "codegen wasm build must emit a wasm object (object-only or linked-RUNNABLE): {msg}"
         );
+        // The pre-link object is always emitted at `<stem>.wasm` and must carry
+        // the wasm magic, regardless of whether linking ran.
         let wasm = f.with_extension("wasm");
         let bytes = std::fs::read(&wasm).expect("wasm object must exist");
         assert!(
@@ -5252,6 +5282,7 @@ fn target_build_aot_wasm_object_or_e0907() {
             "emitted file must start with the wasm magic"
         );
         let _ = std::fs::remove_file(&wasm);
+        let _ = std::fs::remove_file(f.with_extension("linked.wasm"));
     } else {
         // Interp-only build: honest E0907.
         assert!(msg.contains("E0907"), "without codegen, AOT wasm must be E0907: {msg}");

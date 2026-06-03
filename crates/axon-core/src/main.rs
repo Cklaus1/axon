@@ -1578,6 +1578,36 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 /// link fails (e.g. an str/array program whose i64-ABI helpers clash with
 /// wasm32's i32 libc — the remaining ABI gap). Best-effort: a failed link is
 /// not an error, just "object-only".
+/// Locate the wasm32 build of `libaxon_rt.a`, the runtime carrying the
+/// scalar-ABI bridge for str/array externs. Checks `$AXON_WASM_RT` first (an
+/// explicit override), then the conventional cargo target layout. Returns None
+/// if the wasm runtime hasn't been built — callers degrade to libc-only linking.
+#[cfg(feature = "codegen")]
+fn find_wasm_axon_rt() -> Option<PathBuf> {
+    if let Ok(p) = std::env::var("AXON_WASM_RT") {
+        let pb = PathBuf::from(p);
+        if pb.exists() {
+            return Some(pb);
+        }
+    }
+    // Walk up from CWD looking for target/wasm32-wasip1/{debug,release}/libaxon_rt.a.
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        for profile in ["debug", "release"] {
+            let cand = dir
+                .join("target/wasm32-wasip1")
+                .join(profile)
+                .join("libaxon_rt.a");
+            if cand.exists() {
+                return Some(cand);
+            }
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 #[cfg(feature = "codegen")]
 fn try_link_wasm(obj: &Path) -> Option<PathBuf> {
     use std::process::Command;
@@ -1611,10 +1641,23 @@ fn try_link_wasm(obj: &Path) -> Option<PathBuf> {
     let rust_lld = find("", true)?;
     let libc = find("libc.a", false)?;
 
+    // Locate the wasm build of axon-rt (the `__axon_*` runtime). A pure-int
+    // program needs none (pruning removes every `__axon_*`); a str/array program
+    // references the runtime, whose wasm build carries the scalar-ABI bridge
+    // (`#[cfg(target_arch="wasm32")]`) that matches codegen's struct expansion.
+    // If it isn't built (`cargo build -p axon-rt --target wasm32-wasip1`), we
+    // still link libc-only — pure-int programs succeed; str programs surface an
+    // unresolved-symbol failure and fall back to object-only (None), honestly.
+    let rt_lib = find_wasm_axon_rt();
+
     let linked = obj.with_extension("linked.wasm");
-    let status = Command::new(&rust_lld)
-        .args(["-flavor", "wasm", "--no-entry", "--export=main"])
-        .arg(&libc)
+    let mut cmd = Command::new(&rust_lld);
+    cmd.args(["-flavor", "wasm", "--no-entry", "--export=main"])
+        .arg(&libc);
+    if let Some(rt) = &rt_lib {
+        cmd.arg(rt);
+    }
+    let status = cmd
         .arg(obj)
         .arg("-o")
         .arg(&linked)

@@ -270,9 +270,17 @@ pub extern "C" fn __axon_min_i64(a: i64, b: i64) -> i64 {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `a.contains(b)`.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_contains(a: AxonStr, b: AxonStr) -> bool {
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
+    a.contains(b)
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_contains(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
+    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
+    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
     a.contains(b)
 }
 
@@ -282,9 +290,17 @@ pub extern "C" fn __axon_str_contains(a: AxonStr, b: AxonStr) -> bool {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `a.starts_with(b)`.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_starts_with(a: AxonStr, b: AxonStr) -> bool {
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
+    a.starts_with(b)
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_starts_with(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
+    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
+    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
     a.starts_with(b)
 }
 
@@ -294,9 +310,17 @@ pub extern "C" fn __axon_str_starts_with(a: AxonStr, b: AxonStr) -> bool {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `a.ends_with(b)`.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_ends_with(a: AxonStr, b: AxonStr) -> bool {
     let a = unsafe { a.as_str() };
     let b = unsafe { b.as_str() };
+    a.ends_with(b)
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_ends_with(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
+    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
+    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
     a.ends_with(b)
 }
 
@@ -306,9 +330,17 @@ pub extern "C" fn __axon_str_ends_with(a: AxonStr, b: AxonStr) -> bool {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `h.find(needle).map(|i| i as i64).unwrap_or(-1)`.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_index_of(hay: AxonStr, needle: AxonStr) -> i64 {
     let hay = unsafe { hay.as_str() };
     let needle = unsafe { needle.as_str() };
+    hay.find(needle).map(|i| i as i64).unwrap_or(-1)
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_index_of(hay_len: i64, hay_ptr: *const u8, needle_len: i64, needle_ptr: *const u8) -> i64 {
+    let hay = unsafe { AxonStr { len: hay_len, ptr: hay_ptr }.as_str() };
+    let needle = unsafe { AxonStr { len: needle_len, ptr: needle_ptr }.as_str() };
     hay.find(needle).map(|i| i as i64).unwrap_or(-1)
 }
 
@@ -318,8 +350,15 @@ pub extern "C" fn __axon_str_index_of(hay: AxonStr, needle: AxonStr) -> i64 {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `s.len() as i64` (byte length, not char count).
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_len(s: AxonStr) -> i64 {
     let s = unsafe { s.as_str() };
+    s.len() as i64
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_len(s_len: i64, s_ptr: *const u8) -> i64 {
+    let s = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
     s.len() as i64
 }
 
@@ -329,8 +368,16 @@ pub extern "C" fn __axon_str_len(s: AxonStr) -> i64 {
 /// `governance/specs/R1-codegen-build-unblock.md`, Batch 2). Matches the
 /// interpreter oracle: `s.as_bytes().get(i.max(0) as usize).map(|b| *b as i64).unwrap_or(-1)`.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_char_at(s: AxonStr, i: i64) -> i64 {
     let s = unsafe { s.as_str() };
+    let i = i.max(0) as usize;
+    s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_char_at(s_len: i64, s_ptr: *const u8, i: i64) -> i64 {
+    let s = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
     let i = i.max(0) as usize;
     s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
 }
@@ -539,6 +586,19 @@ pub extern "C" fn __axon_read_file(
 /// (len ≥ 0 → Ok stdout; len < 0 → Err with `|len|`). Mirrors the interpreter's
 /// DefaultHost::exec so native==interp.
 #[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_exec(
+    cmd_len: i64,
+    cmd_ptr: *const u8,
+    args_ptr: *const AxonStr,
+    args_count: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_exec_impl(unsafe { AxonStr { len: cmd_len, ptr: cmd_ptr }.as_str() }, args_ptr, args_count, out_len, out_ptr)
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_exec(
     cmd: AxonStr,
     args_ptr: *const AxonStr,
@@ -546,7 +606,15 @@ pub extern "C" fn __axon_exec(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let cmd_s = unsafe { cmd.as_str() };
+    __axon_exec_impl(unsafe { cmd.as_str() }, args_ptr, args_count, out_len, out_ptr)
+}
+fn __axon_exec_impl(
+    cmd_s: &str,
+    args_ptr: *const AxonStr,
+    args_count: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
     let args: Vec<String> = if args_ptr.is_null() || args_count <= 0 {
         Vec::new()
     } else {
@@ -721,6 +789,7 @@ unsafe fn write_str_out(
 /// Uses the out-param convention: the caller allocates slots; this function
 /// mallocs the result and writes {byte_length, buffer_ptr}.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_repeat(
     s: AxonStr,
     n: i64,
@@ -732,12 +801,27 @@ pub extern "C" fn __axon_str_repeat(
     let result = src.repeat(count);
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_repeat(
+    s_len: i64,
+    s_ptr: *const u8,
+    n: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let count = n.max(0) as usize;
+    let result = src.repeat(count);
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
 
 // ── R1 Batch 2b: str_slice ────────────────────────────────────────────────────
 /// `str_slice(s, start, end)` — byte-indexed slice of `s`.
 /// Clamps start to [0, len], end to [start, len]; returns "" if byte range
 /// crosses a UTF-8 boundary (s.get returns None).
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_slice(
     s: AxonStr,
     start: i64,
@@ -752,6 +836,23 @@ pub extern "C" fn __axon_str_slice(
     let slice = src.get(start..end).unwrap_or("");
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_slice(
+    s_len: i64,
+    s_ptr: *const u8,
+    start: i64,
+    end: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let start = (start.max(0) as usize).min(src.len());
+    let end = (end.max(0) as usize).min(src.len());
+    let start = start.min(end);
+    let slice = src.get(start..end).unwrap_or("");
+    unsafe { write_str_out(slice, out_len, out_ptr) }
+}
 
 // ── BUG_HUNT #37: parse_int Err message (echoes the input, like the interp) ──
 /// Build the `parse_int` error message for a failed input, matching the
@@ -759,12 +860,29 @@ pub extern "C" fn __axon_str_slice(
 /// integer ``. Codegen calls this from the Err branch (it has the input str)
 /// instead of emitting a static message, so native==interp on the message too.
 #[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_parse_int_err(
+    input_len: i64,
+    input_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_int_err_impl(unsafe { AxonStr { len: input_len, ptr: input_ptr }.as_str() }, out_len, out_ptr)
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_parse_int_err(
     input: AxonStr,
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let src = unsafe { input.as_str() };
+    __axon_parse_int_err_impl(unsafe { input.as_str() }, out_len, out_ptr)
+}
+fn __axon_parse_int_err_impl(
+    src: &str,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
     // Mirror the interpreter (interp.rs): a radix-prefixed input gets a hint.
     let lower = src.to_ascii_lowercase();
     let hint = if lower.starts_with("0x") || lower.starts_with("0o") || lower.starts_with("0b") {
@@ -786,6 +904,20 @@ pub extern "C" fn __axon_parse_int_err(
 /// (`0x`/`0o`/`0b`) is stripped, a leading `-` is preserved, an out-of-range
 /// base or bad digit is a recoverable Err — never a panic.
 #[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_parse_int_radix(
+    s_len: i64,
+    s_ptr: *const u8,
+    base: i64,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_int_radix_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, base, out_ok, out_val, out_len, out_ptr)
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_parse_int_radix(
     s: AxonStr,
     base: i64,
@@ -794,7 +926,17 @@ pub extern "C" fn __axon_parse_int_radix(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let src = unsafe { s.as_str() };
+    __axon_parse_int_radix_impl(unsafe { s.as_str() }, base, out_ok, out_val, out_len, out_ptr)
+}
+#[allow(clippy::too_many_arguments)]
+fn __axon_parse_int_radix_impl(
+    src: &str,
+    base: i64,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
     let set_ok = |n: i64| unsafe {
         *out_ok = 1;
         *out_val = n;
@@ -834,11 +976,33 @@ pub extern "C" fn __axon_parse_int_radix(
 /// mangles any multibyte UTF-8 (`str_reverse("héllo")` → invalid bytes); this
 /// is the I-2-canonical implementation codegen now calls instead.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_reverse(
     s: AxonStr,
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
+    let src = unsafe { s.as_str() };
+    let result: String = src.chars().rev().collect();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+// wasm32 ABI bridge (R7): LLVM (codegen) expands a by-value `{i64 len, ptr}`
+// struct arg into SCALARS — so codegen calls `__axon_str_reverse(i64 len,
+// i32 ptr, …)`. rustc, by contrast, would pass `AxonStr` INDIRECTLY on wasm32
+// (a single i32 pointer), so the by-value signature above mismatches the
+// codegen call (`function signature mismatch` → trap). On wasm we therefore
+// declare the EXPANDED scalar form that matches codegen exactly, and rebuild
+// the AxonStr inside. (Native keeps the by-value form, which agrees there.)
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_reverse(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let s = AxonStr { len: s_len, ptr: s_ptr };
     let src = unsafe { s.as_str() };
     let result: String = src.chars().rev().collect();
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -851,6 +1015,7 @@ pub extern "C" fn __axon_str_reverse(
 /// `str_replace("abc", "", "X")` → `"XaXbXcX"`. The old inline codegen skipped
 /// the empty-`from` case (returned `s` unchanged) — a silent divergence.
 #[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
 pub extern "C" fn __axon_str_replace(
     s: AxonStr,
     from: AxonStr,
@@ -861,6 +1026,25 @@ pub extern "C" fn __axon_str_replace(
     let src = unsafe { s.as_str() };
     let from_s = unsafe { from.as_str() };
     let to_s = unsafe { to.as_str() };
+    let result = src.replace(from_s, to_s);
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn __axon_str_replace(
+    s_len: i64,
+    s_ptr: *const u8,
+    from_len: i64,
+    from_ptr: *const u8,
+    to_len: i64,
+    to_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let from_s = unsafe { AxonStr { len: from_len, ptr: from_ptr }.as_str() };
+    let to_s = unsafe { AxonStr { len: to_len, ptr: to_ptr }.as_str() };
     let result = src.replace(from_s, to_s);
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
