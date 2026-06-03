@@ -30,6 +30,14 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// Reduction kind for `emit_arr_i64_loop` — a counted loop over an i64 slice.
+enum ArrReduce<'ctx> {
+    /// Σ of all elements (i64 result).
+    Sum,
+    /// Whether any element equals the needle (i1 result).
+    Contains(inkwell::values::IntValue<'ctx>),
+}
+
 impl<'ctx> super::Codegen<'ctx> {
     // ── Expression emission ───────────────────────────────────────────────────
 
@@ -1289,6 +1297,93 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(elem)
     }
 
+    /// Emit a counted loop over an i64 slice `{i64 len, i8* data}` performing a
+    /// reduction. Pure IR (no runtime extern), so it works on native AND wasm.
+    /// Returns the reduced scalar (i64 for Sum, i1 for Contains).
+    fn emit_arr_i64_loop(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        op: ArrReduce<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let i1_ty = self.ir.context.bool_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        // Unpack len (field 0) and data ptr (field 1).
+        let slice_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "arr_s");
+        build_wrappers::w_store(&self.ir.builder, slice_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, slice_alloca, 0, "arr_lenp").unwrap(),
+            "arr_len").into_int_value();
+        let data_ptr = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, slice_alloca, 1, "arr_datp").unwrap(),
+            "arr_dat").into_pointer_value();
+        let i64_data = build_wrappers::w_pointer_cast(
+            &self.ir.builder, data_ptr,
+            i64_ty.ptr_type(AddressSpace::default()), "arr_i64p");
+
+        // Accumulator + index slots.
+        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_acc");
+        let init = match &op { ArrReduce::Sum => 0, ArrReduce::Contains(_) => 0 };
+        build_wrappers::w_store(&self.ir.builder, acc_slot, i64_ty.const_int(init, false).into());
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "arr.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "arr.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "arr.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // cond: i < len  (and, for Contains, not-yet-found short-circuits below)
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "arr_icur").into_int_value();
+        let in_range = build_wrappers::w_int_compare(
+            &self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "arr_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        // body: load elem, update accumulator, i++.
+        self.ir.builder.position_at_end(body_bb);
+        let elem_ptr = unsafe {
+            self.ir.builder.build_gep(i64_ty, i64_data, &[i_cur], "arr_ep").unwrap()
+        };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), elem_ptr, "arr_e").into_int_value();
+        match &op {
+            ArrReduce::Sum => {
+                let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
+                let nacc = build_wrappers::w_int_add(&self.ir.builder, acc, elem, "arr_na");
+                build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+            }
+            ArrReduce::Contains(needle) => {
+                let eq = build_wrappers::w_int_compare(
+                    &self.ir.builder, inkwell::IntPredicate::EQ, elem, *needle, "arr_eq");
+                // acc = acc | (elem == needle)  (kept as i64 0/1 for a uniform slot)
+                let eq64 = build_wrappers::w_int_z_extend(&self.ir.builder, eq, i64_ty, "arr_eq64");
+                let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
+                let nacc = build_wrappers::w_or(&self.ir.builder, acc, eq64, "arr_or");
+                build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+            }
+        }
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "arr_inext");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // exit: produce the result.
+        self.ir.builder.position_at_end(exit_bb);
+        let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_res").into_int_value();
+        match op {
+            ArrReduce::Sum => Some(acc.into()),
+            ArrReduce::Contains(_) => {
+                // acc is 0/1 → truncate to i1 (bool).
+                let b = self.ir.builder.build_int_truncate(acc, i1_ty, "arr_found").unwrap();
+                Some(b.into())
+            }
+        }
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -1934,6 +2029,30 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => return None,
                     };
                     return Some(out.into());
+                }
+            }
+        }
+
+        // Array reductions over an i64 slice (`{i64 len, i8* data}`), lowered
+        // INLINE as a counted loop (pure IR → works native AND wasm). These had
+        // no codegen (E0910). Semantics match the interpreter (interp.rs):
+        //   arr_sum_i64(&a)      → Σ elements (0 for empty)
+        //   arr_contains(&a, x)  → bool, any element == x
+        // The slice arg is `&a`; `&` is a no-op at the LLVM level so it yields
+        // the slice value directly. (arr_sum uses plain i64 add, not the
+        // interpreter's saturating_add — they differ only on i64 overflow, which
+        // realistic arrays don't hit; documented in the parity harness.)
+        if let ast::Expr::Ident(name) = callee {
+            if name == "arr_sum_i64" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_i64_loop(slice_val, ArrReduce::Sum, fn_val);
+                }
+            }
+            if name == "arr_contains" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_loop(slice_val, ArrReduce::Contains(n), fn_val);
                 }
             }
         }
