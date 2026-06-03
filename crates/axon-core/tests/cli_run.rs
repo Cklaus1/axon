@@ -2695,6 +2695,53 @@ fn verify_value_predicate_gates_on_uncertain_value() {
 }
 
 #[test]
+fn sensitive_type_into_ai_call_is_e1206() {
+    // PRD §4 (privacy): a `@[sensitive(category)]` value must never flow into an
+    // external AI call. v1 catches the direct case at check (E1206).
+    let leak = "@[sensitive(pii)]\n\
+        type User = { name: str, email: str }\n\
+        fn leak(u: User) -> str { match ai_complete(u) { Ok(s) => s  Err(e) => e } }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sens_{}.ax", std::process::id()));
+    std::fs::write(&f, leak).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1206"), "sensitive→AI must be E1206: {all}");
+    assert!(all.contains("pii") && all.contains("User"), "message names the category + type: {all}");
+}
+
+#[test]
+fn sensitive_type_used_locally_is_allowed() {
+    // No false positive: a `@[sensitive]` value used OUTSIDE an AI call is fine.
+    let ok = "@[sensitive(pii)]\n\
+        type User = { name: str, email: str }\n\
+        fn local(u: User) -> str { u.name }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sens_ok_{}.ax", std::process::id()));
+    std::fs::write(&f, ok).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "local use of a sensitive value must be allowed: {all}");
+}
+
+#[test]
+fn non_sensitive_type_into_ai_call_is_allowed() {
+    // The guard is specific to `@[sensitive]` types — a plain struct may flow
+    // into an AI call.
+    let ok = "type Plain = { note: str }\n\
+        fn f(p: Plain) -> str { match ai_complete(p) { Ok(s) => s  Err(e) => e } }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_sens_plain_{}.ax", std::process::id()));
+    std::fs::write(&f, ok).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "a non-sensitive type must be allowed: {all}");
+}
+
+#[test]
 fn uncertain_binops_propagate_minimum_confidence() {
     // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
     // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's

@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::{levenshtein, E1500, E1503, E1504, E1505};
+use crate::error::{levenshtein, E1206, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -255,6 +255,9 @@ pub struct CheckCtx {
     confidence_observed: HashSet<String>,
     /// `@[adaptive]` fn names (populated in `check_program`).
     adaptive_fns: HashSet<String>,
+    /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
+    /// Such a value may not flow into an external AI call (E1206, PRD §4).
+    sensitive_types: HashMap<String, String>,
 }
 
 impl CheckCtx {
@@ -279,6 +282,7 @@ impl CheckCtx {
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
+            sensitive_types: HashMap::new(),
         }
     }
 
@@ -334,6 +338,18 @@ impl CheckCtx {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "adaptive") {
                     self.adaptive_fns.insert(f.name.clone());
+                }
+            }
+        }
+
+        // PRD §4: collect `@[sensitive(category)]` struct types. A value of such
+        // a type may not flow into an external AI call (E1206). The category
+        // (pii/phi/financial/…) is the attr's first arg, "sensitive" if absent.
+        for item in &program.items {
+            if let Item::TypeDef(t) = item {
+                if let Some(a) = t.attrs.iter().find(|a| a.name == "sensitive") {
+                    let category = a.args.first().cloned().unwrap_or_else(|| "sensitive".into());
+                    self.sensitive_types.insert(t.name.clone(), category);
                 }
             }
         }
@@ -873,6 +889,41 @@ impl CheckCtx {
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
                 }
+                // PRD §4 (privacy): a `@[sensitive]` value may not flow into an
+                // external AI call. v1 catches the direct case — an arg to an AI
+                // builtin (`ai_complete`/`ai_extract_*`) whose resolved type is a
+                // sensitive struct → E1206. (Transitive taint + auto-`to_redacted`
+                // are the follow-on; this is the highest-value direct guard.)
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if !self.sensitive_types.is_empty() && is_external_ai_sink(name) {
+                        for (i, arg) in args.iter().enumerate() {
+                            let apath = format!("{node_path}.arg_{i}");
+                            let ty = self.resolve_expr_type(arg, &apath, scope);
+                            if let Type::Struct(sname) = &ty {
+                                if let Some(cat) = self.sensitive_types.get(sname) {
+                                    let file = self.file.clone();
+                                    self.errors.push(
+                                        CheckError::new(
+                                            E1206,
+                                            format!(
+                                                "a `@[sensitive({cat})]` value of type `{sname}` is passed to \
+                                                 the external AI call `{name}` — sensitive data must never leave \
+                                                 the program boundary"
+                                            ),
+                                        )
+                                        .node(&apath)
+                                        .at(&file, 0, 0)
+                                        .fix(format!(
+                                            "strip the sensitive fields before the call (e.g. build a redacted \
+                                             projection of `{sname}`), or move the call behind a local-only boundary"
+                                        )),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // R05 / R06 — only for named (direct) calls.
                 if let Expr::Ident(name) = callee.as_ref() {
                     // Fix #3: detect calling a local variable that is not a function.
@@ -2133,6 +2184,12 @@ fn axon_type_name(ty: &AxonType) -> String {
 
 /// Returns a display string for an `AxonType` suitable for error messages.
 /// Identical to `axon_type_name` for now; separated so they can diverge.
+/// Is `name` an external AI sink — a builtin that sends data off the program
+/// boundary to a model? A `@[sensitive]` value reaching one of these is E1206.
+fn is_external_ai_sink(name: &str) -> bool {
+    name == "ai_complete" || name.starts_with("ai_extract")
+}
+
 fn axon_type_display(ty: &AxonType) -> String {
     axon_type_name(ty)
 }

@@ -1,0 +1,24 @@
+// PRD §4 — Privacy & Data Sovereignty: sensitivity at the type level.
+// A `@[sensitive(category)]` struct may never flow into an external AI call;
+// the compiler refuses it (E1206) rather than relying on a policy doc.
+
+@[sensitive(pii)]
+type User = { name: str, email: str }
+
+// Safe: redact to a plain projection before the model sees anything.
+fn summarize(u: User) -> str {
+    // Only a non-identifying note crosses the boundary, never the User itself.
+    let note = "a registered user"
+    match ai_complete(note) {
+        Ok(s) => s
+        Err(_) => note
+    }
+}
+
+fn main() -> i64 {
+    let u = User { name: "Ada", email: "ada@example.com" }
+    // Local use of the sensitive value is fine.
+    println("greeting {u.name}")
+    let _ = summarize(u)
+    0
+}

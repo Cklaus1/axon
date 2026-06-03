@@ -400,7 +400,7 @@ impl Parser {
                 fndef.verify = verify_spec;
                 Ok(Item::FnDef(fndef))
             }
-            Some(Token::Type)  => self.parse_type_def(),
+            Some(Token::Type)  => self.parse_type_def(attrs),
             Some(Token::Enum)  => Ok(Item::EnumDef(self.parse_enum_def()?)),
             Some(Token::Mod)   => Ok(Item::ModDecl(self.parse_mod()?)),
             Some(Token::Use)   => Ok(Item::UseDecl(self.parse_use()?)),
@@ -886,7 +886,7 @@ impl Parser {
     /// `type Name = { fields }` (struct) OR the sum-type sugar
     /// `type Name = Variant { fields }? ( | Variant ... )*`, which produces the
     /// same `EnumDef` as `enum Name { ... }`. Returns the appropriate `Item`.
-    fn parse_type_def(&mut self) -> Result<Item> {
+    fn parse_type_def(&mut self, attrs: Vec<Attr>) -> Result<Item> {
         let start = self.current_span().start;
         self.expect(&Token::Type)?;
         let name = self.expect_ident()?;
@@ -920,7 +920,7 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, span: Span::new(start, end) }))
+        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, attrs, span: Span::new(start, end) }))
     }
 
     /// Parse an enum variant's optional `{ field: Type, ... }` payload (shared by

@@ -66,6 +66,12 @@ pub struct TypeDef {
     /// Phase 3: type parameters for generic structs.
     pub generic_params: Vec<String>,
     pub fields: Vec<TypeField>,
+    /// Attributes on the type, e.g. `@[sensitive(pii)]` — the privacy/data-
+    /// sovereignty tag the checker uses to forbid the type from flowing into an
+    /// external AI call (PRD §4 "Sensitivity at the Type Level"). Empty for an
+    /// ordinary type.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub attrs: Vec<Attr>,
     pub span: Span,
 }
 
