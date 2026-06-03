@@ -336,6 +336,41 @@ fn log_adaptive_return(
     Ok(())
 }
 
+/// R4 §4.3: the mandatory `@[agent]` action log. Codegen emits a call to this at
+/// every capability-bearing builtin call inside an `@[agent]` fn, so a native
+/// agent cannot act on the world (fs/net/exec) without the action being audited
+/// — the same `event:"agent_action"`/`zone:"agent"` record the interpreter
+/// writes (I-13, un-opt-out-able). `fn_name`/`action`/`caps_used` are str ABI
+/// pairs; `action` is the tool (builtin) name, `caps_used` its capability kind.
+#[no_mangle]
+pub extern "C" fn __axon_log_agent_action(
+    fn_name_ptr: *const u8,
+    fn_name_len: i64,
+    action_ptr: *const u8,
+    action_len: i64,
+    caps_ptr: *const u8,
+    caps_len: i64,
+) {
+    let fn_name = slice_to_str(fn_name_ptr, fn_name_len);
+    let action = slice_to_str(action_ptr, action_len);
+    let caps = slice_to_str(caps_ptr, caps_len);
+    let Some(dir) = provenance_dir() else { return };
+    if fs::create_dir_all(&dir).is_err() { return; }
+    let path = dir.join("provenance.jsonl");
+    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let src = provenance_source();
+    let src_field = if src.is_empty() { String::new() } else { format!(",\"src\":{}", json_quote(&src)) };
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\"action\":{a},\"caps_used\":{c}{src_field}}}\n",
+        f = json_quote(fn_name),
+        a = json_quote(action),
+        c = json_quote(caps),
+    );
+    if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
 fn provenance_dir() -> Option<PathBuf> {
     // Honour $XDG_CACHE_HOME if set, otherwise fall back to $HOME/.cache.
     if let Ok(xdg) = std::env::var("XDG_CACHE_HOME") {

@@ -2026,6 +2026,15 @@ impl<'ctx> super::Codegen<'ctx> {
             // @[adaptive] provenance (`"src"` field, interp parity).
             let set_src_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
             self.ir.module.add_function("__axon_set_provenance_source", set_src_ty, None);
+
+            // R4 §4.3: __axon_log_agent_action(fn_ptr, fn_len, action_ptr,
+            // action_len, caps_ptr, caps_len) — emitted at a capability builtin
+            // call inside an @[agent] fn (the mandatory agent action log).
+            let log_aa_ty = void_ty.fn_type(
+                &[i8_ptr.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into()],
+                false,
+            );
+            self.ir.module.add_function("__axon_log_agent_action", log_aa_ty, None);
         }
 
         // ── goal_run(name: str, target: f64, max_evals: i64) -> f64 ───────────

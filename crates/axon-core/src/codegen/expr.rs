@@ -1942,6 +1942,13 @@ impl<'ctx> super::Codegen<'ctx> {
             arg_vals.push(coerced.into());
         }
 
+        // R4 §4.3: if this is a capability-bearing builtin called inside an
+        // `@[agent]` fn, emit the mandatory agent_action audit log before the
+        // call (no-op otherwise). Keyed on the callee name + the agent context.
+        if let ast::Expr::Ident(name) = callee {
+            self.emit_agent_action_log(name);
+        }
+
         let call = self.ir
             .builder
             .build_call(fn_v, &arg_vals, "call")

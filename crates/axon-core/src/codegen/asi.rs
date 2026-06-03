@@ -26,6 +26,38 @@ use crate::types::Type;
 use super::build_wrappers;
 
 impl<'ctx> super::Codegen<'ctx> {
+    /// R4 §4.3: emit the mandatory `agent_action` audit log when a capability-
+    /// bearing builtin `action` (exercising capability `caps`) is called inside
+    /// the current `@[agent]` fn. No-op when not in an agent fn, when the builtin
+    /// is pure (no capability), or when the block is already terminated. This is
+    /// the codegen counterpart to the interpreter's `append_agent_action_jsonl`
+    /// — the highest-trust zone's un-opt-out-able audit trail (I-13).
+    pub(super) fn emit_agent_action_log(&mut self, action: &str) {
+        let Some(agent_fn) = self.current_agent_fn.clone() else { return };
+        let Some(caps) = crate::capabilities::capability_of_builtin(action) else { return };
+        let log_fn = match self.ir.module.get_function("__axon_log_agent_action") {
+            Some(f) => f,
+            None => return,
+        };
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &agent_fn, "aa_fn");
+        let act_g = build_wrappers::w_global_string_ptr(&self.ir.builder, action, "aa_action");
+        let cap_g = build_wrappers::w_global_string_ptr(&self.ir.builder, caps, "aa_caps");
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            log_fn,
+            &[
+                fn_g.into(), i64_ty.const_int(agent_fn.len() as u64, false).into(),
+                act_g.into(), i64_ty.const_int(action.len() as u64, false).into(),
+                cap_g.into(), i64_ty.const_int(caps.len() as u64, false).into(),
+            ],
+            "",
+        );
+    }
+
     // ── Provenance logging helpers (for @[adaptive] functions) ──────────────
     /// Emit a call to `__axon_provenance_log(fn_name, event)` at the current
     /// builder position.  Used at function prologues and immediately before

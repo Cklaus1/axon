@@ -3573,6 +3573,35 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_agent_action_log_matches_interp() {
+    // R4 §4.3: the mandatory @[agent] action log (I-13) must be injected by
+    // native codegen too, not just the interpreter — a native agent cannot act
+    // on the world (fs/net/exec) un-audited. scripts/agent_action_parity.sh
+    // builds an @[agent] program both ways and asserts the agent_action records
+    // (fn|action|caps) match. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/agent_action_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("agent_action_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run agent_action_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — agent action parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native @[agent] action log must match the interpreter (R4 §4.3):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("native agent_action log matches the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_exec_matches_interp() {
     // R6: the `exec` builtin was interp-only — native codegen had no emitter, so
     // a native build silently produced no output. Codegen now emits `exec`

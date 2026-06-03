@@ -153,6 +153,11 @@ pub struct Codegen<'ctx> {
     /// it via `set_provenance_source`). Emitted in `main`'s prologue as a
     /// one-time `__axon_set_provenance_source` call. Empty ⇒ no call emitted.
     pub(super) source_path: String,
+    /// R4 §4.3: the name of the current fn if it carries `@[agent]`, else `None`.
+    /// Set on entry to an agent fn; while set, every capability-bearing builtin
+    /// call emits an `agent_action` audit record (the mandatory, un-opt-out-able
+    /// agent action log, I-13) — matching the interpreter.
+    pub(super) current_agent_fn: Option<String>,
     /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries
     /// `@[verify(confidence OP K)]` *and* whose return type is `Uncertain<T>`,
     /// this holds `(fn_name, op_str, bound)` so each return site can inject
@@ -204,6 +209,7 @@ impl<'ctx> Codegen<'ctx> {
             current_adaptive_input: None,
             adaptive_registry_targets: Vec::new(),
             source_path: String::new(),
+            current_agent_fn: None,
             current_verify_fn: None,
         }
     }
@@ -630,7 +636,12 @@ impl<'ctx> Codegen<'ctx> {
         let saved_result_types = self.current_result_types.take();
         let saved_adaptive = self.current_adaptive_fn.take();
         let saved_adaptive_input = self.current_adaptive_input.take();
+        let saved_agent = self.current_agent_fn.take();
         let saved_verify = self.current_verify_fn.take();
+        // R4 §4.3: arm the mandatory agent action log for an `@[agent]` fn.
+        if f.attrs.iter().any(|a| a.name == "agent") {
+            self.current_agent_fn = Some(f.name.clone());
+        }
 
         // ── @[adaptive]: emit a "call" event at the prologue. ─────────────────
         // Activates `current_adaptive_fn` so any subsequent build_return inside
@@ -759,6 +770,7 @@ impl<'ctx> Codegen<'ctx> {
         self.current_result_types = saved_result_types;
         self.current_adaptive_fn = saved_adaptive;
         self.current_adaptive_input = saved_adaptive_input;
+        self.current_agent_fn = saved_agent;
         self.current_verify_fn = saved_verify;
     }
 
