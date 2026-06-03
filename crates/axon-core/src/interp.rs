@@ -443,6 +443,15 @@ pub fn run_program(program: &Program) -> i32 {
 
 fn run_program_inner(program: &Program) -> i32 {
     let mut interp = Interp::build(program);
+    // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
+    // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
+    // compile-error code) instead of `panic: no main` + exit 101 — and never
+    // exit 0, which masqueraded as success.
+    if !interp.fns.contains_key("main") {
+        let _ = std::io::stdout().flush();
+        eprintln!("error: no `main` function defined — a runnable program needs `fn main() -> i64` (or `fn main()`)");
+        return 2;
+    }
     let outcome = interp.init_globals().and_then(|()| interp.run_main());
     match outcome {
         Ok(Value::Int(n)) => n as i32,

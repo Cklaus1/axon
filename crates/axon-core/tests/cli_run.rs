@@ -38,6 +38,21 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn no_main_function_is_a_clean_error_exit_2() {
+    // BUG_HUNT #23: a program with no `main` is a COMPILE-time error (malformed),
+    // not a runtime panic. It must report a clean diagnostic and exit 2 — NOT
+    // `panic: no main` (exit 101), and NOT exit 0 (which masqueraded as success).
+    let f = std::env::temp_dir().join(format!("axon_nomain_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn helper() -> i64 { 5 }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2), "no main must be a compile error (exit 2): {msg}");
+    assert!(msg.contains("no `main`"), "the error must name the missing main: {msg}");
+    assert!(!msg.contains("panic"), "must NOT be a panic: {msg}");
+}
+
+#[test]
 fn exec_builtin_runs_and_is_capability_gated() {
     // R6: the `exec` builtin spawns a process and exercises the `exec`
     // capability — activating the previously-dormant @[contained] exec axis.
