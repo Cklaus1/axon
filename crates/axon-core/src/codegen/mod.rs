@@ -1129,7 +1129,7 @@ impl<'ctx> Codegen<'ctx> {
                     // arg's slice type so a `let b = arr_reverse(&a)` binding is
                     // indexable (b[i]). The arg may be `&a` (UnaryOp::Ref), peel it.
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
-                        || name == "arr_map" || name == "arr_filter"
+                        || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
                     {
                         if let Some(arg0) = args.first() {
                             let inner = match arg0 {

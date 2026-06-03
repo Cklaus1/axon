@@ -1789,6 +1789,88 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "fd_res"))
     }
 
+    /// arr_zip_with(a, b, f) on two i64 slices: result[i] = f(a[i], b[i]) for
+    /// i in 0..min(len_a, len_b). Mallocs an i64 result of length n; returns a
+    /// fresh `{len, ptr}` slice. Pure IR + malloc (native AND wasm).
+    fn emit_arr_i64_zip_with(
+        &mut self,
+        a_slice: BasicValueEnum<'ctx>,
+        b_slice: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "zw_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "zw_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "zw_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into(), i64_ty.into()], false);
+
+        // Unpack both slices.
+        let unpack = |slf: &mut Self, sv: BasicValueEnum<'ctx>, tag: &str| {
+            let al = build_wrappers::w_alloca(&slf.ir.builder, slice_ty.into(), tag);
+            build_wrappers::w_store(&slf.ir.builder, al, sv);
+            let l = build_wrappers::w_load(
+                &slf.ir.builder, i64_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 0, "zw_lp").unwrap(), "zw_l").into_int_value();
+            let d = build_wrappers::w_load(
+                &slf.ir.builder, ptr_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 1, "zw_dp").unwrap(), "zw_d").into_pointer_value();
+            let di = build_wrappers::w_pointer_cast(&slf.ir.builder, d, i64_ty.ptr_type(AddressSpace::default()), "zw_di");
+            (l, di)
+        };
+        let (a_len, a_data) = unpack(self, a_slice, "zw_a");
+        let (b_len, b_data) = unpack(self, b_slice, "zw_b");
+
+        // n = min(a_len, b_len).
+        let a_le = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, a_len, b_len, "zw_alt");
+        let n = self.ir.builder.build_select(a_le, a_len, b_len, "zw_n").unwrap().into_int_value();
+
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, n, eight, "zw_bytes");
+        let dst_raw = self.emit_malloc(total, "zw_dst");
+        let dst_i64 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "zw_dsti");
+
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "zw_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "zw.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "zw.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "zw.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "zw_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, n, "zw_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ap = unsafe { self.ir.builder.build_gep(i64_ty, a_data, &[i_cur], "zw_ap").unwrap() };
+        let av = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ap, "zw_av").into_int_value();
+        let bp = unsafe { self.ir.builder.build_gep(i64_ty, b_data, &[i_cur], "zw_bp").unwrap() };
+        let bv = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), bp, "zw_bv").into_int_value();
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), av.into(), bv.into()], "zw_call")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[i_cur], "zw_dpst").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, dp, r.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "zw_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "zw_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "zw_olen").unwrap(), n.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "zw_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "zw_optr").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -2516,6 +2598,17 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val), self.emit_expr(&args[2], fn_val))
                 {
                     if let Some(r) = self.emit_arr_i64_fold(slice_val, init, lam, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_zip_with(a, b, |x, y| ...) — the first TWO-SLICE closure op.
+            // result[i] = f(a[i], b[i]) for i in 0..min(len_a, len_b); i64 result.
+            if name == "arr_zip_with" && args.len() == 3 {
+                if let (Some(a_slice), Some(b_slice), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val), self.emit_expr(&args[2], fn_val))
+                {
+                    if let Some(r) = self.emit_arr_i64_zip_with(a_slice, b_slice, lam, fn_val) {
                         return Some(r);
                     }
                 }

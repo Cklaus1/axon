@@ -73,7 +73,10 @@ check filt_n  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_filter(&a, |x| 
 check fold_s  'fn main() -> i64 { let a = [1, 2, 3, 4]  arr_fold(&a, 0, |acc, x| acc + x) }'
 check fold_i  'fn main() -> i64 { let a = [1, 2, 3]  arr_fold(&a, 100, |acc, x| acc + x) }'
 check fold_p  'fn main() -> i64 { let a = [1, 2, 3, 4]  arr_fold(&a, 1, |acc, x| acc * x) }'
+check zw_sum  'fn main() -> i64 { let a = [1, 2, 3]  let b = [10, 20, 30]  let c = arr_zip_with(a, b, |x, y| x + y)  arr_sum_i64(&c) }'
+check zw_un   'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = [10, 20]  let c = arr_zip_with(a, b, |x, y| x + y)  arr_sum_i64(&c) }'
+check zw_dot  'fn main() -> i64 { let a = [1, 2, 3]  let b = [4, 5, 6]  let c = arr_zip_with(a, b, |x, y| x * y)  arr_sum_i64(&c) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with match the interpreter ✓"
 exit 0
