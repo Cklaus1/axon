@@ -688,6 +688,43 @@ pub extern "C" fn __axon_str_slice(
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 
+// ── BUG_HUNT #38: str_reverse (char-correct, not byte-reverse) ────────────────
+/// `str_reverse(s)` — reverse by Unicode scalar (char), matching the
+/// interpreter (`chars().rev()`). The old inline codegen reversed BYTES, which
+/// mangles any multibyte UTF-8 (`str_reverse("héllo")` → invalid bytes); this
+/// is the I-2-canonical implementation codegen now calls instead.
+#[no_mangle]
+pub extern "C" fn __axon_str_reverse(
+    s: AxonStr,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let result: String = src.chars().rev().collect();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+// ── BUG_HUNT #39: str_replace (matches Rust str::replace) ─────────────────────
+/// `str_replace(s, from, to)` — replace every occurrence of `from` with `to`,
+/// matching the interpreter (Rust `str::replace`). In particular an empty
+/// `from` interleaves `to` between every char (and at both ends), e.g.
+/// `str_replace("abc", "", "X")` → `"XaXbXcX"`. The old inline codegen skipped
+/// the empty-`from` case (returned `s` unchanged) — a silent divergence.
+#[no_mangle]
+pub extern "C" fn __axon_str_replace(
+    s: AxonStr,
+    from: AxonStr,
+    to: AxonStr,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let from_s = unsafe { from.as_str() };
+    let to_s = unsafe { to.as_str() };
+    let result = src.replace(from_s, to_s);
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
 // ── ASI Layer-3: @[verify] runtime enforcement ────────────────────────────────
 
 /// Runtime panic for `@[verify(confidence OP K)]` violations.
@@ -1328,6 +1365,36 @@ mod migrated_builtin_tests {
             let got = call_str_ret(|l, p| __axon_str_slice(s(src), start, end, l, p));
             assert_eq!(got, expected, "str_slice({src:?}, {start}, {end})");
             assert_eq!(got, s_clamped, "must also match oracle");
+        }
+    }
+
+    // ── BUG_HUNT #38: str_reverse (char-correct, matches chars().rev()) ──
+    #[test]
+    fn str_reverse_matches_interpreter_chars_rev() {
+        let oracle = |x: &str| -> String { x.chars().rev().collect() };
+        for &x in &["", "a", "hello", "héllo", "🦀ab", "naïve", "日本語"] {
+            let got = call_str_ret(|l, p| __axon_str_reverse(s(x), l, p));
+            assert_eq!(got, oracle(x), "str_reverse({x:?}) must reverse by char, not byte");
+            // The result must be valid UTF-8 (the #38 bug produced invalid bytes).
+            assert!(got.chars().count() == x.chars().count(), "char count preserved for {x:?}");
+        }
+    }
+
+    // ── BUG_HUNT #39: str_replace (matches Rust str::replace, incl. empty from) ──
+    #[test]
+    fn str_replace_matches_interpreter_incl_empty_from() {
+        let oracle = |x: &str, f: &str, t: &str| -> String { x.replace(f, t) };
+        let cases = [
+            ("abc", "", "X"),     // the #39 case: empty from interleaves → "XaXbXcX"
+            ("abc", "b", "ZZ"),
+            ("aaa", "a", ""),
+            ("hello world", "o", "0"),
+            ("", "x", "y"),
+            ("héllo", "l", "L"),
+        ];
+        for (x, f, t) in cases {
+            let got = call_str_ret(|l, p| __axon_str_replace(s(x), s(f), s(t), l, p));
+            assert_eq!(got, oracle(x, f, t), "str_replace({x:?}, {f:?}, {t:?})");
         }
     }
 

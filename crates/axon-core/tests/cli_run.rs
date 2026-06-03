@@ -3450,6 +3450,35 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
 }
 
 #[test]
+fn codegen_str_reverse_replace_match_interp_on_utf8() {
+    // BUG_HUNT #38/#39 regression: codegen str_reverse byte-reversed (mangling
+    // multibyte UTF-8) and str_replace skipped the empty-`from` case. Both now
+    // delegate to char-correct axon-rt functions. scripts/str_utf8_parity.sh
+    // builds a multibyte + empty-from program both ways and asserts identical
+    // stdout. Skips (exit 0) when codegen can't build.
+    let script = format!("{}/../../scripts/str_utf8_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("str_utf8_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run str_utf8_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — str utf8 parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native str_reverse/str_replace must match the interpreter (#38/#39):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("str_reverse and str_replace match the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn interp_random_i64_inverted_bounds_fails_loudly() {
     // BUG_HUNT #27 regression (interpreter side): random_i64(hi, lo) with hi<lo
     // must fail loudly, not silently return lo (I-9 no-silent-success). Runs in
