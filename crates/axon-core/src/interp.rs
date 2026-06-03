@@ -5345,13 +5345,20 @@ impl<'p> Interp<'p> {
                     // the strong model, not the hardcoded sonnet). The model is
                     // env-overridable per tier for a proxy/gateway deployment.
                     // Charge the per-token cost to the meter and stamp it into the
-                    // provenance (Phase-7 cost_meter / F4 — was 0).
-                    ok!(match axon_ai::complete_with_model(&prompt, &tier.api_model()) {
-                        Ok(s) => {
-                            self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
+                    // provenance (Phase-7 cost_meter / F4 — was 0). R3: use the
+                    // model's REAL token count (input+output from `usage`) for the
+                    // charge, not the pre-dispatch prompt-length estimate — so the
+                    // metered cost matches what the provider actually billed. (The
+                    // BUDGET gate above still uses the estimate, correctly: it must
+                    // decide before the call whether to dispatch at all.)
+                    ok!(match axon_ai::complete_with_model_usage(&prompt, &tier.api_model()) {
+                        Ok((s, real_tokens)) => {
+                            let real_micro = tier.cost_micro(real_tokens);
+                            let real_usd = real_micro as f64 / 1_000_000.0;
+                            self.ai_cost_micro.set(self.ai_cost_micro.get() + real_micro);
                             append_ai_call_jsonl(
                                 &caller, &prompt, tier_name, model_id, model_ver,
-                                params, "live", "", cost_usd,
+                                params, "live", "", real_usd,
                             );
                             Value::Ok(Box::new(Value::Str(s)))
                         }

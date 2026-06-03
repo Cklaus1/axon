@@ -131,10 +131,21 @@ fn ai_complete_inner(prompt: &str) -> Result<String, String> {
 /// strong model instead of the hardcoded sonnet. The interpreter passes
 /// `Tier::api_model()` (itself env-overridable for a proxy/gateway deployment).
 fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> {
-    // AXON_AI_MOCK: return the interpreter's deterministic stub (I-2 parity),
-    // no network, no API key. Checked FIRST so a mocked run never needs a key.
+    ai_complete_inner_model_usage(prompt, model).map(|(text, _tokens)| text)
+}
+
+/// `ai_complete` returning BOTH the reply and the REAL total token count
+/// (input + output) from the model's `usage` field — for accurate per-token
+/// cost metering (R3 / F4). Under AXON_AI_MOCK the count is a deterministic
+/// estimate from the prompt (~4 chars/token) so mocked cost stays reproducible
+/// and identical to the interpreter's pre-dispatch estimate; only a LIVE call
+/// reports the model's actual usage.
+fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+    // Deterministic mock: the interpreter's stub + the same token estimate the
+    // pre-dispatch meter uses, so mock metering is exact and reproducible.
     if ai_mock_enabled() {
-        return Ok(MOCK_AI_COMPLETE.to_string());
+        let est = (prompt.len() as i64) / 4 + 1;
+        return Ok((MOCK_AI_COMPLETE.to_string(), est));
     }
     // Read API key from environment.
     let api_key = std::env::var("ANTHROPIC_API_KEY")
@@ -180,7 +191,17 @@ fn ai_complete_inner_model(prompt: &str, model: &str) -> Result<String, String> 
         .ok_or_else(|| format!("Unexpected API response shape: {}", text))?
         .to_string();
 
-    Ok(reply)
+    // The REAL token usage (input + output). Anthropic returns these in
+    // `usage.{input_tokens,output_tokens}`. Fall back to a prompt-length
+    // estimate if the field is missing (older API shapes / proxies).
+    let in_tok = json["usage"]["input_tokens"].as_i64();
+    let out_tok = json["usage"]["output_tokens"].as_i64();
+    let total = match (in_tok, out_tok) {
+        (Some(i), Some(o)) => i + o,
+        _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
+    };
+
+    Ok((reply, total))
 }
 
 /// Rust-callable plain completion (mirrors the `__axon_ai_complete` C ABI).
@@ -197,6 +218,15 @@ pub fn complete(prompt: &str) -> Result<String, String> {
 /// interpreter sources it from `ai_routing::Tier::api_model()`.
 pub fn complete_with_model(prompt: &str, model: &str) -> Result<String, String> {
     ai_complete_inner_model(prompt, model)
+}
+
+/// `complete_with_model` returning BOTH the reply and the REAL total token count
+/// (input + output) for accurate per-token cost metering (R3 / F4). The
+/// interpreter uses this on a LIVE call so the cost reflects what the model
+/// actually charged, not a prompt-length estimate. Under AXON_AI_MOCK the count
+/// is the same deterministic estimate the pre-dispatch meter uses (reproducible).
+pub fn complete_with_model_usage(prompt: &str, model: &str) -> Result<(String, i64), String> {
+    ai_complete_inner_model_usage(prompt, model)
 }
 
 // -- Layer-3 ASI: typed structured-output ("Uncertain<T>") ---------------------
@@ -1023,6 +1053,31 @@ mod tests {
         // AXON_AI_MOCK=0 must NOT mock (falls through to the key check → error).
         std::env::set_var("AXON_AI_MOCK", "0");
         assert!(ai_complete_inner("x").is_err(), "AXON_AI_MOCK=0 must not mock");
+
+        match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
+        if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
+    }
+
+    #[test]
+    fn complete_with_usage_returns_deterministic_token_estimate_under_mock() {
+        // R3 / F4: complete_with_model_usage returns (reply, total_tokens). Under
+        // mock the token count is the SAME deterministic estimate the interpreter's
+        // pre-dispatch meter uses (~4 chars/token + 1), so mocked cost stays exact
+        // and reproducible; only a LIVE call reports the model's real usage.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_key = std::env::var("ANTHROPIC_API_KEY").ok();
+        let prev_mock = std::env::var("AXON_AI_MOCK").ok();
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        std::env::set_var("AXON_AI_MOCK", "1");
+
+        // 16-char prompt → 16/4 + 1 = 5 tokens.
+        let (reply, tokens) = complete_with_model_usage("sixteen char p..", "claude-opus-4-8")
+            .expect("mock succeeds with no key");
+        assert_eq!(reply, MOCK_AI_COMPLETE);
+        assert_eq!(tokens, 5, "mock token count is the deterministic prompt-length estimate");
+        // Determinism: same prompt → same count.
+        let (_r2, t2) = complete_with_model_usage("sixteen char p..", "claude-opus-4-8").unwrap();
+        assert_eq!(tokens, t2);
 
         match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
         if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
