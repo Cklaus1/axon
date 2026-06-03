@@ -86,7 +86,10 @@ check all_t   'fn main() -> i64 { let a = [2, 4, 6]  if arr_all(&a, |x| x > 0) {
 check all_f   'fn main() -> i64 { let a = [2, 4, 6]  if arr_all(&a, |x| x > 3) { 1 } else { 0 } }'
 check any_t   'fn main() -> i64 { let a = [1, 2, 3]  if arr_any(&a, |x| x > 2) { 1 } else { 0 } }'
 check any_f   'fn main() -> i64 { let a = [1, 2, 3]  if arr_any(&a, |x| x > 100) { 1 } else { 0 } }'
+check amax    'fn main() -> i64 { let a = [3, 7, 2, 9, 1]  arr_argmax_i64(&a) }'
+check amin    'fn main() -> i64 { let a = [3, 7, 2, 9, 1]  arr_argmin_i64(&a) }'
+check amax_tie 'fn main() -> i64 { let a = [5, 5, 3]  arr_argmax_i64(&a) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin match the interpreter ✓"
 exit 0

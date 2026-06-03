@@ -52,6 +52,9 @@ enum ArrReduce<'ctx> {
     /// Arithmetic mean of the elements (f64 result): Σ / len, or 0.0 for empty
     /// (matching the interpreter, which does NOT panic on an empty mean).
     Mean,
+    /// Index of the max/min element (i64 result). `true` = argmax. Panics
+    /// (exit 101) on an empty array, matching the interpreter.
+    ArgExtreme { is_max: bool },
 }
 
 impl<'ctx> super::Codegen<'ctx> {
@@ -1355,9 +1358,9 @@ impl<'ctx> super::Codegen<'ctx> {
             &self.ir.builder, data_ptr,
             i64_ty.ptr_type(AddressSpace::default()), "arr_i64p");
 
-        // Max/min panic on an empty array (interp parity, exit 101). Emit the
-        // check before the loop: if len == 0, call exit(101).
-        if let ArrReduce::Extreme { .. } = op {
+        // Max/min and argmax/argmin panic on an empty array (interp parity,
+        // exit 101). Emit the check before the loop: if len == 0, call exit(101).
+        if matches!(op, ArrReduce::Extreme { .. } | ArrReduce::ArgExtreme { .. }) {
             let empty_bb = self.ir.context.append_basic_block(fn_val, "arr.empty");
             let nonempty_bb = self.ir.context.append_basic_block(fn_val, "arr.nonempty");
             let is_empty = build_wrappers::w_int_compare(
@@ -1381,12 +1384,15 @@ impl<'ctx> super::Codegen<'ctx> {
         // so the first element always wins the running compare.
         let init: u64 = match &op {
             ArrReduce::Sum | ArrReduce::Mean | ArrReduce::Contains(_) => 0,
-            ArrReduce::Extreme { is_max: true } => i64::MIN as u64,
-            ArrReduce::Extreme { is_max: false } => i64::MAX as u64,
+            ArrReduce::Extreme { is_max: true } | ArrReduce::ArgExtreme { is_max: true } => i64::MIN as u64,
+            ArrReduce::Extreme { is_max: false } | ArrReduce::ArgExtreme { is_max: false } => i64::MAX as u64,
         };
         build_wrappers::w_store(&self.ir.builder, acc_slot, i64_ty.const_int(init, false).into());
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_i");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        // For argmax/argmin: track the best element's INDEX (acc holds its value).
+        let best_idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_bidx");
+        build_wrappers::w_store(&self.ir.builder, best_idx_slot, i64_ty.const_zero().into());
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "arr.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "arr.body");
@@ -1429,6 +1435,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 let nacc = self.ir.builder.build_select(better, elem, acc, "arr_pick").unwrap().into_int_value();
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
             }
+            ArrReduce::ArgExtreme { is_max } => {
+                let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
+                // STRICT compare (interp updates only on strictly-better), so the
+                // FIRST max/min index wins ties — matching the interpreter.
+                let pred = if *is_max { inkwell::IntPredicate::SGT } else { inkwell::IntPredicate::SLT };
+                let better = build_wrappers::w_int_compare(&self.ir.builder, pred, elem, acc, "arr_argbetter");
+                let nacc = self.ir.builder.build_select(better, elem, acc, "arr_argval").unwrap().into_int_value();
+                build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+                let cur_best = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "arr_cb").into_int_value();
+                let nbest = self.ir.builder.build_select(better, i_cur, cur_best, "arr_argidx").unwrap().into_int_value();
+                build_wrappers::w_store(&self.ir.builder, best_idx_slot, nbest.into());
+            }
         }
         let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "arr_inext");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
@@ -1439,6 +1457,11 @@ impl<'ctx> super::Codegen<'ctx> {
         let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_res").into_int_value();
         match op {
             ArrReduce::Sum | ArrReduce::Extreme { .. } => Some(acc.into()),
+            ArrReduce::ArgExtreme { .. } => {
+                // Return the tracked best index, not the value.
+                let bidx = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "arr_bres").into_int_value();
+                Some(bidx.into())
+            }
             ArrReduce::Contains(_) => {
                 // acc is 0/1 → truncate to i1 (bool).
                 let b = self.ir.builder.build_int_truncate(acc, i1_ty, "arr_found").unwrap();
@@ -2776,6 +2799,12 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_mean_i64" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Mean, fn_val);
+                }
+            }
+            if (name == "arr_argmax_i64" || name == "arr_argmin_i64") && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    let is_max = name == "arr_argmax_i64";
+                    return self.emit_arr_i64_loop(slice_val, ArrReduce::ArgExtreme { is_max }, fn_val);
                 }
             }
             // arr_reverse(&a) — the first ALLOCATING arr_* lowering: malloc a new
