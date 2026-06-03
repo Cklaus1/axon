@@ -1128,7 +1128,9 @@ impl<'ctx> Codegen<'ctx> {
                     // fn_return_types) and return `[T]` — propagate the input
                     // arg's slice type so a `let b = arr_reverse(&a)` binding is
                     // indexable (b[i]). The arg may be `&a` (UnaryOp::Ref), peel it.
-                    if name == "arr_reverse" || name == "arr_take" || name == "arr_drop" {
+                    if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
+                        || name == "arr_map" || name == "arr_filter"
+                    {
                         if let Some(arg0) = args.first() {
                             let inner = match arg0 {
                                 ast::Expr::UnaryOp { op: ast::UnaryOp::Ref, operand } => operand.as_ref(),

@@ -65,7 +65,12 @@ check take_all 'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_take(&a, 9)  a
 check take0   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_take(&a, 0)  arr_sum_i64(&b) }'
 check drop1   'fn main() -> i64 { let a = [1, 2, 3, 4]  let b = arr_drop(&a, 1)  arr_sum_i64(&b) }'
 check drop_ix 'fn main() -> i64 { let a = [10, 20, 30]  let b = arr_drop(&a, 1)  b[0] }'
+check map_sum 'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_map(&a, |x| x * 2)  arr_sum_i64(&b) }'
+check map_ix  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_map(&a, |x| x + 10)  b[1] }'
+check filt_s  'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = arr_filter(&a, |x| x > 2)  arr_sum_i64(&b) }'
+check filt_l  'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = arr_filter(&a, |x| x > 2)  len(b) }'
+check filt_n  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_filter(&a, |x| x > 100)  len(b) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr_sum/contains/max/min/mean_i64 + arr_reverse/take/drop match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter match the interpreter ✓"
 exit 0

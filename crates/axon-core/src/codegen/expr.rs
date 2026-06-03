@@ -1125,7 +1125,20 @@ impl<'ctx> super::Codegen<'ctx> {
         let body_val = self.emit_expr(body, lambda_fn);
         if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
             match body_val {
-                Some(v) => { build_wrappers::w_ret(&self.ir.builder, v); }
+                Some(v) => {
+                    // The lambda ABI declares an i64 return, but a bool-bodied
+                    // lambda (`|x| x > 2`, the filter/any/all predicate shape)
+                    // produces i1 — zero-extend it to i64 so the `ret` matches
+                    // the function type (callers read it back as i64 and test
+                    // != 0). Other narrow ints widen the same way.
+                    let coerced = match v {
+                        BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 64 => {
+                            build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "lam_ret_zext").into()
+                        }
+                        other => other,
+                    };
+                    build_wrappers::w_ret(&self.ir.builder, coerced);
+                }
                 None => { build_wrappers::w_ret(&self.ir.builder, i64_ty.const_zero().into()); }
             }
         }
@@ -1593,6 +1606,122 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.build_struct_gep(slice_ty, out, 1, "td_optr").unwrap(),
             dst_i8.into());
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "td_res"))
+    }
+
+    /// arr_map / arr_filter on an i64 slice with a lambda fat-pointer `{i8* fn,
+    /// i8* env}`. Per element, indirect-call `fn(env, elem) -> i64`:
+    ///   map    → dst[i] = result          (result len == src len)
+    ///   filter → keep elem where result≠0 (result len ≤ src len, write-index)
+    /// Returns a fresh `{len, ptr}` slice. Pure IR + malloc (native AND wasm).
+    fn emit_arr_i64_closure(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        is_map: bool,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        // Extract the lambda fn ptr + env ptr from the fat pointer.
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "cl_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "cl_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "cl_fp");
+        // Indirect-call signature: i64 fn(i8* env, i64 arg). The lambda ABI is
+        // uniformly i64-return — a bool predicate (filter) is zero-extended to
+        // i64 at the lambda's return site, so we read it back as i64 and test
+        // `!= 0` below.
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+
+        // Unpack src len + data ptr.
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "cl_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "cl_lenp").unwrap(),
+            "cl_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "cl_datp").unwrap(),
+            "cl_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "cl_srci");
+
+        // Malloc len*8 for the destination (filter may use fewer — over-alloc ok).
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "cl_bytes");
+        let dst_raw = self.emit_malloc(total, "cl_dst");
+        let dst_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "cl_dsti");
+
+        // Loop index `i` and (for filter) write index `w`.
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "cl_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let w_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "cl_w");
+        build_wrappers::w_store(&self.ir.builder, w_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "cl.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "cl.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "cl.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "cl_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "cl_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i_cur], "cl_sp").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "cl_e").into_int_value();
+        // r = lambda(env, elem)
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "cl_call")
+            .unwrap()
+            .try_as_basic_value().left()?.into_int_value();
+        let w_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "cl_wc").into_int_value();
+        if is_map {
+            // dst[i] = r ; (write index tracks i)
+            let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[i_cur], "cl_dp").unwrap() };
+            build_wrappers::w_store(&self.ir.builder, dp, r.into());
+        } else {
+            // filter: keep where the predicate is truthy (r != 0). r is the
+            // i64-widened predicate result.
+            let keep = build_wrappers::w_int_compare(
+                &self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "cl_keep");
+            let keep_bb = self.ir.context.append_basic_block(fn_val, "cl.keep");
+            let skip_bb = self.ir.context.append_basic_block(fn_val, "cl.skip");
+            build_wrappers::w_cond_br(&self.ir.builder, keep, keep_bb, skip_bb);
+            self.ir.builder.position_at_end(keep_bb);
+            let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[w_cur], "cl_dpf").unwrap() };
+            build_wrappers::w_store(&self.ir.builder, dp, elem.into());
+            let w_next = build_wrappers::w_int_add(&self.ir.builder, w_cur, i64_ty.const_int(1, false), "cl_wn");
+            build_wrappers::w_store(&self.ir.builder, w_slot, w_next.into());
+            build_wrappers::w_br(&self.ir.builder, skip_bb);
+            self.ir.builder.position_at_end(skip_bb);
+        }
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "cl_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // Result length: map → src len; filter → write index.
+        self.ir.builder.position_at_end(exit_bb);
+        let out_len = if is_map {
+            len
+        } else {
+            build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "cl_wf").into_int_value()
+        };
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "cl_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "cl_olen").unwrap(),
+            out_len.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "cl_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "cl_optr").unwrap(),
+            dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "cl_res"))
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
@@ -2296,6 +2425,20 @@ impl<'ctx> super::Codegen<'ctx> {
                 {
                     let is_take = name == "arr_take";
                     if let Some(r) = self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_map(&a, |x| ...) / arr_filter(&a, |x| ...) — the first
+            // CLOSURE-taking arr_* lowerings. The 2nd arg is a lambda fat-pointer
+            // `{i8* fn, i8* env}`; per element we indirect-call `fn(env, elem)`.
+            // map → mapped value into the result; filter → keep where pred true.
+            if (name == "arr_map" || name == "arr_filter") && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    let is_map = name == "arr_map";
+                    if let Some(r) = self.emit_arr_i64_closure(slice_val, lam, is_map, fn_val) {
                         return Some(r);
                     }
                 }
