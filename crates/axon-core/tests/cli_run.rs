@@ -381,6 +381,27 @@ fn select_fires_first_ready_channel() {
 }
 
 #[test]
+fn ad_optimizer_flagship_demo_runs_the_full_stack() {
+    // The flagship ASI demo: an autonomous Meta-Ads optimizer that composes the
+    // whole modern stack into one believable workflow — tournament-strategy
+    // variant search, Uncertain<T> ROAS confidence, agent metacognition,
+    // a @[verify]-bounded spend cap, and Temporal<T> ad-creative fatigue.
+    // Deterministic under AXON_SEED; pins the narrative contract.
+    let out = axon()
+        .args(["run", &ex("asi/ad_optimizer.ax")])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "flagship should run clean: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("searched 80 variants"), "tournament searches the budget: {stdout}");
+    assert!(stdout.contains("best variant #35"), "converges on the best variant: {stdout}");
+    assert!(stdout.contains("confidence 0.92"), "ROAS carries Uncertain confidence: {stdout}");
+    assert!(stdout.contains("compiler-capped at 500"), "spend is @[verify]-bounded: {stdout}");
+    assert!(stdout.contains("creative refresh"), "Temporal fatigue triggers a refresh: {stdout}");
+}
+
+#[test]
 fn spawn_channel_fanout_collects_results() {
     // Cooperative concurrency: spawn one worker per candidate to send its score
     // to a channel, then collect — the fan-out/collect pattern runs and the best

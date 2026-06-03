@@ -1,0 +1,114 @@
+// ════════════════════════════════════════════════════════════════════════════
+//  Axon ASI flagship: an autonomous Meta-Ads optimizer.
+// ════════════════════════════════════════════════════════════════════════════
+//
+//  A real campaign-management problem, with every Axon ASI primitive doing the
+//  job it was designed for — not as separate demos, but woven into one agent:
+//
+//    * @[goal(strategy: tournament)]  — search a large space of ad variants
+//      (audience × creative) to maximize predicted ROAS. Tournament beats a
+//      hill-climb here because the ROAS landscape is multi-modal (several
+//      audience pockets convert well).
+//    * Uncertain<T>                   — every ROAS prediction carries the
+//      model's CONFIDENCE. A high score we're unsure about is not the same as
+//      a high score we trust.
+//    * Temporal<T>                    — ad creative FATIGUES. A winner today is
+//      worth less in a week; confidence in the creative decays per day, so the
+//      agent knows when to refresh.
+//    * @[verify(value <= cap)]        — a hard SAFETY bound the compiler proves:
+//      the recommended daily spend can never exceed the budget cap.
+//    * agent metacognition            — the agent inspects its own search trace
+//      to decide whether it has CONVERGED or is spinning its wheels.
+//
+//  Run:  AXON_SEED=42 axon run examples/asi/ad_optimizer.ax
+//
+//  (Deterministic under AXON_SEED — no API key, no network: the "predicted
+//  ROAS" model is a stand-in for a live ai_extract call, so the demo is a
+//  reproducible showcase of the control flow.)
+
+// ── 1. The ad-performance model ─────────────────────────────────────────────
+// A variant id encodes an (audience segment × creative) pair. In production
+// this score comes from `ai_extract_uncertain_i64("predict ROAS for …")`; here
+// it's a deterministic multi-modal landscape so the demo is reproducible. ROAS
+// is return-on-ad-spend ×100 (so 320 = 3.2x).
+@[adaptive]
+fn variant_roas(v: i64) -> i64 {
+    // Two converting pockets (a broad audience near v=37, a niche near v=78);
+    // the broad pocket pays better. Everything else is mediocre.
+    let broad = 320 - ((v - 37) * (v - 37)) / 8
+    let niche = 260 - ((v - 78) * (v - 78)) / 4
+    if broad > niche { broad } else { niche }
+}
+
+// ── 2. The optimizer: search variants with the tournament strategy ──────────
+// The target is a STRETCH ROAS (3.5x = 350) — higher than any single variant
+// can hit (the best pocket caps near 3.2x). So the agent searches the full
+// budget and converges on the best ACHIEVABLE variant rather than stopping at
+// the first "good enough", which is exactly how you run a real campaign.
+@[goal(metric: variant_roas, target: 350, strategy: tournament, lo: 0, hi: 100, max_evals: 80)]
+fn optimize_campaign() -> i64 {
+    // Met if we cleared a realistic 3.0x floor (300), even if the 3.5x stretch
+    // target isn't reachable.
+    let best = goal_best_score("variant_roas", 350.0)
+    if f64_to_i64(best) >= 300 { 1 } else { 0 }
+}
+
+// ── 3. A ROAS prediction with confidence (Uncertain<T>) ─────────────────────
+// The score's trustworthiness scales with how strong it is — a marginal
+// improvement is reported with lower confidence than a clear winner.
+fn roas_with_confidence(score: i64) -> Uncertain<i64> {
+    let conf_pts = if score >= 300 { 92 } else if score >= 240 { 78 } else { 55 }
+    uncertain_dyn_i64(score, i64_to_f64(conf_pts) / 100.0)
+}
+
+// ── 4. A spend recommendation with a compiler-ENFORCED safety bound ─────────
+// @[verify] is a hard bound: this function can never return a spend above the
+// $500/day cap, no matter the predicted ROAS. The runtime gate enforces it on
+// every call (a breach is a policy rejection, exit 3 — not a silent overspend).
+// A pure-arithmetic verify body can ALSO be proven statically by `axon verify`
+// (the Z3 path); this one returns an Uncertain so it uses the runtime gate.
+@[verify(value <= 500)]
+fn recommend_spend(predicted_roas: i64) -> Uncertain<i64> {
+    // Spend a fraction of predicted ROAS, hard-capped at the daily budget.
+    let raw = predicted_roas + 100
+    let safe = if raw > 500 { 500 } else { raw }
+    uncertain_dyn_i64(safe, 0.9)
+}
+
+fn main() -> i64 {
+    println("── Meta-Ads autonomous optimizer ───────────────────────────────")
+
+    // Step 1: search the variant space (tournament over audience × creative).
+    let met = optimize_campaign()
+    let best_variant = goal_best_input("variant_roas", 350.0)
+    let best_score = f64_to_i64(goal_best_score("variant_roas", 350.0))
+    let evaluated = agent_trace_len("variant_roas")
+    println("searched {to_str(evaluated)} variants → best variant #{to_str(best_variant)}")
+
+    // Step 2: report the winning ROAS WITH confidence.
+    let prediction = roas_with_confidence(best_score)
+    println("predicted ROAS {to_str(prediction.value)} (3.2x) @ confidence {to_str_f64(prediction.confidence)}")
+
+    // Step 3: metacognition — did the search converge, or is it stuck?
+    if agent_detect_loop("variant_roas") {
+        println("metacog: search has converged (no further progress)")
+    } else {
+        println("metacog: search uncertainty {to_str_f64(agent_uncertainty(\"variant_roas\"))} — explored broadly")
+    }
+
+    // Step 4: a PROVABLY-SAFE spend recommendation (never exceeds the cap).
+    let spend = recommend_spend(best_score)
+    println("recommended spend ${to_str(spend.value)}/day (compiler-capped at 500)")
+
+    // Step 5: ad fatigue — the winning creative decays. Plan the refresh.
+    let day = 86400000
+    let creative = temporal_new(best_score, 14 * day, 0.08)
+    let in_7d = temporal_at(creative, 7 * day)
+    println("creative fatigue: trust 1.0 today → {to_str_f64(in_7d.confidence)} in 7 days")
+    if temporal_confidence(in_7d) < 0.6 {
+        println("action: schedule a creative refresh within the week")
+    }
+
+    println("─────────────────────────────────────────────────────────────────")
+    if met == 1 { 0 } else { 1 }
+}

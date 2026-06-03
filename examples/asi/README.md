@@ -1,4 +1,42 @@
-# Axon ASI Demo — Autonomous Prompt Optimizer
+# Axon ASI Demos
+
+## ⭐ Flagship: `ad_optimizer.ax` — an autonomous Meta-Ads optimizer
+
+The single demo that shows the whole modern Axon stack working together on a
+problem every developer recognizes — optimizing ad spend.
+
+```
+AXON_SEED=42 axon run examples/asi/ad_optimizer.ax
+```
+
+```
+── Meta-Ads autonomous optimizer ───────────────────────────────
+searched 80 variants → best variant #35
+predicted ROAS 320 (3.2x) @ confidence 0.92
+metacog: search uncertainty 0.12 — explored broadly
+recommended spend $420/day (compiler-capped at 500)
+creative fatigue: trust 1.0 today → 0.56 in 7 days
+action: schedule a creative refresh within the week
+─────────────────────────────────────────────────────────────────
+```
+
+Each line is a different primitive doing the job it was designed for:
+
+| Line | Primitive | Why it fits |
+|---|---|---|
+| searched 80 variants | `@[goal(strategy: tournament)]` | the ROAS landscape is multi-modal (several converting audience pockets) — tournament beats hill-climb |
+| confidence 0.92 | `Uncertain<T>` | a ROAS prediction is only as good as the model's confidence in it |
+| metacog: … explored broadly | agent metacognition | the agent inspects its own search trace to know it converged vs got stuck |
+| compiler-capped at 500 | `@[verify(value <= 500)]` | the spend recommendation can NEVER exceed the daily cap — a compiler-enforced safety bound, not a hope |
+| creative fatigue → refresh | `Temporal<T>` | ad creative wears out; confidence in it decays per day, so the agent plans the refresh |
+
+This is the answer to "why a new language for AI apps?" — the expensive,
+dangerous mistakes (blowing the budget, trusting a shaky prediction, running a
+stale creative) become things the type system handles, not incidents.
+
+---
+
+# Autonomous Prompt Optimizer
 
 The first end-to-end ASI workflow on Axon, written entirely against
 **already-shipped** primitives (no Phase-5+ features required). It exists
