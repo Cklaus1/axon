@@ -60,7 +60,12 @@ check mean_fr 'fn main() -> i64 { let a = [1, 2]  f64_to_i64(arr_mean_i64(&a) * 
 check rev_0   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_reverse(&a)  b[0] }'
 check rev_2   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_reverse(&a)  b[2] }'
 check rev_sum 'fn main() -> i64 { let a = [10, 20, 30, 40]  let b = arr_reverse(&a)  arr_sum_i64(&b) }'
+check take2   'fn main() -> i64 { let a = [1, 2, 3, 4]  let b = arr_take(&a, 2)  arr_sum_i64(&b) }'
+check take_all 'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_take(&a, 9)  arr_sum_i64(&b) }'
+check take0   'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_take(&a, 0)  arr_sum_i64(&b) }'
+check drop1   'fn main() -> i64 { let a = [1, 2, 3, 4]  let b = arr_drop(&a, 1)  arr_sum_i64(&b) }'
+check drop_ix 'fn main() -> i64 { let a = [10, 20, 30]  let b = arr_drop(&a, 1)  b[0] }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr_sum/contains/max/min/mean_i64 + arr_reverse match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr_sum/contains/max/min/mean_i64 + arr_reverse/take/drop match the interpreter ✓"
 exit 0

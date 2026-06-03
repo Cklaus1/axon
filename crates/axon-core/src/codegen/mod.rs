@@ -1124,11 +1124,11 @@ impl<'ctx> Codegen<'ctx> {
             ast::Expr::Ident(name) => self.local_types.get(name).cloned(),
             ast::Expr::Call { callee, args, .. } => {
                 if let ast::Expr::Ident(name) = callee.as_ref() {
-                    // arr_reverse(&a) is lowered inline (not in fn_return_types)
-                    // and returns `[T]` — propagate the input arg's slice type so
-                    // a `let b = arr_reverse(&a)` binding is indexable (b[i]).
-                    // The arg may be `&a` (UnaryOp::Ref), so peel the ref.
-                    if name == "arr_reverse" {
+                    // arr_reverse/take/drop are lowered inline (not in
+                    // fn_return_types) and return `[T]` — propagate the input
+                    // arg's slice type so a `let b = arr_reverse(&a)` binding is
+                    // indexable (b[i]). The arg may be `&a` (UnaryOp::Ref), peel it.
+                    if name == "arr_reverse" || name == "arr_take" || name == "arr_drop" {
                         if let Some(arg0) = args.first() {
                             let inner = match arg0 {
                                 ast::Expr::UnaryOp { op: ast::UnaryOp::Ref, operand } => operand.as_ref(),

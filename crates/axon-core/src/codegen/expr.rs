@@ -1511,6 +1511,90 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "rev_res"))
     }
 
+    /// arr_take / arr_drop on an i64 slice → a fresh slice holding a contiguous
+    /// range. `n` is clamped to [0, len]; take copies src[0..n], drop copies
+    /// src[n..len]. Pure IR + malloc (native AND wasm).
+    fn emit_arr_i64_take_drop(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        is_take: bool,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "td_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "td_lenp").unwrap(),
+            "td_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "td_datp").unwrap(),
+            "td_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "td_srci");
+
+        // clamp n to [0, len]: nc = max(0, min(n, len)).
+        let zero = i64_ty.const_zero();
+        let n_le_len = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, n, len, "td_nlt");
+        let n_min = self.ir.builder.build_select(n_le_len, n, len, "td_nmin").unwrap().into_int_value();
+        let n_ge_0 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, n_min, zero, "td_ngt");
+        let nc = self.ir.builder.build_select(n_ge_0, n_min, zero, "td_nc").unwrap().into_int_value();
+
+        // take: start=0, count=nc ; drop: start=nc, count=len-nc.
+        let (start, count) = if is_take {
+            (zero, nc)
+        } else {
+            (nc, build_wrappers::w_int_sub(&self.ir.builder, len, nc, "td_cnt"))
+        };
+
+        let eight = i64_ty.const_int(8, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, count, eight, "td_bytes");
+        let dst_raw = self.emit_malloc(total, "td_dst");
+        let dst_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "td_dsti");
+
+        // for i in 0..count: dst[i] = src[start + i]
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "td_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, zero.into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "td.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "td.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "td.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "td_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, count, "td_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let s_idx = build_wrappers::w_int_add(&self.ir.builder, start, i_cur, "td_si");
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[s_idx], "td_sp").unwrap() };
+        let v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "td_v");
+        let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[i_cur], "td_dp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, dp, v);
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "td_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "td_out");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "td_olen").unwrap(),
+            count.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "td_di8");
+        build_wrappers::w_store(
+            &self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "td_optr").unwrap(),
+            dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "td_res"))
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_field_access(&mut self, receiver: &ast::Expr, field: &str, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         // Layer-1 ASI: handle Uncertain<T> / Temporal<T> field access via
@@ -2200,6 +2284,18 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_reverse" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     if let Some(r) = self.emit_arr_i64_reverse(slice_val, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_take(&a, n) / arr_drop(&a, n) — copy a contiguous i64 range into
+            // a fresh slice. take = first min(n,len); drop = from min(n,len) on.
+            if (name == "arr_take" || name == "arr_drop") && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    let is_take = name == "arr_take";
+                    if let Some(r) = self.emit_arr_i64_take_drop(slice_val, n, is_take, fn_val) {
                         return Some(r);
                     }
                 }
