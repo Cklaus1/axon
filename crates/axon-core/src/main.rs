@@ -2282,7 +2282,13 @@ fn run_build_pipeline(
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
 
-    let compiler_version = env!("CARGO_PKG_VERSION");
+    // Cache key MUST include the git SHA, not just the semver: two builds of the
+    // compiler at the same 0.1.0 version but different commits emit different IR
+    // (e.g. the #36 random_i64 guard), and keying on semver alone served a stale
+    // pre-fix binary on rebuild — a silent-wrong-artifact footgun. VERSION is
+    // `<semver> (<git-sha>)`, captured by build.rs; a dirty tree appends nothing
+    // here, so a `--no-cache` build is still the escape hatch mid-edit.
+    let compiler_version = VERSION;
     let cache_dir = opts
         .cache_dir
         .clone()

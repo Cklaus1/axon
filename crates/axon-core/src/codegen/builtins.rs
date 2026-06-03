@@ -1539,16 +1539,13 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         // ── Phase 7: random_i64(lo: i64, hi: i64) -> i64 ─────────────────────
-        // Uses C rand() % (hi - lo) + lo.
-        //
-        // PARITY GAP (BUG_HUNT #27 / #36): the interpreter now rejects inverted
-        // bounds (hi < lo) with a graceful panic and returns `lo` for the empty
-        // range hi == lo. This IR does neither: hi == lo makes `range` 0 → a
-        // signed-rem div-by-zero (hard crash), and hi < lo yields garbage. A
-        // matching guard (compare hi<lo → call a trap/abort thunk; hi==lo →
-        // return lo) belongs here but needs the codegen build to verify, which
-        // is pathologically slow (BUILD_DIAGNOSIS.md). Tracked as finding #36;
-        // the interpreter is the reference semantics.
+        // Uses C rand() % (hi - lo) + lo, with the SAME degenerate-bounds guard
+        // the interpreter has (BUG_HUNT #27/#36, I-2 parity, I-9 no-silent-wrong):
+        //   • hi <  lo → inverted bounds: print an error + exit(1) (matches the
+        //     interpreter's graceful panic; previously yielded garbage).
+        //   • hi == lo → empty range [lo, lo): return lo (previously a signed-rem
+        //     by 0 → SIGFPE hard crash).
+        //   • else      → lo + (rand() mod range), normalised non-negative.
         {
             let rand_fn = self.ir.module.get_function("rand").unwrap_or_else(|| {
                 let ft = self.ir.context.i32_type().fn_type(&[], false);
@@ -1557,10 +1554,47 @@ impl<'ctx> super::Codegen<'ctx> {
             let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
             let fn_val = self.ir.module.add_function("random_i64", fn_ty, None);
             let entry_bb = self.ir.context.append_basic_block(fn_val, "ri_entry");
+            let inverted_bb = self.ir.context.append_basic_block(fn_val, "ri_inverted");
+            let chk_eq_bb = self.ir.context.append_basic_block(fn_val, "ri_chk_eq");
+            let empty_bb = self.ir.context.append_basic_block(fn_val, "ri_empty");
+            let gen_bb = self.ir.context.append_basic_block(fn_val, "ri_gen");
             let saved = self.ir.builder.get_insert_block();
+
             self.ir.builder.position_at_end(entry_bb);
             let lo = fn_val.get_nth_param(0).unwrap().into_int_value();
             let hi = fn_val.get_nth_param(1).unwrap().into_int_value();
+            // hi < lo → inverted bounds branch.
+            let is_inverted = build_wrappers::w_int_compare(
+                &self.ir.builder, IntPredicate::SLT, hi, lo, "ri_inv",
+            );
+            build_wrappers::w_cond_br(&self.ir.builder, is_inverted, inverted_bb, chk_eq_bb);
+
+            // Inverted bounds: print an error and exit(1) — loud failure, not a
+            // silent garbage value (I-9). Mirrors the interpreter's panic.
+            self.ir.builder.position_at_end(inverted_bb);
+            let msg = b"random_i64: inverted bounds (lo must be <= hi); the range is [lo, hi)\n\0";
+            let msg_const = self.ir.context.const_string(msg, false);
+            let msg_global = self.ir.module.add_global(msg_const.get_type(), None, "random_i64_inv_msg");
+            msg_global.set_initializer(&msg_const);
+            msg_global.set_constant(true);
+            build_wrappers::w_call(&self.ir.builder, printf_fn, &[msg_global.as_pointer_value().into()], "");
+            let one = i32_ty.const_int(1, false);
+            build_wrappers::w_call(&self.ir.builder, exit_fn, &[one.into()], "");
+            build_wrappers::w_unreachable(&self.ir.builder);
+
+            // hi == lo → empty range branch.
+            self.ir.builder.position_at_end(chk_eq_bb);
+            let is_empty = build_wrappers::w_int_compare(
+                &self.ir.builder, IntPredicate::EQ, hi, lo, "ri_eq",
+            );
+            build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, gen_bb);
+
+            // Empty range [lo, lo): return lo (no rem-by-zero).
+            self.ir.builder.position_at_end(empty_bb);
+            build_wrappers::w_ret(&self.ir.builder, lo.into());
+
+            // General case: lo + (rand() mod range), range = hi - lo > 0.
+            self.ir.builder.position_at_end(gen_bb);
             let r_i32 = build_wrappers::w_call(&self.ir.builder,rand_fn, &[], "ri_rand")
                 .try_as_basic_value().left().unwrap().into_int_value();
             let r = build_wrappers::w_int_s_extend(&self.ir.builder,r_i32, i64_ty, "ri_r64");
@@ -1571,6 +1605,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let r_final = build_wrappers::w_int_signed_rem(&self.ir.builder,r_pos, range, "ri_final");
             let result = build_wrappers::w_int_add(&self.ir.builder,r_final, lo, "ri_result");
             build_wrappers::w_ret(&self.ir.builder, result.into());
+
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("random_i64".to_string(), fn_val);
             self.fn_return_types.insert("random_i64".to_string(), Type::I64);

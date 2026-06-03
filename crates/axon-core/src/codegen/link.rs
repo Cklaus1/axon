@@ -176,7 +176,18 @@ pub(super) fn emit_object_and_link(
     // so the default PIE link fails. `-lm`: axon-rt's math builtins
     // (`__axon_pow` etc.) reference libm. (R1: both surfaced once the native
     // build actually produced objects — see BUILD_RESOLVED.md.)
-    let mut link_args: Vec<&str> = vec![&obj_path, "-o", output_path, "-lpthread", "-no-pie", "-lm"];
+    // `-Wl,--allow-multiple-definition` (BUG_HUNT #43): both `libaxon_rt.a` and
+    // `libaxon_ai.a` are Rust `staticlib`s, so each embeds its own copy of the
+    // Rust `core`/`std` symbols (e.g. `core::fmt::builders`). In a release link
+    // the duplicate `core` symbols are a fatal "multiple definition" error
+    // (debug happens to dedup via weak/comdat). Both copies come from the SAME
+    // rustc `core`, so taking the first is safe — this is the standard remedy
+    // for linking two Rust staticlibs into one binary.
+    let mut link_args: Vec<&str> = vec![
+        &obj_path, "-o", output_path,
+        "-lpthread", "-no-pie", "-lm",
+        "-Wl,--allow-multiple-definition",
+    ];
     if let Some(ref lib) = rt_lib {
         link_args.push(lib.as_str());
     }

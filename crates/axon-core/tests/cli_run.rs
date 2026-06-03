@@ -3391,6 +3391,79 @@ fn wasm_interp_matches_native_on_pure_compute() {
 }
 
 #[test]
+fn codegen_random_i64_degenerate_bounds_match_interp() {
+    // BUG_HUNT #36 regression: codegen random_i64 used to SIGFPE (signed-rem by
+    // zero) on hi==lo and yield garbage on hi<lo, while the interpreter guards
+    // both (hi==lo → lo; hi<lo → graceful failure). Now that the codegen build
+    // is fast (~5s), scripts/random_i64_parity.sh builds each degenerate case
+    // NATIVELY and asserts the fixed behavior. Skips (exit 0) when codegen can't
+    // build (LLVM absent), so it stays green in interpreter-only CI.
+    let script = format!("{}/../../scripts/random_i64_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("random_i64_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run random_i64_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — random_i64 parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "random_i64 degenerate bounds must match the interpreter (#36):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("random_i64 degenerate bounds match the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn codegen_to_str_scalar_dispatch_matches_interp() {
+    // BUG_HUNT #40 regression: `to_str` is polymorphic over scalars; codegen
+    // must dispatch on the arg's LLVM type at the call site or an f64 is
+    // silently truncated to int (to_str(3.14) → "3"). scripts/to_str_parity.sh
+    // builds a mixed-type to_str program both ways and asserts identical stdout.
+    // Skips (exit 0) when codegen can't build.
+    let script = format!("{}/../../scripts/to_str_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("to_str_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run to_str_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — to_str parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native to_str must match the interpreter across scalars (#40):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("to_str scalar dispatch matches the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn interp_random_i64_inverted_bounds_fails_loudly() {
+    // BUG_HUNT #27 regression (interpreter side): random_i64(hi, lo) with hi<lo
+    // must fail loudly, not silently return lo (I-9 no-silent-success). Runs in
+    // the always-available interpreter so it gates without codegen.
+    let f = std::env::temp_dir().join(format!("axon_rand_inv_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { random_i64(20, 10) }\n").unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_ne!(out.status.code(), Some(0), "inverted bounds must fail, not silently succeed: {msg}");
+    assert!(msg.contains("inverted bounds"), "the failure must name inverted bounds: {msg}");
+}
+
+#[test]
 fn codegen_provenance_matches_interp_on_adaptive_returns() {
     // R4 §8 "Parity" acceptance + the codegen provenance tripwire: I-13
     // (provenance is not opt-out-able) must hold UNIFORMLY across the
