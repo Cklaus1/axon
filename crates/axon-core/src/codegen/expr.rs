@@ -30,6 +30,16 @@ use crate::types::Type;
 
 use super::build_wrappers;
 
+/// Reduction kind for `emit_arr_f64_loop` — a counted loop over an f64 slice.
+enum ArrReduceF64 {
+    /// Σ of all elements (f64 result).
+    Sum,
+    /// Arithmetic mean (f64): Σ / len, or 0.0 for empty (no panic).
+    Mean,
+    /// Max/min element (f64). `true` = max. Panics (exit 101) on empty.
+    Extreme { is_max: bool },
+}
+
 /// Predicate-reduction kind for `emit_arr_i64_pred`.
 enum PredReduce {
     /// Count elements where the predicate is true (i64 result).
@@ -1904,6 +1914,100 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// f64-element reductions over a slice `{i64 len, f64* data}` (Sum/Mean/
+    /// Extreme). len/index stay i64; the element + accumulator are f64. Mean
+    /// guards empty→0.0; Extreme panics (exit 101) on empty. Pure IR (native+wasm).
+    fn emit_arr_f64_loop(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        op: ArrReduceF64,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let s_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "af_s");
+        build_wrappers::w_store(&self.ir.builder, s_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, s_alloca, 0, "af_lp").unwrap(), "af_len").into_int_value();
+        let data_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, s_alloca, 1, "af_dp").unwrap(), "af_dat").into_pointer_value();
+        let f64_data = build_wrappers::w_pointer_cast(&self.ir.builder, data_raw, f64_ty.ptr_type(AddressSpace::default()), "af_fd");
+
+        // Extreme panics on empty (interp parity). Sum/Mean do not.
+        if matches!(op, ArrReduceF64::Extreme { .. }) {
+            let empty_bb = self.ir.context.append_basic_block(fn_val, "af.empty");
+            let ne_bb = self.ir.context.append_basic_block(fn_val, "af.ne");
+            let is_empty = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "af_e");
+            build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, ne_bb);
+            self.ir.builder.position_at_end(empty_bb);
+            if let Some(exit_fn) = self.ir.module.get_function("exit") {
+                let code = self.ir.context.i32_type().const_int(101, false);
+                build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
+            }
+            self.ir.builder.build_unreachable().unwrap();
+            self.ir.builder.position_at_end(ne_bb);
+        }
+
+        // acc: Sum/Mean start 0.0; Extreme starts the first element (loaded once
+        // len>0 is guaranteed). To keep it simple, init Extreme to ±inf so the
+        // first compare always wins.
+        let acc_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "af_acc");
+        let init = match &op {
+            ArrReduceF64::Sum | ArrReduceF64::Mean => f64_ty.const_float(0.0),
+            ArrReduceF64::Extreme { is_max: true } => f64_ty.const_float(f64::NEG_INFINITY),
+            ArrReduceF64::Extreme { is_max: false } => f64_ty.const_float(f64::INFINITY),
+        };
+        build_wrappers::w_store(&self.ir.builder, acc_slot, init.into());
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "af_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "af.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "af.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "af.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "af_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "af_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ep = unsafe { self.ir.builder.build_gep(f64_ty, f64_data, &[i_cur], "af_ep").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), ep, "af_e").into_float_value();
+        let acc = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), acc_slot, "af_a").into_float_value();
+        let nacc = match &op {
+            ArrReduceF64::Sum | ArrReduceF64::Mean => build_wrappers::w_float_add(&self.ir.builder, acc, elem, "af_na"),
+            ArrReduceF64::Extreme { is_max } => {
+                let pred = if *is_max { inkwell::FloatPredicate::OGT } else { inkwell::FloatPredicate::OLT };
+                let better = build_wrappers::w_float_compare(&self.ir.builder, pred, elem, acc, "af_b");
+                self.ir.builder.build_select(better, elem, acc, "af_pick").unwrap().into_float_value()
+            }
+        };
+        build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "af_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let acc = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), acc_slot, "af_res").into_float_value();
+        match op {
+            ArrReduceF64::Sum | ArrReduceF64::Extreme { .. } => Some(acc.into()),
+            ArrReduceF64::Mean => {
+                // mean = len==0 ? 0.0 : acc / (f64)len.
+                let is_empty = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "af_me");
+                let len_f = build_wrappers::w_signed_int_to_float(&self.ir.builder, len, f64_ty, "af_lf");
+                let div = self.ir.builder.build_float_div(acc, len_f, "af_mean").unwrap();
+                let mean = self.ir.builder.build_select(is_empty, f64_ty.const_float(0.0), div, "af_msel").unwrap();
+                Some(mean)
+            }
+        }
+    }
+
     /// arr_count_if / arr_all / arr_any — a predicate reduction over an i64
     /// slice. Per element calls the lambda `i64 fn(env, elem)` (predicate, i64-
     /// widened) and folds: Count sums the truthy count; All accumulates AND;
@@ -2805,6 +2909,22 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     let is_max = name == "arr_argmax_i64";
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::ArgExtreme { is_max }, fn_val);
+                }
+            }
+            // f64-element reductions: arr_sum_f64 / arr_mean_f64 / arr_max_f64 /
+            // arr_min_f64 — same loop shape as the i64 ones but the slice element
+            // is f64 (8-byte load/store, float compares).
+            if (name == "arr_sum_f64" || name == "arr_mean_f64"
+                || name == "arr_max_f64" || name == "arr_min_f64") && args.len() == 1
+            {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    let kind = match name.as_str() {
+                        "arr_sum_f64" => ArrReduceF64::Sum,
+                        "arr_mean_f64" => ArrReduceF64::Mean,
+                        "arr_max_f64" => ArrReduceF64::Extreme { is_max: true },
+                        _ => ArrReduceF64::Extreme { is_max: false },
+                    };
+                    return self.emit_arr_f64_loop(slice_val, kind, fn_val);
                 }
             }
             // arr_reverse(&a) — the first ALLOCATING arr_* lowering: malloc a new
