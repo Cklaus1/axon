@@ -3124,6 +3124,87 @@ impl<'ctx> super::Codegen<'ctx> {
                 Type::Result(Box::new(Type::F64), Box::new(Type::Str)));
         }
 
+        // ── parse-with-default wrappers: parse_int_or / parse_float_or /
+        //    parse_bool_or ────────────────────────────────────────────────────
+        // These fold the Result-match ceremony away: `parse_int_or(s, d)` is
+        // `match parse_int(s) { Ok(n) => n, Err(_) => d }`. They existed in the
+        // interpreter but had NO codegen lowering, so native silently returned a
+        // zero value (a real native↔interp divergence). Each is built here as a
+        // thin LLVM fn that calls the already-registered Result-returning parser,
+        // reads the i1 tag, and `select`s between the Ok payload and the default.
+        // The payload is read by storing the Result to an alloca and loading the
+        // value slot at the right scalar type (tag=1 ⇒ Ok). str_ty is the {i64,
+        // i8*} AxonStr used as the first param of each parser.
+        {
+            use inkwell::types::BasicType;
+            let f64_ty = self.ir.context.f64_type();
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            // Build one parse-or wrapper. `parser_name` is the Result-returning
+            // builtin; `val_ty` is the Ok payload's scalar LLVM type and the
+            // default-arg / return type.
+            let build_or = |slf: &mut Self,
+                                or_name: &str,
+                                parser_name: &str,
+                                val_ty: inkwell::types::BasicTypeEnum<'ctx>,
+                                ret_sem: Type| {
+                let parser = match slf.functions.get(parser_name).copied() {
+                    Some(p) => p,
+                    None => return,
+                };
+                let result_ty = parser.get_type().get_return_type().unwrap();
+                let fn_ty = val_ty.fn_type(&[str_ty.into(), val_ty.into()], false);
+                let fn_val = slf.ir.module.add_function(or_name, fn_ty, None);
+                let bb = slf.ir.context.append_basic_block(fn_val, "po_entry");
+                let saved = slf.ir.builder.get_insert_block();
+                slf.ir.builder.position_at_end(bb);
+
+                let s_arg = fn_val.get_nth_param(0).unwrap();
+                let default_arg = fn_val.get_nth_param(1).unwrap();
+                let ok_bb = slf.ir.context.append_basic_block(fn_val, "po_ok");
+                let def_bb = slf.ir.context.append_basic_block(fn_val, "po_def");
+                // r = parser(s)
+                let r = build_wrappers::w_call(&slf.ir.builder, parser, &[s_arg.into()], "po_r")
+                    .try_as_basic_value().left().unwrap();
+                // Store to an alloca so we can read the tag and the payload slot.
+                let r_slot = build_wrappers::w_alloca(&slf.ir.builder, result_ty, "po_rslot");
+                build_wrappers::w_store(&slf.ir.builder, r_slot, r);
+                // tag = *(i1*)&r.0  (field 0); branch Ok vs default.
+                let tag_ptr = build_wrappers::w_struct_gep(&slf.ir.builder, result_ty, r_slot, 0, "po_tagp");
+                let tag = build_wrappers::w_load(&slf.ir.builder, slf.ir.context.bool_type().into(), tag_ptr, "po_tag")
+                    .into_int_value();
+                build_wrappers::w_cond_br(&slf.ir.builder, tag, ok_bb, def_bb);
+
+                // ok_bb: return the parsed Ok payload. The parsers store the Ok
+                // value at the start of the payload array at its natural type
+                // (i64 / f64 / i1), so a same-typed load reads it back.
+                slf.ir.builder.position_at_end(ok_bb);
+                let pay_ptr = build_wrappers::w_struct_gep(&slf.ir.builder, result_ty, r_slot, 1, "po_payp");
+                let pay_val_ptr = build_wrappers::w_pointer_cast(
+                    &slf.ir.builder, pay_ptr,
+                    val_ty.ptr_type(inkwell::AddressSpace::default()), "po_payvp");
+                let ok_val = build_wrappers::w_load(&slf.ir.builder, val_ty, pay_val_ptr, "po_okv");
+                build_wrappers::w_ret(&slf.ir.builder, ok_val);
+
+                // def_bb: return the caller's default.
+                slf.ir.builder.position_at_end(def_bb);
+                build_wrappers::w_ret(&slf.ir.builder, default_arg);
+
+                if let Some(b) = saved { slf.ir.builder.position_at_end(b); }
+                slf.functions.insert(or_name.to_string(), fn_val);
+                slf.fn_return_types.insert(or_name.to_string(), ret_sem);
+            };
+
+            build_or(self, "parse_int_or", "parse_int", i64_ty.into(), Type::I64);
+            build_or(self, "parse_float_or", "parse_float", f64_ty.into(), Type::F64);
+            // parse_bool_or is intentionally NOT lowered here: the i1 (bool)
+            // default/payload exposed a codegen ABI corner this generic wrapper
+            // mishandles (the i1 default param read back as 0, plus a let-binding
+            // scope error E0701). Shipping it would compute a wrong, !=interp
+            // result, so it is deferred to a dedicated follow-up. parse_int_or
+            // and parse_float_or (i64/f64 payloads) are correct and native==interp.
+            let _ = bool_ty; // (would be parse_bool_or's val_ty)
+        }
+
         // ── Phase 5: abs_i64, min_i64, max_i64 ───────────────────────────────
         // abs_i64 migrated to axon-rt `__axon_abs_i64` (R1 Batch 1). This block
         // and `declare_phase9_math_builtins` both registered `abs_i64`

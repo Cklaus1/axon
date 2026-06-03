@@ -1636,6 +1636,30 @@ fn codegen_parse_int_radix_matches_interp() {
 }
 
 #[test]
+fn codegen_parse_int_or_and_float_or_match_interp() {
+    // parse_int_or / parse_float_or had NO codegen lowering — native silently
+    // returned a zero value (real native↔interp divergence). Codegen now lowers
+    // them (call the Result parser, select Ok payload or default). Harness
+    // asserts native==interp across success + default(parse-fail) cases.
+    // (parse_bool_or's i1 payload is a separate, documented codegen gap — not
+    // covered here.) Skips when codegen can't build (LLVM absent).
+    let script = format!("{}/../../scripts/parse_or_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("parse_or_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run parse_or_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — parse_or parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "native parse_int_or/parse_float_or must match interp:\n{stdout}{stderr}");
+    assert!(stdout.contains("parse_or_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:
