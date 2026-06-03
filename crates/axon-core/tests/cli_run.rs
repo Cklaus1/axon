@@ -1212,6 +1212,82 @@ fn self_improve_demo_completes_the_full_cycle() {
 }
 
 #[test]
+fn r10_ai_discovery_flow_proposes_verifies_graduates_with_provenance() {
+    // R10 AI-driven discoverer (the bounded slice): the AI selects a template
+    // NAME from the closed registry (never authors code); the proposal records
+    // its origin; verify runs the SAME deterministic pass through the four
+    // gates; graduate stamps the AI provenance into the manifest. End-to-end
+    // under AXON_AI_MOCK=1 so it is deterministic.
+    let dir = std::env::temp_dir().join(format!("axon_r10ai_{}", std::process::id()));
+    let corpus = dir.join("corpus");
+    std::fs::create_dir_all(&corpus).unwrap();
+    std::fs::write(corpus.join("a.ax"), "fn main() -> i64 { let x = 5  x + 0 }\n").unwrap();
+    std::fs::write(corpus.join("b.ax"), "fn f(y: i64) -> i64 { y * 1 }\nfn main() -> i64 { f(3) }\n").unwrap();
+
+    // 1. discover --ai (mock) writes a proposal stamped with its origin.
+    let out = axon()
+        .args(["improve", "discover", "corpus", "--ai"])
+        .env("AXON_AI_MOCK", "1")
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "discover --ai: {:?}", out);
+    let prop = std::fs::read_to_string(dir.join("proposals/fold-arith-identities.proposal")).unwrap();
+    assert!(prop.contains("proposed_by = mock:mock"), "proposal records AI origin: {prop}");
+
+    // 2. verify the SELECTED template — runs the real pass through G1/G2.
+    let out = axon()
+        .args(["improve", "verify", "corpus", "--pass", "fold-arith-identities"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "verify: {:?}", out);
+    assert!(String::from_utf8_lossy(&out.stdout).contains("PASSED"), "{:?}", out);
+
+    // 3. graduate with multi-sig + the AI provenance → manifest.
+    let out = axon()
+        .args([
+            "improve", "graduate", "fold-arith-identities",
+            "--sign", "principal:root-a", "--sign", "principal:root-b",
+            "--proposed-by", "ai:claude-opus-4-8",
+        ])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "graduate: {:?}", out);
+    let manifest = std::fs::read_to_string(dir.join("passes.manifest")).unwrap();
+    assert!(manifest.contains("proposed_by = \"ai:claude-opus-4-8\""), "manifest records origin: {manifest}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn r10_ai_discovery_rejects_unknown_template_and_tampered_graduate() {
+    // The two TCB firewalls (red-team must-fix): an unknown template name at
+    // verify is E1407 (it never reaches the gates with an undefined pass); a
+    // graduate of a name absent from the registry is E1408 (tamper/skew).
+    let dir = std::env::temp_dir().join(format!("axon_r10ai_neg_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let out = axon()
+        .args(["improve", "verify", "examples", "--pass", "evil-template"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "unknown verify pass must exit 2: {:?}", out);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("E1407"), "{:?}", out);
+
+    let out = axon()
+        .args(["improve", "graduate", "not-a-real-pass", "--sign", "a", "--sign", "b"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "graduating an unregistered name must exit 2: {:?}", out);
+    assert!(String::from_utf8_lossy(&out.stderr).contains("E1408"), "{:?}", out);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn safe_self_improve_demo_composes_full_stack() {
     // Flagship demo (#18): composes optimizer + agent + safety quartet
     // + kill-switch + mod-imports from examples/stdlib/. Pins every
@@ -4058,9 +4134,11 @@ fn improve_graduate_requires_multisig_e1404() {
     std::fs::create_dir_all(&tmp).unwrap();
     let manifest = tmp.join("passes.manifest");
 
+    // A real registry pass name (so E1408 is satisfied — only a genuine pass
+    // can graduate); the multi-sig gate (E1404) is what we exercise here.
     // Zero signers → E1404.
     let none = axon()
-        .args(["improve", "graduate", "p", "--manifest", manifest.to_str().unwrap()])
+        .args(["improve", "graduate", "fold-arith-identities", "--manifest", manifest.to_str().unwrap()])
         .output()
         .unwrap();
     let msg = String::from_utf8_lossy(&none.stderr);
@@ -4070,7 +4148,7 @@ fn improve_graduate_requires_multisig_e1404() {
     // One signer → still E1404 (no quorum).
     let one = axon()
         .args([
-            "improve", "graduate", "p", "--sign", "principal:root-a",
+            "improve", "graduate", "fold-arith-identities", "--sign", "principal:root-a",
             "--manifest", manifest.to_str().unwrap(),
         ])
         .output()
@@ -4081,7 +4159,7 @@ fn improve_graduate_requires_multisig_e1404() {
     // Two DISTINCT signers → graduates; manifest gains the entry.
     let two = axon()
         .args([
-            "improve", "graduate", "fold_const",
+            "improve", "graduate", "fold-arith-identities",
             "--sign", "principal:root-a", "--sign", "principal:root-b",
             "--manifest", manifest.to_str().unwrap(),
         ])
@@ -4093,7 +4171,7 @@ fn improve_graduate_requires_multisig_e1404() {
         String::from_utf8_lossy(&two.stderr)
     );
     let body = std::fs::read_to_string(&manifest).unwrap_or_default();
-    assert!(body.contains("name = \"fold_const\""), "manifest records the pass: {body}");
+    assert!(body.contains("name = \"fold-arith-identities\""), "manifest records the pass: {body}");
     assert!(body.contains("axp1:"), "pass is content-addressed: {body}");
     assert!(body.contains("principal:root-a") && body.contains("principal:root-b"), "multi-sig recorded");
     let _ = std::fs::remove_dir_all(&tmp);
@@ -4108,7 +4186,7 @@ fn improve_list_and_revert_roundtrip() {
     let manifest = tmp.join("passes.manifest");
     axon()
         .args([
-            "improve", "graduate", "dce",
+            "improve", "graduate", "fold-arith-identities",
             "--sign", "p:a", "--sign", "p:b",
             "--manifest", manifest.to_str().unwrap(),
         ])
@@ -4120,7 +4198,7 @@ fn improve_list_and_revert_roundtrip() {
         .output()
         .unwrap();
     let lstdout = String::from_utf8_lossy(&listed.stdout);
-    assert!(lstdout.contains("dce"), "list shows the graduated pass: {lstdout}");
+    assert!(lstdout.contains("fold-arith-identities"), "list shows the graduated pass: {lstdout}");
     // Extract the axp1: id from the manifest.
     let body = std::fs::read_to_string(&manifest).unwrap();
     let id = body
@@ -4134,7 +4212,7 @@ fn improve_list_and_revert_roundtrip() {
         .unwrap();
     assert!(rev.status.success(), "revert should succeed: {}", String::from_utf8_lossy(&rev.stderr));
     let after = std::fs::read_to_string(&manifest).unwrap();
-    assert!(!after.contains("dce"), "reverted pass is gone: {after}");
+    assert!(!after.contains("fold-arith-identities"), "reverted pass is gone: {after}");
 
     // Reverting again (absent) errors.
     let rev2 = axon()

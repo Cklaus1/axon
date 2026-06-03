@@ -296,6 +296,12 @@ enum ImproveAction {
     Discover {
         #[arg(help = "Path to the corpus directory (default: examples/)")]
         corpus: Option<PathBuf>,
+
+        /// Use AI-driven discovery: an AI selects which pre-verified templates
+        /// apply (from the closed registry — it never authors code). Deterministic
+        /// under AXON_AI_MOCK=1. Without this flag, runs the static detector.
+        #[arg(long, help = "AI-driven discovery (selects templates from the closed registry; mockable)")]
+        ai: bool,
     },
 
     /// Run the full four-gate verification harness against the corpus.
@@ -339,6 +345,11 @@ enum ImproveAction {
         /// Manifest path (default: ./passes.manifest).
         #[arg(long, help = "passes.manifest path")]
         manifest: Option<PathBuf>,
+
+        /// Discovery origin to record (audit): `static` (default), `mock`, or
+        /// `ai:<model>`. Lets a reviewer see whether an AI proposed this pass.
+        #[arg(long = "proposed-by", value_name = "ORIGIN", help = "Discovery origin for the audit trail (e.g. ai:claude-opus-4-8)")]
+        proposed_by: Option<String>,
     },
 
     /// List graduated passes and their verification provenance.
@@ -865,6 +876,101 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
     corpus
 }
 
+/// R10 AI-driven discovery (the `--ai` path). Builds the AI proposer, runs
+/// `discover_with_ai` (which validates every selection against the closed
+/// registry — unknown name → E1407), and writes one proposal per accepted
+/// template, stamped with its discovery origin (`proposed_by`) for the audit
+/// trail. Deterministic under `AXON_AI_MOCK=1`.
+fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
+    use axon_core::improve::{discover_with_ai, DiscoveryMode};
+
+    // The proposer seam. Under AXON_AI_MOCK the response is a deterministic stub
+    // (the project's existing mock discipline): propose the one menu template if
+    // the digest shows opportunities. A live model would replace this closure —
+    // but its output is validated identically against the closed registry, so a
+    // live or compromised model gains nothing (it can only NAME a template; an
+    // unknown name is E1407, a known one still runs the four-gate firewall).
+    let mock = axon_core::interp::ai_mock_enabled();
+    let mode = if mock {
+        DiscoveryMode::Mock
+    } else {
+        // No live wiring in this slice — be honest and require the mock so the
+        // result is deterministic and the audit origin is truthful.
+        eprintln!(
+            "axon improve discover --ai: live AI discovery is not wired in this slice — \
+             run with AXON_AI_MOCK=1 for deterministic template selection"
+        );
+        process::exit(2);
+    };
+    let proposer = move |_prompt: &str| -> String {
+        // Deterministic stub: offer the single registry template. The static
+        // cross-check in discover_with_ai drops it if there are no real sites,
+        // so this cannot manufacture a vacuous proposal.
+        axon_core::improve_templates::template_names().join("\n")
+    };
+
+    let proposals = match discover_with_ai(programs, &proposer, mode) {
+        Ok(p) => p,
+        Err(e) => {
+            // E1407: the (mock/live) AI named a template outside the registry.
+            eprintln!("axon improve discover --ai: [{}] {}", e.code, e.message);
+            process::exit(2);
+        }
+    };
+
+    if proposals.is_empty() {
+        println!(
+            "axon improve discover --ai: no applicable templates in {} — nothing to propose",
+            dir.display()
+        );
+        process::exit(0);
+    }
+
+    let pdir = PathBuf::from("proposals");
+    if let Err(e) = std::fs::create_dir_all(&pdir) {
+        eprintln!("axon improve discover --ai: cannot create proposals/: {e}");
+        process::exit(1);
+    }
+    for prop in &proposals {
+        // Deterministic filename (no timestamp — red-team advisory): one
+        // proposal per template name, overwrite semantics like the static path.
+        let ppath = pdir.join(format!("{}.proposal", prop.template));
+        let body = format!(
+            "# axon improve proposal (UNPRIVILEGED — grants nothing)\n\
+             name = {}\n\
+             description = {}\n\
+             opportunities = {}\n\
+             members_affected = {}\n\
+             corpus = {}\n\
+             proposed_by = {}:{}\n\
+             reasoning = {}\n\
+             # Next: `axon improve verify --pass {}` runs the four gates; only a\n\
+             # multi-sig `axon improve graduate {} --proposed-by {}:{}` adds it.\n",
+            prop.template,
+            axon_core::improve_templates::get_template(&prop.template)
+                .map(|t| t.description).unwrap_or(""),
+            prop.opportunities,
+            prop.members_affected,
+            dir.display(),
+            prop.mode.mode_str(), prop.mode.model_str(),
+            prop.reasoning,
+            prop.template,
+            prop.template, prop.mode.mode_str(), prop.mode.model_str(),
+        );
+        if let Err(e) = std::fs::write(&ppath, &body) {
+            eprintln!("axon improve discover --ai: cannot write {}: {e}", ppath.display());
+            process::exit(1);
+        }
+        println!(
+            "axon improve discover --ai: proposed `{}` ({} site(s) across {} member(s)) [origin: {}:{}]",
+            prop.template, prop.opportunities, prop.members_affected,
+            prop.mode.mode_str(), prop.mode.model_str(),
+        );
+        println!("  wrote {} — a proposal grants nothing; run `axon improve verify --pass {}` next", ppath.display(), prop.template);
+    }
+    process::exit(0);
+}
+
 fn cmd_improve(action: ImproveAction) {
     use axon_core::improve::{verify_pass_with, PerfStatus, VerifyOptions};
     use axon_core::manifest::{
@@ -873,7 +979,7 @@ fn cmd_improve(action: ImproveAction) {
     };
 
     match action {
-        ImproveAction::Discover { corpus } => {
+        ImproveAction::Discover { corpus, ai } => {
             // Discovery is the UNPRIVILEGED proposal side (R10 §3/§4): scan the
             // corpus for a candidate optimization and WRITE a proposal. It grants
             // nothing — only `verify` (four gates) then a multi-sig `graduate`
@@ -887,6 +993,12 @@ fn cmd_improve(action: ImproveAction) {
             }
             let programs: Vec<axon_core::ast::Program> =
                 members.iter().map(|(_, _, p)| p.clone()).collect();
+
+            if ai {
+                cmd_improve_discover_ai(&programs, &dir);
+                return;
+            }
+
             match axon_core::improve::discover_arith_identities(&programs) {
                 Some(prop) => {
                     // Write the proposal (pure data — NOT executable). The
@@ -932,6 +1044,32 @@ fn cmd_improve(action: ImproveAction) {
         }
 
         ImproveAction::Verify { corpus, perf, pass } => {
+            // Validate the pass name against the closed registry FIRST — before
+            // any corpus I/O. `identity` (default) is the G1/G3 baseline; every
+            // other name MUST resolve in `improve_templates::TEMPLATES` (the
+            // single source of truth — red-team must-fix #1/#4: pass lookup is
+            // by name in TEMPLATES, never dynamic/file-based). An unknown name →
+            // E1407, fail-closed, so it never reaches the verifier with an
+            // undefined pass (and the error is the same regardless of corpus).
+            let pass_name = pass.unwrap_or_else(|| "identity".to_string());
+            let identity: &axon_core::improve::Pass = &|p: &axon_core::ast::Program| p.clone();
+            let the_pass: &axon_core::improve::Pass = if pass_name == "identity" {
+                identity
+            } else {
+                match axon_core::improve_templates::get_pass_for_template(&pass_name) {
+                    Some(p) => p,
+                    None => {
+                        eprintln!(
+                            "axon improve verify: [{}] unknown pass `{pass_name}` — not in the \
+                             template registry (known: identity, {:?})",
+                            axon_core::error::E1407,
+                            axon_core::improve_templates::template_names(),
+                        );
+                        process::exit(2);
+                    }
+                }
+            };
+
             let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
             let members = load_corpus(&dir);
             if members.is_empty() {
@@ -940,21 +1078,6 @@ fn cmd_improve(action: ImproveAction) {
             }
             let programs: Vec<axon_core::ast::Program> =
                 members.iter().map(|(_, _, p)| p.clone()).collect();
-            // Select the candidate pass. `identity` (default) is the G1/G3
-            // baseline; `fold-arith-identities` is the REAL discovered
-            // optimization (from `discover`) — verifying it runs the actual
-            // rewrite through all four gates, proving it correct + safe.
-            let pass_name = pass.unwrap_or_else(|| "identity".to_string());
-            let identity: &axon_core::improve::Pass = &|p: &axon_core::ast::Program| p.clone();
-            let fold: &axon_core::improve::Pass = &axon_core::improve::fold_arith_identities_pass;
-            let the_pass: &axon_core::improve::Pass = match pass_name.as_str() {
-                "fold-arith-identities" => fold,
-                "identity" => identity,
-                other => {
-                    eprintln!("axon improve verify: unknown pass `{other}` (expected: identity | fold-arith-identities)");
-                    process::exit(2);
-                }
-            };
             println!("axon improve verify — pass: {pass_name}");
             let opts = VerifyOptions { measure_perf: perf, perf_trials: 5 };
             let rec = verify_pass_with(the_pass, &programs, &opts);
@@ -988,7 +1111,22 @@ fn cmd_improve(action: ImproveAction) {
             }
         }
 
-        ImproveAction::Graduate { name, signers, corpus, manifest } => {
+        ImproveAction::Graduate { name, signers, corpus, manifest, proposed_by } => {
+            // BUG_HUNT / red-team must-fix #4: a graduated pass name MUST resolve
+            // in the closed template registry (or be the `identity` baseline) —
+            // a name absent from the registry is E1408 (manifest tampering /
+            // version skew), refused before it can enter the manifest. Pass code
+            // is ALWAYS looked up by name in TEMPLATES, never loaded dynamically.
+            if name != "identity" && !axon_core::improve_templates::is_known_template(&name) {
+                eprintln!(
+                    "axon improve graduate: [{}] pass `{name}` is not in the template registry \
+                     (known: {:?}) — refusing to graduate a name with no reviewed Rust pass \
+                     (possible tampering or version skew)",
+                    axon_core::error::E1408,
+                    axon_core::improve_templates::template_names(),
+                );
+                process::exit(2);
+            }
             // Build the content-addressed identifiers from the verified pass.
             // (In this slice the pass under graduation is the identity pass,
             // verified by `verify`; a real flow pins the discovered pass's
@@ -1006,6 +1144,7 @@ fn cmd_improve(action: ImproveAction) {
             };
 
             // The multi-sig gate (E1404) — the I-12 firewall.
+            let origin = proposed_by.unwrap_or_else(|| "static".to_string());
             let entry: PassEntry = match graduate(
                 id,
                 &name,
@@ -1013,6 +1152,7 @@ fn cmd_improve(action: ImproveAction) {
                 ch,
                 &signers,
                 PerfClaim::Unmeasured,
+                origin,
             ) {
                 Ok(e) => e,
                 Err(e) => {

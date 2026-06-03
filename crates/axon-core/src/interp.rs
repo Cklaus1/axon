@@ -5243,7 +5243,7 @@ fn as_float_opt(v: &Value) -> Option<f64> {
 /// Whether deterministic mock-LLM responses are enabled (`AXON_AI_MOCK` set and
 /// not "0"/empty). Lets the ASI demos run end-to-end with no API key, no
 /// network, and no `asi-runtime` feature — for showcases, CI, and tests.
-fn ai_mock_enabled() -> bool {
+pub fn ai_mock_enabled() -> bool {
     std::env::var("AXON_AI_MOCK").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
 }
 

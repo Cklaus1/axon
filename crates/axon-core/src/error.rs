@@ -101,6 +101,8 @@ pub const E1403: &str = "E1403"; // G3 regression: pass breaks an existing test
 pub const E1404: &str = "E1404"; // graduation requires multi-sig of root Principals (I-12)
 pub const E1405: &str = "E1405"; // pass manifest hash mismatch at boot (TCB attestation)
 pub const E1406: &str = "E1406"; // correctness judged by AI — forbidden; the oracle is the interpreter
+pub const E1407: &str = "E1407"; // AI proposed a template name not in the closed registry (rejected before verify)
+pub const E1408: &str = "E1408"; // a graduated/verified pass name is absent from the template registry (tamper / version skew)
 
 // R5 goal sugar: #[goal(...)] attribute diagnostics
 pub const E1500: &str = "E1500"; // metric must name an @[adaptive] fn
@@ -286,7 +288,7 @@ mod tests {
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205,
             E1300, E1301, E1302,
-            E1401, E1402, E1403, E1404, E1405, E1406,
+            E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
             E1500, E1503, E1504,
             W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1311, W1410,
             I0001,

@@ -405,6 +405,211 @@ pub fn discover_arith_identities(corpus: &[Program]) -> Option<Proposal> {
     })
 }
 
+// ── R10 AI-driven discovery (the proposal side, still unprivileged) ──────────
+//
+// The headline PRD claim — "learned passes graduated from AI-discovered
+// optimizations" — without letting AI weaken the TCB. The design (and the
+// adversarial review behind it) reduces to one rule: **the AI selects template
+// NAMES from the closed `improve_templates::TEMPLATES` registry; it never
+// authors code.** A selected name maps to a reviewed, deterministic Rust pass;
+// an unknown name is rejected (E1407) BEFORE a proposal is written, so it never
+// reaches `verify`. The four-gate firewall and multi-sig graduation are
+// unchanged — an AI that selects a (hypothetically) miscompiling template is
+// still caught by G1, and one that selects nothing grants nothing. The AI's
+// real, honest value is *ranking + explaining* over the fixed menu, not
+// authoring (see `AiProposal::reasoning`).
+
+/// How a proposal was discovered — recorded for the audit trail so a multi-sig
+/// reviewer at graduation time knows whether an AI (and which model), a
+/// deterministic mock, or the static detector proposed the pass. (Red-team
+/// finding: a reviewer must be able to apply higher scrutiny to AI-origin
+/// passes; origin must round-trip into the manifest.)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiscoveryMode {
+    /// The deterministic static detector (`discover_arith_identities`).
+    Static,
+    /// A live AI model proposed the selection.
+    Ai { model: String },
+    /// The deterministic mock AI (`AXON_AI_MOCK`) — reproducible.
+    Mock,
+}
+
+impl DiscoveryMode {
+    /// Stable `mode` token for the proposal/manifest serialization.
+    pub fn mode_str(&self) -> &str {
+        match self {
+            DiscoveryMode::Static => "static",
+            DiscoveryMode::Ai { .. } => "ai",
+            DiscoveryMode::Mock => "mock",
+        }
+    }
+    /// The model identifier (`-` for static, `mock` for mock).
+    pub fn model_str(&self) -> String {
+        match self {
+            DiscoveryMode::Static => "-".to_string(),
+            DiscoveryMode::Ai { model } => model.clone(),
+            DiscoveryMode::Mock => "mock".to_string(),
+        }
+    }
+}
+
+/// An AI-driven proposal: a template the AI selected from the closed menu, with
+/// the static opportunity count (cross-checked, not AI-supplied) and the AI's
+/// reasoning (advisory — never gates anything). Carries `mode` so origin
+/// round-trips to the manifest (audit).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiProposal {
+    /// The selected template name — guaranteed in `improve_templates::TEMPLATES`
+    /// (an unknown name is rejected as `AiDiscoverError::UnknownTemplate` before
+    /// an `AiProposal` is ever constructed).
+    pub template: String,
+    /// Static opportunity count across the corpus (from the template's detector,
+    /// NOT the AI — a cross-check that the selection is real).
+    pub opportunities: usize,
+    /// Corpus members with ≥1 opportunity (static).
+    pub members_affected: usize,
+    /// The AI's free-text justification. Advisory; recorded for the human
+    /// reviewer; never affects verification.
+    pub reasoning: String,
+    /// How this was discovered (origin for the audit trail).
+    pub mode: DiscoveryMode,
+}
+
+/// Why an AI discovery was refused.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AiDiscoverError {
+    pub code: &'static str,
+    pub message: String,
+}
+
+/// The AI proposer seam: given the prompt (the template menu + a corpus
+/// digest), return the model's raw text. Injectable so tests pass a
+/// deterministic stub and the CLI passes the real `ai_complete` (mock or live).
+/// The discoverer NEVER trusts this output beyond extracting candidate template
+/// *names*, each of which is then validated against the closed registry.
+pub type AiProposer<'a> = dyn Fn(&str) -> String + 'a;
+
+/// Build the menu+digest prompt shown to the AI. Deterministic: a pure function
+/// of the corpus + the (compile-time) template menu, so under the mock the
+/// whole discovery is reproducible.
+pub fn ai_discovery_prompt(corpus: &[Program]) -> String {
+    let menu = crate::improve_templates::TEMPLATES
+        .iter()
+        .map(|t| format!("- {} : {}", t.name, t.description))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // A coarse, deterministic corpus digest (no source text, no timestamps).
+    let n_programs = corpus.len();
+    let n_fns: usize = corpus
+        .iter()
+        .map(|p| p.items.iter().filter(|it| matches!(it, Item::FnDef(_))).count())
+        .sum();
+    format!(
+        "You are an optimization-pass selector for the Axon compiler. You may ONLY \
+         choose from this fixed menu of pre-verified rewrite templates; you may NOT \
+         invent a template or emit code.\n\nMENU:\n{menu}\n\nCORPUS DIGEST: \
+         {n_programs} program(s), {n_fns} top-level function(s).\n\nReply with the \
+         template name(s) that apply, one per line."
+    )
+}
+
+/// Parse candidate template names from the AI's raw reply. Tolerant: takes any
+/// line whose trimmed content (after stripping common list/JSON punctuation)
+/// exactly equals a known template name. NON-matching lines are dropped here;
+/// the explicit `UnknownTemplate` rejection (E1407) is raised by the caller when
+/// a name the AI *clearly intended* (e.g. a JSON `"template": "x"`) is unknown —
+/// see [`discover_with_ai`]. This split keeps name-extraction lenient while the
+/// validation against the registry stays strict and fail-closed.
+fn extract_candidate_names(reply: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in reply.lines() {
+        let t = line
+            .trim()
+            .trim_start_matches(['-', '*', '•', ' '])
+            .trim_matches(['"', ',', ' ', '\t']);
+        // Pull a bare token or the value of a `template: "x"` / `"template":"x"`.
+        let token = if let Some(idx) = t.rfind(':') {
+            t[idx + 1..].trim().trim_matches(['"', ',', ' ']).to_string()
+        } else {
+            t.to_string()
+        };
+        if !token.is_empty() && !out.contains(&token) {
+            out.push(token);
+        }
+    }
+    out
+}
+
+/// AI-driven discovery (must-fix #1/#2/#3). Prompts `propose` with the menu +
+/// digest, extracts candidate names, and **validates every name against the
+/// closed registry**:
+/// - a candidate that is a known template → an [`AiProposal`] (with the static
+///   opportunity count + the AI's reasoning + origin `mode`);
+/// - a candidate that names a template NOT in the registry, when the AI clearly
+///   intended a selection (non-empty, looks like a name) → **E1407**, returned
+///   as `Err` — the proposal is NOT written, the name never reaches `verify`.
+///
+/// Determinism: a pure function of `corpus` + `propose`'s output. Under the
+/// deterministic mock proposer the result is byte-identical across runs.
+///
+/// `mode` is the origin stamped onto every produced proposal (Ai/Mock).
+pub fn discover_with_ai(
+    corpus: &[Program],
+    propose: &AiProposer<'_>,
+    mode: DiscoveryMode,
+) -> Result<Vec<AiProposal>, AiDiscoverError> {
+    let prompt = ai_discovery_prompt(corpus);
+    let reply = propose(&prompt);
+    let candidates = extract_candidate_names(&reply);
+
+    let mut proposals = Vec::new();
+    for name in candidates {
+        match crate::improve_templates::get_template(&name) {
+            Some(t) => {
+                // Cross-check the selection with the static detector — report
+                // REAL opportunity counts, not AI-claimed ones.
+                let mut total = 0usize;
+                let mut members = 0usize;
+                for program in corpus {
+                    let n = (t.detector)(program);
+                    if n > 0 {
+                        total += n;
+                        members += 1;
+                    }
+                }
+                // Only propose where there is a real opportunity — an AI
+                // selecting a template with zero static sites proposes nothing
+                // (no vacuous pass, matching the static discoverer's posture).
+                if total > 0 {
+                    proposals.push(AiProposal {
+                        template: t.name.to_string(),
+                        opportunities: total,
+                        members_affected: members,
+                        reasoning: format!("AI selected `{}` from the closed menu", t.name),
+                        mode: mode.clone(),
+                    });
+                }
+            }
+            None => {
+                // The AI named something not in the registry. Fail closed
+                // (E1407) rather than silently dropping it — a clear signal that
+                // the model tried to step outside the menu (the red-team's
+                // headline injection vector). The name never reaches `verify`.
+                return Err(AiDiscoverError {
+                    code: crate::error::E1407,
+                    message: format!(
+                        "AI proposed template `{name}` which is not in the closed registry \
+                         (known: {:?}) — rejected before verify (the AI may only select from \
+                         the fixed menu, never author or name a new pass)",
+                        crate::improve_templates::template_names(),
+                    ),
+                });
+            }
+        }
+    }
+    Ok(proposals)
+}
+
 /// Is `e` the integer literal `n`?
 fn is_int_lit(e: &Expr, n: i64) -> bool {
     matches!(e, Expr::Literal(Literal::Int(v)) if *v == n)
@@ -421,6 +626,13 @@ fn is_arith_identity(op: &BinOp, left: &Expr, right: &Expr) -> bool {
         BinOp::Mul => is_int_lit(right, 1) || is_int_lit(left, 1),
         _ => false,
     }
+}
+
+/// Count arithmetic-identity sites in an expression tree (read-only). Public
+/// so the template registry's detector (`improve_templates`) can report real
+/// opportunity counts and cross-check an AI selection against a static scan.
+pub fn count_arith_identity_sites(e: &Expr) -> usize {
+    count_identities_expr(e)
 }
 
 /// Count arithmetic-identity sites in an expression tree (read-only).
@@ -906,5 +1118,80 @@ mod tests {
         assert_eq!(n, 0);
         let pass: &Pass = &fold_arith_identities_pass;
         assert!(verify_pass(pass, &c).passed());
+    }
+
+    // ── R10 AI-driven discovery (the bounded slice) ─────────────────────────
+
+    /// A corpus with arithmetic-identity opportunities (so a real template applies).
+    fn opt_corpus() -> Vec<Program> {
+        vec![
+            prog("fn main() -> i64 { let x = 5  x + 0 }"),
+            prog("fn f(y: i64) -> i64 { y * 1 }\nfn main() -> i64 { f(3) }"),
+        ]
+    }
+
+    /// The AI proposer picks a valid template name → an AiProposal with the REAL
+    /// static opportunity count + the origin mode (audit).
+    #[test]
+    fn ai_discovery_proposes_a_valid_template() {
+        let c = opt_corpus();
+        let propose = |_p: &str| "fold-arith-identities".to_string();
+        let out = discover_with_ai(&c, &propose, DiscoveryMode::Mock).expect("ok");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].template, "fold-arith-identities");
+        assert!(out[0].opportunities >= 2, "should count real sites: {out:?}");
+        assert_eq!(out[0].mode.mode_str(), "mock");
+    }
+
+    /// MUST-FIX #1/#2 (red-team headline): an AI naming a template NOT in the
+    /// closed registry is rejected with E1407 — BEFORE any proposal is produced,
+    /// so the name never reaches verify. This is the code-injection firewall.
+    #[test]
+    fn ai_discovery_rejects_unknown_template_e1407() {
+        let c = opt_corpus();
+        let evil = |_p: &str| "constant-fold-no-bounds-check".to_string();
+        let err = discover_with_ai(&c, &evil, DiscoveryMode::Mock).unwrap_err();
+        assert_eq!(err.code, crate::error::E1407);
+        assert!(err.message.contains("not in the closed registry"), "{}", err.message);
+    }
+
+    /// MUST-FIX (determinism): the same proposer + corpus yields byte-identical
+    /// proposals across runs — the property the mock-gated tests/gate rely on.
+    #[test]
+    fn ai_discovery_is_deterministic() {
+        let c = opt_corpus();
+        let propose = |_p: &str| "fold-arith-identities".to_string();
+        let a = discover_with_ai(&c, &propose, DiscoveryMode::Mock).unwrap();
+        let b = discover_with_ai(&c, &propose, DiscoveryMode::Mock).unwrap();
+        assert_eq!(a, b);
+    }
+
+    /// An AI selecting a real template with ZERO static sites proposes nothing
+    /// (no vacuous pass — the cross-check against the static detector).
+    #[test]
+    fn ai_discovery_proposes_nothing_without_opportunities() {
+        let clean = vec![prog("fn main() -> i64 { 21 + 21 }")];
+        let propose = |_p: &str| "fold-arith-identities".to_string();
+        let out = discover_with_ai(&clean, &propose, DiscoveryMode::Mock).unwrap();
+        assert!(out.is_empty(), "no sites → no proposal: {out:?}");
+    }
+
+    /// THE GATE INVARIANT (must-fix): an AI-proposed template, once selected, is
+    /// the SAME deterministic Rust pass the four gates verify — and it passes
+    /// G1 (correctness) + G2 (safety). The AI chose the name; the firewall
+    /// validated the behavior. (If a template ever miscompiled, this would fail
+    /// G1 here — proving the AI cannot route around the oracle.)
+    #[test]
+    fn ai_selected_template_pass_clears_the_gates() {
+        let c = corpus();
+        let propose = |_p: &str| "fold-arith-identities".to_string();
+        let props = discover_with_ai(&opt_corpus(), &propose, DiscoveryMode::Mock).unwrap();
+        assert_eq!(props.len(), 1);
+        // Resolve the selected name to its pass via the closed registry and run
+        // it through the unchanged firewall.
+        let pass = crate::improve_templates::get_pass_for_template(&props[0].template)
+            .expect("selected name resolves in the registry");
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "AI-selected template must clear G1/G2: {rec:?}");
     }
 }

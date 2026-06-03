@@ -107,6 +107,13 @@ pub struct PassEntry {
     pub graduated_by: Vec<String>,
     /// Whether the pass earned the `faster` claim (G4) or is unmeasured.
     pub perf_status: PerfClaim,
+    /// How this pass was DISCOVERED — `static` (deterministic detector), `mock`,
+    /// or `ai:<model>` (a live model proposed it). Recorded so a multi-sig
+    /// reviewer at graduation time can apply higher scrutiny to AI-origin passes
+    /// (red-team must-fix #3: the human gate needs visibility into proposal
+    /// origin). Defaults to `static` when absent (back-compat with older
+    /// manifests that predate AI discovery).
+    pub proposed_by: String,
 }
 
 /// Why a graduation was refused.
@@ -131,6 +138,7 @@ pub fn graduate(
     corpus_hash: impl Into<String>,
     signers: &[String],
     perf_status: PerfClaim,
+    proposed_by: impl Into<String>,
 ) -> Result<PassEntry, GraduationError> {
     let distinct: std::collections::BTreeSet<&String> = signers.iter().collect();
     if distinct.len() < MIN_GRADUATION_SIGS {
@@ -145,6 +153,7 @@ pub fn graduate(
             ),
         });
     }
+    let proposed_by = proposed_by.into();
     Ok(PassEntry {
         id: id.into(),
         name: name.into(),
@@ -152,6 +161,7 @@ pub fn graduate(
         corpus_hash: corpus_hash.into(),
         graduated_by: signers.to_vec(),
         perf_status,
+        proposed_by: if proposed_by.is_empty() { "static".to_string() } else { proposed_by },
     })
 }
 
@@ -209,6 +219,7 @@ pub fn write_manifest(m: &Manifest) -> String {
         out.push_str(&format!("corpus_hash = {}\n", q(&p.corpus_hash)));
         out.push_str(&format!("graduated_by = {}\n", q_array(&p.graduated_by)));
         out.push_str(&format!("perf_status = {}\n", q(p.perf_status.as_str())));
+        out.push_str(&format!("proposed_by = {}\n", q(&p.proposed_by)));
     }
     out
 }
@@ -250,6 +261,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
                 corpus_hash: String::new(),
                 graduated_by: Vec::new(),
                 perf_status: PerfClaim::Unmeasured,
+                proposed_by: "static".to_string(), // back-compat default if the key is absent
             });
             continue;
         }
@@ -290,6 +302,7 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
                     (E1405, format!("unknown perf_status `{s}` (expected unmeasured|faster)"))
                 })?;
             }
+            "proposed_by" => p.proposed_by = parse_str(val).map_err(tag)?,
             other => return Err((E1405, format!("passes.manifest line {}: unknown key `{other}`", lineno + 1))),
         }
     }
@@ -412,6 +425,7 @@ mod tests {
             corpus_hash(&[b"a".to_vec(), b"b".to_vec()]),
             &["principal:root-a".into(), "principal:root-b".into()],
             PerfClaim::Faster,
+            "static",
         )
         .expect("two distinct signers graduate")
     }
@@ -423,11 +437,11 @@ mod tests {
         let c = corpus_hash(&[b"x".to_vec()]);
 
         // Zero signers — refused.
-        let e = graduate(&id, "p", &v, &c, &[], PerfClaim::Unmeasured).unwrap_err();
+        let e = graduate(&id, "p", &v, &c, &[], PerfClaim::Unmeasured, "static").unwrap_err();
         assert_eq!(e.code, E1404);
 
         // One signer — refused (no quorum).
-        let e = graduate(&id, "p", &v, &c, &["principal:root-a".into()], PerfClaim::Unmeasured)
+        let e = graduate(&id, "p", &v, &c, &["principal:root-a".into()], PerfClaim::Unmeasured, "static")
             .unwrap_err();
         assert_eq!(e.code, E1404);
 
@@ -436,6 +450,7 @@ mod tests {
             &id, "p", &v, &c,
             &["principal:root-a".into(), "principal:root-a".into()],
             PerfClaim::Unmeasured,
+            "static",
         )
         .unwrap_err();
         assert_eq!(e.code, E1404, "self-graduation via a duplicate signer must be refused");
@@ -445,6 +460,7 @@ mod tests {
             &id, "p", &v, &c,
             &["principal:root-a".into(), "principal:root-b".into()],
             PerfClaim::Unmeasured,
+            "static",
         );
         assert!(ok.is_ok(), "≥2 distinct signers must graduate: {ok:?}");
     }
@@ -475,6 +491,7 @@ mod tests {
                 corpus_hash(&[b"z".to_vec()]),
                 &["principal:root-a".into(), "principal:root-c".into()],
                 PerfClaim::Unmeasured,
+                "static",
             )
             .unwrap(),
         );
@@ -486,6 +503,37 @@ mod tests {
         assert_eq!(write_manifest(&parsed), text);
         // Hashes carry their tags.
         assert!(parsed.passes.iter().all(|p| p.id.starts_with("axp1:")));
+    }
+
+    /// Red-team must-fix #3: the discovery origin (`proposed_by`) round-trips
+    /// through serialize→parse, so a multi-sig reviewer sees AI provenance; and
+    /// an OLD manifest lacking the key still parses (defaulting to `static`).
+    #[test]
+    fn proposed_by_roundtrips_and_defaults_to_static() {
+        let e = graduate(
+            pass_hash(b"ai-pass"),
+            "fold-arith-identities",
+            verify_hash(b"r"),
+            corpus_hash(&[b"c".to_vec()]),
+            &["principal:root-a".into(), "principal:root-b".into()],
+            PerfClaim::Unmeasured,
+            "ai:claude-opus-4-8",
+        )
+        .unwrap();
+        assert_eq!(e.proposed_by, "ai:claude-opus-4-8");
+        let mut m = Manifest::new();
+        m.insert(e);
+        let text = write_manifest(&m);
+        assert!(text.contains("proposed_by = \"ai:claude-opus-4-8\""), "origin serialized: {text}");
+        let parsed = parse_manifest(&text).expect("round-trips");
+        assert_eq!(parsed.passes[0].proposed_by, "ai:claude-opus-4-8");
+
+        // Back-compat: a manifest predating the field parses with the default.
+        let old = "version = 1\n\n[[pass]]\nid = \"axp1:x\"\nname = \"identity\"\n\
+                   verified = \"axv1:y\"\ncorpus_hash = \"axc1:z\"\n\
+                   graduated_by = [\"a\", \"b\"]\nperf_status = \"unmeasured\"\n";
+        let p = parse_manifest(old).expect("old manifest still parses");
+        assert_eq!(p.passes[0].proposed_by, "static", "absent proposed_by defaults to static");
     }
 
     #[test]
