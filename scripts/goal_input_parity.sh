@@ -58,17 +58,18 @@ if [ ! -f "$NLOG" ]; then
   exit 1
 fi
 
-# The native return records must now carry the input that produced each score.
+# The native return records must now carry the input as a STRUCTURED field
+# ("input":<n>, matching the interpreter — R4 parity), not buried in payload.
 # tune(3) -> 84, tune(7) -> 100; assert both input bindings are present.
-if ! grep -q "input=3" "$NLOG" || ! grep -q "input=7" "$NLOG"; then
-  echo "goal_input_parity: FAIL — native provenance is missing the input field (F11 ABI regressed):"
+if ! grep -q '"input":3' "$NLOG" || ! grep -q '"input":7' "$NLOG"; then
+  echo "goal_input_parity: FAIL — native provenance is missing the structured input field (F11/R4 ABI regressed):"
   echo "--- native log ---"; cat "$NLOG"
   exit 1
 fi
 
 # And the (input -> score) pairing must match the interpreter's: tune(3)=84.
-if ! grep -q "ret_i64=84 input=3" "$NLOG"; then
-  echo "goal_input_parity: FAIL — native (input,score) pairing wrong: expected ret_i64=84 input=3"
+if ! grep -q '"score":84,"input":3' "$NLOG"; then
+  echo "goal_input_parity: FAIL — native (input,score) pairing wrong: expected score 84 with input 3"
   echo "--- native log ---"; cat "$NLOG"
   exit 1
 fi

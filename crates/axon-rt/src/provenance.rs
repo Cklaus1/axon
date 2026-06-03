@@ -154,7 +154,7 @@ pub extern "C" fn __axon_provenance_log_ret_i64(
     // R4: emit the SAME discriminator the interpreter writes
     // (`event:"adaptive_return"`, `zone:"adaptive"`) so native and interp
     // provenance carry matching shape — the I-13 engine-parity guarantee.
-    let _ = log_adaptive_return(fn_name, &payload, ret as f64);
+    let _ = log_adaptive_return(fn_name, &payload, ret as f64, None);
 }
 
 /// F11 entry point: log an `i64` return value TOGETHER with the `i64` input
@@ -175,8 +175,11 @@ pub extern "C" fn __axon_provenance_log_ret_i64_in(
     if !fn_name.is_empty() {
         record_with_input(fn_name, ret as f64, Some(input));
     }
-    let payload = format!("ret_i64={} input={}", ret, input);
-    let _ = log_adaptive_return(fn_name, &payload, ret as f64);
+    // Payload matches the score-only path (`ret_i64=<n>`); the input is now a
+    // STRUCTURED `"input":<n>` field (R4 parity with interp), not buried in the
+    // payload string.
+    let payload = format!("ret_i64={}", ret);
+    let _ = log_adaptive_return(fn_name, &payload, ret as f64, Some(input));
 }
 
 /// Layer-2 entry point: log an `f64` return value from an adaptive function.
@@ -191,7 +194,7 @@ pub extern "C" fn __axon_provenance_log_ret_f64(
         record(fn_name, ret);
     }
     let payload = format!("ret_f64={}", ret);
-    let _ = log_adaptive_return(fn_name, &payload, ret);
+    let _ = log_adaptive_return(fn_name, &payload, ret, None);
 }
 
 // ── Internals ─────────────────────────────────────────────────────────────────
@@ -258,12 +261,17 @@ fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Resul
 /// R4 engine-parity: append an `@[adaptive]` return record whose shape matches
 /// the interpreter's `append_provenance_jsonl` (interp.rs) — same `event` and
 /// `zone` discriminator so native and interpreted runs of the same program
-/// produce structurally identical provenance (I-13).  The interpreter also
-/// stamps `input` (the call's first scalar arg) and `src` (the source path);
-/// codegen does not thread those through the ABI yet, so they are omitted here
-/// rather than faked — the discriminating fields (`event`/`zone`/`fn`/`score`)
-/// are the parity contract.
-fn log_adaptive_return(fn_name: &str, payload: &str, score: f64) -> std::io::Result<()> {
+/// produce structurally identical provenance (I-13).  When `input` is `Some`,
+/// emits the interpreter's structured `"input":<n>` field too (F11 threads the
+/// leading i64 arg through `__axon_provenance_log_ret_i64_in`); the `src`
+/// (source path) field is still codegen-side TODO. The discriminating fields
+/// (`event`/`zone`/`fn`/`score`[/`input`]) are the parity contract.
+fn log_adaptive_return(
+    fn_name: &str,
+    payload: &str,
+    score: f64,
+    input: Option<i64>,
+) -> std::io::Result<()> {
     let dir = provenance_dir().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir")
     })?;
@@ -275,12 +283,20 @@ fn log_adaptive_return(fn_name: &str, payload: &str, score: f64) -> std::io::Res
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
+    // Structured `"input":<n>` field (matching interp) when the input was
+    // threaded; omitted entirely otherwise (never faked).
+    let input_field = match input {
+        Some(n) => format!(",\"input\":{n}"),
+        None => String::new(),
+    };
+
     let line = format!(
-        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":\"adaptive_return\",\"zone\":\"adaptive\",\"payload\":{pl_q},\"score\":{s}}}\n",
+        "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":\"adaptive_return\",\"zone\":\"adaptive\",\"payload\":{pl_q},\"score\":{s}{input_field}}}\n",
         ts   = ts,
         fn_q = json_quote(fn_name),
         pl_q = json_quote(payload),
         s    = format_f64(score),
+        input_field = input_field,
     );
 
     let mut f = OpenOptions::new().create(true).append(true).open(path)?;
