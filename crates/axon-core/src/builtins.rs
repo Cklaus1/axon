@@ -1164,6 +1164,30 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "[(i64, f64)]",
         doc: "Return the full optimization trace as a slice of `(input, score)` tuples, in call order, for the @[adaptive] function `name`. Empty when nothing was recorded.",
     },
+    // ── Agent metacognition (PRD "Agent Metacognition") ──────────────────────
+    // An agent that can inspect its own reasoning trace can catch its own
+    // failures (a stuck loop, low confidence). v1 exposes the metacognition
+    // CAPABILITY as builtins over the recorded score trace (the same provenance
+    // `goal_history` reads), rather than the PRD's `self.method()` trait-on-mod
+    // surface (that needs method-on-mod dispatch; this delivers the signal now).
+    BuiltinFn {
+        name: "agent_detect_loop",
+        params: &[("name", "str")],
+        ret: "bool",
+        doc: "Metacognition: has the agent's reasoning STALLED? True when the last few recorded scores for `name` are all within an epsilon of each other (no progress — a likely reasoning loop). False with fewer than 3 records (not enough trace to judge). Reads the same trace as `goal_history`.",
+    },
+    BuiltinFn {
+        name: "agent_uncertainty",
+        params: &[("name", "str")],
+        ret: "f64",
+        doc: "Metacognition: the agent's self-estimated uncertainty in `[0,1]`, derived from the spread of its recent scores (normalized stdev — high variance ⇒ high uncertainty). Returns 1.0 (maximally uncertain) when fewer than 2 records exist. The PRD's `uncertainty_estimate()` as a trace-backed scalar.",
+    },
+    BuiltinFn {
+        name: "agent_trace_len",
+        params: &[("name", "str")],
+        ret: "i64",
+        doc: "Metacognition: the number of reasoning steps (recorded scores) in the agent's trace for `name` — the length of its `reasoning_trace()`. 0 when nothing recorded.",
+    },
     BuiltinFn {
         name: "goal_clear",
         params: &[("name", "str")],

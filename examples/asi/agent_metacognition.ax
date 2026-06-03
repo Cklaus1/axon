@@ -1,0 +1,24 @@
+// PRD "Agent Metacognition": an agent that can inspect its own reasoning trace
+// can catch its own failures. These builtins read the agent's recorded score
+// trace (the same provenance `goal_history` exposes):
+//   agent_trace_len(name)   — how many reasoning steps so far
+//   agent_uncertainty(name) — self-estimated uncertainty in [0,1] (score spread)
+//   agent_detect_loop(name) — has progress stalled? (a likely reasoning loop)
+
+@[adaptive]
+fn search(x: i64) -> i64 { 100 - (x - 7) * (x - 7) }
+
+fn main() -> i64 {
+    let _ = goal_run("search", 100.0, 30)
+
+    let steps = agent_trace_len("search")
+    let uncertainty = agent_uncertainty("search")
+
+    // Metacognitive control: decide what to do based on self-inspection.
+    if agent_detect_loop("search") {
+        println("metacog: reasoning stalled after {to_str(steps)} steps — would escalate")
+    } else {
+        println("metacog: {to_str(steps)} steps, uncertainty {to_str_f64(uncertainty)} — making progress")
+    }
+    0
+}

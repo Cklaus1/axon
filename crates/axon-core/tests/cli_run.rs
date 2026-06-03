@@ -2695,6 +2695,43 @@ fn verify_value_predicate_gates_on_uncertain_value() {
 }
 
 #[test]
+fn agent_metacognition_reads_its_own_trace() {
+    // PRD "Agent Metacognition": an agent can inspect its own reasoning trace to
+    // catch its own failures. v1 exposes the capability as builtins over the
+    // recorded score trace: agent_trace_len (# steps), agent_uncertainty
+    // (score-spread), agent_detect_loop (stalled?).
+    //
+    // A FLAT @[adaptive] fn produces a stalled trace → detect_loop true,
+    // uncertainty 0; a fn with no trace → uncertainty 1.0, not stuck, 0 steps.
+    let src = "@[adaptive]\n\
+        fn flat(x: i64) -> i64 { 42 }\n\
+        fn main() -> i64 {\n  \
+            let _ = goal_run(\"flat\", 100.0, 20)\n  \
+            println(\"{to_str(agent_trace_len(\\\"flat\\\"))}\")\n  \
+            println(\"{to_str_f64(agent_uncertainty(\\\"flat\\\"))}\")\n  \
+            println(\"{to_str_bool(agent_detect_loop(\\\"flat\\\"))}\")\n  \
+            println(\"{to_str(agent_trace_len(\\\"never\\\"))}\")\n  \
+            println(\"{to_str_f64(agent_uncertainty(\\\"never\\\"))}\")\n  \
+            println(\"{to_str_bool(agent_detect_loop(\\\"never\\\"))}\")\n  \
+            0\n\
+        }\n";
+    let f = std::env::temp_dir().join(format!("axon_meta_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
+    let lines: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
+    // Stalled fn: nonzero steps, uncertainty 0, stuck=true.
+    assert!(lines[0].parse::<i64>().unwrap_or(0) >= 3, "stalled fn has a trace: {lines:?}");
+    assert_eq!(lines[1], "0", "a flat trace has zero spread → uncertainty 0: {lines:?}");
+    assert_eq!(lines[2], "true", "a flat trace is a detected loop: {lines:?}");
+    // No trace: 0 steps, uncertainty 1.0, not stuck.
+    assert_eq!(lines[3], "0", "no trace → 0 steps: {lines:?}");
+    assert_eq!(lines[4], "1", "no trace → maximally uncertain (1.0): {lines:?}");
+    assert_eq!(lines[5], "false", "no trace → not a loop: {lines:?}");
+}
+
+#[test]
 fn sensitive_type_into_ai_call_is_e1206() {
     // PRD §4 (privacy): a `@[sensitive(category)]` value must never flow into an
     // external AI call. v1 catches the direct case at check (E1206).

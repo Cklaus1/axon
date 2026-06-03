@@ -4577,6 +4577,61 @@ impl<'p> Interp<'p> {
                 ok!(self.history(&name));
             }
 
+            // ── Agent metacognition (PRD "Agent Metacognition") ──────────────
+            // Read-only inspection of the agent's own score trace so it can
+            // catch its own failures (a stalled loop, low confidence). All three
+            // read the same in-memory provenance `goal_history` exposes; pure
+            // functions of the recorded trace, deterministic.
+            "agent_detect_loop" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                let store = self.provenance.borrow();
+                let stalled = match store.get(&name) {
+                    // Need at least 3 points to call it a loop. The last 3 are a
+                    // loop when their spread is within epsilon of the score scale.
+                    Some(scores) if scores.len() >= 3 => {
+                        let tail = &scores[scores.len() - 3..];
+                        let lo = tail.iter().cloned().fold(f64::INFINITY, f64::min);
+                        let hi = tail.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+                        let scale = hi.abs().max(lo.abs()).max(1.0);
+                        (hi - lo) <= scale * 1e-9
+                    }
+                    _ => false,
+                };
+                ok!(Value::Bool(stalled));
+            }
+            "agent_uncertainty" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                let store = self.provenance.borrow();
+                let u = match store.get(&name) {
+                    Some(scores) if scores.len() >= 2 => {
+                        let n = scores.len() as f64;
+                        let mean = scores.iter().sum::<f64>() / n;
+                        let var = scores.iter().map(|s| (s - mean).powi(2)).sum::<f64>() / n;
+                        let stdev = var.sqrt();
+                        // Normalize by the score scale → a unitless [0,1]-ish
+                        // dispersion; clamp to [0,1] (high spread ⇒ uncertain).
+                        let scale = scores
+                            .iter()
+                            .cloned()
+                            .fold(0.0_f64, |a, s| a.max(s.abs()))
+                            .max(1.0);
+                        (stdev / scale).clamp(0.0, 1.0)
+                    }
+                    // Not enough trace to judge ⇒ maximally uncertain.
+                    _ => 1.0,
+                };
+                ok!(Value::Float(u));
+            }
+            "agent_trace_len" => {
+                want(1)?;
+                let name = as_str(&args[0])?.to_string();
+                let store = self.provenance.borrow();
+                let len = store.get(&name).map(|s| s.len()).unwrap_or(0);
+                ok!(Value::Int(len as i64));
+            }
+
             // Reset the @[adaptive] provenance for `name` so the next
             // goal_run starts fresh. Returns the count of evicted records
             // (so a caller can sanity-check there was anything to clear).
