@@ -179,6 +179,35 @@ pub fn decode_verify_predicate_with_ident(expr: &Expr) -> Option<(String, BinOp,
     None
 }
 
+/// Decode a `@[verify]` predicate that is a **conjunction** of `ident OP K`
+/// atoms — `value > 0 && value < 100 && confidence >= 0.8` flattens to the list
+/// `[(value,Gt,0),(value,Lt,100),(confidence,GtEq,0.8)]`. A single atom returns
+/// a one-element list. Returns `None` if any leaf is not an `ident OP literal`
+/// comparison (so the caller falls back to Unsupported / the runtime gate).
+///
+/// Only `&&` is flattened: a conjunction is provable atom-by-atom (each must
+/// hold for all inputs). `||` is NOT decoded here — proving a disjunction needs
+/// a different VC (at least one atom holds) and stays runtime-only in this slice.
+pub fn decode_verify_conjunction(expr: &Expr) -> Option<Vec<(String, BinOp, f64)>> {
+    fn collect(expr: &Expr, out: &mut Vec<(String, BinOp, f64)>) -> bool {
+        if let Expr::BinOp { op: BinOp::And, left, right } = expr {
+            return collect(left, out) && collect(right, out);
+        }
+        if let Some(atom) = decode_verify_predicate_with_ident(expr) {
+            out.push(atom);
+            true
+        } else {
+            false
+        }
+    }
+    let mut atoms = Vec::new();
+    if collect(expr, &mut atoms) && !atoms.is_empty() {
+        Some(atoms)
+    } else {
+        None
+    }
+}
+
 /// Public re-export of the internal `op_to_str` so codegen can format the
 /// operator into runtime-panic messages identically to compile-time messages.
 pub fn binop_to_verify_str(op: &BinOp) -> &'static str {
@@ -604,6 +633,50 @@ mod tests {
             }),
             span: Span::dummy(),
         }
+    }
+
+    fn binop(op: BinOp, l: Expr, r: Expr) -> Expr {
+        Expr::BinOp { op, left: Box::new(l), right: Box::new(r) }
+    }
+
+    #[test]
+    fn decode_conjunction_flattens_and_chain() {
+        // value >= 0 && value <= 100 && confidence >= 0.8 → three atoms.
+        let pred = binop(
+            BinOp::And,
+            binop(
+                BinOp::And,
+                binop(BinOp::GtEq, Expr::Ident("value".into()), lit_i(0)),
+                binop(BinOp::LtEq, Expr::Ident("value".into()), lit_i(100)),
+            ),
+            binop(BinOp::GtEq, Expr::Ident("confidence".into()), lit_f(0.8)),
+        );
+        let atoms = decode_verify_conjunction(&pred).expect("decodes");
+        assert_eq!(atoms.len(), 3);
+        assert_eq!(atoms[0], ("value".to_string(), BinOp::GtEq, 0.0));
+        assert_eq!(atoms[1], ("value".to_string(), BinOp::LtEq, 100.0));
+        assert_eq!(atoms[2], ("confidence".to_string(), BinOp::GtEq, 0.8));
+    }
+
+    #[test]
+    fn decode_conjunction_single_atom_is_one_element() {
+        let pred = binop(BinOp::Gt, Expr::Ident("value".into()), lit_i(0));
+        let atoms = decode_verify_conjunction(&pred).expect("decodes");
+        assert_eq!(atoms.len(), 1);
+    }
+
+    #[test]
+    fn decode_conjunction_rejects_disjunction_and_non_atoms() {
+        // `||` is not flattened (a disjunction needs a different VC).
+        let or_pred = binop(
+            BinOp::Or,
+            binop(BinOp::GtEq, Expr::Ident("value".into()), lit_i(100)),
+            binop(BinOp::LtEq, Expr::Ident("value".into()), lit_i(0)),
+        );
+        assert!(decode_verify_conjunction(&or_pred).is_none(), "|| must not decode");
+        // A non-comparison leaf (a bare ident) fails the whole decode.
+        let bad = binop(BinOp::And, Expr::Ident("value".into()), lit_i(0));
+        assert!(decode_verify_conjunction(&bad).is_none());
     }
 
     #[test]

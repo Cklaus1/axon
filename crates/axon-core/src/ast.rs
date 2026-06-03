@@ -408,7 +408,7 @@ pub struct VerifySpec {
 
 // ── Operators ────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 pub enum BinOp {
     Add, Sub, Mul, Div, Rem,

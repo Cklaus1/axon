@@ -18,7 +18,6 @@
 #![cfg(feature = "smt")]
 
 use crate::ast::{BinOp, Expr, FnDef, Item, Literal, Program, Stmt};
-use crate::verify::decode_verify_predicate_with_ident;
 
 use z3::ast::{Ast, Bool, Int, Real};
 use z3::{Config, Context, SatResult, Solver};
@@ -42,41 +41,78 @@ pub fn prove_verify_bounds(program: &Program) -> Vec<ProofResult> {
     for item in &program.items {
         let Item::FnDef(f) = item else { continue };
         let Some(spec) = &f.verify else { continue };
-        // Only the decodable `ident OP K` shape (value/confidence OP literal).
-        let Some((ident, op, bound)) = decode_verify_predicate_with_ident(&spec.predicate) else {
+        // Decode the predicate as a CONJUNCTION of `ident OP K` atoms (a single
+        // atom is a 1-element list). `value > 0 && value < 100` proves both
+        // bounds; a `confidence` atom (a runtime Uncertain field, not a static
+        // integer property) makes the whole conjunction Unsupported — the
+        // runtime gate still enforces it.
+        let Some(atoms) = crate::verify::decode_verify_conjunction(&spec.predicate) else {
             out.push(ProofResult::Unsupported {
                 function: f.name.clone(),
-                reason: "predicate is not a simple `value OP K` comparison".into(),
+                reason: "predicate is not a conjunction of `ident OP K` comparisons \
+                         (disjunctions `||` stay runtime-only)".into(),
             });
             continue;
         };
-        // v1 proves the `value` bound (the return); `confidence` is an
-        // Uncertain-field runtime concept, not a static integer property.
-        if ident != "value" {
+        if let Some((bad, _, _)) = atoms.iter().find(|(id, _, _)| id != "value") {
             out.push(ProofResult::Unsupported {
                 function: f.name.clone(),
-                reason: format!("only `value OP K` is statically provable in v1 (got `{ident}`)"),
+                reason: format!(
+                    "only `value OP K` atoms are statically provable in v1 (got `{bad}`); \
+                     the runtime gate enforces the full predicate"
+                ),
             });
             continue;
         }
-        out.push(prove_one(f, &op, bound));
+        let value_atoms: Vec<(BinOp, f64)> =
+            atoms.into_iter().map(|(_, op, b)| (op, b)).collect();
+        out.push(prove_conjunction(f, &value_atoms));
     }
     out
 }
 
-/// Prove a single fn's `value OP K` bound. The bound `K` is taken as an integer
-/// (the fragment is integer arithmetic; a non-integer bound → Unsupported).
+/// Prove a CONJUNCTION of `value OP K` atoms: every atom must hold for all
+/// inputs. Z3 sat-checks the negation of the AND — `∃ params. ¬(A ∧ B ∧ …)` —
+/// so `unsat` ⇒ all bounds proven, `sat` ⇒ a single input violates at least one
+/// (the counterexample). A 1-element list is exactly the old single-bound proof.
+fn prove_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
+    // Route to the float encoder if any param/return is f64 or any bound is
+    // non-integer — but only the single-atom case has a float encoder today;
+    // a float CONJUNCTION falls back to per-atom float proof being all-proven.
+    let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
+    let ret_f64 = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+    let any_frac = atoms.iter().any(|(_, b)| b.fract() != 0.0);
+    if any_f64 || ret_f64 || any_frac {
+        // Float fragment: prove each atom independently; the conjunction holds
+        // iff all do, and a counterexample on any atom disproves the whole.
+        for (op, bound) in atoms {
+            match prove_one_f64(f, op, *bound) {
+                ProofResult::Proven { .. } => continue,
+                other => return other, // Counterexample or Unsupported short-circuits
+            }
+        }
+        return ProofResult::Proven { function: f.name.clone() };
+    }
+    prove_one_int_conjunction(f, atoms)
+}
+
+/// Prove a single fn's `value OP K` bound (the original entry point, retained
+/// for callers/tests). Delegates to the conjunction path with one atom.
 fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
-    // Route to the float (Z3 Real) fragment when the fn's params or RETURN type
-    // are f64, OR the bound is non-integer — the integer encoder cannot
-    // represent any of those.
     let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
     let ret_f64 = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
     if any_f64 || ret_f64 || bound.fract() != 0.0 {
         return prove_one_f64(f, op, bound);
     }
+    prove_one_int_conjunction(f, std::slice::from_ref(&(op.clone(), bound)))
+}
+
+/// Prove a conjunction of `value OP K` atoms over the INTEGER fragment. Every
+/// atom must hold for all inputs; Z3 sat-checks `∃ params. ¬(A₁ ∧ A₂ ∧ …)`.
+/// `unsat` ⇒ all proven; `sat` ⇒ a single counterexample input that breaks the
+/// conjunction. One atom is the classic single-bound proof.
+fn prove_one_int_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
     // Integer fragment: every param must be i64.
-    let bound_i = bound as i64;
     for p in &f.params {
         if !is_i64_type(&p.ty) {
             return ProofResult::Unsupported {
@@ -96,8 +132,7 @@ fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
         .map(|p| (p.name.clone(), Int::new_const(&ctx, p.name.as_str())))
         .collect();
 
-    // Encode the body as an Int term R(params). Bail to Unsupported on any node
-    // outside the fragment.
+    // Encode the body as an Int term R(params).
     let body = match encode_expr(&ctx, &f.body, &params) {
         Some(t) => t,
         None => {
@@ -109,25 +144,34 @@ fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
         }
     };
 
-    // The bound predicate B := R(params) OP K, and its negation ¬B.
-    let k = Int::from_i64(&ctx, bound_i);
-    let bound_pred = match op {
-        BinOp::GtEq => body.ge(&k),
-        BinOp::Gt => body.gt(&k),
-        BinOp::LtEq => body.le(&k),
-        BinOp::Lt => body.lt(&k),
-        BinOp::Eq => body._eq(&k),
-        BinOp::NotEq => body._eq(&k).not(),
-        _ => {
-            return ProofResult::Unsupported {
-                function: f.name.clone(),
-                reason: format!("verify operator {op:?} is not a supported comparison"),
+    // Build each atom's bound predicate and conjoin them.
+    let mut atom_preds = Vec::with_capacity(atoms.len());
+    let mut atom_strs = Vec::with_capacity(atoms.len());
+    for (op, bound) in atoms {
+        let bound_i = *bound as i64;
+        let k = Int::from_i64(&ctx, bound_i);
+        let p = match op {
+            BinOp::GtEq => body.ge(&k),
+            BinOp::Gt => body.gt(&k),
+            BinOp::LtEq => body.le(&k),
+            BinOp::Lt => body.lt(&k),
+            BinOp::Eq => body._eq(&k),
+            BinOp::NotEq => body._eq(&k).not(),
+            _ => {
+                return ProofResult::Unsupported {
+                    function: f.name.clone(),
+                    reason: format!("verify operator {op:?} is not a supported comparison"),
+                }
             }
-        }
-    };
-    let neg = bound_pred.not();
+        };
+        atom_preds.push(p);
+        atom_strs.push(format!("value {} {bound_i}", crate::verify::binop_to_verify_str(op)));
+    }
+    // Conjoin: B := A₁ ∧ A₂ ∧ … ; the VC is ¬B.
+    let refs: Vec<&z3::ast::Bool> = atom_preds.iter().collect();
+    let conj = z3::ast::Bool::and(&ctx, &refs);
+    let neg = conj.not();
 
-    // Ask Z3: does a violating input exist? unsat ⇒ proven; sat ⇒ counterexample.
     let solver = Solver::new(&ctx);
     solver.assert(&neg);
     match solver.check() {
@@ -144,7 +188,7 @@ fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
             ProofResult::Counterexample {
                 function: f.name.clone(),
                 inputs,
-                predicate: format!("value {} {bound_i}", crate::verify::binop_to_verify_str(op)),
+                predicate: atom_strs.join(" && "),
             }
         }
         SatResult::Unknown => ProofResult::Unsupported {
@@ -442,6 +486,66 @@ mod tests {
     fn smt_is_deterministic() {
         let src = "@[verify(value >= 0)]\nfn f(x: i64) -> i64 { if x >= 0 { x } else { 0 - x } }";
         assert_eq!(prove(src), prove(src), "same program ⇒ same proof result");
+    }
+
+    // ── R9: composite (conjunction) predicates ───────────────────────────────
+    #[test]
+    fn smt_proves_a_value_conjunction() {
+        // value >= 0 && value <= 100 for a fn that always returns a clamped
+        // constant 100 — both bounds hold for all inputs → PROVEN.
+        let r = prove(
+            "@[verify(value >= 0 && value <= 100)]\n\
+             fn clamp(x: i64) -> i64 { if x >= 0 { 100 } else { 0 } }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "a satisfied conjunction must be proven, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_conjunction_counterexample_on_one_atom() {
+        // value >= 0 && value <= 5 for g(x)=x: the upper bound is violable
+        // (x=6) → COUNTEREXAMPLE naming the full predicate.
+        let r = prove(
+            "@[verify(value >= 0 && value <= 5)]\n\
+             fn g(x: i64) -> i64 { x }",
+        );
+        match r.as_slice() {
+            [ProofResult::Counterexample { predicate, .. }] => {
+                assert!(predicate.contains("&&"), "predicate should show the conjunction: {predicate}");
+            }
+            other => panic!("expected a counterexample, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn smt_confidence_conjunct_is_unsupported_not_false_proof() {
+        // A conjunction mixing `value` with `confidence` (a runtime field, not a
+        // static integer) is Unsupported — the runtime gate enforces it. Crucially
+        // NOT a false proof.
+        let r = prove(
+            "@[verify(value >= 0 && confidence >= 0.8)]\n\
+             fn h(x: i64) -> i64 { if x >= 0 { x } else { 0 - x } }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Unsupported { .. }]),
+            "a confidence conjunct must be Unsupported, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_disjunction_stays_unsupported() {
+        // `||` is not decoded by the conjunction path → Unsupported (runtime
+        // gate applies). We do not claim a false proof for disjunctions in v1.
+        let r = prove(
+            "@[verify(value >= 100 || value <= 0)]\n\
+             fn d(x: i64) -> i64 { x }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Unsupported { .. }]),
+            "a disjunction must be Unsupported in v1, got {r:?}"
+        );
     }
 
     // ── R9 FLOAT fragment (Z3 Real) ──────────────────────────────────────────
