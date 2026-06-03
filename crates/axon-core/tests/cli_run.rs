@@ -38,6 +38,43 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn exec_builtin_runs_and_is_capability_gated() {
+    // R6: the `exec` builtin spawns a process and exercises the `exec`
+    // capability — activating the previously-dormant @[contained] exec axis.
+    // (1) exec runs and returns stdout. (2) @[contained(exec: none)] rejects it
+    // at check (E1001). (3) @[contained(exec: any)] allows it.
+    let dir = std::env::temp_dir().join(format!("axon_exec_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    // (1) runs — echo prints to stdout.
+    let runf = dir.join("run.ax");
+    std::fs::write(&runf,
+        "fn main() -> i64 { match exec(\"echo\", [\"hi\"]) { Ok(s) => { print(s)  0 } Err(_) => 1 } }\n").unwrap();
+    let run = axon().args(["run", runf.to_str().unwrap()]).output().unwrap();
+    let run_out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(run.status.code(), Some(0), "exec(echo) should succeed: {run_out}");
+    assert!(run_out.contains("hi"), "exec must return the process stdout: {run_out}");
+
+    // (2) exec: none → E1001 at check (the dormant exec axis is now live).
+    let denyf = dir.join("deny.ax");
+    std::fs::write(&denyf,
+        "@[contained(exec: none)]\nfn r() -> i64 { match exec(\"ls\", []) { Ok(_) => 0  Err(_) => 1 } }\nfn main() -> i64 { r() }\n").unwrap();
+    let deny = axon().args(["check", denyf.to_str().unwrap()]).output().unwrap();
+    let deny_msg = format!("{}{}", String::from_utf8_lossy(&deny.stdout), String::from_utf8_lossy(&deny.stderr));
+    assert_eq!(deny.status.code(), Some(2), "exec: none must reject exec: {deny_msg}");
+    assert!(deny_msg.contains("E1001"), "exec denial is E1001: {deny_msg}");
+
+    // (3) exec: any → clean check.
+    let allowf = dir.join("allow.ax");
+    std::fs::write(&allowf,
+        "@[contained(exec: any)]\nfn r() -> i64 { match exec(\"true\", []) { Ok(_) => 0  Err(_) => 1 } }\nfn main() -> i64 { r() }\n").unwrap();
+    let allow = axon().args(["check", allowf.to_str().unwrap()]).output().unwrap();
+    assert!(allow.status.success(), "exec: any must allow exec: {:?}", allow);
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn typed_let_bindings_enforce_the_annotation() {
     // `let x: T = e` parses and enforces the annotation.
     let f = std::env::temp_dir().join(format!("axon_tlet_{}.ax", std::process::id()));

@@ -223,6 +223,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<(), str>",
         doc: "Write `content` to `path`, creating or truncating the file. Returns Ok(()) or Err(message).",
     },
+    BuiltinFn {
+        name: "exec",
+        params: &[("cmd", "str"), ("args", "[str]")],
+        ret: "Result<str, str>",
+        doc: "Spawn a process: run `cmd` with `args`, returning Ok(stdout) on success or Err(message) on failure. Exercises the `exec` capability — a `@[contained(exec: none)]` fn that calls this is rejected at compile time (E1001), and `never: [exec]` hard-denies it. The active host may refuse exec entirely (a sandboxed/browser host returns Err). Use for shelling out to external tools from a trusted zone.",
+    },
     // ── Phase 4: Time builtins ────────────────────────────────────────────────
     BuiltinFn {
         name: "sleep_ms",

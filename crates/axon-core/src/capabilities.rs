@@ -54,6 +54,7 @@ fn classify_call(name: &str) -> Option<IoKind> {
     match name {
         "read_file"                             => Some(IoKind::FsRead),
         "write_file"                            => Some(IoKind::FsWrite),
+        "exec"                                  => Some(IoKind::Exec),
         // Future net calls (http_get, ai_complete, etc.) — treat as net
         "http_get"
         | "http_post"

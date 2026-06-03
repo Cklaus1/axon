@@ -2782,6 +2782,26 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
+            "exec" => {
+                want(2)?;
+                let cmd = as_str(&args[0])?.to_string();
+                // args is `[str]`; collect into Vec<String> (a non-str element is
+                // a type error the checker should have caught).
+                let arg_list: Vec<String> = match &args[1] {
+                    Value::Array(xs) => {
+                        let mut out = Vec::with_capacity(xs.len());
+                        for x in xs {
+                            out.push(as_str(x)?.to_string());
+                        }
+                        out
+                    }
+                    other => return panic(format!("exec: args must be [str], got {}", other.type_name())),
+                };
+                match crate::host::with_host(|h| h.exec(&cmd, &arg_list)) {
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
 
             // ── Conversion / formatting ─────────────────────────────────────────
             "to_str" => {

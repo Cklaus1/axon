@@ -16,16 +16,13 @@
 //! |-----------|-----------|
 //! | `clear`   | the module exercises no capability, OR it declares a `@[contained]` (it has acknowledged its surface; the static checker then enforces it) |
 //! | `flagged` | the module exercises **only** undeclared `fs` (read/write) surface — a human should review (`--accept-flagged`) |
-//! | `denied`  | the module exercises undeclared **`net`** — the exfiltration channel; a dependency that phones home with no declared containment is the canonical supply-chain risk, blocked by default (E1204) |
+//! | `denied`  | the module exercises undeclared **`exec`** (process spawning) OR undeclared **`net`** (the exfiltration channel) — the two highest-risk surfaces; a dependency that spawns processes or phones home with no declared containment is the canonical supply-chain risk, blocked by default (E1204) |
 //!
-//! **Why `net` is the `denied` tier (a deviation from the spec's `exec`
-//! example, stated honestly):** the spec (R6 §4.3) names undeclared `exec` as
-//! the highest-risk surface, but Axon has **no `exec` builtin yet** — nothing
-//! in `classify_call` maps to `IoKind::Exec`, so an exec-based denied tier
-//! would be untestable dead code. Undeclared `net` *is* detectable today
-//! (`ai_complete`/`http_get`) and is the real exfiltration channel a
-//! capability audit exists to catch, so this slice keys `denied` on it. When an
-//! `exec` builtin lands, it joins the `denied` tier.
+//! Both `exec` and `net` are the `denied` tier, matching the spec (R6 §4.3,
+//! which names undeclared `exec` as the highest-risk surface). The `exec`
+//! builtin (`classify_call` → `IoKind::Exec`) and `net` (`ai_complete`/
+//! `http_get`) are both detectable, so the audit catches a module that spawns
+//! processes *or* phones home without declaring it.
 //!
 //! This is **defense-in-depth, not a proof** (R6 §4.3 "Honest limit"). The hard
 //! guarantee remains the static capability checker (`capabilities.rs`,
@@ -136,6 +133,15 @@ mod tests {
         // @[contained] is the highest-risk *detectable* surface → Denied (E1204).
         let v = audit_src("fn fetch() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n");
         assert_eq!(v, Verdict::Denied, "undeclared net must be denied");
+    }
+
+    #[test]
+    fn undeclared_exec_is_denied() {
+        // A module that spawns a process with no @[contained] is the highest-risk
+        // surface the spec names → Denied (E1204). (Now that `exec` is a real
+        // builtin classified as IoKind::Exec, this is no longer dead code.)
+        let v = audit_src("fn run() -> i64 { match exec(\"ls\", []) { Ok(_) => 0  Err(_) => 1 } }\n");
+        assert_eq!(v, Verdict::Denied, "undeclared exec must be denied");
     }
 
     #[test]

@@ -21,6 +21,15 @@ pub trait AxonHost {
     fn env_var(&self, key: &str) -> Option<String>;
     fn now_ms(&self) -> i64;
     fn sleep_ms(&self, ms: u64);
+    /// Spawn a process (the `exec` builtin / `@[contained] exec` capability).
+    /// `cmd` is the program; `args` the argument list. Returns the captured
+    /// stdout on success, or a `str` error. Defaults to **denied** — a host that
+    /// does not explicitly grant process spawning refuses it, so a virtual
+    /// (browser/wasm/sandbox) host is exec-free unless it opts in. `DefaultHost`
+    /// (native) overrides this to actually spawn.
+    fn exec(&self, _cmd: &str, _args: &[String]) -> Result<String, String> {
+        Err("exec is not permitted by the active host".to_string())
+    }
 }
 
 // ── Default implementation ───────────────────────────────────────────────────
@@ -51,6 +60,20 @@ impl AxonHost for DefaultHost {
 
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+
+    fn exec(&self, cmd: &str, args: &[String]) -> Result<String, String> {
+        let output = std::process::Command::new(cmd)
+            .args(args)
+            .output()
+            .map_err(|e| format!("exec `{cmd}` failed: {e}"))?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        } else {
+            let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(format!("exec `{cmd}` exited {code}: {}", stderr.trim()))
+        }
     }
 }
 
