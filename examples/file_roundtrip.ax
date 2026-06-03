@@ -1,0 +1,15 @@
+// File I/O round-trip — write a file, read it back. Runs identically on native
+// AND on wasm32-wasip1 (under wasmtime with a `--dir` grant), because the
+// interpreter's file ops route through the `AxonHost` seam: `DefaultHost` uses
+// std::fs, which WASI provides. The capability model carries over — wasm only
+// touches the directories the host explicitly grants.
+fn main() -> i64 {
+    let path = "/tmp/axon_roundtrip.txt"
+    match write_file(path, "hello from axon") {
+        Ok(_) => match read_file(path) {
+            Ok(contents) => { println("read back: {contents}")  0 }
+            Err(e) => { println("read error: {e}")  1 }
+        }
+        Err(e) => { println("write error: {e}")  2 }
+    }
+}
