@@ -820,6 +820,9 @@ impl<'p> Interp<'p> {
     /// flat `@[ai(fallback: "…")]` (the parser flattens the group), so the arg
     /// reads as `"fallback: <value>"`. Returns the fallback string when present.
     /// This is what lets an offline `ai_complete` stay total instead of panicking.
+    /// Only read on the `#[cfg(not(asi-runtime))]` offline branch — when the live
+    /// model is compiled in, there is no offline fallback path, so it is dead there.
+    #[cfg_attr(feature = "asi-runtime", allow(dead_code))]
     fn current_ai_fallback(&self) -> Option<String> {
         let name = self.current_fn.borrow().clone();
         let f = self.fns.get(name.as_str())?;

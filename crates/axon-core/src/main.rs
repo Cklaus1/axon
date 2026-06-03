@@ -884,32 +884,52 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
 fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
     use axon_core::improve::{discover_with_ai, DiscoveryMode};
 
-    // The proposer seam. Under AXON_AI_MOCK the response is a deterministic stub
-    // (the project's existing mock discipline): propose the one menu template if
-    // the digest shows opportunities. A live model would replace this closure —
-    // but its output is validated identically against the closed registry, so a
-    // live or compromised model gains nothing (it can only NAME a template; an
-    // unknown name is E1407, a known one still runs the four-gate firewall).
+    // The proposer seam. The AI's output is validated identically against the
+    // closed registry no matter its source, so a live (or compromised) model
+    // gains nothing — it can only NAME a template; an unknown name is E1407, and
+    // a known one still runs the full four-gate firewall before it can graduate.
+    //
+    //   - AXON_AI_MOCK   → deterministic stub (reproducible CI/tests).
+    //   - live (asi-runtime + ANTHROPIC_API_KEY) → ask the model to pick from the
+    //     menu via the ai_discovery_prompt; the model id is recorded for audit.
+    type Proposer = Box<dyn Fn(&str) -> String>;
     let mock = axon_core::interp::ai_mock_enabled();
-    let mode = if mock {
-        DiscoveryMode::Mock
+    let (mode, proposer): (DiscoveryMode, Proposer) = if mock {
+        (
+            DiscoveryMode::Mock,
+            // Stub: offer the menu; the static cross-check in discover_with_ai
+            // drops a template with no real sites, so this can't fabricate one.
+            Box::new(|_prompt: &str| axon_core::improve_templates::template_names().join("\n")),
+        )
     } else {
-        // No live wiring in this slice — be honest and require the mock so the
-        // result is deterministic and the audit origin is truthful.
-        eprintln!(
-            "axon improve discover --ai: live AI discovery is not wired in this slice — \
-             run with AXON_AI_MOCK=1 for deterministic template selection"
-        );
-        process::exit(2);
-    };
-    let proposer = move |_prompt: &str| -> String {
-        // Deterministic stub: offer the single registry template. The static
-        // cross-check in discover_with_ai drops it if there are no real sites,
-        // so this cannot manufacture a vacuous proposal.
-        axon_core::improve_templates::template_names().join("\n")
+        // Live: route the menu+digest prompt to the model. Its raw reply is
+        // parsed for candidate template names and validated against the registry.
+        #[cfg(feature = "asi-runtime")]
+        {
+            let model = axon_core::ai_routing::Tier::Balanced.api_model();
+            (
+                DiscoveryMode::Ai { model: model.clone() },
+                Box::new(move |prompt: &str| {
+                    match axon_ai::complete_with_model(prompt, &model) {
+                        Ok(reply) => reply,
+                        // A failed call proposes nothing (empty reply → no candidates).
+                        Err(e) => { eprintln!("axon improve discover --ai: model call failed: {e}"); String::new() }
+                    }
+                }),
+            )
+        }
+        #[cfg(not(feature = "asi-runtime"))]
+        {
+            eprintln!(
+                "axon improve discover --ai: live AI discovery needs the `asi-runtime` \
+                 feature + ANTHROPIC_API_KEY — or run with AXON_AI_MOCK=1 for the \
+                 deterministic path"
+            );
+            process::exit(2);
+        }
     };
 
-    let proposals = match discover_with_ai(programs, &proposer, mode) {
+    let proposals = match discover_with_ai(programs, proposer.as_ref(), mode) {
         Ok(p) => p,
         Err(e) => {
             // E1407: the (mock/live) AI named a template outside the registry.
