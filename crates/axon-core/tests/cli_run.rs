@@ -2790,6 +2790,35 @@ fn sensitive_field_into_ai_call_is_e1206() {
 }
 
 #[test]
+fn sensitive_value_into_write_file_is_e1206() {
+    // PRD §4: the boundary is exfiltration in general, not only AI calls — a
+    // sensitive value written to disk (`write_file`) is also E1206.
+    let leak = "@[sensitive(pii)]\n\
+        type User = { name: str }\n\
+        fn save(u: User) -> i64 { let _ = write_file(\"/tmp/x.txt\", u.name)  0 }\n\
+        fn main() -> i64 { 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_senswf_{}.ax", std::process::id()));
+    std::fs::write(&f, leak).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("E1206"), "sensitive → write_file must be E1206: {all}");
+    assert!(all.contains("file write"), "message names the file-write boundary: {all}");
+}
+
+#[test]
+fn non_sensitive_write_file_is_allowed() {
+    // No false positive: an ordinary write_file is fine.
+    let ok = "fn main() -> i64 { let _ = write_file(\"/tmp/x.txt\", \"plain note\")  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_wfok_{}.ax", std::process::id()));
+    std::fs::write(&f, ok).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "a plain write_file must be allowed: {all}");
+}
+
+#[test]
 fn sensitive_typed_field_into_ai_call_is_e1206() {
     // A field whose declared TYPE is a sensitive struct (`w.user` where
     // Wrapper.user: User and User is @[sensitive]) is caught too — the sensitive

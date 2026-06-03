@@ -889,13 +889,17 @@ impl CheckCtx {
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
                 }
-                // PRD §4 (privacy): a `@[sensitive]` value may not flow into an
-                // external AI call. Catches an arg to an AI builtin
-                // (`ai_complete`/`ai_extract_*`) that is either (a) a value of a
-                // sensitive struct type, or (b) a FIELD of a sensitive struct
-                // (`u.email` — the "exfiltrate sensitive fields" case) → E1206.
+                // PRD §4 (privacy): a `@[sensitive]` value may not cross the
+                // program boundary. Catches an arg to an EXFILTRATION sink — an
+                // AI call (to a model), `write_file` (to disk), or `exec` (to a
+                // process) — that is either (a) a value of a sensitive struct
+                // type, or (b) a field of a sensitive struct / a field whose
+                // type is sensitive → E1206.
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if !self.sensitive_types.is_empty() && is_external_ai_sink(name) {
+                    if let Some(boundary) = (!self.sensitive_types.is_empty())
+                        .then(|| exfiltration_sink_kind(name))
+                        .flatten()
+                    {
                         for (i, arg) in args.iter().enumerate() {
                             let apath = format!("{node_path}.arg_{i}");
                             if let Some((sname, cat)) = self.sensitive_flow_in(arg, &apath, scope) {
@@ -905,7 +909,7 @@ impl CheckCtx {
                                         E1206,
                                         format!(
                                             "a `@[sensitive({cat})]` value from `{sname}` is passed to the \
-                                             external AI call `{name}` — sensitive data must never leave the \
+                                             {boundary} `{name}` — sensitive data must never leave the \
                                              program boundary"
                                         ),
                                     )
@@ -2225,10 +2229,21 @@ fn axon_type_name(ty: &AxonType) -> String {
 
 /// Returns a display string for an `AxonType` suitable for error messages.
 /// Identical to `axon_type_name` for now; separated so they can diverge.
-/// Is `name` an external AI sink — a builtin that sends data off the program
-/// boundary to a model? A `@[sensitive]` value reaching one of these is E1206.
-fn is_external_ai_sink(name: &str) -> bool {
-    name == "ai_complete" || name.starts_with("ai_extract")
+/// Is `name` an **exfiltration sink** — a builtin that sends data off the
+/// program boundary, where a `@[sensitive]` value must never go (E1206)?
+/// Covers: AI calls (to a model), `write_file` (to disk — persisting PII), and
+/// `exec` (to a spawned process — e.g. piping data to `curl`). Returns the
+/// human-readable boundary name for the diagnostic.
+fn exfiltration_sink_kind(name: &str) -> Option<&'static str> {
+    if name == "ai_complete" || name.starts_with("ai_extract") {
+        Some("AI call")
+    } else if name == "write_file" {
+        Some("file write")
+    } else if name == "exec" {
+        Some("process exec")
+    } else {
+        None
+    }
 }
 
 fn axon_type_display(ty: &AxonType) -> String {
