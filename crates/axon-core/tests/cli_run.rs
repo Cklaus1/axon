@@ -3958,6 +3958,24 @@ fn check_json_includes_source_location() {
 }
 
 #[test]
+fn check_json_parse_error_carries_line_col() {
+    // R8: a PARSE error (not just a type error) now resolves to line:col — the
+    // CLI uses parse_source_located, mapping the failing token's byte offset to
+    // (line,col). Previously parse errors were emitted span-less.
+    let f = std::env::temp_dir().join(format!("axon_r8parse_{}.ax", std::process::id()));
+    // An unexpected token `@` on line 2.
+    std::fs::write(&f, "fn main() -> i64 {\n    @\n}\n").unwrap();
+    let out = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let jstderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "parse error must exit 2: {jstderr}");
+    assert!(jstderr.contains("\"schema\":\"axon-diag/1\""), "schema tag: {jstderr}");
+    assert!(jstderr.contains("\"line\":2"), "parse error must carry its line (2): {jstderr}");
+    assert!(jstderr.contains("\"col\":"), "parse error must carry a column: {jstderr}");
+    assert!(jstderr.contains("unexpected token"), "the parse message survives: {jstderr}");
+}
+
+#[test]
 fn check_json_splits_expected_found_into_typed_fields() {
     // R8 (axon-diag/2 enrichment): a type-mismatch diagnostic exposes the
     // `expected`/`found` types as DISCRETE structured fields, not only folded

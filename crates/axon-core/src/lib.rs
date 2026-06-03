@@ -77,6 +77,26 @@ pub fn parse_source(src: &str) -> Result<ast::Program, AxonError> {
     Ok(program)
 }
 
+/// R8: parse source, returning on failure the error message AND the byte offset
+/// where the parser stopped, so a caller can resolve it to `line:col` (parse
+/// errors are otherwise span-less). On a lexer error the offset is 0 (the lexer
+/// reports its own position in the message). `Ok` returns just the program.
+pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> {
+    let raw = Lexer::tokenize_with_newlines(src).map_err(|e| (e.to_string(), 0usize))?;
+    let mut tokens = Vec::with_capacity(raw.len());
+    let mut spans = Vec::with_capacity(raw.len());
+    let mut newlines = Vec::with_capacity(raw.len());
+    for (tok, range, nl) in raw {
+        spans.push(span::Span::new(range.start, range.end));
+        tokens.push(tok);
+        newlines.push(nl);
+    }
+    match Parser::with_newlines(tokens, spans, newlines).parse_program_located() {
+        Ok(p) => Ok(p),
+        Err((e, span)) => Err((e.to_string(), span.start)),
+    }
+}
+
 /// Parse source and return both the AST and the raw token+span list.
 /// Used by the LSP server and formatter (Phase 4) which need source positions.
 pub fn parse_source_with_spans(

@@ -454,12 +454,32 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
 
     let src = read_source(&file);
 
-    // Parse first.
-    let mut program = match parse_source(&src) {
+    // Parse first. R8: use the LOCATED parse so a parse error resolves to a
+    // line:col (previously span-less). The byte offset → (line,col) via the
+    // SourceMap, emitted as a structured PipelineDiagnostic JSON.
+    let use_json_early = json_flag || !std::io::stderr().is_terminal();
+    let mut program = match axon_core::parse_source_located(&src) {
         Ok(p) => p,
-        Err(e) => {
-            // Fix 8: exit 2 for compile errors.
-            emit_error(&format!("{e}"), json_flag || !std::io::stderr().is_terminal());
+        Err((msg, offset)) => {
+            let (line, col) = axon_core::span::SourceMap::new(src.clone()).line_col(offset);
+            let diag = axon_core::PipelineDiagnostic {
+                // Parse errors use the E0000 catch-all (same as lib::check_pipeline).
+                code: "E0000".to_string(),
+                message: msg,
+                file: file.display().to_string(),
+                line: line as u32,
+                col: col as u32,
+                severity: "error".to_string(),
+                caret: String::new(),
+                expected: None,
+                found: None,
+                help: None,
+            };
+            if use_json_early {
+                eprintln!("{}", diag.json());
+            } else {
+                eprintln!("error: {}", diag.display());
+            }
             process::exit(2);
         }
     };

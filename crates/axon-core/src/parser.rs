@@ -345,6 +345,20 @@ impl Parser {
         Ok(Program { items })
     }
 
+    /// R8: like [`parse_program`] but on error also returns the byte-offset
+    /// `Span` of the token the parser was at when it failed (`current_span`),
+    /// so the CLI can resolve a parse error to a `line:col` instead of emitting
+    /// it span-less. The span is `dummy` when the failure is at EOF.
+    pub fn parse_program_located(mut self) -> std::result::Result<Program, (ParseError, Span)> {
+        match self.parse_program() {
+            Ok(p) => Ok(p),
+            Err(e) => {
+                let span = self.current_span();
+                Err((e, span))
+            }
+        }
+    }
+
     fn parse_item(&mut self) -> Result<Item> {
         let mut attrs = Vec::new();
         let mut contained_spec: Option<ContainedSpec> = None;
