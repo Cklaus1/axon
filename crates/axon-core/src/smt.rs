@@ -20,7 +20,7 @@
 use crate::ast::{BinOp, Expr, FnDef, Item, Literal, Program, Stmt};
 use crate::verify::decode_verify_predicate_with_ident;
 
-use z3::ast::{Ast, Bool, Int};
+use z3::ast::{Ast, Bool, Int, Real};
 use z3::{Config, Context, SatResult, Solver};
 
 /// The outcome of attempting a static proof of one `@[verify]` bound.
@@ -67,13 +67,15 @@ pub fn prove_verify_bounds(program: &Program) -> Vec<ProofResult> {
 /// Prove a single fn's `value OP K` bound. The bound `K` is taken as an integer
 /// (the fragment is integer arithmetic; a non-integer bound → Unsupported).
 fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
-    // Integer fragment: every param must be i64 and the bound an integer.
-    if bound.fract() != 0.0 {
-        return ProofResult::Unsupported {
-            function: f.name.clone(),
-            reason: "non-integer bound (v1 fragment is integer arithmetic)".into(),
-        };
+    // Route to the float (Z3 Real) fragment when the fn's params or RETURN type
+    // are f64, OR the bound is non-integer — the integer encoder cannot
+    // represent any of those.
+    let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
+    let ret_f64 = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+    if any_f64 || ret_f64 || bound.fract() != 0.0 {
+        return prove_one_f64(f, op, bound);
     }
+    // Integer fragment: every param must be i64.
     let bound_i = bound as i64;
     for p in &f.params {
         if !is_i64_type(&p.ty) {
@@ -152,6 +154,157 @@ fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
     }
 }
 
+/// The FLOAT fragment (R9): prove a `@[verify(value OP K)]` bound over a
+/// straight-line `f64` function, encoding the body as a Z3 `Real` term. Z3's
+/// `Real` is EXACT rational arithmetic — so this proves the *mathematical*
+/// bound soundly (`x*x >= 0` for all real x), with the honest caveat that it
+/// models real, not IEEE-754, arithmetic (rounding/NaN/Inf are out of fragment,
+/// reported Unsupported). Mirrors the integer path's structure exactly.
+fn prove_one_f64(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
+    for p in &f.params {
+        if !is_f64_type(&p.ty) {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: format!("param `{}` is not f64 (this is the float fragment)", p.name),
+            };
+        }
+    }
+    let cfg = Config::new();
+    let ctx = Context::new(&cfg);
+    let params: Vec<(String, Real)> = f
+        .params
+        .iter()
+        .map(|p| (p.name.clone(), Real::new_const(&ctx, p.name.as_str())))
+        .collect();
+    let body = match encode_expr_real(&ctx, &f.body, &params) {
+        Some(t) => t,
+        None => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: "body uses a construct outside the straight-line float fragment \
+                         (loops, calls, div, string, IEEE rounding, …)".into(),
+            }
+        }
+    };
+    // Bound as a Real rational. f64 → (num, den) via a fixed denominator keeps
+    // it exact for the common decimal bounds (e.g. 0.5 → 1/2, 0.0 → 0/1).
+    let k = f64_to_real(&ctx, bound);
+    let bound_pred = match op {
+        BinOp::GtEq => body.ge(&k),
+        BinOp::Gt => body.gt(&k),
+        BinOp::LtEq => body.le(&k),
+        BinOp::Lt => body.lt(&k),
+        BinOp::Eq => body._eq(&k),
+        BinOp::NotEq => body._eq(&k).not(),
+        _ => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: format!("verify operator {op:?} is not a supported comparison"),
+            }
+        }
+    };
+    let solver = Solver::new(&ctx);
+    solver.assert(&bound_pred.not());
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Sat => {
+            let model = solver.get_model().expect("sat ⇒ a model exists");
+            // Report the violating inputs as the truncated integer part (the
+            // float counterexample's exact rational is in the model; the
+            // ProofResult carries i64 inputs, so we round toward zero).
+            let inputs = params
+                .iter()
+                .map(|(name, c)| {
+                    let v = model.eval(c, true)
+                        .and_then(|r| r.as_real())
+                        .map(|(num, den)| if den != 0 { num / den } else { 0 })
+                        .unwrap_or(0);
+                    (name.clone(), v)
+                })
+                .collect();
+            ProofResult::Counterexample {
+                function: f.name.clone(),
+                inputs,
+                predicate: format!("value {} {bound}", crate::verify::binop_to_verify_str(op)),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: f.name.clone(),
+            reason: "Z3 returned unknown (the float VC was undecidable within limits)".into(),
+        },
+    }
+}
+
+/// Convert an `f64` bound to a Z3 `Real`. Uses a fixed 1e6 denominator so the
+/// common decimal bounds (`0.0`, `0.5`, `0.9`, `1.25`) are represented exactly.
+fn f64_to_real(ctx: &Context, x: f64) -> Real<'_> {
+    let den: i64 = 1_000_000;
+    let num = (x * den as f64).round() as i64;
+    // Real::from_real takes i32; reduce to keep within range for typical bounds.
+    let g = gcd(num.unsigned_abs(), den as u64) as i64;
+    let (n, d) = if g != 0 { (num / g, den / g) } else { (num, den) };
+    Real::from_real(ctx, n as i32, d as i32)
+}
+
+fn gcd(mut a: u64, mut b: u64) -> u64 {
+    while b != 0 { let t = b; b = a % b; a = t; }
+    a
+}
+
+/// Encode an `Expr` as a Z3 `Real` term — the float counterpart of
+/// [`encode_expr`]. Same straight-line fragment (`+`/`-`/`*`, `ite`, literals,
+/// params); `Div` stays out (partial). Integer literals coerce to Real.
+fn encode_expr_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)]) -> Option<Real<'c>> {
+    match e {
+        Expr::Literal(Literal::Float(x)) => Some(f64_to_real(ctx, *x)),
+        Expr::Literal(Literal::Int(n)) => Some(f64_to_real(ctx, *n as f64)),
+        Expr::Ident(name) => params.iter().find(|(n, _)| n == name).map(|(_, c)| c.clone()),
+        Expr::BinOp { op, left, right } => {
+            let l = encode_expr_real(ctx, left, params)?;
+            let r = encode_expr_real(ctx, right, params)?;
+            match op {
+                BinOp::Add => Some(&l + &r),
+                BinOp::Sub => Some(&l - &r),
+                BinOp::Mul => Some(&l * &r),
+                _ => None,
+            }
+        }
+        Expr::If { cond, then, else_ } => {
+            let else_e = else_.as_ref()?;
+            let c = encode_bool_real(ctx, cond, params)?;
+            let a = encode_expr_real(ctx, then, params)?;
+            let b = encode_expr_real(ctx, else_e, params)?;
+            Some(c.ite(&a, &b))
+        }
+        Expr::Block(stmts) => match stmts.as_slice() {
+            [only] => encode_expr_real(ctx, &only.expr, params),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Encode a boolean condition over `Real` terms (float counterpart of
+/// [`encode_bool`]).
+fn encode_bool_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)]) -> Option<Bool<'c>> {
+    match e {
+        Expr::BinOp { op, left, right } => {
+            let l = encode_expr_real(ctx, left, params)?;
+            let r = encode_expr_real(ctx, right, params)?;
+            match op {
+                BinOp::Lt => Some(l.lt(&r)),
+                BinOp::Gt => Some(l.gt(&r)),
+                BinOp::LtEq => Some(l.le(&r)),
+                BinOp::GtEq => Some(l.ge(&r)),
+                BinOp::Eq => Some(l._eq(&r)),
+                BinOp::NotEq => Some(l._eq(&r).not()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Encode an `Expr` as a Z3 `Int` term, or `None` if it falls outside the
 /// straight-line integer fragment. A block evaluates to its tail expression.
 fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> Option<Int<'c>> {
@@ -213,9 +366,14 @@ fn encode_bool<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> 
     }
 }
 
-/// Whether an AST type is `i64` (the only encodable parameter type in v1).
+/// Whether an AST type is `i64` (the integer-fragment parameter type).
 fn is_i64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "i64")
+}
+
+/// Whether an AST type is `f64` (the float-fragment parameter type).
+fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
+    matches!(ty, crate::ast::AxonType::Named(n) if n == "f64")
 }
 
 #[cfg(test)]
@@ -284,5 +442,53 @@ mod tests {
     fn smt_is_deterministic() {
         let src = "@[verify(value >= 0)]\nfn f(x: i64) -> i64 { if x >= 0 { x } else { 0 - x } }";
         assert_eq!(prove(src), prove(src), "same program ⇒ same proof result");
+    }
+
+    // ── R9 FLOAT fragment (Z3 Real) ──────────────────────────────────────────
+    #[test]
+    fn smt_proves_a_float_bound() {
+        // PROVEN: x*x >= 0.0 for all real x (a square is non-negative).
+        let r = prove(
+            "@[verify(value >= 0.0)]\n\
+             fn sq(x: f64) -> f64 { x * x }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "x*x >= 0.0 must be proven, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_finds_a_float_counterexample() {
+        // COUNTEREXAMPLE: x - 0.5 is not always >= 0.0 (x=0 → -0.5).
+        let r = prove(
+            "@[verify(value >= 0.0)]\n\
+             fn dec(x: f64) -> f64 { x - 0.5 }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "x-0.5 >= 0 must yield a counterexample, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_float_constant_bound_proven() {
+        // A non-integer bound now routes to the float fragment instead of
+        // Unsupported: 1.5 is always >= 1.0.
+        let r = prove(
+            "@[verify(value >= 1.0)]\n\
+             fn k() -> f64 { 1.5 }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+    }
+
+    #[test]
+    fn smt_float_ite_bound_proven() {
+        // The float fragment includes `ite`: abs(x) >= 0.0 for all real x.
+        let r = prove(
+            "@[verify(value >= 0.0)]\n\
+             fn absf(x: f64) -> f64 { if x >= 0.0 { x } else { 0.0 - x } }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
     }
 }
