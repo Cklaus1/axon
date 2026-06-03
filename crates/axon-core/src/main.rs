@@ -1544,16 +1544,94 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
                 eprintln!("error: emitted {} is not a valid wasm object (bad magic)", out.display());
                 process::exit(2);
             }
-            eprintln!(
-                "wasm object: {} (target {llvm_triple}) — IR→wasm emitted + magic-verified; \
-                 link to a runnable .wasm needs a wasm sysroot + wasm-ld (deferred, R7 §12)",
-                out.display()
-            );
+            // R7: try to LINK the object into a runnable `.wasm`. After
+            // dead-function pruning, a pure-integer program has no `__axon_*`
+            // imports, so it links cleanly against the wasi libc in reactor mode
+            // (`--no-entry --export=main`) and runs under `wasmtime --invoke main`.
+            // Programs that use str/array still pull i64-ABI helpers that clash
+            // with wasm32's i32 libc — those report the link error honestly (the
+            // i64→i32 ABI retarget is the remaining gap).
+            match try_link_wasm(&out) {
+                Some(linked) => eprintln!(
+                    "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked, RUNNABLE.\n  \
+                     run:  wasmtime --invoke main {}",
+                    linked.display(), linked.display()
+                ),
+                None => eprintln!(
+                    "wasm object: {} (target {llvm_triple}) — IR→wasm emitted + magic-verified. \
+                     Link to a runnable .wasm needs `rust-lld` + a wasi libc (pure-int programs \
+                     link cleanly; str/array programs await the i64→i32 ABI retarget, R7 §12).",
+                    out.display()
+                ),
+            }
         }
         Err(e) => {
             eprintln!("error: {e}");
             process::exit(2);
         }
+    }
+}
+
+/// R7: link a wasm object into a runnable `.wasm` via `rust-lld -flavor wasm`
+/// against the wasi libc, in reactor mode (`--no-entry --export=main`). Returns
+/// the linked path on success, or `None` when the toolchain is absent OR the
+/// link fails (e.g. an str/array program whose i64-ABI helpers clash with
+/// wasm32's i32 libc — the remaining ABI gap). Best-effort: a failed link is
+/// not an error, just "object-only".
+#[cfg(feature = "codegen")]
+fn try_link_wasm(obj: &Path) -> Option<PathBuf> {
+    use std::process::Command;
+    // Locate rust-lld + the wasi libc under the active rustup toolchain.
+    let home = std::env::var("HOME").ok()?;
+    let toolchains = PathBuf::from(&home).join(".rustup/toolchains");
+    let find = |needle: &str, host_seg: bool| -> Option<PathBuf> {
+        // Shallow scan: look for the first matching path under any toolchain.
+        for entry in std::fs::read_dir(&toolchains).ok()?.flatten() {
+            let base = entry.path();
+            let cand = if host_seg {
+                // rust-lld lives under lib/rustlib/<host>/bin/
+                base.join("lib/rustlib")
+            } else {
+                base.join("lib/rustlib/wasm32-wasip1/lib/self-contained").join(needle)
+            };
+            if host_seg {
+                // walk the host dir for rust-lld
+                if let Ok(rd) = std::fs::read_dir(&cand) {
+                    for h in rd.flatten() {
+                        let lld = h.path().join("bin/rust-lld");
+                        if lld.exists() { return Some(lld); }
+                    }
+                }
+            } else if cand.exists() {
+                return Some(cand);
+            }
+        }
+        None
+    };
+    let rust_lld = find("", true)?;
+    let libc = find("libc.a", false)?;
+
+    let linked = obj.with_extension("linked.wasm");
+    let status = Command::new(&rust_lld)
+        .args(["-flavor", "wasm", "--no-entry", "--export=main"])
+        .arg(&libc)
+        .arg(obj)
+        .arg("-o")
+        .arg(&linked)
+        .output()
+        .ok()?;
+    // rust-lld can succeed-with-warnings; treat a produced + non-empty file as
+    // the success signal, but reject if there were signature mismatches (the
+    // wasm would trap), so we only claim "runnable" when it genuinely is.
+    let stderr = String::from_utf8_lossy(&status.stderr);
+    if !status.status.success() || stderr.contains("function signature mismatch") {
+        let _ = std::fs::remove_file(&linked);
+        return None;
+    }
+    if linked.exists() && std::fs::metadata(&linked).map(|m| m.len() > 0).unwrap_or(false) {
+        Some(linked)
+    } else {
+        None
     }
 }
 

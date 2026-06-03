@@ -3992,6 +3992,30 @@ fn wasm_interp_matches_native_on_pure_compute() {
 }
 
 #[test]
+fn wasm_aot_runs_and_matches_interp_on_pure_int() {
+    // R7 (AOT-wasm milestone): a pure-integer program now compiles to wasm,
+    // links (reactor mode, --export=main, after dead-function pruning leaves no
+    // i64-ABI externs), and RUNS under wasmtime with the same result as the
+    // interpreter (fib(10)=55, etc.). End-to-end AOT-wasm EXECUTION, not just
+    // object emission. scripts/wasm_aot_run_parity.sh; skips when codegen/wasm
+    // toolchain absent.
+    let script = format!("{}/../../scripts/wasm_aot_run_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_aot_run_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_run_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — AOT run parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "AOT wasm must run identically to interp on pure-int:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_aot_run_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_object_prunes_dead_externs_and_links_clean() {
     // R7 (AOT-wasm, first real codegen slice): dead-function pruning removes the
     // ~119 unconditionally-emitted builtin helpers that go unused, so a
