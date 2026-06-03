@@ -633,9 +633,22 @@ impl Parser {
                 let inner = self.parse_attr_atom()?;
                 Ok(format!("-{inner}"))
             }
+            Some(Token::LBracket) => {
+                // List-literal attr value `[a, b, c]` (R5 `test_set: [...]`).
+                // Rendered as a flat comma-joined string (`"a,b,c"`) the existing
+                // key:value arg machinery carries; the consumer splits on `,`.
+                let _ = self.advance(); // [
+                let mut elems: Vec<String> = Vec::new();
+                while !self.at(&Token::RBracket) {
+                    elems.push(self.parse_attr_atom()?);
+                    if !self.eat(&Token::Comma) { break; }
+                }
+                self.expect(&Token::RBracket)?;
+                Ok(elems.join(","))
+            }
             Some(other) => Err(ParseError::Unexpected(
                 other.clone(),
-                "attribute argument (ident, number, string, or key:value)".into(),
+                "attribute argument (ident, number, string, list, or key:value)".into(),
             )),
             None => Err(ParseError::Eof),
         }

@@ -4343,6 +4343,57 @@ fn main() -> i64 {
 }
 
 #[test]
+fn goal_test_set_list_literal_gates_on_worst_point() {
+    // R5: `#[goal(... test_set: [a, b, c])]` — the multi-point held-out set.
+    // The goal is met only if the metric clears `target` on EVERY point (the
+    // WORST/min score), so a fn cannot pass by overfitting one point. The metric
+    // quality(x) = 100 - |x-7|*10 peaks at x=7.
+    //  - test_set [5,7,9]: scores 80/100/80, worst 80 >= 60 → goal_met = 1.
+    //  - test_set [7,15]:  scores 100/20,   worst 20 <  60 → goal_met = 0 (x=15 fails).
+    let met = r#"
+@[adaptive]
+fn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }
+@[goal(metric: quality, target: 60, max_evals: 40, test_set: [5, 7, 9])]
+fn opt() -> i64 { goal_met }
+fn main() -> i64 { println(to_str(opt()))  0 }
+"#;
+    let f = std::env::temp_dir().join(format!("goal_ts_met_{}.ax", std::process::id()));
+    std::fs::write(&f, met).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "run clean: {stdout}");
+    assert!(stdout.trim() == "1", "all points clear target → goal_met=1: {stdout:?}");
+
+    let missed = r#"
+@[adaptive]
+fn quality(x: i64) -> i64 { 100 - abs_i64(x - 7) * 10 }
+@[goal(metric: quality, target: 60, max_evals: 40, test_set: [7, 15])]
+fn opt() -> i64 { goal_met }
+fn main() -> i64 { println(to_str(opt()))  0 }
+"#;
+    let f2 = std::env::temp_dir().join(format!("goal_ts_miss_{}.ax", std::process::id()));
+    std::fs::write(&f2, missed).unwrap();
+    let out2 = axon().args(["run", f2.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    let stdout2 = String::from_utf8_lossy(&out2.stdout);
+    assert!(stdout2.trim() == "0", "a failing held-out point → goal_met=0 (no overfit): {stdout2:?}");
+}
+
+#[test]
+fn goal_test_set_non_integer_element_is_e1503() {
+    // R5: a `test_set` with a non-integer element is rejected at check (E1503).
+    let src = "@[adaptive]\nfn q(x: i64) -> i64 { x }\n@[goal(metric: q, target: 5, test_set: [3, foo])]\nfn opt() -> i64 { goal_met }\nfn main() -> i64 { opt() }\n";
+    let f = std::env::temp_dir().join(format!("goal_ts_bad_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2), "malformed test_set must fail check: {msg}");
+    assert!(msg.contains("E1503"), "non-integer test_set element is E1503: {msg}");
+}
+
+#[test]
 fn goal_metric_must_be_adaptive_e1500() {
     // Metric fn lacks @[adaptive] → E1500 on `axon check`.
     let src = r#"

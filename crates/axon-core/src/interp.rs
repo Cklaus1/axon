@@ -990,13 +990,24 @@ impl<'p> Interp<'p> {
         for (p, a) in f.params.iter().zip(args) {
             env.define(p.name.clone(), a);
         }
-        // R5 `#[goal(...)]` sugar: train the metric, evaluate on holdout, gate.
+        // R5 `#[goal(...)]` sugar: train the metric, evaluate on the held-out
+        // set, gate. With a `test_set: [a, b, c]` (or repeated `holdout:`), the
+        // goal is met only if the metric clears `target` on EVERY held-out point
+        // — i.e. on the WORST (minimum) score — so a fn cannot pass by
+        // overfitting one point. With no held-out set, fall back to the best
+        // observed training score.
         let mut goal_met: i64 = 0;
-        if let Some((metric, target, max_evals, holdout)) = self.goal_spec_of(f) {
+        if let Some((metric, target, max_evals, holdout_set)) = self.goal_spec_of(f) {
             let _ = self.run_goal(&metric, target, max_evals)?;
-            let s = match holdout {
-                Some(h) => self.goal_eval_holdout(&metric, h)?,
-                None => self.best_observed(&metric, target, 0),
+            let s = if holdout_set.is_empty() {
+                self.best_observed(&metric, target, 0)
+            } else {
+                let mut worst = f64::INFINITY;
+                for h in &holdout_set {
+                    let score = self.goal_eval_holdout(&metric, *h)?;
+                    if score < worst { worst = score; }
+                }
+                worst
             };
             goal_met = if s >= target { 1i64 } else { 0i64 };
         }
@@ -2039,14 +2050,18 @@ impl<'p> Interp<'p> {
         Ok(score)
     }
 
-    /// Parse the `@[goal(metric:…, target:…, max_evals:…, holdout:…)]`
-    /// attr on `f` and return (metric, target, max_evals, holdout).
-    fn goal_spec_of(&self, f: &FnDef) -> Option<(String, f64, i64, Option<i64>)> {
+    /// Parse the `@[goal(metric:…, target:…, max_evals:…, holdout:… | test_set:[…])]`
+    /// attr on `f`. Returns `(metric, target, max_evals, holdout_set)` where
+    /// `holdout_set` is the list of held-out evaluation points (empty when none).
+    /// `holdout: N` (single point) and `test_set: [a, b, c]` (a set) both feed it;
+    /// `test_set` is the R5 multi-point form, the parser renders `[a,b,c]` as the
+    /// flat string `"a,b,c"` which we split here.
+    fn goal_spec_of(&self, f: &FnDef) -> Option<(String, f64, i64, Vec<i64>)> {
         let goal_attr = f.attrs.iter().find(|a| a.name == "goal")?;
         let mut metric: Option<String> = None;
         let mut target: Option<f64> = None;
         let mut max_evals: i64 = 50;
-        let mut holdout: Option<i64> = None;
+        let mut holdout_set: Vec<i64> = Vec::new();
         for arg in &goal_attr.args {
             if let Some((k, v)) = arg.split_once(':') {
                 let k = k.trim().to_lowercase();
@@ -2064,14 +2079,25 @@ impl<'p> Interp<'p> {
                         if let Ok(n) = v.parse::<i64>() { max_evals = n; }
                     }
                     "holdout" => {
-                        if let Ok(n) = v.parse::<i64>() { holdout = Some(n); }
+                        if let Ok(n) = v.parse::<i64>() { holdout_set.push(n); }
+                    }
+                    // R5: a multi-point held-out test set `test_set: [a, b, c]`,
+                    // rendered by the parser as `"a,b,c"`. Each parseable int is
+                    // a held-out point; the goal is met only if the metric clears
+                    // `target` on the WORST (min) of them (no overfitting to one).
+                    "test_set" => {
+                        for part in v.split(',') {
+                            if let Ok(n) = part.trim().parse::<i64>() {
+                                holdout_set.push(n);
+                            }
+                        }
                     }
                     _ => {}
                 }
             }
         }
         metric
-            .and_then(|m| target.map(|t| (m, t, max_evals, holdout)))
+            .and_then(|m| target.map(|t| (m, t, max_evals, holdout_set)))
     }
 
     /// All i64 input dims that produced the score closest to `target` for an

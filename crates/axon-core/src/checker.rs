@@ -573,6 +573,11 @@ impl CheckCtx {
                         "target" | "max_evals" | "holdout" if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() => {
                             all_numbers = false;
                         }
+                        // R5: `test_set: [a, b, c]` (rendered `"a,b,c"`) — every
+                        // element must parse as an integer.
+                        "test_set" if v.split(',').any(|p| p.trim().parse::<i64>().is_err()) => {
+                            all_numbers = false;
+                        }
                         _ => {}
                     }
                 }
@@ -597,7 +602,7 @@ impl CheckCtx {
                 self.errors.push(
                     CheckError::new(
                         E1503,
-                        "`#[goal(...)]` — target/max_evals/holdout must be numeric values"
+                        "`#[goal(...)]` — target/max_evals/holdout must be numeric values, and test_set must be a list of integers"
                             .to_string(),
                     )
                     .with_span(f.span),
