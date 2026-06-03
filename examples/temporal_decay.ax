@@ -1,0 +1,19 @@
+// PRD "Temporal<T> — Time-Aware Types": knowledge decays. A Temporal value
+// carries a confidence that degrades as time passes — `temporal_at(t, offset)`
+// recomputes it as `confidence * (1 - decay)^(offset_days)`.
+
+fn main() -> i64 {
+    // A revenue forecast: value 1000, valid 90 days, confidence decays 2%/day.
+    let day_ms = 86400000
+    let forecast = temporal_new(1000, 90 * day_ms, 0.02)
+
+    println("now:     value {to_str(forecast.value)} @ confidence {to_str_f64(forecast.confidence)}")
+
+    let in_30d = temporal_at(forecast, 30 * day_ms)
+    println("at +30d: value {to_str(in_30d.value)} @ confidence {to_str_f64(in_30d.confidence)}")
+
+    let in_60d = temporal_at(forecast, 60 * day_ms)
+    println("at +60d: value {to_str(in_60d.value)} @ confidence {to_str_f64(in_60d.confidence)}")
+
+    0
+}

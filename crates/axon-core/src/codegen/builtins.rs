@@ -1160,11 +1160,19 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // temporal_at(t: Temporal<i64>, offset_ms: i64) -> Temporal<i64>
-            // Recompute confidence as c * (1 - decay)^(offset_ms / 86_400_000).
-            // Implementation: linear approximation — c_new = c * max(0, 1 - decay * days)
-            // where days = offset_ms / 86_400_000.0. This avoids pulling in pow().
-            // valid_until_ms is shifted by offset_ms.
+            // Recompute confidence as c * (1 - decay)^(offset_ms / 86_400_000) —
+            // the EXACT power form (matches the interpreter + the builtin doc).
+            // Uses llvm.pow.f64 (already declared); a non-positive offset leaves
+            // confidence unchanged. valid_until_ms is shifted by offset_ms.
             {
+                // Reuse the already-declared llvm.pow.f64 (registered under the
+                // Axon name "pow"); only declare it if missing (defensive).
+                let pow_fn = self.functions.get("pow").copied()
+                    .or_else(|| self.ir.module.get_function("llvm.pow.f64"))
+                    .unwrap_or_else(|| {
+                        let f2 = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+                        self.ir.module.add_function("llvm.pow.f64", f2, None)
+                    });
                 let fn_ty = tmp_ty.fn_type(&[tmp_ty.into(), i64_ty.into()], false);
                 let fn_val = self.ir.module.add_function("temporal_at", fn_ty, None);
                 let bb = self.ir.context.append_basic_block(fn_val, "entry");
@@ -1181,15 +1189,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 let offset_f = build_wrappers::w_signed_int_to_float(&self.ir.builder,offset_ms, f64_ty, "ta_offf");
                 let day_ms = f64_ty.const_float(86_400_000.0);
                 let days = build_wrappers::w_float_div(&self.ir.builder,offset_f, day_ms, "ta_days");
-                // factor = max(0, 1 - decay * days)
                 let one = f64_ty.const_float(1.0);
                 let zero = f64_ty.const_float(0.0);
-                let dd = build_wrappers::w_float_mul(&self.ir.builder,decay, days, "ta_dd");
-                let one_minus = build_wrappers::w_float_sub(&self.ir.builder,one, dd, "ta_1md");
-                let is_neg = build_wrappers::w_float_compare(&self.ir.builder,inkwell::FloatPredicate::OLT, one_minus, zero, "ta_neg");
-                let factor = build_wrappers::w_select(&self.ir.builder,is_neg, zero.into(), one_minus.into(), "ta_factor")
-                    .into_float_value();
-                let new_conf = build_wrappers::w_float_mul(&self.ir.builder,conf, factor, "ta_nc");
+                // base = max(0, 1 - decay); decayed = conf * base^days.
+                let one_minus_decay = build_wrappers::w_float_sub(&self.ir.builder, one, decay, "ta_1md");
+                let base_neg = build_wrappers::w_float_compare(&self.ir.builder, inkwell::FloatPredicate::OLT, one_minus_decay, zero, "ta_bneg");
+                let base = build_wrappers::w_select(&self.ir.builder, base_neg, zero.into(), one_minus_decay.into(), "ta_base").into_float_value();
+                let powed = build_wrappers::w_call(&self.ir.builder, pow_fn, &[base.into(), days.into()], "ta_pow")
+                    .try_as_basic_value().left().unwrap().into_float_value();
+                let decayed = build_wrappers::w_float_mul(&self.ir.builder, conf, powed, "ta_decayed");
+                // Only decay for a positive offset; otherwise keep `conf`.
+                let pos = build_wrappers::w_float_compare(&self.ir.builder, inkwell::FloatPredicate::OGT, days, zero, "ta_pos");
+                let new_conf = build_wrappers::w_select(&self.ir.builder, pos, decayed.into(), conf.into(), "ta_nc").into_float_value();
                 let new_valid = build_wrappers::w_int_add(&self.ir.builder,valid_until, offset_ms, "ta_nvu");
                 // Build new struct, preserving value/horizon/decay.
                 let mut sv = t;
@@ -1229,6 +1240,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.functions.insert("temporal_is_valid".to_string(), fn_val);
                 self.fn_return_types
                     .insert("temporal_is_valid".to_string(), Type::Bool);
+            }
+
+            // temporal_confidence(t: Temporal<i64>) -> f64 — extract field 1.
+            {
+                let fn_ty = f64_ty.fn_type(&[tmp_ty.into()], false);
+                let fn_val = self.ir.module.add_function("temporal_confidence", fn_ty, None);
+                let bb = self.ir.context.append_basic_block(fn_val, "entry");
+                self.ir.builder.position_at_end(bb);
+                let t = fn_val.get_nth_param(0).unwrap().into_struct_value();
+                let conf = build_wrappers::w_extract_value(&self.ir.builder, t, 1, "tc_conf");
+                build_wrappers::w_ret(&self.ir.builder, conf);
+                self.functions.insert("temporal_confidence".to_string(), fn_val);
+                self.fn_return_types.insert("temporal_confidence".to_string(), Type::F64);
             }
 
             // Stub bodies for the legacy `uncertain_confidence` / `temporal_now`

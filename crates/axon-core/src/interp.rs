@@ -4405,6 +4405,7 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 ok!(make_temporal(
                     Value::Int(as_int(&args[0])?),
+                    1.0, // confidence starts full at creation; decays via temporal_at
                     as_int(&args[1])?,
                     as_float(&args[2])?,
                     now_ms(),
@@ -4415,13 +4416,35 @@ impl<'p> Interp<'p> {
                 match &args[0] {
                     Value::Struct { fields, .. } => {
                         let value = fields.get("value").cloned().unwrap_or(Value::Int(0));
+                        let confidence = fields.get("confidence").and_then(as_float_opt).unwrap_or(1.0);
                         let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
                         let decay = fields.get("decay").and_then(as_float_opt).unwrap_or(0.0);
                         let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
                         let offset = as_int(&args[1])?;
-                        ok!(make_temporal(value, horizon, decay, created + offset));
+                        // PRD §"Temporal": project forward by `offset` ms, DECAYING
+                        // confidence as `c * (1 - decay)^(offset_ms / 86_400_000)`
+                        // (decay is per-day; a negative/zero offset leaves it
+                        // unchanged). This is the time-awareness the type exists
+                        // to make explicit — knowledge degrades as time passes.
+                        let days = offset as f64 / 86_400_000.0;
+                        let new_conf = if days > 0.0 {
+                            confidence * (1.0 - decay).max(0.0).powf(days)
+                        } else {
+                            confidence
+                        };
+                        ok!(make_temporal(value, new_conf, horizon, decay, created + offset));
                     }
                     _ => panic("temporal_at: expected a Temporal value"),
+                }
+            }
+            // Read the present confidence of a Temporal value (PRD `rev.confidence`).
+            "temporal_confidence" => {
+                want(1)?;
+                match &args[0] {
+                    Value::Struct { fields, .. } => {
+                        ok!(Value::Float(fields.get("confidence").and_then(as_float_opt).unwrap_or(1.0)));
+                    }
+                    _ => panic("temporal_confidence: expected a Temporal value"),
                 }
             }
             "temporal_is_valid" => {
@@ -5932,10 +5955,13 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     Value::Struct { name: "Uncertain".to_string(), fields }
 }
 
-/// Build a `Temporal { value, horizon_ms, decay, created_ms }` struct value.
-fn make_temporal(value: Value, horizon_ms: i64, decay: f64, created_ms: i64) -> Value {
+/// Build a `Temporal { value, confidence, horizon_ms, decay, created_ms }`
+/// struct value. `confidence` is the present trust in the value (1.0 at
+/// creation), which `temporal_at` decays as time advances (PRD §"Temporal").
+fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, created_ms: i64) -> Value {
     let mut fields = HashMap::new();
     fields.insert("value".to_string(), value);
+    fields.insert("confidence".to_string(), Value::Float(confidence.clamp(0.0, 1.0)));
     fields.insert("horizon_ms".to_string(), Value::Int(horizon_ms));
     fields.insert("decay".to_string(), Value::Float(decay));
     fields.insert("created_ms".to_string(), Value::Int(created_ms));

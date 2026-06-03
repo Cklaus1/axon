@@ -853,6 +853,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "bool",
         doc: "Return true if `__axon_now_ms()` is still within the temporal value's validity window.",
     },
+    BuiltinFn {
+        name: "temporal_confidence",
+        params: &[("t", "Temporal<i64>")],
+        ret: "f64",
+        doc: "The present confidence of a `Temporal` value in [0,1] (PRD `rev.confidence`). Starts at 1.0 at creation and is decayed by `temporal_at` as time advances. Also readable as the `.confidence` field.",
+    },
     // ── Phase 68: Bitwise operations ─────────────────────────────────────────
     BuiltinFn {
         name: "bit_and",

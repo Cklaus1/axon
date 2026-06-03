@@ -2695,6 +2695,30 @@ fn verify_value_predicate_gates_on_uncertain_value() {
 }
 
 #[test]
+fn temporal_at_decays_confidence_over_time() {
+    // PRD "Temporal<T>": knowledge decays. `temporal_at(t, offset)` recomputes
+    // confidence as `c * (1 - decay)^(offset_days)`. value 1000, decay 2%/day:
+    // +30d → 1.0 * 0.98^30 ≈ 0.545; the value itself is unchanged.
+    let src = "fn main() -> i64 {\n  \
+        let day = 86400000\n  \
+        let t = temporal_new(1000, 90 * day, 0.02)\n  \
+        let now = t.confidence\n  \
+        let later = temporal_at(t, 30 * day)\n  \
+        println(\"{to_str_f64(now)} {to_str_f64(later.confidence)} {to_str(later.value)}\")\n  \
+        0\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_temporal_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    // confidence now = 1, after 30d ≈ 0.5454…, value still 1000.
+    assert!(stdout.starts_with("1 0.545"), "confidence decays 1 → ~0.545 over 30d: {stdout:?}");
+    assert!(stdout.contains("1000"), "the value is unchanged by decay: {stdout:?}");
+}
+
+#[test]
 fn agent_metacognition_reads_its_own_trace() {
     // PRD "Agent Metacognition": an agent can inspect its own reasoning trace to
     // catch its own failures. v1 exposes the capability as builtins over the
