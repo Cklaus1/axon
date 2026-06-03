@@ -82,6 +82,86 @@ fn ast_type_simple_name(ty: &AxonType) -> String {
     }
 }
 
+/// BUG_HUNT #19: does this top-level item contain any `goal_run(…)` call?
+/// Used to gate the goal-name registry emission — non-goal programs pay nothing.
+fn program_calls_goal_run(item: &ast::Item) -> bool {
+    fn body_of(item: &ast::Item) -> Vec<&ast::Expr> {
+        match item {
+            ast::Item::FnDef(f) => vec![&f.body],
+            ast::Item::ImplBlock(b) => b.methods.iter().map(|m| &m.body).collect(),
+            _ => Vec::new(),
+        }
+    }
+    body_of(item).into_iter().any(expr_calls_goal_run)
+}
+
+/// Recursively: does `e` (or any sub-expression) call `goal_run`?
+fn expr_calls_goal_run(e: &ast::Expr) -> bool {
+    use ast::Expr;
+    if let Expr::Call { callee, .. } = e {
+        if let Expr::Ident(name) = callee.as_ref() {
+            if name == "goal_run" {
+                return true;
+            }
+        }
+    }
+    // Reuse the resolver's child-expr enumeration shape inline: walk the
+    // structural children that can hold nested calls.
+    match e {
+        Expr::BinOp { left, right, .. } => expr_calls_goal_run(left) || expr_calls_goal_run(right),
+        Expr::UnaryOp { operand, .. } => expr_calls_goal_run(operand),
+        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+            expr_calls_goal_run(value)
+        }
+        Expr::Call { callee, args, .. } => {
+            expr_calls_goal_run(callee) || args.iter().any(expr_calls_goal_run)
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            expr_calls_goal_run(receiver) || args.iter().any(expr_calls_goal_run)
+        }
+        Expr::Question(b) | Expr::Spawn(b) | Expr::Comptime(b) | Expr::Lambda { body: b, .. } => {
+            expr_calls_goal_run(b)
+        }
+        Expr::Return(inner) => inner.as_ref().map(|b| expr_calls_goal_run(b)).unwrap_or(false),
+        Expr::FieldAccess { receiver, .. } => expr_calls_goal_run(receiver),
+        Expr::Index { receiver, index } => {
+            expr_calls_goal_run(receiver) || expr_calls_goal_run(index)
+        }
+        Expr::If { cond, then, else_ } => {
+            expr_calls_goal_run(cond)
+                || expr_calls_goal_run(then)
+                || else_.as_ref().map(|b| expr_calls_goal_run(b)).unwrap_or(false)
+        }
+        Expr::Match { subject, arms } => {
+            expr_calls_goal_run(subject) || arms.iter().any(|a| expr_calls_goal_run(&a.body))
+        }
+        Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().any(expr_calls_goal_run),
+        Expr::Block(stmts) => stmts.iter().any(|s| expr_calls_goal_run(&s.expr)),
+        Expr::While { cond, body } => {
+            expr_calls_goal_run(cond) || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+        }
+        Expr::WhileLet { expr, body, .. } => {
+            expr_calls_goal_run(expr) || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+        }
+        Expr::For { start, end, body, .. } => {
+            expr_calls_goal_run(start)
+                || expr_calls_goal_run(end)
+                || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+        }
+        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => expr_calls_goal_run(b),
+        Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_calls_goal_run(v)),
+        Expr::Assign { value, .. } => expr_calls_goal_run(value),
+        Expr::AssignTo { place, value } => {
+            expr_calls_goal_run(place) || expr_calls_goal_run(value)
+        }
+        Expr::FmtStr { parts } => parts.iter().any(|p| match p {
+            ast::FmtPart::Expr(e) => expr_calls_goal_run(e),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
 // ── Public surface ────────────────────────────────────────────────────────────
 
 pub struct Codegen<'ctx> {
@@ -148,6 +228,13 @@ pub struct Codegen<'ctx> {
     /// signatures (multi-arg, f64 input, str input, …) silently fall
     /// through and rely on the Layer-2 retrospective `goal_run` path.
     pub(super) adaptive_registry_targets: Vec<String>,
+    /// BUG_HUNT #19: every top-level fn name in the program, registered with the
+    /// runtime in `main`'s prologue (one `__axon_register_goal_name` call each)
+    /// so native `goal_run` can reject a typo'd metric name with the same panic
+    /// the interpreter raises (I-9 parity). Populated only when the program
+    /// actually calls `goal_run` (empty ⇒ no calls emitted, zero cost for
+    /// non-goal programs).
+    pub(super) goal_name_targets: Vec<String>,
     /// R4: the program's source path, stamped into native `@[adaptive]`
     /// provenance as the `"src"` field (parity with the interpreter, which sets
     /// it via `set_provenance_source`). Emitted in `main`'s prologue as a
@@ -208,6 +295,7 @@ impl<'ctx> Codegen<'ctx> {
             current_adaptive_fn: None,
             current_adaptive_input: None,
             adaptive_registry_targets: Vec::new(),
+            goal_name_targets: Vec::new(),
             source_path: String::new(),
             current_agent_fn: None,
             current_verify_fn: None,
@@ -471,6 +559,22 @@ impl<'ctx> Codegen<'ctx> {
             self.adaptive_registry_targets.push(mangled.clone());
         }
 
+        // ── BUG_HUNT #19: collect goal-name targets for the I-9 typo guard. ───
+        // Only when the program actually calls `goal_run` do we register the fn
+        // names — so native `goal_run` can reject an unknown (typo'd) metric
+        // name the same way the interpreter does, instead of silently returning
+        // `target`. Use UNMANGLED top-level fn names, matching the string a
+        // `goal_run("name", …)` literal passes (and the interpreter's
+        // `Interp::fns` keyset).
+        self.goal_name_targets.clear();
+        if program.items.iter().any(program_calls_goal_run) {
+            for item in &program.items {
+                if let ast::Item::FnDef(f) = item {
+                    self.goal_name_targets.push(f.name.clone());
+                }
+            }
+        }
+
         // Evaluate module-level comptime let bindings (in source order so that
         // later bindings can reference earlier ones).
         for item in &program.items {
@@ -692,6 +796,9 @@ impl<'ctx> Codegen<'ctx> {
         // programs pay nothing.
         if f.name == "main" {
             self.emit_adaptive_registry_init();
+            // BUG_HUNT #19: register every fn name so native goal_run can reject
+            // a typo'd metric the same way the interpreter does (I-9 parity).
+            self.emit_goal_name_registry_init();
             // R4: stamp the source path into the runtime so native @[adaptive]
             // provenance carries the `"src"` field (interp parity).
             self.emit_provenance_source_init();

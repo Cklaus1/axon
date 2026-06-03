@@ -45,6 +45,56 @@
 use crate::adaptive_registry::lookup_adaptive_i64;
 use crate::provenance;
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+/// Set of every top-level fn name in the program, populated at module-init
+/// time by `__axon_register_goal_name` (one call per `Item::FnDef`, emitted
+/// only when the program actually calls `goal_run`).  This mirrors the
+/// interpreter's `Interp::fns` keyset so that native `goal_run` can answer the
+/// same "is this name known?" question the interpreter does.
+fn goal_names() -> &'static Mutex<HashSet<String>> {
+    static NAMES: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    NAMES.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// Register one top-level fn name as a legitimate `goal_run` target.  Emitted
+/// in `main`'s prologue, once per program function, when the program calls
+/// `goal_run`.  Idempotent (a `HashSet`); re-registration is harmless.
+#[no_mangle]
+pub extern "C" fn __axon_register_goal_name(name_ptr: *const u8, name_len: i64) {
+    if name_ptr.is_null() || name_len <= 0 {
+        return;
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(name_ptr, name_len as usize) };
+    if let Ok(s) = std::str::from_utf8(bytes) {
+        if let Ok(mut g) = goal_names().lock() {
+            g.insert(s.to_string());
+        }
+    }
+}
+
+/// A goal name is "known" — and therefore NOT a typo — if it names a defined
+/// function (registered above), is in the live adaptive registry, or already
+/// has provenance recorded (a legitimate retrospective best-observed lookup).
+///
+/// Mirrors the interpreter's `goal_name_is_known` (BUG_HUNT #19 / I-9): a name
+/// matching none of these is a misspelled metric, and returning `target`
+/// silently makes a typo look like an achieved goal.  The empty string is
+/// never known.
+fn is_known_goal_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if lookup_adaptive_i64(name).is_some() {
+        return true;
+    }
+    if goal_names().lock().map(|g| g.contains(name)).unwrap_or(false) {
+        return true;
+    }
+    !provenance::provenance_records_for(name).is_empty()
+}
+
 /// Run the hill-climb / best-observed lookup for the function named
 /// `fn_name`.
 ///
@@ -69,6 +119,22 @@ pub extern "C" fn __axon_goal_run(
     out_score: *mut f64,
 ) {
     let name = slice_to_str(fn_name_ptr, fn_name_len);
+
+    // BUG_HUNT #19 / I-9: a `goal_run` against a name that is neither a defined
+    // fn, a live adaptive target, nor a recorded provenance key is a typo —
+    // returning `target` silently makes a misspelled metric look like an
+    // achieved goal. Abort with the SAME message + exit code the interpreter's
+    // `unknown_goal_name` Flow::Panic produces (`axon: panic: …`, exit 101), so
+    // native and interp agree on the failure instead of diverging on success.
+    if !is_known_goal_name(name) {
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        eprintln!(
+            "axon: panic: goal function `{name}` is not defined and has no recorded provenance — \
+             check the name matches an @[adaptive] fn (typo?)"
+        );
+        std::process::exit(101);
+    }
 
     // Record intent in provenance so a later harness step can pick this up.
     let payload = format!(
@@ -242,10 +308,15 @@ mod tests {
     };
 
     #[test]
-    fn goal_run_returns_target_when_no_records() {
+    fn goal_run_returns_target_for_known_name_with_no_records() {
         let mut out: f64 = 0.0;
         // Unique name so other parallel tests can't pollute the store for it.
+        // BUG_HUNT #19: the name must be KNOWN (a defined fn) for goal_run to
+        // proceed — a *known* goal with no observations yet legitimately
+        // returns `target` as its not-yet-improved baseline. (An UNKNOWN name
+        // is a typo and now aborts — see `is_known_goal_name_rejects_typos`.)
         let name = b"goal_test_never_called_xyz";
+        __axon_register_goal_name(name.as_ptr(), name.len() as i64);
         __axon_goal_run(
             std::ptr::null(),
             name.as_ptr(),
@@ -255,6 +326,27 @@ mod tests {
             &mut out as *mut f64,
         );
         assert!((out - 0.85).abs() < 1e-9);
+    }
+
+    #[test]
+    fn is_known_goal_name_rejects_typos() {
+        // BUG_HUNT #19 / I-9: the predicate guarding `goal_run` against a
+        // misspelled metric name. The empty string and a never-seen name are
+        // typos (false); a registered fn name is known (true). The `__axon_goal_run`
+        // wrapper turns a `false` here into the same `axon: panic:` + exit-101 the
+        // interpreter raises — that abort path can't be exercised in-process
+        // (it would kill the test binary), so we assert the pure decision here.
+        assert!(!is_known_goal_name(""), "empty name is never a known goal");
+        assert!(
+            !is_known_goal_name("goal_name_that_was_never_registered_or_recorded_qqq"),
+            "an unregistered, un-recorded name is a typo"
+        );
+        let name = b"goal_predicate_known_name";
+        __axon_register_goal_name(name.as_ptr(), name.len() as i64);
+        assert!(
+            is_known_goal_name("goal_predicate_known_name"),
+            "a registered fn name is a known goal target"
+        );
     }
 
     #[test]
@@ -323,18 +415,13 @@ mod tests {
     }
 
     #[test]
-    fn goal_run_handles_null_name_pointer() {
-        let mut out: f64 = 1.23;
-        __axon_goal_run(
-            std::ptr::null(),
-            std::ptr::null(),
-            0,
-            0.42,
-            8,
-            &mut out as *mut f64,
-        );
-        // No name → no records → returns target (0.42).
-        assert!((out - 0.42).abs() < 1e-9, "got {}", out);
+    fn goal_run_null_name_is_an_unknown_goal() {
+        // A null/empty name maps to "" which `is_known_goal_name` rejects — the
+        // same as the interpreter, whose `goal_name_is_known("")` is false. The
+        // `__axon_goal_run` wrapper would abort (exit 101) on this; that path
+        // can't run in-process, so we assert the predicate instead. (Before
+        // BUG_HUNT #19 a null name silently returned `target`.)
+        assert!(!is_known_goal_name(""), "a null/empty goal name is not known");
     }
 
     // ── Layer-3: live hill-climb tests ────────────────────────────────────

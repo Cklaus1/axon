@@ -324,6 +324,37 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// BUG_HUNT #19: emit one `__axon_register_goal_name(name, len)` per
+    /// top-level fn in `main`'s prologue, so native `goal_run` knows the full
+    /// set of legitimate target names and can reject a typo'd metric with the
+    /// same panic the interpreter raises (I-9 parity) instead of silently
+    /// returning `target`. No-op unless the program calls `goal_run`
+    /// (`goal_name_targets` is empty), so non-goal programs pay nothing.
+    pub(super) fn emit_goal_name_registry_init(&mut self) {
+        if self.goal_name_targets.is_empty() {
+            return;
+        }
+        let reg_fn = match self.ir.module.get_function("__axon_register_goal_name") {
+            Some(f) => f,
+            None => return,
+        };
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let names = self.goal_name_targets.clone();
+        for name in &names {
+            let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, name, "goal_name");
+            let name_len = i64_ty.const_int(name.len() as u64, false);
+            let _ = build_wrappers::w_call(
+                &self.ir.builder,
+                reg_fn,
+                &[name_g.into(), name_len.into()],
+                "",
+            );
+        }
+    }
+
     /// R4: emit a one-time `__axon_set_provenance_source(path_ptr, path_len)` in
     /// main's prologue so native `@[adaptive]` provenance carries the program's
     /// `"src"` path — parity with the interpreter (`set_provenance_source`).

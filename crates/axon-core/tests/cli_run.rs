@@ -3639,6 +3639,37 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_goal_run_unknown_name_matches_interp() {
+    // BUG_HUNT #19 regression (I-9): `goal_run("typo", …)` against a name that
+    // is neither a defined fn nor a recorded provenance key is a misspelled
+    // metric. The interpreter aborts (panic, exit 101) so a typo can't look
+    // like an achieved goal — but native codegen used to SILENTLY return
+    // `target`. scripts/goal_unknown_name_parity.sh builds the typo case BOTH
+    // ways and asserts they now agree (same panic message + exit 101), and that
+    // the happy path still succeeds identically. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/goal_unknown_name_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("goal_unknown_name_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run goal_unknown_name_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — goal unknown-name parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native goal_run must reject a typo'd name like the interpreter (#19):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("goal_unknown_name_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_agent_action_log_matches_interp() {
     // R4 §4.3: the mandatory @[agent] action log (I-13) must be injected by
     // native codegen too, not just the interpreter — a native agent cannot act

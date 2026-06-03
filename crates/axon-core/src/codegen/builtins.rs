@@ -2021,6 +2021,14 @@ impl<'ctx> super::Codegen<'ctx> {
             );
             self.ir.module.add_function("__axon_register_adaptive", reg_ty, None);
 
+            // BUG_HUNT #19: __axon_register_goal_name(name_ptr, name_len) — one
+            // call per top-level fn in main's prologue (only when the program
+            // calls goal_run), so native goal_run can reject a typo'd metric
+            // name with the same panic the interpreter raises (I-9 parity)
+            // instead of silently returning `target`.
+            let reg_goal_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+            self.ir.module.add_function("__axon_register_goal_name", reg_goal_ty, None);
+
             // R4: __axon_set_provenance_source(path_ptr, path_len) — called once
             // in main's prologue to stamp the program's source path into native
             // @[adaptive] provenance (`"src"` field, interp parity).
