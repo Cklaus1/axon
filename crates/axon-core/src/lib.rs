@@ -34,6 +34,7 @@ pub mod comptime;
 pub mod interp;
 pub mod mono;
 // Phase 4
+pub mod audit;
 pub mod cache;
 pub mod capabilities;
 pub mod doc;

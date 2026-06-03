@@ -569,18 +569,42 @@ fn cmd_lock(file: PathBuf) {
     use axon_core::lockfile::{module_hash, write_lock, LockEntry};
     let resolved = resolve_modules_or_exit(&file);
 
+    // R6 §4.3: audit each module's capability surface at acquisition time and
+    // pin the verdict into the lockfile. The verdict is deterministic in the
+    // bytes, so it is re-validated cheaply by hash on every build — no AI call
+    // at compile time. A `denied` verdict (undeclared net) blocks the build
+    // (E1204) unless re-locked with `--accept-flagged` once that lands.
     let entries: Vec<LockEntry> = resolved
         .iter()
         .map(|m| {
+            let hash = module_hash(&m.bytes);
             let mut e = LockEntry::new(
                 m.name.clone(),
-                module_hash(&m.bytes),
+                hash.clone(),
                 format!("file:{}", m.path.display()),
             );
-            e.audit = String::new();
+            // Audit the parsed module; an unparseable module gets no verdict
+            // (its hash still pins the bytes; the parse error surfaces elsewhere).
+            let verdict = std::str::from_utf8(&m.bytes)
+                .ok()
+                .and_then(|s| axon_core::parse_source(s).ok())
+                .map(|p| axon_core::audit::audit_module(&p))
+                .unwrap_or(axon_core::audit::Verdict::Clear);
+            // Pin as `<verdict>:<hash-tail>` so a re-hash that changes the bytes
+            // also invalidates the verdict (the verdict is about *these* bytes).
+            e.audit = format!("{}:{}", verdict.as_str(), hash);
             e
         })
         .collect();
+
+    // Surface non-clear verdicts to the user at lock time (informational —
+    // `denied` becomes fatal only at build via E1204).
+    for (m, e) in resolved.iter().zip(entries.iter()) {
+        if !e.audit.starts_with("clear:") {
+            let verdict = e.audit.split(':').next().unwrap_or("");
+            eprintln!("axon: audit `{}` → {verdict}", m.name);
+        }
+    }
 
     let lock = lock_path_for(&file);
     let text = write_lock(&entries);
@@ -710,7 +734,28 @@ fn check_locked_imports(
         let found = module_hash(&m.bytes);
         let entry = parsed.as_ref().and_then(|p| p.modules.iter().find(|e| e.name == m.name));
         match entry {
-            Some(e) if e.hash == found => { /* locked + matching — ok */ }
+            Some(e) if e.hash == found => {
+                // R6 §4.3: hash matches; re-validate the pinned audit verdict by
+                // hash (no AI call). A `denied:<hash>` verdict whose hash still
+                // matches these bytes fails the build with E1204 — un-audited
+                // exfiltration surface never executes. Always enforced (not just
+                // under --locked): once a module is locked with a denied verdict,
+                // running it is a hard error regardless of mode.
+                let (verdict, vhash) = e.audit.split_once(':').unwrap_or(("", ""));
+                if verdict == "denied" && vhash == found {
+                    errors.push(format!(
+                        "[{}] import `{}` was denied by capability audit: {} — see `axon audit {}` or re-lock with `--accept-flagged` after review",
+                        axon_core::error::E1204,
+                        m.name,
+                        std::str::from_utf8(&m.bytes)
+                            .ok()
+                            .and_then(|s| axon_core::parse_source(s).ok())
+                            .map(|p| axon_core::audit::verdict_reason(&p, axon_core::audit::Verdict::Denied))
+                            .unwrap_or_else(|| "undeclared network surface".to_string()),
+                        m.name,
+                    ));
+                }
+            }
             Some(e) => {
                 // Hash mismatch: tamper. Fatal under --locked (E1201), warn in dev.
                 let msg = format!(

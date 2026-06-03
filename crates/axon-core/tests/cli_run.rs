@@ -3618,6 +3618,97 @@ fn locked_mode_enforces_axon_lock() {
 }
 
 #[test]
+fn denied_audit_blocks_import_e1204() {
+    // R6 §4.3/§4.5 (the audit-on-import gate): `axon lock` audits each imported
+    // module's capability surface and pins the verdict into axon.lock. A module
+    // that exercises undeclared `net` (the exfiltration channel) with no
+    // @[contained] is verdict `denied`; on the next build the pinned verdict is
+    // re-validated by hash and the import fails with E1204 — un-audited
+    // exfiltration surface never executes. Paired with a CLEAR control so the
+    // gate is shown precise, not blanket (I-11 allow+deny discipline).
+    let tmp = std::env::temp_dir().join(format!("axon_r6audit_{}", std::process::id()));
+    std::fs::create_dir_all(&tmp).unwrap();
+
+    // DENY: a module that phones home (ai_complete = net) with no containment.
+    std::fs::write(
+        tmp.join("phone.ax"),
+        "fn home() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n",
+    )
+    .unwrap();
+    let prog = tmp.join("prog.ax");
+    std::fs::write(
+        &prog,
+        "mod phone\nuse phone.{home}\nfn main() -> i64 { let _ = home()  0 }\n",
+    )
+    .unwrap();
+
+    // Lock — the audit runs and pins `denied:<hash>` for phone.
+    let lock_out = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(
+        lock_out.status.success(),
+        "axon lock should succeed even when it records a denied verdict: {}",
+        String::from_utf8_lossy(&lock_out.stderr)
+    );
+    let lockfile = std::fs::read_to_string(tmp.join("axon.lock")).unwrap();
+    assert!(
+        lockfile.contains("denied:"),
+        "the lockfile must pin a denied verdict for the net-using module: {lockfile}"
+    );
+
+    // Build/check — the pinned denied verdict re-validates by hash → E1204.
+    let checked = axon()
+        .args(["check", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let cmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&checked.stdout),
+        String::from_utf8_lossy(&checked.stderr)
+    );
+    assert!(cmsg.contains("E1204"), "denied audit must block the import with E1204: {cmsg}");
+    assert_ne!(checked.status.code(), Some(0), "a denied import must fail the build");
+
+    // CONTROL: a pure module audits `clear` and builds fine.
+    std::fs::write(tmp.join("phone.ax"), "fn home() -> i64 { 42 }\n").unwrap();
+    let relocked = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(relocked.status.success(), "re-lock of the now-pure module should succeed");
+    // prog calls home() expecting a value; with home()->i64 it still type-checks.
+    std::fs::write(
+        &prog,
+        "mod phone\nuse phone.{home}\nfn main() -> i64 { home() }\n",
+    )
+    .unwrap();
+    let relock2 = axon()
+        .args(["lock", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(relock2.status.success(), "re-lock after editing prog should succeed");
+    let clear_check = axon()
+        .args(["check", prog.to_str().unwrap()])
+        .env("AXON_PATH", tmp.to_str().unwrap())
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_dir_all(&tmp);
+    let clearmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&clear_check.stdout),
+        String::from_utf8_lossy(&clear_check.stderr)
+    );
+    assert!(!clearmsg.contains("E1204"), "a clear module must not be blocked: {clearmsg}");
+    assert_eq!(clear_check.status.code(), Some(0), "a clear import must build: {clearmsg}");
+}
+
+#[test]
 fn agent_actions_are_mandatorily_logged() {
     // R4 §4.3 (I-13): every capability-bearing action inside an `@[agent]` fn
     // produces a compiler-injected `event:"agent_action"` audit record (action
