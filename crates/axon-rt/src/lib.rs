@@ -512,6 +512,51 @@ pub extern "C" fn __axon_read_file(
     }
 }
 
+/// R6: spawn a process — the native `exec` builtin. `cmd` is the program;
+/// `args_ptr` points to `args_count` `AxonStr` argument structs (the `[str]`
+/// array's element buffer). Returns the captured stdout on success or the error
+/// message, via the same ±len out-param convention as `__axon_read_file`
+/// (len ≥ 0 → Ok stdout; len < 0 → Err with `|len|`). Mirrors the interpreter's
+/// DefaultHost::exec so native==interp.
+#[no_mangle]
+pub extern "C" fn __axon_exec(
+    cmd: AxonStr,
+    args_ptr: *const AxonStr,
+    args_count: i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let cmd_s = unsafe { cmd.as_str() };
+    let args: Vec<String> = if args_ptr.is_null() || args_count <= 0 {
+        Vec::new()
+    } else {
+        let slice = unsafe { std::slice::from_raw_parts(args_ptr, args_count as usize) };
+        slice.iter().map(|a| unsafe { a.as_str() }.to_string()).collect()
+    };
+    let (text, is_err) = match std::process::Command::new(cmd_s).args(&args).output() {
+        Ok(output) if output.status.success() => {
+            (String::from_utf8_lossy(&output.stdout).into_owned(), false)
+        }
+        Ok(output) => {
+            let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            (format!("exec `{cmd_s}` exited {code}: {}", stderr.trim()), true)
+        }
+        Err(e) => (format!("exec `{cmd_s}` failed: {e}"), true),
+    };
+    let len = text.len();
+    let buf = unsafe {
+        let p = libc_malloc(len + 1);
+        std::ptr::copy_nonoverlapping(text.as_ptr(), p, len);
+        *p.add(len) = 0;
+        p
+    };
+    unsafe {
+        *out_len = if is_err { -(len as i64) } else { len as i64 };
+        *out_ptr = buf;
+    }
+}
+
 /// Write `content` to `path`.  Returns 0 on success; on error returns the error
 /// message length (positive) and writes the message to `*out_ptr`.
 #[no_mangle]

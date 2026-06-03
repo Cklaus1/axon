@@ -3573,6 +3573,36 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_exec_matches_interp() {
+    // R6: the `exec` builtin was interp-only — native codegen had no emitter, so
+    // a native build silently produced no output. Codegen now emits `exec`
+    // delegating to axon-rt's __axon_exec, matching the interpreter on both the
+    // Ok (stdout) and Err (message) paths. scripts/exec_parity.sh builds an
+    // exec program both ways and asserts identical output. Skips when codegen
+    // can't build.
+    let script = format!("{}/../../scripts/exec_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("exec_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run exec_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — exec parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native exec must match the interpreter (R6 codegen emitter):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("exec matches the interpreter"),
+        "expected the agreement line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_parse_int_err_message_matches_interp() {
     // BUG_HUNT #37 (message parity): codegen parse_int's Err message used a
     // static string while the interpreter echoes the input + a radix hint. Now
