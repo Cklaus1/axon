@@ -1980,6 +1980,75 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "en_res"))
     }
 
+    /// arr_zip(a, b) → [(a[i], b[i])] for i in 0..min(len_a, len_b). Result is
+    /// a slice of {i64, i64} tuples (16-byte stride). Pure IR + malloc.
+    fn emit_arr_i64_zip(
+        &mut self,
+        a_slice: BasicValueEnum<'ctx>,
+        b_slice: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let tup_ty = self.ir.context.struct_type(&[i64_ty.into(), i64_ty.into()], false);
+
+        let unpack = |slf: &mut Self, sv: BasicValueEnum<'ctx>, tag: &str| {
+            let al = build_wrappers::w_alloca(&slf.ir.builder, slice_ty.into(), tag);
+            build_wrappers::w_store(&slf.ir.builder, al, sv);
+            let l = build_wrappers::w_load(&slf.ir.builder, i64_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 0, "zp_lp").unwrap(), "zp_l").into_int_value();
+            let d = build_wrappers::w_load(&slf.ir.builder, ptr_ty.into(),
+                slf.ir.builder.build_struct_gep(slice_ty, al, 1, "zp_dp").unwrap(), "zp_d").into_pointer_value();
+            let di = build_wrappers::w_pointer_cast(&slf.ir.builder, d, i64_ty.ptr_type(AddressSpace::default()), "zp_di");
+            (l, di)
+        };
+        let (a_len, a_data) = unpack(self, a_slice, "zp_a");
+        let (b_len, b_data) = unpack(self, b_slice, "zp_b");
+        let a_le = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, a_len, b_len, "zp_alt");
+        let n = self.ir.builder.build_select(a_le, a_len, b_len, "zp_n").unwrap().into_int_value();
+
+        let sixteen = i64_ty.const_int(16, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, n, sixteen, "zp_bytes");
+        let dst_raw = self.emit_malloc(total, "zp_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, tup_ty.ptr_type(AddressSpace::default()), "zp_dt");
+
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "zp_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "zp.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "zp.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "zp.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "zp_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, n, "zp_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ap = unsafe { self.ir.builder.build_gep(i64_ty, a_data, &[i_cur], "zp_ap").unwrap() };
+        let av = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ap, "zp_av").into_int_value();
+        let bp = unsafe { self.ir.builder.build_gep(i64_ty, b_data, &[i_cur], "zp_bp").unwrap() };
+        let bv = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), bp, "zp_bv").into_int_value();
+        let tp = unsafe { self.ir.builder.build_gep(tup_ty, dst, &[i_cur], "zp_tp").unwrap() };
+        let f0 = self.ir.builder.build_struct_gep(tup_ty, tp, 0, "zp_f0").unwrap();
+        build_wrappers::w_store(&self.ir.builder, f0, av.into());
+        let f1 = self.ir.builder.build_struct_gep(tup_ty, tp, 1, "zp_f1").unwrap();
+        build_wrappers::w_store(&self.ir.builder, f1, bv.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "zp_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "zp_out");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "zp_ol").unwrap(), n.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "zp_di8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "zp_op").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zp_res"))
+    }
+
     /// arr_find(&a, pred) → Option<i64>: first element where the predicate
     /// lambda returns truthy (Some), else None. Loops the whole slice tracking
     /// a found-flag + found-value (no short-circuit — observably identical for
@@ -3531,6 +3600,15 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_enumerate" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_enumerate(slice_val, fn_val);
+                }
+            }
+            // arr_zip(a, b) → [(a[i], b[i])] for i in 0..min(len) : a slice of
+            // {i64, i64} tuples (16-byte stride).
+            if name == "arr_zip" && args.len() == 2 {
+                if let (Some(a_slice), Some(b_slice)) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_zip(a_slice, b_slice, fn_val);
                 }
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying

@@ -1133,9 +1133,9 @@ impl<'ctx> Codegen<'ctx> {
                     if name == "arr_range" || name == "arr_repeat" {
                         return Some(Type::Slice(Box::new(Type::I64)));
                     }
-                    // arr_enumerate(&a) → [(i64, i64)] — a slice of index/value
-                    // tuples (the element type is fixed regardless of input).
-                    if name == "arr_enumerate" {
+                    // arr_enumerate(&a) / arr_zip(a, b) → [(i64, i64)] — a slice
+                    // of tuples (element type fixed regardless of input shape).
+                    if name == "arr_enumerate" || name == "arr_zip" {
                         return Some(Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64]))));
                     }
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
