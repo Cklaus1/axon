@@ -60,7 +60,11 @@ check mrg_len  'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  dict
 check mrg_win  'fn main() -> i64 { let a = dict_new()  dict_set(a, "k", 1)  let b = dict_new()  dict_set(b, "k", 99)  let m = dict_merge(a, b)  match dict_get(m, "k") { Some(v) => v  None => 0 } }'
 check mrg_keep 'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 5)  let b = dict_new()  dict_set(b, "y", 7)  let m = dict_merge(a, b)  match dict_get(m, "x") { Some(v) => v  None => 0 } }'
 check mrg_cp   'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  let b = dict_new()  dict_set(b, "y", 2)  let m = dict_merge(a, b)  dict_len(a) }'
+check fp_len   'fn main() -> i64 { let p = [("a", 1), ("b", 2), ("c", 3)]  let d = dict_from_pairs(p)  dict_len(d) }'
+check fp_get   'fn main() -> i64 { let p = [("a", 10), ("b", 20)]  let d = dict_from_pairs(p)  match dict_get(d, "b") { Some(v) => v  None => 0 - 1 } }'
+check fp_dup   'fn main() -> i64 { let p = [("k", 1), ("k", 9)]  let d = dict_from_pairs(p)  match dict_get(d, "k") { Some(v) => v  None => 0 } }'
+check fp_one   'fn main() -> i64 { let p = [("solo", 7)]  let d = dict_from_pairs(p)  match dict_get(d, "solo") { Some(v) => v  None => 0 } }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge (int values, BTreeMap order) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs (int values, BTreeMap order) match the interpreter ✓"
 exit 0

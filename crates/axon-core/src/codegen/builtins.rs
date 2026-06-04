@@ -894,6 +894,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let ssplit_ty = void_ty.fn_type(
             &[str_ty_d.into(), str_ty_d.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
         self.ir.module.add_function("__axon_str_split", ssplit_ty, None);
+        // i8* __axon_dict_from_pairs(len:i64, data:i8*) → a Dict handle. `data`
+        // points at an array of (str,i64) tuples = LLVM `{{i64,i8*}, i64}`;
+        // passed as scalars (the str_join slice-arg ABI). Returns the handle.
+        let dfp_ty = i8_ptr.fn_type(&[i64_ty.into(), i8_ptr.into()], false);
+        self.ir.module.add_function("__axon_dict_from_pairs", dfp_ty, None);
+        self.fn_return_types.insert("dict_from_pairs".to_string(), Type::Deferred("Dict".to_string()));
         // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
         // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);

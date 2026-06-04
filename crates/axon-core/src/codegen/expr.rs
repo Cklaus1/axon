@@ -4157,6 +4157,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.ir.builder.build_struct_gep(str_ty, res, 1, "sj_rp").unwrap(), out_ptr.into());
                 return Some(build_wrappers::w_load(&self.ir.builder, str_ty.into(), res, "sj_resv"));
             }
+            // dict_from_pairs([(str,i64)]) → Dict: unpack the slice's {len,data}
+            // and hand them to the runtime, which reads `data` as an array of
+            // (str,i64) tuples and inserts each into a fresh dict. Returns the
+            // i8* handle directly (no out-params).
+            if name == "dict_from_pairs" && args.len() == 1 {
+                let pairs = self.emit_expr(&args[0], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let slot = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "dfp_s");
+                build_wrappers::w_store(&self.ir.builder, slot, pairs);
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+                    self.ir.builder.build_struct_gep(slice_ty, slot, 0, "dfp_lp").unwrap(), "dfp_len").into_int_value();
+                let data = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+                    self.ir.builder.build_struct_gep(slice_ty, slot, 1, "dfp_dp").unwrap(), "dfp_data").into_pointer_value();
+                let f = self.functions.get("__axon_dict_from_pairs").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_from_pairs"))?;
+                return self.ir.builder.build_call(f, &[len.into(), data.into()], "dfp_call")
+                    .unwrap().try_as_basic_value().left();
+            }
             // dict_values(d) → [i64] (v1 int-valued): the runtime mallocs an
             // i64 array in key-sorted order; codegen wraps it in a {len, ptr}
             // slice. Same out-param shape as dict_keys, but the element is a

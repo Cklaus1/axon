@@ -237,6 +237,34 @@ pub extern "C" fn __axon_dict_new() -> *mut c_void {
     Arc::into_raw(arc) as *mut c_void
 }
 
+/// One `(str, i64)` pair, matching codegen's tuple layout for `[(str, i64)]`:
+/// an LLVM `{ {i64,i8*}, i64 }` (str struct first, then the i64 value). Used as
+/// the element type for `__axon_dict_from_pairs`.
+#[repr(C)]
+pub struct StrI64Pair {
+    pub key: AxonStr,
+    pub val: i64,
+}
+
+/// Build a dict from a `[(str, i64)]` slice (v1: int values), matching the
+/// interpreter. The slice is passed as (len, *const StrI64Pair) scalars (the
+/// str_join slice-arg ABI). Later pairs win on a key conflict (BTreeMap insert
+/// order = iteration order). Returns a fresh opaque handle; null/empty → {}.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_from_pairs(len: i64, data: *const StrI64Pair) -> *mut c_void {
+    let mut out: StdMap<String, DictVal> = StdMap::new();
+    if !data.is_null() && len > 0 {
+        for i in 0..len as usize {
+            let pair = unsafe { &*data.add(i) };
+            let k = unsafe { pair.key.as_str() }.to_string();
+            out.insert(k, DictVal::Int(pair.val));
+        }
+    }
+    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    Arc::into_raw(arc) as *mut c_void
+}
+
 /// Merge two dicts into a FRESH dict (neither input is mutated), matching the
 /// interpreter: start from d1's entries, then overlay d2's (so d2 wins on a key
 /// conflict). Returns a new opaque handle. A null input is treated as empty.
