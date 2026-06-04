@@ -484,6 +484,47 @@ pub extern "C" fn __axon_dict_values(
     }
 }
 
+/// Split `s` on the separator `sep` into a fresh `[str]` slice, matching the
+/// interpreter's `str_split` exactly: an empty `sep` yields the single element
+/// `[s]`, otherwise Rust's `str::split` (so "a,,b".split(",") = ["a","","b"]).
+/// Writes the slice's `{len, data}` via out-params: `*out_len` = #parts,
+/// `*out_data` = a malloc'd array of `AxonStr` (each part's bytes malloc'd +
+/// null-terminated). Same shape as `__axon_dict_keys`; codegen assembles the
+/// `{i64,ptr}` slice from these.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_str_split(
+    s: AxonStr,
+    sep: AxonStr,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    let s = unsafe { s.as_str() };
+    let sep = unsafe { sep.as_str() };
+    let parts: Vec<&str> = if sep.is_empty() { vec![s] } else { s.split(sep).collect() };
+    let n = parts.len();
+    if n == 0 {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let elem_size = std::mem::size_of::<AxonStr>();
+    let arr = unsafe { libc_malloc(elem_size * n) } as *mut AxonStr;
+    for (i, part) in parts.iter().enumerate() {
+        let len = part.len();
+        let buf = unsafe {
+            let p = libc_malloc(len + 1);
+            std::ptr::copy_nonoverlapping(part.as_ptr(), p, len);
+            *p.add(len) = 0;
+            p
+        };
+        unsafe { *arr.add(i) = AxonStr { len: len as i64, ptr: buf }; }
+    }
+    unsafe {
+        *out_len = n as i64;
+        *out_data = arr as *mut u8;
+    }
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {

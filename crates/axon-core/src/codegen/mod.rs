@@ -1128,7 +1128,7 @@ impl<'ctx> Codegen<'ctx> {
             // → [i64] (v1 int-valued dict)
             "dict_values" => i64_slice(),
             // → [str]
-            "dict_keys" => Type::Slice(Box::new(Type::Str)),
+            "dict_keys" | "str_split" => Type::Slice(Box::new(Type::Str)),
             // → [(i64, i64)] — slice of pairs
             "arr_enumerate" | "arr_zip" => {
                 Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64])))

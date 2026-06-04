@@ -3849,6 +3849,29 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.ir.builder.build_struct_gep(slice_ty, out, 1, "dk_op").unwrap(), data.into());
                 return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "dk_res"));
             }
+            // str_split(s, sep) → [str]: the runtime mallocs an array of AxonStr
+            // (each part's bytes too); codegen wraps it in a {len, ptr} slice.
+            // Same out-param shape as dict_keys, but two str args by value.
+            if name == "str_split" && args.len() == 2 {
+                let s = self.emit_expr(&args[0], fn_val)?;
+                let sep = self.emit_expr(&args[1], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ss_len");
+                let data_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "ss_data");
+                let f = self.functions.get("__axon_str_split").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_str_split"))?;
+                self.ir.builder.build_call(f, &[s.into(), sep.into(), len_slot.into(), data_slot.into()], "ss_call").unwrap();
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_slot, "ss_l").into_int_value();
+                let data = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_slot, "ss_d").into_pointer_value();
+                let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ss_out");
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 0, "ss_ol").unwrap(), len.into());
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 1, "ss_op").unwrap(), data.into());
+                return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ss_res"));
+            }
             // dict_values(d) → [i64] (v1 int-valued): the runtime mallocs an
             // i64 array in key-sorted order; codegen wraps it in a {len, ptr}
             // slice. Same out-param shape as dict_keys, but the element is a
