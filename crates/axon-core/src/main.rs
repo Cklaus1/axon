@@ -2103,6 +2103,36 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
 ///   0 — success (file formatted in-place, or --check and already correct)
 ///   1 — --check: at least one file would be reformatted
 ///   2 — parse error in input file (file not touched)
+/// Does `src` contain a `//` line comment or `/* */` block comment outside of a
+/// string literal? The AST-based formatter discards comments (the lexer skips
+/// `//…`), so formatting a file with comments would SILENTLY DELETE them. We
+/// detect that up front and refuse, rather than destroy documentation. A simple
+/// scanner that tracks whether we're inside a `"…"` string (honoring `\` escapes)
+/// — good enough to avoid false positives on `"http://…"` and the like.
+fn source_has_comments(src: &str) -> bool {
+    let b = src.as_bytes();
+    let mut i = 0;
+    let mut in_str = false;
+    while i < b.len() {
+        let c = b[i];
+        if in_str {
+            if c == b'\\' {
+                i += 2; // skip the escaped char
+                continue;
+            }
+            if c == b'"' {
+                in_str = false;
+            }
+        } else if c == b'"' {
+            in_str = true;
+        } else if c == b'/' && i + 1 < b.len() && (b[i + 1] == b'/' || b[i + 1] == b'*') {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
 fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2123,6 +2153,20 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
                 process::exit(2);
             }
         };
+
+        // The formatter is a pure AST pretty-printer — comments aren't in the
+        // AST, so reformatting would erase them. Refuse rather than silently
+        // delete documentation. (Comment-preserving formatting is future work;
+        // see spec/compiler-phase4.md.)
+        if source_has_comments(&src) {
+            eprintln!(
+                "error: {}: refusing to format — the file contains comments, which the \
+                 AST-based formatter would delete. (Comment-preserving formatting is not yet \
+                 implemented; the file is unchanged.)",
+                file.display()
+            );
+            process::exit(2);
+        }
 
         let formatted = axon_core::format_program(&program);
 

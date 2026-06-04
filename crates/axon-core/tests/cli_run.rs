@@ -5852,3 +5852,36 @@ fn r1e_direct_ir_emission_stays_confined() {
          — route it through build_wrappers::w_* (R1e: one IR path)"
     );
 }
+
+#[test]
+fn fmt_refuses_to_delete_comments() {
+    // The AST-based formatter discards comments — formatting a commented file
+    // would silently delete documentation. `axon fmt` must REFUSE (exit 2) and
+    // leave the file unchanged, not destroy the comments.
+    let f = std::env::temp_dir().join(format!("axon_fmtc_{}.ax", std::process::id()));
+    let original = "// keep me\nfn main() -> i64 { let x = 42  x }\n";
+    std::fs::write(&f, original).unwrap();
+    let out = axon().args(["fmt", f.to_str().unwrap()]).output().unwrap();
+    let after = std::fs::read_to_string(&f).unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(2), "fmt must exit 2 on a commented file");
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("refusing to format"),
+        "fmt must explain it refused to delete comments"
+    );
+    assert_eq!(after, original, "fmt must NOT modify a file it refused to format");
+}
+
+#[test]
+fn fmt_still_formats_comment_free_files() {
+    // The refusal must not break the working case: a comment-free file still
+    // formats, and a `//` inside a string is not mistaken for a comment.
+    let f = std::env::temp_dir().join(format!("axon_fmtok_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main()->i64{let u=\"http://x\"  str_len(u)}\n").unwrap();
+    let out = axon().args(["fmt", f.to_str().unwrap()]).output().unwrap();
+    let after = std::fs::read_to_string(&f).unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(out.status.success(), "fmt must succeed on a comment-free file: {out:?}");
+    assert!(after.contains("\"http://x\""), "the URL string must survive (not seen as a comment)");
+    assert!(after.contains("    "), "the file must actually be reformatted (indented)");
+}
