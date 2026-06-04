@@ -20,7 +20,7 @@ services) — that remains greenfield, multi-quarter work.
 
 | Req | What | % | State |
 |---|---|---|---|
-| **R1** | Native pipeline (parse→type→borrow→LLVM→native) | 95 | ✅ 28/28 example parity, 6× faster than interp |
+| **R1** | Native pipeline (parse→type→borrow→LLVM→native) | 97 | ✅ 32/32 example parity; **stdlib codegen coverage expanded ~84 builtins: +35 arr_* (full reduction/alloc/closure/tuple/nested suite), bitwise/shift, polymorphic as_i64/as_f64, parse_*_or — all native==interp==AOT-wasm**; unimplemented builtins now fail honestly (E0910) instead of silently returning 0 |
 | **R2** | Type system + borrow checker (HM, no-null, ownership) | 90 | ✅ Strong; dyn-trait + refinement types remain |
 | **R3** | AI as a language primitive (routing, policy, budget, cost) | 87 | ⚠️ tier routing + live token-count live; first-class Budget type remains |
 | **R4** | Three code zones + compiler-enforced provenance | 100 | ✅ Complete |
@@ -31,14 +31,23 @@ services) — that remains greenfield, multi-quarter work.
 | **R9** | Layer-1/3 alignment (`Uncertain`/`Temporal`/`@[verify]`/causal) | 88 | ⚠️ SMT loop invariants + metacognition trait remain |
 | **R10** | Self-improving compiler (4-gate firewall, AI discoverer) | 99 | ✅ static + live AI discoverer; growing the template menu is the only follow-on |
 
-**Average 93.4% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
+**Average 93.6% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
 
 ## What "done and verified" means here
 
 Every ✅/⚠️ above is backed by passing acceptance tests, not aspiration:
 
-- **Native == interpreter** on all 28 pure-compute + AI-under-mock examples
+- **Native == interpreter** on all 32 pure-compute + AI-under-mock examples
   (`all_examples_parity.sh`), the interpreter being the I-2 reference oracle.
+- **Stdlib codegen coverage**: ~84 builtins that previously had no native
+  lowering (and silently returned 0 on `axon build`) now compute correctly
+  native==interp==AOT-wasm — the full 35-builtin `arr_*` suite (reductions,
+  allocating ops, closure ops, tuple/nested results), the bitwise/shift ops,
+  the polymorphic `as_i64`/`as_f64` casts, and `parse_int_or`/`parse_float_or`/
+  `parse_bool_or` (`arr_reduce_parity.sh` 85 cases, `bitwise_cast_parity.sh`,
+  `parse_or_parity.sh`). Anything still unimplemented in codegen now aborts the
+  build with a clear **E0910** ("not yet supported by native codegen — use
+  `axon run`") rather than shipping a wrong binary.
 - **Cross-platform**: the same `.ax` runs byte-identically on native and
   `wasm32-wasip1` across compute, file I/O, and env vars
   (`wasm_parity.sh` 28/28, `wasm_fs_parity.sh`). Beyond the interpreter path,
@@ -73,7 +82,8 @@ multi-slice epic with its own spec (where applicable):
 
 | Epic | Why it's large |
 |---|---|
-| **R7 AOT-wasm retarget** | codegen bakes i64 pointers into the str/array IR; wasm32 needs i32 — a cross-cutting codegen ABI change (`R7-targets.md` §12 Q6) |
+| **R7 js / mobile backends** | the AOT-wasm str/array i64→i32 + size_t ABI is now CLOSED (the whole example corpus runs AOT-wasm, 26/26); what remains is a js *backend* (transpile or wasm-in-JS) and mobile runtimes, plus host-needing programs (AI/thread/goal) on the pure-AOT path |
+| **`dict_*` runtime data structure** | the dict builtins (used in 6 examples) need a runtime hashmap extern in axon-rt with tagged values + string keys — like the channel `__axon_chan_*` impl, not inline IR. `arr_group_by` (returns a Dict) is gated on this |
 | **Kernel Phase-7 services** | scheduler + durable stores + SMT-checked cap subsets (`R12-kernel-runtime-services.md`) |
 | **SMT loop invariants** | invariant inference past straight-line code (`R9b-smt-loop-invariants.md`) |
 | **Platform vision** | UI/GPU/mobile/3D — entirely greenfield, no foundation yet |
