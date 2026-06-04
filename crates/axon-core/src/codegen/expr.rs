@@ -4294,6 +4294,31 @@ impl<'ctx> super::Codegen<'ctx> {
                 return self.ir.builder.build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dfl_call")
                     .unwrap().try_as_basic_value().left();
             }
+            // dict_each(d, f) → (): same runtime-callback as dict_filter but the
+            // result is discarded and nothing is returned (side effects only).
+            // The predicate `fn(str key, i64 val)` works via the [str,i64] hint.
+            if name == "dict_each" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let i8p = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8p.into()], false);
+                self.pending_lambda_param_tys = Some(vec![str_ty.into(), i64_ty.into()]);
+                let lam = match self.emit_expr(&args[1], fn_val)? {
+                    BasicValueEnum::StructValue(s) => s,
+                    _ => { self.pending_lambda_param_tys = None; return None; }
+                };
+                let ptr_ty = i8p;
+                let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "dea_fn").into_pointer_value();
+                let env_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "dea_env").into_pointer_value();
+                let fn_p = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "dea_fp");
+                let env_p = build_wrappers::w_pointer_cast(&self.ir.builder, env_raw, ptr_ty, "dea_ep");
+                let f = self.functions.get("__axon_dict_each").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_each"))?;
+                self.ir.builder.build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dea_call").unwrap();
+                // Unit-returning: produce a placeholder i64 0 (Unit values are
+                // never read; matches how other Unit builtins lower).
+                return Some(i64_ty.const_zero().into());
+            }
             if name == "dict_inc" && args.len() == 2 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;

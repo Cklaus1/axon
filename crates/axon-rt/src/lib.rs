@@ -753,6 +753,37 @@ pub extern "C" fn __axon_dict_filter(
     Arc::into_raw(arc) as *mut c_void
 }
 
+/// Call `f(key, val)` for every entry (BTreeMap key order) for its side effects,
+/// returning nothing — matching the interpreter's `dict_each`. The closure
+/// arrives as (fn_ptr, env), ABI `i64 f(i8* env, AxonStr key, i64 val)` (the i64
+/// result is ignored); the key is passed as an AxonStr over the live String
+/// bytes. Snapshot-first so a callback that mutates the SAME dict can't perturb
+/// the iteration / deadlock on the lock. Null dict → no-op.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_each(
+    d: *mut c_void,
+    fn_ptr: *const c_void,
+    env: *mut c_void,
+) {
+    if d.is_null() {
+        return;
+    }
+    let dict = unsafe { dict_borrow(d) };
+    let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
+    let pairs: Vec<(String, i64)> = {
+        let guard = dict.map.lock().unwrap();
+        guard.iter().map(|(k, v)| {
+            let iv = match v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
+            (k.clone(), iv)
+        }).collect()
+    };
+    for (k, v) in pairs {
+        let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
+        let _ = f(env, key, v);
+    }
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {
