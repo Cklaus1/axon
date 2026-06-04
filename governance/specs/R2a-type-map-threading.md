@@ -1,8 +1,37 @@
 # Tech Spec — R2a: Thread the inferred type map to the back-end (stop re-deriving types)
 
-**Status:** 📋 Draft (2026-06-04) — fork-first. The single deepest structural
-simplification surfaced by the 2026-06-04 architecture review: expression types
-are computed **three times** because Hindley-Milner's result is thrown away.
+**Status:** 🟡 Slice 0 LANDED (2026-06-04); full refactor RE-SCOPED — fork-first.
+The single deepest structural simplification surfaced by the 2026-06-04
+architecture review: expression types are computed **three times** because
+Hindley-Milner's result is thrown away.
+
+**⚠️ Scoping correction (2026-06-04, found during slice 1 prep):** the draft
+below assumed "the AST has spans but no node identity." That is FALSE at the
+`Expr` granularity — `Expr` is a **bare enum with no `span` and no `id` field**
+(only `Stmt` carries a span). So slice 1 ("add `Expr.id`, pure addition,
+behavior-identical") is NOT cheap: giving a bare enum stable identity means a
+struct-wrapper (`Expr { kind, id }`) or a per-variant field, touching a large
+share of the **1,369 `Expr::` construct/match sites across 16 files**. Worse,
+**monomorphization rebuilds the AST** (`main.rs` builds a fresh `concrete`
+Program from `mono.fns` between inference and codegen), so pointer-identity keys
+break and any `ExprId` must be assigned PRE-mono and survive the clone. The full
+thread-the-map refactor is therefore a multi-day, high-blast-radius change — NOT
+an autonomous-loop-sized slice. It should be done deliberately, behind the now-
+landed `parity_all.sh` + `fuzz_parity.sh` safety nets, as its own focused effort.
+
+**Slice 0 (landed, the cheap value):** the codegen heuristic's per-builtin
+*fixed-shape* cases (`arr_range→[i64]`, `dict_keys→[str]`, `dict_values→[i64]`,
+`arr_enumerate/arr_zip→[(i64,i64)]`, `arr_chunk→[[i64]]`, `arr_partition`) were
+moved out of inline `if name == "…"` branches threaded into the 160-line
+`infer_expr_sem_type` and into a single declarative
+`Codegen::fixed_collection_return_type(name) -> Option<Type>` match. This
+captures the most-felt slice of R2a's value — "the file every fixed-shape
+collection builtin must be registered in" is now ONE focused table (a match arm),
+not a branch buried in the heuristic — without the 1,369-site identity rewrite.
+The input-propagating cases (arr_reverse/map/filter/… → same slice type as the
+arg) stay in the heuristic (structural, not constant). Verified native==interp
+on all six fixed shapes; gate.sh --strict green. The HM-type-threading endgame
+remains as below, now correctly budgeted.
 
 **Requirement:** R2 (type system). Cross-cuts R1 (codegen) — it deletes the
 codegen type-guessing heuristic that every collection builtin must be patched

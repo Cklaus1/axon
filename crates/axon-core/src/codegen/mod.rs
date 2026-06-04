@@ -1108,6 +1108,39 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// The FIXED (input-independent) return shape of a collection builtin, or
+    /// `None` if the builtin's result shape depends on its argument (those —
+    /// arr_reverse/map/filter/… — propagate the input slice type and are handled
+    /// in `infer_expr_sem_type` itself).
+    ///
+    /// This is the single place to register a collection builtin whose codegen
+    /// result layout is a constant: adding one is a match arm here, not a new
+    /// `if name == "…"` branch threaded into the 160-line `infer_expr_sem_type`
+    /// heuristic. (A step toward R2a — `governance/specs/R2a-type-map-threading.md`
+    /// — which will ultimately thread the HM-inferred type map to codegen and
+    /// retire this heuristic wholesale; until then, this keeps the per-builtin
+    /// shape data declarative and in one spot, the way R1d did for extern decls.)
+    fn fixed_collection_return_type(name: &str) -> Option<Type> {
+        let i64_slice = || Type::Slice(Box::new(Type::I64));
+        Some(match name {
+            // → [i64] regardless of args
+            "arr_range" | "arr_repeat" | "arr_flatten" => i64_slice(),
+            // → [i64] (v1 int-valued dict)
+            "dict_values" => i64_slice(),
+            // → [str]
+            "dict_keys" => Type::Slice(Box::new(Type::Str)),
+            // → [(i64, i64)] — slice of pairs
+            "arr_enumerate" | "arr_zip" => {
+                Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64])))
+            }
+            // → [[i64]] — slice of i64 slices
+            "arr_chunk" => Type::Slice(Box::new(i64_slice())),
+            // → ([i64], [i64]) — tuple of two slices
+            "arr_partition" => Type::Tuple(vec![i64_slice(), i64_slice()]),
+            _ => return None,
+        })
+    }
+
     /// Heuristic: infer the Axon semantic type of an expression without emitting IR.
     /// Used to populate `local_types` and select Result union layouts.
     fn infer_expr_sem_type(&self, expr: &ast::Expr) -> Option<Type> {
@@ -1125,32 +1158,13 @@ impl<'ctx> Codegen<'ctx> {
                     // fn_return_types) and return `[T]` — propagate the input
                     // arg's slice type so a `let b = arr_reverse(&a)` binding is
                     // indexable (b[i]). The arg may be `&a` (UnaryOp::Ref), peel it.
-                    // arr_range / arr_repeat return [i64] regardless of input
-                    // expr shape — handle them first (their args aren't slices).
-                    if name == "arr_range" || name == "arr_repeat" || name == "arr_flatten" {
-                        return Some(Type::Slice(Box::new(Type::I64)));
-                    }
-                    // dict_keys(d) → [str].
-                    if name == "dict_keys" {
-                        return Some(Type::Slice(Box::new(Type::Str)));
-                    }
-                    // dict_values(d) → [i64] (v1 int-valued).
-                    if name == "dict_values" {
-                        return Some(Type::Slice(Box::new(Type::I64)));
-                    }
-                    // arr_enumerate(&a) / arr_zip(a, b) → [(i64, i64)] — a slice
-                    // of tuples (element type fixed regardless of input shape).
-                    if name == "arr_enumerate" || name == "arr_zip" {
-                        return Some(Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64]))));
-                    }
-                    // arr_chunk(&a, n) → [[i64]] (a slice of i64 slices).
-                    if name == "arr_chunk" {
-                        return Some(Type::Slice(Box::new(Type::Slice(Box::new(Type::I64)))));
-                    }
-                    // arr_partition(&a, pred) → ([i64], [i64]) tuple of slices.
-                    if name == "arr_partition" {
-                        let s = Type::Slice(Box::new(Type::I64));
-                        return Some(Type::Tuple(vec![s.clone(), s]));
+                    //
+                    // Builtins whose result shape is a CONSTANT (arr_range→[i64],
+                    // dict_keys→[str], arr_chunk→[[i64]], …) are single-sourced in
+                    // `fixed_collection_return_type` — registering one is a match
+                    // arm there, not a new branch in this 160-line heuristic.
+                    if let Some(t) = Self::fixed_collection_return_type(name) {
+                        return Some(t);
                     }
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
                         || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
