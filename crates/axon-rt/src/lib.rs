@@ -715,6 +715,44 @@ pub extern "C" fn __axon_dict_to_str(
     }
 }
 
+/// Keep only the entries for which the predicate `f(key, val)` returns true,
+/// returning a FRESH dict (v1 int-valued), matching the interpreter. The
+/// predicate arrives as (fn_ptr, env) — the lambda ABI `i64 f(i8* env, AxonStr
+/// key, i64 val)` now that lambda params are typed (str key = {i64,ptr} struct,
+/// the bool result is i1 widened to i64) — and the runtime indirect-calls it per
+/// entry, passing the key as an AxonStr over the live String bytes. Keys/values
+/// unchanged for kept entries; a null dict → {}.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_filter(
+    d: *mut c_void,
+    fn_ptr: *const c_void,
+    env: *mut c_void,
+) -> *mut c_void {
+    let mut out: StdMap<String, DictVal> = StdMap::new();
+    if !d.is_null() {
+        let dict = unsafe { dict_borrow(d) };
+        let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
+        // Snapshot first (don't hold the lock across the callback; the predicate
+        // can't observe a partial result).
+        let pairs: Vec<(String, DictVal)> = {
+            let guard = dict.map.lock().unwrap();
+            guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        };
+        for (k, v) in pairs {
+            let iv = match &v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
+            let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
+            // i1 result is zero-extended to i64 by the lambda's return site;
+            // truthy = non-zero.
+            if f(env, key, iv) != 0 {
+                out.insert(k, v);
+            }
+        }
+    }
+    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    Arc::into_raw(arc) as *mut c_void
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {

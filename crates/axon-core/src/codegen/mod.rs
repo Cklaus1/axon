@@ -200,6 +200,12 @@ pub struct Codegen<'ctx> {
     /// fires for variables the resolver missed (e.g. names introduced by AST
     /// rewrites after `fill_captures` ran).
     current_lambda_env: Option<(PointerValue<'ctx>, StructType<'ctx>, HashMap<String, u32>)>,
+    /// Expected LLVM parameter types for the NEXT lambda emitted, set by a
+    /// builtin lowering (e.g. dict_filter's `fn(str, i64)` predicate) just before
+    /// emitting an inline `|k, v|` whose params carry no annotation. `emit_lambda`
+    /// consumes (takes) this so it types the params correctly; cleared after.
+    /// `None` (the default) leaves the annotation-or-i64 behavior unchanged.
+    pending_lambda_param_tys: Option<Vec<BasicTypeEnum<'ctx>>>,
     /// Phase 4 `@[adaptive]`: when emitting a function carrying that attribute,
     /// this holds the function name so `log_return_if_adaptive` can log
     /// a "return" event before each early/tail return.
@@ -292,6 +298,7 @@ impl<'ctx> Codegen<'ctx> {
             comptime_env: HashMap::new(),
             loop_stack: Vec::new(),
             current_lambda_env: None,
+            pending_lambda_param_tys: None,
             current_adaptive_fn: None,
             current_adaptive_input: None,
             adaptive_registry_targets: Vec::new(),

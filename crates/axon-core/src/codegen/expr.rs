@@ -1118,17 +1118,21 @@ impl<'ctx> super::Codegen<'ctx> {
             (0..n_captures).map(|_| i64_ty.into()).collect();
         let env_struct_ty = self.ir.context.struct_type(&env_field_tys, false);
 
-        // Each parameter's LLVM type: from its explicit annotation when present
-        // (so a `str` param is the {i64,ptr} struct, an f64 is double, …),
-        // falling back to i64 for an un-annotated `|x|` — which keeps every
-        // existing i64/bool closure (arr_map/filter/fold/…) byte-identical. The
-        // generic closure-call site (emit_call) types the indirect call from the
-        // actual arg values, so the declaration and the call agree.
+        // Each parameter's LLVM type: a caller-supplied hint
+        // (`pending_lambda_param_tys`, set by a builtin lowering like dict_filter
+        // whose `fn(str,V)` sig types an inline `|k,v|`) takes priority, then the
+        // param's explicit annotation, then i64 for an un-annotated `|x|` — which
+        // keeps every existing i64/bool closure byte-identical. The generic
+        // closure-call site types the indirect call from the actual arg values,
+        // so the declaration and the call agree.
+        let hint = self.pending_lambda_param_tys.take();
         let param_llvm_tys: Vec<BasicTypeEnum<'ctx>> = params
             .iter()
-            .map(|p| {
-                p.ty.as_ref()
-                    .and_then(|t| self.llvm_type_from_axon(t))
+            .enumerate()
+            .map(|(i, p)| {
+                hint.as_ref()
+                    .and_then(|h| h.get(i).copied())
+                    .or_else(|| p.ty.as_ref().and_then(|t| self.llvm_type_from_axon(t)))
                     .unwrap_or_else(|| i64_ty.into())
             })
             .collect();
@@ -4261,6 +4265,33 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f = self.functions.get("__axon_dict_map_values").copied()
                     .or_else(|| self.ir.module.get_function("__axon_dict_map_values"))?;
                 return self.ir.builder.build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dmv_call")
+                    .unwrap().try_as_basic_value().left();
+            }
+            // dict_filter(d, pred) → Dict: same runtime-callback lowering as
+            // dict_map_values, but the predicate is `fn(str key, i64 val) -> bool`
+            // (works now that lambda params are typed by annotation) and the
+            // runtime keeps each entry iff the call returns non-zero.
+            if name == "dict_filter" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                // The predicate is `fn(str key, i64 val) -> bool`; hint those
+                // param types so an inline `|k, v|` (no annotations) types `k` as
+                // the str struct and `v` as i64.
+                let i64_ty = self.ir.context.i64_type();
+                let i8p = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8p.into()], false);
+                self.pending_lambda_param_tys = Some(vec![str_ty.into(), i64_ty.into()]);
+                let lam = match self.emit_expr(&args[1], fn_val)? {
+                    BasicValueEnum::StructValue(s) => s,
+                    _ => { self.pending_lambda_param_tys = None; return None; }
+                };
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "dfl_fn").into_pointer_value();
+                let env_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "dfl_env").into_pointer_value();
+                let fn_p = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "dfl_fp");
+                let env_p = build_wrappers::w_pointer_cast(&self.ir.builder, env_raw, ptr_ty, "dfl_ep");
+                let f = self.functions.get("__axon_dict_filter").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_filter"))?;
+                return self.ir.builder.build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dfl_call")
                     .unwrap().try_as_basic_value().left();
             }
             if name == "dict_inc" && args.len() == 2 {

@@ -909,6 +909,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let dmv_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i8_ptr.into()], false);
         self.ir.module.add_function("__axon_dict_map_values", dmv_ty, None);
         self.fn_return_types.insert("dict_map_values".to_string(), Type::Deferred("Dict".to_string()));
+        // i8* __axon_dict_filter(d:i8*, fn_ptr:i8*, env:i8*) → a Dict handle. The
+        // runtime indirect-calls `i64 fn(i8* env, AxonStr key, i64 val)` per entry
+        // (keeps it iff non-zero). Same lowering as dict_map_values.
+        let dfl_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i8_ptr.into()], false);
+        self.ir.module.add_function("__axon_dict_filter", dfl_ty, None);
+        self.fn_return_types.insert("dict_filter".to_string(), Type::Deferred("Dict".to_string()));
         // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
         // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);
