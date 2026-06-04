@@ -1,18 +1,29 @@
 # Tech Spec — R0: Split interp.rs into an interp/ directory (mirror codegen/)
 
-**Status:** 🟡 Slices 1–5 LANDED (2026-06-04). `interp/provenance.rs` (304 LoC,
-`51e5a4e`), `interp/value.rs` (262 LoC, `fe102d0`), `interp/goal.rs` (1069 LoC,
-`53939d5`), `interp/proptest.rs` (the `@[forall]` harness, 199 LoC, `444064d`),
-and `interp/eval.rs` (the core tree-walking evaluator — eval/eval_block/
-eval_call/eval_binop/match_pattern, 579 LoC) extracted — interp.rs **6790 → 4396
-lines (−35%)**, each a pure code move with gate.sh --strict green (parity_all
-21/2/0, the I-2 oracle unchanged). The `interp/` directory now mirrors
-`codegen/`. The eval cluster was clean to move (zero uses of the `ok!`/`want`
-macro — those are local to `call_builtin`; `eval_call`'s call to `call_builtin`
-resolves across the split impl blocks). **Only the `call_builtin` dispatch itself
-(slice "builtins.rs") remains** — the ~2400-line match with the `ok!` macro +
-`want` closure defined inline; splitting it needs the macro-promotion fork
-(below) and is the genuine hard tail.
+**Status:** ✅ COMPLETE — Slices 1–6 LANDED (2026-06-04). The monolith is split:
+`interp/provenance.rs` (304 LoC, `51e5a4e`), `interp/value.rs` (262 LoC,
+`fe102d0`), `interp/goal.rs` (1069 LoC, `53939d5`), `interp/proptest.rs` (199
+LoC, `444064d`), `interp/eval.rs` (579 LoC, `9480382`), and `interp/builtins.rs`
+(the ~2400-line `call_builtin` dispatch, 2517 LoC) extracted — **interp.rs 6790 →
+1885 lines (−72%)**, each a pure code move with gate.sh --strict green (parity_all
+21/2/0, the I-2 oracle byte-identical throughout). The `interp/` directory now
+mirrors `codegen/`.
+
+**The macro-promotion fork turned out to be unnecessary.** The spec assumed the
+`call_builtin` split required promoting `ok!` → module-scope `macro_rules!` and
+`want` → `pub(super) fn`. That is only true if `call_builtin` is split into
+*multiple category sub-methods* (the finer ambition). The minimal correct slice —
+moving `call_builtin` as ONE whole method into a second `impl` block — keeps
+`want`/`ok!` **function-local** (defined inside the method body, they travel with
+it unchanged). `ok!`'s `return Ok(Some($v))` still returns from `call_builtin`
+correctly; `want`'s capture of `args`/`name` is unaffected. Verified: the parent's
+private `Interp` fields (`self.provenance`, `self.ai_cost_micro`, …) resolve from
+the child module (a child sees an ancestor's private items — already proven by
+`goal.rs` accessing `self.fns`/`self.provenance`), and `call_builtin`'s ~30
+`self.<method>` calls (including the already-split `run_goal_warm`/`best_observed`
+in goal.rs) resolve across the split impl blocks. A further category split
+(call_builtin_array/str/dict/asi) is now optional polish, not required for the
+file-size goal, and can be done later behind the same gate if desired.
 
 **Mechanics now proven for BOTH kinds of cluster:**
 - *Free-fn clusters* (provenance, value): moved private free fns become
