@@ -113,6 +113,9 @@ check ck_l   'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = arr_chunk(&a, 
 check ck_i   'fn main() -> i64 { let a = [1, 2, 3, 4, 5]  let b = arr_chunk(&a, 2)  len(b[2]) }'
 check ck_v   'fn main() -> i64 { let a = [10, 20, 30, 40, 50]  let b = arr_chunk(&a, 2)  b[1][0] }'
 check ck_e   'fn main() -> i64 { let a = [1, 2, 3, 4]  let b = arr_chunk(&a, 2)  len(b) }'
+check pt_y   'fn main() -> i64 { let a = [1, 2, 3, 4, 5, 6]  let p = arr_partition(&a, |x| x % 2 == 0)  let y = p.0  arr_sum_i64(&y) }'
+check pt_n   'fn main() -> i64 { let a = [1, 2, 3, 4, 5, 6]  let p = arr_partition(&a, |x| x % 2 == 0)  let no = p.1  arr_sum_i64(&no) }'
+check pt_e   'fn main() -> i64 { let a = [1, 2, 3]  let p = arr_partition(&a, |x| x > 100)  let y = p.0  len(y) }'
 check rng_s   'fn main() -> i64 { let a = arr_range(0, 5)  arr_sum_i64(&a) }'
 check rng_ix  'fn main() -> i64 { let a = arr_range(10, 20)  a[3] }'
 check rng_e   'fn main() -> i64 { let a = arr_range(5, 5)  len(a) }'
@@ -128,5 +131,5 @@ check find_n  'fn main() -> i64 { let a = [1, 2, 3]  match arr_find(&a, |x| x > 
 check find_1  'fn main() -> i64 { let a = [5, 2, 8, 3]  match arr_find(&a, |x| x > 4) { Some(v) => v  None => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
-echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk match the interpreter ✓"
+echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
 exit 0

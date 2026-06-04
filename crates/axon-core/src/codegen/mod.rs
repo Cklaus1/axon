@@ -1142,6 +1142,11 @@ impl<'ctx> Codegen<'ctx> {
                     if name == "arr_chunk" {
                         return Some(Type::Slice(Box::new(Type::Slice(Box::new(Type::I64)))));
                     }
+                    // arr_partition(&a, pred) → ([i64], [i64]) tuple of slices.
+                    if name == "arr_partition" {
+                        let s = Type::Slice(Box::new(Type::I64));
+                        return Some(Type::Tuple(vec![s.clone(), s]));
+                    }
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
                         || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
                         || name == "arr_sort_by" || name == "arr_concat"

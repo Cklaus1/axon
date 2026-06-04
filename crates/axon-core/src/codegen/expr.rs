@@ -1922,6 +1922,101 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_partition(&a, pred) → ([yes], [no]): a `{slice, slice}` tuple of two
+    /// i64 slices. Per element, the predicate lambda routes it to the yes-buffer
+    /// or no-buffer (both over-allocated to len). Returns a 2-slice tuple.
+    fn emit_arr_i64_partition(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let pair_ty = self.ir.context.struct_type(&[slice_ty.into(), slice_ty.into()], false);
+        let one = i64_ty.const_int(1, false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "pt_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "pt_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "pt_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "pt_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "pt_lp").unwrap(), "pt_len").into_int_value();
+        let src_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "pt_dp").unwrap(), "pt_dat").into_pointer_value();
+        let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "pt_si");
+
+        let eight = i64_ty.const_int(8, false);
+        let bytes = build_wrappers::w_int_mul(&self.ir.builder, len, eight, "pt_bytes");
+        let yes_raw = self.emit_malloc(bytes, "pt_yes");
+        let yes = build_wrappers::w_pointer_cast(&self.ir.builder, yes_raw, i64_ty.ptr_type(AddressSpace::default()), "pt_yi");
+        let no_raw = self.emit_malloc(bytes, "pt_no");
+        let no = build_wrappers::w_pointer_cast(&self.ir.builder, no_raw, i64_ty.ptr_type(AddressSpace::default()), "pt_ni");
+        let yc = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pt_yc");
+        build_wrappers::w_store(&self.ir.builder, yc, i64_ty.const_zero().into());
+        let nc = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pt_nc");
+        build_wrappers::w_store(&self.ir.builder, nc, i64_ty.const_zero().into());
+
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pt_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "pt.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "pt.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "pt.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "pt_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "pt_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+        self.ir.builder.position_at_end(body_bb);
+        let ep = unsafe { self.ir.builder.build_gep(i64_ty, src, &[i_cur], "pt_ep").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ep, "pt_e").into_int_value();
+        let r = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "pt_call")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        let yes_bb = self.ir.context.append_basic_block(fn_val, "pt.yes");
+        let no_bb = self.ir.context.append_basic_block(fn_val, "pt.no");
+        let cont_bb = self.ir.context.append_basic_block(fn_val, "pt.cont");
+        let truthy = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "pt_t");
+        build_wrappers::w_cond_br(&self.ir.builder, truthy, yes_bb, no_bb);
+        self.ir.builder.position_at_end(yes_bb);
+        let yw = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), yc, "pt_yw").into_int_value();
+        let yp = unsafe { self.ir.builder.build_gep(i64_ty, yes, &[yw], "pt_yp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, yp, elem.into());
+        build_wrappers::w_store(&self.ir.builder, yc, build_wrappers::w_int_add(&self.ir.builder, yw, one, "pt_yw1").into());
+        build_wrappers::w_br(&self.ir.builder, cont_bb);
+        self.ir.builder.position_at_end(no_bb);
+        let nw = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), nc, "pt_nw").into_int_value();
+        let np = unsafe { self.ir.builder.build_gep(i64_ty, no, &[nw], "pt_np").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, np, elem.into());
+        build_wrappers::w_store(&self.ir.builder, nc, build_wrappers::w_int_add(&self.ir.builder, nw, one, "pt_nw1").into());
+        build_wrappers::w_br(&self.ir.builder, cont_bb);
+        self.ir.builder.position_at_end(cont_bb);
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, one, "pt_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        // exit: build the ({yc, yes}, {nc, no}) pair tuple.
+        self.ir.builder.position_at_end(exit_bb);
+        let yfin = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), yc, "pt_yf").into_int_value();
+        let nfin = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), nc, "pt_nf").into_int_value();
+        let pair = build_wrappers::w_alloca(&self.ir.builder, pair_ty.into(), "pt_pair");
+        // pair.0 = {yfin, yes_i8}
+        let p0 = self.ir.builder.build_struct_gep(pair_ty, pair, 0, "pt_p0").unwrap();
+        build_wrappers::w_store(&self.ir.builder, self.ir.builder.build_struct_gep(slice_ty, p0, 0, "pt_p0l").unwrap(), yfin.into());
+        let yes_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, yes_raw, ptr_ty, "pt_yi8");
+        build_wrappers::w_store(&self.ir.builder, self.ir.builder.build_struct_gep(slice_ty, p0, 1, "pt_p0p").unwrap(), yes_i8.into());
+        // pair.1 = {nfin, no_i8}
+        let p1 = self.ir.builder.build_struct_gep(pair_ty, pair, 1, "pt_p1").unwrap();
+        build_wrappers::w_store(&self.ir.builder, self.ir.builder.build_struct_gep(slice_ty, p1, 0, "pt_p1l").unwrap(), nfin.into());
+        let no_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, no_raw, ptr_ty, "pt_ni8");
+        build_wrappers::w_store(&self.ir.builder, self.ir.builder.build_struct_gep(slice_ty, p1, 1, "pt_p1p").unwrap(), no_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, pair_ty.into(), pair, "pt_res"))
+    }
+
     /// arr_enumerate(&a) → [(i64 idx, i64 val)]. Result is a slice whose
     /// elements are `{i64, i64}` tuples (16-byte stride). dst[i] = (i, src[i]).
     /// Pure IR + malloc. The element type is the tuple, so indexing the result
@@ -3851,6 +3946,15 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     return self.emit_arr_i64_chunk(slice_val, n, fn_val);
+                }
+            }
+            // arr_partition(&a, |x| pred) → ([yes], [no]): a tuple of two i64
+            // slices — elements where the predicate is true / false.
+            if name == "arr_partition" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_partition(slice_val, lam, fn_val);
                 }
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
