@@ -1980,6 +1980,119 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "en_res"))
     }
 
+    /// arr_flatten(&a) — [[i64]] → [i64]. The outer slice's elements are
+    /// `{i64 len, i8* ptr}` slice structs (16-byte stride). Two passes: sum all
+    /// inner lengths → total; malloc total*8; copy each inner slice's i64s into
+    /// the destination, advancing a write cursor. Pure IR + malloc.
+    fn emit_arr_i64_flatten(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        // Unpack outer slice: len = #inner slices, data → array of slice structs.
+        let o_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ft_o");
+        build_wrappers::w_store(&self.ir.builder, o_alloca, slice_val);
+        let olen = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, o_alloca, 0, "ft_olp").unwrap(), "ft_olen").into_int_value();
+        let odata_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, o_alloca, 1, "ft_odp").unwrap(), "ft_odat").into_pointer_value();
+        // Outer data as a pointer to slice structs (16-byte stride).
+        let odata = build_wrappers::w_pointer_cast(&self.ir.builder, odata_raw, slice_ty.ptr_type(AddressSpace::default()), "ft_od");
+
+        // Pass 1: total = Σ inner_len.
+        let total_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ft_total");
+        build_wrappers::w_store(&self.ir.builder, total_slot, i64_ty.const_zero().into());
+        let p1i = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ft_p1i");
+        build_wrappers::w_store(&self.ir.builder, p1i, i64_ty.const_zero().into());
+        let c1 = self.ir.context.append_basic_block(fn_val, "ft.c1");
+        let b1 = self.ir.context.append_basic_block(fn_val, "ft.b1");
+        let e1 = self.ir.context.append_basic_block(fn_val, "ft.e1");
+        build_wrappers::w_br(&self.ir.builder, c1);
+        self.ir.builder.position_at_end(c1);
+        let i1 = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), p1i, "ft_i1").into_int_value();
+        let g1 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i1, olen, "ft_g1");
+        build_wrappers::w_cond_br(&self.ir.builder, g1, b1, e1);
+        self.ir.builder.position_at_end(b1);
+        let inner_p = unsafe { self.ir.builder.build_gep(slice_ty, odata, &[i1], "ft_ip").unwrap() };
+        let il = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, inner_p, 0, "ft_ilp").unwrap(), "ft_il").into_int_value();
+        let cur_t = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), total_slot, "ft_ct").into_int_value();
+        let nt = build_wrappers::w_int_add(&self.ir.builder, cur_t, il, "ft_nt");
+        build_wrappers::w_store(&self.ir.builder, total_slot, nt.into());
+        let n1 = build_wrappers::w_int_add(&self.ir.builder, i1, i64_ty.const_int(1, false), "ft_n1");
+        build_wrappers::w_store(&self.ir.builder, p1i, n1.into());
+        build_wrappers::w_br(&self.ir.builder, c1);
+        self.ir.builder.position_at_end(e1);
+        let total = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), total_slot, "ft_totf").into_int_value();
+
+        // malloc total*8.
+        let eight = i64_ty.const_int(8, false);
+        let bytes = build_wrappers::w_int_mul(&self.ir.builder, total, eight, "ft_bytes");
+        let dst_raw = self.emit_malloc(bytes, "ft_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, i64_ty.ptr_type(AddressSpace::default()), "ft_di");
+
+        // Pass 2: copy, with a write cursor `w`.
+        let w_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ft_w");
+        build_wrappers::w_store(&self.ir.builder, w_slot, i64_ty.const_zero().into());
+        let p2i = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ft_p2i");
+        build_wrappers::w_store(&self.ir.builder, p2i, i64_ty.const_zero().into());
+        let c2 = self.ir.context.append_basic_block(fn_val, "ft.c2");
+        let b2 = self.ir.context.append_basic_block(fn_val, "ft.b2");
+        let e2 = self.ir.context.append_basic_block(fn_val, "ft.e2");
+        build_wrappers::w_br(&self.ir.builder, c2);
+        self.ir.builder.position_at_end(c2);
+        let i2 = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), p2i, "ft_i2").into_int_value();
+        let g2 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i2, olen, "ft_g2");
+        build_wrappers::w_cond_br(&self.ir.builder, g2, b2, e2);
+        self.ir.builder.position_at_end(b2);
+        // Inner slice i2: len + data ptr.
+        let inp = unsafe { self.ir.builder.build_gep(slice_ty, odata, &[i2], "ft_inp").unwrap() };
+        let inlen = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, inp, 0, "ft_inlp").unwrap(), "ft_inlen").into_int_value();
+        let indat_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, inp, 1, "ft_indp").unwrap(), "ft_indat").into_pointer_value();
+        let indat = build_wrappers::w_pointer_cast(&self.ir.builder, indat_raw, i64_ty.ptr_type(AddressSpace::default()), "ft_ind");
+        // Inner copy loop j in 0..inlen: dst[w]=inner[j]; w++.
+        let js = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ft_j");
+        build_wrappers::w_store(&self.ir.builder, js, i64_ty.const_zero().into());
+        let jc = self.ir.context.append_basic_block(fn_val, "ft.jc");
+        let jb = self.ir.context.append_basic_block(fn_val, "ft.jb");
+        let je = self.ir.context.append_basic_block(fn_val, "ft.je");
+        build_wrappers::w_br(&self.ir.builder, jc);
+        self.ir.builder.position_at_end(jc);
+        let jcur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), js, "ft_jc").into_int_value();
+        let jg = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, jcur, inlen, "ft_jg");
+        build_wrappers::w_cond_br(&self.ir.builder, jg, jb, je);
+        self.ir.builder.position_at_end(jb);
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, indat, &[jcur], "ft_sp").unwrap() };
+        let sv = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "ft_sv");
+        let wcur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), w_slot, "ft_wc").into_int_value();
+        let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst, &[wcur], "ft_dp2").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, dp, sv);
+        let wn = build_wrappers::w_int_add(&self.ir.builder, wcur, i64_ty.const_int(1, false), "ft_wn");
+        build_wrappers::w_store(&self.ir.builder, w_slot, wn.into());
+        let jn = build_wrappers::w_int_add(&self.ir.builder, jcur, i64_ty.const_int(1, false), "ft_jn");
+        build_wrappers::w_store(&self.ir.builder, js, jn.into());
+        build_wrappers::w_br(&self.ir.builder, jc);
+        self.ir.builder.position_at_end(je);
+        let n2 = build_wrappers::w_int_add(&self.ir.builder, i2, i64_ty.const_int(1, false), "ft_n2");
+        build_wrappers::w_store(&self.ir.builder, p2i, n2.into());
+        build_wrappers::w_br(&self.ir.builder, c2);
+        self.ir.builder.position_at_end(e2);
+
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ft_out");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "ft_ol").unwrap(), total.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "ft_di8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "ft_op").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ft_res"))
+    }
+
     /// arr_zip(a, b) → [(a[i], b[i])] for i in 0..min(len_a, len_b). Result is
     /// a slice of {i64, i64} tuples (16-byte stride). Pure IR + malloc.
     fn emit_arr_i64_zip(
@@ -3609,6 +3722,13 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     return self.emit_arr_i64_zip(a_slice, b_slice, fn_val);
+                }
+            }
+            // arr_flatten(&a) — [[i64]] → [i64]. Outer slice has 16-byte
+            // {i64 len, ptr} slice-struct elements; concatenate all inner i64s.
+            if name == "arr_flatten" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_i64_flatten(slice_val, fn_val);
                 }
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
