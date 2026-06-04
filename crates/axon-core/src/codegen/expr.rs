@@ -53,6 +53,21 @@ enum PredReduce {
     Any,
 }
 
+/// How `emit_arr_i64_closure` turns the per-element lambda result into output.
+#[derive(Clone, Copy, PartialEq)]
+enum ClosureMode {
+    /// `arr_map`: dst[i] = lambda(elem); result len = src len.
+    Map,
+    /// `arr_filter`: keep elem where lambda(elem) != 0; result len = #kept.
+    Filter,
+    /// `arr_take_while`: keep the leading prefix while lambda(elem) != 0; stop
+    /// (keep nothing further) at the first element that fails.
+    TakeWhile,
+    /// `arr_drop_while`: skip the leading prefix while lambda(elem) != 0; once an
+    /// element fails, keep it and every element after.
+    DropWhile,
+}
+
 /// Reduction kind for `emit_arr_i64_loop` — a counted loop over an i64 slice.
 enum ArrReduce<'ctx> {
     /// Σ of all elements (i64 result).
@@ -1690,12 +1705,13 @@ impl<'ctx> super::Codegen<'ctx> {
         &mut self,
         slice_val: BasicValueEnum<'ctx>,
         lam: inkwell::values::StructValue<'ctx>,
-        is_map: bool,
+        mode: ClosureMode,
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let is_map = mode == ClosureMode::Map;
 
         // Extract the lambda fn ptr + env ptr from the fat pointer.
         let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "cl_fn").into_pointer_value();
@@ -1733,6 +1749,11 @@ impl<'ctx> super::Codegen<'ctx> {
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
         let w_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "cl_w");
         build_wrappers::w_store(&self.ir.builder, w_slot, i64_ty.const_zero().into());
+        // take_while/drop_while: a one-way "transition done" flag. For TakeWhile
+        // it latches to 1 at the first failing element (stop keeping). For
+        // DropWhile it latches to 1 at the first failing element (start keeping).
+        let done_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "cl_done");
+        build_wrappers::w_store(&self.ir.builder, done_slot, i64_ty.const_zero().into());
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "cl.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "cl.body");
@@ -1758,10 +1779,36 @@ impl<'ctx> super::Codegen<'ctx> {
             let dp = unsafe { self.ir.builder.build_gep(i64_ty, dst_i64, &[i_cur], "cl_dp").unwrap() };
             build_wrappers::w_store(&self.ir.builder, dp, r.into());
         } else {
-            // filter: keep where the predicate is truthy (r != 0). r is the
-            // i64-widened predicate result.
-            let keep = build_wrappers::w_int_compare(
-                &self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "cl_keep");
+            // r is the i64-widened predicate result; pred = (r != 0).
+            let pred = build_wrappers::w_int_compare(
+                &self.ir.builder, inkwell::IntPredicate::NE, r, i64_ty.const_zero(), "cl_pred");
+            // Decide `keep` (whether to append elem) per mode:
+            //   Filter:    keep = pred
+            //   TakeWhile: keep = !done && pred; latch done when !pred
+            //   DropWhile: keep = done || !pred; latch done when !pred
+            let keep = match mode {
+                ClosureMode::Filter => pred,
+                ClosureMode::TakeWhile | ClosureMode::DropWhile => {
+                    let done = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), done_slot, "cl_dn").into_int_value();
+                    let done_b = build_wrappers::w_int_compare(
+                        &self.ir.builder, inkwell::IntPredicate::NE, done, i64_ty.const_zero(), "cl_dnb");
+                    // Latch done on the first failing element (!pred): done |= !pred.
+                    let not_pred = self.ir.builder.build_not(pred, "cl_npred").unwrap();
+                    let new_done = self.ir.builder.build_or(done_b, not_pred, "cl_ndn").unwrap();
+                    let new_done_i = build_wrappers::w_int_z_extend(&self.ir.builder, new_done, i64_ty, "cl_ndni");
+                    build_wrappers::w_store(&self.ir.builder, done_slot, new_done_i.into());
+                    if mode == ClosureMode::TakeWhile {
+                        // keep = pred && !was-already-done (use the PRE-update done)
+                        let not_done = self.ir.builder.build_not(done_b, "cl_ntd").unwrap();
+                        self.ir.builder.build_and(pred, not_done, "cl_tw").unwrap()
+                    } else {
+                        // DropWhile: keep = new_done (true once we've stopped
+                        // dropping, i.e. at and after the first failing element).
+                        new_done
+                    }
+                }
+                ClosureMode::Map => unreachable!(),
+            };
             let keep_bb = self.ir.context.append_basic_block(fn_val, "cl.keep");
             let skip_bb = self.ir.context.append_basic_block(fn_val, "cl.skip");
             build_wrappers::w_cond_br(&self.ir.builder, keep, keep_bb, skip_bb);
@@ -4113,12 +4160,23 @@ impl<'ctx> super::Codegen<'ctx> {
             // CLOSURE-taking arr_* lowerings. The 2nd arg is a lambda fat-pointer
             // `{i8* fn, i8* env}`; per element we indirect-call `fn(env, elem)`.
             // map → mapped value into the result; filter → keep where pred true.
-            if (name == "arr_map" || name == "arr_filter") && args.len() == 2 {
+            // map → mapped value; filter → keep where pred true; take_while →
+            // keep the leading pred-true prefix; drop_while → keep from the first
+            // pred-false element on. All four share emit_arr_i64_closure (a bool
+            // predicate is the i64-widened lambda result, read back as != 0).
+            if matches!(name.as_str(), "arr_map" | "arr_filter" | "arr_take_while" | "arr_drop_while")
+                && args.len() == 2
+            {
                 if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
-                    let is_map = name == "arr_map";
-                    if let Some(r) = self.emit_arr_i64_closure(slice_val, lam, is_map, fn_val) {
+                    let cmode = match name.as_str() {
+                        "arr_map" => ClosureMode::Map,
+                        "arr_filter" => ClosureMode::Filter,
+                        "arr_take_while" => ClosureMode::TakeWhile,
+                        _ => ClosureMode::DropWhile,
+                    };
+                    if let Some(r) = self.emit_arr_i64_closure(slice_val, lam, cmode, fn_val) {
                         return Some(r);
                     }
                 }

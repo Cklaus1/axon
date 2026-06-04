@@ -133,6 +133,13 @@ check ixof_s  'fn main() -> i64 { let a = [10, 20, 30]  match arr_index_of(&a, 3
 check ixof_n  'fn main() -> i64 { let a = [10, 20, 30]  match arr_index_of(&a, 99) { Some(i) => i  None => 0 - 1 } }'
 check ixof_1st 'fn main() -> i64 { let a = [7, 4, 7, 4]  match arr_index_of(&a, 4) { Some(i) => i  None => 0 - 1 } }'
 check ixof_e  'fn main() -> i64 { let a = arr_range(0, 0)  match arr_index_of(&a, 5) { Some(i) => i  None => 0 - 1 } }'
+check tw_l    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_take_while(&a, |x| x % 2 == 0)  len(b) }'
+check tw_s    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_take_while(&a, |x| x % 2 == 0)  arr_sum_i64(&b) }'
+check tw_none 'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_take_while(&a, |x| x > 100)  len(b) }'
+check dw_l    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_while(&a, |x| x % 2 == 0)  len(b) }'
+check dw_s    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_while(&a, |x| x % 2 == 0)  arr_sum_i64(&b) }'
+check dw_1st  'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_while(&a, |x| x % 2 == 0)  b[0] }'
+check dw_all  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_drop_while(&a, |x| x > 0)  len(b) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
