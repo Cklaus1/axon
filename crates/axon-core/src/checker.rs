@@ -642,7 +642,7 @@ impl CheckCtx {
                     CheckError::new(
                         E1505,
                         format!(
-                            "`#[goal(strategy: {bad})]` — unknown strategy; expected one of \
+                            "`@[goal(strategy: {bad})]` — unknown strategy; expected one of \
                              hill_climb | random | multistart | tournament | bayesian"
                         ),
                     )

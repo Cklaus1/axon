@@ -587,7 +587,7 @@ impl<'a> Resolver<'a> {
                     Diagnostic::info(
                         I0001,
                         format!(
-                            "`#[{}]` is a deferred Axon attribute; it is recognised by the \
+                            "`@[{}]` is a deferred Axon attribute; it is recognised by the \
                              runtime but not resolved by the Phase-1 compiler",
                             attr.name
                         ),
@@ -598,7 +598,7 @@ impl<'a> Resolver<'a> {
                 self.emit_warning(
                     Diagnostic::warning(
                         "W0001",
-                        format!("unknown attribute `#[{}]`", attr.name),
+                        format!("unknown attribute `@[{}]`", attr.name),
                     )
                     .with_file(self.file),
                 );
@@ -1673,6 +1673,12 @@ mod tests {
         let result = resolve_program(&prog, "test.ax");
         let w0001s = warnings_with_code(&result, "W0001");
         assert!(!w0001s.is_empty(), "expected W0001 for unknown attribute, got: {:?}", result.warnings);
+        // The message must use Axon's `@[...]` attribute syntax, not Rust's `#[...]`.
+        assert!(
+            w0001s[0].contains("@[totally_unknown]") && !w0001s[0].contains("#["),
+            "W0001 must name the attribute in Axon `@[...]` syntax, got: {}",
+            w0001s[0]
+        );
     }
 
     #[test]
