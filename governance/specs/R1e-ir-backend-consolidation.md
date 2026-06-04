@@ -1,6 +1,12 @@
 # Tech Spec — R1e: IR-Backend Consolidation (one IR-emission path)
 
-**Status:** 📋 Draft (2026-06-04) — the cleanup that retires a dead abstraction
+**Status:** 🟡 Slice 1 LANDED (2026-06-04, `dfe4836`) — the dead `IR` trait +
+arena shim is DELETED (~1200 LoC removed: `codegen/ir.rs` gone, `ir_inkwell.rs`
+1003→73 lines). Single real IR path = `self.ir.{context,module,builder}` +
+`build_wrappers::w_*`; stale IR.3/IR.4 comments rewritten; MIGRATION.md /
+IR_REARCH.md marked SUPERSEDED. Remaining: slice 2 — converge the 154 `expr.rs`
+direct-`build_*` stragglers onto `w_*` + add a grep drift-tripwire.
+— the cleanup that retires a dead abstraction
 and collapses the codegen IR surface to ONE path.
 **Requirement:** R1 (native pipeline). Sibling to `R1d-single-source-builtins.md`
 (which single-sources *builtins*); this one single-sources the *IR-emission
