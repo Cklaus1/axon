@@ -214,7 +214,10 @@ pub extern "C" fn __axon_select(chans: *mut *mut c_void, n: i64) -> i64 {
 // Payload: an i64 for Int, the f64 bit-pattern for Float, or a pointer to a
 // heap `String` (boxed) for Str — the dict owns the Str copy.
 
-use std::collections::HashMap as StdHashMap;
+// BTreeMap (NOT HashMap) so key-iteration order matches the interpreter's Dict
+// (`Rc<RefCell<BTreeMap>>`) — dict_keys/values/to_pairs return entries in sorted
+// key order, which the parity harnesses depend on.
+use std::collections::BTreeMap as StdMap;
 
 #[derive(Clone)]
 enum DictVal {
@@ -224,13 +227,13 @@ enum DictVal {
 }
 
 struct Dict {
-    map: Mutex<StdHashMap<String, DictVal>>,
+    map: Mutex<StdMap<String, DictVal>>,
 }
 
 /// Create an empty dict. Opaque handle to an `Arc<Dict>`.
 #[no_mangle]
 pub extern "C" fn __axon_dict_new() -> *mut c_void {
-    let arc = Arc::new(Dict { map: Mutex::new(StdHashMap::new()) });
+    let arc = Arc::new(Dict { map: Mutex::new(StdMap::new()) });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -399,6 +402,47 @@ pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
     let next = cur + 1;
     guard.insert(k, DictVal::Int(next));
     next
+}
+
+/// Collect the keys into a fresh `[str]` slice (BTreeMap order). Writes the
+/// slice's `{len, data}` via out-params: `*out_len` = #keys, `*out_data` = a
+/// malloc'd array of `AxonStr` structs (each key's bytes also malloc'd +
+/// null-terminated). The codegen assembles the `{i64,ptr}` slice from these.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_keys(
+    d: *mut c_void,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    if d.is_null() {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let dict = unsafe { dict_borrow(d) };
+    let guard = dict.map.lock().unwrap();
+    let n = guard.len();
+    if n == 0 {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    // Array of AxonStr ({i64,ptr} = 16 bytes each).
+    let elem_size = std::mem::size_of::<AxonStr>();
+    let arr = unsafe { libc_malloc(elem_size * n) } as *mut AxonStr;
+    for (i, k) in guard.keys().enumerate() {
+        let len = k.len();
+        let buf = unsafe {
+            let p = libc_malloc(len + 1);
+            std::ptr::copy_nonoverlapping(k.as_ptr(), p, len);
+            *p.add(len) = 0;
+            p
+        };
+        unsafe { *arr.add(i) = AxonStr { len: len as i64, ptr: buf }; }
+    }
+    unsafe {
+        *out_len = n as i64;
+        *out_data = arr as *mut u8;
+    }
 }
 
 /// Drop the dict handle (Arc decref).

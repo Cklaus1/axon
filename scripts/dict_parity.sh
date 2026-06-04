@@ -49,7 +49,10 @@ check getor_mis 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dic
 check rm_some   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "k") { Some(v) => v  None => 0 - 1 } }'
 check rm_none   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "z") { Some(v) => v  None => 0 - 1 } }'
 check rm_len    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  dict_remove(d, "a")  dict_len(d) }'
+check keys_len  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let ks = dict_keys(d)  len(ks) }'
+check keys_sort 'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 1)  dict_set(d, "apple", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'
+check keys_ord  'fn main() -> i64 { let d = dict_new()  dict_set(d, "bb", 1)  dict_set(d, "a", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove (int values) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys (int values, BTreeMap order) match the interpreter ✓"
 exit 0

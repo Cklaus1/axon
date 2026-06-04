@@ -3828,6 +3828,27 @@ impl<'ctx> super::Codegen<'ctx> {
                     .or_else(|| self.ir.module.get_function("__axon_dict_len"))?;
                 return self.ir.builder.build_call(f, &[d.into()], "dict_len").unwrap().try_as_basic_value().left();
             }
+            // dict_keys(d) → [str]: the runtime mallocs an array of AxonStr +
+            // each key's bytes; codegen wraps it in a {len, ptr} slice struct.
+            if name == "dict_keys" && args.len() == 1 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dk_len");
+                let data_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "dk_data");
+                let f = self.functions.get("__axon_dict_keys").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_keys"))?;
+                self.ir.builder.build_call(f, &[d.into(), len_slot.into(), data_slot.into()], "dk_call").unwrap();
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_slot, "dk_l").into_int_value();
+                let data = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_slot, "dk_d").into_pointer_value();
+                let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "dk_out");
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 0, "dk_ol").unwrap(), len.into());
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 1, "dk_op").unwrap(), data.into());
+                return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "dk_res"));
+            }
             if name == "dict_inc" && args.len() == 2 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;
