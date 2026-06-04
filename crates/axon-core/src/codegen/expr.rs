@@ -1179,6 +1179,15 @@ impl<'ctx> super::Codegen<'ctx> {
                         BasicValueEnum::IntValue(iv) if iv.get_type().get_bit_width() < 64 => {
                             build_wrappers::w_int_z_extend(&self.ir.builder, iv, i64_ty, "lam_ret_zext").into()
                         }
+                        // An f64-bodied lambda (e.g. a numeric `key_fn` for
+                        // arr_max_by/min_by) is transported through the uniform
+                        // i64-return ABI by BITCASTING its bits to i64 (a pure
+                        // reinterpret — no value change). The caller bitcasts the
+                        // i64 back to f64 to recover the key. Keeps every lambda's
+                        // ABI i64-return without an f64-specific function type.
+                        BasicValueEnum::FloatValue(fv) => {
+                            self.ir.builder.build_bitcast(fv, i64_ty, "lam_ret_f2i").unwrap()
+                        }
                         other => other,
                     };
                     build_wrappers::w_ret(&self.ir.builder, coerced);
@@ -1768,6 +1777,105 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.build_struct_gep(slice_ty, out, 1, "ps_optr").unwrap(),
             dst_i8.into());
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ps_res"))
+    }
+
+    /// arr_max_by / arr_min_by(&a, key_fn) → the i64 ELEMENT that maximizes
+    /// (resp. minimizes) the numeric key. `key_fn` returns f64, transported
+    /// through the i64 lambda ABI as bitcast bits; we bitcast back to f64 to
+    /// compare. STRICT compare so the FIRST best element wins ties (interp
+    /// parity). Empty array → exit(101), matching the interpreter's panic.
+    fn emit_arr_i64_max_by(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        lam: inkwell::values::StructValue<'ctx>,
+        is_max: bool,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let f64_ty = self.ir.context.f64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+
+        let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "mb_fn").into_pointer_value();
+        let env_ptr = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "mb_env").into_pointer_value();
+        let fn_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "mb_fp");
+        let indirect_ty = i64_ty.fn_type(&[ptr_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "mb_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(
+            &self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "mb_lenp").unwrap(),
+            "mb_len").into_int_value();
+        let src_raw = build_wrappers::w_load(
+            &self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "mb_datp").unwrap(),
+            "mb_dat").into_pointer_value();
+        let src_i64 = build_wrappers::w_pointer_cast(
+            &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "mb_srci");
+
+        // Empty → exit(101), matching the interpreter panic.
+        let empty_bb = self.ir.context.append_basic_block(fn_val, "mb.empty");
+        let nonempty_bb = self.ir.context.append_basic_block(fn_val, "mb.nonempty");
+        let is_empty = build_wrappers::w_int_compare(
+            &self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "mb_isempty");
+        build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, nonempty_bb);
+        self.ir.builder.position_at_end(empty_bb);
+        if let Some(exit_fn) = self.ir.module.get_function("exit") {
+            let code = self.ir.context.i32_type().const_int(101, false);
+            build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
+        }
+        self.ir.builder.build_unreachable().unwrap();
+        self.ir.builder.position_at_end(nonempty_bb);
+
+        // Helper to compute the f64 key of element at index `i`.
+        // best_val (the element) + best_key (its f64 key); init from element 0.
+        let best_val_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "mb_bv");
+        let best_key_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "mb_bk");
+        let e0p = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i64_ty.const_zero()], "mb_e0p").unwrap() };
+        let e0 = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), e0p, "mb_e0").into_int_value();
+        let k0_i = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), e0.into()], "mb_k0c")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        let k0 = self.ir.builder.build_bitcast(k0_i, f64_ty, "mb_k0").unwrap().into_float_value();
+        build_wrappers::w_store(&self.ir.builder, best_val_slot, e0.into());
+        build_wrappers::w_store(&self.ir.builder, best_key_slot, k0.into());
+
+        // for i in 1..len: k = bitcast(key_fn(elem)); if strictly better, update.
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "mb_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_int(1, false).into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "mb.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "mb.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "mb.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "mb_ic").into_int_value();
+        let in_range = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "mb_inr");
+        build_wrappers::w_cond_br(&self.ir.builder, in_range, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let ep = unsafe { self.ir.builder.build_gep(i64_ty, src_i64, &[i_cur], "mb_ep").unwrap() };
+        let elem = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), ep, "mb_e").into_int_value();
+        let k_i = self.ir.builder
+            .build_indirect_call(indirect_ty, fn_ptr, &[env_ptr.into(), elem.into()], "mb_kc")
+            .unwrap().try_as_basic_value().left()?.into_int_value();
+        let k = self.ir.builder.build_bitcast(k_i, f64_ty, "mb_k").unwrap().into_float_value();
+        let best_key = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), best_key_slot, "mb_bkl").into_float_value();
+        // STRICT: max uses OGT, min uses OLT → first best wins ties (interp parity).
+        let pred = if is_max { inkwell::FloatPredicate::OGT } else { inkwell::FloatPredicate::OLT };
+        let better = self.ir.builder.build_float_compare(pred, k, best_key, "mb_better").unwrap();
+        let cur_val = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_val_slot, "mb_cv").into_int_value();
+        let new_val = self.ir.builder.build_select(better, elem, cur_val, "mb_nv").unwrap().into_int_value();
+        let new_key = self.ir.builder.build_select(better, k, best_key, "mb_nk").unwrap().into_float_value();
+        build_wrappers::w_store(&self.ir.builder, best_val_slot, new_val.into());
+        build_wrappers::w_store(&self.ir.builder, best_key_slot, new_key.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "mb_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        Some(build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_val_slot, "mb_res"))
     }
 
     /// arr_map / arr_filter on an i64 slice with a lambda fat-pointer `{i8* fn,
@@ -4261,6 +4369,19 @@ impl<'ctx> super::Codegen<'ctx> {
                         _ => ClosureMode::DropWhile,
                     };
                     if let Some(r) = self.emit_arr_i64_closure(slice_val, lam, cmode, fn_val) {
+                        return Some(r);
+                    }
+                }
+            }
+            // arr_max_by / arr_min_by(&a, key_fn) → the i64 element maximizing /
+            // minimizing the f64 key. key_fn returns f64, transported through the
+            // i64 lambda ABI as bitcast bits (recovered with a bitcast back).
+            if (name == "arr_max_by" || name == "arr_min_by") && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::StructValue(lam))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    let is_max = name == "arr_max_by";
+                    if let Some(r) = self.emit_arr_i64_max_by(slice_val, lam, is_max, fn_val) {
                         return Some(r);
                     }
                 }

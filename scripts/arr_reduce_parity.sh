@@ -145,6 +145,10 @@ check push_t  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_push(&a, 7)  b[
 check push_s  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_push(&a, 4)  arr_sum_i64(&b) }'
 check push_e  'fn main() -> i64 { let a = arr_range(0, 0)  let b = arr_push(&a, 9)  b[0] }'
 check push_cp 'fn main() -> i64 { let a = [1, 2]  let b = arr_push(&a, 3)  len(a) }'
+check maxby_v 'fn main() -> i64 { let a = [3, 1, 4, 1, 5, 9, 2]  arr_max_by(&a, |x| i64_to_f64(x)) }'
+check minby_v 'fn main() -> i64 { let a = [3, 1, 4, 1, 5, 9, 2]  arr_min_by(&a, |x| i64_to_f64(x)) }'
+check maxby_n 'fn main() -> i64 { let a = [3, 1, 4, 9, 2]  arr_max_by(&a, |x| i64_to_f64(0 - x)) }'
+check maxby_t 'fn main() -> i64 { let a = [5, 3, 5, 1]  arr_max_by(&a, |x| i64_to_f64(x)) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
