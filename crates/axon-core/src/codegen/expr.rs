@@ -1112,11 +1112,23 @@ impl<'ctx> super::Codegen<'ctx> {
         let closure_ty = self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false);
 
         // ── Build the env struct type for captures ────────────────────
-        // All captured variables are stored as i64 (Phase 4 limitation).
+        // Each captured variable's env slot uses its ACTUAL LLVM type, read from
+        // the caller's locals (still in scope here — `self.locals` is saved
+        // below). This lets a pointer (e.g. a Dict handle), f64, or str capture
+        // round-trip instead of being forced through an i64 slot (which crashed
+        // IR-verification when the body used it as its real type). A capture the
+        // caller doesn't have a local for falls back to i64 (the old default).
         let n_captures = captures.len();
-        let env_field_tys: Vec<BasicTypeEnum<'ctx>> =
-            (0..n_captures).map(|_| i64_ty.into()).collect();
-        let env_struct_ty = self.ir.context.struct_type(&env_field_tys, false);
+        let capture_llvm_tys: Vec<BasicTypeEnum<'ctx>> = captures
+            .iter()
+            .map(|(name, _)| {
+                self.locals
+                    .get(name.as_str())
+                    .map(|&(_, ty)| ty)
+                    .unwrap_or_else(|| i64_ty.into())
+            })
+            .collect();
+        let env_struct_ty = self.ir.context.struct_type(&capture_llvm_tys, false);
 
         // Each parameter's LLVM type: a caller-supplied hint
         // (`pending_lambda_param_tys`, set by a builtin lowering like dict_filter
@@ -1167,7 +1179,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 let field_ptr = self.ir.builder
                     .build_struct_gep(env_struct_ty, env_ptr_arg, idx as u32, cap_name)
                     .unwrap();
-                self.locals.insert(cap_name.clone(), (field_ptr, i64_ty.into()));
+                self.locals.insert(cap_name.clone(), (field_ptr, capture_llvm_tys[idx]));
                 capture_idx_map.insert(cap_name.clone(), idx as u32);
             }
         }
@@ -1240,10 +1252,13 @@ impl<'ctx> super::Codegen<'ctx> {
                 let ty = ptr_ty.fn_type(&[i64_ty.into()], false);
                 self.ir.module.add_function("malloc", ty, None)
             });
-            let env_size = i64_ty.const_int(
-                (n_captures * 8) as u64, // 8 bytes per i64
-                false,
-            );
+            // Size the env buffer by the ACTUAL struct (its fields now have their
+            // real types, so a str/ptr capture is wider than 8 bytes). `size_of`
+            // returns an i64 including alignment padding — exactly what the
+            // `build_struct_gep` field offsets below assume.
+            let env_size = env_struct_ty
+                .size_of()
+                .unwrap_or_else(|| i64_ty.const_int((n_captures * 8) as u64, false));
             let raw = self.ir.builder
                 .build_call(malloc_fn, &[self.msize(env_size, "msz").into()], "env_alloc")
                 .unwrap()

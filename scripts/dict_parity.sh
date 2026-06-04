@@ -77,6 +77,7 @@ check fl_key   'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 1)  dict
 check fl_get   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 5)  dict_set(d, "b", 20)  let f = dict_filter(d, |k, v| v > 10)  match dict_get(f, "b") { Some(v) => v  None => 0 - 1 } }'
 check fl_cp    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 5)  let f = dict_filter(d, |k, v| v > 100)  dict_len(d) }'
 check ea_run   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "bb", 2)  dict_each(d, |k, v| println(to_str(str_len(k) + v)))  0 }'
+check ea_cap   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 10)  dict_set(d, "b", 20)  let sink = dict_new()  dict_each(d, |k, v| { dict_set(sink, k, v * 2)  0 })  match dict_get(sink, "b") { Some(x) => x  None => 0 - 1 } }'
 check ts_len   'fn main() -> i64 { let d = dict_new()  dict_set(d, "apple", 1)  dict_set(d, "banana", 2)  match dict_to_str(d) { Ok(s) => str_len(s)  Err(e) => 0 - 1 } }'
 check ts_ok    'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 5)  match dict_to_str(d) { Ok(s) => 1  Err(e) => 0 } }'
 check ts_err   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k=v", 1)  match dict_to_str(d) { Ok(s) => 0  Err(e) => 1 } }'
