@@ -36,10 +36,9 @@ pub(super) enum L {
     Str,
     /// Opaque `i8*` (e.g. a Dict handle).
     Ptr,
-    /// `void` — return slot only. No slice-1 row uses it yet (the void-returning
-    /// dict_set has bespoke lowering), but it's part of the shape vocabulary the
-    /// later batches will need.
-    #[allow(dead_code)]
+    /// `void` — return slot only (e.g. `sleep_ms(i64) -> ()`). Paired with
+    /// `SemRet::Unit`. The void-returning dict_set keeps its bespoke call-site
+    /// lowering and is NOT a row.
     Void,
 }
 
@@ -54,6 +53,8 @@ pub(super) enum SemRet {
     I32,
     F64,
     Bool,
+    /// `Type::Unit` — the `()` return of a void extern (e.g. `sleep_ms`).
+    Unit,
     /// `Type::Deferred("Dict")` — the opaque Dict handle.
     DictHandle,
 }
@@ -65,6 +66,7 @@ impl SemRet {
             SemRet::I32 => Type::I32,
             SemRet::F64 => Type::F64,
             SemRet::Bool => Type::Bool,
+            SemRet::Unit => Type::Unit,
             SemRet::DictHandle => Type::Deferred("Dict".to_string()),
         }
     }
@@ -128,6 +130,10 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
     ExternSig { axon_name: "dict_has", symbol: "__axon_dict_has", params: &[L::Ptr, L::Str],  ret: L::I1,   fn_key: None, ret_type: Some(("dict_has", SemRet::Bool)) },
     ExternSig { axon_name: "dict_len", symbol: "__axon_dict_len", params: &[L::Ptr],          ret: L::I64,  fn_key: None, ret_type: Some(("dict_len", SemRet::I64)) },
     ExternSig { axon_name: "dict_inc", symbol: "__axon_dict_inc", params: &[L::Ptr, L::Str],  ret: L::I64,  fn_key: None, ret_type: Some(("dict_inc", SemRet::I64)) },
+
+    // ── time builtins (Phase 4) ─────────────────────────────────────────────
+    ExternSig { axon_name: "sleep_ms", symbol: "__axon_sleep_ms", params: &[L::I64], ret: L::Void, fn_key: Some("sleep_ms"), ret_type: Some(("sleep_ms", SemRet::Unit)) },
+    ExternSig { axon_name: "now_ms",   symbol: "__axon_now_ms",   params: &[],       ret: L::I64,  fn_key: Some("now_ms"),   ret_type: Some(("now_ms",   SemRet::I64)) },
 ];
 
 impl<'ctx> super::Codegen<'ctx> {

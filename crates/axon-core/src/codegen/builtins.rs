@@ -1009,21 +1009,9 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("assert_eq_str".to_string(), Type::Unit);
         }
 
-        // ── Phase 4: time builtins ─────────────────────────────────────────────
-        {
-            let i64_ty = self.ir.context.i64_type();
-            // sleep_ms(ms: i64) -> ()
-            let sleep_ty = void_ty.fn_type(&[i64_ty.into()], false);
-            let sleep_fn = self.ir.module.add_function("__axon_sleep_ms", sleep_ty, None);
-            self.functions.insert("sleep_ms".to_string(), sleep_fn);
-            self.fn_return_types.insert("sleep_ms".to_string(), Type::Unit);
-
-            // now_ms() -> i64
-            let now_ty = i64_ty.fn_type(&[], false);
-            let now_fn = self.ir.module.add_function("__axon_now_ms", now_ty, None);
-            self.functions.insert("now_ms".to_string(), now_fn);
-            self.fn_return_types.insert("now_ms".to_string(), Type::I64);
-        }
+        // ── Phase 4: time builtins (sleep_ms / now_ms) ─────────────────────────
+        // Migrated to the BUILTIN_EXTERNS registry (R1d slice 2) — see
+        // builtin_externs.rs; declared by `declare_builtin_externs` above.
 
         // ── Layer-1 ASI: Uncertain<i64> / Temporal<i64> builtins ───────────────
         // V1 monomorphisation on i64 (PRD AI_Language_Plan.md lines 1360-1467).
