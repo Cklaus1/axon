@@ -1788,6 +1788,37 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
 }
 
 #[test]
+fn build_aborts_on_str_param_lambda_e0910_not_ir_crash() {
+    // A lambda with an explicit non-i64 parameter type (here `str`) does not fit
+    // the i64 closure ABI. Native codegen used to emit it anyway and crash with a
+    // raw "IR verification failed" — an opaque internal error. It must now abort
+    // with a CLEAN E0910 naming the parameter, so the program is honestly
+    // directed to `axon run`. (Guards against regressing back to the IR crash.)
+    let f = std::env::temp_dir().join(format!("axon_lam910_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() -> i64 { let g = |s: str| str_len(s)\n g(\"hi\") }\n").unwrap();
+    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_lam910_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
+    if codegen_present {
+        assert!(
+            msg.contains("E0910") && msg.contains("lambda parameter"),
+            "a str-param lambda must abort with a clean E0910 (not a raw IR crash), got:\n{msg}"
+        );
+        assert!(
+            !msg.contains("IR verification"),
+            "the str-param lambda must NOT surface a raw IR-verification error:\n{msg}"
+        );
+        assert!(!out.status.success(), "build must FAIL (not exit 0):\n{msg}");
+    } else {
+        eprintln!("codegen feature absent — str-param-lambda E0910 test skipped");
+    }
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:

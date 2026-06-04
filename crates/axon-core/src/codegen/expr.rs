@@ -1103,6 +1103,27 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
+    /// Classify a lambda parameter's EXPLICIT type as unsupported by the i64
+    /// closure ABI, returning a short human label (`"str"`, `"slice"`, …) or
+    /// `None` when the type fits an i64 slot (i64/i32/bool, type params, or
+    /// anything we can't statically rule out). Conservative: only flags types
+    /// that are DEFINITELY not i64-representable, so it never false-positives on
+    /// the existing i64/bool closures.
+    fn unsupported_lambda_param_kind(ty: &ast::AxonType) -> Option<&'static str> {
+        match ty {
+            ast::AxonType::Named(n) => match n.as_str() {
+                "str" => Some("str"),
+                "f64" => Some("f64"),
+                _ => None, // i64/i32/bool/usize/… all fit the i64 slot
+            },
+            ast::AxonType::Slice(_) => Some("slice"),
+            ast::AxonType::Tuple(_) => Some("tuple"),
+            // Option/Result/Chan/Ref/Generic/Fn/dyn/TypeParam/Union: either fit
+            // an i64 handle/slot today or are too uncertain to hard-reject here.
+            _ => None,
+        }
+    }
+
     pub(super) fn emit_lambda(&mut self, params: &[ast::LambdaParam], body: &ast::Expr, captures: &[(String, Option<crate::types::Type>)], _fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
@@ -1117,6 +1138,32 @@ impl<'ctx> super::Codegen<'ctx> {
         let env_field_tys: Vec<BasicTypeEnum<'ctx>> =
             (0..n_captures).map(|_| i64_ty.into()).collect();
         let env_struct_ty = self.ir.context.struct_type(&env_field_tys, false);
+
+        // Honest gate (E0910): the lambda ABI passes every parameter in a single
+        // i64 slot. That's correct for i64/bool params, but a param explicitly
+        // typed as `str` (a 2-field `{i64,ptr}` struct), a slice, a tuple, or f64
+        // does NOT fit — emitting it anyway produces an IR-verification crash
+        // ("Call parameter type does not match function signature"), an opaque
+        // internal error. Detect a clearly-non-i64 EXPLICIT param type up front
+        // and record a clean E0910 instead, so the build aborts with an
+        // actionable message. (This is what blocks dict_filter/dict_each's
+        // `fn(str,V)` predicates natively — they run under the interpreter; the
+        // real fix is the R2a lambda-parameter type ABI.)
+        for p in params {
+            if let Some(kind) = p.ty.as_ref().and_then(Self::unsupported_lambda_param_kind) {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not yet support the lambda \
+                     parameter `{}` (a {kind}) — only i64/bool parameters fit the current \
+                     closure ABI (str/slice/tuple/f64 params need the R2a lambda-param type \
+                     ABI). This program runs under the interpreter (`axon run`).",
+                    p.name,
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+            }
+        }
 
         // ── Declare the lambda function (env_ptr first, then params) ──
         let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
