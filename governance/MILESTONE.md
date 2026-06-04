@@ -20,7 +20,7 @@ services) — that remains greenfield, multi-quarter work.
 
 | Req | What | % | State |
 |---|---|---|---|
-| **R1** | Native pipeline (parse→type→borrow→LLVM→native) | 97 | ✅ 32/32 example parity; **stdlib codegen coverage expanded ~84 builtins: +35 arr_* (full reduction/alloc/closure/tuple/nested suite), bitwise/shift, polymorphic as_i64/as_f64, parse_*_or — all native==interp==AOT-wasm**; unimplemented builtins now fail honestly (E0910) instead of silently returning 0 |
+| **R1** | Native pipeline (parse→type→borrow→LLVM→native) | 97 | ✅ 32/32 example parity; **stdlib codegen coverage expanded ~90 builtins: +35 arr_* (full reduction/alloc/closure/tuple/nested suite), bitwise/shift, polymorphic as_i64/as_f64, parse_*_or, dict_keys/values, exp/ln/log10, str_split→[str], str_digits_only — all native==interp==AOT-wasm**; a differential parity FUZZER (fuzz_parity.sh, 36 seeded descriptors + NaN/inf/overflow boundary cases) auto-guards I-2 in the gate; unimplemented builtins fail honestly (E0910) — only the complex-composite-type ones (dict_to_pairs→[(str,V)], arr_group_by→str-keyed dict, str_join, arr_push) remain, run under interp |
 | **R2** | Type system + borrow checker (HM, no-null, ownership) | 90 | ✅ Strong; dyn-trait + refinement types remain |
 | **R3** | AI as a language primitive (routing, policy, budget, cost) | 87 | ⚠️ tier routing + live token-count live; first-class Budget type remains |
 | **R4** | Three code zones + compiler-enforced provenance | 100 | ✅ Complete |
