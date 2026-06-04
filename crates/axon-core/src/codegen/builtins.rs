@@ -887,11 +887,15 @@ impl<'ctx> super::Codegen<'ctx> {
         // i64 __axon_dict_len(d:i8*)
         let dl_ty = i64_ty.fn_type(&[i8_ptr.into()], false);
         self.ir.module.add_function("__axon_dict_len", dl_ty, None);
+        // i64 __axon_dict_inc(d:i8*, key:str)
+        let di_ty = i64_ty.fn_type(&[i8_ptr.into(), str_ty_d.into()], false);
+        self.ir.module.add_function("__axon_dict_inc", di_ty, None);
         // dict_new returns the opaque handle type (Deferred("Dict") → i8*).
         self.fn_return_types.insert("dict_new".to_string(), Type::Deferred("Dict".to_string()));
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);
         self.fn_return_types.insert("dict_has".to_string(), Type::Bool);
         self.fn_return_types.insert("dict_len".to_string(), Type::I64);
+        self.fn_return_types.insert("dict_inc".to_string(), Type::I64);
 
         // Populate fn_return_types for all other builtins (Fix 19).
         self.fn_return_types.insert("println".to_string(), Type::Unit);

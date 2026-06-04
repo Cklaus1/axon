@@ -3828,6 +3828,33 @@ impl<'ctx> super::Codegen<'ctx> {
                     .or_else(|| self.ir.module.get_function("__axon_dict_len"))?;
                 return self.ir.builder.build_call(f, &[d.into()], "dict_len").unwrap().try_as_basic_value().left();
             }
+            if name == "dict_inc" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let f = self.functions.get("__axon_dict_inc").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_inc"))?;
+                return self.ir.builder.build_call(f, &[d.into(), key.into()], "dict_inc").unwrap().try_as_basic_value().left();
+            }
+            // dict_get_or(d, k, default) → value-or-default. v1: int-valued —
+            // calls dict_get's extern and selects payload (found) vs default.
+            if name == "dict_get_or" && args.len() == 3 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let default = self.emit_expr(&args[2], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let tag_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "go_tag");
+                let pay_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "go_pay");
+                let sl_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "go_sl");
+                let f = self.functions.get("__axon_dict_get").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_get"))?;
+                let found = self.ir.builder
+                    .build_call(f, &[d.into(), key.into(), tag_slot.into(), pay_slot.into(), sl_slot.into()], "go_call")
+                    .unwrap().try_as_basic_value().left()?.into_int_value();
+                let payload = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), pay_slot, "go_p");
+                // select(found, payload, default).
+                let chosen = self.ir.builder.build_select(found, payload, default, "go_sel").unwrap();
+                return Some(chosen);
+            }
         }
 
         // Array reductions over an i64 slice (`{i64 len, i8* data}`), lowered

@@ -41,7 +41,12 @@ check get_s   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 42)  matc
 check get_n   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 42)  match dict_get(d, "z") { Some(v) => v  None => 0 - 1 } }'
 check counter 'fn main() -> i64 { let d = dict_new()  dict_set(d, "n", 5)  let cur = match dict_get(d, "n") { Some(v) => v  None => 0 }  dict_set(d, "n", cur + 1)  match dict_get(d, "n") { Some(v) => v  None => 0 } }'
 check interp_key 'fn main() -> i64 { let d = dict_new()  let i = 3  dict_set(d, "step-{i}", i)  match dict_get(d, "step-3") { Some(v) => v  None => 0 - 1 } }'
+check inc       'fn main() -> i64 { let d = dict_new()  dict_inc(d, "a")  dict_inc(d, "a")  dict_inc(d, "a") }'
+check inc_new   'fn main() -> i64 { let d = dict_new()  dict_inc(d, "fresh") }'
+check inc_freq  'fn main() -> i64 { let d = dict_new()  dict_inc(d, "x")  dict_inc(d, "y")  dict_inc(d, "x")  match dict_get(d, "x") { Some(v) => v  None => 0 } }'
+check getor_hit 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dict_get_or(d, "k", 99) }'
+check getor_mis 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dict_get_or(d, "z", 99) }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len (int values) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or (int values) match the interpreter ✓"
 exit 0

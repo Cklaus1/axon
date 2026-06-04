@@ -343,6 +343,25 @@ pub extern "C" fn __axon_dict_len(d: *mut c_void) -> i64 {
     n
 }
 
+/// Atomically bump an i64 counter at `key`: initialize to 1 if absent (or if
+/// the existing value is non-Int — matching the interpreter's get-or-0 + 1),
+/// else previous+1. Returns the new value. The common frequency-table primitive.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
+    if d.is_null() { return 0; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let mut guard = dict.map.lock().unwrap();
+    let cur = match guard.get(&k) {
+        Some(DictVal::Int(n)) => *n,
+        _ => 0,
+    };
+    let next = cur + 1;
+    guard.insert(k, DictVal::Int(next));
+    next
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {
