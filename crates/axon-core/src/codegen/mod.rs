@@ -43,6 +43,7 @@ pub mod option_result;
 pub mod output;
 pub mod match_pat;
 pub mod builtins;
+pub mod builtin_externs;
 pub mod build_wrappers;
 pub mod expr;
 pub mod ir;

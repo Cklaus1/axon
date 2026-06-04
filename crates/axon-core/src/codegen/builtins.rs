@@ -41,6 +41,13 @@ impl<'ctx> super::Codegen<'ctx> {
         let bool_ty = self.ir.context.bool_type();
         let void_ty = self.ir.context.void_type();
 
+        // R1d slice 1: single-source registry for the straight `declare → link`
+        // externs (math scalars, str predicates, dict scalars). Replaces the
+        // hand-written get-or-`add_function` + `functions`/`fn_return_types`
+        // blocks that used to live inline below and in declare_string_builtins /
+        // declare_phase9_math_builtins. See codegen/builtin_externs.rs.
+        self.declare_builtin_externs();
+
         // R7 (AOT-wasm): declare `malloc` ONCE, up front, with the target-correct
         // `size_t` width — i32 on wasm32 (ILP32), i64 on native (LP64). Every
         // later `get_function("malloc").unwrap_or_else(…)` reuses THIS decl (the
@@ -774,45 +781,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("axon_concat".to_string(), fn_val);
         }
 
-        // abs_i32(n: i32) -> i32 — migrated to axon-rt `__axon_abs_i32` (R1 Batch 3).
-        {
-            let i32_ty = self.ir.context.i32_type();
-            let fn_ty = i32_ty.fn_type(&[i32_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_abs_i32")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i32", fn_ty, None));
-            self.functions.insert("abs_i32".to_string(), fn_val);
-            self.fn_return_types.insert("abs_i32".to_string(), Type::I32);
-        }
-
-        // abs_f64(n: f64) -> f64 — migrated to axon-rt `__axon_abs_f64` (R1 Batch 3).
-        {
-            let f64_ty = self.ir.context.f64_type();
-            let fn_ty = f64_ty.fn_type(&[f64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_abs_f64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_f64", fn_ty, None));
-            self.functions.insert("abs_f64".to_string(), fn_val);
-            self.fn_return_types.insert("abs_f64".to_string(), Type::F64);
-        }
-
-        // min_i32(a: i32, b: i32) -> i32 — migrated to axon-rt `__axon_min_i32` (R1 Batch 3).
-        {
-            let i32_ty = self.ir.context.i32_type();
-            let fn_ty = i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_min_i32")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_min_i32", fn_ty, None));
-            self.functions.insert("min_i32".to_string(), fn_val);
-            self.fn_return_types.insert("min_i32".to_string(), Type::I32);
-        }
-
-        // max_i32(a: i32, b: i32) -> i32 — migrated to axon-rt `__axon_max_i32` (R1 Batch 3).
-        {
-            let i32_ty = self.ir.context.i32_type();
-            let fn_ty = i32_ty.fn_type(&[i32_ty.into(), i32_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_max_i32")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_max_i32", fn_ty, None));
-            self.functions.insert("max_i32".to_string(), fn_val);
-            self.fn_return_types.insert("max_i32".to_string(), Type::I32);
-        }
+        // abs_i32 / abs_f64 / min_i32 / max_i32 — now registry rows (R1d slice 1).
 
         // malloc: void* malloc(i64 size)
         let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
@@ -870,9 +839,8 @@ impl<'ctx> super::Codegen<'ctx> {
         // dispatch (like to_str) and assembles Option<T> from get's out-params.
         let str_ty_d = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
         let i64_ptr_d = i64_ty.ptr_type(inkwell::AddressSpace::default());
-        // i8* __axon_dict_new()
-        let dn_ty = i8_ptr.fn_type(&[], false);
-        self.ir.module.add_function("__axon_dict_new", dn_ty, None);
+        // __axon_dict_new / _has / _len / _inc — now registry rows (R1d slice 1).
+        // The bespoke out-param entries (_set / _get / _remove / _keys) stay here.
         // void __axon_dict_set(d:i8*, key:str, tag:i64, payload:i64, pstr:i8*, plen:i64)
         let ds_ty = void_ty.fn_type(
             &[i8_ptr.into(), str_ty_d.into(), i64_ty.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into()], false);
@@ -881,15 +849,6 @@ impl<'ctx> super::Codegen<'ctx> {
         let dg_ty = bool_ty.fn_type(
             &[i8_ptr.into(), str_ty_d.into(), i64_ptr_d.into(), i64_ptr_d.into(), i64_ptr_d.into()], false);
         self.ir.module.add_function("__axon_dict_get", dg_ty, None);
-        // i1 __axon_dict_has(d:i8*, key:str)
-        let dh_ty = bool_ty.fn_type(&[i8_ptr.into(), str_ty_d.into()], false);
-        self.ir.module.add_function("__axon_dict_has", dh_ty, None);
-        // i64 __axon_dict_len(d:i8*)
-        let dl_ty = i64_ty.fn_type(&[i8_ptr.into()], false);
-        self.ir.module.add_function("__axon_dict_len", dl_ty, None);
-        // i64 __axon_dict_inc(d:i8*, key:str)
-        let di_ty = i64_ty.fn_type(&[i8_ptr.into(), str_ty_d.into()], false);
-        self.ir.module.add_function("__axon_dict_inc", di_ty, None);
         // i1 __axon_dict_remove(d:i8*, key:str, out_tag, out_payload, out_strlen)
         let dr_ty = bool_ty.fn_type(
             &[i8_ptr.into(), str_ty_d.into(), i64_ptr_d.into(), i64_ptr_d.into(), i64_ptr_d.into()], false);
@@ -898,12 +857,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let i8_ptr_ptr_d = i8_ptr.ptr_type(inkwell::AddressSpace::default());
         let dk_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
         self.ir.module.add_function("__axon_dict_keys", dk_ty, None);
-        // dict_new returns the opaque handle type (Deferred("Dict") → i8*).
-        self.fn_return_types.insert("dict_new".to_string(), Type::Deferred("Dict".to_string()));
+        // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
+        // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);
-        self.fn_return_types.insert("dict_has".to_string(), Type::Bool);
-        self.fn_return_types.insert("dict_len".to_string(), Type::I64);
-        self.fn_return_types.insert("dict_inc".to_string(), Type::I64);
 
         // Populate fn_return_types for all other builtins (Fix 19).
         self.fn_return_types.insert("println".to_string(), Type::Unit);
@@ -1665,26 +1621,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert(fname.to_string(), Type::F64);
         }
 
-        // ── Phase 7: clamp_i64(n: i64, lo: i64, hi: i64) -> i64 ─────────────
-        // Migrated to axon-rt `__axon_clamp_i64` (R1 Batch 1).
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_clamp_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_clamp_i64", fn_ty, None));
-            self.functions.insert("clamp_i64".to_string(), fn_val);
-            self.fn_return_types.insert("clamp_i64".to_string(), Type::I64);
-        }
-
-        // ── Phase 7: clamp_f64(n: f64, lo: f64, hi: f64) -> f64 ─────────────
-        // Migrated to axon-rt `__axon_clamp_f64` (R1 Batch 1).
-        {
-            let f64_ty = self.ir.context.f64_type();
-            let fn_ty = f64_ty.fn_type(&[f64_ty.into(), f64_ty.into(), f64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_clamp_f64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_clamp_f64", fn_ty, None));
-            self.functions.insert("clamp_f64".to_string(), fn_val);
-            self.fn_return_types.insert("clamp_f64".to_string(), Type::F64);
-        }
+        // clamp_i64 / clamp_f64 — now registry rows (R1d slice 1).
 
         // ── Phase 7: parse_bool(s: str) -> Result<bool, str> ─────────────────
         // Accepts "true"/"false" (exact, lowercase). Returns Ok(bool) or Err("invalid bool").
@@ -2809,53 +2746,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("f64_to_i64".to_string(), Type::I64);
         }
 
-        // ── Phase 9: abs_i64(n: i64) -> i64 ─────────────────────────────────
-        // Migrated to axon-rt as `__axon_abs_i64` (R1 Batch 1,
-        // governance/specs/R1-codegen-build-unblock.md). Declared extern, no
-        // body — the linker resolves it against libaxon_rt.a, so this builtin
-        // costs ~0 LLVM-IR in axon-core. Dispatch key stays the .ax name
-        // `abs_i64` (emit_call resolves via self.functions.get("abs_i64")).
-        {
-            let i64_ty = self.ir.context.i64_type();
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_abs_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i64", fn_ty, None));
-            self.functions.insert("abs_i64".to_string(), fn_val);
-            self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
-        }
-
-        // ── Phase 9: abs_f64(x: f64) -> f64 ─────────────────────────────────
-        // Migrated to axon-rt `__axon_abs_f64` (R1 Batch 3). Idempotent
-        // get-or-declare — the duplicate block cannot cause LLVM redefinition
-        // because the second call hits the first's get_function.
-        {
-            let f64_ty = self.ir.context.f64_type();
-            let fn_ty = f64_ty.fn_type(&[f64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_abs_f64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_f64", fn_ty, None));
-            self.functions.insert("abs_f64".to_string(), fn_val);
-            self.fn_return_types.insert("abs_f64".to_string(), Type::F64);
-        }
-
-        // ── Phase 9: sign_i64(n: i64) -> i64  (-1 | 0 | 1) ─────────────────
-        // Migrated to axon-rt `__axon_sign_i64` (R1 Batch 1).
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_sign_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_sign_i64", fn_ty, None));
-            self.functions.insert("sign_i64".to_string(), fn_val);
-            self.fn_return_types.insert("sign_i64".to_string(), Type::I64);
-        }
-
-        // ── Phase 9: pow_i64(base: i64, exp: i64) -> i64 ────────────────────
-        // Migrated to axon-rt `__axon_pow_i64` (R1 Batch 1).
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_pow_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_pow_i64", fn_ty, None));
-            self.functions.insert("pow_i64".to_string(), fn_val);
-            self.fn_return_types.insert("pow_i64".to_string(), Type::I64);
-        }
+        // abs_i64 / abs_f64 / sign_i64 / pow_i64 — now registry rows (R1d slice 1).
 
         // ── Phase 9: sqrt_f64 / floor_f64 / ceil_f64 / round_f64 ────────────
         // Use LLVM intrinsics via C libm linkage.
@@ -2949,35 +2840,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_eq".to_string(), Type::Bool);
         }
 
-        // str_contains(s: str, needle: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_str_contains")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_contains", fn_ty, None));
-            self.functions.insert("str_contains".to_string(), fn_val);
-            self.fn_return_types.insert("str_contains".to_string(), Type::Bool);
-        }
-
-        // str_starts_with(s: str, prefix: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_str_starts_with")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_starts_with", fn_ty, None));
-            self.functions.insert("str_starts_with".to_string(), fn_val);
-            self.fn_return_types.insert("str_starts_with".to_string(), Type::Bool);
-        }
-
-        // str_ends_with(s: str, suffix: str) -> bool  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = bool_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_str_ends_with")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_ends_with", fn_ty, None));
-            self.functions.insert("str_ends_with".to_string(), fn_val);
-            self.fn_return_types.insert("str_ends_with".to_string(), Type::Bool);
-        }
+        // str_contains / str_starts_with / str_ends_with — now registry rows (R1d slice 1).
 
         // ── str_slice(s: str, start: i64, end: i64) -> str ──
         // Migrated to axon-rt (R1 Batch 2b): out-param ABI via __axon_str_slice.
@@ -3028,25 +2891,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_slice".to_string(), Type::Str);
         }
 
-        // str_index_of(s: str, needle: str) -> i64  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_str_index_of")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_index_of", fn_ty, None));
-            self.functions.insert("str_index_of".to_string(), fn_val);
-            self.fn_return_types.insert("str_index_of".to_string(), Type::I64);
-        }
-
-        // char_at(s: str, i: i64) -> i64  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = i64_ty.fn_type(&[str_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_char_at")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_char_at", fn_ty, None));
-            self.functions.insert("char_at".to_string(), fn_val);
-            self.fn_return_types.insert("char_at".to_string(), Type::I64);
-        }
+        // str_index_of / char_at — now registry rows (R1d slice 1).
 
         // to_str_bool(b: bool) -> str
         // Returns str "true" or "false" (global string constants).
@@ -3247,36 +3092,7 @@ impl<'ctx> super::Codegen<'ctx> {
             let _ = bool_ty;
         }
 
-        // ── Phase 5: abs_i64, min_i64, max_i64 ───────────────────────────────
-        // abs_i64 migrated to axon-rt `__axon_abs_i64` (R1 Batch 1). This block
-        // and `declare_phase9_math_builtins` both registered `abs_i64`
-        // (pre-existing duplicate); both now declare the SAME extern, so use a
-        // get-or-declare to avoid an LLVM duplicate-symbol. No IR body.
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_abs_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_abs_i64", fn_ty, None));
-            self.functions.insert("abs_i64".to_string(), fn_val);
-            self.fn_return_types.insert("abs_i64".to_string(), Type::I64);
-        }
-
-        // min_i64(a: i64, b: i64) -> i64 — migrated to axon-rt `__axon_min_i64` (R1 Batch 1).
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_min_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_min_i64", fn_ty, None));
-            self.functions.insert("min_i64".to_string(), fn_val);
-            self.fn_return_types.insert("min_i64".to_string(), Type::I64);
-        }
-
-        // max_i64(a: i64, b: i64) -> i64 — migrated to axon-rt `__axon_max_i64` (R1 Batch 1).
-        {
-            let fn_ty = i64_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_max_i64")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_max_i64", fn_ty, None));
-            self.functions.insert("max_i64".to_string(), fn_val);
-            self.fn_return_types.insert("max_i64".to_string(), Type::I64);
-        }
+        // abs_i64 / min_i64 / max_i64 — now registry rows (R1d slice 1).
 
         // ── Phase 6: str_to_upper / str_to_lower ─────────────────────────────
         // Both functions: malloc len+1 bytes, copy with ASCII conversion, null-terminate.
@@ -3678,15 +3494,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("exit".to_string(), Type::Unit);
         }
 
-        // str_len(s: str) -> i64  ─ migrated to axon-rt (R1 Batch 2)
-        {
-            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            let fn_ty = i64_ty.fn_type(&[str_ty.into()], false);
-            let fn_val = self.ir.module.get_function("__axon_str_len")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_len", fn_ty, None));
-            self.functions.insert("str_len".to_string(), fn_val);
-            self.fn_return_types.insert("str_len".to_string(), Type::I64);
-        }
+        // str_len — now a registry row (R1d slice 1).
 
         // ── Phase 7: str_pad_start / str_pad_end ─────────────────────────────
         // str_pad_start(s: str, width: i64, fill: str) -> str
