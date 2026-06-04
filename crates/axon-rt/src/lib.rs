@@ -1342,6 +1342,36 @@ pub extern "C" fn __axon_str_reverse(
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
 
+/// `str_digits_only(s)` — keep only the ASCII digit chars, matching the
+/// interpreter (`chars().filter(is_ascii_digit)`). Same str→str out-param ABI as
+/// str_reverse; native takes AxonStr by value, wasm32 takes the expanded scalar
+/// form (see the str_reverse ABI note above).
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_digits_only(
+    s: AxonStr,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let src = unsafe { s.as_str() };
+    let result: String = src.chars().filter(|c| c.is_ascii_digit()).collect();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_digits_only(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let src = unsafe { s.as_str() };
+    let result: String = src.chars().filter(|c| c.is_ascii_digit()).collect();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
 // ── BUG_HUNT #39: str_replace (matches Rust str::replace) ─────────────────────
 /// `str_replace(s, from, to)` — replace every occurrence of `from` with `to`,
 /// matching the interpreter (Rust `str::replace`). In particular an empty

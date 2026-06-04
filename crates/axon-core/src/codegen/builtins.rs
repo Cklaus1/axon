@@ -2033,6 +2033,45 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_reverse".to_string(), Type::Str);
         }
 
+        // str_digits_only(s: str) -> str — keep only ASCII digits. Identical
+        // str→str out-param shape as str_reverse; delegates to axon-rt's
+        // __axon_str_digits_only (matches the interpreter's char filter).
+        {
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let rt_fn_ty = self.ir.context.void_type().fn_type(&[
+                str_ty.into(), i64_ptr.into(), i8_ptr_ptr.into(),
+            ], false);
+            let rt_fn = self.ir.module.get_function("__axon_str_digits_only")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_digits_only", rt_fn_ty, None));
+
+            let fn_ty = str_ty.fn_type(&[str_ty.into()], false);
+            let fn_val = self.ir.module.add_function("str_digits_only", fn_ty, None);
+            let bb = self.ir.context.append_basic_block(fn_val, "entry");
+            let saved = self.ir.builder.get_insert_block();
+            self.ir.builder.position_at_end(bb);
+
+            let s_arg = fn_val.get_nth_param(0).unwrap();
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sdo_olen");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "sdo_optr");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder,
+                out_ptr_slot, i8_ptr_ptr, "sdo_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn, &[
+                s_arg.into(), out_len_slot.into(), out_ptr_slot_cast.into(),
+            ], "sdo_call");
+            let out_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "sdo_len").into_int_value();
+            let out_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "sdo_ptr").into_pointer_value();
+            let mut result = str_ty.const_zero();
+            result = build_wrappers::w_insert_value(&self.ir.builder, result, out_len.into(), 0, "sdo_r0").into_struct_value();
+            result = build_wrappers::w_insert_value(&self.ir.builder, result, out_ptr.into(), 1, "sdo_r1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, result.into());
+
+            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            self.functions.insert("str_digits_only".to_string(), fn_val);
+            self.fn_return_types.insert("str_digits_only".to_string(), Type::Str);
+        }
+
 
         // ── Phase 10: i64_to_str_radix(n: i64, base: i64) -> str ─────────────
         // Convert n to string in given base (2-36). Negative n gets '-' prefix.

@@ -247,6 +247,9 @@ fuzz str_index    str 2 'str_index_of(A, B)'
 # length of the first part (exercises the array-of-AxonStr build + indexing).
 fuzz str_split_n   str 1 'len(str_split(A, "l"))'
 fuzz str_split_el  str 1 'str_len(str_split(A, "o")[0])'
+# str_digits_only → str; reduce to a scalar (digit count) since the fuzzer wraps
+# the expr in to_str(), which only takes scalars. Exercises the str-out ABI.
+fuzz str_digits    str 1 'str_len(str_digits_only(A))'
 # ── slice 2b: f64 NaN/inf boundary (compare: Stdout — exact canonical form) ───
 #   sqrt(-1) yields a NEGATIVE NaN; native snprintf would print "-nan" without
 #   the to_str_f64 NaN-normalization (the fix that lands with this slice).
@@ -261,5 +264,5 @@ expect_overflow ovf_mul  '9223372036854775807 * 2'
 expect_overflow ovf_neg  '0 - (0 - 9223372036854775807 - 1)'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — 35 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
+echo "fuzz_parity: PASS — 36 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
 exit 0
