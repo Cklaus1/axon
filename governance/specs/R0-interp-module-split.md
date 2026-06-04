@@ -1,10 +1,14 @@
 # Tech Spec — R0: Split interp.rs into an interp/ directory (mirror codegen/)
 
-**Status:** 🟡 Slices 1+2+3 LANDED (2026-06-04). `interp/provenance.rs` (304 LoC,
-`51e5a4e`), `interp/value.rs` (262 LoC, `fe102d0`), and `interp/goal.rs` (1069
-LoC, `53939d5`) extracted — interp.rs **6790 → 5169 lines (−24%)**, each a pure
-code move with gate.sh --strict green (parity_all 21/2/0, the I-2 oracle
-unchanged). The `interp/` directory now mirrors `codegen/`.
+**Status:** 🟡 Slices 1+2+3+4 LANDED (2026-06-04). `interp/provenance.rs` (304
+LoC, `51e5a4e`), `interp/value.rs` (262 LoC, `fe102d0`), `interp/goal.rs` (1069
+LoC, `53939d5`), and `interp/proptest.rs` (the `@[forall]` harness, 199 LoC)
+extracted — interp.rs **6790 → 4971 lines (−27%)**, each a pure code move with
+gate.sh --strict green (parity_all 21/2/0, the I-2 oracle unchanged). The
+`interp/` directory now mirrors `codegen/`. (Slice 4 — `proptest.rs` — was not in
+the original slice list but is the same low-risk free-fn shape as 1–2 and the
+spec named the property-test harness as "orthogonal to interpretation"; taken
+ahead of the entangled `call_builtin` tail.)
 
 **Mechanics now proven for BOTH kinds of cluster:**
 - *Free-fn clusters* (provenance, value): moved private free fns become
