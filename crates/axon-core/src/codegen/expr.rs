@@ -68,6 +68,9 @@ enum ArrReduce<'ctx> {
     /// Index of the max/min element (i64 result). `true` = argmax. Panics
     /// (exit 101) on an empty array, matching the interpreter.
     ArgExtreme { is_max: bool },
+    /// Index of the FIRST element equal to the needle, or -1 if none (i64
+    /// result). Empty array → -1 (no panic), matching the interpreter.
+    IndexOf(inkwell::values::IntValue<'ctx>),
 }
 
 impl<'ctx> super::Codegen<'ctx> {
@@ -1401,7 +1404,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // Sentinel init: 0 for Sum/Contains; i64::MIN for max / i64::MAX for min
         // so the first element always wins the running compare.
         let init: u64 = match &op {
-            ArrReduce::Sum | ArrReduce::Mean | ArrReduce::Contains(_) => 0,
+            ArrReduce::Sum | ArrReduce::Mean | ArrReduce::Contains(_) | ArrReduce::IndexOf(_) => 0,
             ArrReduce::Extreme { is_max: true } | ArrReduce::ArgExtreme { is_max: true } => i64::MIN as u64,
             ArrReduce::Extreme { is_max: false } | ArrReduce::ArgExtreme { is_max: false } => i64::MAX as u64,
         };
@@ -1409,8 +1412,13 @@ impl<'ctx> super::Codegen<'ctx> {
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_i");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
         // For argmax/argmin: track the best element's INDEX (acc holds its value).
+        // For IndexOf: holds the first-match index, init -1 (not found).
         let best_idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "arr_bidx");
-        build_wrappers::w_store(&self.ir.builder, best_idx_slot, i64_ty.const_zero().into());
+        let best_idx_init = match &op {
+            ArrReduce::IndexOf(_) => i64_ty.const_int(-1i64 as u64, true),
+            _ => i64_ty.const_zero(),
+        };
+        build_wrappers::w_store(&self.ir.builder, best_idx_slot, best_idx_init.into());
 
         let cond_bb = self.ir.context.append_basic_block(fn_val, "arr.cond");
         let body_bb = self.ir.context.append_basic_block(fn_val, "arr.body");
@@ -1465,6 +1473,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 let nbest = self.ir.builder.build_select(better, i_cur, cur_best, "arr_argidx").unwrap().into_int_value();
                 build_wrappers::w_store(&self.ir.builder, best_idx_slot, nbest.into());
             }
+            ArrReduce::IndexOf(needle) => {
+                // Record i_cur the FIRST time elem == needle; leave it otherwise.
+                // best_idx starts at -1, so `best == -1` means "not yet found":
+                // update = (elem == needle) && (best == -1).
+                let eq = build_wrappers::w_int_compare(
+                    &self.ir.builder, inkwell::IntPredicate::EQ, elem, *needle, "arr_ioeq");
+                let cur_best = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "arr_iocb").into_int_value();
+                let not_found = build_wrappers::w_int_compare(
+                    &self.ir.builder, inkwell::IntPredicate::EQ, cur_best, i64_ty.const_int(-1i64 as u64, true), "arr_ionf");
+                let do_set = self.ir.builder.build_and(eq, not_found, "arr_ioset").unwrap();
+                let nbest = self.ir.builder.build_select(do_set, i_cur, cur_best, "arr_ioidx").unwrap().into_int_value();
+                build_wrappers::w_store(&self.ir.builder, best_idx_slot, nbest.into());
+            }
         }
         let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "arr_inext");
         build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
@@ -1475,8 +1496,9 @@ impl<'ctx> super::Codegen<'ctx> {
         let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_res").into_int_value();
         match op {
             ArrReduce::Sum | ArrReduce::Extreme { .. } => Some(acc.into()),
-            ArrReduce::ArgExtreme { .. } => {
-                // Return the tracked best index, not the value.
+            ArrReduce::ArgExtreme { .. } | ArrReduce::IndexOf(_) => {
+                // Return the tracked best index (ArgExtreme: best max/min;
+                // IndexOf: first-match index, or the -1 sentinel if none).
                 let bidx = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), best_idx_slot, "arr_bres").into_int_value();
                 Some(bidx.into())
             }
@@ -3999,6 +4021,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
                 {
                     return self.emit_arr_i64_loop(slice_val, ArrReduce::Contains(n), fn_val);
+                }
+            }
+            // arr_index_of(&a, x) → Option<i64>: Some(first index where elem == x),
+            // or None. The loop yields the index (or the -1 sentinel for "none");
+            // wrap it in Option<i64> here (Some(idx) iff idx != -1), matching the
+            // interpreter's `Some(i)`/`None` return — same shape as dict_get.
+            if name == "arr_index_of" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    let idx = self.emit_arr_i64_loop(slice_val, ArrReduce::IndexOf(n), fn_val)?
+                        .into_int_value();
+                    let i64_ty = self.ir.context.i64_type();
+                    let found = build_wrappers::w_int_compare(
+                        &self.ir.builder, inkwell::IntPredicate::NE,
+                        idx, i64_ty.const_int(-1i64 as u64, true), "aio_found");
+                    let some_v = self.emit_option(Some(idx.into()), &Type::I64);
+                    let none_v = self.emit_option(None, &Type::I64);
+                    let chosen = self.ir.builder.build_select(found, some_v, none_v, "aio_opt").unwrap();
+                    return Some(chosen);
                 }
             }
             if (name == "arr_max_i64" || name == "arr_min_i64") && args.len() == 1 {

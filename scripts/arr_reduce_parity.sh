@@ -129,6 +129,10 @@ check uq_o    'fn main() -> i64 { let a = [3, 1, 3, 2, 1]  let b = arr_unique(&a
 check find_s  'fn main() -> i64 { let a = [1, 2, 3, 4]  match arr_find(&a, |x| x > 2) { Some(v) => v  None => 0 - 1 } }'
 check find_n  'fn main() -> i64 { let a = [1, 2, 3]  match arr_find(&a, |x| x > 100) { Some(v) => v  None => 0 - 1 } }'
 check find_1  'fn main() -> i64 { let a = [5, 2, 8, 3]  match arr_find(&a, |x| x > 4) { Some(v) => v  None => 0 - 1 } }'
+check ixof_s  'fn main() -> i64 { let a = [10, 20, 30]  match arr_index_of(&a, 30) { Some(i) => i  None => 0 - 1 } }'
+check ixof_n  'fn main() -> i64 { let a = [10, 20, 30]  match arr_index_of(&a, 99) { Some(i) => i  None => 0 - 1 } }'
+check ixof_1st 'fn main() -> i64 { let a = [7, 4, 7, 4]  match arr_index_of(&a, 4) { Some(i) => i  None => 0 - 1 } }'
+check ixof_e  'fn main() -> i64 { let a = arr_range(0, 0)  match arr_index_of(&a, 5) { Some(i) => i  None => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"
