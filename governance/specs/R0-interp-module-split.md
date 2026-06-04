@@ -1,20 +1,39 @@
 # Tech Spec — R0: Split interp.rs into an interp/ directory (mirror codegen/)
 
-**Status:** 🟡 Slices 1+2 LANDED (2026-06-04). `interp/provenance.rs` (304 LoC,
-`51e5a4e`) and `interp/value.rs` (262 LoC, `fe102d0`) extracted — interp.rs
-6790 → 6235 lines, each a pure code move with gate.sh --strict green (parity_all
-21/2/0, the I-2 oracle unchanged). The `interp/` directory now exists mirroring
-`codegen/`. Remaining slices 3–6 (goal.rs ~1100 LoC, asi.rs, builtins.rs with the
-`ok!`/`want` macro promotion, eval.rs) are progressively larger surgeries — the
-`call_builtin` split in particular needs the load-bearing macro-promotion fork
-resolved (below) and deserves its own focused effort, not a rushed tail-end pass.
-Mechanics confirmed on the two landed slices: edition-2021 lets `interp.rs` stay
-the module root with `mod NAME;` resolving to `interp/NAME.rs`; the moved private
-free fns become `pub(super)`, the parent keeps `use NAME::*` so unqualified call
-sites are unchanged, and `pub use NAME::{…}` re-exports the public API at the
-original `interp::` path (main.rs untouched). — Low-risk, high-mechanical
-structural cleanup of the lone remaining monolith. Pure code-move, zero behavior
-change.
+**Status:** 🟡 Slices 1+2+3 LANDED (2026-06-04). `interp/provenance.rs` (304 LoC,
+`51e5a4e`), `interp/value.rs` (262 LoC, `fe102d0`), and `interp/goal.rs` (1069
+LoC, `53939d5`) extracted — interp.rs **6790 → 5169 lines (−24%)**, each a pure
+code move with gate.sh --strict green (parity_all 21/2/0, the I-2 oracle
+unchanged). The `interp/` directory now mirrors `codegen/`.
+
+**Mechanics now proven for BOTH kinds of cluster:**
+- *Free-fn clusters* (provenance, value): moved private free fns become
+  `pub(super)`; parent keeps `use NAME::*` so unqualified call sites are
+  unchanged; `pub use NAME::{…}` re-exports the public API at the original
+  `interp::` path (main.rs untouched). `use super::*` in the submodule inherits
+  the parent's imports (don't re-`use std::io::Write` etc. — redundant-import
+  warning).
+- *impl-method clusters* (goal): methods move into a SECOND
+  `impl<'p> Interp<'p>` block in the submodule. Inherent methods resolve across
+  split impl blocks, so parent call sites are unchanged. A private inherent
+  method in a child module's impl is NOT visible to the parent impl (E0624) →
+  the moved methods become `pub(super)`; the reverse (submodule calling the
+  parent's private `call_fn`/`eval`) works because a child module sees ancestors'
+  private items. CRITICAL: `mod NAME;` must be at module scope, NOT left inside
+  the impl block the methods were cut from (`error: module is not supported in
+  impls`).
+
+**Remaining slices are the HARD TAIL, deferred to focused turns:** the AI
+builtins (`ai_complete`/`ai_extract_*`) are INLINE `match` arms inside
+`call_builtin` (interp.rs ~4207–4360), not separable methods — so "asi.rs" can't
+be a clean impl-method move like goal.rs; it's entangled with the same
+`call_builtin` split as slice 5 (`builtins.rs`), which needs the load-bearing
+`ok!`-macro → module-scope `macro_rules!` + `want`-closure → `pub(super) fn`
+promotion fork (below) resolved first. Only the small AI-policy helpers
+(`current_ai_tier/budget/fallback`) are separable, and they're tightly coupled to
+those arms. These deserve their own careful effort, not a rushed tail-end pass.
+— Low-risk, high-mechanical structural cleanup of the lone remaining monolith.
+Pure code-move, zero behavior change.
 
 **Requirement:** none (cross-cutting maintainability). Sibling to R1e (which
 modularized codegen's IR surface) — this gives the *other* engine the same
