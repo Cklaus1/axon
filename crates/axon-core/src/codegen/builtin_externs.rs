@@ -130,6 +130,9 @@ pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
     ExternSig { axon_name: "dict_has", symbol: "__axon_dict_has", params: &[L::Ptr, L::Str],  ret: L::I1,   fn_key: None, ret_type: Some(("dict_has", SemRet::Bool)) },
     ExternSig { axon_name: "dict_len", symbol: "__axon_dict_len", params: &[L::Ptr],          ret: L::I64,  fn_key: None, ret_type: Some(("dict_len", SemRet::I64)) },
     ExternSig { axon_name: "dict_inc", symbol: "__axon_dict_inc", params: &[L::Ptr, L::Str],  ret: L::I64,  fn_key: None, ret_type: Some(("dict_inc", SemRet::I64)) },
+    // dict_merge(d1, d2) → a fresh Dict handle (d2 wins conflicts). Both args +
+    // result are opaque i8* handles, so it's a plain registry row like dict_new.
+    ExternSig { axon_name: "dict_merge", symbol: "__axon_dict_merge", params: &[L::Ptr, L::Ptr], ret: L::Ptr, fn_key: Some("dict_merge"), ret_type: Some(("dict_merge", SemRet::DictHandle)) },
 
     // ── time builtins (Phase 4) ─────────────────────────────────────────────
     ExternSig { axon_name: "sleep_ms", symbol: "__axon_sleep_ms", params: &[L::I64], ret: L::Void, fn_key: Some("sleep_ms"), ret_type: Some(("sleep_ms", SemRet::Unit)) },

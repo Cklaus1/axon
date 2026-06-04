@@ -237,6 +237,28 @@ pub extern "C" fn __axon_dict_new() -> *mut c_void {
     Arc::into_raw(arc) as *mut c_void
 }
 
+/// Merge two dicts into a FRESH dict (neither input is mutated), matching the
+/// interpreter: start from d1's entries, then overlay d2's (so d2 wins on a key
+/// conflict). Returns a new opaque handle. A null input is treated as empty.
+#[no_mangle]
+pub extern "C" fn __axon_dict_merge(d1: *mut c_void, d2: *mut c_void) -> *mut c_void {
+    let mut out: StdMap<String, DictVal> = StdMap::new();
+    if !d1.is_null() {
+        let a = unsafe { dict_borrow(d1) };
+        for (k, v) in a.map.lock().unwrap().iter() {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    if !d2.is_null() {
+        let b = unsafe { dict_borrow(d2) };
+        for (k, v) in b.map.lock().unwrap().iter() {
+            out.insert(k.clone(), v.clone());
+        }
+    }
+    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    Arc::into_raw(arc) as *mut c_void
+}
+
 // Borrow the Arc<Dict> from a raw handle WITHOUT consuming it (the caller still
 // owns the handle). Returns a cloned Arc whose drop is balanced by into_raw.
 #[inline]

@@ -56,7 +56,11 @@ check vals_sum  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 10)  di
 check vals_len  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let vs = dict_values(d)  len(vs) }'
 check vals_ord  'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 7)  dict_set(d, "apple", 3)  let vs = dict_values(d)  vs[0] }'
 check vals_empty 'fn main() -> i64 { let d = dict_new()  let vs = dict_values(d)  len(vs) }'
+check mrg_len  'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  dict_set(a, "y", 2)  let b = dict_new()  dict_set(b, "y", 9)  dict_set(b, "z", 3)  let m = dict_merge(a, b)  dict_len(m) }'
+check mrg_win  'fn main() -> i64 { let a = dict_new()  dict_set(a, "k", 1)  let b = dict_new()  dict_set(b, "k", 99)  let m = dict_merge(a, b)  match dict_get(m, "k") { Some(v) => v  None => 0 } }'
+check mrg_keep 'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 5)  let b = dict_new()  dict_set(b, "y", 7)  let m = dict_merge(a, b)  match dict_get(m, "x") { Some(v) => v  None => 0 } }'
+check mrg_cp   'fn main() -> i64 { let a = dict_new()  dict_set(a, "x", 1)  let b = dict_new()  dict_set(b, "y", 2)  let m = dict_merge(a, b)  dict_len(a) }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values (int values, BTreeMap order) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge (int values, BTreeMap order) match the interpreter ✓"
 exit 0
