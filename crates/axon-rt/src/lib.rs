@@ -343,6 +343,45 @@ pub extern "C" fn __axon_dict_len(d: *mut c_void) -> i64 {
     n
 }
 
+/// Remove `key`, returning whether it was present (writing the prior value's
+/// tag + payload to the out-params, same convention as `__axon_dict_get`). For
+/// a Str value, `*out_payload` is a freshly-malloc'd null-terminated copy.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_remove(
+    d: *mut c_void,
+    key: AxonStr,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    if d.is_null() { return false; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let removed = dict.map.lock().unwrap().remove(&k);
+    match removed {
+        None => false,
+        Some(v) => {
+            unsafe {
+                match v {
+                    DictVal::Int(n) => { *out_tag = 0; *out_payload = n; }
+                    DictVal::Float(f) => { *out_tag = 1; *out_payload = f.to_bits() as i64; }
+                    DictVal::Str(s) => {
+                        *out_tag = 2;
+                        let len = s.len();
+                        let p = libc_malloc(len + 1);
+                        std::ptr::copy_nonoverlapping(s.as_ptr(), p, len);
+                        *p.add(len) = 0;
+                        *out_payload = p as i64;
+                        if !out_str_len.is_null() { *out_str_len = len as i64; }
+                    }
+                }
+            }
+            true
+        }
+    }
+}
+
 /// Atomically bump an i64 counter at `key`: initialize to 1 if absent (or if
 /// the existing value is non-Int — matching the interpreter's get-or-0 + 1),
 /// else previous+1. Returns the new value. The common frequency-table primitive.

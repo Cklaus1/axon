@@ -46,7 +46,10 @@ check inc_new   'fn main() -> i64 { let d = dict_new()  dict_inc(d, "fresh") }'
 check inc_freq  'fn main() -> i64 { let d = dict_new()  dict_inc(d, "x")  dict_inc(d, "y")  dict_inc(d, "x")  match dict_get(d, "x") { Some(v) => v  None => 0 } }'
 check getor_hit 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dict_get_or(d, "k", 99) }'
 check getor_mis 'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 7)  dict_get_or(d, "z", 99) }'
+check rm_some   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "k") { Some(v) => v  None => 0 - 1 } }'
+check rm_none   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 8)  match dict_remove(d, "z") { Some(v) => v  None => 0 - 1 } }'
+check rm_len    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  dict_remove(d, "a")  dict_len(d) }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or (int values) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove (int values) match the interpreter ✓"
 exit 0

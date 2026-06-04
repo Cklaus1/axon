@@ -3835,6 +3835,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     .or_else(|| self.ir.module.get_function("__axon_dict_inc"))?;
                 return self.ir.builder.build_call(f, &[d.into(), key.into()], "dict_inc").unwrap().try_as_basic_value().left();
             }
+            // dict_remove(d, k) → Option<i64> (v1 int-valued): remove + return
+            // the prior value. Same out-param + emit_option shape as dict_get.
+            if name == "dict_remove" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let tag_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dr_tag");
+                let pay_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dr_pay");
+                let sl_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dr_sl");
+                let f = self.functions.get("__axon_dict_remove").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_remove"))?;
+                let found = self.ir.builder
+                    .build_call(f, &[d.into(), key.into(), tag_slot.into(), pay_slot.into(), sl_slot.into()], "dr_call")
+                    .unwrap().try_as_basic_value().left()?.into_int_value();
+                let payload = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), pay_slot, "dr_p").into_int_value();
+                let some_v = self.emit_option(Some(payload.into()), &Type::I64);
+                let none_v = self.emit_option(None, &Type::I64);
+                let chosen = self.ir.builder.build_select(found, some_v, none_v, "dr_opt").unwrap();
+                return Some(chosen);
+            }
             // dict_get_or(d, k, default) → value-or-default. v1: int-valued —
             // calls dict_get's extern and selects payload (found) vs default.
             if name == "dict_get_or" && args.len() == 3 {

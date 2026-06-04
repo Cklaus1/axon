@@ -890,6 +890,10 @@ impl<'ctx> super::Codegen<'ctx> {
         // i64 __axon_dict_inc(d:i8*, key:str)
         let di_ty = i64_ty.fn_type(&[i8_ptr.into(), str_ty_d.into()], false);
         self.ir.module.add_function("__axon_dict_inc", di_ty, None);
+        // i1 __axon_dict_remove(d:i8*, key:str, out_tag, out_payload, out_strlen)
+        let dr_ty = bool_ty.fn_type(
+            &[i8_ptr.into(), str_ty_d.into(), i64_ptr_d.into(), i64_ptr_d.into(), i64_ptr_d.into()], false);
+        self.ir.module.add_function("__axon_dict_remove", dr_ty, None);
         // dict_new returns the opaque handle type (Deferred("Dict") → i8*).
         self.fn_return_types.insert("dict_new".to_string(), Type::Deferred("Dict".to_string()));
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);
