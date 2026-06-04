@@ -10,10 +10,14 @@
 pub const E0101: &str = "E0101";
 pub const E0102: &str = "E0102";
 
+// Generic / fallback
+pub const E0000: &str = "E0000"; // generic parse/IO error with no more-specific code (CLI + LSP)
+
 // Resolution errors
 pub const E0001: &str = "E0001";
 pub const E0002: &str = "E0002";
 pub const E0003: &str = "E0003";
+pub const E0004: &str = "E0004"; // reserved (Phase 2): use of a non-exported item across modules
 
 // Type-check errors
 pub const E0301: &str = "E0301";
@@ -58,6 +62,7 @@ pub const E0702: &str = "E0702"; // comptime integer division by zero
 pub const E0703: &str = "E0703"; // comptime integer overflow
 
 // Generics errors (Phase 3)
+pub const E0800: &str = "E0800"; // LSP: source could not be parsed (document-level diagnostic)
 pub const E0801: &str = "E0801"; // generic instantiation depth exceeded
 pub const E0802: &str = "E0802"; // cannot infer type argument
 pub const E0803: &str = "E0803"; // type argument does not satisfy bound
@@ -71,6 +76,7 @@ pub const E0905: &str = "E0905"; // cross-compilation needs sysroot (cross.toml 
 pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler version
 pub const E0907: &str = "E0907"; // AOT wasm build needs the native codegen backend (R7)
 pub const E0908: &str = "E0908"; // no engine supports the requested target triple (R7, reserved)
+pub const E0910: &str = "E0910"; // builtin / construct has no native codegen lowering — honest abort, runs under the interpreter
 
 // Capability permission errors (Phase 4: @[contained])
 pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
@@ -275,7 +281,8 @@ mod tests {
     #[test]
     fn error_codes_are_unique() {
         let codes = [
-            E0001, E0002, E0003,
+            E0000,
+            E0001, E0002, E0003, E0004,
             E0101, E0102,
             E0301, E0302, E0303, E0304, E0305,
             E0306, E0307, E0308, E0309, E0310,
@@ -284,8 +291,8 @@ mod tests {
             E0501, E0502, E0503, E0504,
             E0601, E0602, E0603,
             E0701, E0702, E0703,
-            E0801, E0802, E0803,
-            E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908,
+            E0800, E0801, E0802, E0803,
+            E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908, E0910,
             E1001, E1002, E1003, E1004,
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205, E1206,
