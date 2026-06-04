@@ -1133,6 +1133,8 @@ impl<'ctx> Codegen<'ctx> {
             "arr_enumerate" | "arr_zip" => {
                 Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64])))
             }
+            // → [(str, i64)] — dict entries as a slice of (key, value) tuples
+            "dict_to_pairs" => Type::Slice(Box::new(Type::Tuple(vec![Type::Str, Type::I64]))),
             // → [[i64]] — slice of i64 slices
             "arr_chunk" => Type::Slice(Box::new(i64_slice())),
             // → ([i64], [i64]) — tuple of two slices

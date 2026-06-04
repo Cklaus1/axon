@@ -575,6 +575,57 @@ pub extern "C" fn __axon_str_split(
     }
 }
 
+/// Collect the entries into a fresh `[(str, i64)]` slice (BTreeMap key order) —
+/// the inverse of dict_from_pairs (v1 int-valued). Writes {len, data} via
+/// out-params: `*out_data` = a malloc'd array of `StrI64Pair` (each key's bytes
+/// malloc'd + null-terminated, the i64 value reinterpreted with the dict_values
+/// convention). Same out-param shape as dict_keys; codegen wraps it in a
+/// {i64, ptr} slice whose element is the (str,i64) tuple.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_to_pairs(
+    d: *mut c_void,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    if d.is_null() {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let dict = unsafe { dict_borrow(d) };
+    let guard = dict.map.lock().unwrap();
+    let n = guard.len();
+    if n == 0 {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let arr = unsafe { libc_malloc(std::mem::size_of::<StrI64Pair>() * n) } as *mut StrI64Pair;
+    for (i, (k, v)) in guard.iter().enumerate() {
+        let klen = k.len();
+        let buf = unsafe {
+            let p = libc_malloc(klen + 1);
+            std::ptr::copy_nonoverlapping(k.as_ptr(), p, klen);
+            *p.add(klen) = 0;
+            p
+        };
+        let payload: i64 = match v {
+            DictVal::Int(x) => *x,
+            DictVal::Float(f) => f.to_bits() as i64,
+            DictVal::Str(s) => s.as_ptr() as i64,
+        };
+        unsafe {
+            *arr.add(i) = StrI64Pair {
+                key: AxonStr { len: klen as i64, ptr: buf },
+                val: payload,
+            };
+        }
+    }
+    unsafe {
+        *out_len = n as i64;
+        *out_data = arr as *mut u8;
+    }
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {

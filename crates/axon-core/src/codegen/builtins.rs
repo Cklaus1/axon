@@ -900,6 +900,10 @@ impl<'ctx> super::Codegen<'ctx> {
         let dfp_ty = i8_ptr.fn_type(&[i64_ty.into(), i8_ptr.into()], false);
         self.ir.module.add_function("__axon_dict_from_pairs", dfp_ty, None);
         self.fn_return_types.insert("dict_from_pairs".to_string(), Type::Deferred("Dict".to_string()));
+        // void __axon_dict_to_pairs(d:i8*, out_len:i64*, out_data:i8**) → an array
+        // of (str,i64) tuples (StrI64Pair). Same out-param shape as dict_keys.
+        let dtp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
+        self.ir.module.add_function("__axon_dict_to_pairs", dtp_ty, None);
         // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
         // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);

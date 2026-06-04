@@ -64,7 +64,11 @@ check fp_len   'fn main() -> i64 { let p = [("a", 1), ("b", 2), ("c", 3)]  let d
 check fp_get   'fn main() -> i64 { let p = [("a", 10), ("b", 20)]  let d = dict_from_pairs(p)  match dict_get(d, "b") { Some(v) => v  None => 0 - 1 } }'
 check fp_dup   'fn main() -> i64 { let p = [("k", 1), ("k", 9)]  let d = dict_from_pairs(p)  match dict_get(d, "k") { Some(v) => v  None => 0 } }'
 check fp_one   'fn main() -> i64 { let p = [("solo", 7)]  let d = dict_from_pairs(p)  match dict_get(d, "solo") { Some(v) => v  None => 0 } }'
+check tp_len   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let p = dict_to_pairs(d)  len(p) }'
+check tp_ord   'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 1)  dict_set(d, "apple", 2)  let p = dict_to_pairs(d)  str_len(p[0].0) }'
+check tp_val   'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 1)  dict_set(d, "apple", 2)  let p = dict_to_pairs(d)  p[0].1 }'
+check tp_rt    'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 5)  dict_set(d, "y", 7)  let d2 = dict_from_pairs(dict_to_pairs(d))  match dict_get(d2, "y") { Some(v) => v  None => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs (int values, BTreeMap order) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs (int values, BTreeMap order) match the interpreter ✓"
 exit 0
