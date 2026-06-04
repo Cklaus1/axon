@@ -1055,18 +1055,18 @@ impl InferCtx {
                                     field_ty.clone()
                                 }
                             } else {
-                                let known: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
-                                let span = self.current_stmt_span;
-                                self.errors.push(
-                                    InferError::new(
-                                        E0101,
-                                        format!(
-                                            "struct `{name}` has no field `{field}` (known fields: {})",
-                                            known.join(", ")
-                                        ),
-                                    )
-                                    .with_span(span),
-                                );
+                                // Unknown field on a known struct in field-access
+                                // position is ALREADY reported by the checker as
+                                // the canonical E0401 "struct '…' has no field
+                                // '…'", with the known-fields list in its
+                                // structured `fix`/help. Don't also emit an E0101
+                                // here (that double-reported the same access, and
+                                // overloaded E0101 — a name-resolution code — for a
+                                // field error). Return a fresh var so inference
+                                // continues; the checker owns the diagnostic. (The
+                                // struct-LITERAL field cases below stay on infer —
+                                // the checker does not cover unknown/missing fields
+                                // in a literal.)
                                 self.fresh()
                             }
                         } else {

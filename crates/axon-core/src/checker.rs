@@ -1925,7 +1925,11 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
-                                .found(field)
+                                // No `.found(field)`: the driver appends ", found
+                                // {found}" to the message, which for a field-
+                                // existence error reads as the nonsensical
+                                // "has no field 'z', found z". The known-fields
+                                // list already rides in `fix` (→ help).
                                 .fix(format!("'{struct_name}' fields: {}", field_names.join(", "))),
                             );
                         }

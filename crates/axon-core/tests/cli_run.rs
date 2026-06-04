@@ -672,6 +672,65 @@ fn undefined_name_reports_one_diagnostic_with_suggestion() {
 }
 
 #[test]
+fn unknown_struct_field_access_reports_one_clean_e0401() {
+    // Accessing a nonexistent field on a known struct (`p.z`) was reported
+    // TWICE — infer's E0101 "struct has no field" AND the checker's canonical
+    // E0401 — and the E0401 message carried a nonsensical ", found z" suffix
+    // (the driver appends ", found {found}" and the field name had been stuffed
+    // into `found`, which is meant for type-mismatch errors). Fix: the checker's
+    // E0401 owns field-access errors (it already carries the known-fields list in
+    // its structured `help`); infer no longer re-reports, and E0401 drops the
+    // bogus `found`. One clean diagnostic.
+    let f = std::env::temp_dir().join(format!("axon_field_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type P = { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }\n  let z = p.zzz }\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        msg.matches("E0401").count(),
+        1,
+        "field-access error should be one canonical E0401: {msg}"
+    );
+    assert_eq!(
+        msg.matches("E0101").count(),
+        0,
+        "infer must not also report a field-access error as E0101: {msg}"
+    );
+    assert!(
+        !msg.contains("found 'zzz'") && !msg.contains("found zzz") && !msg.contains("found\":\"zzz"),
+        "E0401 must not carry the nonsensical 'found zzz' for a field-existence error: {msg}"
+    );
+    assert!(
+        msg.contains("x, y") || msg.contains("fields: x"),
+        "E0401 must still list the known fields as a suggestion: {msg}"
+    );
+
+    // The struct-LITERAL field cases are NOT covered by the checker, so infer
+    // must STILL report them (an unknown field in a literal must not go silent).
+    let f2 = std::env::temp_dir().join(format!("axon_fieldlit_{}.ax", std::process::id()));
+    std::fs::write(&f2, "type P = { x: i64 }\nfn main() { let p = P { x: 1, z: 9 } }\n").unwrap();
+    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(
+        msg2.contains("no field") && msg2.contains('z'),
+        "an unknown field in a struct LITERAL must still be reported: {msg2}"
+    );
+}
+
+#[test]
 fn run_exits_with_main_return_value() {
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();
