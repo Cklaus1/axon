@@ -6053,3 +6053,57 @@ fn stdlib_module_acceptance_suites_pass() {
         "stdlib module acceptance suites failed (Phase-7 userland TCB regressions): {failures:#?}"
     );
 }
+
+#[test]
+fn asi_demo_set_runs_without_crashing() {
+    // examples/asi/ is the documented "public face" of the language (CLAUDE.md
+    // ASI Demo Set). Only ~8 of 33 demos had a cli_run test; the rest — including
+    // 3 of the 4 flagship demos (classify/code_review/optimize/summarize) — were
+    // unguarded, so a regression that PANICKED one would go unnoticed. These demos
+    // intentionally exit non-zero (computed values, or @[verify]/goal-gate
+    // REJECTIONS — exit 3 is policy-rejection, working as designed), so we can't
+    // assert exit 0. The real regression signal is a CRASH: a panic (exit 101) or
+    // a parse/type/resolve error on stderr. This asserts every demo RUNS TO
+    // COMPLETION without crashing. (contained_violation.ax is an intentional
+    // @[contained] deny-case — it fails `check`, not `run`, so we exclude it.)
+    let dir = format!("{}/../../examples/asi", env!("CARGO_MANIFEST_DIR"));
+    let stdlib = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let path = format!("{dir}:{stdlib}");
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
+        .filter(|p| p.file_name().map(|n| n != "contained_violation.ax").unwrap_or(true))
+        .collect();
+    files.sort();
+    assert!(files.len() > 20, "expected the full ASI demo set, found {}", files.len());
+
+    let mut crashes = Vec::new();
+    for f in &files {
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_PATH", &path)
+            .env("AXON_AI_MOCK", "1")
+            .env("AXON_SEED", "42")
+            .output()
+            .unwrap();
+        let name = f.file_name().unwrap().to_string_lossy();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        // A crash = panic exit (101) OR a compile-stage error on stderr. A
+        // deliberate @[verify]/goal-gate rejection ("verify failed"/exit 3) and
+        // a non-zero computed return are NOT crashes.
+        let panicked = out.status.code() == Some(101);
+        let compile_err = stderr.contains("parse error")
+            || stderr.contains("cannot find")
+            || stderr.contains("type mismatch")
+            || stderr.contains("IR verification");
+        if panicked || compile_err {
+            let why = if panicked { "PANIC (exit 101)" } else { "compile error" };
+            crashes.push(format!("{name}: {why} — {}", stderr.lines().next().unwrap_or("")));
+        }
+    }
+    assert!(
+        crashes.is_empty(),
+        "ASI demos (the documented public face) must run without crashing: {crashes:#?}"
+    );
+}
