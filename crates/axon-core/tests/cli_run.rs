@@ -5937,3 +5937,77 @@ fn doc_multifile_preserves_doc_comments() {
     assert!(md.contains("fn alpha") && md.contains("fn beta"), "both signatures present:\n{md}");
     assert!(!md.contains("No documented items"), "must NOT drop all docs:\n{md}");
 }
+
+#[test]
+fn every_emitted_error_code_is_registered() {
+    // Drift guard: every `"E####"`/`"W####"`/`"I####"` diagnostic code emitted as
+    // a string literal anywhere in the crate MUST be declared in the error.rs
+    // registry (the single source of truth). This is what would have caught E0910
+    // — emitted ~30 times this session but absent from the registry for weeks.
+    use std::collections::HashSet;
+    let src_dir = format!("{}/src", env!("CARGO_MANIFEST_DIR"));
+    let code_re = |s: &str| -> Vec<String> {
+        // crude scan for "X####" where X in EWI — good enough for source text.
+        let b = s.as_bytes();
+        let mut out = Vec::new();
+        let mut i = 0;
+        while i + 6 < b.len() {
+            if b[i] == b'"'
+                && matches!(b[i + 1], b'E' | b'W' | b'I')
+                && b[i + 2..i + 6].iter().all(|c| c.is_ascii_digit())
+                && b[i + 6] == b'"'
+            {
+                out.push(String::from_utf8_lossy(&b[i + 1..i + 6]).into_owned());
+            }
+            i += 1;
+        }
+        out
+    };
+
+    // Read error.rs to collect registered codes (`pub const E0001: &str = "E0001"`).
+    let registry_src = std::fs::read_to_string(format!("{src_dir}/error.rs")).unwrap();
+    let registered: HashSet<String> = registry_src
+        .lines()
+        .filter_map(|l| {
+            let l = l.trim_start();
+            l.strip_prefix("pub const ")
+                .and_then(|r| r.split(':').next())
+                .filter(|c| {
+                    c.len() == 5
+                        && matches!(c.as_bytes()[0], b'E' | b'W' | b'I')
+                        && c[1..].chars().all(|ch| ch.is_ascii_digit())
+                })
+                .map(|c| c.to_string())
+        })
+        .collect();
+    assert!(!registered.is_empty(), "failed to parse the error.rs registry");
+
+    // Walk every .rs under src/ (including codegen/) and collect emitted codes.
+    fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+        for e in std::fs::read_dir(dir).unwrap() {
+            let p = e.unwrap().path();
+            if p.is_dir() {
+                collect(&p, out);
+            } else if p.extension().map(|x| x == "rs").unwrap_or(false) {
+                out.push(p);
+            }
+        }
+    }
+    let mut files = Vec::new();
+    collect(std::path::Path::new(&src_dir), &mut files);
+
+    let mut unregistered: Vec<String> = Vec::new();
+    for file in &files {
+        let src = std::fs::read_to_string(file).unwrap();
+        for code in code_re(&src) {
+            if !registered.contains(&code) && !unregistered.contains(&code) {
+                unregistered.push(format!("{code} (in {})", file.file_name().unwrap().to_string_lossy()));
+            }
+        }
+    }
+    assert!(
+        unregistered.is_empty(),
+        "these diagnostic codes are emitted but NOT in the error.rs registry — add a \
+         `pub const` for each (single source of truth): {unregistered:?}"
+    );
+}
