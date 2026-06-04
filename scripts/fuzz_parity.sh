@@ -231,6 +231,12 @@ fuzz ceil_f64  f64 1 'ceil(A)'
 fuzz min_f64   f64 2 'min_f64(A, B)'
 fuzz max_f64   f64 2 'max_f64(A, B)'
 fuzz f2i       f64 1 'f64_to_i64(A)'
+# transcendentals (LLVM intrinsics → libm; native==interp). Domains kept finite:
+# ln/log10 need a positive arg (abs+1 ≥ 1, avoids NaN — that path's its own
+# nan_case); exp's arg is bounded small so it can't overflow to inf.
+fuzz exp_f64   f64 1 'exp(min_f64(abs_f64(A), 700.0))'
+fuzz ln_f64    f64 1 'ln(abs_f64(A) + 1.0)'
+fuzz log10_f64 f64 1 'log10(abs_f64(A) + 1.0)'
 # ── str scalars (str → i64/bool/str) ──────────────────────────────────────────
 fuzz str_len      str 1 'str_len(A)'
 fuzz str_contains str 2 'str_contains(A, B)'
@@ -251,5 +257,5 @@ expect_overflow ovf_mul  '9223372036854775807 * 2'
 expect_overflow ovf_neg  '0 - (0 - 9223372036854775807 - 1)'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — 30 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
+echo "fuzz_parity: PASS — 33 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
 exit 0

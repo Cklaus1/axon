@@ -955,6 +955,24 @@ impl<'ctx> super::Codegen<'ctx> {
             let ceil_fn = self.ir.module.add_function("llvm.ceil.f64", f1, None);
             self.functions.insert("ceil".to_string(), ceil_fn);
             self.fn_return_types.insert("ceil".to_string(), Type::F64);
+
+            // exp / ln / log10 — the transcendental trio. LLVM intrinsics
+            // (lowered to C libm exp/log/log10), matching the interpreter's
+            // Rust f64::{exp,ln,log10} (which call the same libm), so
+            // native==interp. Note: Axon `ln` = natural log = `llvm.log.f64`
+            // (C `log`); `log10` is the base-10 intrinsic. Closes the E0910
+            // gap for these (they were interp-only).
+            let exp_fn = self.ir.module.add_function("llvm.exp.f64", f1, None);
+            self.functions.insert("exp".to_string(), exp_fn);
+            self.fn_return_types.insert("exp".to_string(), Type::F64);
+
+            let ln_fn = self.ir.module.add_function("llvm.log.f64", f1, None);
+            self.functions.insert("ln".to_string(), ln_fn);
+            self.fn_return_types.insert("ln".to_string(), Type::F64);
+
+            let log10_fn = self.ir.module.add_function("llvm.log10.f64", f1, None);
+            self.functions.insert("log10".to_string(), log10_fn);
+            self.fn_return_types.insert("log10".to_string(), Type::F64);
         }
 
         // assert_eq_f64 — panic if two f64 values differ.
