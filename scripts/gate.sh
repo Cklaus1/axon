@@ -93,6 +93,15 @@ if [ "$STRICT" = 1 ]; then
   # CARGO_BIN_EXE harnesses. Under --strict only because it links LLVM.
   echo "── gate: codegen-gated integration tests ────────────────────────"
   cargo test -p axon-core --test integration_fixtures || fail "codegen integration tests"
+
+  # The two-engine invariant (I-2): native codegen + AOT-wasm must match the
+  # interpreter oracle byte-for-byte. ~22 scripts/*_parity.sh harnesses assert
+  # this, but were historically run ad hoc — which is how the silent-divergence
+  # bugs (#27/#36/#38/#39/parse_*_or) reached main. parity_all.sh runs the whole
+  # suite; a real divergence fails the gate, toolchain-absent harnesses skip
+  # cleanly. Under --strict only (links LLVM + may run wasmtime; ~2 min).
+  echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
+  ./scripts/parity_all.sh --quiet || fail "parity suite"
 fi
 
 echo ""
