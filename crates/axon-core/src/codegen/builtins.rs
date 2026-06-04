@@ -1505,6 +1505,81 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("read_file".to_string(), fn_val);
         }
 
+        // ── dict_to_str(d: Dict) -> Result<str, str> ─────────────────────────
+        // Serialize to `key=value\n` lines; an unrepresentable key/value is a
+        // recoverable Err. IDENTICAL Result<str,str> assembly to read_file —
+        // the runtime signals Err via a negative out_len. Only the arg differs
+        // (an i8* dict handle instead of a str path).
+        {
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let i8_arr16_ty = self.ir.context.i8_type().array_type(16);
+            let result_ty = self.ir.context.struct_type(&[bool_ty.into(), i8_arr16_ty.into()], false);
+
+            let rt_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
+            let rt_fn = self.ir.module.add_function("__axon_dict_to_str", rt_ty, None);
+
+            let fn_ty = result_ty.fn_type(&[i8_ptr.into()], false);
+            let fn_val = self.ir.module.add_function("dict_to_str", fn_ty, None);
+
+            let entry_bb = self.ir.context.append_basic_block(fn_val, "dts_entry");
+            let ok_bb = self.ir.context.append_basic_block(fn_val, "dts_ok");
+            let err_bb = self.ir.context.append_basic_block(fn_val, "dts_err");
+            let saved = self.ir.builder.get_insert_block();
+            self.ir.builder.position_at_end(entry_bb);
+
+            let d_arg = fn_val.get_nth_param(0).unwrap().into_pointer_value();
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dts_out_len");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "dts_out_ptr");
+            let out_ptr_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "dts_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn, &[d_arg.into(), out_len_slot.into(), out_ptr_cast.into()], "");
+
+            let out_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "dts_len").into_int_value();
+            let out_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "dts_ptr").into_pointer_value();
+            let zero_i64 = i64_ty.const_int(0, false);
+            let is_ok = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGE, out_len, zero_i64, "dts_is_ok");
+            build_wrappers::w_cond_br(&self.ir.builder, is_ok, ok_bb, err_bb);
+
+            // ok_bb: { tag=1, payload=str{out_len, out_ptr} }
+            self.ir.builder.position_at_end(ok_bb);
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "dts_ok_slot");
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 0, "dts_tag_ok"),
+                bool_ty.const_int(1, false).into());
+            let payload_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 1, "dts_pay_ok");
+            let str_ok_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ok, str_ty.ptr_type(inkwell::AddressSpace::default()), "dts_str_ok_ptr");
+            let str_ok_slot = build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "dts_str_ok");
+            build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_ok_slot, 0, ""), out_len.into());
+            build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_ok_slot, 1, ""), out_ptr.into());
+            let str_ok_val = build_wrappers::w_load(&self.ir.builder, str_ty.into(), str_ok_slot, "dts_str_ok_val");
+            build_wrappers::w_store(&self.ir.builder, str_ok_ptr, str_ok_val);
+            let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "dts_ok_val");
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
+
+            // err_bb: actual_len = -out_len, { tag=0, payload=str{actual_len, out_ptr} }
+            self.ir.builder.position_at_end(err_bb);
+            let actual_len = build_wrappers::w_int_neg(&self.ir.builder, out_len, "dts_actual_len");
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "dts_err_slot");
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 0, "dts_tag_err"),
+                bool_ty.const_int(0, false).into());
+            let payload_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 1, "dts_pay_err");
+            let str_err_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "dts_str_err_ptr");
+            let str_err_slot = build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "dts_str_err");
+            build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_err_slot, 0, ""), actual_len.into());
+            build_wrappers::w_store(&self.ir.builder, build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), str_err_slot, 1, ""), out_ptr.into());
+            let str_err_val = build_wrappers::w_load(&self.ir.builder, str_ty.into(), str_err_slot, "dts_str_err_val");
+            build_wrappers::w_store(&self.ir.builder, str_err_ptr, str_err_val);
+            let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "dts_err_val");
+            build_wrappers::w_ret(&self.ir.builder, err_val);
+
+            if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+            self.functions.insert("dict_to_str".to_string(), fn_val);
+            self.fn_return_types.insert("dict_to_str".to_string(),
+                Type::Result(Box::new(Type::Str), Box::new(Type::Str)));
+        }
+
         // ── R6: exec(cmd: str, args: [str]) -> Result<str, str> ───────────────
         // Runtime: __axon_exec(cmd: AxonStr, args_ptr: *const AxonStr,
         //                      args_count: i64, out_len: *i64, out_ptr: **u8)

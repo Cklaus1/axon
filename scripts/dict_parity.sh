@@ -72,7 +72,11 @@ check mv_get   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 10)  dic
 check mv_len   'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let m = dict_map_values(d, |v| v + 100)  dict_len(m) }'
 check mv_cap   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k", 3)  let factor = 50  let m = dict_map_values(d, |v| v * factor)  match dict_get(m, "k") { Some(v) => v  None => 0 } }'
 check mv_cp    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 9)  let m = dict_map_values(d, |v| v * 2)  match dict_get(d, "a") { Some(v) => v  None => 0 } }'
+check ts_len   'fn main() -> i64 { let d = dict_new()  dict_set(d, "apple", 1)  dict_set(d, "banana", 2)  match dict_to_str(d) { Ok(s) => str_len(s)  Err(e) => 0 - 1 } }'
+check ts_ok    'fn main() -> i64 { let d = dict_new()  dict_set(d, "x", 5)  match dict_to_str(d) { Ok(s) => 1  Err(e) => 0 } }'
+check ts_err   'fn main() -> i64 { let d = dict_new()  dict_set(d, "k=v", 1)  match dict_to_str(d) { Ok(s) => 0  Err(e) => 1 } }'
+check ts_empty 'fn main() -> i64 { let d = dict_new()  match dict_to_str(d) { Ok(s) => str_len(s)  Err(e) => 0 - 1 } }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values (int values, BTreeMap order) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values/dict_merge/dict_from_pairs/dict_to_pairs/dict_map_values/dict_to_str (int values, BTreeMap order) match the interpreter ✓"
 exit 0

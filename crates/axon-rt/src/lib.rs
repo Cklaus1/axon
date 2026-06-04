@@ -660,6 +660,61 @@ pub extern "C" fn __axon_dict_map_values(
     Arc::into_raw(arc) as *mut c_void
 }
 
+/// Serialize a dict to `key=value\n` lines (BTreeMap key order), matching the
+/// interpreter. v1 int-valued: values render as their decimal i64. Signals the
+/// recoverable error (a key with `=`/newline, matching the interp's Err case)
+/// the read_file way — via a NEGATIVE out_len, so codegen builds `Err(msg)`;
+/// `out_len >= 0` → `Ok(serialized)`. The string buffer is malloc'd either way.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_to_str(
+    d: *mut c_void,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let mut out = String::new();
+    let mut err: Option<String> = None;
+    if !d.is_null() {
+        let dict = unsafe { dict_borrow(d) };
+        let guard = dict.map.lock().unwrap();
+        for (k, v) in guard.iter() {
+            if k.contains('=') || k.contains('\n') {
+                err = Some(format!(
+                    "dict_to_str: key '{k}' contains an unrepresentable char (= or newline)"
+                ));
+                break;
+            }
+            // v1: int-valued render (matches the interpreter's `display` for Int).
+            let vs = match v {
+                DictVal::Int(x) => x.to_string(),
+                DictVal::Float(f) => format!("{f}"),
+                DictVal::Str(s) => s.clone(),
+            };
+            if vs.contains('\n') {
+                err = Some(format!(
+                    "dict_to_str: value for key '{k}' contains a newline (unsupported)"
+                ));
+                break;
+            }
+            out.push_str(k);
+            out.push('=');
+            out.push_str(&vs);
+            out.push('\n');
+        }
+    }
+    // read_file's Result<str,str> convention: out_len >= 0 → Ok(payload of that
+    // length); out_len < 0 → Err, with the message length = -out_len. write_str_out
+    // writes a positive length; the err path negates it. (Our err messages are
+    // always non-empty, so -len is genuinely negative — no len-0 ambiguity.)
+    match err {
+        None => unsafe { write_str_out(&out, out_len, out_ptr) },
+        Some(msg) => unsafe {
+            write_str_out(&msg, out_len, out_ptr);
+            *out_len = -*out_len;
+        },
+    }
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {
