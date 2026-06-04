@@ -3748,6 +3748,88 @@ impl<'ctx> super::Codegen<'ctx> {
             }
         }
 
+        // ── Dict builtins (R1c) — opaque i8* handle + tagged-value runtime ──
+        if let ast::Expr::Ident(name) = callee {
+            if name == "dict_new" && args.is_empty() {
+                let f = self.functions.get("__axon_dict_new").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_new"))?;
+                return self.ir.builder.build_call(f, &[], "dict_new").unwrap().try_as_basic_value().left();
+            }
+            if name == "dict_set" && args.len() == 3 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let v = self.emit_expr(&args[2], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+                // Tag dispatch on the value's LLVM type (call-site, like to_str).
+                let (tag, payload, pstr, plen) = match v {
+                    BasicValueEnum::FloatValue(fv) => {
+                        // tag=1; payload = bitcast f64→i64.
+                        let bits = self.ir.builder.build_bitcast(fv, i64_ty, "ds_fbits").unwrap().into_int_value();
+                        (1i64, bits, i8_ptr.const_null(), i64_ty.const_zero())
+                    }
+                    BasicValueEnum::StructValue(sv) if sv.get_type() == str_ty => {
+                        // tag=2; pass the str's (ptr,len) as the str payload.
+                        let slen = build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "ds_sl").into_int_value();
+                        let sptr = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "ds_sp").into_pointer_value();
+                        (2i64, i64_ty.const_zero(), sptr, slen)
+                    }
+                    BasicValueEnum::IntValue(iv) => {
+                        // tag=0; widen narrow ints (bool/i32) to i64 payload.
+                        let p = if iv.get_type().get_bit_width() < 64 {
+                            build_wrappers::w_int_s_extend(&self.ir.builder, iv, i64_ty, "ds_iw")
+                        } else { iv };
+                        (0i64, p, i8_ptr.const_null(), i64_ty.const_zero())
+                    }
+                    _ => return None,
+                };
+                let f = self.functions.get("__axon_dict_set").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_set"))?;
+                self.ir.builder.build_call(f, &[
+                    d.into(), key.into(), i64_ty.const_int(tag as u64, false).into(),
+                    payload.into(), pstr.into(), plen.into()], "").unwrap();
+                return None;
+            }
+            if name == "dict_has" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let f = self.functions.get("__axon_dict_has").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_has"))?;
+                return self.ir.builder.build_call(f, &[d.into(), key.into()], "dict_has").unwrap().try_as_basic_value().left();
+            }
+            // dict_get(d, k) → Option<i64>. v1: the value is reinterpreted as i64
+            // (the int-valued case — the common state-counter shape). Str-valued
+            // dicts are a follow-on (would need Option<str>, dispatched by the
+            // surrounding match's expected type). Calls the extern with out-param
+            // slots, then builds Some(payload)/None from the found flag.
+            if name == "dict_get" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let key = self.emit_expr(&args[1], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let tag_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dg_tag");
+                let pay_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dg_pay");
+                let sl_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dg_sl");
+                let f = self.functions.get("__axon_dict_get").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_get"))?;
+                let found = self.ir.builder
+                    .build_call(f, &[d.into(), key.into(), tag_slot.into(), pay_slot.into(), sl_slot.into()], "dg_call")
+                    .unwrap().try_as_basic_value().left()?.into_int_value();
+                let payload = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), pay_slot, "dg_p").into_int_value();
+                // Build Option<i64> via emit_option + select on the found flag.
+                let some_v = self.emit_option(Some(payload.into()), &Type::I64);
+                let none_v = self.emit_option(None, &Type::I64);
+                let chosen = self.ir.builder.build_select(found, some_v, none_v, "dg_opt").unwrap();
+                return Some(chosen);
+            }
+            if name == "dict_len" && args.len() == 1 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let f = self.functions.get("__axon_dict_len").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_len"))?;
+                return self.ir.builder.build_call(f, &[d.into()], "dict_len").unwrap().try_as_basic_value().left();
+            }
+        }
+
         // Array reductions over an i64 slice (`{i64 len, i8* data}`), lowered
         // INLINE as a counted loop (pure IR → works native AND wasm). These had
         // no codegen (E0910). Semantics match the interpreter (interp.rs):

@@ -1704,6 +1704,29 @@ fn codegen_arr_sum_and_contains_match_interp() {
 }
 
 #[test]
+fn codegen_dict_core_matches_interp() {
+    // R1c slice 1: the core dict_* builtins (new/set/get/has/len) now have
+    // native codegen — a Dict lowers to an opaque i8* handle over the
+    // __axon_dict_* runtime in axon-rt (tagged-value HashMap), like channels.
+    // Harness asserts native==interp for int-valued dicts incl. a counter
+    // pattern and a string-interpolated key. Skips when codegen absent.
+    let script = format!("{}/../../scripts/dict_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("dict_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run dict_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — dict parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "native dict_* must match interp:\n{stdout}{stderr}");
+    assert!(stdout.contains("dict_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // Honest-error guard: a known builtin with no native codegen lowering
     // (arr_*/dict_* etc.) must ABORT the native build with E0910, not silently

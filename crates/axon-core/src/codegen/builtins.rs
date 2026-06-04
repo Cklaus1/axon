@@ -863,6 +863,36 @@ impl<'ctx> super::Codegen<'ctx> {
         self.fn_return_types.insert("send".to_string(), Type::Unit);
         self.fn_return_types.insert("clone".to_string(), Type::Chan(Box::new(Type::Unknown)));
 
+        // ── Dict runtime externs (R1c) ──────────────────────────────────────
+        // A Dict is an opaque i8* handle to an Arc<Mutex<HashMap>> in axon-rt.
+        // Values are tagged (0=Int,1=Float,2=Str); str keys/values pass the
+        // AxonStr by value. Codegen for dict_set/get does the call-site tag
+        // dispatch (like to_str) and assembles Option<T> from get's out-params.
+        let str_ty_d = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+        let i64_ptr_d = i64_ty.ptr_type(inkwell::AddressSpace::default());
+        // i8* __axon_dict_new()
+        let dn_ty = i8_ptr.fn_type(&[], false);
+        self.ir.module.add_function("__axon_dict_new", dn_ty, None);
+        // void __axon_dict_set(d:i8*, key:str, tag:i64, payload:i64, pstr:i8*, plen:i64)
+        let ds_ty = void_ty.fn_type(
+            &[i8_ptr.into(), str_ty_d.into(), i64_ty.into(), i64_ty.into(), i8_ptr.into(), i64_ty.into()], false);
+        self.ir.module.add_function("__axon_dict_set", ds_ty, None);
+        // i1 __axon_dict_get(d:i8*, key:str, out_tag:i64*, out_payload:i64*, out_strlen:i64*)
+        let dg_ty = bool_ty.fn_type(
+            &[i8_ptr.into(), str_ty_d.into(), i64_ptr_d.into(), i64_ptr_d.into(), i64_ptr_d.into()], false);
+        self.ir.module.add_function("__axon_dict_get", dg_ty, None);
+        // i1 __axon_dict_has(d:i8*, key:str)
+        let dh_ty = bool_ty.fn_type(&[i8_ptr.into(), str_ty_d.into()], false);
+        self.ir.module.add_function("__axon_dict_has", dh_ty, None);
+        // i64 __axon_dict_len(d:i8*)
+        let dl_ty = i64_ty.fn_type(&[i8_ptr.into()], false);
+        self.ir.module.add_function("__axon_dict_len", dl_ty, None);
+        // dict_new returns the opaque handle type (Deferred("Dict") → i8*).
+        self.fn_return_types.insert("dict_new".to_string(), Type::Deferred("Dict".to_string()));
+        self.fn_return_types.insert("dict_set".to_string(), Type::Unit);
+        self.fn_return_types.insert("dict_has".to_string(), Type::Bool);
+        self.fn_return_types.insert("dict_len".to_string(), Type::I64);
+
         // Populate fn_return_types for all other builtins (Fix 19).
         self.fn_return_types.insert("println".to_string(), Type::Unit);
         self.fn_return_types.insert("print".to_string(), Type::Unit);

@@ -199,6 +199,158 @@ pub extern "C" fn __axon_select(chans: *mut *mut c_void, n: i64) -> i64 {
     }
 }
 
+// ── Dict (R1c) ──────────────────────────────────────────────────────────────
+//
+// A string-keyed, tagged-value hash map — the native realization of the
+// interpreter's dynamically-typed `Dict` (`Rc<RefCell<BTreeMap<String,Value>>>`).
+// Codegen values are statically typed, so each stored value carries a TAG plus
+// an 8-byte payload, exactly mirroring how the interpreter's `Value` enum
+// discriminates int/float/str. The dict is an opaque `*mut c_void` handle to an
+// `Arc<Mutex<HashMap<…>>>`, the same ownership model as channels above (created,
+// mutated, dropped through C-ABI externs the codegen calls by name — never
+// inline IR). See `governance/specs/R1c-dict-runtime.md`.
+//
+// Tag values (must match codegen's call-site dispatch): 0=Int, 1=Float, 2=Str.
+// Payload: an i64 for Int, the f64 bit-pattern for Float, or a pointer to a
+// heap `String` (boxed) for Str — the dict owns the Str copy.
+
+use std::collections::HashMap as StdHashMap;
+
+#[derive(Clone)]
+enum DictVal {
+    Int(i64),
+    Float(f64),
+    Str(String),
+}
+
+struct Dict {
+    map: Mutex<StdHashMap<String, DictVal>>,
+}
+
+/// Create an empty dict. Opaque handle to an `Arc<Dict>`.
+#[no_mangle]
+pub extern "C" fn __axon_dict_new() -> *mut c_void {
+    let arc = Arc::new(Dict { map: Mutex::new(StdHashMap::new()) });
+    Arc::into_raw(arc) as *mut c_void
+}
+
+// Borrow the Arc<Dict> from a raw handle WITHOUT consuming it (the caller still
+// owns the handle). Returns a cloned Arc whose drop is balanced by into_raw.
+#[inline]
+unsafe fn dict_borrow(d: *mut c_void) -> Arc<Dict> {
+    let arc = Arc::from_raw(d as *const Dict);
+    let clone = Arc::clone(&arc);
+    let _ = Arc::into_raw(arc); // keep the caller's handle alive
+    clone
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn dict_key_of(key: AxonStr) -> String {
+    unsafe { key.as_str() }.to_string()
+}
+
+fn dict_val_of(tag: i64, payload: i64, payload_str: *const u8, payload_str_len: i64) -> DictVal {
+    match tag {
+        1 => DictVal::Float(f64::from_bits(payload as u64)),
+        2 => {
+            // Str payload: reconstruct from (ptr,len) and own a copy.
+            if payload_str.is_null() || payload_str_len < 0 {
+                DictVal::Str(String::new())
+            } else {
+                let s = unsafe { std::slice::from_raw_parts(payload_str, payload_str_len as usize) };
+                DictVal::Str(String::from_utf8_lossy(s).into_owned())
+            }
+        }
+        _ => DictVal::Int(payload),
+    }
+}
+
+/// Set `key` → tagged value. Str payloads arrive as (ptr,len); int/float in
+/// `payload`. The dict owns its key + Str-value copies.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_set(
+    d: *mut c_void,
+    key: AxonStr,
+    tag: i64,
+    payload: i64,
+    payload_str: *const u8,
+    payload_str_len: i64,
+) {
+    if d.is_null() { return; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let v = dict_val_of(tag, payload, payload_str, payload_str_len);
+    dict.map.lock().unwrap().insert(k, v);
+}
+
+/// Look up `key`. Returns 1 if found (writing the tag + payload out-params), 0
+/// if absent. For a Str value, `*out_payload` is set to a freshly-malloc'd,
+/// null-terminated copy's pointer and `*out_str_len` to its byte length.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_get(
+    d: *mut c_void,
+    key: AxonStr,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    if d.is_null() { return false; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let guard = dict.map.lock().unwrap();
+    match guard.get(&k) {
+        None => false,
+        Some(v) => {
+            unsafe {
+                match v {
+                    DictVal::Int(n) => { *out_tag = 0; *out_payload = *n; }
+                    DictVal::Float(f) => { *out_tag = 1; *out_payload = f.to_bits() as i64; }
+                    DictVal::Str(s) => {
+                        *out_tag = 2;
+                        let len = s.len();
+                        let p = libc_malloc(len + 1);
+                        std::ptr::copy_nonoverlapping(s.as_ptr(), p, len);
+                        *p.add(len) = 0;
+                        *out_payload = p as i64;
+                        if !out_str_len.is_null() { *out_str_len = len as i64; }
+                    }
+                }
+            }
+            true
+        }
+    }
+}
+
+/// Whether `key` is present.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_has(d: *mut c_void, key: AxonStr) -> bool {
+    if d.is_null() { return false; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let has = dict.map.lock().unwrap().contains_key(&k);
+    has
+}
+
+/// Number of entries.
+#[no_mangle]
+pub extern "C" fn __axon_dict_len(d: *mut c_void) -> i64 {
+    if d.is_null() { return 0; }
+    let dict = unsafe { dict_borrow(d) };
+    let n = dict.map.lock().unwrap().len() as i64;
+    n
+}
+
+/// Drop the dict handle (Arc decref).
+#[no_mangle]
+pub extern "C" fn __axon_dict_drop(d: *mut c_void) {
+    if !d.is_null() {
+        unsafe { drop(Arc::from_raw(d as *const Dict)) };
+    }
+}
+
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
 /// Spawn a new OS thread.

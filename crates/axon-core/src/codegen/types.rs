@@ -121,6 +121,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 self.ir.module.get_struct_type(&mangled).map(|s| s.into())
             }
 
+            // R1c: a `Dict` is an opaque runtime handle (i8*), like a channel —
+            // the dynamically-typed map lives behind `__axon_dict_*` externs.
+            // The builtin-sig parser lands "Dict" as `Deferred("Dict")`.
+            Type::Deferred(name) if name == "Dict" => {
+                Some(self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into())
+            }
             // Unresolved — skip
             Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
             // TypeParam should be eliminated by monomorphization.
