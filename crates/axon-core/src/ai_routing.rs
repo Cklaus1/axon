@@ -109,6 +109,15 @@ impl Tier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // The `AXON_AI_MODEL_*` env vars are process-global, but cargo runs tests in
+    // parallel threads of ONE process. The default-model test (asserts the
+    // built-ins when the vars are unset) and the override test (sets+removes a
+    // var) therefore race: the override's set_var can leak into the default
+    // test's read window. Serialize the two env-touching tests on this mutex so
+    // neither observes the other's transient state.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn tier_roundtrips_through_name() {
@@ -128,6 +137,7 @@ mod tests {
         // R3 routing bug fix: the live request's `model` follows the tier, so
         // `strong` (t3) actually reaches the strong model — not a hardcoded one.
         // (Env vars are process-global; only assert the defaults when unset.)
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         if std::env::var_os("AXON_AI_MODEL_CHEAP").is_none()
             && std::env::var_os("AXON_AI_MODEL_BALANCED").is_none()
             && std::env::var_os("AXON_AI_MODEL_STRONG").is_none()
@@ -145,6 +155,7 @@ mod tests {
     fn api_model_honors_env_override() {
         // A deployment (e.g. a TrainLoop/proxy gateway) pins a tier's concrete
         // model via env without a recompile.
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::set_var("AXON_AI_MODEL_STRONG", "my-gateway-opus");
         assert_eq!(Tier::Strong.api_model(), "my-gateway-opus");
         std::env::remove_var("AXON_AI_MODEL_STRONG");

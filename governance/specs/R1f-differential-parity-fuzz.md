@@ -127,21 +127,22 @@ drift surface the architecture review flagged):
    → `to_str_f64` now normalizes `-0.0 → +0.0` before snprintf
    (`(n == 0.0) ? 0.0 : n`, an OEQ-select). Verified native==interp.
 
-2. **Scientific-notation format — DOCUMENTED RESIDUAL** (own follow-up). For
-   floats large/small enough to render in scientific notation, interp's hand-
-   rolled `fmt_g` and C's `%.6g` disagree on BOTH trailing zeros and exponent
-   style: `1000000.0` → interp `1.00000e6` vs native `1e+06`; `0.0000001` →
-   `1.00000e-7` vs `1e-07`. This is NOT a one-line fix (the two formatters
-   implement different conventions) and is a behavior decision about the I-2
-   oracle's float formatter, so it is deliberately NOT bundled into the fuzzer
-   commit. **Not a live corpus break** — no shipped `examples/*.ax` uses floats
-   in the scientific-notation range (`all_examples_parity` = 32/32). The
-   fuzzer's `f64` domain is bounded to |x| ≤ 1e5 (which `%.6g` renders in
-   non-scientific form), so slice 2 stays green while the residual is tracked
-   here. **Follow-up: a dedicated slice that picks one canonical `%g` convention
-   and converges both engines** (likely: make interp's `fmt_g` emit the C
-   `%.6g` exponent form, since C's is the well-specified standard) — gated by a
-   widened `f64` fuzz domain that includes the sci-notation range.
+2. **Scientific-notation format — CONVERGED** (slice 2b). For floats large/small
+   enough to render in scientific notation, interp's hand-rolled `fmt_g` and C's
+   `%.6g` disagreed on BOTH trailing zeros and exponent style: `1000000.0` →
+   interp `1.00000e6` vs native `1e+06`; `0.0000001` → `1.00000e-7` vs `1e-07`.
+   **Resolution: make interp the one that moves** — C's `%.6g` is the
+   well-specified standard, so `interp.rs::fmt_g`'s exponential branch now trims
+   the mantissa's trailing zeros and emits a signed two-digit exponent
+   (`1e+06` / `1.23457e+06` / `1e-07` / `1.5e+15`), matching C byte-for-byte. (A
+   behavior change to the I-2 oracle, but toward the standard, and verified
+   against `printf '%.6g'` across the range; no shipped example pinned the old
+   form — `all_examples_parity` stayed 32/32.) The fuzzer's `f64` domain was
+   then **widened to span the sci-notation range** (edges at ±1e6/±1e-7/±1e15/
+   ±1e-12; random scaled across 10^[-9,9]) so it proves the convergence — 56
+   inputs/descriptor, green. Pinned by the `fmt_g_matches_c_printf_six_g` unit
+   test. (Surfaced + fixed a pre-existing parallel-test env-var flake in
+   `ai_routing` as collateral — the gate's parity stage exposed it.)
 
 ## Out of scope (named, not faked)
 

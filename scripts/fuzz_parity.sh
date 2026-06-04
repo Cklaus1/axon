@@ -83,9 +83,19 @@ fuzz() {
         for (i=1;i<=ne;i++){ cnt++; vals[cnt]=edges[i] }
         for (i=1;i<=n;i++){ cnt++; vals[cnt]=int(rand()*1000000) }
       } else if (domain == "f64") {
-        ne = split("0.0 1.0 -1.0 0.5 -0.5 2.5 -2.5 100000.0 -100000.0", edges, " ")
+        # Edges now SPAN the scientific-notation range (1e6, 1e-7, 1e15, 1e-12)
+        # as well as the common range. Slice 2b converged the interp fmt_g onto
+        # C %.6g, so the fuzzer proves it across the whole %g domain (mantissa
+        # trailing-zero trim + signed two-digit exponent). -0.0 covered by ceil.
+        ne = split("0.0 1.0 -1.0 0.5 -0.5 2.5 -2.5 100000.0 -100000.0 1000000.0 -1234567.0 0.0000001 -0.0000001 9999999.0 1.5e15 -2.5e-12", edges, " ")
         for (i=1;i<=ne;i++){ cnt++; vals[cnt]=edges[i] }
-        for (i=1;i<=n;i++){ cnt++; vals[cnt]=sprintf("%.4f", rand()*2000.0-1000.0) }
+        # Random spread across many magnitudes: scale a [-1,1] mantissa by a
+        # random power of ten in [-9, 9] so sci-notation is regularly exercised.
+        for (i=1;i<=n;i++){
+          mant = rand()*2.0 - 1.0
+          ex = int(rand()*19) - 9
+          cnt++; vals[cnt]=sprintf("%.6e", mant * (10 ^ ex))
+        }
       } else if (domain == "str") {
         # A fixed corpus of already-quoted Axon string literals (empty, single
         # char, multi-word with spaces, mixed case, digits, punctuation,

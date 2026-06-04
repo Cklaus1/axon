@@ -6245,9 +6245,27 @@ fn fmt_g(x: f64) -> String {
     let p: i32 = 6;
     let e = x.abs().log10().floor() as i32;
     if e < -4 || e >= p {
-        // Exponential form; trim trailing zeros in the mantissa.
-        let s = format!("{:.*e}", (p - 1) as usize, x);
-        return s;
+        // Exponential form. Match C's `%.6g` exactly (the standard the native
+        // codegen path emits via snprintf, so I-2 holds): trim trailing zeros
+        // from the mantissa AND print the exponent as a sign plus at least two
+        // digits — `1e+06`, `1.23457e+06`, `1e-07`. Rust's `{:e}` gives neither
+        // (it yields `1.00000e6`), which is the divergence the differential
+        // fuzzer caught. Split Rust's output on `e`, trim the mantissa, then
+        // reformat the exponent.
+        let raw = format!("{:.*e}", (p - 1) as usize, x);
+        let (mantissa, exp) = raw.split_once('e').unwrap_or((raw.as_str(), "0"));
+        let mut m = mantissa.to_string();
+        if m.contains('.') {
+            while m.ends_with('0') {
+                m.pop();
+            }
+            if m.ends_with('.') {
+                m.pop();
+            }
+        }
+        let exp_n: i32 = exp.parse().unwrap_or(0);
+        let sign = if exp_n < 0 { '-' } else { '+' };
+        return format!("{m}e{sign}{:02}", exp_n.abs());
     }
     let decimals = (p - 1 - e).max(0) as usize;
     let mut s = format!("{:.*}", decimals, x);
@@ -6281,6 +6299,29 @@ mod tests {
     #[test]
     fn main_returns_exit_code() {
         assert_eq!(run("fn main() -> i64 { 7 }"), 7);
+    }
+
+    #[test]
+    fn fmt_g_matches_c_printf_six_g() {
+        // R1f slice 2b: the interpreter's fmt_g must match C's `%.6g` (the format
+        // the native codegen path emits via snprintf) so I-2 holds — the
+        // differential fuzzer (fuzz_parity.sh) caught the original divergence.
+        // Pins both the mantissa trailing-zero trim AND the signed two-digit
+        // exponent in the scientific-notation branch, plus -0.0 normalization.
+        assert_eq!(fmt_g(1_000_000.0), "1e+06");
+        assert_eq!(fmt_g(1_234_567.0), "1.23457e+06");
+        assert_eq!(fmt_g(9_999_999.0), "1e+07");
+        assert_eq!(fmt_g(0.000_000_1), "1e-07");
+        assert_eq!(fmt_g(-1_234_567.0), "-1.23457e+06");
+        assert_eq!(fmt_g(1.5e15), "1.5e+15");
+        assert_eq!(fmt_g(-2.5e-12), "-2.5e-12");
+        // Non-scientific range is unchanged.
+        assert_eq!(fmt_g(123_456.0), "123456");
+        assert_eq!(fmt_g(0.0001), "0.0001");
+        assert_eq!(fmt_g(2.71875), "2.71875");
+        // Zero (and -0.0) normalize to "0".
+        assert_eq!(fmt_g(0.0), "0");
+        assert_eq!(fmt_g(-0.0), "0");
     }
 
     #[test]
