@@ -904,6 +904,11 @@ impl<'ctx> super::Codegen<'ctx> {
         // of (str,i64) tuples (StrI64Pair). Same out-param shape as dict_keys.
         let dtp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
         self.ir.module.add_function("__axon_dict_to_pairs", dtp_ty, None);
+        // i8* __axon_dict_map_values(d:i8*, fn_ptr:i8*, env:i8*) → a Dict handle.
+        // The runtime indirect-calls the lambda `i64 fn(i8* env, i64)` per value.
+        let dmv_ty = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into(), i8_ptr.into()], false);
+        self.ir.module.add_function("__axon_dict_map_values", dmv_ty, None);
+        self.fn_return_types.insert("dict_map_values".to_string(), Type::Deferred("Dict".to_string()));
         // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
         // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);

@@ -626,6 +626,40 @@ pub extern "C" fn __axon_dict_to_pairs(
     }
 }
 
+/// Apply a closure to each value, returning a FRESH dict with the same keys and
+/// mapped values (v1 int-valued), matching the interpreter. The closure arrives
+/// as (fn_ptr, env) — the axon lambda ABI `i64 fn(i8* env, i64 val)` — and the
+/// runtime indirect-calls it per value (the same transmute-and-call pattern as
+/// __axon_spawn). Keys are unchanged; a null dict → {}.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_map_values(
+    d: *mut c_void,
+    fn_ptr: *const c_void,
+    env: *mut c_void,
+) -> *mut c_void {
+    let mut out: StdMap<String, DictVal> = StdMap::new();
+    if !d.is_null() {
+        let dict = unsafe { dict_borrow(d) };
+        let f: extern "C" fn(*mut c_void, i64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
+        // Snapshot (key, int-value) first so the lambda can't observe a partial
+        // map (and we don't hold the lock across the callback).
+        let pairs: Vec<(String, i64)> = {
+            let guard = dict.map.lock().unwrap();
+            guard.iter().map(|(k, v)| {
+                let iv = match v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
+                (k.clone(), iv)
+            }).collect()
+        };
+        for (k, v) in pairs {
+            let nv = f(env, v);
+            out.insert(k, DictVal::Int(nv));
+        }
+    }
+    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    Arc::into_raw(arc) as *mut c_void
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {

@@ -4224,6 +4224,26 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.ir.builder.build_struct_gep(slice_ty, out, 1, "dtp_op").unwrap(), data.into());
                 return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "dtp_res"));
             }
+            // dict_map_values(d, f) → Dict: hand the dict handle + the lambda's
+            // (fn_ptr, env) to the runtime, which iterates and indirect-calls
+            // `i64 f(i8* env, i64 val)` per value (the __axon_spawn callback
+            // pattern). Returns the new handle. v1: int-valued.
+            if name == "dict_map_values" && args.len() == 2 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let lam = match self.emit_expr(&args[1], fn_val)? {
+                    BasicValueEnum::StructValue(s) => s,
+                    _ => return None,
+                };
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let fn_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 0, "dmv_fn").into_pointer_value();
+                let env_raw = build_wrappers::w_extract_value(&self.ir.builder, lam, 1, "dmv_env").into_pointer_value();
+                let fn_p = build_wrappers::w_pointer_cast(&self.ir.builder, fn_raw, ptr_ty, "dmv_fp");
+                let env_p = build_wrappers::w_pointer_cast(&self.ir.builder, env_raw, ptr_ty, "dmv_ep");
+                let f = self.functions.get("__axon_dict_map_values").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_map_values"))?;
+                return self.ir.builder.build_call(f, &[d.into(), fn_p.into(), env_p.into()], "dmv_call")
+                    .unwrap().try_as_basic_value().left();
+            }
             if name == "dict_inc" && args.len() == 2 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;
