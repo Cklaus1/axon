@@ -1917,6 +1917,69 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "zw_res"))
     }
 
+    /// arr_enumerate(&a) → [(i64 idx, i64 val)]. Result is a slice whose
+    /// elements are `{i64, i64}` tuples (16-byte stride). dst[i] = (i, src[i]).
+    /// Pure IR + malloc. The element type is the tuple, so indexing the result
+    /// (`b[k].0`) flows through the standard tuple field-access codegen.
+    fn emit_arr_i64_enumerate(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let tup_ty = self.ir.context.struct_type(&[i64_ty.into(), i64_ty.into()], false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "en_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "en_lp").unwrap(), "en_len").into_int_value();
+        let src_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "en_dp").unwrap(), "en_dat").into_pointer_value();
+        let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "en_si");
+
+        // malloc len * sizeof({i64,i64}) = len * 16.
+        let sixteen = i64_ty.const_int(16, false);
+        let total = build_wrappers::w_int_mul(&self.ir.builder, len, sixteen, "en_bytes");
+        let dst_raw = self.emit_malloc(total, "en_dst");
+        let dst = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, tup_ty.ptr_type(AddressSpace::default()), "en_dt");
+
+        let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "en_i");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i64_ty.const_zero().into());
+        let cond_bb = self.ir.context.append_basic_block(fn_val, "en.cond");
+        let body_bb = self.ir.context.append_basic_block(fn_val, "en.body");
+        let exit_bb = self.ir.context.append_basic_block(fn_val, "en.exit");
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(cond_bb);
+        let i_cur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), idx_slot, "en_ic").into_int_value();
+        let go = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, i_cur, len, "en_go");
+        build_wrappers::w_cond_br(&self.ir.builder, go, body_bb, exit_bb);
+
+        self.ir.builder.position_at_end(body_bb);
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src, &[i_cur], "en_sp").unwrap() };
+        let v = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "en_v").into_int_value();
+        // dst[i] = { i_cur, v } — GEP the tuple slot, store both fields.
+        let tp = unsafe { self.ir.builder.build_gep(tup_ty, dst, &[i_cur], "en_tp").unwrap() };
+        let f0 = self.ir.builder.build_struct_gep(tup_ty, tp, 0, "en_f0").unwrap();
+        build_wrappers::w_store(&self.ir.builder, f0, i_cur.into());
+        let f1 = self.ir.builder.build_struct_gep(tup_ty, tp, 1, "en_f1").unwrap();
+        build_wrappers::w_store(&self.ir.builder, f1, v.into());
+        let i_next = build_wrappers::w_int_add(&self.ir.builder, i_cur, i64_ty.const_int(1, false), "en_in");
+        build_wrappers::w_store(&self.ir.builder, idx_slot, i_next.into());
+        build_wrappers::w_br(&self.ir.builder, cond_bb);
+
+        self.ir.builder.position_at_end(exit_bb);
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "en_out");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "en_ol").unwrap(), len.into());
+        let dst_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, dst_raw, ptr_ty, "en_di8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "en_op").unwrap(), dst_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "en_res"))
+    }
+
     /// arr_find(&a, pred) → Option<i64>: first element where the predicate
     /// lambda returns truthy (Some), else None. Loops the whole slice tracking
     /// a found-flag + found-value (no short-circuit — observably identical for
@@ -3461,6 +3524,13 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_unique" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_unique(slice_val, fn_val);
+                }
+            }
+            // arr_enumerate(&a) → [(i, a[i])] : a slice of {i64 idx, i64 val}
+            // tuples (16-byte stride). The first nested/tuple-element arr_*.
+            if name == "arr_enumerate" && args.len() == 1 {
+                if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
+                    return self.emit_arr_i64_enumerate(slice_val, fn_val);
                 }
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
