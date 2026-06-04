@@ -1372,6 +1372,56 @@ pub extern "C" fn __axon_str_digits_only(
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
 
+/// `str_join(parts, sep)` — join a `[str]` slice with `sep`, matching the
+/// interpreter (Rust `slice::join`). The slice is passed as two SCALARS
+/// (`slice_len`, `slice_data` → an array of `AxonStr`, the same element layout
+/// str_split produces) rather than a by-value struct, sidestepping the
+/// slice-struct ABI; `sep` keeps the str by-value (native) / scalar (wasm) form.
+/// `slice_data` may be null when `slice_len == 0` (empty slice → "").
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_join(
+    slice_len: i64,
+    slice_data: *const AxonStr,
+    sep: AxonStr,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let sep = unsafe { sep.as_str() };
+    let result = unsafe { join_axonstr_slice(slice_len, slice_data, sep) };
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_join(
+    slice_len: i64,
+    slice_data: *const AxonStr,
+    sep_len: i64,
+    sep_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let sep = unsafe { AxonStr { len: sep_len, ptr: sep_ptr }.as_str() };
+    let result = unsafe { join_axonstr_slice(slice_len, slice_data, sep) };
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+/// Shared join body: read `slice_len` `AxonStr` elements from `slice_data` and
+/// join them with `sep`. Extracted so the native + wasm entry points can't drift.
+unsafe fn join_axonstr_slice(slice_len: i64, slice_data: *const AxonStr, sep: &str) -> String {
+    if slice_len <= 0 || slice_data.is_null() {
+        return String::new();
+    }
+    let n = slice_len as usize;
+    let mut parts: Vec<&str> = Vec::with_capacity(n);
+    for i in 0..n {
+        let elem = &*slice_data.add(i);
+        parts.push(elem.as_str());
+    }
+    parts.join(sep)
+}
+
 // ── BUG_HUNT #39: str_replace (matches Rust str::replace) ─────────────────────
 /// `str_replace(s, from, to)` — replace every occurrence of `from` with `to`,
 /// matching the interpreter (Rust `str::replace`). In particular an empty

@@ -3872,6 +3872,40 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.ir.builder.build_struct_gep(slice_ty, out, 1, "ss_op").unwrap(), data.into());
                 return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ss_res"));
             }
+            // str_join(parts, sep) → str: the inverse of str_split. Unpack the
+            // [str] slice arg into its (len, data) scalars (data → AxonStr*),
+            // pass them + the sep str to the runtime, assemble the str result.
+            if name == "str_join" && args.len() == 2 {
+                let parts = self.emit_expr(&args[0], fn_val)?;
+                let sep = self.emit_expr(&args[1], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let str_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let str_ptr_ty = str_ty.ptr_type(AddressSpace::default());
+                // Spill the slice to extract its {len, data} fields.
+                let parts_slot = build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "sj_parts");
+                build_wrappers::w_store(&self.ir.builder, parts_slot, parts);
+                let slen = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+                    self.ir.builder.build_struct_gep(str_ty, parts_slot, 0, "sj_lp").unwrap(), "sj_len").into_int_value();
+                let sdata_i8 = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+                    self.ir.builder.build_struct_gep(str_ty, parts_slot, 1, "sj_dp").unwrap(), "sj_data").into_pointer_value();
+                // data points at an array of AxonStr (== str_ty); cast i8* → str_ty*.
+                let sdata = build_wrappers::w_pointer_cast(&self.ir.builder, sdata_i8, str_ptr_ty, "sj_dcast");
+                let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "sj_olen");
+                let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "sj_optr");
+                let f = self.functions.get("__axon_str_join").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_str_join"))?;
+                self.ir.builder.build_call(f,
+                    &[slen.into(), sdata.into(), sep.into(), out_len_slot.into(), out_ptr_slot.into()], "sj_call").unwrap();
+                let out_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "sj_ol").into_int_value();
+                let out_ptr = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), out_ptr_slot, "sj_op").into_pointer_value();
+                let res = build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "sj_res");
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(str_ty, res, 0, "sj_rl").unwrap(), out_len.into());
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(str_ty, res, 1, "sj_rp").unwrap(), out_ptr.into());
+                return Some(build_wrappers::w_load(&self.ir.builder, str_ty.into(), res, "sj_resv"));
+            }
             // dict_values(d) → [i64] (v1 int-valued): the runtime mallocs an
             // i64 array in key-sorted order; codegen wraps it in a {len, ptr}
             // slice. Same out-param shape as dict_keys, but the element is a

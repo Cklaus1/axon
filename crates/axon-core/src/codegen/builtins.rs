@@ -2072,6 +2072,21 @@ impl<'ctx> super::Codegen<'ctx> {
             self.fn_return_types.insert("str_digits_only".to_string(), Type::Str);
         }
 
+        // Declare __axon_str_join for the emit_call lowering (str_join takes a
+        // [str] slice + sep → str). The slice is passed as two scalars
+        // (i64 len, AxonStr* data) + the sep str struct + str out-params.
+        {
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let str_ptr = str_ty.ptr_type(inkwell::AddressSpace::default());
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let sj_ty = self.ir.context.void_type().fn_type(&[
+                i64_ty.into(), str_ptr.into(), str_ty.into(), i64_ptr.into(), i8_ptr_ptr.into(),
+            ], false);
+            self.ir.module.add_function("__axon_str_join", sj_ty, None);
+            self.fn_return_types.insert("str_join".to_string(), Type::Str);
+        }
+
 
         // ── Phase 10: i64_to_str_radix(n: i64, base: i64) -> str ─────────────
         // Convert n to string in given base (2-36). Negative n gets '-' prefix.
