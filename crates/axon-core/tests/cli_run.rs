@@ -5995,6 +5995,16 @@ fn every_emitted_error_code_is_registered() {
     }
     let mut files = Vec::new();
     collect(std::path::Path::new(&src_dir), &mut files);
+    // Non-vacuity floor: if the walk found ~no files (wrong src_dir, a broken
+    // read_dir), the scan below would loop over nothing, leave `unregistered`
+    // empty, and PASS — falsely certifying "every emitted code is registered"
+    // having checked zero codes. The crate has dozens of .rs files; require a
+    // floor so a coverage collapse turns red instead of green.
+    assert!(
+        files.len() >= 10,
+        "expected to walk the whole src/ tree, found only {} .rs files at {src_dir}",
+        files.len()
+    );
 
     let mut unregistered: Vec<String> = Vec::new();
     for file in &files {
@@ -6039,8 +6049,19 @@ fn stdlib_module_acceptance_suites_pass() {
             .output()
             .unwrap();
         let stdout = String::from_utf8_lossy(&out.stdout);
-        // A passing suite prints "N passed, 0 failed"; require that and a 0 exit.
-        if !out.status.success() || !stdout.contains(", 0 failed") {
+        // A passing suite prints "N passed, 0 failed". Require: 0 exit, no
+        // failures, AND N > 0. The `passed > 0` clause is load-bearing: a module
+        // whose @[test]s silently stopped being recognized (a parse quirk, a
+        // refactor that drops the attribute) prints "0 passed, 0 failed" — which
+        // exits 0 and *contains* ", 0 failed", so a bare contains-check would let
+        // its coverage vanish to zero while the gate stayed green. Every stdlib
+        // module is an acceptance suite that MUST assert something.
+        let passed = stdout
+            .split_once(" passed,")
+            .and_then(|(head, _)| head.rsplit(|c: char| !c.is_ascii_digit()).next())
+            .and_then(|n| n.parse::<u32>().ok())
+            .unwrap_or(0);
+        if !out.status.success() || !stdout.contains(", 0 failed") || passed == 0 {
             failures.push(format!(
                 "{}: {}",
                 f.file_name().unwrap().to_string_lossy(),
