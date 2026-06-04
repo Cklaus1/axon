@@ -1788,34 +1788,42 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
 }
 
 #[test]
-fn build_aborts_on_str_param_lambda_e0910_not_ir_crash() {
-    // A lambda with an explicit non-i64 parameter type (here `str`) does not fit
-    // the i64 closure ABI. Native codegen used to emit it anyway and crash with a
-    // raw "IR verification failed" — an opaque internal error. It must now abort
-    // with a CLEAN E0910 naming the parameter, so the program is honestly
-    // directed to `axon run`. (Guards against regressing back to the IR crash.)
-    let f = std::env::temp_dir().join(format!("axon_lam910_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() -> i64 { let g = |s: str| str_len(s)\n g(\"hi\") }\n").unwrap();
-    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
-        .arg(std::env::temp_dir().join(format!("axon_lam910_{}.bin", std::process::id())))
-        .output()
-        .unwrap();
-    let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
-    if codegen_present {
-        assert!(
-            msg.contains("E0910") && msg.contains("lambda parameter"),
-            "a str-param lambda must abort with a clean E0910 (not a raw IR crash), got:\n{msg}"
-        );
-        assert!(
-            !msg.contains("IR verification"),
-            "the str-param lambda must NOT surface a raw IR-verification error:\n{msg}"
-        );
-        assert!(!out.status.success(), "build must FAIL (not exit 0):\n{msg}");
-    } else {
-        eprintln!("codegen feature absent — str-param-lambda E0910 test skipped");
+fn str_param_lambda_builds_and_runs_native() {
+    // A lambda with an explicit `str` parameter (`|s: str| str_len(s)`) now
+    // compiles to native code: emit_lambda declares each param with its annotated
+    // LLVM type (a str is the {i64,ptr} struct) and the generic closure-call site
+    // types the indirect call from the actual arg values, so the two agree. This
+    // used to crash with a raw "IR verification failed". The body must compute
+    // correctly (str ops read the typed local) — verified by the printed output.
+    let f = std::env::temp_dir().join(format!("axon_lamstr_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  \
+           let g = |s: str| str_len(s)\n  \
+           println(to_str(g(\"hello\")))\n  \
+           let h = |s: str| if str_contains(s, \"ell\") { 1 } else { 0 }\n  \
+           println(to_str(h(\"hello\")))\n  \
+           0\n\
+         }\n",
+    )
+    .unwrap();
+    let bin = std::env::temp_dir().join(format!("axon_lamstr_{}.bin", std::process::id()));
+    let build = axon().args(["build", f.to_str().unwrap(), "-o"]).arg(&bin).output().unwrap();
+    let bmsg = format!("{}{}", String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+    if bmsg.contains("requires building axon with the `codegen` feature") {
+        let _ = std::fs::remove_file(&f);
+        eprintln!("codegen feature absent — str-param-lambda native test skipped");
+        return;
     }
+    assert!(
+        build.status.success() && !bmsg.contains("IR verification"),
+        "str-param lambda must build natively (no IR crash):\n{bmsg}"
+    );
+    let run = std::process::Command::new(&bin).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&bin);
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert_eq!(out, "5\n1\n", "str-param lambda body must compute correctly, got: {out:?}");
 }
 
 #[test]

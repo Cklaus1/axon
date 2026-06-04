@@ -1103,27 +1103,6 @@ impl<'ctx> super::Codegen<'ctx> {
     }
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
-    /// Classify a lambda parameter's EXPLICIT type as unsupported by the i64
-    /// closure ABI, returning a short human label (`"str"`, `"slice"`, …) or
-    /// `None` when the type fits an i64 slot (i64/i32/bool, type params, or
-    /// anything we can't statically rule out). Conservative: only flags types
-    /// that are DEFINITELY not i64-representable, so it never false-positives on
-    /// the existing i64/bool closures.
-    fn unsupported_lambda_param_kind(ty: &ast::AxonType) -> Option<&'static str> {
-        match ty {
-            ast::AxonType::Named(n) => match n.as_str() {
-                "str" => Some("str"),
-                "f64" => Some("f64"),
-                _ => None, // i64/i32/bool/usize/… all fit the i64 slot
-            },
-            ast::AxonType::Slice(_) => Some("slice"),
-            ast::AxonType::Tuple(_) => Some("tuple"),
-            // Option/Result/Chan/Ref/Generic/Fn/dyn/TypeParam/Union: either fit
-            // an i64 handle/slot today or are too uncertain to hard-reject here.
-            _ => None,
-        }
-    }
-
     pub(super) fn emit_lambda(&mut self, params: &[ast::LambdaParam], body: &ast::Expr, captures: &[(String, Option<crate::types::Type>)], _fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
@@ -1139,37 +1118,26 @@ impl<'ctx> super::Codegen<'ctx> {
             (0..n_captures).map(|_| i64_ty.into()).collect();
         let env_struct_ty = self.ir.context.struct_type(&env_field_tys, false);
 
-        // Honest gate (E0910): the lambda ABI passes every parameter in a single
-        // i64 slot. That's correct for i64/bool params, but a param explicitly
-        // typed as `str` (a 2-field `{i64,ptr}` struct), a slice, a tuple, or f64
-        // does NOT fit — emitting it anyway produces an IR-verification crash
-        // ("Call parameter type does not match function signature"), an opaque
-        // internal error. Detect a clearly-non-i64 EXPLICIT param type up front
-        // and record a clean E0910 instead, so the build aborts with an
-        // actionable message. (This is what blocks dict_filter/dict_each's
-        // `fn(str,V)` predicates natively — they run under the interpreter; the
-        // real fix is the R2a lambda-parameter type ABI.)
-        for p in params {
-            if let Some(kind) = p.ty.as_ref().and_then(Self::unsupported_lambda_param_kind) {
-                let msg = format!(
-                    "codegen error [E0910]: native codegen does not yet support the lambda \
-                     parameter `{}` (a {kind}) — only i64/bool parameters fit the current \
-                     closure ABI (str/slice/tuple/f64 params need the R2a lambda-param type \
-                     ABI). This program runs under the interpreter (`axon run`).",
-                    p.name,
-                );
-                if !self.codegen_errors.iter().any(|e| e == &msg) {
-                    eprintln!("{msg}");
-                    self.codegen_errors.push(msg);
-                }
-            }
-        }
+        // Each parameter's LLVM type: from its explicit annotation when present
+        // (so a `str` param is the {i64,ptr} struct, an f64 is double, …),
+        // falling back to i64 for an un-annotated `|x|` — which keeps every
+        // existing i64/bool closure (arr_map/filter/fold/…) byte-identical. The
+        // generic closure-call site (emit_call) types the indirect call from the
+        // actual arg values, so the declaration and the call agree.
+        let param_llvm_tys: Vec<BasicTypeEnum<'ctx>> = params
+            .iter()
+            .map(|p| {
+                p.ty.as_ref()
+                    .and_then(|t| self.llvm_type_from_axon(t))
+                    .unwrap_or_else(|| i64_ty.into())
+            })
+            .collect();
 
         // ── Declare the lambda function (env_ptr first, then params) ──
         let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
             vec![ptr_ty.into()]; // env_ptr
-        for _ in params {
-            lambda_param_tys.push(i64_ty.into());
+        for t in &param_llvm_tys {
+            lambda_param_tys.push((*t).into());
         }
         let fn_ty = i64_ty.fn_type(&lambda_param_tys, false);
         let lambda_fn = self.ir.module.add_function(&lambda_name, fn_ty, None);
@@ -1204,12 +1172,15 @@ impl<'ctx> super::Codegen<'ctx> {
         // to loading captures via GEP if the resolver missed them.
         self.current_lambda_env = Some((env_ptr_arg, env_struct_ty, capture_idx_map));
 
-        // Bind explicit parameters (offset by 1 for env_ptr).
+        // Bind explicit parameters (offset by 1 for env_ptr), each with its real
+        // LLVM type so the body sees a correctly-typed local (a str param is a
+        // {i64,ptr} struct local that str_len/str_contains/etc. read directly).
         for (i, p) in params.iter().enumerate() {
             if let Some(arg) = lambda_fn.get_nth_param((i + 1) as u32) {
-                let alloca = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), &p.name);
+                let pty = param_llvm_tys[i];
+                let alloca = build_wrappers::w_alloca(&self.ir.builder, pty, &p.name);
                 build_wrappers::w_store(&self.ir.builder, alloca, arg);
-                self.locals.insert(p.name.clone(), (alloca, i64_ty.into()));
+                self.locals.insert(p.name.clone(), (alloca, pty));
             }
         }
 
@@ -3864,11 +3835,18 @@ impl<'ctx> super::Codegen<'ctx> {
                         let fp = build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "cfp");
                         let ep = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "cep");
                         // Build arg list: env_ptr first, then explicit args.
+                        // Track each arg's ACTUAL LLVM type so the indirect-call
+                        // signature matches the value passed (a str arg is a
+                        // {i64,ptr} struct, not an i64) — and emit_lambda declares
+                        // its params from the same annotation, so the two agree.
                         let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> =
                             vec![ep.into()];
+                        let mut arg_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
+                            vec![ptr_ty.into()];
                         for a in args {
                             if let Some(v) = self.emit_expr(a, fn_val) {
                                 call_args.push(v.into());
+                                arg_tys.push(v.get_type().into());
                             }
                         }
                         // Build an indirect call via fn pointer.
@@ -3879,13 +3857,7 @@ impl<'ctx> super::Codegen<'ctx> {
                                 "fp_cast",
                             )
                             .unwrap();
-                        // Build the function type for the indirect call.
-                        let mut ipt: Vec<BasicMetadataTypeEnum<'ctx>> =
-                            vec![ptr_ty.into()];
-                        for _ in args {
-                            ipt.push(i64_ty.into());
-                        }
-                        let indirect_ty = i64_ty.fn_type(&ipt, false);
+                        let indirect_ty = i64_ty.fn_type(&arg_tys, false);
                         let call = self.ir.builder
                             .build_indirect_call(indirect_ty, fn_ptr, &call_args, "icall")
                             .unwrap();
