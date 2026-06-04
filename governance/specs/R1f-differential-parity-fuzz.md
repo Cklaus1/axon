@@ -1,8 +1,21 @@
 # Tech Spec — R1f: Differential parity fuzzing (auto-find interp↔codegen divergence)
 
-**Status:** 📋 Draft (2026-06-04) — fork-first. Turns I-2 from "22 hand-written
-fixed-case harnesses, audited periodically" into "random typed inputs, compared
-on every change." Prerequisite for safely collapsing the double-impl (R1f-2).
+**Status:** 🟡 Slice 1 LANDED (2026-06-04). `scripts/fuzz_parity.sh` implements
+fork (b): per builtin it generates 9 edge + `FUZZ_N` (default 40) seeded-random
+inputs, emits ONE `.ax` exercising all of them, builds once, diffs interp vs
+native stdout + exit code. Descriptors: `abs_i64` (unary extern), `min_i64`
+(binary extern), `+` (inline i64 binop) — 49 inputs each, native==interp.
+Bounded to the ±1e9 non-overflow domain on purpose (the i64-overflow boundary is
+a known divergence — verified: `abs_i64(i64::MIN)` gives interp exit 101 vs
+native 134 — reserved for slice 2 with explicit ExitCode handling). Verified the
+comparison machinery BITES on that boundary. Gated two ways: the
+`codegen_fuzz_parity_finds_no_divergence` cli_run test AND `parity_all.sh`
+(slice 3 was automatic — the filename matches `*_parity.sh`). Skips cleanly when
+LLVM absent. **Remaining: slice 2** — widen the descriptor table to ~30-40
+scalar/str/math builtins + the `{domain, compare}` descriptor for ExitCode/
+F64Bits cases. Turns I-2 from "fixed cases, audited periodically" into "random
+inputs, compared on every change." Prerequisite for collapsing the double-impl
+(R1f-2).
 
 **Requirement:** R1 (native pipeline) / I-2 (interpreter is the oracle).
 

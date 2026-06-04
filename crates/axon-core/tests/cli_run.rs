@@ -1636,6 +1636,36 @@ fn codegen_parse_int_radix_matches_interp() {
 }
 
 #[test]
+fn codegen_fuzz_parity_finds_no_divergence() {
+    // R1f slice 1: the differential fuzzer. Unlike the fixed-case harnesses, it
+    // generates seeded-random + edge inputs per builtin, emits ONE program
+    // exercising all of them, builds it once, and diffs interp vs native stdout
+    // + exit code. Slice 1 = abs_i64 / min_i64 / `+` over the non-overflowing
+    // ±1e9 domain (the i64-overflow boundary, a KNOWN divergence, is a slice-2
+    // target). Skips when codegen can't build (LLVM absent).
+    let script = format!("{}/../../scripts/fuzz_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("fuzz_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run fuzz_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — fuzz parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "fuzzer found an interp↔codegen divergence:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("fuzz_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_parse_int_or_and_float_or_match_interp() {
     // parse_int_or / parse_float_or / parse_bool_or had NO codegen lowering —
     // native silently returned a zero value (real native↔interp divergence).
