@@ -498,40 +498,17 @@ impl InferCtx {
                 if let Some(sig) = self.fn_sigs.get(name) {
                     return Type::Fn(sig.params.clone(), Box::new(sig.ret.clone()));
                 }
-                let var = self.fresh();
-                let span = self.current_stmt_span;
-                // Build a "did you mean" suggestion by scanning visible names
-                // (scope frames + module bindings + fn signatures).
-                let suggestion = {
-                    let mut best: Option<(usize, String)> = None;
-                    let candidates = scope
-                        .frames
-                        .iter()
-                        .flat_map(|f| f.keys().cloned())
-                        .chain(self.module_bindings.keys().cloned())
-                        .chain(self.fn_sigs.keys().cloned());
-                    for cand in candidates {
-                        let d = crate::error::levenshtein(name, &cand);
-                        if d <= 2 {
-                            let take = match &best {
-                                None => true,
-                                Some((b, _)) => d < *b,
-                            };
-                            if take {
-                                best = Some((d, cand));
-                            }
-                        }
-                    }
-                    best.map(|(_, s)| s)
-                };
-                let mut msg = format!("cannot find value `{name}` in scope");
-                if let Some(s) = &suggestion {
-                    msg.push_str(&format!(" — did you mean `{s}`?"));
-                }
-                self.errors.push(
-                    InferError::new(E0101, msg).with_span(span),
-                );
-                var
+                // An unresolved name is ALREADY reported by the resolver as
+                // E0001 "cannot find name" (with its own Levenshtein "did you
+                // mean" suggestion, now rendered — see main.rs/lsp.rs). The
+                // resolver runs first and authoritatively owns this error; an
+                // empirical sweep across 12 undefined-name positions confirmed
+                // infer's "cannot find value" E0101 fires iff the resolver
+                // emitted E0001 at the same span — i.e. it is *strictly*
+                // redundant. Emitting it here double-reports every undefined
+                // name. Return a fresh var so inference continues (downstream
+                // constraints still flow), but do NOT re-report the error.
+                self.fresh()
             }
 
             // ── Bindings ─────────────────────────────────────────────────────

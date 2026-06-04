@@ -104,9 +104,17 @@ pub fn analyse_source(source: &str, uri: &str) -> crate::AnalysisResult {
     resolver::fill_captures(&mut program);
 
     for d in &resolve_result.errors {
+        // Fold the resolver's "did you mean `x`?" suggestion into the message —
+        // LspDiagnostic has no discrete fix field. infer.rs no longer re-emits an
+        // E0101 to carry this hint (it was a redundant double-report of the same
+        // undefined name), so the suggestion must ride on the E0001 here.
+        let mut message = d.message.clone();
+        if let Some(fix) = &d.fix {
+            message.push_str(&format!(" — {fix}"));
+        }
         diagnostics.push(LspDiagnostic {
             code: d.code.to_string(),
-            message: d.message.clone(),
+            message,
             span: d.span,
             severity: 1,
         });

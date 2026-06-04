@@ -2608,7 +2608,13 @@ fn run_check_pipeline_located(
     let resolve_result = axon_core::resolver::resolve_program(program, &file);
     for diag in &resolve_result.errors {
         let (line, col) = loc(&diag.span);
-        push(&mut diags, diag.code.to_string(), diag.message.clone(), "error", line, col);
+        // The resolver computes a "did you mean `x`?" suggestion (Levenshtein ≤ 3)
+        // and stores it in `diag.fix`. Render it through the structured `help`
+        // field instead of dropping it — historically `push` discarded `fix`, so
+        // infer.rs re-emitted an E0101 "cannot find value … did you mean" purely
+        // to resurface the lost hint, double-reporting every undefined name.
+        push_typed(&mut diags, diag.code.to_string(), diag.message.clone(),
+            line, col, None, None, diag.fix.clone());
     }
     for warn in &resolve_result.warnings {
         eprintln!("warning: [{}] {}", warn.code, warn.message);

@@ -606,19 +606,32 @@ fn parse_error_prefix_is_not_doubled() {
 }
 
 #[test]
-fn undefined_name_in_to_str_arg_reports_e0101_once() {
-    // A single undefined name passed to the polymorphic `to_str` builtin emitted
-    // its E0101 "cannot find value" diagnostic TWICE: the `to_str` scalar-probe
-    // special-case in infer.rs inferred the arg (emitting E0101), found a fresh
-    // type var (not scalar), then fell through to the general arg loop which
-    // re-inferred the SAME arg (emitting E0101 again). For an AI-first language
-    // whose diagnostics are model-consumed, a duplicated error is real noise.
-    // Fix: the special-case now constrains the already-inferred arg in place and
-    // returns, so each arg is visited exactly once. (E0102 rejection of a
-    // genuinely non-scalar arg like `to_str([1,2,3])` is preserved — see the
-    // second half of this test.)
-    let f = std::env::temp_dir().join(format!("axon_dup101_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() { println(to_str(x)) }\n").unwrap();
+fn undefined_name_reports_one_diagnostic_with_suggestion() {
+    // An undefined name was reported up to THREE times: the resolver's E0001
+    // "cannot find name", plus infer's E0101 "cannot find value" — and for a
+    // `to_str(<undefined>)` arg, infer emitted its E0101 twice (a separate
+    // double-visit bug). For an AI-first language whose diagnostics are
+    // model-consumed, reporting one mistake three times is real noise.
+    //
+    // Root cause: the resolver computed a Levenshtein "did you mean" suggestion
+    // but the CLI driver dropped its `fix` field, so infer re-emitted an E0101
+    // purely to resurface that lost hint. An empirical sweep confirmed infer's
+    // "cannot find value" fires iff the resolver already emitted E0001 at the
+    // same span — strictly redundant. Fix: render the resolver's suggestion via
+    // the structured `help` field and stop infer re-reporting the name.
+    //
+    // Invariant now: exactly ONE diagnostic (E0001), carrying the suggestion,
+    // and NO E0101 for an undefined name.
+    // Use a typo with a SINGLE unambiguous closest match (a unique user fn) so
+    // the suggestion is deterministic — among equidistant builtins the resolver's
+    // tie-break is HashMap-order (nondeterministic), which would flake an
+    // assertion on the specific suggested word.
+    let f = std::env::temp_dir().join(format!("axon_undef1_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn calculate(x: i64) -> i64 { x }\nfn main() { println(to_str(calculat)) }\n",
+    )
+    .unwrap();
     let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
@@ -626,12 +639,24 @@ fn undefined_name_in_to_str_arg_reports_e0101_once() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    let n101 = msg.matches("E0101").count();
-    assert_eq!(n101, 1, "undefined name should yield exactly one E0101, got {n101}: {msg}");
+    assert_eq!(
+        msg.matches("E0001").count(),
+        1,
+        "undefined name should be reported once as E0001: {msg}"
+    );
+    assert_eq!(
+        msg.matches("E0101").count(),
+        0,
+        "infer must no longer re-report an undefined name as E0101: {msg}"
+    );
+    assert!(
+        msg.contains("did you mean") && msg.contains("calculate"),
+        "the resolver's 'did you mean `calculate`?' suggestion must survive on E0001: {msg}"
+    );
 
-    // Guard against over-correction: a real non-scalar arg must STILL be rejected
-    // (the polymorphism is scalars-only; `to_str` of an array is a type error).
-    let f2 = std::env::temp_dir().join(format!("axon_dup101b_{}.ax", std::process::id()));
+    // Guard against over-correction: a real non-scalar arg to the scalar-only
+    // polymorphic `to_str` must STILL be rejected as a type error (E0102).
+    let f2 = std::env::temp_dir().join(format!("axon_undef2_{}.ax", std::process::id()));
     std::fs::write(&f2, "fn main() { let a = [1, 2, 3]\n  println(to_str(a)) }\n").unwrap();
     let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f2);
