@@ -46,7 +46,6 @@ pub mod builtins;
 pub mod builtin_externs;
 pub mod build_wrappers;
 pub mod expr;
-pub mod ir;
 pub mod ir_inkwell;
 
 // Re-export TestResult so backward-compatible path
@@ -256,23 +255,20 @@ pub struct Codegen<'ctx> {
     /// emission and aborts rather than shipping a binary that silently computes
     /// a wrong value (the arr_*/dict_* "returns 0 natively" class).
     pub(super) codegen_errors: Vec<String>,
-    /// IR.3 prep: a parallel inkwell-backed IR backend that codegen
-    /// modules can call via `self.ir.*` instead of `self.ir.builder.*` /
-    /// `self.ir.context.*` / `self.ir.module.*`.  During the migration phase
-    /// (IR.3) both this field AND the legacy `context/module/builder`
-    /// fields are populated; modules migrate one at a time per
-    /// `MIGRATION.md`.  IR.4 will remove the legacy fields once every
-    /// caller has migrated.  Empty until first use; backend wraps its
-    /// own `Module<'ctx>` independent of `self.ir.module`.
+    /// The inkwell IR holder: the one `Context`/`Module`/`Builder` per codegen
+    /// run. Codegen emits LLVM through `self.ir.{context, module, builder}`
+    /// (paired with the `build_wrappers::w_*` helpers). This is the SINGLE
+    /// IR-emission path — the earlier `IR`-trait/arena abstraction was
+    /// abandoned and removed (R1e); there are no longer any "legacy" fields to
+    /// migrate off of.
     pub(super) ir: ir_inkwell::InkwellBackend<'ctx>,
 }
 
 impl<'ctx> Codegen<'ctx> {
     pub fn new(context: &'ctx Context, module_name: &str) -> Self {
-        // IR_REARCH.md option (c): InkwellBackend owns the only module +
-        // builder.  Codegen accesses them through `self.ir.{module,
-        // builder, context}`.  Single symbol table → IR.3 partial
-        // migrations are end-to-end linkable.
+        // InkwellBackend owns the only module + builder (IR_REARCH.md option
+        // (c)); Codegen accesses them through `self.ir.{module, builder,
+        // context}`. One module per run → a single symbol table.
         let module = context.create_module(module_name);
         let builder = context.create_builder();
         let ir = ir_inkwell::InkwellBackend::adopt(context, module, builder);

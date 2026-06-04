@@ -1,3 +1,5 @@
+> **SUPERSEDED (R1e, 2026-06-04):** the `IR` trait + arena shim this doc describes was abandoned (0 callers) and DELETED. The single IR-emission path is now `self.ir.{context,module,builder}` + `build_wrappers::w_*`. See `governance/specs/R1e-ir-backend-consolidation.md`. This file is kept for history.
+
 # IR.3 Migration Playbook
 
 Concrete recipes for migrating each codegen module from direct
