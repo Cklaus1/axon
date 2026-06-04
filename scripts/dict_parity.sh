@@ -52,7 +52,11 @@ check rm_len    'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dic
 check keys_len  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let ks = dict_keys(d)  len(ks) }'
 check keys_sort 'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 1)  dict_set(d, "apple", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'
 check keys_ord  'fn main() -> i64 { let d = dict_new()  dict_set(d, "bb", 1)  dict_set(d, "a", 2)  let ks = dict_keys(d)  str_len(ks[0]) }'
+check vals_sum  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 10)  dict_set(d, "b", 20)  dict_set(d, "c", 12)  let vs = dict_values(d)  let s = 0  let i = 0  while i < len(vs) { s = s + vs[i]  i = i + 1 }  s }'
+check vals_len  'fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 1)  dict_set(d, "b", 2)  let vs = dict_values(d)  len(vs) }'
+check vals_ord  'fn main() -> i64 { let d = dict_new()  dict_set(d, "zebra", 7)  dict_set(d, "apple", 3)  let vs = dict_values(d)  vs[0] }'
+check vals_empty 'fn main() -> i64 { let d = dict_new()  let vs = dict_values(d)  len(vs) }'
 
 [ "$fail" -eq 0 ] || { echo "dict_parity: FAIL"; exit 1; }
-echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys (int values, BTreeMap order) match the interpreter ✓"
+echo "dict_parity: PASS — dict_new/set/get/has/len/inc/get_or/remove + dict_keys/dict_values (int values, BTreeMap order) match the interpreter ✓"
 exit 0

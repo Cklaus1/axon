@@ -857,6 +857,10 @@ impl<'ctx> super::Codegen<'ctx> {
         let i8_ptr_ptr_d = i8_ptr.ptr_type(inkwell::AddressSpace::default());
         let dk_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
         self.ir.module.add_function("__axon_dict_keys", dk_ty, None);
+        // void __axon_dict_values(d:i8*, out_len:i64*, out_data:i8**) — same
+        // out-param shape as dict_keys; the data array is i64 (v1 int-valued).
+        let dvl_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ptr_d.into(), i8_ptr_ptr_d.into()], false);
+        self.ir.module.add_function("__axon_dict_values", dvl_ty, None);
         // dict_new/has/len/inc return types are now registry rows (R1d slice 1).
         // dict_set keeps its Unit entry here (bespoke out-param lowering).
         self.fn_return_types.insert("dict_set".to_string(), Type::Unit);

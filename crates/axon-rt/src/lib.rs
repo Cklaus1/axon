@@ -445,6 +445,45 @@ pub extern "C" fn __axon_dict_keys(
     }
 }
 
+/// Collect the values into a fresh `[i64]` slice (BTreeMap key order). Writes
+/// the slice's `{len, data}` via out-params: `*out_len` = #values, `*out_data`
+/// = a malloc'd array of `i64`. v1 reinterprets each value as `i64` with the
+/// SAME convention as `__axon_dict_get` (Int→n, Float→bits, Str→ptr) — the
+/// int-valued case is the supported surface, mirroring `dict_get`. The codegen
+/// assembles the `{i64,ptr}` slice from these out-params.
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_values(
+    d: *mut c_void,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    if d.is_null() {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let dict = unsafe { dict_borrow(d) };
+    let guard = dict.map.lock().unwrap();
+    let n = guard.len();
+    if n == 0 {
+        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        return;
+    }
+    let arr = unsafe { libc_malloc(std::mem::size_of::<i64>() * n) } as *mut i64;
+    for (i, v) in guard.values().enumerate() {
+        let payload: i64 = match v {
+            DictVal::Int(x) => *x,
+            DictVal::Float(f) => f.to_bits() as i64,
+            DictVal::Str(s) => s.as_ptr() as i64,
+        };
+        unsafe { *arr.add(i) = payload; }
+    }
+    unsafe {
+        *out_len = n as i64;
+        *out_data = arr as *mut u8;
+    }
+}
+
 /// Drop the dict handle (Arc decref).
 #[no_mangle]
 pub extern "C" fn __axon_dict_drop(d: *mut c_void) {

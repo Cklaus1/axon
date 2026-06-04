@@ -3849,6 +3849,30 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.ir.builder.build_struct_gep(slice_ty, out, 1, "dk_op").unwrap(), data.into());
                 return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "dk_res"));
             }
+            // dict_values(d) → [i64] (v1 int-valued): the runtime mallocs an
+            // i64 array in key-sorted order; codegen wraps it in a {len, ptr}
+            // slice. Same out-param shape as dict_keys, but the element is a
+            // fixed-width i64 (no per-element malloc), reinterpreted with the
+            // dict_get convention.
+            if name == "dict_values" && args.len() == 1 {
+                let d = self.emit_expr(&args[0], fn_val)?;
+                let i64_ty = self.ir.context.i64_type();
+                let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+                let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+                let len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "dv_len");
+                let data_slot = build_wrappers::w_alloca(&self.ir.builder, ptr_ty.into(), "dv_data");
+                let f = self.functions.get("__axon_dict_values").copied()
+                    .or_else(|| self.ir.module.get_function("__axon_dict_values"))?;
+                self.ir.builder.build_call(f, &[d.into(), len_slot.into(), data_slot.into()], "dv_call").unwrap();
+                let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), len_slot, "dv_l").into_int_value();
+                let data = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(), data_slot, "dv_d").into_pointer_value();
+                let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "dv_out");
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 0, "dv_ol").unwrap(), len.into());
+                build_wrappers::w_store(&self.ir.builder,
+                    self.ir.builder.build_struct_gep(slice_ty, out, 1, "dv_op").unwrap(), data.into());
+                return Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "dv_res"));
+            }
             if name == "dict_inc" && args.len() == 2 {
                 let d = self.emit_expr(&args[0], fn_val)?;
                 let key = self.emit_expr(&args[1], fn_val)?;

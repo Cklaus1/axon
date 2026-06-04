@@ -1134,6 +1134,10 @@ impl<'ctx> Codegen<'ctx> {
                     if name == "dict_keys" {
                         return Some(Type::Slice(Box::new(Type::Str)));
                     }
+                    // dict_values(d) → [i64] (v1 int-valued).
+                    if name == "dict_values" {
+                        return Some(Type::Slice(Box::new(Type::I64)));
+                    }
                     // arr_enumerate(&a) / arr_zip(a, b) → [(i64, i64)] — a slice
                     // of tuples (element type fixed regardless of input shape).
                     if name == "arr_enumerate" || name == "arr_zip" {
