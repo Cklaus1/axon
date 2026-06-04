@@ -1,6 +1,6 @@
 # Tech Spec — R1f: Differential parity fuzzing (auto-find interp↔codegen divergence)
 
-**Status:** 🟡 Slices 1+2 LANDED (2026-06-04). `scripts/fuzz_parity.sh`
+**Status:** ✅ Slices 1+2+2b LANDED (2026-06-04). `scripts/fuzz_parity.sh`
 implements fork (b): per builtin it generates edge + `FUZZ_N` (default 40)
 seeded-random inputs, emits ONE `.ax` exercising all of them, builds once, diffs
 interp vs native stdout + exit code. **Slice 2** widened the table to **30
@@ -15,13 +15,23 @@ predicates (len/contains/starts/ends/index over a fixed corpus). The widening
 DOCUMENTED RESIDUAL with its own follow-up. i64 inputs bounded to ±1e9 and f64 to
 |x|≤1e5 on purpose — the overflow boundary (verified `abs_i64(i64::MIN)`: interp
 exit 101 vs native 134) and the sci-notation range are known divergences with
-explicit descriptors deferred to slice 2b. Gated two ways: the
-`codegen_fuzz_parity_finds_no_divergence` cli_run test AND `parity_all.sh`
-(filename auto-matches `*_parity.sh`). Skips cleanly when LLVM absent.
-**Remaining: slice 2b** — `{compare: ExitCode|F64Bits}` descriptors for the
-overflow boundary + NaN/inf, and converge the sci-notation residual. Turns I-2
-from "fixed cases, audited periodically" into "random inputs, compared on every
-change." Prerequisite for collapsing the double-impl (R1f-2).
+explicit descriptors deferred to slice 2b. **Slice 2b** (2026-06-04) added the
+two boundary descriptor MODES the slice-1/2 equality `fuzz` helper couldn't
+express: `nan_case NAME EXPR EXPECT` (compare: Stdout, asserts both engines
+print the exact canonical NaN/inf form) and `expect_overflow NAME EXPR`
+(compare: ExitCode, asserts the *documented* i64-overflow CONTRACT — interp
+aborts non-zero with no stdout, native completes — rather than false equality).
+4 NaN/inf cases (`sqrt(-1)`, `0/0`, `±1/0`) + 4 overflow cases (add/sub/mul/neg
+at the i64 boundary). The NaN boundary caught a THIRD real divergence — fixed
+here (see Findings §3). Both new modes verified to BITE (a wrong NaN expectation
+and a non-overflowing expr in an overflow slot each fail the harness). Gated two
+ways: the `codegen_fuzz_parity_finds_no_divergence` cli_run test AND
+`parity_all.sh` (filename auto-matches `*_parity.sh`). Skips cleanly when LLVM
+absent. Turns I-2 from "fixed cases, audited periodically" into "random inputs,
+compared on every change." **The scalar/str/math surface is now fuzz-covered on
+both the common range AND its boundaries** — the prerequisite for collapsing the
+double-impl (R1f-2) is met. Remaining work is R1f-2 (a separate spec) and the v2
+collection/ASI generators.
 
 **Requirement:** R1 (native pipeline) / I-2 (interpreter is the oracle).
 
@@ -143,6 +153,20 @@ drift surface the architecture review flagged):
    inputs/descriptor, green. Pinned by the `fmt_g_matches_c_printf_six_g` unit
    test. (Surfaced + fixed a pre-existing parallel-test env-var flake in
    `ai_routing` as collateral — the gate's parity stage exposed it.)
+
+3. **Negative-NaN formatting — FIXED** (slice 2b). The NaN/inf boundary
+   descriptors caught a third divergence in the same `to_str` family: `sqrt(-1.0)`
+   yields a NaN with the sign bit SET, which native's `snprintf("%.6g", x)`
+   prints as `-nan`, while interp's `fmt_g` returns `"nan"` for any NaN
+   (sign-agnostic, the canonical form). Per I-2 codegen matches the oracle →
+   codegen `to_str_f64` now collapses any NaN to a canonical positive NaN before
+   snprintf (`isnan(n) ? +NaN : n`, via an `UNO(n,n)` self-compare select),
+   sitting right after the `-0.0` normalization. `0.0/0.0` (a positive-sign-bit
+   NaN) already printed `nan` on both sides; this fixes the negative-NaN path.
+   Verified native==interp. **A slice-1/2 limitation made visible:** the random
+   `f64` domain deliberately avoids NaN-producing ops (it can't assert equality
+   on a value that legitimately diverges in raw bits), so these need the explicit
+   `nan_case` descriptor — exactly why slice 2b exists.
 
 ## Out of scope (named, not faked)
 

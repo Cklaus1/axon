@@ -336,8 +336,22 @@ impl<'ctx> super::Codegen<'ctx> {
             let is_zero = self.ir.builder
                 .build_float_compare(inkwell::FloatPredicate::OEQ, raw_n, zero_f, "iszero")
                 .unwrap();
-            let n = self.ir.builder
+            let n_z = self.ir.builder
                 .build_select(is_zero, zero_f, raw_n, "n_norm")
+                .unwrap()
+                .into_float_value();
+            // I-2 parity: the interpreter's fmt_g returns "nan" for ANY NaN
+            // (sign-agnostic), but C's snprintf("%.6g", x) prints "-nan" when the
+            // NaN's sign bit is set (e.g. sqrt(-1.0) yields a negative NaN).
+            // Collapse any NaN to a canonical positive NaN so native prints
+            // "nan" too: n = isnan(n_z) ? +NaN : n_z. UNO(n_z, n_z) is true iff
+            // n_z is NaN (an unordered self-compare).
+            let pos_nan = f64_ty.const_float(f64::NAN);
+            let is_nan = self.ir.builder
+                .build_float_compare(inkwell::FloatPredicate::UNO, n_z, n_z, "isnan")
+                .unwrap();
+            let n = self.ir.builder
+                .build_select(is_nan, pos_nan, n_z, "n_nanorm")
                 .unwrap()
                 .into_float_value();
             let fmt_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,fmt_global.as_pointer_value(), i8_ptr, "fmtptr");

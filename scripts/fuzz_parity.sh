@@ -148,6 +148,58 @@ fuzz() {
   echo "  OK   $name: $cases inputs, interp==native (exit $i_exit)"
 }
 
+# nan_case NAME EXPR EXPECT
+#   A single fixed NaN/inf-producing f64 expression that BOTH engines must print
+#   identically (the to_str %g contract — sign-of-NaN and ±inf). Asserts the
+#   exact string against EXPECT too, pinning the canonical form. (compare:
+#   Stdout — the boundary the slice-2 random f64 domain deliberately avoided.)
+nan_case() {
+  local name="$1" expr="$2" expect="$3"
+  local src="$WORK/$name.ax"
+  printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
+  local i_out n_out
+  i_out="$("$AXON" run "$src" 2>/dev/null)"
+  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+    echo "  FAIL $name: native build failed"; fail=1; return
+  fi
+  n_out="$("$WORK/$name.bin" 2>/dev/null)"
+  if [ "$i_out" != "$n_out" ]; then
+    echo "  FAIL $name: interp='$i_out' native='$n_out' (NaN/inf format divergence)"; fail=1; return
+  fi
+  if [ "$i_out" != "$expect" ]; then
+    echo "  FAIL $name: both engines agree on '$i_out' but expected '$expect'"; fail=1; return
+  fi
+  echo "  OK   $name: interp==native=='$i_out'"
+}
+
+# expect_overflow NAME EXPR
+#   An i64 expression that OVERFLOWS. This is a KNOWN, documented divergence, NOT
+#   an equality case (compare: ExitCode): the interpreter uses checked arithmetic
+#   and aborts gracefully (non-zero exit, no stdout), while native codegen emits
+#   wrapping two's-complement IR (exit 0, a wrapped value). The descriptor
+#   asserts exactly that CONTRACT — interp aborts non-zero, native does not —
+#   so a regression either way (interp silently wrapping, or native starting to
+#   abort) is caught, without pretending the two agree.
+expect_overflow() {
+  local name="$1" expr="$2"
+  local src="$WORK/$name.ax"
+  printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
+  local i_out i_exit n_exit
+  i_out="$("$AXON" run "$src" 2>/dev/null)"; i_exit=$?
+  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+    echo "  FAIL $name: native build failed"; fail=1; return
+  fi
+  "$WORK/$name.bin" >/dev/null 2>&1; n_exit=$?
+  # Contract: interp aborts (non-zero) on the overflow; stdout empty.
+  if [ "$i_exit" = 0 ]; then
+    echo "  FAIL $name: interp did NOT abort on overflow (exit 0, out='$i_out') — checked-arith regression?"; fail=1; return
+  fi
+  if [ -n "$i_out" ]; then
+    echo "  FAIL $name: interp printed '$i_out' before aborting — expected no output"; fail=1; return
+  fi
+  echo "  OK   $name: interp aborts (exit $i_exit), native wraps (exit $n_exit) — documented i64-overflow divergence"
+}
+
 echo "fuzz_parity: seed=$SEED, up to $((N)) random + edge inputs per builtin"
 # ── i64 scalars (extern + inline) ─────────────────────────────────────────────
 fuzz abs_i64   i64 1 'abs_i64(A)'
@@ -185,7 +237,19 @@ fuzz str_contains str 2 'str_contains(A, B)'
 fuzz str_starts   str 2 'str_starts_with(A, B)'
 fuzz str_ends     str 2 'str_ends_with(A, B)'
 fuzz str_index    str 2 'str_index_of(A, B)'
+# ── slice 2b: f64 NaN/inf boundary (compare: Stdout — exact canonical form) ───
+#   sqrt(-1) yields a NEGATIVE NaN; native snprintf would print "-nan" without
+#   the to_str_f64 NaN-normalization (the fix that lands with this slice).
+nan_case nan_sqrt_neg 'sqrt(0.0 - 1.0)'        'nan'
+nan_case nan_zero_div '0.0 / 0.0'              'nan'
+nan_case inf_pos      '1.0 / 0.0'              'inf'
+nan_case inf_neg      '(0.0 - 1.0) / 0.0'      '-inf'
+# ── slice 2b: i64 overflow boundary (compare: ExitCode — documented divergence)
+expect_overflow ovf_add  '9223372036854775807 + 1'
+expect_overflow ovf_sub  '(0 - 9223372036854775807 - 1) - 1'
+expect_overflow ovf_mul  '9223372036854775807 * 2'
+expect_overflow ovf_neg  '0 - (0 - 9223372036854775807 - 1)'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — 30 scalar/i64/f64/str descriptors agree native==interp on edges + seeded random ✓"
+echo "fuzz_parity: PASS — 30 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
 exit 0
