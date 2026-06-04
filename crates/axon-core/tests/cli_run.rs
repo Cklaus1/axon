@@ -5885,3 +5885,32 @@ fn fmt_still_formats_comment_free_files() {
     assert!(after.contains("\"http://x\""), "the URL string must survive (not seen as a comment)");
     assert!(after.contains("    "), "the file must actually be reformatted (indented)");
 }
+
+#[test]
+fn fmt_processes_all_files_not_just_until_first_error() {
+    // `axon fmt a b c` where `b` is refused (has comments) must STILL format `c`
+    // — not stop at `b` and silently skip the rest. Reports the refusal + exits
+    // non-zero, but the formattable files on both sides are formatted.
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let a = dir.join(format!("axon_fmtmulti_a_{pid}.ax"));
+    let b = dir.join(format!("axon_fmtmulti_b_{pid}.ax"));
+    let c = dir.join(format!("axon_fmtmulti_c_{pid}.ax"));
+    std::fs::write(&a, "fn a()->i64{1}\n").unwrap();
+    std::fs::write(&b, "// keep\nfn b()->i64{2}\n").unwrap();
+    std::fs::write(&c, "fn c()->i64{3}\n").unwrap();
+    let out = axon()
+        .args(["fmt", a.to_str().unwrap(), b.to_str().unwrap(), c.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let a_after = std::fs::read_to_string(&a).unwrap();
+    let b_after = std::fs::read_to_string(&b).unwrap();
+    let c_after = std::fs::read_to_string(&c).unwrap();
+    let _ = std::fs::remove_file(&a);
+    let _ = std::fs::remove_file(&b);
+    let _ = std::fs::remove_file(&c);
+    assert_eq!(out.status.code(), Some(2), "must exit 2 (a file was refused)");
+    assert!(a_after.contains("    "), "the file BEFORE the refused one must be formatted");
+    assert!(c_after.contains("    "), "the file AFTER the refused one must STILL be formatted");
+    assert!(b_after.starts_with("// keep"), "the commented file must be left unchanged");
+}

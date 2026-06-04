@@ -2143,14 +2143,20 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
     }
 
     let mut any_would_change = false;
+    let mut any_error = false;
 
+    // Process EVERY file independently — a parse error or comment-refusal on one
+    // must not silently skip the files after it (the classic "stopped halfway,
+    // user thinks it's done" trap). Errors are collected and reported per file;
+    // the command exits non-zero at the end if any occurred.
     for file in &files {
         let src = read_source(file);
         let program = match parse_source(&src) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("error: {}: {e}", file.display());
-                process::exit(2);
+                any_error = true;
+                continue;
             }
         };
 
@@ -2165,7 +2171,8 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
                  implemented; the file is unchanged.)",
                 file.display()
             );
-            process::exit(2);
+            any_error = true;
+            continue;
         }
 
         let formatted = axon_core::format_program(&program);
@@ -2176,12 +2183,19 @@ fn cmd_fmt(files: Vec<PathBuf>, check: bool) {
                 any_would_change = true;
             }
         } else if formatted != src {
-            std::fs::write(file, &formatted).unwrap_or_else(|e| {
+            if let Err(e) = std::fs::write(file, &formatted) {
                 eprintln!("error writing {}: {e}", file.display());
-                process::exit(1);
-            });
+                any_error = true;
+                continue;
+            }
             eprintln!("formatted: {}", file.display());
         }
+    }
+
+    // A refusal/parse/write error is the strongest signal (exit 2); otherwise
+    // `--check` reports drift with exit 1.
+    if any_error {
+        process::exit(2);
     }
 
     if check && any_would_change {
