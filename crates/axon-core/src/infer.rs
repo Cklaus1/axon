@@ -724,8 +724,15 @@ impl InferCtx {
                         if arg_ty.is_scalar() {
                             return Type::Str;
                         }
-                        // Non-scalar: fall through so the i64 param constraint
-                        // produces the type error.
+                        // Non-scalar: constrain the ALREADY-inferred arg to the
+                        // declared `i64` param right here — reproducing the exact
+                        // E0102 the general arg loop below would emit — instead of
+                        // falling through to re-infer the arg. Falling through
+                        // double-visited the arg: a `to_str(<undefined>)` then
+                        // emitted its E0101 "cannot find value" diagnostic TWICE
+                        // (once here, once below). `to_str` is always str-returning.
+                        self.constrain(arg_ty, Type::I64, "arg 0 of `to_str`");
+                        return Type::Str;
                     }
                 }
                 let _callee_ty = self.infer_expr(callee, scope, ret_ty);

@@ -606,6 +606,47 @@ fn parse_error_prefix_is_not_doubled() {
 }
 
 #[test]
+fn undefined_name_in_to_str_arg_reports_e0101_once() {
+    // A single undefined name passed to the polymorphic `to_str` builtin emitted
+    // its E0101 "cannot find value" diagnostic TWICE: the `to_str` scalar-probe
+    // special-case in infer.rs inferred the arg (emitting E0101), found a fresh
+    // type var (not scalar), then fell through to the general arg loop which
+    // re-inferred the SAME arg (emitting E0101 again). For an AI-first language
+    // whose diagnostics are model-consumed, a duplicated error is real noise.
+    // Fix: the special-case now constrains the already-inferred arg in place and
+    // returns, so each arg is visited exactly once. (E0102 rejection of a
+    // genuinely non-scalar arg like `to_str([1,2,3])` is preserved — see the
+    // second half of this test.)
+    let f = std::env::temp_dir().join(format!("axon_dup101_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() { println(to_str(x)) }\n").unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let n101 = msg.matches("E0101").count();
+    assert_eq!(n101, 1, "undefined name should yield exactly one E0101, got {n101}: {msg}");
+
+    // Guard against over-correction: a real non-scalar arg must STILL be rejected
+    // (the polymorphism is scalars-only; `to_str` of an array is a type error).
+    let f2 = std::env::temp_dir().join(format!("axon_dup101b_{}.ax", std::process::id()));
+    std::fs::write(&f2, "fn main() { let a = [1, 2, 3]\n  println(to_str(a)) }\n").unwrap();
+    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(
+        msg2.contains("E0102"),
+        "to_str of a non-scalar array must still be a type error (E0102): {msg2}"
+    );
+}
+
+#[test]
 fn run_exits_with_main_return_value() {
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();
