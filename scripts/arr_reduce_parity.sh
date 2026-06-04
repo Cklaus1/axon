@@ -140,6 +140,11 @@ check dw_l    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_whil
 check dw_s    'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_while(&a, |x| x % 2 == 0)  arr_sum_i64(&b) }'
 check dw_1st  'fn main() -> i64 { let a = [2, 4, 6, 3, 8]  let b = arr_drop_while(&a, |x| x % 2 == 0)  b[0] }'
 check dw_all  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_drop_while(&a, |x| x > 0)  len(b) }'
+check push_l  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_push(&a, 4)  len(b) }'
+check push_t  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_push(&a, 7)  b[3] }'
+check push_s  'fn main() -> i64 { let a = [1, 2, 3]  let b = arr_push(&a, 4)  arr_sum_i64(&b) }'
+check push_e  'fn main() -> i64 { let a = arr_range(0, 0)  let b = arr_push(&a, 9)  b[0] }'
+check push_cp 'fn main() -> i64 { let a = [1, 2]  let b = arr_push(&a, 3)  len(a) }'
 
 [ "$fail" -eq 0 ] || { echo "arr_reduce_parity: FAIL"; exit 1; }
 echo "arr_reduce_parity: PASS — arr reductions + reverse/take/drop/map/filter/fold/zip_with/sort_by + count_if/all/any/argmax/argmin + f64 reductions + range/repeat/concat/unique/find/std/enumerate/zip/flatten/chunk/partition match the interpreter ✓"

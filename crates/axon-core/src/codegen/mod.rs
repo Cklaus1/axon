@@ -1169,7 +1169,7 @@ impl<'ctx> Codegen<'ctx> {
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
                         || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
                         || name == "arr_sort_by" || name == "arr_concat"
-                        || name == "arr_unique"
+                        || name == "arr_unique" || name == "arr_push"
                         || name == "arr_take_while" || name == "arr_drop_while"
                     {
                         if let Some(arg0) = args.first() {
