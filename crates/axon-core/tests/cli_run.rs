@@ -6011,3 +6011,45 @@ fn every_emitted_error_code_is_registered() {
          `pub const` for each (single source of truth): {unregistered:?}"
     );
 }
+
+#[test]
+fn stdlib_module_acceptance_suites_pass() {
+    // The examples/stdlib/*.ax modules are the acceptance tests for the Phase-7
+    // userland TCB components (principal_mint, supervisor_tree, store, goal,
+    // budget, llm_gateway, …) — 100+ @[test]s. They passed only when run by hand;
+    // nothing in the gate guarded them, so a regression in one would go unnoticed.
+    // This runs every stdlib module's @[test] suite and asserts each is all-green.
+    let dir = format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
+        .collect();
+    files.sort();
+    assert!(!files.is_empty(), "no stdlib modules found at {dir}");
+
+    let mut failures = Vec::new();
+    for f in &files {
+        // These modules are self-contained (inline their deps), so no AXON_PATH
+        // is needed; pin the deterministic env like the other suites.
+        let out = axon()
+            .args(["test", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("AXON_SEED", "42")
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        // A passing suite prints "N passed, 0 failed"; require that and a 0 exit.
+        if !out.status.success() || !stdout.contains(", 0 failed") {
+            failures.push(format!(
+                "{}: {}",
+                f.file_name().unwrap().to_string_lossy(),
+                stdout.lines().last().unwrap_or("<no output>")
+            ));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "stdlib module acceptance suites failed (Phase-7 userland TCB regressions): {failures:#?}"
+    );
+}
