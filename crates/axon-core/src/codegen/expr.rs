@@ -1149,6 +1149,36 @@ impl<'ctx> super::Codegen<'ctx> {
             })
             .collect();
 
+        // Honest gate (E0910): the closure ABI is i64-RETURN — a closure value is
+        // a bare `{fn_ptr, env_ptr}` fat pointer carrying no return-type tag, so a
+        // polymorphic call site can only assume i64 back. A lambda whose body
+        // yields a str (a {i64,ptr} struct), a slice, or a tuple therefore can't
+        // round-trip its result; emitting it crashes IR-verification. Predict the
+        // body type (the same inference used elsewhere) and, when it's clearly
+        // non-i64, record a clean E0910 so the build aborts with an actionable
+        // message instead of a raw LLVM error. (i64/bool/f64 bodies are fine —
+        // f64 is bitcast-transported through the i64 slot; see the return site.)
+        if let Some(bt) = self.infer_expr_sem_type(body) {
+            let unsupported_ret = match &bt {
+                crate::types::Type::Str => Some("str"),
+                crate::types::Type::Slice(_) => Some("slice"),
+                crate::types::Type::Tuple(_) => Some("tuple"),
+                _ => None,
+            };
+            if let Some(kind) = unsupported_ret {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen does not yet support a lambda whose \
+                     body returns a {kind} — the closure ABI is i64-return (a closure value \
+                     carries no return-type tag, so a str/slice/tuple result can't round-trip). \
+                     This program runs under the interpreter (`axon run`)."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
+                }
+            }
+        }
+
         // ── Declare the lambda function (env_ptr first, then params) ──
         let mut lambda_param_tys: Vec<BasicMetadataTypeEnum<'ctx>> =
             vec![ptr_ty.into()]; // env_ptr

@@ -1827,6 +1827,37 @@ fn str_param_lambda_builds_and_runs_native() {
 }
 
 #[test]
+fn str_returning_lambda_aborts_with_e0910_not_ir_crash() {
+    // A lambda whose BODY returns a str can't round-trip through the i64-return
+    // closure ABI (a closure value carries no return-type tag). It must abort with
+    // a clean E0910, NOT a raw "IR verification failed" — and i64/bool/f64-return
+    // lambdas must NOT be falsely gated (they round-trip / bitcast-transport).
+    let f = std::env::temp_dir().join(format!("axon_lamret_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { let g = |x: i64| if x > 0 { \"pos\" } else { \"neg\" }\n str_len(g(1)) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_lamret_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
+    if codegen_present {
+        assert!(
+            msg.contains("E0910") && msg.contains("returns a str"),
+            "a str-returning lambda must abort with a clean E0910, got:\n{msg}"
+        );
+        assert!(!msg.contains("IR verification"), "must not surface a raw IR crash:\n{msg}");
+        assert!(!out.status.success(), "build must FAIL:\n{msg}");
+    } else {
+        eprintln!("codegen feature absent — str-return-lambda E0910 test skipped");
+    }
+}
+
+#[test]
 fn dict_get_or_and_dict_inc_compress_idioms() {
     // Two pragmatic dict helpers that compress patterns appearing across
     // every demo:
