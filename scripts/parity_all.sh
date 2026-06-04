@@ -59,19 +59,26 @@ for h in scripts/*_parity.sh; do
   out="$(bash "$h" 2>&1)"
   rc=$?
 
+  # A harness's VERDICT is its FINAL summary line (`<name>: PASS …` /
+  # `<name>: … skipping`). Detecting "skip" anywhere in the output is wrong: a
+  # passing harness may print a per-case "SKIP <case>" line (e.g. wasm_aot_run
+  # skips a single loop program) while its overall result is PASS — grepping the
+  # whole output then false-labels the harness as skipped and DROPS real
+  # coverage. Judge by the last line only.
+  last_line="$(echo "$out" | tail -1)"
   if [ "$rc" -ne 0 ]; then
     printf "  FAIL  %-30s (exit %d)\n" "$name" "$rc"
     fail=$((fail+1))
     failed_names="$failed_names $name"
     # On failure, always show the harness output — that's the divergence.
     echo "$out" | sed 's/^/        | /'
-  elif echo "$out" | grep -qiE "skip|unavailable"; then
+  elif echo "$last_line" | grep -qiE "skip|unavailable"; then
     printf "  SKIP  %-30s (toolchain absent)\n" "$name"
     skip=$((skip+1))
   else
     printf "  PASS  %-30s\n" "$name"
     pass=$((pass+1))
-    [ "$QUIET" = 0 ] && echo "$out" | tail -1 | sed 's/^/        /'
+    [ "$QUIET" = 0 ] && echo "$last_line" | sed 's/^/        /'
   fi
 done
 
