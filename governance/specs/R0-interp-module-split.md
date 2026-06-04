@@ -1,6 +1,18 @@
 # Tech Spec — R0: Split interp.rs into an interp/ directory (mirror codegen/)
 
-**Status:** 📋 Draft (2026-06-04) — fork-first. Low-risk, high-mechanical
+**Status:** 🟡 Slices 1+2 LANDED (2026-06-04). `interp/provenance.rs` (304 LoC,
+`51e5a4e`) and `interp/value.rs` (262 LoC, `fe102d0`) extracted — interp.rs
+6790 → 6235 lines, each a pure code move with gate.sh --strict green (parity_all
+21/2/0, the I-2 oracle unchanged). The `interp/` directory now exists mirroring
+`codegen/`. Remaining slices 3–6 (goal.rs ~1100 LoC, asi.rs, builtins.rs with the
+`ok!`/`want` macro promotion, eval.rs) are progressively larger surgeries — the
+`call_builtin` split in particular needs the load-bearing macro-promotion fork
+resolved (below) and deserves its own focused effort, not a rushed tail-end pass.
+Mechanics confirmed on the two landed slices: edition-2021 lets `interp.rs` stay
+the module root with `mod NAME;` resolving to `interp/NAME.rs`; the moved private
+free fns become `pub(super)`, the parent keeps `use NAME::*` so unqualified call
+sites are unchanged, and `pub use NAME::{…}` re-exports the public API at the
+original `interp::` path (main.rs untouched). — Low-risk, high-mechanical
 structural cleanup of the lone remaining monolith. Pure code-move, zero behavior
 change.
 
