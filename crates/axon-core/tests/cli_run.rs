@@ -5914,3 +5914,26 @@ fn fmt_processes_all_files_not_just_until_first_error() {
     assert!(c_after.contains("    "), "the file AFTER the refused one must STILL be formatted");
     assert!(b_after.starts_with("// keep"), "the commented file must be left unchanged");
 }
+
+#[test]
+fn doc_multifile_preserves_doc_comments() {
+    // `axon doc a.ax b.ax` (documenting a multi-file project) must include BOTH
+    // files' /// doc comments. The old multi-file path merged into one program
+    // and passed an empty source, dropping every doc comment ("No documented
+    // items"). Each file is now documented with its own source.
+    let dir = std::env::temp_dir();
+    let pid = std::process::id();
+    let a = dir.join(format!("axon_docmf_a_{pid}.ax"));
+    let b = dir.join(format!("axon_docmf_b_{pid}.ax"));
+    std::fs::write(&a, "/// Alpha function.\nfn alpha() -> i64 { 1 }\n").unwrap();
+    std::fs::write(&b, "/// Beta function.\nfn beta() -> i64 { 2 }\n").unwrap();
+    let out = axon().args(["doc", a.to_str().unwrap(), b.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&a);
+    let _ = std::fs::remove_file(&b);
+    let md = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "multi-file doc must succeed: {out:?}");
+    assert!(md.contains("Alpha function."), "file A's doc comment must appear:\n{md}");
+    assert!(md.contains("Beta function."), "file B's doc comment must appear:\n{md}");
+    assert!(md.contains("fn alpha") && md.contains("fn beta"), "both signatures present:\n{md}");
+    assert!(!md.contains("No documented items"), "must NOT drop all docs:\n{md}");
+}

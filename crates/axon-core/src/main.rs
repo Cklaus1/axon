@@ -2274,20 +2274,24 @@ fn cmd_doc(files: Vec<PathBuf>, out: Option<PathBuf>) {
         let markdown = axon_core::generate_docs(program, &src, filename);
         emit_doc_output(markdown, out.as_deref());
     } else {
-        // Merge and document the combined namespace.
-        let (merged_program, merge_errors) = axon_core::merge_programs(file_programs);
-        if !merge_errors.is_empty() {
-            for e in &merge_errors {
-                eprintln!("error[{}]: {}", e.code, e.message);
-            }
-            process::exit(2);
+        // Multi-file: document EACH file with its OWN source so the `///` doc
+        // comments are extracted (they're read by per-item byte-offset, which
+        // is only valid against that file's source). Merging into one program
+        // and passing an empty source dropped every doc comment — and with no
+        // docs, "*No documented items.*". Concatenate the per-file sections
+        // under one H1 instead. (`generate_docs` emits its own H1 per call; we
+        // demote those to H2 file headers under a single project H1.)
+        let _ = &title; // single-file title is unused on this path
+        let mut combined = format!("# API documentation ({} files)\n", files.len());
+        for ((filename, program), path) in file_programs.iter().zip(&files) {
+            let src = read_source(path);
+            let per_file = axon_core::generate_docs(program, &src, filename);
+            // Drop the per-file H1 line (`# <filename>`); the project H1 is above.
+            // Keep the body, under an H2 file heading.
+            let body = per_file.split_once('\n').map(|(_, rest)| rest).unwrap_or("").trim();
+            combined.push_str(&format!("\n## {filename}\n\n{body}\n"));
         }
-        // For multi-file, source text is the concatenation (/// comments are
-        // still in the per-file sources, but we use byte-offsets from spans).
-        // Pass an empty source — the doc extractor gracefully returns no docs
-        // for items whose spans exceed the source length.
-        let markdown = axon_core::generate_docs(&merged_program, "", &title);
-        emit_doc_output(markdown, out.as_deref());
+        emit_doc_output(combined, out.as_deref());
     }
 }
 
