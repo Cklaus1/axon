@@ -325,7 +325,21 @@ impl<'ctx> super::Codegen<'ctx> {
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry);
 
-            let n = fn_val.get_nth_param(0).unwrap().into_float_value();
+            let raw_n = fn_val.get_nth_param(0).unwrap().into_float_value();
+            // I-2 parity: the interpreter's fmt_g returns "0" for x == 0.0, which
+            // (since -0.0 == 0.0) normalizes negative zero. C's snprintf("%.6g",
+            // -0.0) instead prints "-0". Collapse -0.0 → +0.0 here so native
+            // matches the oracle: n = (raw_n == 0.0) ? 0.0 : raw_n. The OEQ
+            // compare is true for both +0.0 and -0.0, so the select replaces
+            // negative zero with a literal +0.0 and leaves every other value.
+            let zero_f = f64_ty.const_float(0.0);
+            let is_zero = self.ir.builder
+                .build_float_compare(inkwell::FloatPredicate::OEQ, raw_n, zero_f, "iszero")
+                .unwrap();
+            let n = self.ir.builder
+                .build_select(is_zero, zero_f, raw_n, "n_norm")
+                .unwrap()
+                .into_float_value();
             let fmt_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,fmt_global.as_pointer_value(), i8_ptr, "fmtptr");
 
             // Pass 1: snprintf(NULL, 0, "%.6g", n) → required length.

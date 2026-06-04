@@ -52,32 +52,61 @@ fi
 
 fail=0
 
-# fuzz NAME ARITY EXPR
-#   EXPR is an Axon expression template using `A` (and `B` for arity 2) as the
-#   integer placeholders, e.g. 'abs_i64(A)' or 'min_i64(A, B)' or 'A + B'.
-#   Generates edges+N seeded inputs, emits one println(to_str(EXPR)) per input,
-#   builds once, asserts interp stdout+exit == native stdout+exit.
+# fuzz NAME DOMAIN ARITY EXPR
+#   DOMAIN selects the placeholder generator (A, and B for arity 2):
+#     i64  — integers in ±1e9 (edges 0,±1,±2,±1e9,±999999999). NON-overflowing
+#            on purpose: the overflow boundary is a known divergence (interp
+#            checked/graceful vs native wrapping) — its own ExitCode descriptor.
+#     pos  — non-negative i64 in [0,1e6] (for pow/shift/char-index — exponents
+#            and bit-counts must stay in range; A^B and 1<<B can't overflow).
+#     f64  — decimals; edges 0.0,±1.0,±0.5,large; printed via to_str (which both
+#            engines route through the same `%.6g` contract).
+#     str  — A is drawn from a fixed corpus of string literals (B too for arity
+#            2); the EXPR uses `A`/`B` as already-quoted Axon str expressions.
+#   EXPR is an Axon expression template; the result is printed via to_str so a
+#   single stdout+exit diff covers every input. Build ONCE, diff both engines.
 fuzz() {
-  local name="$1" arity="$2" expr="$3"
+  local name="$1" domain="$2" arity="$3" expr="$4"
   local src="$WORK/$name.ax"
 
-  # Generate the program body: one line per input. awk owns RNG (seeded) so the
-  # set is reproducible; edge values are prepended unconditionally. Inputs are
-  # bounded to ±1e9 → every abs/min/+ stays within i64 (no overflow in slice 1).
   {
     echo "fn main() -> i64 {"
-    awk -v seed="$SEED" -v n="$N" -v arity="$arity" -v expr="$expr" 'BEGIN {
+    awk -v seed="$SEED" -v n="$N" -v arity="$arity" -v expr="$expr" -v domain="$domain" 'BEGIN {
       srand(seed)
-      ne = split("0 1 -1 2 -2 1000000000 -1000000000 999999999 -999999999", edges, " ")
-      cnt = 0
-      for (i = 1; i <= ne; i++) { cnt++; vals[cnt] = edges[i] }
-      for (i = 1; i <= n; i++) { cnt++; vals[cnt] = int(rand() * 2000000000) - 1000000000 }
-      for (i = 1; i <= cnt; i++) {
+      # Per-domain value table (edges first, then N seeded-random).
+      if (domain == "i64") {
+        ne = split("0 1 -1 2 -2 1000000000 -1000000000 999999999 -999999999", edges, " ")
+        for (i=1;i<=ne;i++){ cnt++; vals[cnt]=edges[i] }
+        for (i=1;i<=n;i++){ cnt++; vals[cnt]=int(rand()*2000000000)-1000000000 }
+      } else if (domain == "pos") {
+        ne = split("0 1 2 3 10 1000 1000000", edges, " ")
+        for (i=1;i<=ne;i++){ cnt++; vals[cnt]=edges[i] }
+        for (i=1;i<=n;i++){ cnt++; vals[cnt]=int(rand()*1000000) }
+      } else if (domain == "f64") {
+        ne = split("0.0 1.0 -1.0 0.5 -0.5 2.5 -2.5 100000.0 -100000.0", edges, " ")
+        for (i=1;i<=ne;i++){ cnt++; vals[cnt]=edges[i] }
+        for (i=1;i<=n;i++){ cnt++; vals[cnt]=sprintf("%.4f", rand()*2000.0-1000.0) }
+      } else if (domain == "str") {
+        # A fixed corpus of already-quoted Axon string literals (empty, single
+        # char, multi-word with spaces, mixed case, digits, punctuation,
+        # substrings) — the cases str-scalar builtins must agree on. Assigned
+        # directly (not split) so embedded spaces survive.
+        cnt=0
+        vals[++cnt]="\"\""
+        vals[++cnt]="\"a\""
+        vals[++cnt]="\"Hello\""
+        vals[++cnt]="\"Hello World\""
+        vals[++cnt]="\"MiXeD\""
+        vals[++cnt]="\"123abc\""
+        vals[++cnt]="\"end.\""
+        vals[++cnt]="\"oo\""
+        vals[++cnt]="\"o\""
+      }
+      for (i=1;i<=cnt;i++) {
         e = expr
         gsub(/A/, vals[i], e)
         if (arity == 2) {
-          # deterministic second operand from a different index in the table
-          b = vals[((i * 7) % cnt) + 1]
+          b = vals[((i * 7) % cnt) + 1]   # deterministic second operand
           gsub(/B/, b, e)
         }
         print "    println(to_str(" e "))"
@@ -109,12 +138,44 @@ fuzz() {
   echo "  OK   $name: $cases inputs, interp==native (exit $i_exit)"
 }
 
-echo "fuzz_parity: seed=$SEED, $((N)) random + 9 edge inputs per builtin"
-# ── slice-1 descriptors: {name, arity, expr} ──────────────────────────────────
-fuzz abs_i64 1 'abs_i64(A)'      # unary extern builtin (registry row)
-fuzz min_i64 2 'min_i64(A, B)'   # binary extern builtin (registry row)
-fuzz add_i64 2 'A + B'           # inline i64 binop lowering (emit_binop)
+echo "fuzz_parity: seed=$SEED, up to $((N)) random + edge inputs per builtin"
+# ── i64 scalars (extern + inline) ─────────────────────────────────────────────
+fuzz abs_i64   i64 1 'abs_i64(A)'
+fuzz abs_i32   i64 1 'abs_i32(A)'
+fuzz sign_i64  i64 1 'sign_i64(A)'
+fuzz min_i64   i64 2 'min_i64(A, B)'
+fuzz max_i64   i64 2 'max_i64(A, B)'
+fuzz min_i32   i64 2 'min_i32(A, B)'
+fuzz max_i32   i64 2 'max_i32(A, B)'
+fuzz clamp_i64 i64 1 'clamp_i64(A, 0 - 500, 500)'
+# ── i64 binops + bitwise (inline emit_binop / emit_call) ──────────────────────
+fuzz add_i64   i64 2 'A + B'
+fuzz sub_i64   i64 2 'A - B'
+fuzz cmp_lt    i64 2 'A < B'
+fuzz cmp_eq    i64 2 'A == B'
+fuzz bit_and   i64 2 'bit_and(A, B)'
+fuzz bit_or    i64 2 'bit_or(A, B)'
+fuzz bit_xor   i64 2 'bit_xor(A, B)'
+fuzz bit_not   i64 1 'bit_not(A)'
+# ── pos-domain: exponent / shift counts must stay in range ────────────────────
+fuzz pow_i64   pos 2 'pow_i64(A % 10, B % 8)'
+fuzz shl_i64   pos 2 'shl(A % 1000, B % 31)'
+fuzz shr_i64   pos 2 'shr(A, B % 31)'
+fuzz mod_i64   pos 2 'A % (B % 1000 + 1)'
+# ── f64 math (printed through the shared %.6g to_str contract) ────────────────
+fuzz abs_f64   f64 1 'abs_f64(A)'
+fuzz floor_f64 f64 1 'floor(A)'
+fuzz ceil_f64  f64 1 'ceil(A)'
+fuzz min_f64   f64 2 'min_f64(A, B)'
+fuzz max_f64   f64 2 'max_f64(A, B)'
+fuzz f2i       f64 1 'f64_to_i64(A)'
+# ── str scalars (str → i64/bool/str) ──────────────────────────────────────────
+fuzz str_len      str 1 'str_len(A)'
+fuzz str_contains str 2 'str_contains(A, B)'
+fuzz str_starts   str 2 'str_starts_with(A, B)'
+fuzz str_ends     str 2 'str_ends_with(A, B)'
+fuzz str_index    str 2 'str_index_of(A, B)'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — abs_i64 / min_i64 / + agree native==interp on edges + seeded random ✓"
+echo "fuzz_parity: PASS — 30 scalar/i64/f64/str descriptors agree native==interp on edges + seeded random ✓"
 exit 0

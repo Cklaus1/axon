@@ -1,21 +1,27 @@
 # Tech Spec — R1f: Differential parity fuzzing (auto-find interp↔codegen divergence)
 
-**Status:** 🟡 Slice 1 LANDED (2026-06-04). `scripts/fuzz_parity.sh` implements
-fork (b): per builtin it generates 9 edge + `FUZZ_N` (default 40) seeded-random
-inputs, emits ONE `.ax` exercising all of them, builds once, diffs interp vs
-native stdout + exit code. Descriptors: `abs_i64` (unary extern), `min_i64`
-(binary extern), `+` (inline i64 binop) — 49 inputs each, native==interp.
-Bounded to the ±1e9 non-overflow domain on purpose (the i64-overflow boundary is
-a known divergence — verified: `abs_i64(i64::MIN)` gives interp exit 101 vs
-native 134 — reserved for slice 2 with explicit ExitCode handling). Verified the
-comparison machinery BITES on that boundary. Gated two ways: the
+**Status:** 🟡 Slices 1+2 LANDED (2026-06-04). `scripts/fuzz_parity.sh`
+implements fork (b): per builtin it generates edge + `FUZZ_N` (default 40)
+seeded-random inputs, emits ONE `.ax` exercising all of them, builds once, diffs
+interp vs native stdout + exit code. **Slice 2** widened the table to **30
+descriptors across 4 domains** (`i64`/`pos`/`f64`/`str`): i64 scalars
+(abs/sign/min/max/clamp, i32 variants) + binops (`+`/`-`/`<`/`==`) + bitwise
+(and/or/xor/not); `pos`-domain pow/shl/shr/mod (exponent/shift counts kept in
+range); the f64 math family (abs/floor/ceil/min/max/f64_to_i64); str-scalar
+predicates (len/contains/starts/ends/index over a fixed corpus). The widening
+**immediately caught two real float-formatting divergences** (the
+`fmt_g`-vs-`snprintf` drift the review flagged — see Findings): `-0.0` → FIXED
+(codegen `to_str_f64` normalizes `-0.0 → +0.0`); scientific-notation `%g` →
+DOCUMENTED RESIDUAL with its own follow-up. i64 inputs bounded to ±1e9 and f64 to
+|x|≤1e5 on purpose — the overflow boundary (verified `abs_i64(i64::MIN)`: interp
+exit 101 vs native 134) and the sci-notation range are known divergences with
+explicit descriptors deferred to slice 2b. Gated two ways: the
 `codegen_fuzz_parity_finds_no_divergence` cli_run test AND `parity_all.sh`
-(slice 3 was automatic — the filename matches `*_parity.sh`). Skips cleanly when
-LLVM absent. **Remaining: slice 2** — widen the descriptor table to ~30-40
-scalar/str/math builtins + the `{domain, compare}` descriptor for ExitCode/
-F64Bits cases. Turns I-2 from "fixed cases, audited periodically" into "random
-inputs, compared on every change." Prerequisite for collapsing the double-impl
-(R1f-2).
+(filename auto-matches `*_parity.sh`). Skips cleanly when LLVM absent.
+**Remaining: slice 2b** — `{compare: ExitCode|F64Bits}` descriptors for the
+overflow boundary + NaN/inf, and converge the sci-notation residual. Turns I-2
+from "fixed cases, audited periodically" into "random inputs, compared on every
+change." Prerequisite for collapsing the double-impl (R1f-2).
 
 **Requirement:** R1 (native pipeline) / I-2 (interpreter is the oracle).
 
@@ -108,6 +114,34 @@ collection/higher-order/host/ASI builtins are out of scope for v1 (they need a
   documented residual (like the `arr_sum` overflow note), not a blocker.
 - Does NOT remove the dual implementation; it makes the dual impl *safe to keep
   and cheap to converge*, and unblocks R1f-2.
+
+## Findings (what the fuzzer caught)
+
+The widening (slice 2) immediately earned its keep — on its first run it found
+two real interp↔codegen float-formatting divergences (the `fmt_g`-vs-`snprintf`
+drift surface the architecture review flagged):
+
+1. **`-0.0` formatting — FIXED** (slice 2, same commit). `ceil(-0.5)` is `-0.0`
+   in IEEE-754; interp's `fmt_g` returns `"0"` (since `-0.0 == 0.0`) but native's
+   `snprintf("%.6g", -0.0)` prints `"-0"`. Per I-2 codegen must match the oracle
+   → `to_str_f64` now normalizes `-0.0 → +0.0` before snprintf
+   (`(n == 0.0) ? 0.0 : n`, an OEQ-select). Verified native==interp.
+
+2. **Scientific-notation format — DOCUMENTED RESIDUAL** (own follow-up). For
+   floats large/small enough to render in scientific notation, interp's hand-
+   rolled `fmt_g` and C's `%.6g` disagree on BOTH trailing zeros and exponent
+   style: `1000000.0` → interp `1.00000e6` vs native `1e+06`; `0.0000001` →
+   `1.00000e-7` vs `1e-07`. This is NOT a one-line fix (the two formatters
+   implement different conventions) and is a behavior decision about the I-2
+   oracle's float formatter, so it is deliberately NOT bundled into the fuzzer
+   commit. **Not a live corpus break** — no shipped `examples/*.ax` uses floats
+   in the scientific-notation range (`all_examples_parity` = 32/32). The
+   fuzzer's `f64` domain is bounded to |x| ≤ 1e5 (which `%.6g` renders in
+   non-scientific form), so slice 2 stays green while the residual is tracked
+   here. **Follow-up: a dedicated slice that picks one canonical `%g` convention
+   and converges both engines** (likely: make interp's `fmt_g` emit the C
+   `%.6g` exponent form, since C's is the well-specified standard) — gated by a
+   widened `f64` fuzz domain that includes the sci-notation range.
 
 ## Out of scope (named, not faked)
 
