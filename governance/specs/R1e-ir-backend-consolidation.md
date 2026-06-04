@@ -4,8 +4,13 @@
 arena shim is DELETED (~1200 LoC removed: `codegen/ir.rs` gone, `ir_inkwell.rs`
 1003→73 lines). Single real IR path = `self.ir.{context,module,builder}` +
 `build_wrappers::w_*`; stale IR.3/IR.4 comments rewritten; MIGRATION.md /
-IR_REARCH.md marked SUPERSEDED. Remaining: slice 2 — converge the 154 `expr.rs`
-direct-`build_*` stragglers onto `w_*` + add a grep drift-tripwire.
+IR_REARCH.md marked SUPERSEDED. **Drift tripwire LANDED** (`cli_run.rs`
+`r1e_dead_ir_trait_stays_deleted` + `r1e_direct_ir_emission_stays_confined`):
+source-invariant tests fail if `ir.rs`/`impl IR`/`IRValue…` reappear or if a NEW
+file grows direct `.builder.build_*` (a second IR path spreading) — verified to
+bite, then pass. Remaining: slice 2 — converge the 165 `expr.rs` direct-`build_*`
+stragglers onto `w_*` (the tripwire allowlist shrinks to
+`[build_wrappers.rs, ir_inkwell.rs]` as that completes).
 — the cleanup that retires a dead abstraction
 and collapses the codegen IR surface to ONE path.
 **Requirement:** R1 (native pipeline). Sibling to `R1d-single-source-builtins.md`

@@ -5663,3 +5663,92 @@ fn unknown_per_call_tier_is_e1302() {
     let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(msg.contains("E1302"), "unknown per-call tier must be E1302: {msg}");
 }
+
+// ---------------------------------------------------------------------------
+// R1e drift tripwire — keep codegen to ONE IR-emission path.
+//
+// R1e (`governance/specs/R1e-ir-backend-consolidation.md`, `dfe4836`) deleted the
+// dead `IR`-trait/arena shim (`codegen/ir.rs` + the `impl IR for InkwellBackend`
+// block), leaving a single real path: the `self.ir.{context,module,builder}`
+// inherent fields, with `build_wrappers::w_*` keeping inkwell's heavy generics
+// out of the call sites. These source-invariant assertions stop a second path
+// from silently reappearing — the exact regression R1e was meant to prevent.
+// They read source text (no toolchain), so they run under --no-default-features.
+// ---------------------------------------------------------------------------
+
+fn codegen_dir() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/codegen")
+}
+
+#[test]
+fn r1e_dead_ir_trait_stays_deleted() {
+    let cg = codegen_dir();
+    // The trait module file must stay gone.
+    assert!(
+        !cg.join("ir.rs").exists(),
+        "codegen/ir.rs (the dead IR-trait shim) reappeared — R1e deleted it; \
+         the single IR path is self.ir.{{context,module,builder}} + build_wrappers"
+    );
+    // mod.rs must not re-declare the module.
+    let mod_rs = std::fs::read_to_string(cg.join("mod.rs")).unwrap();
+    assert!(
+        !mod_rs.contains("pub mod ir;") && !mod_rs.contains("mod ir;"),
+        "codegen/mod.rs re-declares `mod ir;` — the IR-trait module is retired (R1e)"
+    );
+    // No source file may re-introduce the trait or its handle types. We scan
+    // only .rs files (the SUPERSEDED .md design notes keep them for history).
+    for entry in std::fs::read_dir(&cg).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        assert!(
+            !src.contains("impl IR for"),
+            "{name}: the dead `impl IR for …` block is back — R1e removed it (0 real callers)"
+        );
+        // Handle types (IRValue/IRBlock/IRGlobal) only ever existed to serve the
+        // trait. Their return makes the second path possible again.
+        for ty in ["IRValue", "IRBlock", "IRGlobal", "IRIntPred"] {
+            assert!(
+                !src.contains(ty),
+                "{name}: the IR-trait handle type `{ty}` reappeared — R1e retired the arena shim"
+            );
+        }
+    }
+}
+
+#[test]
+fn r1e_direct_ir_emission_stays_confined() {
+    // Direct `.builder.build_*` (bypassing the w_* wrappers) is allowed only in
+    // the files that legitimately own raw IR emission: expr.rs (the 165 typed
+    // straggler sites R1e slice 2 will converge), the build_wrappers themselves,
+    // and the ir_inkwell holder's own inherent-API test. A NEW file growing a
+    // direct `.builder.build_` call is a second IR path spreading — fail it here
+    // so it converges onto w_* instead.
+    let allow: &[&str] = &["expr.rs", "build_wrappers.rs", "ir_inkwell.rs"];
+    let cg = codegen_dir();
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(&cg).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rs") {
+            continue;
+        }
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if allow.contains(&name.as_str()) {
+            continue;
+        }
+        let src = std::fs::read_to_string(&path).unwrap();
+        // Count raw builder build_* calls that skip the wrapper layer.
+        let hits = src.matches(".builder.build_").count();
+        if hits > 0 {
+            offenders.push(format!("{name} ({hits})"));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "new direct `.builder.build_*` IR emission outside the allowlist {allow:?}: {offenders:?} \
+         — route it through build_wrappers::w_* (R1e: one IR path)"
+    );
+}
