@@ -1138,6 +1138,10 @@ impl<'ctx> Codegen<'ctx> {
                     if name == "arr_enumerate" || name == "arr_zip" {
                         return Some(Type::Slice(Box::new(Type::Tuple(vec![Type::I64, Type::I64]))));
                     }
+                    // arr_chunk(&a, n) → [[i64]] (a slice of i64 slices).
+                    if name == "arr_chunk" {
+                        return Some(Type::Slice(Box::new(Type::Slice(Box::new(Type::I64)))));
+                    }
                     if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
                         || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
                         || name == "arr_sort_by" || name == "arr_concat"

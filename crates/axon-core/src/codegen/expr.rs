@@ -1302,12 +1302,17 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_index(&mut self, receiver: &ast::Expr, index: &ast::Expr, fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
+        // Element LLVM type: from a named local's tracked Slice type, OR — for a
+        // non-Ident receiver like a chained index `b[1][0]` — from the inferred
+        // sem-type of the receiver expression (e.g. arr_chunk → Slice(Slice)).
         let elem_llvm_ty = if let ast::Expr::Ident(n) = receiver {
             self.local_types.get(n.as_str()).and_then(|ty| {
                 if let Type::Slice(inner) = ty { self.llvm_type(inner) } else { None }
             })
         } else {
-            None
+            self.infer_expr_sem_type(receiver).and_then(|ty| {
+                if let Type::Slice(inner) = ty { self.llvm_type(&inner) } else { None }
+            })
         };
 
         let slice_val = self.emit_expr(receiver, fn_val)?;
@@ -1978,6 +1983,114 @@ impl<'ctx> super::Codegen<'ctx> {
         build_wrappers::w_store(&self.ir.builder,
             self.ir.builder.build_struct_gep(slice_ty, out, 1, "en_op").unwrap(), dst_i8.into());
         Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "en_res"))
+    }
+
+    /// arr_chunk(&a, n) — [i64] → [[i64]] in chunks of n (last shorter). n<=0 →
+    /// exit(101). Outer = ceil(len/n) slice structs; each chunk mallocs its own
+    /// i64 buffer + copies its range. Nested allocation. Pure IR + malloc.
+    fn emit_arr_i64_chunk(
+        &mut self,
+        slice_val: BasicValueEnum<'ctx>,
+        n: inkwell::values::IntValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        let slice_ty = self.ir.context.struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let one = i64_ty.const_int(1, false);
+        let eight = i64_ty.const_int(8, false);
+
+        let src_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ck_s");
+        build_wrappers::w_store(&self.ir.builder, src_alloca, slice_val);
+        let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 0, "ck_lp").unwrap(), "ck_len").into_int_value();
+        let src_raw = build_wrappers::w_load(&self.ir.builder, ptr_ty.into(),
+            self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "ck_dp").unwrap(), "ck_dat").into_pointer_value();
+        let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "ck_si");
+
+        // n <= 0 → exit(101) panic.
+        let bad_bb = self.ir.context.append_basic_block(fn_val, "ck.bad");
+        let ok_bb = self.ir.context.append_basic_block(fn_val, "ck.ok");
+        let npos = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, n, i64_ty.const_zero(), "ck_np");
+        build_wrappers::w_cond_br(&self.ir.builder, npos, ok_bb, bad_bb);
+        self.ir.builder.position_at_end(bad_bb);
+        if let Some(exit_fn) = self.ir.module.get_function("exit") {
+            let code = self.ir.context.i32_type().const_int(101, false);
+            build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
+        }
+        self.ir.builder.build_unreachable().unwrap();
+        self.ir.builder.position_at_end(ok_bb);
+
+        // outer count = ceil(len / n) = (len + n - 1) / n.
+        let lpn = build_wrappers::w_int_add(&self.ir.builder, len, n, "ck_lpn");
+        let lpnm1 = build_wrappers::w_int_sub(&self.ir.builder, lpn, one, "ck_lpnm1");
+        let ocount = self.ir.builder.build_int_signed_div(lpnm1, n, "ck_oc").unwrap();
+        // malloc outer = ocount * 16 (slice structs).
+        let sixteen = i64_ty.const_int(16, false);
+        let obytes = build_wrappers::w_int_mul(&self.ir.builder, ocount, sixteen, "ck_obytes");
+        let outer_raw = self.emit_malloc(obytes, "ck_outer");
+        let outer = build_wrappers::w_pointer_cast(&self.ir.builder, outer_raw, slice_ty.ptr_type(AddressSpace::default()), "ck_od");
+
+        // for c in 0..ocount: start = c*n; clen = min(n, len-start); malloc
+        // clen*8; copy src[start..start+clen]; outer[c] = {clen, buf}.
+        let cs = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ck_c");
+        build_wrappers::w_store(&self.ir.builder, cs, i64_ty.const_zero().into());
+        let oc = self.ir.context.append_basic_block(fn_val, "ck.oc");
+        let ob = self.ir.context.append_basic_block(fn_val, "ck.ob");
+        let oe = self.ir.context.append_basic_block(fn_val, "ck.oe");
+        build_wrappers::w_br(&self.ir.builder, oc);
+        self.ir.builder.position_at_end(oc);
+        let cc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), cs, "ck_cc").into_int_value();
+        let og = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, cc, ocount, "ck_og");
+        build_wrappers::w_cond_br(&self.ir.builder, og, ob, oe);
+        self.ir.builder.position_at_end(ob);
+        let start = build_wrappers::w_int_mul(&self.ir.builder, cc, n, "ck_start");
+        let rem = build_wrappers::w_int_sub(&self.ir.builder, len, start, "ck_rem");
+        let n_le_rem = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, n, rem, "ck_nlr");
+        let clen = self.ir.builder.build_select(n_le_rem, n, rem, "ck_clen").unwrap().into_int_value();
+        let cbytes = build_wrappers::w_int_mul(&self.ir.builder, clen, eight, "ck_cbytes");
+        let cbuf_raw = self.emit_malloc(cbytes, "ck_cbuf");
+        let cbuf = build_wrappers::w_pointer_cast(&self.ir.builder, cbuf_raw, i64_ty.ptr_type(AddressSpace::default()), "ck_cb");
+        // inner copy j in 0..clen: cbuf[j] = src[start+j].
+        let js = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "ck_j");
+        build_wrappers::w_store(&self.ir.builder, js, i64_ty.const_zero().into());
+        let jc = self.ir.context.append_basic_block(fn_val, "ck.jc");
+        let jb = self.ir.context.append_basic_block(fn_val, "ck.jb");
+        let je = self.ir.context.append_basic_block(fn_val, "ck.je");
+        build_wrappers::w_br(&self.ir.builder, jc);
+        self.ir.builder.position_at_end(jc);
+        let jcur = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), js, "ck_jcur").into_int_value();
+        let jg = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SLT, jcur, clen, "ck_jg");
+        build_wrappers::w_cond_br(&self.ir.builder, jg, jb, je);
+        self.ir.builder.position_at_end(jb);
+        let sidx = build_wrappers::w_int_add(&self.ir.builder, start, jcur, "ck_sidx");
+        let sp = unsafe { self.ir.builder.build_gep(i64_ty, src, &[sidx], "ck_sp").unwrap() };
+        let sv = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), sp, "ck_sv");
+        let cp = unsafe { self.ir.builder.build_gep(i64_ty, cbuf, &[jcur], "ck_cp").unwrap() };
+        build_wrappers::w_store(&self.ir.builder, cp, sv);
+        let jn = build_wrappers::w_int_add(&self.ir.builder, jcur, one, "ck_jn");
+        build_wrappers::w_store(&self.ir.builder, js, jn.into());
+        build_wrappers::w_br(&self.ir.builder, jc);
+        self.ir.builder.position_at_end(je);
+        // outer[c] = { clen, cbuf as i8* }.
+        let op = unsafe { self.ir.builder.build_gep(slice_ty, outer, &[cc], "ck_op").unwrap() };
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, op, 0, "ck_olp").unwrap(), clen.into());
+        let cbuf_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, cbuf_raw, ptr_ty, "ck_cbi8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, op, 1, "ck_odp").unwrap(), cbuf_i8.into());
+        let cn = build_wrappers::w_int_add(&self.ir.builder, cc, one, "ck_cn");
+        build_wrappers::w_store(&self.ir.builder, cs, cn.into());
+        build_wrappers::w_br(&self.ir.builder, oc);
+        self.ir.builder.position_at_end(oe);
+
+        let out = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "ck_out");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 0, "ck_ol2").unwrap(), ocount.into());
+        let outer_i8 = build_wrappers::w_pointer_cast(&self.ir.builder, outer_raw, ptr_ty, "ck_oi8");
+        build_wrappers::w_store(&self.ir.builder,
+            self.ir.builder.build_struct_gep(slice_ty, out, 1, "ck_op2").unwrap(), outer_i8.into());
+        Some(build_wrappers::w_load(&self.ir.builder, slice_ty.into(), out, "ck_res"))
     }
 
     /// arr_flatten(&a) — [[i64]] → [i64]. The outer slice's elements are
@@ -3729,6 +3842,15 @@ impl<'ctx> super::Codegen<'ctx> {
             if name == "arr_flatten" && args.len() == 1 {
                 if let Some(slice_val) = self.emit_expr(&args[0], fn_val) {
                     return self.emit_arr_i64_flatten(slice_val, fn_val);
+                }
+            }
+            // arr_chunk(&a, n) — [i64] → [[i64]] in chunks of n (last may be
+            // shorter). n<=0 → exit(101) panic. Each chunk is a fresh slice.
+            if name == "arr_chunk" && args.len() == 2 {
+                if let (Some(slice_val), Some(BasicValueEnum::IntValue(n))) =
+                    (self.emit_expr(&args[0], fn_val), self.emit_expr(&args[1], fn_val))
+                {
+                    return self.emit_arr_i64_chunk(slice_val, n, fn_val);
                 }
             }
             // arr_find(&a, |x| pred) → Option<i64>: the first element satisfying
