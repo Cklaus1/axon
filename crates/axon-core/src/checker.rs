@@ -882,6 +882,27 @@ impl CheckCtx {
             // ── Block ────────────────────────────────────────────────────────
             Expr::Block(stmts) => {
                 let n = stmts.len();
+                // Unreachable-code (W0005): once a statement unconditionally
+                // diverts control (`return`/`break`/`continue`), every following
+                // statement in this block is dead. Warn ONCE on the first one.
+                if let Some(term_idx) = stmts
+                    .iter()
+                    .take(n.saturating_sub(1))
+                    .position(|s| is_terminator(&s.expr))
+                {
+                    if term_idx + 1 < n {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::warning(
+                                crate::error::W0005,
+                                "unreachable code: this and the following statements can never run (an earlier `return`/`break`/`continue` always diverts control)".to_string(),
+                            )
+                            .node(format!("{node_path}.stmt_{}", term_idx + 1))
+                            .at(&file, 0, 0)
+                            .fix("remove the dead code, or move it before the diverting statement".to_string()),
+                        );
+                    }
+                }
                 for (i, stmt) in stmts.iter().enumerate() {
                     let stmt_path = format!("{node_path}.stmt_{i}");
                     let is_last = i + 1 == n;
@@ -2686,6 +2707,15 @@ fn literal_scalar_kind(lit: &crate::ast::Literal) -> &'static str {
         Literal::Bool(_) => "bool",
         Literal::Str(_) => "str",
     }
+}
+
+/// True when an expression unconditionally diverts control flow, so any
+/// statement after it in the same block is unreachable. Conservative: only the
+/// bare control-flow forms (`return`, `break`, `continue`). An `if` whose every
+/// branch diverts is NOT treated as a terminator here (that needs branch
+/// analysis); this catches the common straight-line dead-code case.
+fn is_terminator(e: &Expr) -> bool {
+    matches!(e, Expr::Return(_) | Expr::Break | Expr::Continue)
 }
 
 /// Best-effort constant folder for INTEGER expressions, used to catch a

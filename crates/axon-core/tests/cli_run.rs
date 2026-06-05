@@ -1034,6 +1034,49 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn unreachable_code_after_return_warns_w0005() {
+    // Statements after an unconditional `return` are dead code → W0005 warning
+    // (printed, check still passes — the program runs).
+    let dead = std::env::temp_dir().join(format!("axon_dead_{}.ax", std::process::id()));
+    std::fs::write(
+        &dead,
+        "fn f() -> i64 {\n  return 1\n  let x = 2\n  x\n}\nfn main() -> i64 { f() }\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", dead.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&dead);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "dead code is a WARNING, check must pass: {msg}");
+    assert!(
+        msg.contains("W0005") && msg.contains("unreachable code"),
+        "expected a W0005 unreachable-code warning: {msg}"
+    );
+
+    // A `return` inside a conditional (not the unconditional last move) followed
+    // by more code must NOT warn — that code IS reachable when the branch is not
+    // taken.
+    let ok = std::env::temp_dir().join(format!("axon_retok_{}.ax", std::process::id()));
+    std::fs::write(
+        &ok,
+        "fn f(n: i64) -> i64 {\n  if n > 0 { return 1 }\n  0\n}\nfn main() {}\n",
+    )
+    .unwrap();
+    let outo = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&ok);
+    let msgo = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outo.stdout),
+        String::from_utf8_lossy(&outo.stderr)
+    );
+    assert_eq!(outo.status.code(), Some(0), "conditional return must check clean");
+    assert!(!msgo.contains("W0005"), "a conditional return must NOT trigger W0005: {msgo}");
+}
+
+#[test]
 fn integer_division_by_literal_zero_is_e0407() {
     // `10 / 0` and `10 % 0` always panic at runtime ("integer division by zero").
     // The constant case is caught statically as E0407.
