@@ -40,6 +40,7 @@ pub const E0309: &str = "E0309";
 pub const E0401: &str = "E0401"; // struct has no field (Phase 3 canonical code)
 pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
+pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -1296,13 +1297,41 @@ impl CheckCtx {
                 }
             }
 
+            // ── StructLit (incl. enum-variant literals `Enum::Variant {..}`) ──
+            Expr::StructLit { name, fields } => {
+                // Check field VALUE expressions (infer owns field-name validation
+                // for structs via E0101; this walks nested exprs for other rules).
+                for (i, (_fname, fexpr)) in fields.iter().enumerate() {
+                    self.check_expr(fexpr, &format!("{node_path}.field_{i}"), scope);
+                }
+                // Enum-variant literal: `Enum::Variant`. Validate the variant
+                // actually exists on the enum — `S::C` for a missing `C` was
+                // silently accepted (built a bogus Value::Enum), then matching it
+                // panicked at runtime ("no match arm matched"). Flag E0404.
+                if let Some((enum_name, variant)) = name.split_once("::") {
+                    if let Some(variants) = self.enum_variants.get(enum_name) {
+                        if !variants.iter().any(|v| v == variant) {
+                            let file = self.file.clone();
+                            self.errors.push(
+                                CheckError::new(
+                                    E0404,
+                                    format!("enum `{enum_name}` has no variant `{variant}`"),
+                                )
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .fix(format!("`{enum_name}` variants: {}", variants.join(", "))),
+                            );
+                        }
+                    }
+                }
+            }
+
             // ── Leaves ───────────────────────────────────────────────────────
             Expr::Ident(_)
             | Expr::Literal(_)
             | Expr::None
             | Expr::Array(_)
             | Expr::Tuple(_)
-            | Expr::StructLit { .. }
             | Expr::Break
             | Expr::Continue => {}
         }

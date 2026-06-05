@@ -1034,6 +1034,66 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn unknown_enum_variant_literal_is_e0404() {
+    // `S::C` for an enum `S` with no variant `C` was silently accepted (it built
+    // a bogus enum value), then panicked at runtime when matched ("no match arm
+    // matched"). It must now be a clean E0404 naming the real variants.
+    let bad = std::env::temp_dir().join(format!("axon_badvar_{}.ax", std::process::id()));
+    std::fs::write(
+        &bad,
+        "type S = A | B\nfn main() {\n  let s = S::C\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "S::C must fail check (exit 2): {msg}");
+    assert!(
+        msg.contains("E0404") && msg.contains("has no variant `C`"),
+        "expected E0404 naming the missing variant: {msg}"
+    );
+    assert!(
+        msg.contains("A, B") || msg.contains("variants: A"),
+        "E0404 should list the real variants: {msg}"
+    );
+
+    // A valid variant literal must still check + run.
+    let ok = std::env::temp_dir().join(format!("axon_okvar_{}.ax", std::process::id()));
+    std::fs::write(
+        &ok,
+        "type S = A | B\nfn main() -> i64 {\n  let s = S::A\n  match s { S::A => 1\n    S::B => 2 }\n}\n",
+    )
+    .unwrap();
+    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let outr = axon().args(["run", ok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&ok);
+    assert_eq!(outc.status.code(), Some(0), "a valid variant literal must check clean");
+    assert_eq!(outr.status.code(), Some(1), "the valid variant must run (S::A => 1)");
+
+    // Bonus: an error INSIDE a struct/enum literal field value is now caught
+    // (the StructLit arm previously did not recurse into field expressions).
+    let fv = std::env::temp_dir().join(format!("axon_fverr_{}.ax", std::process::id()));
+    std::fs::write(
+        &fv,
+        "type P = { x: i64 }\nfn main() {\n  let o = Some(5)\n  let p = P { x: o.unwrap() }\n}\n",
+    )
+    .unwrap();
+    let outf = axon().args(["check", fv.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&fv);
+    let msgf = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outf.stdout),
+        String::from_utf8_lossy(&outf.stderr)
+    );
+    assert_eq!(outf.status.code(), Some(2), "error in a struct-literal field value must be caught: {msgf}");
+    assert!(msgf.contains("E0403"), "the field-value method error must surface: {msgf}");
+}
+
+#[test]
 fn indexing_a_non_array_is_a_clean_compile_error_e0402() {
     // `n[0]` where `n` is not an array/slice was silently accepted at check time
     // then panicked at runtime ("indexing non-array (i64)"). It must now be a

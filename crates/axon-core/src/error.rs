@@ -46,6 +46,7 @@ pub const E0315: &str = "E0315";
 pub const E0401: &str = "E0401"; // struct has no field
 pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
+pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 
 // Trait errors (Phase 3)
 pub const E0501: &str = "E0501"; // trait method not implemented
