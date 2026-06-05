@@ -905,6 +905,27 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let _ = std::fs::remove_file(&mok);
     assert_eq!(outmc.status.code(), Some(0), "valid match-result use must check clean");
     assert_eq!(outmr.status.code(), Some(2), "valid match-result use must run (classify(B) == 2)");
+
+    // And via the `?` operator: `get()?.foo` unwraps Result<i64,_> to i64, so a
+    // field access on it is a non-struct access (was a runtime panic).
+    let q = std::env::temp_dir().join(format!("axon_qfield_{}.ax", std::process::id()));
+    std::fs::write(
+        &q,
+        "fn get() -> Result<i64, str> { Ok(5) }\nfn run_it() -> Result<i64, str> {\n  let x = get()?.foo\n  Ok(x)\n}\nfn main() -> i64 { match run_it() { Ok(n) => n\n    Err(e) => 99 } }\n",
+    )
+    .unwrap();
+    let outq = axon().args(["check", q.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&q);
+    let msgq = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outq.stdout),
+        String::from_utf8_lossy(&outq.stderr)
+    );
+    assert_eq!(outq.status.code(), Some(2), "get()?.foo must fail check (exit 2): {msgq}");
+    assert!(
+        msgq.contains("E0401") && msgq.contains("i64 has no field 'foo'"),
+        "expected E0401 for field access on the `?`-unwrapped i64: {msgq}"
+    );
 }
 
 #[test]

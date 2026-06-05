@@ -2211,6 +2211,18 @@ impl CheckCtx {
             }
             // No else branch → the if is `()`-typed; leave Unknown for inference.
             Expr::If { else_: None, .. } => Type::Unknown,
+            // `expr?` unwraps a Result<T,E> / Option<T> to its inner T, so
+            // `get()?.foo` (field access on the unwrapped scalar) can be checked
+            // instead of slipping to a runtime panic.
+            Expr::Question(inner) => {
+                let inner_ty =
+                    self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                match inner_ty {
+                    Type::Result(ok, _) => *ok,
+                    Type::Option(t) => *t,
+                    _ => Type::Unknown,
+                }
+            }
             // A `match` expression's type is its arms' common type — same
             // unify-or-Unknown rule as `if` (so `(match s { … }).foo` and a
             // let-bound match result can be field-checked). Empty/none-agreeing
