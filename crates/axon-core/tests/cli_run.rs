@@ -1074,6 +1074,42 @@ fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
     );
     assert_eq!(outo.status.code(), Some(0), "a valid match must check clean");
     assert!(!msgo.contains("W0004"), "distinct sub-patterns must NOT trigger W0004: {msgo}");
+
+    // An arm AFTER an unguarded catch-all (`_`) is also unreachable → W0004.
+    let aw = std::env::temp_dir().join(format!("axon_afterwild_{}.ax", std::process::id()));
+    std::fs::write(
+        &aw,
+        "type S = A | B\nfn f(s: S) -> i64 { match s { _ => 0\n  S::A => 1 } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let outa = axon().args(["check", aw.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&aw);
+    let msga = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outa.stdout),
+        String::from_utf8_lossy(&outa.stderr)
+    );
+    assert_eq!(outa.status.code(), Some(0), "arm-after-wildcard is a warning, check passes: {msga}");
+    assert!(
+        msga.contains("W0004") && msga.contains("already covers every value"),
+        "expected W0004 for an arm after a catch-all: {msga}"
+    );
+
+    // A GUARDED catch-all does NOT cover everything, so a following arm is fine.
+    let g = std::env::temp_dir().join(format!("axon_guarded_{}.ax", std::process::id()));
+    std::fs::write(
+        &g,
+        "fn f(n: i64) -> i64 { match n { x if x > 0 => 1\n  _ => 0 } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let outg = axon().args(["check", g.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&g);
+    let msgg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outg.stdout),
+        String::from_utf8_lossy(&outg.stderr)
+    );
+    assert!(!msgg.contains("W0004"), "an arm after a GUARDED catch-all must NOT warn: {msgg}");
 }
 
 #[test]

@@ -1724,14 +1724,34 @@ impl CheckCtx {
         // occurrence wins; warn on each subsequent duplicate.
         {
             let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            let mut catch_all_seen = false;
             for arm in arms {
-                // A guard makes even an identical head potentially reachable.
+                let file = self.file.clone();
+                // Any arm AFTER an unguarded catch-all (`_` or a bare binding) is
+                // unreachable — the catch-all already matched everything.
+                if catch_all_seen {
+                    self.errors.push(
+                        CheckError::warning(
+                            crate::error::W0004,
+                            "unreachable match arm: an earlier `_`/binding arm already covers every value".to_string(),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .fix("remove this arm, or move it above the catch-all".to_string()),
+                    );
+                    continue;
+                }
+                // A guard makes even an identical head potentially reachable, and
+                // a GUARDED catch-all does not actually cover everything.
                 if arm.guard.is_some() {
+                    continue;
+                }
+                if matches!(arm.pattern, Pattern::Wildcard | Pattern::Ident(_)) {
+                    catch_all_seen = true;
                     continue;
                 }
                 if let Some(key) = conclusive_pattern_key(&arm.pattern) {
                     if !seen.insert(key.clone()) {
-                        let file = self.file.clone();
                         self.errors.push(
                             CheckError::warning(
                                 crate::error::W0004,
