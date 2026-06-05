@@ -41,6 +41,7 @@ pub const E0401: &str = "E0401"; // struct has no field (Phase 3 canonical code)
 pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
+pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -1766,6 +1767,36 @@ impl CheckCtx {
             }
         }
 
+        // Literal-pattern type check (E0405): a literal pattern whose type can't
+        // match the subject is always-dead (`match n /*i64*/ { "x" => … }`,
+        // `match b /*bool*/ { 5 => … }`). Silently fell through to a catch-all
+        // before. Only fires when the subject is a concrete scalar and the
+        // literal's type definitively differs (i64/i32 are mutually compatible).
+        if let Some(subj) = scalar_kind(subject_ty) {
+            for arm in arms {
+                if let Pattern::Literal(lit) = &arm.pattern {
+                    let lit_kind = literal_scalar_kind(lit);
+                    if lit_kind != subj {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::new(
+                                E0405,
+                                format!(
+                                    "this match is on `{}`, but the pattern is a `{lit_kind}` literal — it can never match",
+                                    subject_ty.display()
+                                ),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .expected(subj.to_string())
+                            .found(lit_kind.to_string())
+                            .fix(format!("use a `{subj}` literal pattern, or match on a `{lit_kind}` value")),
+                        );
+                    }
+                }
+            }
+        }
+
         // A wildcard pattern or a plain identifier covers all constructors.
         let has_wildcard = arms
             .iter()
@@ -2586,6 +2617,31 @@ fn conclusive_pattern_key(p: &Pattern) -> Option<String> {
         // Wildcard/Ident bind-alls, deep Some/Ok/Err, tuples: not keyed (a repeat
         // of a bind-all is handled by exhaustiveness, not duplicate detection).
         _ => None,
+    }
+}
+
+/// The scalar "kind" a subject type belongs to for literal-pattern matching, or
+/// `None` for non-scalar / inference-pending types (where no E0405 should fire).
+/// `i64`/`i32` collapse to one "int" kind (mutually compatible by widening).
+fn scalar_kind(ty: &Type) -> Option<&'static str> {
+    match ty {
+        Type::I64 | Type::I32 => Some("int"),
+        Type::F64 => Some("float"),
+        Type::Bool => Some("bool"),
+        Type::Str => Some("str"),
+        _ => None,
+    }
+}
+
+/// The scalar kind of a literal pattern — aligned with `scalar_kind` so an
+/// int-literal pattern against an int subject compares equal.
+fn literal_scalar_kind(lit: &crate::ast::Literal) -> &'static str {
+    use crate::ast::Literal;
+    match lit {
+        Literal::Int(_) => "int",
+        Literal::Float(_) => "float",
+        Literal::Bool(_) => "bool",
+        Literal::Str(_) => "str",
     }
 }
 

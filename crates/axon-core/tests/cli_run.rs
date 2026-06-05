@@ -1034,6 +1034,51 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn literal_pattern_typed_against_wrong_subject_is_e0405() {
+    // A literal pattern whose type can't match the subject is always-dead — it
+    // silently fell through to a catch-all (`match n /*i64*/ { "x" => … }`
+    // returns the wildcard branch). Now a clean E0405.
+    for (label, decl, body) in [
+        ("str pat on int", "n: i64", "match n { \"x\" => 1\n    _ => 0 }"),
+        ("int pat on str", "s: str", "match s { 5 => 1\n    _ => 0 }"),
+        ("str pat on bool", "b: bool", "match b { \"x\" => 1\n    _ => 0 }"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_patty_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, format!("fn g({decl}) -> i64 {{ {body} }}\nfn main() {{}}\n")).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: must fail check (exit 2): {msg}");
+        assert!(
+            msg.contains("E0405") && msg.contains("can never match"),
+            "{label}: expected E0405 always-dead pattern: {msg}"
+        );
+    }
+
+    // Matching literals of the RIGHT type (incl. i64/i32 compatible) must pass.
+    for (label, src) in [
+        ("int", "fn g(n: i64) -> i64 { match n { 0 => 1\n  1 => 2\n  _ => 0 } }\nfn main() {}\n"),
+        ("str", "fn g(s: str) -> i64 { match s { \"a\" => 1\n  \"b\" => 2\n  _ => 0 } }\nfn main() {}\n"),
+        ("bool", "fn g(b: bool) -> i64 { match b { true => 1\n  false => 0 } }\nfn main() {}\n"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_patok_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{label}: matching literals of the right type must check clean: {msg}");
+    }
+}
+
+#[test]
 fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
     // A later arm whose head exactly duplicates an earlier one is dead code.
     // It must produce a W0004 WARNING — printed, but NOT failing `check` (exit 0,
