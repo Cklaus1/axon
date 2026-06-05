@@ -984,63 +984,62 @@ impl CheckCtx {
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
                 }
-                // `recv.method(args)` where `method` is actually a DATA FIELD of
-                // the receiver's struct (not a method defined on that type) is a
-                // call of a non-function — silently accepted before, then a
-                // runtime "no method `x` on type `P`" panic. Flag E0403.
-                // Conservative: fires ONLY when the receiver is a known struct,
-                // `method` IS one of its data fields, AND no method of that name
-                // exists on the type — so genuine method calls are never touched.
+                // `recv.method(args)` is only valid when `method` is a method
+                // defined on the receiver's type (via an impl block) or a builtin
+                // channel method. Calling anything else — a data field `p.x()`, an
+                // `Option`/`Result` (`o.unwrap()`), or a bare type with no such
+                // impl (`n.foo()`, `[1].push()`, `"s".upper()`) — was silently
+                // accepted at check time then panicked at runtime ("no method `m`
+                // on type `T`"). Flag E0403 when the receiver resolves to a
+                // concrete type whose `type_methods` set lacks `method`.
+                //
+                // Keyed by the SAME name the interpreter uses to register/look up
+                // methods (Value::type_name() / type_name_of()), so a user impl on
+                // a primitive (`impl Trait for i64`) is correctly recognized.
                 let recv_ty = self.resolve_expr_type(receiver, &rpath, scope);
-                if let Type::Struct(sname) = &recv_ty {
-                    let is_field = self
-                        .struct_fields
-                        .get(sname)
-                        .is_some_and(|fs| fs.iter().any(|(n, _)| n == method));
-                    let is_method = self
+                let method_key: Option<String> = match &recv_ty {
+                    Type::Struct(n) | Type::Enum(n) => Some(n.clone()),
+                    other => method_lookup_key(other).map(|s| s.to_string()),
+                };
+                if let Some(key) = method_key {
+                    let key = key.as_str();
+                    let has_method = self
                         .type_methods
-                        .get(sname)
+                        .get(key)
                         .is_some_and(|ms| ms.contains(method));
-                    if is_field && !is_method {
+                    if !has_method {
                         let file = self.file.clone();
-                        self.errors.push(
-                            CheckError::new(
-                                E0403,
-                                format!("`{method}` is a data field of `{sname}`, not a method — it cannot be called"),
+                        // Tailor the message + hint to the receiver shape.
+                        let is_data_field = matches!(&recv_ty, Type::Struct(s)
+                            if self.struct_fields.get(s).is_some_and(|fs| fs.iter().any(|(n,_)| n == method)));
+                        let (msg, hint): (String, String) = if is_data_field {
+                            (
+                                format!("`{method}` is a data field of `{key}`, not a method — it cannot be called"),
+                                format!("remove the call parentheses to read the field: `…{method}`"),
                             )
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .fix(format!("remove the call parentheses to read the field: `…{method}`")),
+                        } else if matches!(recv_ty, Type::Option(_)) {
+                            (
+                                format!("`Option` has no method `{method}` — Axon has no null/unwrap; Option is destructured by matching"),
+                                "match on it instead: `match opt { Some(v) => …  None => … }`".to_string(),
+                            )
+                        } else if matches!(recv_ty, Type::Result(_, _)) {
+                            (
+                                format!("`Result` has no method `{method}` — Axon has no null/unwrap; Result is destructured by matching"),
+                                "match on it instead: `match res { Ok(v) => …  Err(e) => … }`".to_string(),
+                            )
+                        } else {
+                            (
+                                format!("no method `{method}` on type `{}`", recv_ty.display()),
+                                format!("define it with `impl SomeTrait for {key} {{ fn {method}(self: {key}) … }}`, or call a free function"),
+                            )
+                        };
+                        self.errors.push(
+                            CheckError::new(E0403, msg)
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .fix(hint),
                         );
                     }
-                }
-                // Option<T>/Result<T,E> have NO methods in Axon (no-null by
-                // design: you pattern-match, there is no `.unwrap()`/`.is_some()`).
-                // A method call on one — a common reflex from other languages —
-                // was check-clean then a runtime "no method `m` on type `Option`"
-                // panic. Flag it with a match-instead hint. (Only these two: prims
-                // could gain trait impls; Option/Result definitively cannot.)
-                let opt_or_res = match &recv_ty {
-                    Type::Option(_) => Some("Option"),
-                    Type::Result(_, _) => Some("Result"),
-                    _ => None,
-                };
-                if let Some(tn) = opt_or_res {
-                    let file = self.file.clone();
-                    let hint = if tn == "Option" {
-                        "match on it instead: `match opt { Some(v) => …  None => … }`"
-                    } else {
-                        "match on it instead: `match res { Ok(v) => …  Err(e) => … }`"
-                    };
-                    self.errors.push(
-                        CheckError::new(
-                            E0403,
-                            format!("`{tn}` has no method `{method}` — Axon has no null/unwrap; {tn} is destructured by matching"),
-                        )
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        .fix(hint),
-                    );
                 }
             }
 
@@ -2460,6 +2459,31 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
 // ── AxonType helpers for E0501/E0502/E0503 ────────────────────────────────────
 
 /// Returns a human-readable name for an `AxonType`, used in error messages.
+/// The name under which methods are registered/looked up for a value of this
+/// type — matching the interpreter's `Value::type_name()` / `type_name_of()`
+/// keys, so `type_methods[key]` reflects exactly the methods callable at
+/// runtime. Returns `None` for types where the checker can't be sure of the
+/// receiver (Unknown/Var/Deferred) or which dispatch through other paths
+/// (channels = builtin methods; fn/dyn = not method receivers) — those are left
+/// to inference / the runtime to avoid false E0403s.
+fn method_lookup_key(ty: &Type) -> Option<&'static str> {
+    match ty {
+        Type::Struct(_) | Type::Enum(_) => None, // handled inline (needs the name)
+        Type::I64 => Some("i64"),
+        Type::I32 => Some("i32"),
+        Type::F64 => Some("f64"),
+        Type::Bool => Some("bool"),
+        Type::Str => Some("str"),
+        Type::Slice(_) => Some("[]"),
+        Type::Tuple(_) => Some("tuple"),
+        Type::Option(_) => Some("Option"),
+        Type::Result(_, _) => Some("Result"),
+        // Unknown / Var / Deferred / Fn / Chan / DynTrait / Uncertain / Temporal
+        // / Unit / Dict: don't risk a false positive.
+        _ => None,
+    }
+}
+
 fn axon_type_name(ty: &AxonType) -> String {
     match ty {
         AxonType::Named(n) => n.clone(),

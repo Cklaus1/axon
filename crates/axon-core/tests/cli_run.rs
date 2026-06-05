@@ -991,6 +991,46 @@ fn calling_a_data_field_as_a_method_is_e0403() {
             "{label}: expected E0403 explaining {tn} has no methods: {msg}"
         );
     }
+
+    // A method call on any bare builtin type with no impl (`[1].push()`,
+    // `"s".upper()`, `n.foo()`, `t.bar()`) is also E0403 ("no method on type T").
+    for (label, src) in [
+        ("array", "fn main() {\n  let a = [1, 2]\n  let x = a.push(3)\n}\n"),
+        ("str", "fn main() {\n  let s = \"hi\"\n  let x = s.upper()\n}\n"),
+        ("i64", "fn main() {\n  let n = 5\n  let x = n.foo()\n}\n"),
+        ("bool", "fn main() {\n  let b = true\n  let x = b.toggle()\n}\n"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_nometh_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: method on builtin must fail check: {msg}");
+        assert!(
+            msg.contains("E0403") && msg.contains("no method"),
+            "{label}: expected E0403 'no method on type': {msg}"
+        );
+    }
+
+    // CRUCIAL no-false-positive case: a user trait impl ON A PRIMITIVE makes the
+    // method legal — it must check clean and run (keyed the same as the runtime).
+    let prim = std::env::temp_dir().join(format!("axon_primimpl_{}.ax", std::process::id()));
+    std::fs::write(
+        &prim,
+        "trait Double { fn double(self) -> i64 }\n\
+         impl Double for i64 {\n  fn double(self: i64) -> i64 { self * 2 }\n}\n\
+         fn main() -> i64 {\n  let n = 5\n  n.double()\n}\n",
+    )
+    .unwrap();
+    let outpc = axon().args(["check", prim.to_str().unwrap()]).output().unwrap();
+    let outpr = axon().args(["run", prim.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&prim);
+    assert_eq!(outpc.status.code(), Some(0), "a user trait-impl on a primitive must check clean");
+    assert_eq!(outpr.status.code(), Some(10), "the primitive method must run (5*2 == 10)");
 }
 
 #[test]
