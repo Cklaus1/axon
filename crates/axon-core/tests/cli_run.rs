@@ -1089,6 +1089,38 @@ fn duplicate_names_in_definitions_are_rejected() {
     let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&ok);
     assert_eq!(outc.status.code(), Some(0), "distinct names in definitions must check clean");
+
+    // A pattern that binds the same name twice (`(a, a)`) is also E0002 — the
+    // second binding silently shadowed the first (last-wins).
+    let dupbind = std::env::temp_dir().join(format!("axon_dupbind_{}.ax", std::process::id()));
+    std::fs::write(
+        &dupbind,
+        "fn f(t: (i64, i64)) -> i64 { match t { (a, a) => a } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let outb = axon().args(["check", dupbind.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&dupbind);
+    let msgb = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outb.stdout),
+        String::from_utf8_lossy(&outb.stderr)
+    );
+    assert_eq!(outb.status.code(), Some(2), "a duplicate pattern binding must fail check: {msgb}");
+    assert!(
+        msgb.contains("E0002") && msgb.contains("binding `a` appears more than once"),
+        "expected E0002 for the duplicate pattern binding: {msgb}"
+    );
+
+    // Distinct bindings and repeated wildcards (`(_, _)`) must NOT error.
+    let bindok = std::env::temp_dir().join(format!("axon_bindok_{}.ax", std::process::id()));
+    std::fs::write(
+        &bindok,
+        "fn f(t: (i64, i64)) -> i64 { match t { (a, b) => a + b } }\nfn g(t: (i64, i64)) -> i64 { match t { (_, _) => 0 } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let outbc = axon().args(["check", bindok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bindok);
+    assert_eq!(outbc.status.code(), Some(0), "distinct bindings + repeated wildcards must check clean");
 }
 
 #[test]

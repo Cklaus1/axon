@@ -968,6 +968,26 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_arm(&mut self, arm: &MatchArm) {
+        // A pattern may not bind the same name twice (`(a, a)`, `Point { x: a,
+        // y: a }`): the second binding silently shadowed the first (last-wins),
+        // an unambiguous bug. Flag each repeat as E0002.
+        {
+            let mut names: Vec<String> = Vec::new();
+            collect_pattern_binding_names(&arm.pattern, &mut names);
+            let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+            for n in &names {
+                if !seen.insert(n.as_str()) {
+                    self.emit_error(
+                        Diagnostic::error(
+                            E0002,
+                            format!("binding `{n}` appears more than once in this pattern"),
+                        )
+                        .with_file(self.file)
+                        .with_fix(format!("rename one of the `{n}` bindings")),
+                    );
+                }
+            }
+        }
         // Each arm gets its own scope so pattern bindings don't escape.
         self.table.push_scope();
         self.resolve_pattern(&arm.pattern);
@@ -1336,6 +1356,30 @@ fn collect_free_vars(
         }
         Expr::Literal(_) | Expr::None | Expr::Return(None)
         | Expr::Break | Expr::Continue => {}
+    }
+}
+
+/// Collect pattern binding names into a Vec (preserving duplicates), so a
+/// pattern that binds the same name twice can be detected. Mirrors
+/// `collect_pattern_bindings` but keeps repeats.
+fn collect_pattern_binding_names(pat: &crate::ast::Pattern, out: &mut Vec<String>) {
+    use crate::ast::Pattern;
+    match pat {
+        Pattern::Ident(n) => out.push(n.clone()),
+        Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
+            collect_pattern_binding_names(inner, out)
+        }
+        Pattern::Struct { fields, .. } => {
+            for (_, sub) in fields {
+                collect_pattern_binding_names(sub, out);
+            }
+        }
+        Pattern::Tuple(pats) => {
+            for p in pats {
+                collect_pattern_binding_names(p, out);
+            }
+        }
+        Pattern::Wildcard | Pattern::None | Pattern::Literal(_) => {}
     }
 }
 
