@@ -929,6 +929,48 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
 }
 
 #[test]
+fn calling_a_data_field_as_a_method_is_e0403() {
+    // `p.x()` where `x` is a DATA FIELD of `p`'s struct (not a method) was
+    // silently accepted at check time and panicked at runtime ("no method `x`
+    // on type `P`"). It must now be a clean E0403 compile error.
+    let bad = std::env::temp_dir().join(format!("axon_fieldcall_{}.ax", std::process::id()));
+    std::fs::write(
+        &bad,
+        "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  p.x()\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "p.x() must fail check (exit 2): {msg}");
+    assert!(
+        msg.contains("E0403") && msg.contains("is a data field of `P`"),
+        "expected E0403 naming the field+struct: {msg}"
+    );
+
+    // A genuine trait-method call on the same struct must still check + run —
+    // the method name is not a data field, so E0403 must not fire.
+    let good = std::env::temp_dir().join(format!("axon_methodcall_{}.ax", std::process::id()));
+    std::fs::write(
+        &good,
+        "type Square = { side: i64 }\n\
+         trait Shape {\n  fn area(self) -> i64\n}\n\
+         impl Shape for Square {\n  fn area(self: Square) -> i64 { self.side * self.side }\n}\n\
+         fn main() -> i64 {\n  let sq = Square { side: 4 }\n  sq.area()\n}\n",
+    )
+    .unwrap();
+    let outc = axon().args(["check", good.to_str().unwrap()]).output().unwrap();
+    let outr = axon().args(["run", good.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&good);
+    assert_eq!(outc.status.code(), Some(0), "a real trait-method call must check clean");
+    assert_eq!(outr.status.code(), Some(16), "the method call must run (4*4 == 16)");
+}
+
+#[test]
 fn indexing_a_non_array_is_a_clean_compile_error_e0402() {
     // `n[0]` where `n` is not an array/slice was silently accepted at check time
     // then panicked at runtime ("indexing non-array (i64)"). It must now be a

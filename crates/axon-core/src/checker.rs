@@ -39,6 +39,7 @@ pub const E0308: &str = "E0308";
 pub const E0309: &str = "E0309";
 pub const E0401: &str = "E0401"; // struct has no field (Phase 3 canonical code)
 pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
+pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -248,6 +249,11 @@ pub struct CheckCtx {
     /// Impl table: concrete type name → set of trait names it implements.
     /// Built from `ImplBlock` items during `check_program` for E0504.
     impl_table: HashMap<String, HashSet<String>>,
+    /// Method table: concrete type name → set of method names defined on it
+    /// (across all impl blocks, trait and inherent). Built during
+    /// `check_program`; used to tell a genuine method call `p.m()` from calling
+    /// a DATA field `p.x()` (E0403).
+    type_methods: HashMap<String, HashSet<String>>,
     /// Per-function generic bounds: fn_name → Vec<(param_name, trait_names)>.
     /// Built from `FnDef.generic_bounds` during `check_program` for E0504.
     fn_bounds: HashMap<String, Vec<(String, Vec<String>)>>,
@@ -286,6 +292,7 @@ impl CheckCtx {
             current_generic_params: HashSet::new(),
             trait_defs: HashMap::new(),
             impl_table: HashMap::new(),
+            type_methods: HashMap::new(),
             fn_bounds: HashMap::new(),
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
@@ -320,12 +327,22 @@ impl CheckCtx {
                 Item::TraitDef(t) => {
                     self.trait_defs.insert(t.name.clone(), t.clone());
                 }
-                Item::ImplBlock(blk) if !blk.trait_name.is_empty() => {
-                    // Record: axon_type_name(for_type) implements trait_name.
-                    self.impl_table
-                        .entry(axon_type_name(&blk.for_type))
-                        .or_default()
-                        .insert(blk.trait_name.clone());
+                Item::ImplBlock(blk) => {
+                    let ty_name = axon_type_name(&blk.for_type);
+                    // Record: type implements trait_name (E0504), for trait impls.
+                    if !blk.trait_name.is_empty() {
+                        self.impl_table
+                            .entry(ty_name.clone())
+                            .or_default()
+                            .insert(blk.trait_name.clone());
+                    }
+                    // Record every method name defined on this type (trait AND
+                    // inherent impls) so `p.method()` can be told from calling a
+                    // data field `p.x()` (E0403).
+                    let methods = self.type_methods.entry(ty_name).or_default();
+                    for m in &blk.methods {
+                        methods.insert(m.name.clone());
+                    }
                 }
                 Item::FnDef(f) if !f.generic_bounds.is_empty() => {
                     self.fn_bounds.insert(f.name.clone(), f.generic_bounds.clone());
@@ -961,10 +978,40 @@ impl CheckCtx {
             }
 
             // ── MethodCall ───────────────────────────────────────────────────
-            Expr::MethodCall { receiver, method: _, args } => {
-                self.check_expr(receiver, &format!("{node_path}.receiver"), scope);
+            Expr::MethodCall { receiver, method, args } => {
+                let rpath = format!("{node_path}.receiver");
+                self.check_expr(receiver, &rpath, scope);
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
+                }
+                // `recv.method(args)` where `method` is actually a DATA FIELD of
+                // the receiver's struct (not a method defined on that type) is a
+                // call of a non-function — silently accepted before, then a
+                // runtime "no method `x` on type `P`" panic. Flag E0403.
+                // Conservative: fires ONLY when the receiver is a known struct,
+                // `method` IS one of its data fields, AND no method of that name
+                // exists on the type — so genuine method calls are never touched.
+                if let Type::Struct(sname) = self.resolve_expr_type(receiver, &rpath, scope) {
+                    let is_field = self
+                        .struct_fields
+                        .get(&sname)
+                        .is_some_and(|fs| fs.iter().any(|(n, _)| n == method));
+                    let is_method = self
+                        .type_methods
+                        .get(&sname)
+                        .is_some_and(|ms| ms.contains(method));
+                    if is_field && !is_method {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::new(
+                                E0403,
+                                format!("`{method}` is a data field of `{sname}`, not a method — it cannot be called"),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .fix(format!("remove the call parentheses to read the field: `…{method}`")),
+                        );
+                    }
                 }
             }
 
