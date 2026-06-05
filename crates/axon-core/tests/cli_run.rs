@@ -4222,6 +4222,47 @@ fn sensitive_value_laundered_through_a_helper_is_e1206() {
 }
 
 #[test]
+fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
+    // R6 local taint: a sensitive field copied into a local (`let e = u.email`)
+    // loses its static sensitive type (it's a plain `str`) but keeps its
+    // provenance — leaking `e` (directly or via a helper) is E1206.
+    let direct = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = u.email\n  let _ = ai_complete(e) }\n";
+    let via_helper = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = u.email\n  let _ = relay(e) }\n";
+    for (label, src) in [("direct", direct), ("via helper", via_helper)] {
+        let f = std::env::temp_dir().join(format!("axon_loctaint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "{label}: a leaked tainted local must fail check: {all}");
+        assert!(all.contains("E1206"), "{label}: expected E1206 for the tainted local: {all}");
+    }
+
+    // No false positives: a sensitive field copied to a local used PURELY
+    // locally, and a tainted local SHADOWED by a non-sensitive rebind before the
+    // sink, must both be clean.
+    let local_only = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn main() -> i64 { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let n = u.name\n  println(\"hi {n}\")\n  0 }\n";
+    let rebound = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = u.email\n  let e = \"public\"\n  let _ = ai_complete(e) }\n";
+    for (label, src) in [("local only", local_only), ("rebound clears taint", rebound)] {
+        let f = std::env::temp_dir().join(format!("axon_locok_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(!all.contains("E1206"), "{label}: must NOT trip local taint: {all}");
+    }
+}
+
+#[test]
 fn uncertain_binops_propagate_minimum_confidence() {
     // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
     // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's

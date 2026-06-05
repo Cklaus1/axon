@@ -281,6 +281,12 @@ pub struct CheckCtx {
     /// fixpoint in `check_program`. A sensitive value passed at one of these
     /// argument positions is E1206, closing the "launder through a helper" hole.
     exfiltrating_params: HashMap<String, HashSet<usize>>,
+    /// Local taint (PRD §4 / R6): within the current function, local-binding name
+    /// → (source description, category) for a local that was bound to a sensitive
+    /// value (a sensitive struct, or a field of one — `let e = u.email`). Lets
+    /// `sink(e)` be flagged even though `e`'s static type is a plain `str`. Reset
+    /// per function in `check_fn`; populated as `let` bindings are walked.
+    sensitive_locals: HashMap<String, (String, String)>,
 }
 
 impl CheckCtx {
@@ -309,6 +315,7 @@ impl CheckCtx {
             adaptive_fns: HashSet::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
+            sensitive_locals: HashMap::new(),
         }
     }
 
@@ -594,6 +601,19 @@ impl CheckCtx {
     }
 
     fn check_fn(&mut self, f: &FnDef) {
+        // Reset the per-function sensitive-local tracking (R6 local taint).
+        // Seed it with any parameter whose declared type is a `@[sensitive]`
+        // struct, so `fn leak(u: User) { sink(u.email) }` is covered and a local
+        // copy of a param field inherits taint.
+        self.sensitive_locals.clear();
+        for p in &f.params {
+            if let AxonType::Named(tn) = &p.ty {
+                if let Some(cat) = self.sensitive_types.get(tn) {
+                    self.sensitive_locals
+                        .insert(p.name.clone(), (tn.clone(), cat.clone()));
+                }
+            }
+        }
         // Bring generic type params into scope so R08 doesn't flag them as unknown.
         let prev_generics = std::mem::replace(
             &mut self.current_generic_params,
@@ -952,6 +972,24 @@ impl CheckCtx {
                 self.check_expr(value, &val_path, scope);
                 let ty = self.resolve_expr_type(value, &val_path, scope);
                 scope.insert(name.clone(), ty);
+                // R6 local taint: if this binds a sensitive value (a sensitive
+                // struct, or a field of one — `let e = u.email`), remember that
+                // the LOCAL is now tainted, so a later `sink(e)` is caught even
+                // though `e`'s static type is a plain scalar. (Only when some
+                // type is sensitive — otherwise the map stays empty.)
+                if !self.sensitive_types.is_empty() {
+                    match self.sensitive_flow_in(value, &val_path, scope) {
+                        Some(src) => {
+                            self.sensitive_locals.insert(name.clone(), src);
+                        }
+                        // A rebind to a NON-sensitive value clears any prior taint
+                        // on this name (`let e = u.email; let e = "public"`), so a
+                        // later use of the re-bound `e` is not falsely flagged.
+                        None => {
+                            self.sensitive_locals.remove(name);
+                        }
+                    }
+                }
             }
 
             // ── Call ─────────────────────────────────────────────────────────
@@ -2418,6 +2456,14 @@ impl CheckCtx {
         apath: &str,
         scope: &HashMap<String, Type>,
     ) -> Option<(String, String)> {
+        // (a0) The arg is a local that was bound to a sensitive value earlier in
+        // this function (`let e = u.email; sink(e)`). Its static type is a plain
+        // scalar, but its provenance is tainted (tracked in `sensitive_locals`).
+        if let Expr::Ident(n) = arg {
+            if let Some(src) = self.sensitive_locals.get(n) {
+                return Some(src.clone());
+            }
+        }
         // (a) The whole value is a sensitive struct.
         if let Type::Struct(sname) = self.resolve_expr_type(arg, apath, scope) {
             if let Some(cat) = self.sensitive_types.get(&sname) {
