@@ -813,6 +813,37 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let _ = std::fs::remove_file(&good);
     assert_eq!(outc.status.code(), Some(0), "valid nested access must check clean");
     assert_eq!(outr.status.code(), Some(5), "valid nested access must run (o.inner.v == 5)");
+
+    // Same class via an INDEX result: `a[0].foo` where the element is a scalar
+    // also slipped to a runtime panic (the Array/Index arms lost the element
+    // type). Must now be E0401 at check time.
+    let idx = std::env::temp_dir().join(format!("axon_idxfield_{}.ax", std::process::id()));
+    std::fs::write(&idx, "fn main() {\n  let a = [1, 2, 3]\n  let x = a[0].foo\n}\n").unwrap();
+    let outi = axon().args(["check", idx.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&idx);
+    let msgi = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outi.stdout),
+        String::from_utf8_lossy(&outi.stderr)
+    );
+    assert_eq!(outi.status.code(), Some(2), "a[0].foo must fail check (exit 2): {msgi}");
+    assert!(
+        msgi.contains("E0401") && msgi.contains("i64 has no field 'foo'"),
+        "expected E0401 for field access on the i64 array element: {msgi}"
+    );
+
+    // But indexing a struct array and reading a real field must still work.
+    let sidx = std::env::temp_dir().join(format!("axon_sidx_{}.ax", std::process::id()));
+    std::fs::write(
+        &sidx,
+        "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  ps[0].x\n}\n",
+    )
+    .unwrap();
+    let outsc = axon().args(["check", sidx.to_str().unwrap()]).output().unwrap();
+    let outsr = axon().args(["run", sidx.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&sidx);
+    assert_eq!(outsc.status.code(), Some(0), "struct-array element field access must check clean");
+    assert_eq!(outsr.status.code(), Some(7), "struct-array element field access must run (ps[0].x == 7)");
 }
 
 #[test]

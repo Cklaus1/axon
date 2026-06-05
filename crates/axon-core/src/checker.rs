@@ -2109,7 +2109,17 @@ impl CheckCtx {
                 }
                 Type::Unknown
             }
-            Expr::Array(_) => Type::Slice(Box::new(Type::Unknown)),
+            Expr::Array(elems) => {
+                // Resolve the element type from the first element so `a[i].foo`
+                // (field access on a scalar element) can be caught — a bare
+                // `Slice(Unknown)` would lose the element type and let it slip to
+                // a runtime panic. Empty literal → Unknown element.
+                let elem_ty = elems
+                    .first()
+                    .map(|e| self.resolve_expr_type(e, &format!("{node_path}.elem_0"), scope))
+                    .unwrap_or(Type::Unknown);
+                Type::Slice(Box::new(elem_ty))
+            }
             Expr::Tuple(elems) => {
                 // Recurse per element so `t.0`, `t.1` can be checked structurally
                 // even when inference didn't register an expr_types entry.
@@ -2150,6 +2160,24 @@ impl CheckCtx {
                         .and_then(|i| elems.get(i).cloned())
                         .unwrap_or(Type::Unknown),
                     _ => Type::Unknown,
+                }
+            }
+            // Indexing a slice/array yields the element type, so `a[0].foo`
+            // resolves `a[0]` to the element and the R11 check can flag a field
+            // access on a non-struct element (else it slips to a runtime "field
+            // access on non-struct" panic, same class as the FieldAccess arm).
+            Expr::Index { receiver, index } => {
+                let recv_ty =
+                    self.resolve_expr_type(receiver, &format!("{node_path}.receiver"), scope);
+                match recv_ty {
+                    Type::Slice(elem) => *elem,
+                    // Indexing a str yields a str (a 1-char substring in this
+                    // language's semantics); any other receiver is unknown here.
+                    Type::Str => Type::Str,
+                    _ => {
+                        let _ = index;
+                        Type::Unknown
+                    }
                 }
             }
             Expr::FmtStr { .. } => Type::Str,
