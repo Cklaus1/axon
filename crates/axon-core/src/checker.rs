@@ -985,6 +985,17 @@ impl CheckCtx {
                 // though `e`'s static type is a plain scalar. (Only when some
                 // type is sensitive — otherwise the map stays empty.)
                 if !self.sensitive_types.is_empty() {
+                    // Direct sensitive value (`let e = u.email`), OR a container
+                    // literal that EMBEDS a sensitive value (`let w = Wrapper {
+                    // data: u.email }`, `let t = (u.email, _)`). The container case
+                    // over-approximates (the whole local is tainted), which is the
+                    // safe direction for a security check — a later `w.data` /
+                    // `t.0` extraction is then flagged.
+                    // `sensitive_flow_in` already recurses into struct/array/tuple
+                    // literals (case (c)), so a container that embeds a sensitive
+                    // value taints the whole local (over-approximation, the safe
+                    // direction). A later `w.data` / `t.0` extraction on the
+                    // tainted local is then caught by the field/index walk in (a0).
                     match self.sensitive_flow_in(value, &val_path, scope) {
                         Some(src) => {
                             self.sensitive_locals.insert(name.clone(), src);
@@ -2513,12 +2524,37 @@ impl CheckCtx {
         apath: &str,
         scope: &HashMap<String, Type>,
     ) -> Option<(String, String)> {
-        // (a0) The arg is a local that was bound to a sensitive value earlier in
-        // this function (`let e = u.email; sink(e)`). Its static type is a plain
+        // (a0) The arg is a bare local that was bound to a sensitive value earlier
+        // in this function (`let e = u.email; sink(e)`). Its static type is a plain
         // scalar, but its provenance is tainted (tracked in `sensitive_locals`).
         if let Expr::Ident(n) = arg {
             if let Some(src) = self.sensitive_locals.get(n) {
                 return Some(src.clone());
+            }
+        }
+        // (a0b) A field/element extracted from a tainted NON-struct local — a
+        // container that bundled a sensitive value (`let w = Wrapper{data:u.email}
+        // ...}; sink(w.data)`; `let t = (u.email, _); sink(t.0)`). The whole local
+        // is conservatively tainted. Guarded so a sensitive STRUCT local falls
+        // through to case (b), which produces the precise `Struct.field` source.
+        if let Expr::FieldAccess { receiver, .. } | Expr::Index { receiver, .. } = arg {
+            // Walk to the root identifier.
+            let mut root = receiver.as_ref();
+            while let Expr::FieldAccess { receiver: r, .. } | Expr::Index { receiver: r, .. } =
+                root
+            {
+                root = r.as_ref();
+            }
+            if let Expr::Ident(n) = root {
+                let receiver_is_sensitive_struct = matches!(
+                    self.resolve_expr_type(receiver, &format!("{apath}.receiver"), scope),
+                    Type::Struct(ref s) if self.sensitive_types.contains_key(s)
+                );
+                if !receiver_is_sensitive_struct {
+                    if let Some(src) = self.sensitive_locals.get(n) {
+                        return Some(src.clone());
+                    }
+                }
             }
         }
         // (a1) The arg is a call to a TAINT-RETURNING fn whose tainting parameter
@@ -2582,6 +2618,13 @@ impl CheckCtx {
             Expr::StructLit { fields, .. } => {
                 for (fname, e) in fields {
                     if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.{fname}"), scope) {
+                        return Some(found);
+                    }
+                }
+            }
+            Expr::Tuple(elems) => {
+                for (i, e) in elems.iter().enumerate() {
+                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope) {
                         return Some(found);
                     }
                 }

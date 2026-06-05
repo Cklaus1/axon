@@ -4222,6 +4222,41 @@ fn sensitive_value_laundered_through_a_helper_is_e1206() {
 }
 
 #[test]
+fn sensitive_value_stored_in_a_container_then_extracted_is_e1206() {
+    // R6 container-store taint: a sensitive value bundled into a struct/tuple
+    // local, then EXTRACTED and leaked, was a hole (`let w = Wrapper{data:
+    // u.email}; sink(w.data)`). The whole local is conservatively tainted now.
+    let struct_store = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        type Wrapper = { data: str }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let w = Wrapper { data: u.email }\n  let _ = ai_complete(w.data) }\n";
+    let tuple_store = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let t = (u.email, \"x\")\n  let _ = ai_complete(t.0) }\n";
+    for (label, src) in [("struct store", struct_store), ("tuple store", tuple_store)] {
+        let f = std::env::temp_dir().join(format!("axon_store_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "{label}: stored-then-extracted sensitive data must fail: {all}");
+        assert!(all.contains("E1206"), "{label}: expected E1206: {all}");
+    }
+
+    // The precise field-source label is preserved for a DIRECT sensitive-struct
+    // field access (`u.email` → "User.email", not the over-approximated "User").
+    let direct = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = ai_complete(u.email) }\n";
+    let f = std::env::temp_dir().join(format!("axon_precise_{}.ax", std::process::id()));
+    std::fs::write(&f, direct).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(all.contains("User.email"), "the precise field source must be preserved: {all}");
+}
+
+#[test]
 fn sensitive_value_returned_from_a_helper_then_leaked_is_e1206() {
     // R6 return-value taint: a fn that returns a sensitive param (or a field of
     // it) propagates sensitivity to its result. `ai_complete(get_email(u))` and
