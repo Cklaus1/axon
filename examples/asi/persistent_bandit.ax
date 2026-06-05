@@ -55,7 +55,6 @@ fn load_or_fresh() -> (Bandit, i64) {
             // a single update per arm with the historic mean (lossless
             // for sum / count, since we set them to the loaded totals
             // by spinning the update API count times).
-            let mut_total = 0
             let i = 0
             while i < n_arms() {
                 let k = arm_label(i)

@@ -112,6 +112,7 @@ const E0002: &str = "E0002"; // duplicate name
 const E0003: &str = "E0003"; // module not found
 // E0004 (item not exported) is Phase 2 — declared but not yet used.
 const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
+const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 #[allow(dead_code)]
 const E0004: &str = "E0004";
 const I0001: &str = "I0001"; // deferred attribute info
@@ -593,7 +594,47 @@ impl<'a> Resolver<'a> {
 
         self.resolve_expr(&f.body);
 
+        // Unused-local lint (W0006): a `let`-binding whose name is never read.
+        self.check_unused_locals(&f.body);
+
         self.table.pop_scope();
+    }
+
+    /// Warn (W0006) on any `let`-binding in this function body whose name is
+    /// never read. NAME-BASED + conservative to guarantee zero false positives:
+    /// a name is "used" if it appears as ANY identifier reference OR as an
+    /// assignment target anywhere in the body; a name bound more than once (so a
+    /// shadow could make one instance unused while the name is used elsewhere) is
+    /// NOT flagged. `_`-prefixed names are the conventional ignore-opt-out.
+    fn check_unused_locals(&mut self, body: &Expr) {
+        use std::collections::{HashMap, HashSet};
+        // (name → first-binding span) and a bound-count to skip shadowed names.
+        let mut bound: HashMap<String, crate::span::Span> = HashMap::new();
+        let mut bound_count: HashMap<String, u32> = HashMap::new();
+        let mut used: HashSet<String> = HashSet::new();
+        collect_binds_and_uses(body, &mut bound, &mut bound_count, &mut used);
+        // Deterministic order: sort by the binding's span start.
+        let mut unused: Vec<(String, crate::span::Span)> = bound
+            .into_iter()
+            .filter(|(name, _)| {
+                !name.starts_with('_')
+                    && !used.contains(name)
+                    && bound_count.get(name).copied().unwrap_or(0) == 1
+            })
+            .collect();
+        unused.sort_by_key(|(_, span)| span.start);
+        for (name, span) in unused {
+            let mut d = Diagnostic::warning(
+                W0006,
+                format!("unused variable `{name}` — its value is never read"),
+            )
+            .with_file(self.file)
+            .with_fix(format!("remove the binding, or prefix it `_{name}` to silence this"));
+            if !span.is_dummy() {
+                d = d.with_span(span);
+            }
+            self.emit_warning(d);
+        }
     }
 
     fn resolve_use(&mut self, u: &UseDecl) {
@@ -1362,6 +1403,167 @@ fn collect_free_vars(
 /// Collect pattern binding names into a Vec (preserving duplicates), so a
 /// pattern that binds the same name twice can be detected. Mirrors
 /// `collect_pattern_bindings` but keeps repeats.
+/// Walk a function body collecting `let`/`own`/`ref` binding names (with the
+/// span of the binding's value, the best available location) + a bound-count,
+/// and every name USED (any `Ident` reference or `Assign`/`AssignTo` target).
+/// Used by the W0006 unused-local lint. Binding names from patterns, loop vars,
+/// and lambda params are NOT collected as lint targets (only `let`-family
+/// bindings), but their bodies ARE walked for uses.
+fn collect_binds_and_uses(
+    e: &Expr,
+    bound: &mut std::collections::HashMap<String, crate::span::Span>,
+    bound_count: &mut std::collections::HashMap<String, u32>,
+    used: &mut std::collections::HashSet<String>,
+) {
+    use crate::ast::Expr as E;
+    match e {
+        E::Let { name, value, .. }
+        | E::Own { name, value, .. }
+        | E::RefBind { name, value, .. } => {
+            // The value is evaluated/used; walk it first. The binding span is
+            // attached by the enclosing Stmt walk (see the block case), so a
+            // top-level Let reached directly records a dummy span (still warns).
+            collect_binds_and_uses(value, bound, bound_count, used);
+            bound.entry(name.clone()).or_insert_with(crate::span::Span::dummy);
+            *bound_count.entry(name.clone()).or_insert(0) += 1;
+        }
+        E::Ident(name) => {
+            used.insert(name.clone());
+        }
+        E::Assign { name, value } => {
+            // An assignment target counts as a use (conservative — avoids
+            // false-positives on assigned-for-side-effect patterns).
+            used.insert(name.clone());
+            collect_binds_and_uses(value, bound, bound_count, used);
+        }
+        E::AssignTo { place, value } => {
+            collect_binds_and_uses(place, bound, bound_count, used);
+            collect_binds_and_uses(value, bound, bound_count, used);
+        }
+        E::Block(stmts) => {
+            for s in stmts {
+                // For a `let`-family binding, record the STMT's span (the Let
+                // expr itself carries none) so the warning points at the source.
+                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } =
+                    &s.expr
+                {
+                    if !s.span.is_dummy() {
+                        bound.insert(name.clone(), s.span);
+                    }
+                }
+                collect_binds_and_uses(&s.expr, bound, bound_count, used);
+            }
+        }
+        E::While { cond, body } => {
+            // The condition is a USE site (`while i < n` reads `n`).
+            collect_binds_and_uses(cond, bound, bound_count, used);
+            for s in body {
+                collect_binds_and_uses(&s.expr, bound, bound_count, used);
+            }
+        }
+        E::WhileLet { expr, body, .. } => {
+            collect_binds_and_uses(expr, bound, bound_count, used);
+            for s in body {
+                collect_binds_and_uses(&s.expr, bound, bound_count, used);
+            }
+        }
+        E::For { start, end, body, .. } => {
+            collect_binds_and_uses(start, bound, bound_count, used);
+            collect_binds_and_uses(end, bound, bound_count, used);
+            for s in body {
+                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } =
+                    &s.expr
+                {
+                    if !s.span.is_dummy() {
+                        bound.insert(name.clone(), s.span);
+                    }
+                }
+                collect_binds_and_uses(&s.expr, bound, bound_count, used);
+            }
+        }
+        E::Call { callee, args, .. } => {
+            collect_binds_and_uses(callee, bound, bound_count, used);
+            for a in args {
+                collect_binds_and_uses(a, bound, bound_count, used);
+            }
+        }
+        E::MethodCall { receiver, args, .. } => {
+            collect_binds_and_uses(receiver, bound, bound_count, used);
+            for a in args {
+                collect_binds_and_uses(a, bound, bound_count, used);
+            }
+        }
+        E::BinOp { left, right, .. } => {
+            collect_binds_and_uses(left, bound, bound_count, used);
+            collect_binds_and_uses(right, bound, bound_count, used);
+        }
+        E::UnaryOp { operand, .. } => collect_binds_and_uses(operand, bound, bound_count, used),
+        E::Question(inner) | E::Spawn(inner) | E::Comptime(inner) => {
+            collect_binds_and_uses(inner, bound, bound_count, used)
+        }
+        E::Match { subject, arms } => {
+            collect_binds_and_uses(subject, bound, bound_count, used);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_binds_and_uses(g, bound, bound_count, used);
+                }
+                collect_binds_and_uses(&arm.body, bound, bound_count, used);
+            }
+        }
+        E::If { cond, then, else_ } => {
+            collect_binds_and_uses(cond, bound, bound_count, used);
+            collect_binds_and_uses(then, bound, bound_count, used);
+            if let Some(els) = else_ {
+                collect_binds_and_uses(els, bound, bound_count, used);
+            }
+        }
+        E::Select(arms) => {
+            for arm in arms {
+                collect_binds_and_uses(&arm.recv, bound, bound_count, used);
+                collect_binds_and_uses(&arm.body, bound, bound_count, used);
+            }
+        }
+        // A lambda's captures are uses of outer names; its body params are its
+        // own bindings (not lint targets here). Walk the body for uses.
+        E::Lambda { body, captures, .. } => {
+            for (cap, _) in captures {
+                used.insert(cap.clone());
+            }
+            collect_binds_and_uses(body, bound, bound_count, used);
+        }
+        E::Return(Some(inner)) => collect_binds_and_uses(inner, bound, bound_count, used),
+        E::FieldAccess { receiver, .. } => {
+            collect_binds_and_uses(receiver, bound, bound_count, used)
+        }
+        E::Index { receiver, index } => {
+            collect_binds_and_uses(receiver, bound, bound_count, used);
+            collect_binds_and_uses(index, bound, bound_count, used);
+        }
+        E::Tuple(elems) | E::Array(elems) => {
+            for el in elems {
+                collect_binds_and_uses(el, bound, bound_count, used);
+            }
+        }
+        E::FmtStr { parts } => {
+            for part in parts {
+                if let crate::ast::FmtPart::Expr(inner) = part {
+                    collect_binds_and_uses(inner, bound, bound_count, used);
+                }
+            }
+        }
+        E::Ok(inner) | E::Err(inner) | E::Some(inner) => {
+            collect_binds_and_uses(inner, bound, bound_count, used)
+        }
+        E::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_binds_and_uses(v, bound, bound_count, used);
+            }
+        }
+        // Leaves with no sub-expressions / no uses.
+        E::Literal(_) | E::None | E::Return(None) | E::Break | E::Continue => {}
+    }
+}
+
 fn collect_pattern_binding_names(pat: &crate::ast::Pattern, out: &mut Vec<String>) {
     use crate::ast::Pattern;
     match pat {

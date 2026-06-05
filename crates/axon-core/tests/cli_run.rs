@@ -1034,6 +1034,46 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn unused_local_binding_warns_w0006() {
+    // A `let` binding never read is dead → W0006 warning (printed, check passes).
+    let unused = std::env::temp_dir().join(format!("axon_unused_{}.ax", std::process::id()));
+    std::fs::write(&unused, "fn main() {\n  let x = 5\n}\n").unwrap();
+    let out = axon().args(["check", unused.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&unused);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "an unused local is a WARNING, check must pass: {msg}");
+    assert!(
+        msg.contains("W0006") && msg.contains("unused variable `x`"),
+        "expected a W0006 unused-variable warning: {msg}"
+    );
+
+    // No false positives: a used binding (incl. used in a while-cond or string
+    // interpolation), a `_`-prefixed name, and a shadowed name must NOT warn.
+    for (label, src) in [
+        ("read", "fn main() -> i64 { let x = 5\n  x }\n"),
+        ("while cond", "fn f(s: str) -> i64 { let n = str_len(s)\n  let i = 0\n  while i < n { i = i + 1 }\n  i }\nfn main() {}\n"),
+        ("interp", "fn main() { let name = \"bob\"\n  println(\"hi {name}\") }\n"),
+        ("underscore", "fn main() { let _x = 5 }\n"),
+        ("shadowed", "fn main() -> i64 { let x = 5\n  let x = 10\n  x }\n"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_usedok_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let outo = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msgo = format!(
+            "{}{}",
+            String::from_utf8_lossy(&outo.stdout),
+            String::from_utf8_lossy(&outo.stderr)
+        );
+        assert!(!msgo.contains("W0006"), "{label}: a used/ignored binding must NOT warn W0006: {msgo}");
+    }
+}
+
+#[test]
 fn unreachable_code_after_return_warns_w0005() {
     // Statements after an unconditional `return` are dead code → W0005 warning
     // (printed, check still passes — the program runs).
