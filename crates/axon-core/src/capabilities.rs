@@ -103,21 +103,51 @@ fn dir_prefix(path: &str) -> &str {
 /// Run the capability check on all functions in `program` and return diagnostics.
 pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
     let mut errors = Vec::new();
+    // Map fn-name → FnDef so a `@[contained]` fn's capability check can follow
+    // calls into user helpers transitively (a sandbox must not be escapable by
+    // moving the forbidden I/O one function call away).
+    let fn_map: std::collections::HashMap<&str, &FnDef> = program
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            Item::FnDef(f) => Some((f.name.as_str(), f)),
+            _ => None,
+        })
+        .collect();
     for item in &program.items {
         if let Item::FnDef(fndef) = item {
-            check_fn(fndef, &mut errors);
+            check_fn(fndef, &fn_map, &mut errors);
         }
     }
     errors
 }
 
-fn check_fn(fndef: &FnDef, errors: &mut Vec<CapabilityError>) {
+fn check_fn<'a>(
+    fndef: &'a FnDef,
+    fn_map: &std::collections::HashMap<&'a str, &'a FnDef>,
+    errors: &mut Vec<CapabilityError>,
+) {
     let spec = match &fndef.contained {
         Some(s) => s,
         None => return, // no @[contained] — no restrictions
     };
-    // Walk the function body.
-    check_expr(&fndef.body, spec, errors);
+    // Walk the function body AND every user helper it transitively reaches,
+    // checking each against this fn's spec. `visited` starts with the contained
+    // fn itself so a self/mutual recursion can't loop.
+    let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    visited.insert(fndef.name.as_str());
+    let mut ctx = CapCtx { spec, fn_map, visited, errors };
+    check_expr(&fndef.body, &mut ctx);
+}
+
+/// Threaded state for the transitive `@[contained]` walk: the spec being
+/// enforced, the program's fn map (to follow helper calls), the visited set (to
+/// stop recursion), and the error sink.
+struct CapCtx<'a, 'e> {
+    spec: &'a ContainedSpec,
+    fn_map: &'a std::collections::HashMap<&'a str, &'a FnDef>,
+    visited: std::collections::HashSet<&'a str>,
+    errors: &'e mut Vec<CapabilityError>,
 }
 
 /// The set of capability *kinds* a program exercises — `"fs:read"`,
@@ -340,13 +370,13 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
     }
 }
 
-fn check_stmts(stmts: &[Stmt], spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
+fn check_stmts<'a>(stmts: &'a [Stmt], ctx: &mut CapCtx<'a, '_>) {
     for stmt in stmts {
-        check_expr(&stmt.expr, spec, errors);
+        check_expr(&stmt.expr, ctx);
     }
 }
 
-fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
+fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
     match expr {
         Expr::Call { callee, args, .. } => {
             // Plain-ident call sites:    `ai_extract_uncertain_i64(p)`
@@ -354,102 +384,118 @@ fn check_expr(expr: &Expr, spec: &ContainedSpec, errors: &mut Vec<CapabilityErro
             //   `Call { callee: StructLit { name: "ai_extract::<T>", … } }`
             // — see `parser.rs::parse_ai_extract_turbofish`.  Both shapes
             // funnel through `classify_call`, which keys on the synthetic name.
-            match callee.as_ref() {
-                Expr::Ident(name) => check_call(name, args, spec, errors),
-                Expr::StructLit { name, fields } if fields.is_empty() => {
-                    check_call(name, args, spec, errors);
+            let callee_name = match callee.as_ref() {
+                Expr::Ident(name) => Some(name.as_str()),
+                Expr::StructLit { name, fields } if fields.is_empty() => Some(name.as_str()),
+                _ => None,
+            };
+            if let Some(name) = callee_name {
+                // A builtin I/O call is checked against the spec directly.
+                check_call(name, args, ctx.spec, ctx.errors);
+                // A USER fn call escapes the sandbox unless we follow it: the
+                // helper's body must also satisfy this spec (the helper inherits
+                // the caller's containment). Guard against recursion via `visited`.
+                if classify_call(name).is_none() {
+                    if let Some(helper) = ctx.fn_map.get(name) {
+                        if ctx.visited.insert(name) {
+                            // A helper with its OWN @[contained] is checked under
+                            // its own spec elsewhere; still descend so a stricter
+                            // CALLER spec also constrains it (defense in depth).
+                            check_expr(&helper.body, ctx);
+                            ctx.visited.remove(name);
+                        }
+                    }
                 }
-                _ => {}
             }
             // Recurse into callee and args.
-            check_expr(callee, spec, errors);
+            check_expr(callee, ctx);
             for arg in args {
-                check_expr(arg, spec, errors);
+                check_expr(arg, ctx);
             }
         }
 
         // Recurse into all compound expressions.
-        Expr::Block(stmts) => check_stmts(stmts, spec, errors),
+        Expr::Block(stmts) => check_stmts(stmts, ctx),
         Expr::Let { value, .. }
         | Expr::Own { value, .. }
-        | Expr::RefBind { value, .. } => check_expr(value, spec, errors),
+        | Expr::RefBind { value, .. } => check_expr(value, ctx),
         Expr::BinOp { left, right, .. } => {
-            check_expr(left, spec, errors);
-            check_expr(right, spec, errors);
+            check_expr(left, ctx);
+            check_expr(right, ctx);
         }
-        Expr::UnaryOp { operand, .. } => check_expr(operand, spec, errors),
-        Expr::Question(inner) => check_expr(inner, spec, errors),
+        Expr::UnaryOp { operand, .. } => check_expr(operand, ctx),
+        Expr::Question(inner) => check_expr(inner, ctx),
         Expr::MethodCall { receiver, args, .. } => {
-            check_expr(receiver, spec, errors);
+            check_expr(receiver, ctx);
             for arg in args {
-                check_expr(arg, spec, errors);
+                check_expr(arg, ctx);
             }
         }
         Expr::If { cond, then, else_ } => {
-            check_expr(cond, spec, errors);
-            check_expr(then, spec, errors);
+            check_expr(cond, ctx);
+            check_expr(then, ctx);
             if let Some(e) = else_ {
-                check_expr(e, spec, errors);
+                check_expr(e, ctx);
             }
         }
         Expr::Match { subject, arms } => {
-            check_expr(subject, spec, errors);
+            check_expr(subject, ctx);
             for arm in arms {
-                if let Some(g) = &arm.guard { check_expr(g, spec, errors); }
-                check_expr(&arm.body, spec, errors);
+                if let Some(g) = &arm.guard { check_expr(g, ctx); }
+                check_expr(&arm.body, ctx);
             }
         }
         Expr::While { cond, body } => {
-            check_expr(cond, spec, errors);
-            check_stmts(body, spec, errors);
+            check_expr(cond, ctx);
+            check_stmts(body, ctx);
         }
         Expr::WhileLet { expr, body, .. } => {
-            check_expr(expr, spec, errors);
-            check_stmts(body, spec, errors);
+            check_expr(expr, ctx);
+            check_stmts(body, ctx);
         }
         Expr::For { start, end, body, .. } => {
-            check_expr(start, spec, errors);
-            check_expr(end, spec, errors);
-            check_stmts(body, spec, errors);
+            check_expr(start, ctx);
+            check_expr(end, ctx);
+            check_stmts(body, ctx);
         }
-        Expr::Assign { value, .. } => check_expr(value, spec, errors),
+        Expr::Assign { value, .. } => check_expr(value, ctx),
         Expr::AssignTo { place, value } => {
-            check_expr(place, spec, errors);
-            check_expr(value, spec, errors);
+            check_expr(place, ctx);
+            check_expr(value, ctx);
         }
         Expr::Return(inner) => {
-            if let Some(e) = inner { check_expr(e, spec, errors); }
+            if let Some(e) = inner { check_expr(e, ctx); }
         }
-        Expr::FieldAccess { receiver, .. } => check_expr(receiver, spec, errors),
+        Expr::FieldAccess { receiver, .. } => check_expr(receiver, ctx),
         Expr::Index { receiver, index } => {
-            check_expr(receiver, spec, errors);
-            check_expr(index, spec, errors);
+            check_expr(receiver, ctx);
+            check_expr(index, ctx);
         }
         Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
-            check_expr(inner, spec, errors);
+            check_expr(inner, ctx);
         }
         Expr::Array(elems) | Expr::Tuple(elems) => {
-            for e in elems { check_expr(e, spec, errors); }
+            for e in elems { check_expr(e, ctx); }
         }
         Expr::StructLit { fields, .. } => {
-            for (_, v) in fields { check_expr(v, spec, errors); }
+            for (_, v) in fields { check_expr(v, ctx); }
         }
         Expr::FmtStr { parts } => {
             for part in parts {
                 if let crate::ast::FmtPart::Expr(e) = part {
-                    check_expr(e, spec, errors);
+                    check_expr(e, ctx);
                 }
             }
         }
-        Expr::Lambda { body, .. } => check_expr(body, spec, errors),
-        Expr::Spawn(body) => check_expr(body, spec, errors),
+        Expr::Lambda { body, .. } => check_expr(body, ctx),
+        Expr::Spawn(body) => check_expr(body, ctx),
         Expr::Select(arms) => {
             for arm in arms {
-                check_expr(&arm.recv, spec, errors);
-                check_expr(&arm.body, spec, errors);
+                check_expr(&arm.recv, ctx);
+                check_expr(&arm.body, ctx);
             }
         }
-        Expr::Comptime(inner) => check_expr(inner, spec, errors),
+        Expr::Comptime(inner) => check_expr(inner, ctx),
         // Leaf nodes — no recursion needed.
         Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
     }

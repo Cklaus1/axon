@@ -38,6 +38,81 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn contained_sandbox_is_enforced_transitively_through_helpers() {
+    // Security: a `@[contained]` sandbox must not be escapable by moving the
+    // forbidden I/O one function call away. A contained fn that calls a helper
+    // which performs a forbidden exec/net/write is E1001 — through one or two
+    // hops — and a helper's OWN looser @[contained] does not re-open the sandbox.
+    let cases: &[(&str, &str)] = &[
+        // (label, source) — each must be rejected (exit 2, E1001)
+        (
+            "exec via helper",
+            "fn run(c: str) -> Result<str, str> { exec(c, [\"x\"]) }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 { let _ = run(\"rm -rf /\")\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "exec via two hops",
+            "fn inner(c: str) -> Result<str, str> { exec(c, [\"x\"]) }\n\
+             fn outer(c: str) -> Result<str, str> { inner(c) }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 { let _ = outer(\"rm\")\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "net (ai_complete) via helper",
+            // The helper calls the net builtin with a literal arg (the net/fs
+            // allowlist check needs a literal; a forwarded param is a separate,
+            // pre-existing limitation — `exec: none` is kind-level and needs none).
+            "fn fetch() -> Result<str, str> { ai_complete(\"hello\") }\n\
+             @[contained(net: [])]\n\
+             fn scorer() -> i64 { let _ = fetch()\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "write to a literal forbidden path via helper",
+            "fn save(d: str) -> Result<(), str> { write_file(\"/etc/passwd\", d) }\n\
+             @[contained(fs: [write(\"./out/\")])]\n\
+             fn scorer() -> i64 { let _ = save(\"x\")\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+        (
+            "stricter caller overrides a looser helper spec",
+            "@[contained(exec: any)]\n\
+             fn helper() -> Result<str, str> { exec(\"ls\", [\"x\"]) }\n\
+             @[contained(exec: none)]\n\
+             fn scorer() -> i64 { let _ = helper()\n  0 }\n\
+             fn main() -> i64 { scorer() }\n",
+        ),
+    ];
+    for (label, src) in cases {
+        let f = std::env::temp_dir().join(format!("axon_captrans_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "{label}: a laundered I/O must be rejected: {msg}");
+        assert!(msg.contains("E1001"), "{label}: expected E1001: {msg}");
+    }
+
+    // No false positive: a contained fn calling a helper that does ONLY allowed
+    // I/O, and mutually-recursive helpers (must not infinite-loop), check clean.
+    let safe = "fn ok_write(d: str) -> Result<(), str> { write_file(\"./out/log\", d) }\n\
+        fn a(n: i64) -> i64 { if n > 0 { b(n - 1) } else { 0 } }\n\
+        fn b(n: i64) -> i64 { if n > 0 { a(n - 1) } else { 0 } }\n\
+        @[contained(fs: [write(\"./out/\")], exec: none)]\n\
+        fn scorer() -> i64 { let _ = ok_write(\"x\")\n  a(5) }\n\
+        fn main() -> i64 { scorer() }\n";
+    let f = std::env::temp_dir().join(format!("axon_capsafe_{}.ax", std::process::id()));
+    std::fs::write(&f, safe).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "allowed transitive I/O + recursion must check clean: {msg}");
+}
+
+#[test]
 fn no_main_function_is_a_clean_error_exit_2() {
     // BUG_HUNT #23: a program with no `main` is a COMPILE-time error (malformed),
     // not a runtime panic. It must report a clean diagnostic and exit 2 — NOT
