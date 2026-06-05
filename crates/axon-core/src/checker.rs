@@ -281,6 +281,12 @@ pub struct CheckCtx {
     /// fixpoint in `check_program`. A sensitive value passed at one of these
     /// argument positions is E1206, closing the "launder through a helper" hole.
     exfiltrating_params: HashMap<String, HashSet<usize>>,
+    /// Return-value taint (PRD §4 / R6): user-fn name → the set of its parameter
+    /// INDICES whose sensitivity flows to the RETURN value (the fn returns the
+    /// param, a field of it, or the result of calling another taint-returning fn
+    /// with it). Computed in the same fixpoint. A call `f(sensitive_arg)` at such
+    /// a position yields a sensitive result, so `let e = get_email(u)` taints `e`.
+    taint_returning_params: HashMap<String, HashSet<usize>>,
     /// Local taint (PRD §4 / R6): within the current function, local-binding name
     /// → (source description, category) for a local that was bound to a sensitive
     /// value (a sensitive struct, or a field of one — `let e = u.email`). Lets
@@ -315,6 +321,7 @@ impl CheckCtx {
             adaptive_fns: HashSet::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
+            taint_returning_params: HashMap::new(),
             sensitive_locals: HashMap::new(),
         }
     }
@@ -2151,16 +2158,27 @@ impl CheckCtx {
             rounds += 1;
             for (fname, params, body) in &fns {
                 for (idx, pname) in params.iter().enumerate() {
-                    // Already known to exfiltrate — skip.
-                    if self
+                    // (1) Param flows to an exfiltration sink.
+                    if !self
                         .exfiltrating_params
                         .get(fname)
                         .is_some_and(|s| s.contains(&idx))
+                        && self.param_reaches_sink(pname, body)
                     {
-                        continue;
-                    }
-                    if self.param_reaches_sink(pname, body) {
                         self.exfiltrating_params
+                            .entry(fname.clone())
+                            .or_default()
+                            .insert(idx);
+                        changed = true;
+                    }
+                    // (2) Param's sensitivity flows to the RETURN value.
+                    if !self
+                        .taint_returning_params
+                        .get(fname)
+                        .is_some_and(|s| s.contains(&idx))
+                        && self.param_reaches_return(pname, body)
+                    {
+                        self.taint_returning_params
                             .entry(fname.clone())
                             .or_default()
                             .insert(idx);
@@ -2169,6 +2187,45 @@ impl CheckCtx {
                 }
             }
         }
+    }
+
+    /// True when the parameter `pname` flows to the function's RETURN value: it
+    /// appears (as the ident, a field of it, an index, an interpolation, or the
+    /// result of calling a taint-returning fn with it) in a tail/return position.
+    fn param_reaches_return(&self, pname: &str, body: &Expr) -> bool {
+        self.expr_carries_param_taint(pname, self.tail_exprs(body).as_slice())
+    }
+
+    /// The set of expressions in RETURN position of a body: the block's trailing
+    /// expression (recursively through nested blocks / if / match arms) plus every
+    /// explicit `return <e>`.
+    fn tail_exprs<'e>(&self, body: &'e Expr) -> Vec<&'e Expr> {
+        let mut out = Vec::new();
+        collect_return_exprs(body, &mut out);
+        out
+    }
+
+    /// True if any of `exprs` carries the taint of param `pname` — directly
+    /// (ident / field / index / fmtstr), or as the result of a call to a
+    /// taint-returning fn whose tainted-arg position carries `pname`.
+    fn expr_carries_param_taint(&self, pname: &str, exprs: &[&Expr]) -> bool {
+        exprs.iter().any(|e| {
+            if arg_carries_ident(e, pname) {
+                return true;
+            }
+            if let Expr::Call { callee, args, .. } = e {
+                if let Expr::Ident(cn) = callee.as_ref() {
+                    if let Some(positions) = self.taint_returning_params.get(cn) {
+                        for (i, arg) in args.iter().enumerate() {
+                            if positions.contains(&i) && arg_carries_ident(arg, pname) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        })
     }
 
     /// True when the identifier `pname` flows as a direct argument into an
@@ -2462,6 +2519,23 @@ impl CheckCtx {
         if let Expr::Ident(n) = arg {
             if let Some(src) = self.sensitive_locals.get(n) {
                 return Some(src.clone());
+            }
+        }
+        // (a1) The arg is a call to a TAINT-RETURNING fn whose tainting parameter
+        // is itself fed a sensitive value (`get_email(u)` where get_email returns
+        // `u.email` and `u` is sensitive). The result inherits the sensitivity.
+        if let Expr::Call { callee, args, .. } = arg {
+            if let Expr::Ident(cn) = callee.as_ref() {
+                if let Some(positions) = self.taint_returning_params.get(cn) {
+                    for (i, inner) in args.iter().enumerate() {
+                        if positions.contains(&i) {
+                            let ipath = format!("{apath}.arg_{i}");
+                            if let Some(src) = self.sensitive_flow_in(inner, &ipath, scope) {
+                                return Some(src);
+                            }
+                        }
+                    }
+                }
             }
         }
         // (a) The whole value is a sensitive struct.
@@ -2988,6 +3062,144 @@ fn axon_type_name(ty: &AxonType) -> String {
 /// Covers: AI calls (to a model), `write_file` (to disk — persisting PII), and
 /// `exec` (to a spawned process — e.g. piping data to `curl`). Returns the
 /// human-readable boundary name for the diagnostic.
+/// Collect every expression in RETURN position of `body`: the STRUCTURAL TAIL of
+/// a block (recursing through nested blocks / if-else branches / match arms),
+/// plus every explicit `return <e>` reachable anywhere. Used by the R6
+/// return-value taint analysis.
+fn collect_return_exprs<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+    // Every explicit `return <e>` anywhere in the body is a return position.
+    collect_explicit_returns(e, out);
+    // Plus the structural tail.
+    collect_tail_expr(e, out);
+}
+
+/// The structural tail expression(s) of `e` (the value a block "falls off" to),
+/// recursing into block-last / if-branches / match-arm-bodies.
+fn collect_tail_expr<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+    use crate::ast::Expr as E;
+    match e {
+        E::Block(stmts) => {
+            if let Some(last) = stmts.last() {
+                collect_tail_expr(&last.expr, out);
+            }
+        }
+        E::If { then, else_, .. } => {
+            collect_tail_expr(then, out);
+            if let Some(els) = else_ {
+                collect_tail_expr(els, out);
+            }
+        }
+        E::Match { arms, .. } => {
+            for arm in arms {
+                collect_tail_expr(&arm.body, out);
+            }
+        }
+        // A `return`/leaf/value expression is itself the tail (an explicit
+        // return is also picked up by collect_explicit_returns; harmless dup).
+        other => out.push(other),
+    }
+}
+
+/// Collect every explicit `return <e>` expression nested anywhere under `e`.
+/// (A direct match rather than via `each_subexpr`, whose callback lifetime can't
+/// thread the collected references back out.)
+fn collect_explicit_returns<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+    use crate::ast::Expr as E;
+    match e {
+        E::Return(Some(inner)) => {
+            out.push(inner);
+            collect_explicit_returns(inner, out);
+        }
+        E::Block(stmts) | E::While { body: stmts, .. } | E::WhileLet { body: stmts, .. } => {
+            for s in stmts {
+                collect_explicit_returns(&s.expr, out);
+            }
+        }
+        E::For { start, end, body, .. } => {
+            collect_explicit_returns(start, out);
+            collect_explicit_returns(end, out);
+            for s in body {
+                collect_explicit_returns(&s.expr, out);
+            }
+        }
+        E::Let { value, .. } | E::Own { value, .. } | E::RefBind { value, .. } => {
+            collect_explicit_returns(value, out)
+        }
+        E::Call { callee, args, .. } => {
+            collect_explicit_returns(callee, out);
+            for a in args {
+                collect_explicit_returns(a, out);
+            }
+        }
+        E::MethodCall { receiver, args, .. } => {
+            collect_explicit_returns(receiver, out);
+            for a in args {
+                collect_explicit_returns(a, out);
+            }
+        }
+        E::BinOp { left, right, .. } => {
+            collect_explicit_returns(left, out);
+            collect_explicit_returns(right, out);
+        }
+        E::UnaryOp { operand, .. } => collect_explicit_returns(operand, out),
+        E::Question(inner) | E::Spawn(inner) | E::Comptime(inner) => {
+            collect_explicit_returns(inner, out)
+        }
+        E::Match { subject, arms } => {
+            collect_explicit_returns(subject, out);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    collect_explicit_returns(g, out);
+                }
+                collect_explicit_returns(&arm.body, out);
+            }
+        }
+        E::If { cond, then, else_ } => {
+            collect_explicit_returns(cond, out);
+            collect_explicit_returns(then, out);
+            if let Some(els) = else_ {
+                collect_explicit_returns(els, out);
+            }
+        }
+        E::Select(arms) => {
+            for arm in arms {
+                collect_explicit_returns(&arm.recv, out);
+                collect_explicit_returns(&arm.body, out);
+            }
+        }
+        E::Lambda { body, .. } => collect_explicit_returns(body, out),
+        E::FieldAccess { receiver, .. } => collect_explicit_returns(receiver, out),
+        E::Index { receiver, index } => {
+            collect_explicit_returns(receiver, out);
+            collect_explicit_returns(index, out);
+        }
+        E::Tuple(elems) | E::Array(elems) => {
+            for el in elems {
+                collect_explicit_returns(el, out);
+            }
+        }
+        E::FmtStr { parts } => {
+            for p in parts {
+                if let crate::ast::FmtPart::Expr(inner) = p {
+                    collect_explicit_returns(inner, out);
+                }
+            }
+        }
+        E::Ok(inner) | E::Err(inner) | E::Some(inner) => collect_explicit_returns(inner, out),
+        E::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                collect_explicit_returns(v, out);
+            }
+        }
+        E::Assign { value, .. } => collect_explicit_returns(value, out),
+        E::AssignTo { place, value } => {
+            collect_explicit_returns(place, out);
+            collect_explicit_returns(value, out);
+        }
+        E::Return(None) | E::Ident(_) | E::Literal(_) | E::None | E::Break | E::Continue => {}
+    }
+}
+
 /// True when expression `e` carries the identifier `name` in a "this value is
 /// the argument" sense: the bare identifier, a field access whose receiver
 /// carries it (`u.email`), an index/cast of it, or a string interpolation that

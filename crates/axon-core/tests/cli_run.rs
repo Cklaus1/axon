@@ -4222,6 +4222,54 @@ fn sensitive_value_laundered_through_a_helper_is_e1206() {
 }
 
 #[test]
+fn sensitive_value_returned_from_a_helper_then_leaked_is_e1206() {
+    // R6 return-value taint: a fn that returns a sensitive param (or a field of
+    // it) propagates sensitivity to its result. `ai_complete(get_email(u))` and
+    // `let e = extract(u); sink(e)` were holes (the result's static type is a
+    // plain str). Now caught — directly, let-bound, and through chains.
+    let direct = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn get_email(u: User) -> str { u.email }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = ai_complete(get_email(u)) }\n";
+    let let_bound = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn extract(u: User) -> str { u.email }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = extract(u)\n  let _ = ai_complete(e) }\n";
+    let two_hop = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn inner(u: User) -> str { u.email }\n\
+        fn outer(u: User) -> str { inner(u) }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = ai_complete(outer(u)) }\n";
+    let compound = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn extract(u: User) -> str { u.email }\n\
+        fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = extract(u)\n  let _ = relay(e) }\n";
+    for (label, src) in [("direct", direct), ("let-bound", let_bound), ("two-hop", two_hop), ("compound", compound)] {
+        let f = std::env::temp_dir().join(format!("axon_rettaint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "{label}: returned-then-leaked sensitive data must fail: {all}");
+        assert!(all.contains("E1206"), "{label}: expected E1206: {all}");
+    }
+
+    // No false positive: a taint-returning-SHAPED fn (returns its param) given a
+    // NON-sensitive argument must NOT warn.
+    let safe = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn echo_str(s: str) -> str { s }\n\
+        fn main() { let _ = ai_complete(echo_str(\"public\")) }\n";
+    let f = std::env::temp_dir().join(format!("axon_retsafe_{}.ax", std::process::id()));
+    std::fs::write(&f, safe).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "a non-sensitive arg through a returner must NOT trip taint: {all}");
+}
+
+#[test]
 fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
     // R6 local taint: a sensitive field copied into a local (`let e = u.email`)
     // loses its static sensitive type (it's a plain `str`) but keeps its
