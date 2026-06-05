@@ -1034,6 +1034,47 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn integer_division_by_literal_zero_is_e0407() {
+    // `10 / 0` and `10 % 0` always panic at runtime ("integer division by zero").
+    // The constant case is caught statically as E0407.
+    for (label, body) in [("div", "10 / 0"), ("rem", "10 % 0")] {
+        let f = std::env::temp_dir().join(format!("axon_divz_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, format!("fn main() -> i64 {{ {body} }}\n")).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: /0 must fail check (exit 2): {msg}");
+        assert!(
+            msg.contains("E0407") && msg.contains("by zero"),
+            "{label}: expected E0407 division-by-zero: {msg}"
+        );
+    }
+
+    // A non-zero literal divisor, a VARIABLE divisor (can't be known statically),
+    // and a float `/0.0` (which is `inf`, not a panic) must all check clean.
+    for (label, src) in [
+        ("nonzero", "fn main() -> i64 { 10 / 2 }\n"),
+        ("variable", "fn main() -> i64 { let d = 0\n  10 / d }\n"),
+        ("float", "fn main() -> i64 { let x = 10.0 / 0.0\n  f64_to_i64(x) }\n"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_divok_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "{label}: must check clean (E0407 is literal-0 only): {msg}");
+    }
+}
+
+#[test]
 fn duplicate_names_in_definitions_are_rejected() {
     // Duplicate parameter / struct-field / enum-variant names, and a duplicate
     // field in a struct literal, were all silently accepted (later shadows

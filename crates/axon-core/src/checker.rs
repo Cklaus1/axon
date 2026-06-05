@@ -43,6 +43,7 @@ pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
 pub const E0406: &str = "E0406"; // a field is set more than once in a struct literal
+pub const E0407: &str = "E0407"; // integer division/remainder by a literal zero
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -1062,6 +1063,26 @@ impl CheckCtx {
                 if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem) {
                     self.check_numeric_operand(&lty, &lpath);
                     self.check_numeric_operand(&rty, &rpath);
+                }
+                // Integer division/remainder by a LITERAL zero always panics at
+                // runtime ("integer division by zero"). Catch the constant case
+                // statically as E0407. (Only an integer literal 0 — a float `/0.0`
+                // is `inf`, not a panic, and a non-literal divisor can't be known
+                // here.)
+                if matches!(op, BinOp::Div | BinOp::Rem) {
+                    if let Expr::Literal(crate::ast::Literal::Int(0)) = right.as_ref() {
+                        let file = self.file.clone();
+                        let verb = if matches!(op, BinOp::Div) { "division" } else { "remainder" };
+                        self.errors.push(
+                            CheckError::new(
+                                E0407,
+                                format!("integer {verb} by zero — this always panics at runtime"),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .fix("guard the divisor (`if d != 0 { … }`) or use a non-zero constant".to_string()),
+                        );
+                    }
                 }
             }
 
