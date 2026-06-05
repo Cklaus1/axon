@@ -777,6 +777,43 @@ fn wrong_arg_type_e0306_message_is_not_double_printed() {
 }
 
 #[test]
+fn byte_identical_diagnostics_are_collapsed_to_one() {
+    // `"a" + "b"` runs the checker's non-numeric-operand check on BOTH operands;
+    // each produced an E0102 with the SAME code/message/line/col, so the user
+    // saw the identical line twice. The pipeline now drops exact duplicates.
+    let f = std::env::temp_dir().join(format!("axon_dupdiag_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() { let x = \"a\" + \"b\" }\n").unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        msg.matches("non-numeric type str").count(),
+        1,
+        "the identical non-numeric E0102 must be reported exactly once: {msg}"
+    );
+
+    // But two GENUINELY distinct non-numeric operands must each be reported:
+    // `"a" + true` differs in the operand type (str vs bool), so both survive.
+    let f2 = std::env::temp_dir().join(format!("axon_dupdiag2_{}.ax", std::process::id()));
+    std::fs::write(&f2, "fn main() { let x = \"a\" + true }\n").unwrap();
+    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert!(
+        msg2.contains("non-numeric type str") && msg2.contains("non-numeric type bool"),
+        "distinct-type non-numeric operands must BOTH be reported (no over-dedup): {msg2}"
+    );
+}
+
+#[test]
 fn run_exits_with_main_return_value() {
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();

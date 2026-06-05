@@ -2746,6 +2746,27 @@ fn run_check_pipeline_located(
         push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
     }
 
+    // Collapse byte-identical diagnostics. Some checks fire per-operand: `"a" +
+    // "b"` runs check_numeric_operand on BOTH operands, each producing an E0102
+    // with the same code/message/line/col — the user sees the SAME line twice
+    // with no way to tell them apart. A diagnostic identical in every rendered
+    // field to one already emitted is pure noise, so drop it (order-preserving).
+    // Genuinely distinct cases survive: `"a" + true` keeps its two lines (the
+    // `str` and `bool` messages differ), as does any pair with distinct spans.
+    {
+        let mut seen = std::collections::HashSet::new();
+        diags.retain(|d| {
+            seen.insert((
+                d.severity.clone(),
+                d.code.clone(),
+                d.message.clone(),
+                d.file.clone(),
+                d.line,
+                d.col,
+            ))
+        });
+    }
+
     (diags, infer_ctx)
 }
 
