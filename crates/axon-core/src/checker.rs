@@ -1849,7 +1849,10 @@ impl CheckCtx {
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
-                        .found(field)
+                        // No `.found(field)`: the driver appends ", found {found}"
+                        // and the field name isn't a type — it would render the
+                        // nonsensical "has no field 'x', found x" (cf. 2bcee30).
+                        // The valid field set rides `fix` (→ help).
                         .fix("Uncertain<T> fields: value, confidence, source_tag"),
                     );
                 }
@@ -1868,7 +1871,7 @@ impl CheckCtx {
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
-                        .found(field)
+                        // No `.found(field)` — see the Uncertain<T> note above.
                         .fix("Temporal<T> fields: value, confidence, horizon_ms, decay, valid_until_ms"),
                     );
                 }
@@ -1892,8 +1895,10 @@ impl CheckCtx {
                             ),
                         )
                         .node(node_path)
-                        .at(&file, 0, 0)
-                        .found(field),
+                        .at(&file, 0, 0),
+                        // No `.found(field)`: the index is already in the message;
+                        // the driver's ", found {found}" suffix would echo it as a
+                        // bogus "type" (cf. 2bcee30).
                     );
                     return;
                 }
@@ -1905,8 +1910,8 @@ impl CheckCtx {
                             format!("tuple field must be a numeric index, got '{field}'"),
                         )
                         .node(node_path)
-                        .at(&file, 0, 0)
-                        .found(field),
+                        .at(&file, 0, 0),
+                        // No `.found(field)` — see the tuple-OOB note above.
                     );
                     return;
                 }
@@ -1963,8 +1968,11 @@ impl CheckCtx {
                         format!("{} has no field '{field}'", other.display()),
                     )
                     .node(node_path)
-                    .at(&file, 0, 0)
-                    .found(field),
+                    .at(&file, 0, 0),
+                    // No `.found(field)`: the field name is already named in the
+                    // message, and it's not a type — the driver's ", found
+                    // {found}" suffix would render "i64 has no field 'foo', found
+                    // foo" (the same wart 2bcee30 fixed for the struct arm).
                 );
             }
         }

@@ -731,6 +731,51 @@ fn unknown_struct_field_access_reports_one_clean_e0401() {
 }
 
 #[test]
+fn non_struct_field_access_e0401_has_no_found_wart() {
+    // 2bcee30 dropped the nonsensical ", found z" suffix for the STRUCT arm but
+    // the other E0401 arms (scalar non-struct, tuple OOB, tuple non-numeric)
+    // still stuffed the field name into `.found()`, so the driver appended it as
+    // a bogus "type": "i64 has no field 'foo', found foo". Each must read clean.
+    let cases: &[(&str, &str, &str)] = &[
+        // (program, must-contain, must-NOT-contain the wart)
+        (
+            "fn main() { let n = 5\n  let y = n.foo }\n",
+            "i64 has no field 'foo'",
+            "found foo",
+        ),
+        (
+            "fn main() { let t = (1, 2)\n  let x = t.5 }\n",
+            "out of bounds",
+            "found 5",
+        ),
+        (
+            "fn main() { let t = (1, 2)\n  let x = t.foo }\n",
+            "numeric index",
+            "found foo",
+        ),
+    ];
+    for (i, (src, want, wart)) in cases.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_fldwart_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            msg.contains(want),
+            "case {i}: expected message to contain {want:?}: {msg}"
+        );
+        assert!(
+            !msg.contains(wart),
+            "case {i}: E0401 must not carry the bogus {wart:?} suffix: {msg}"
+        );
+    }
+}
+
+#[test]
 fn wrong_arg_type_e0306_message_is_not_double_printed() {
     // Passing a str where an i64 is wanted (`f("hi")`) renders the checker's
     // E0306. Its message used to EMBED "expected `i64`, found `str`" while the
