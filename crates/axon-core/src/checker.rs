@@ -42,6 +42,7 @@ pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
+pub const E0406: &str = "E0406"; // a field is set more than once in a struct literal
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -1304,6 +1305,26 @@ impl CheckCtx {
                 // for structs via E0101; this walks nested exprs for other rules).
                 for (i, (_fname, fexpr)) in fields.iter().enumerate() {
                     self.check_expr(fexpr, &format!("{node_path}.field_{i}"), scope);
+                }
+                // Duplicate field in the literal (`P { x: 1, x: 2 }`): last-wins
+                // silently dropped the first value. Flag each repeat as E0406.
+                {
+                    let mut seen: std::collections::HashSet<&str> =
+                        std::collections::HashSet::new();
+                    for (fname, _) in fields {
+                        if !seen.insert(fname.as_str()) {
+                            let file = self.file.clone();
+                            self.errors.push(
+                                CheckError::new(
+                                    E0406,
+                                    format!("field `{fname}` is set more than once in this `{name}` literal"),
+                                )
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .fix(format!("remove the duplicate `{fname}:` entry")),
+                            );
+                        }
+                    }
                 }
                 // Enum-variant literal: `Enum::Variant`. Validate the variant
                 // actually exists on the enum — `S::C` for a missing `C` was

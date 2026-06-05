@@ -1034,6 +1034,64 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn duplicate_names_in_definitions_are_rejected() {
+    // Duplicate parameter / struct-field / enum-variant names, and a duplicate
+    // field in a struct literal, were all silently accepted (later shadows
+    // earlier, last-wins at runtime). Each must now be a clean compile error.
+    let cases: &[(&str, &str, &str)] = &[
+        // (label, source, code)
+        (
+            "dup param",
+            "fn f(x: i64, x: i64) -> i64 { x }\nfn main() {}\n",
+            "E0002",
+        ),
+        (
+            "dup struct field",
+            "type P = { x: i64, x: i64 }\nfn main() {}\n",
+            "E0002",
+        ),
+        (
+            "dup enum variant",
+            "type S = A | A | B\nfn main() {}\n",
+            "E0002",
+        ),
+        (
+            "dup literal field",
+            "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1, x: 2 }\n}\n",
+            "E0406",
+        ),
+    ];
+    for (label, src, code) in cases {
+        let f = std::env::temp_dir().join(format!("axon_dupdef_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: must fail check (exit 2): {msg}");
+        assert!(msg.contains(code), "{label}: expected {code}: {msg}");
+        assert!(
+            msg.contains("more than once"),
+            "{label}: message should say 'more than once': {msg}"
+        );
+    }
+
+    // Valid definitions with distinct names must check clean.
+    let ok = std::env::temp_dir().join(format!("axon_defok_{}.ax", std::process::id()));
+    std::fs::write(
+        &ok,
+        "fn f(x: i64, y: i64) -> i64 { x + y }\ntype P = { a: i64, b: i64 }\ntype S = A | B | C\nfn main() {}\n",
+    )
+    .unwrap();
+    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&ok);
+    assert_eq!(outc.status.code(), Some(0), "distinct names in definitions must check clean");
+}
+
+#[test]
 fn literal_pattern_typed_against_wrong_subject_is_e0405() {
     // A literal pattern whose type can't match the subject is always-dead — it
     // silently fell through to a catch-all (`match n /*i64*/ { "x" => … }`

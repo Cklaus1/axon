@@ -48,6 +48,7 @@ pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 pub const E0403: &str = "E0403"; // calling a data field as a method (`p.x()`)
 pub const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 pub const E0405: &str = "E0405"; // literal pattern's type can't match the match subject
+pub const E0406: &str = "E0406"; // a field is set more than once in a struct literal
 
 // Trait errors (Phase 3)
 pub const E0501: &str = "E0501"; // trait method not implemented
@@ -292,7 +293,7 @@ mod tests {
             E0301, E0302, E0303, E0304, E0305,
             E0306, E0307, E0308, E0309, E0310,
             E0311, E0312, E0313, E0314, E0315,
-            E0401, E0402, E0403, E0404, E0405,
+            E0401, E0402, E0403, E0404, E0405, E0406,
             E0501, E0502, E0503, E0504,
             E0601, E0602, E0603,
             E0701, E0702, E0703,

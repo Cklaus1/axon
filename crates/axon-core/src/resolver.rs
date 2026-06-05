@@ -313,6 +313,35 @@ impl<'a> Resolver<'a> {
         self.errors.push(d);
     }
 
+    /// Emit E0002 for each duplicated name in a definition's name list (function
+    /// parameters, struct fields, enum variants). The SECOND+ occurrence is the
+    /// error — a duplicate `fn f(x, x)` / `type P {x, x}` / `enum S = A | A` was
+    /// silently accepted, with the later one shadowing the earlier (params/fields
+    /// last-wins at runtime), an unambiguous bug. `kind` is the noun used in the
+    /// message ("parameter", "field", "variant").
+    fn check_duplicate_names<'n>(
+        &mut self,
+        names: impl IntoIterator<Item = &'n str>,
+        kind: &str,
+        owner: &str,
+        span: crate::span::Span,
+    ) {
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for name in names {
+            if !seen.insert(name) {
+                self.emit_error(
+                    Diagnostic::error(
+                        E0002,
+                        format!("{kind} `{name}` is declared more than once in {owner}"),
+                    )
+                    .with_file(self.file)
+                    .with_span(span)
+                    .with_fix(format!("rename or remove the duplicate {kind} `{name}`")),
+                );
+            }
+        }
+    }
+
     fn emit_info(&mut self, d: Diagnostic) {
         self.infos.push(d);
     }
@@ -338,6 +367,15 @@ impl<'a> Resolver<'a> {
         for item in &program.items {
             match item {
                 Item::FnDef(f) => {
+                    // Duplicate parameter names (`fn f(x, x)`): the later one
+                    // shadows the earlier (last-wins at the call), so the first is
+                    // unreachable — an unambiguous bug.
+                    self.check_duplicate_names(
+                        f.params.iter().map(|p| p.name.as_str()),
+                        "parameter",
+                        &format!("`{}`", f.name),
+                        f.span,
+                    );
                     let sym = Symbol::Fn {
                         name: f.name.clone(),
                         param_names: f.params.iter().map(|p| p.name.clone()).collect(),
@@ -387,6 +425,14 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::TypeDef(t) => {
+                    // Duplicate struct fields (`type P = { x, x }`): last-wins,
+                    // so the first field is silently dropped.
+                    self.check_duplicate_names(
+                        t.fields.iter().map(|fld| fld.name.as_str()),
+                        "field",
+                        &format!("struct `{}`", t.name),
+                        t.span,
+                    );
                     let sym = Symbol::Type {
                         name: t.name.clone(),
                     };
@@ -411,6 +457,13 @@ impl<'a> Resolver<'a> {
                     }
                 }
                 Item::EnumDef(e) => {
+                    // Duplicate enum variants (`type S = A | A | B`).
+                    self.check_duplicate_names(
+                        e.variants.iter().map(|v| v.name.as_str()),
+                        "variant",
+                        &format!("enum `{}`", e.name),
+                        e.span,
+                    );
                     let sym = Symbol::Enum {
                         name: e.name.clone(),
                     };
