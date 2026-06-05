@@ -1091,6 +1091,36 @@ fn unknown_enum_variant_literal_is_e0404() {
     );
     assert_eq!(outf.status.code(), Some(2), "error in a struct-literal field value must be caught: {msgf}");
     assert!(msgf.contains("E0403"), "the field-value method error must surface: {msgf}");
+
+    // A wrong FIELD NAME on a valid variant (`S::A { y }` when A's field is x)
+    // is also E0404 (infer side, which has the per-variant field data).
+    let wf = std::env::temp_dir().join(format!("axon_wfield_{}.ax", std::process::id()));
+    std::fs::write(&wf, "type S = A { x: i64 }\nfn main() {\n  let s = S::A { y: 1 }\n}\n").unwrap();
+    let outw = axon().args(["check", wf.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&wf);
+    let msgw = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outw.stdout),
+        String::from_utf8_lossy(&outw.stderr)
+    );
+    assert_eq!(outw.status.code(), Some(2), "wrong variant field must fail check: {msgw}");
+    assert!(
+        msgw.contains("E0404") && msgw.contains("has no field `y`"),
+        "expected E0404 naming the bad variant field: {msgw}"
+    );
+
+    // A correct variant + field must still check + run.
+    let cf = std::env::temp_dir().join(format!("axon_cfield_{}.ax", std::process::id()));
+    std::fs::write(
+        &cf,
+        "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  match s { S::A { x } => x }\n}\n",
+    )
+    .unwrap();
+    let outcc = axon().args(["check", cf.to_str().unwrap()]).output().unwrap();
+    let outcr = axon().args(["run", cf.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&cf);
+    assert_eq!(outcc.status.code(), Some(0), "a correct variant+field must check clean");
+    assert_eq!(outcr.status.code(), Some(5), "the correct variant+field must run (x == 5)");
 }
 
 #[test]

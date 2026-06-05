@@ -22,6 +22,7 @@ use crate::types::{Constraint, Substitution, Type};
 
 const E0101: &str = "E0101";
 const E0102: &str = "E0102";
+const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant/field
 
 // ── Integer widening ──────────────────────────────────────────────────────────
 
@@ -927,12 +928,21 @@ impl InferCtx {
                     let variant_name = parts.get(1).copied().unwrap_or("").to_string();
                     if self.enum_variants.contains_key(&enum_name) {
                         // Fix #2: use known payload field types when available.
-                        let declared_payload: Vec<(String, Type)> = self
+                        // `enum_variant_fields[enum][variant]` exists iff the
+                        // variant exists (an empty Vec = a fieldless variant), so
+                        // distinguish "unknown variant" from "no payload".
+                        let known_variant = self
                             .enum_variant_fields
                             .get(&enum_name)
-                            .and_then(|m| m.get(&variant_name))
-                            .cloned()
-                            .unwrap_or_default();
+                            .map(|m| m.get(&variant_name));
+                        let declared_payload: Vec<(String, Type)> = match known_variant {
+                            Some(Some(p)) => p.clone(),
+                            _ => Vec::new(),
+                        };
+                        // Whether we have an authoritative field list for this
+                        // variant (so an unknown field name can be flagged like
+                        // struct E0101 does — E0404 here for an enum variant).
+                        let variant_known = matches!(known_variant, Some(Some(_)));
 
                         for (fname, fexpr) in fields {
                             let inferred_ty = self.infer_expr(fexpr, scope, ret_ty);
@@ -944,9 +954,28 @@ impl InferCtx {
                                     decl_ty.clone(),
                                     "enum variant field",
                                 );
+                            } else if variant_known {
+                                // A field name not on this variant: `S::A { y }`
+                                // when `A`'s only field is `x`. Was silently
+                                // accepted (then built a bogus value); flag E0404.
+                                let known: Vec<String> =
+                                    declared_payload.iter().map(|(n, _)| n.clone()).collect();
+                                let known_list = if known.is_empty() {
+                                    "none (this variant has no fields)".to_string()
+                                } else {
+                                    known.join(", ")
+                                };
+                                let span = self.current_stmt_span;
+                                self.errors.push(
+                                    InferError::new(
+                                        E0404,
+                                        format!(
+                                            "variant `{enum_name}::{variant_name}` has no field `{fname}` (known fields: {known_list})"
+                                        ),
+                                    )
+                                    .with_span(span),
+                                );
                             }
-                            // Unknown field names in enum variants are not flagged
-                            // in Phase 1 (the parser already validated them).
                         }
                         return Type::Enum(enum_name);
                     }
