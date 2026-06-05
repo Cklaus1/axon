@@ -229,6 +229,12 @@ pub struct CheckCtx {
     pub errors: Vec<CheckError>,
     /// Current function's declared return type (set during `check_fn`).
     current_ret_ty: Option<Type>,
+    /// Exact node-path of the CURRENT function body (`#fn_<name>.body`). The
+    /// R07 body-tail return-type check (E0307) must fire ONLY for this path —
+    /// `ends_with(".body")` alone also matches match-arm bodies
+    /// (`…arm_N.body`), which would compare an arm's tail against the function's
+    /// return type and false-flag (e.g. `state = match s { _ => { … } }`).
+    fn_body_path: String,
     /// Enum names collected from the program for R08 resolution.
     known_enums: Vec<String>,
     /// Variant lists for user-defined enums — used by Fix #10 for exhaustiveness.
@@ -273,6 +279,7 @@ impl CheckCtx {
             expr_types: HashMap::new(),
             errors: Vec::new(),
             current_ret_ty: Option::None,
+            fn_body_path: String::new(),
             known_enums: Vec::new(),
             enum_variants: HashMap::new(),
             current_generic_params: HashSet::new(),
@@ -696,7 +703,10 @@ impl CheckCtx {
         let prev_observed = std::mem::take(&mut self.confidence_observed);
         Self::collect_confidence_observed(&f.body, &mut self.confidence_observed);
 
-        self.check_expr(&f.body, &format!("{fn_path}.body"), &mut scope);
+        let body_path = format!("{fn_path}.body");
+        let prev_body_path = std::mem::replace(&mut self.fn_body_path, body_path.clone());
+        self.check_expr(&f.body, &body_path, &mut scope);
+        self.fn_body_path = prev_body_path;
 
         self.confidence_observed = prev_observed;
         self.current_ret_ty = prev_ret;
@@ -857,8 +867,11 @@ impl CheckCtx {
                     if is_last {
                         self.check_stmt(stmt, &stmt_path, scope);
                         // R07: the final expression of the function body must
-                        // match the declared return type.
-                        if node_path.ends_with(".body") {
+                        // match the declared return type. Gate on the EXACT
+                        // function-body path — `ends_with(".body")` also matches
+                        // match-arm bodies (`…arm_N.body`), which would compare an
+                        // arm's tail against the fn return type and false-flag.
+                        if node_path == self.fn_body_path {
                             let expr_ty =
                                 self.resolve_expr_type(&stmt.expr, &stmt_path, scope);
                             self.check_return_type_match(&expr_ty, node_path, &stmt_path);
@@ -2180,6 +2193,24 @@ impl CheckCtx {
                     }
                 }
             }
+            // An `if`/`else` expression's type is its branch type, so
+            // `(if c { 5 } else { 6 }).foo` can be checked. Only commit to a type
+            // when BOTH branches resolve to the SAME concrete type (what a real
+            // unifier requires); a mismatch or any Unknown stays Unknown and lets
+            // inference own it. (This is now safe to feed downstream: the E0307
+            // body-tail check is gated on the exact fn-body path, so a match-arm
+            // if-expr no longer leaks into the return-type comparison.)
+            Expr::If { then, else_: Some(e), .. } => {
+                let then_ty = self.resolve_expr_type(then, &format!("{node_path}.then"), scope);
+                let else_ty = self.resolve_expr_type(e, &format!("{node_path}.else"), scope);
+                if then_ty == else_ty && !matches!(then_ty, Type::Unknown) {
+                    then_ty
+                } else {
+                    Type::Unknown
+                }
+            }
+            // No else branch → the if is `()`-typed; leave Unknown for inference.
+            Expr::If { else_: None, .. } => Type::Unknown,
             Expr::FmtStr { .. } => Type::Str,
             Expr::StructLit { name, .. } => {
                 // Resolve struct literal type by looking up struct fields.

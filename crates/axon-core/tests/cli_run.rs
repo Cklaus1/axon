@@ -844,6 +844,63 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
     let _ = std::fs::remove_file(&sidx);
     assert_eq!(outsc.status.code(), Some(0), "struct-array element field access must check clean");
     assert_eq!(outsr.status.code(), Some(7), "struct-array element field access must run (ps[0].x == 7)");
+
+    // And via an if-EXPRESSION result: `(if c {5} else {6}).foo` where both
+    // branches are i64. Resolving the if-expr type also required tightening the
+    // E0307 body-tail check to the exact fn-body path (see the dedicated test
+    // below) so a match-arm if-expr no longer leaks into the return comparison.
+    let iff = std::env::temp_dir().join(format!("axon_iffield_{}.ax", std::process::id()));
+    std::fs::write(&iff, "fn main() {\n  let x = (if true { 5 } else { 6 }).foo\n}\n").unwrap();
+    let outf = axon().args(["check", iff.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&iff);
+    let msgf = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outf.stdout),
+        String::from_utf8_lossy(&outf.stderr)
+    );
+    assert_eq!(outf.status.code(), Some(2), "(if..).foo must fail check (exit 2): {msgf}");
+    assert!(
+        msgf.contains("E0401") && msgf.contains("i64 has no field 'foo'"),
+        "expected E0401 for field access on the i64 if-expr result: {msgf}"
+    );
+}
+
+#[test]
+fn match_arm_tail_is_not_compared_to_fn_return_type_e0307() {
+    // The R07 body-tail check used `node_path.ends_with(".body")` to decide
+    // "this is the function body" — but match-arm bodies are `…arm_N.body` too.
+    // So a match arm's tail expression was compared against the FUNCTION's
+    // declared return type. It was masked only because resolve_expr_type
+    // returned Unknown for if/match tails; once those resolve to a concrete
+    // type it false-flagged E0307 (e.g. an i64-returning fn whose body is
+    // `acc = match s { _ => { if c { acc+1 } else { acc } } }` wrongly read as
+    // "returns <branch type>"). The check is now gated on the EXACT fn-body
+    // path. This must compile clean and run.
+    let f = std::env::temp_dir().join(format!("axon_armtail_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "type S = A | B\n\
+         fn step(s: S, c: i64) -> i64 {\n\
+        \x20   let acc = 0\n\
+        \x20   acc = match s {\n\
+        \x20       S::A => { if c > 0 { acc + 1 } else { acc } }\n\
+        \x20       S::B => { if c > 0 { acc } else { acc - 1 } }\n\
+        \x20   }\n\
+        \x20   acc\n\
+         }\n\
+         fn main() -> i64 { step(S::A, 5) }\n",
+    )
+    .unwrap();
+    let outc = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let outr = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outc.stdout),
+        String::from_utf8_lossy(&outc.stderr)
+    );
+    assert_eq!(outc.status.code(), Some(0), "match-arm if-tail must NOT trip E0307: {msg}");
+    assert_eq!(outr.status.code(), Some(1), "step(S::A, 5) should compute acc == 1");
 }
 
 #[test]
