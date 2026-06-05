@@ -275,6 +275,12 @@ pub struct CheckCtx {
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
+    /// Transitive taint (PRD §4 / R6): user-fn name → the set of its parameter
+    /// INDICES whose value reaches an exfiltration sink (an AI call / write_file
+    /// / exec — directly, or through another exfiltrating fn). Computed to a
+    /// fixpoint in `check_program`. A sensitive value passed at one of these
+    /// argument positions is E1206, closing the "launder through a helper" hole.
+    exfiltrating_params: HashMap<String, HashSet<usize>>,
 }
 
 impl CheckCtx {
@@ -302,6 +308,7 @@ impl CheckCtx {
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
             sensitive_types: HashMap::new(),
+            exfiltrating_params: HashMap::new(),
         }
     }
 
@@ -381,6 +388,14 @@ impl CheckCtx {
                     self.sensitive_types.insert(t.name.clone(), category);
                 }
             }
+        }
+
+        // PRD §4 / R6 transitive taint: compute which user-fn parameters reach an
+        // exfiltration sink, to a fixpoint, so a sensitive value laundered through
+        // a helper (`relay(u.email)` where `relay(s) { ai_complete(s) }`) is still
+        // E1206. Only worth computing when something is actually sensitive.
+        if !self.sensitive_types.is_empty() {
+            self.compute_exfiltrating_params(program);
         }
 
         for item in &program.items {
@@ -952,30 +967,55 @@ impl CheckCtx {
                 // type, or (b) a field of a sensitive struct / a field whose
                 // type is sensitive → E1206.
                 if let Expr::Ident(name) = callee.as_ref() {
-                    if let Some(boundary) = (!self.sensitive_types.is_empty())
-                        .then(|| exfiltration_sink_kind(name))
-                        .flatten()
-                    {
-                        for (i, arg) in args.iter().enumerate() {
-                            let apath = format!("{node_path}.arg_{i}");
-                            if let Some((sname, cat)) = self.sensitive_flow_in(arg, &apath, scope) {
-                                let file = self.file.clone();
-                                self.errors.push(
-                                    CheckError::new(
-                                        E1206,
+                    if !self.sensitive_types.is_empty() {
+                        // A direct builtin sink taints EVERY argument position; a
+                        // user fn known to exfiltrate taints only the positions
+                        // whose param reaches a sink (transitive taint).
+                        let builtin_boundary = exfiltration_sink_kind(name);
+                        let user_sink_positions = self.exfiltrating_params.get(name);
+                        if builtin_boundary.is_some() || user_sink_positions.is_some() {
+                            for (i, arg) in args.iter().enumerate() {
+                                let is_sink_pos = builtin_boundary.is_some()
+                                    || user_sink_positions.is_some_and(|s| s.contains(&i));
+                                if !is_sink_pos {
+                                    continue;
+                                }
+                                let apath = format!("{node_path}.arg_{i}");
+                                if let Some((sname, cat)) =
+                                    self.sensitive_flow_in(arg, &apath, scope)
+                                {
+                                    let file = self.file.clone();
+                                    // For a builtin the boundary names the sink
+                                    // kind; for a user fn it's an indirect leak
+                                    // (the fn forwards this arg to a sink).
+                                    let boundary = builtin_boundary.unwrap_or("exfiltrating function");
+                                    let detail = if builtin_boundary.is_some() {
                                         format!(
-                                            "a `@[sensitive({cat})]` value from `{sname}` is passed to the \
-                                             {boundary} `{name}` — sensitive data must never leave the \
-                                             program boundary"
-                                        ),
-                                    )
-                                    .node(&apath)
-                                    .at(&file, 0, 0)
-                                    .fix(format!(
-                                        "strip the sensitive fields before the call (e.g. build a redacted \
-                                         projection of `{sname}`), or move the call behind a local-only boundary"
-                                    )),
-                                );
+                                            "the {boundary} `{name}` — sensitive data must never leave \
+                                             the program boundary"
+                                        )
+                                    } else {
+                                        format!(
+                                            "`{name}`, which forwards argument {i} to an exfiltration \
+                                             sink (AI call / file write / exec) — sensitive data must \
+                                             never leave the program boundary"
+                                        )
+                                    };
+                                    self.errors.push(
+                                        CheckError::new(
+                                            E1206,
+                                            format!(
+                                                "a `@[sensitive({cat})]` value from `{sname}` is passed to {detail}"
+                                            ),
+                                        )
+                                        .node(&apath)
+                                        .at(&file, 0, 0)
+                                        .fix(format!(
+                                            "strip the sensitive fields before the call (e.g. build a redacted \
+                                             projection of `{sname}`), or move the call behind a local-only boundary"
+                                        )),
+                                    );
+                                }
                             }
                         }
                     }
@@ -2038,6 +2078,100 @@ impl CheckCtx {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // R6 transitive taint — which fn params reach an exfiltration sink
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Populate `self.exfiltrating_params` to a fixpoint. A parameter index of a
+    /// function is "exfiltrating" when that parameter's value flows — as a direct
+    /// identifier argument — into an exfiltration sink: a builtin sink
+    /// (`ai_complete`/`ai_extract*`/`write_file`/`exec`), or another user fn at one
+    /// of ITS already-known exfiltrating positions. Iterating to a fixpoint
+    /// propagates taint through chains of helpers.
+    fn compute_exfiltrating_params(&mut self, program: &Program) {
+        // Collect the (name, param-names, body) of every user fn once.
+        let fns: Vec<(String, Vec<String>, &Expr)> = program
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                Item::FnDef(f) => Some((
+                    f.name.clone(),
+                    f.params.iter().map(|p| p.name.clone()).collect(),
+                    &f.body,
+                )),
+                _ => None,
+            })
+            .collect();
+
+        let mut changed = true;
+        // Bounded by the number of (fn, param) pairs; the fixpoint converges
+        // because the exfiltrating set only grows. The outer guard is a safety
+        // cap against any pathological case.
+        let max_rounds = fns.len() + 2;
+        let mut rounds = 0;
+        while changed && rounds <= max_rounds {
+            changed = false;
+            rounds += 1;
+            for (fname, params, body) in &fns {
+                for (idx, pname) in params.iter().enumerate() {
+                    // Already known to exfiltrate — skip.
+                    if self
+                        .exfiltrating_params
+                        .get(fname)
+                        .is_some_and(|s| s.contains(&idx))
+                    {
+                        continue;
+                    }
+                    if self.param_reaches_sink(pname, body) {
+                        self.exfiltrating_params
+                            .entry(fname.clone())
+                            .or_default()
+                            .insert(idx);
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    /// True when the identifier `pname` flows as a direct argument into an
+    /// exfiltration sink anywhere in `body` (a builtin sink, or a user fn at one
+    /// of its currently-known exfiltrating positions). Reads
+    /// `self.exfiltrating_params` (the partial fixpoint).
+    fn param_reaches_sink(&self, pname: &str, body: &Expr) -> bool {
+        let mut found = false;
+        self.walk_for_sink_flow(pname, body, &mut found);
+        found
+    }
+
+    fn walk_for_sink_flow(&self, pname: &str, e: &Expr, found: &mut bool) {
+        if *found {
+            return;
+        }
+        if let Expr::Call { callee, args, .. } = e {
+            if let Expr::Ident(callee_name) = callee.as_ref() {
+                for (i, arg) in args.iter().enumerate() {
+                    // Does this arg carry the parameter `pname`? Either the bare
+                    // identifier, or a field access on it (`p.email`), or an
+                    // interpolation that mentions it.
+                    if arg_carries_ident(arg, pname) {
+                        let is_builtin_sink = exfiltration_sink_kind(callee_name).is_some();
+                        let is_user_sink = self
+                            .exfiltrating_params
+                            .get(callee_name)
+                            .is_some_and(|s| s.contains(&i));
+                        if is_builtin_sink || is_user_sink {
+                            *found = true;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        // Recurse into every sub-expression.
+        each_subexpr(e, &mut |sub| self.walk_for_sink_flow(pname, sub, found));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // R08 — unknown type annotation
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -2808,6 +2942,116 @@ fn axon_type_name(ty: &AxonType) -> String {
 /// Covers: AI calls (to a model), `write_file` (to disk — persisting PII), and
 /// `exec` (to a spawned process — e.g. piping data to `curl`). Returns the
 /// human-readable boundary name for the diagnostic.
+/// True when expression `e` carries the identifier `name` in a "this value is
+/// the argument" sense: the bare identifier, a field access whose receiver
+/// carries it (`u.email`), an index/cast of it, or a string interpolation that
+/// mentions it. Conservative for taint: a match/call that merely contains the
+/// name elsewhere is not counted (only flow-through forms).
+fn arg_carries_ident(e: &Expr, name: &str) -> bool {
+    match e {
+        Expr::Ident(n) => n == name,
+        Expr::FieldAccess { receiver, .. } => arg_carries_ident(receiver, name),
+        Expr::Index { receiver, .. } => arg_carries_ident(receiver, name),
+        Expr::FmtStr { parts } => parts.iter().any(|p| match p {
+            crate::ast::FmtPart::Expr(inner) => arg_carries_ident(inner, name),
+            _ => false,
+        }),
+        _ => false,
+    }
+}
+
+/// Invoke `f` on each DIRECT sub-expression of `e` (one level). Used by the
+/// taint walker to recurse uniformly without re-listing the AST per call site.
+fn each_subexpr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    use crate::ast::Expr as E;
+    match e {
+        E::Block(stmts) | E::While { body: stmts, .. } | E::WhileLet { body: stmts, .. } => {
+            for s in stmts {
+                f(&s.expr);
+            }
+        }
+        E::Let { value, .. } | E::Own { value, .. } | E::RefBind { value, .. } => f(value),
+        E::Call { callee, args, .. } => {
+            f(callee);
+            for a in args {
+                f(a);
+            }
+        }
+        E::MethodCall { receiver, args, .. } => {
+            f(receiver);
+            for a in args {
+                f(a);
+            }
+        }
+        E::BinOp { left, right, .. } => {
+            f(left);
+            f(right);
+        }
+        E::UnaryOp { operand, .. } => f(operand),
+        E::Question(inner) | E::Spawn(inner) | E::Comptime(inner) => f(inner),
+        E::Match { subject, arms } => {
+            f(subject);
+            for arm in arms {
+                if let Some(g) = &arm.guard {
+                    f(g);
+                }
+                f(&arm.body);
+            }
+        }
+        E::If { cond, then, else_ } => {
+            f(cond);
+            f(then);
+            if let Some(e) = else_ {
+                f(e);
+            }
+        }
+        E::Select(arms) => {
+            for arm in arms {
+                f(&arm.recv);
+                f(&arm.body);
+            }
+        }
+        E::Lambda { body, .. } => f(body),
+        E::Return(Some(inner)) => f(inner),
+        E::FieldAccess { receiver, .. } => f(receiver),
+        E::Index { receiver, index } => {
+            f(receiver);
+            f(index);
+        }
+        E::Tuple(elems) | E::Array(elems) => {
+            for el in elems {
+                f(el);
+            }
+        }
+        E::FmtStr { parts } => {
+            for p in parts {
+                if let crate::ast::FmtPart::Expr(inner) = p {
+                    f(inner);
+                }
+            }
+        }
+        E::Ok(inner) | E::Err(inner) | E::Some(inner) => f(inner),
+        E::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                f(v);
+            }
+        }
+        E::Assign { value, .. } => f(value),
+        E::AssignTo { place, value } => {
+            f(place);
+            f(value);
+        }
+        E::For { start, end, body, .. } => {
+            f(start);
+            f(end);
+            for s in body {
+                f(&s.expr);
+            }
+        }
+        E::Ident(_) | E::Literal(_) | E::None | E::Return(None) | E::Break | E::Continue => {}
+    }
+}
+
 fn exfiltration_sink_kind(name: &str) -> Option<&'static str> {
     if name == "ai_complete" || name.starts_with("ai_extract") {
         Some("AI call")

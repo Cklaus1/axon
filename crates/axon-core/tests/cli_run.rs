@@ -4181,6 +4181,47 @@ fn non_sensitive_type_into_ai_call_is_allowed() {
 }
 
 #[test]
+fn sensitive_value_laundered_through_a_helper_is_e1206() {
+    // R6 transitive taint: a sensitive field passed to a helper that forwards it
+    // to an AI sink (`relay(u.email)` where `relay(s) { ai_complete(s) }`) used
+    // to ESCAPE the guard (the guard only saw the direct sink). The fixpoint
+    // analysis now flags it, through one OR two hops.
+    let one_hop = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = relay(u.email) }\n";
+    let two_hop = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn inner(s: str) -> Result<str, str> { ai_complete(s) }\n\
+        fn outer(s: str) -> Result<str, str> { inner(s) }\n\
+        fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = outer(u.email) }\n";
+    for (label, src) in [("one hop", one_hop), ("two hop", two_hop)] {
+        let f = std::env::temp_dir().join(format!("axon_taint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "{label}: laundered sensitive data must fail check: {all}");
+        assert!(all.contains("E1206"), "{label}: expected E1206 for the laundered flow: {all}");
+        assert!(all.contains("forwards argument"), "{label}: message should explain the indirect leak: {all}");
+    }
+
+    // No false positive: a NON-sensitive value through the same helper, and a
+    // sensitive value used purely locally, must NOT warn.
+    let safe = "@[sensitive(pii)]\n\
+        type User = { email: str, name: str }\n\
+        fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
+        fn local(u: User) -> str { u.name }\n\
+        fn main() { let _ = relay(\"public\")\n  let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = local(u) }\n";
+    let f = std::env::temp_dir().join(format!("axon_taint_safe_{}.ax", std::process::id()));
+    std::fs::write(&f, safe).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "a non-sensitive arg + local use must NOT trip transitive taint: {all}");
+}
+
+#[test]
 fn uncertain_binops_propagate_minimum_confidence() {
     // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
     // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's
