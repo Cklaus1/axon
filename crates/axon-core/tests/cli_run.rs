@@ -776,6 +776,46 @@ fn non_struct_field_access_e0401_has_no_found_wart() {
 }
 
 #[test]
+fn nested_field_access_on_non_struct_is_caught_at_check_time() {
+    // `p.x.y` where `p.x` is an i64 field used to slip past the checker (its
+    // `resolve_expr_type` had no FieldAccess arm, so `p.x` resolved to Unknown
+    // and the R11 check deferred to inference, which also missed it) and panic
+    // at RUNTIME with "field access on non-struct". It must now be a clean
+    // compile error (E0401, exit 2), never a runtime crash.
+    let bad = std::env::temp_dir().join(format!("axon_nestbad_{}.ax", std::process::id()));
+    std::fs::write(
+        &bad,
+        "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  let q = p.x.y\n  println(to_str(q))\n}\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&bad);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "p.x.y must fail check (exit 2): {msg}");
+    assert!(
+        msg.contains("E0401") && msg.contains("i64 has no field 'y'"),
+        "expected E0401 for field access on the i64 field: {msg}"
+    );
+
+    // Genuinely-valid nested struct access must still type-check AND run.
+    let good = std::env::temp_dir().join(format!("axon_nestok_{}.ax", std::process::id()));
+    std::fs::write(
+        &good,
+        "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  o.inner.v\n}\n",
+    )
+    .unwrap();
+    let outc = axon().args(["check", good.to_str().unwrap()]).output().unwrap();
+    let outr = axon().args(["run", good.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&good);
+    assert_eq!(outc.status.code(), Some(0), "valid nested access must check clean");
+    assert_eq!(outr.status.code(), Some(5), "valid nested access must run (o.inner.v == 5)");
+}
+
+#[test]
 fn wrong_arg_type_e0306_message_is_not_double_printed() {
     // Passing a str where an i64 is wanted (`f("hi")`) renders the checker's
     // E0306. Its message used to EMBED "expected `i64`, found `str`" while the

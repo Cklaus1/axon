@@ -2122,6 +2122,36 @@ impl CheckCtx {
                     .collect();
                 Type::Tuple(tys)
             }
+            // Chained/nested field access: resolve the receiver's struct, then
+            // look up the field's declared type. Without this arm `p.x` falls to
+            // `Type::Unknown` below, so `p.x.y` (accessing `.y` on the i64 field
+            // `p.x`) resolved its receiver to Unknown → check_field_access's
+            // Unknown arm deferred to inference, which ALSO misses it → the error
+            // slipped to a runtime "field access on non-struct" panic. Resolving
+            // the field type here lets the existing R11 check flag it statically.
+            Expr::FieldAccess { receiver, field } => {
+                let recv_ty =
+                    self.resolve_expr_type(receiver, &format!("{node_path}.receiver"), scope);
+                match recv_ty {
+                    Type::Struct(sname) => self
+                        .struct_fields
+                        .get(&sname)
+                        .and_then(|fields| {
+                            fields.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone())
+                        })
+                        // Unknown field name: leave Unknown so the R11 field-
+                        // existence check (which owns that error + the known-
+                        // fields hint) reports it, not this resolver.
+                        .unwrap_or(Type::Unknown),
+                    // Tuple element type when the field is a valid numeric index.
+                    Type::Tuple(elems) => field
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(|i| elems.get(i).cloned())
+                        .unwrap_or(Type::Unknown),
+                    _ => Type::Unknown,
+                }
+            }
             Expr::FmtStr { .. } => Type::Str,
             Expr::StructLit { name, .. } => {
                 // Resolve struct literal type by looking up struct fields.
