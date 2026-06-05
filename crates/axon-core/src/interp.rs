@@ -230,6 +230,13 @@ pub struct Interp<'p> {
     /// side effects (e.g. R3's `ai_call` provenance records) to their caller.
     /// Set on entry to `call_fn`, restored on exit. Empty at top level.
     current_fn: RefCell<String>,
+    /// R4/I-13 — the nearest ENCLOSING `@[agent]` fn on the call stack (not just
+    /// the immediate fn). Set when entering an `@[agent]` fn and INHERITED through
+    /// non-agent helpers, so a capability builtin called inside a helper of an
+    /// agent is still logged to the agent's action trail (the un-opt-out-able
+    /// audit can't be escaped by wrapping the I/O one call away). `None` outside
+    /// any agent.
+    enclosing_agent: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -334,6 +341,18 @@ struct FnNameGuard<'a> {
 impl Drop for FnNameGuard<'_> {
     fn drop(&mut self) {
         *self.cell.borrow_mut() = std::mem::take(&mut self.prev);
+    }
+}
+
+/// Like `FnNameGuard` but for an `Option<String>` cell — used for the
+/// `enclosing_agent` save/restore (R4/I-13 transitive agent attribution).
+struct FnNameOptGuard<'a> {
+    cell: &'a RefCell<Option<String>>,
+    prev: Option<String>,
+}
+impl Drop for FnNameOptGuard<'_> {
+    fn drop(&mut self) {
+        *self.cell.borrow_mut() = self.prev.take();
     }
 }
 
@@ -581,6 +600,7 @@ impl<'p> Interp<'p> {
             call_depth: Cell::new(0),
             max_depth: resolve_max_depth(),
             corrigible_halted: Cell::new(false),
+            enclosing_agent: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
@@ -666,13 +686,10 @@ impl<'p> Interp<'p> {
     /// zone, else `None`. Used to inject the mandatory agent action log: every
     /// capability-bearing action an agent takes is audited (I-13).
     fn current_agent_fn(&self) -> Option<String> {
-        let name = self.current_fn.borrow().clone();
-        let f = self.fns.get(name.as_str())?;
-        if f.attrs.iter().any(|a| a.name == "agent") {
-            Some(name)
-        } else {
-            None
-        }
+        // R4/I-13: the nearest ENCLOSING `@[agent]` on the call stack — so a
+        // capability builtin called from a helper of an agent is still logged to
+        // that agent's action trail (the audit can't be escaped by indirection).
+        self.enclosing_agent.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
@@ -749,6 +766,19 @@ impl<'p> Interp<'p> {
         let _fn_guard = FnNameGuard {
             cell: &self.current_fn,
             prev: self.current_fn.replace(f.name.clone()),
+        };
+        // R4/I-13: if THIS fn is an `@[agent]`, it becomes the enclosing agent for
+        // everything it transitively calls; otherwise the caller's enclosing agent
+        // is inherited unchanged. Restored on return so sibling calls aren't
+        // wrongly attributed. The agent action log reads this (not just the
+        // immediate fn) so an agent can't escape the audit by calling a helper.
+        let _agent_guard = if f.attrs.iter().any(|a| a.name == "agent") {
+            Some(FnNameOptGuard {
+                cell: &self.enclosing_agent,
+                prev: self.enclosing_agent.replace(Some(f.name.clone())),
+            })
+        } else {
+            None
         };
         // R3c: each fn activation meters its own ai_complete calls — reset to 0
         // on entry, restore the caller's count on exit.

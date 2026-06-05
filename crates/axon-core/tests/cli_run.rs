@@ -6591,6 +6591,56 @@ fn main() -> i64 {
 }
 
 #[test]
+fn agent_action_log_is_not_escapable_through_a_helper() {
+    // R4 §4.3 (I-13): the agent action log must be UN-OPT-OUT-ABLE. An agent must
+    // not be able to act on the world without an audit record by moving the I/O
+    // one function call away. A capability call inside a helper of an `@[agent]`
+    // fn is logged to that agent (the enclosing-agent attribution), while the
+    // same helper called from a NON-agent context is not logged.
+    let cache = std::env::temp_dir().join(format!("axon_r4trans_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let prog = r#"
+fn do_call(g: str) -> str {
+    match ai_complete("plan {g}") { Ok(s) => s  Err(_) => "" }
+}
+@[agent]
+fn planner(goal: str) -> str { do_call(goal) }
+fn plain(goal: str) -> str { do_call(goal) }
+fn main() -> i64 {
+    let _ = planner("a")
+    let _ = plain("b")
+    0
+}
+"#;
+    let f = std::env::temp_dir().join(format!("axon_r4trans_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "program should run clean");
+
+    let log = cache.join("axon").join("provenance.jsonl");
+    let body = std::fs::read_to_string(&log).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&cache);
+    let actions: Vec<&str> = body.lines().filter(|l| l.contains("\"event\":\"agent_action\"")).collect();
+    // Exactly one — the helper call made FROM the agent. The same helper called
+    // from `plain` (non-agent) must NOT be logged.
+    assert_eq!(
+        actions.len(), 1,
+        "the laundered agent call must be logged exactly once (not 0 = escaped, not 2 = the non-agent caller leaked). Log:\n{body}"
+    );
+    assert!(
+        actions[0].contains("\"fn\":\"planner\""),
+        "the action must be attributed to the enclosing AGENT, not the helper: {}",
+        actions[0]
+    );
+}
+
+#[test]
 fn ai_tier_routing_pins_real_model_in_provenance() {
     // R3 §4.2/§4.3: the AiCall provenance records the RESOLVED tier + concrete
     // model (not a hardcoded placeholder). A `@[ai(policy(tier: cheap))]` fn
