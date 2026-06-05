@@ -195,7 +195,7 @@ impl<'ctx> super::Codegen<'ctx> {
         llvm_fn: FunctionValue<'ctx>,
     ) {
         // Quick exit: not in a verify-armed function.
-        let (fn_name, op_str, bound) = match self.current_verify_fn.clone() {
+        let (fn_name, ident, op_str, bound) = match self.current_verify_fn.clone() {
             Some(t) => t,
             None => return,
         };
@@ -212,19 +212,31 @@ impl<'ctx> super::Codegen<'ctx> {
             return;
         }
 
-        // The return value must be an Uncertain<T> struct (field 1 = f64
-        // confidence).  Anything else means the verify clause was attached to
-        // a function whose return type isn't actually Uncertain — the static
-        // checker should have rejected it, but be defensive.
-        let struct_val = match ret_val {
-            BasicValueEnum::StructValue(sv) => sv,
-            _ => return,
-        };
         let f64_ty = self.ir.context.f64_type();
-        // Confidence is at index 1 in `{ value, confidence: f64, source_tag: i64 }`.
-        let conf_ev = build_wrappers::w_extract_value(&self.ir.builder, struct_val, 1, "verify_conf");
-        // Sanity: must be an f64.  If the struct shape is unexpected, bail.
-        let actual = match conf_ev {
+        // The compared `actual` depends on the predicate ident and return shape:
+        //  - `confidence` (Uncertain field 1, f64) — the original path.
+        //  - `value` on an Uncertain return — field 0, widened to f64.
+        //  - `value` on a SCALAR return — the return value itself (int→f64).
+        let actual: inkwell::values::FloatValue<'ctx> = match ret_val {
+            BasicValueEnum::StructValue(sv) => {
+                let idx = if ident == "confidence" { 1 } else { 0 };
+                let ev = build_wrappers::w_extract_value(&self.ir.builder, sv, idx, "verify_field");
+                match ev {
+                    BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
+                    BasicValueEnum::IntValue(iv) => self
+                        .ir
+                        .builder
+                        .build_signed_int_to_float(iv, f64_ty, "verify_val_f")
+                        .unwrap(),
+                    _ => return,
+                }
+            }
+            // Scalar return (`value` predicate on i64/i32/bool/f64).
+            BasicValueEnum::IntValue(iv) => self
+                .ir
+                .builder
+                .build_signed_int_to_float(iv, f64_ty, "verify_scalar_f")
+                .unwrap(),
             BasicValueEnum::FloatValue(fv) if fv.get_type() == f64_ty => fv,
             _ => return,
         };

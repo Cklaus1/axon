@@ -241,13 +241,14 @@ pub struct Codegen<'ctx> {
     /// call emits an `agent_action` audit record (the mandatory, un-opt-out-able
     /// agent action log, I-13) — matching the interpreter.
     pub(super) current_agent_fn: Option<String>,
-    /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries
-    /// `@[verify(confidence OP K)]` *and* whose return type is `Uncertain<T>`,
-    /// this holds `(fn_name, op_str, bound)` so each return site can inject
-    /// a runtime confidence check via `__axon_verify_panic`.  `op_str` is the
-    /// source-level operator (`">="`, `">"`, …) and `bound` is the literal K.
-    /// `None` whenever the surrounding function has no decodable verify spec.
-    pub(super) current_verify_fn: Option<(String, &'static str, f64)>,
+    /// ASI Layer-3 `@[verify]` runtime: when emitting a function that carries a
+    /// decodable `@[verify(<ident> OP K)]`, this holds `(fn_name, ident, op_str,
+    /// bound)` so each return site injects a runtime check via
+    /// `__axon_verify_panic`. `ident` is `"confidence"` (Uncertain field 1) or
+    /// `"value"` (the Uncertain value field OR the whole scalar return). `op_str`
+    /// is the source operator (`">="`, …) and `bound` is the literal K. `None`
+    /// whenever the surrounding function has no decodable verify spec.
+    pub(super) current_verify_fn: Option<(String, String, &'static str, f64)>,
     /// R7 (AOT-wasm): true when emitting for a wasm32 target. wasm32 is an
     /// ILP32 target — `size_t`/pointers are 32-bit — so the C runtime's
     /// `malloc`/`free`/`realloc` take an **i32** size, not the i64 the native
@@ -896,15 +897,24 @@ impl<'ctx> Codegen<'ctx> {
         // If any of those fail, we silently emit nothing — same shape as the
         // static checker, which also no-ops on undecodable predicates.
         if let Some(spec) = &f.verify {
-            if let Some((op, bound)) = crate::verify::decode_verify_predicate(&spec.predicate) {
-                let ret_is_uncertain = f
-                    .return_type
-                    .as_ref()
-                    .map(|t| matches!(self.axon_type_to_semantic(t), Type::Uncertain(_)))
-                    .unwrap_or(false);
-                if ret_is_uncertain {
+            if let Some((ident, op, bound)) =
+                crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
+            {
+                let ret_sem = f.return_type.as_ref().map(|t| self.axon_type_to_semantic(t));
+                let ret_is_uncertain = matches!(ret_sem, Some(Type::Uncertain(_)));
+                let ret_is_scalar = matches!(
+                    ret_sem,
+                    Some(Type::I64 | Type::I32 | Type::F64 | Type::Bool)
+                );
+                // Arm when: `confidence`/`value` on an Uncertain return (the
+                // original path), OR `value` on a SCALAR return (the parity fix —
+                // a `@[verify(value <= 500)]` bound on a plain-typed fn must be
+                // enforced natively too, matching the interpreter).
+                let armable = (ret_is_uncertain && (ident == "confidence" || ident == "value"))
+                    || (ret_is_scalar && ident == "value");
+                if armable {
                     let op_str = crate::verify::binop_to_verify_str(&op);
-                    self.current_verify_fn = Some((f.name.clone(), op_str, bound));
+                    self.current_verify_fn = Some((f.name.clone(), ident, op_str, bound));
                 }
             }
         }
