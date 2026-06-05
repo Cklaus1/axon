@@ -731,6 +731,52 @@ fn unknown_struct_field_access_reports_one_clean_e0401() {
 }
 
 #[test]
+fn wrong_arg_type_e0306_message_is_not_double_printed() {
+    // Passing a str where an i64 is wanted (`f("hi")`) renders the checker's
+    // E0306. Its message used to EMBED "expected `i64`, found `str`" while the
+    // driver ALSO appends " (expected i64), found str" from the structured
+    // fields — so the rendered line read "... found `str` (expected i64), found
+    // str". The embed is gone now (same fix shape as E0307/E0401): the pair
+    // rides ONLY the structured fields + the one appended suffix.
+    let f = std::env::temp_dir().join(format!("axon_argty_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn f(a: i64) -> i64 { a }\nfn main() { let x = f(\"hi\") }\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    // The E0306 line must mention the function + arg index, and carry the
+    // expected/found pair exactly ONCE (the appended suffix), never doubled.
+    let e0306_line = msg
+        .lines()
+        .find(|l| l.contains("E0306"))
+        .unwrap_or_else(|| panic!("expected an E0306 diagnostic: {msg}"));
+    assert!(
+        e0306_line.contains("argument 0 of `f`"),
+        "E0306 should still pinpoint the arg + function: {e0306_line}"
+    );
+    // The wart was the message reading "... wrong type: expected `i64`, found
+    // `str` (expected i64), found str" — the embedded pair PLUS the appended
+    // suffix. The message must now carry the type pair only via the single
+    // appended " (expected i64), found str", never the embedded "wrong type:
+    // expected `i64`" form.
+    assert!(
+        !e0306_line.contains("wrong type: expected"),
+        "E0306 message must not embed the expected/found pair (driver appends it): {e0306_line}"
+    );
+    assert!(
+        e0306_line.contains("has the wrong type (expected i64), found str"),
+        "E0306 should carry the type pair exactly once via the appended suffix: {e0306_line}"
+    );
+}
+
+#[test]
 fn run_exits_with_main_return_value() {
     let f = std::env::temp_dir().join("axon_cli_run_exitcode.ax");
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();

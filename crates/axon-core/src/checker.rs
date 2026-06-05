@@ -1462,10 +1462,12 @@ impl CheckCtx {
                 self.errors.push(
                     CheckError::new(
                         E0306,
-                        format!(
-                            "argument {i} of `{name}` has the wrong type: \
-                             expected `{expected_disp}`, found `{found_disp}`",
-                        ),
+                        // The expected/found pair is carried by the structured
+                        // `.expected()/.found()` fields below; every renderer
+                        // (CLI JSON, `display()`, LSP) re-appends it, so keep it
+                        // out of the message itself to avoid printing it twice
+                        // (cf. E0307). The `i` index + `name` stay in the message.
+                        format!("argument {i} of `{name}` has the wrong type"),
                     )
                     .node(&arg_path)
                     .at(&file, 0, 0)
@@ -3376,10 +3378,15 @@ mod tests {
             "E0306 message should pinpoint argument index: {}", e0306.message);
         assert!(e0306.message.contains("`wants_bool`"),
             "E0306 message should name the function: {}", e0306.message);
-        assert!(e0306.message.contains("expected `bool`"),
-            "E0306 message should spell expected: {}", e0306.message);
-        assert!(e0306.message.contains("found `i64`"),
-            "E0306 message should spell found: {}", e0306.message);
+        // Expected/found ride the structured fields, not the message text —
+        // the driver re-appends them, so embedding them too would double-print
+        // (cf. E0307). Assert the fields carry the pair.
+        assert_eq!(e0306.expected.as_deref(), Option::Some("bool"),
+            "E0306 should carry expected in its structured field");
+        assert_eq!(e0306.found.as_deref(), Option::Some("i64"),
+            "E0306 should carry found in its structured field");
+        assert!(!e0306.message.contains("expected `bool`"),
+            "E0306 message must NOT embed expected/found (driver appends it): {}", e0306.message);
     }
 
     #[test]
