@@ -863,6 +863,48 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         msgf.contains("E0401") && msgf.contains("i64 has no field 'foo'"),
         "expected E0401 for field access on the i64 if-expr result: {msgf}"
     );
+
+    // And via a MATCH-expression result, both directly and let-bound: a match
+    // whose arms all resolve to the same scalar type carries that type, so a
+    // field access on the result is a non-struct access.
+    for (label, src) in [
+        (
+            "direct",
+            "type S = A | B\nfn main() {\n  let s = S::A\n  let x = (match s { S::A => 1\n    S::B => 2 }).foo\n}\n",
+        ),
+        (
+            "let-bound",
+            "type S = A | B\nfn main() {\n  let s = S::A\n  let v = match s { S::A => 1\n    S::B => 2 }\n  let x = v.foo\n}\n",
+        ),
+    ] {
+        let mf = std::env::temp_dir().join(format!("axon_mfield_{}_{label}.ax", std::process::id()));
+        std::fs::write(&mf, src).unwrap();
+        let outm = axon().args(["check", mf.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&mf);
+        let msgm = format!(
+            "{}{}",
+            String::from_utf8_lossy(&outm.stdout),
+            String::from_utf8_lossy(&outm.stderr)
+        );
+        assert_eq!(outm.status.code(), Some(2), "{label} match-field must fail check: {msgm}");
+        assert!(
+            msgm.contains("E0401") && msgm.contains("i64 has no field 'foo'"),
+            "{label}: expected E0401 for field access on the i64 match result: {msgm}"
+        );
+    }
+
+    // A valid match result flowing where its type is correct must still pass.
+    let mok = std::env::temp_dir().join(format!("axon_mok_{}.ax", std::process::id()));
+    std::fs::write(
+        &mok,
+        "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { classify(S::B) }\n",
+    )
+    .unwrap();
+    let outmc = axon().args(["check", mok.to_str().unwrap()]).output().unwrap();
+    let outmr = axon().args(["run", mok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&mok);
+    assert_eq!(outmc.status.code(), Some(0), "valid match-result use must check clean");
+    assert_eq!(outmr.status.code(), Some(2), "valid match-result use must run (classify(B) == 2)");
 }
 
 #[test]

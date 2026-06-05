@@ -2211,6 +2211,41 @@ impl CheckCtx {
             }
             // No else branch → the if is `()`-typed; leave Unknown for inference.
             Expr::If { else_: None, .. } => Type::Unknown,
+            // A `match` expression's type is its arms' common type — same
+            // unify-or-Unknown rule as `if` (so `(match s { … }).foo` and a
+            // let-bound match result can be field-checked). Empty/none-agreeing
+            // → Unknown.
+            Expr::Match { arms, .. } => {
+                let mut arm_ty: Option<Type> = None;
+                for (i, arm) in arms.iter().enumerate() {
+                    let t = self.resolve_expr_type(
+                        &arm.body,
+                        &format!("{node_path}.arm_{i}.body"),
+                        scope,
+                    );
+                    if matches!(t, Type::Unknown) {
+                        arm_ty = None;
+                        break;
+                    }
+                    match &arm_ty {
+                        None => arm_ty = Some(t),
+                        Some(prev) if *prev == t => {}
+                        Some(_) => {
+                            arm_ty = None;
+                            break;
+                        }
+                    }
+                }
+                arm_ty.unwrap_or(Type::Unknown)
+            }
+            // NOTE: deliberately NO `Expr::BinOp` arm. Resolving an arithmetic
+            // binop to its operand type to catch `(1 + 2).foo` is unsound here:
+            // an `Uncertain<T>`/`Temporal<T>` operand makes `a + b` stay
+            // Uncertain/Temporal (and carry `.value`/`.confidence`), but a naive
+            // operand-type resolution collapses it to the inner `i64`, which then
+            // false-flags `(ua + ub).value` as a non-field. Comparison/logical
+            // ops are always bool but `(a < b).foo` is too rare to special-case.
+            // Leave binops to inference.
             Expr::FmtStr { .. } => Type::Str,
             Expr::StructLit { name, .. } => {
                 // Resolve struct literal type by looking up struct fields.
