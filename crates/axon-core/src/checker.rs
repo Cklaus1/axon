@@ -38,6 +38,7 @@ pub const E0307: &str = "E0307";
 pub const E0308: &str = "E0308";
 pub const E0309: &str = "E0309";
 pub const E0401: &str = "E0401"; // struct has no field (Phase 3 canonical code)
+pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 
 // Trait validation error codes (Phase 3+)
 pub const E0501: &str = "E0501"; // impl block names a trait that does not exist
@@ -1122,8 +1123,31 @@ impl CheckCtx {
 
             // ── Index ────────────────────────────────────────────────────────
             Expr::Index { receiver, index } => {
-                self.check_expr(receiver, &format!("{node_path}.receiver"), scope);
+                let recv_path = format!("{node_path}.receiver");
+                self.check_expr(receiver, &recv_path, scope);
                 self.check_expr(index, &format!("{node_path}.index"), scope);
+                // R11-sibling: indexing is only valid on a slice/array. A
+                // concrete non-slice receiver (`n[0]` where `n: i64`, or a bool,
+                // or a struct) used to be silently accepted at check time and
+                // panic at runtime ("indexing non-array (i64)"). Flag it as
+                // E0402. Skip Unknown/Var/Deferred (let inference own those) and
+                // tuples (those are accessed via `.0`/`.1`, reported elsewhere).
+                let recv_ty = self.resolve_expr_type(receiver, &recv_path, scope);
+                let indexable = matches!(recv_ty, Type::Slice(_))
+                    || recv_ty.is_deferred()
+                    || matches!(recv_ty, Type::Unknown | Type::Var(_));
+                if !indexable {
+                    let file = self.file.clone();
+                    self.errors.push(
+                        CheckError::new(
+                            E0402,
+                            format!("cannot index a value of type {}", recv_ty.display()),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .fix("indexing `a[i]` is only valid on an array/slice `[T]`"),
+                    );
+                }
             }
 
             // ── Spawn / Comptime ─────────────────────────────────────────────
@@ -2180,17 +2204,14 @@ impl CheckCtx {
             // access on a non-struct element (else it slips to a runtime "field
             // access on non-struct" panic, same class as the FieldAccess arm).
             Expr::Index { receiver, index } => {
+                let _ = index;
                 let recv_ty =
                     self.resolve_expr_type(receiver, &format!("{node_path}.receiver"), scope);
                 match recv_ty {
                     Type::Slice(elem) => *elem,
-                    // Indexing a str yields a str (a 1-char substring in this
-                    // language's semantics); any other receiver is unknown here.
-                    Type::Str => Type::Str,
-                    _ => {
-                        let _ = index;
-                        Type::Unknown
-                    }
+                    // str/other receivers are not indexable (the R11 Index check
+                    // reports E0402); leave Unknown so no wrong type flows on.
+                    _ => Type::Unknown,
                 }
             }
             // An `if`/`else` expression's type is its branch type, so

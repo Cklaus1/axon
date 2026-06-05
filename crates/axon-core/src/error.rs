@@ -44,6 +44,7 @@ pub const E0315: &str = "E0315";
 
 // Field / struct errors
 pub const E0401: &str = "E0401"; // struct has no field
+pub const E0402: &str = "E0402"; // indexing a non-indexable (non-array) type
 
 // Trait errors (Phase 3)
 pub const E0501: &str = "E0501"; // trait method not implemented

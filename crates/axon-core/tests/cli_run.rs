@@ -929,6 +929,43 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
 }
 
 #[test]
+fn indexing_a_non_array_is_a_clean_compile_error_e0402() {
+    // `n[0]` where `n` is not an array/slice was silently accepted at check time
+    // then panicked at runtime ("indexing non-array (i64)"). It must now be a
+    // clean E0402 compile error (exit 2), for scalar and str receivers alike
+    // (the interpreter does not support str indexing either).
+    for (label, src, ty) in [
+        ("i64", "fn main() {\n  let n = 5\n  let x = n[0]\n}\n", "i64"),
+        ("bool", "fn main() {\n  let b = true\n  let x = b[0]\n}\n", "bool"),
+        ("str", "fn main() {\n  let s = \"hi\"\n  let x = s[0]\n}\n", "str"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_idxty_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: indexing must fail check: {msg}");
+        assert!(
+            msg.contains("E0402") && msg.contains(&format!("cannot index a value of type {ty}")),
+            "{label}: expected E0402 naming the type: {msg}"
+        );
+    }
+
+    // A real array/slice index must still check clean AND run.
+    let ok = std::env::temp_dir().join(format!("axon_idxok_{}.ax", std::process::id()));
+    std::fs::write(&ok, "fn main() -> i64 {\n  let a = [10, 20, 30]\n  a[1]\n}\n").unwrap();
+    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let outr = axon().args(["run", ok.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&ok);
+    assert_eq!(outc.status.code(), Some(0), "valid array index must check clean");
+    assert_eq!(outr.status.code(), Some(20), "valid array index must run (a[1] == 20)");
+}
+
+#[test]
 fn match_arm_tail_is_not_compared_to_fn_return_type_e0307() {
     // The R07 body-tail check used `node_path.ends_with(".body")` to decide
     // "this is the function body" — but match-arm bodies are `…arm_N.body` too.
