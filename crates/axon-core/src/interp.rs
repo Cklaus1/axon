@@ -978,6 +978,45 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+            } else if let Some(observed) = scalar_as_f64(&result) {
+                // SCALAR return (`i64`/`f64`/`bool`): `value` binds to the
+                // returned scalar itself. A `@[verify(value OP K)]` safety bound on
+                // a plain-typed fn used to be SILENTLY UNENFORCED (the gate only
+                // fired for an Uncertain result) — a real hole for a hard bound
+                // like `@[verify(value <= 500)]` on an i64 spend recommender.
+                let val_str = display(&result);
+                let input_str = input_arg.map(|n| format!(", input {n}")).unwrap_or_default();
+                let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
+                if let Some((ident, op, bound)) = decoded {
+                    // Only the `value` ident maps to a scalar return (a scalar has
+                    // no `confidence`/`source_tag`); other idents fall through to
+                    // the composite path which leaves them unbound (predicate
+                    // can't reference a field a scalar doesn't have).
+                    if ident == "value" && !cmp_f64(&op, observed, bound) {
+                        return Err(Flow::VerifyFailed(format!(
+                            "verify failed in {}: value {} {} {} is false (value {}{})",
+                            verify_fn_label(&f.name),
+                            observed,
+                            crate::verify::binop_to_verify_str(&op),
+                            bound,
+                            val_str,
+                            input_str,
+                        )));
+                    }
+                } else {
+                    // Composite predicate: bind `value` to the scalar and evaluate.
+                    let mut pred_env = Env::new();
+                    pred_env.define("value".into(), result.clone());
+                    let outcome = self.eval(&spec.predicate, &mut pred_env)?;
+                    if let Value::Bool(false) = outcome {
+                        return Err(Flow::VerifyFailed(format!(
+                            "verify failed in {}: composite predicate did not hold (value {}{})",
+                            verify_fn_label(&f.name),
+                            val_str,
+                            input_str,
+                        )));
+                    }
+                }
             }
         }
 
@@ -1356,6 +1395,18 @@ fn cmp_f64(op: &BinOp, a: f64, b: f64) -> bool {
         BinOp::Eq => a == b,
         BinOp::NotEq => a != b,
         _ => false,
+    }
+}
+
+/// A scalar `Value` as an `f64` for a `@[verify(value OP K)]` comparison, or
+/// `None` for a non-scalar (struct/enum/array/…), which `value` can't bind to.
+/// `bool` maps to 0.0/1.0 so `@[verify(value == 1)]` works on a flag.
+fn scalar_as_f64(v: &Value) -> Option<f64> {
+    match v {
+        Value::Int(n) => Some(*n as f64),
+        Value::Float(f) => Some(*f),
+        Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
+        _ => None,
     }
 }
 

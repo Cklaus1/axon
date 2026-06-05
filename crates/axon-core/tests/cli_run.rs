@@ -1721,6 +1721,37 @@ fn run_exits_with_main_return_value() {
     assert_eq!(out.status.code(), Some(7), "main's i64 return should be the exit code");
 }
 
+#[test]
+fn verify_is_enforced_on_a_scalar_return_at_runtime() {
+    // A `@[verify(value OP K)]` safety bound on a plain-typed (i64/f64/bool) fn
+    // used to be SILENTLY UNENFORCED — the runtime gate only fired for an
+    // Uncertain<T> result. A breach must now be a verify-failure (exit 3, the
+    // policy-rejection code) with a `verify failed` message; a satisfied bound
+    // runs clean. (Mirrors the documented `@[verify(value <= 500)]` spend-cap.)
+    let breach = "@[verify(value <= 500)]\n\
+        fn recommend(roas: i64) -> i64 { roas + 100 }\n\
+        fn main() -> i64 { recommend(900) }\n";
+    let f = std::env::temp_dir().join(format!("axon_vscalar_bad_{}.ax", std::process::id()));
+    std::fs::write(&f, breach).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(3), "a scalar @[verify] breach must exit 3 (policy rejection): {msg}");
+    assert!(msg.contains("verify failed"), "breach must report a verify failure: {msg}");
+
+    // A satisfied bound (i64 and f64) runs clean and returns normally.
+    for (label, src, want) in [
+        ("i64 holds", "@[verify(value >= 0)]\nfn pos(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() -> i64 { pos(-7) }\n", 7),
+        ("f64 holds", "@[verify(value <= 1.0)]\nfn frac() -> f64 { 0.5 }\nfn main() -> i64 {\n  let _ = frac()\n  0\n}\n", 0),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_vscalar_ok_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(want), "{label}: a satisfied scalar @[verify] must run clean");
+    }
+}
+
 /// Parse the integer from a "best score: N (target …)" line.
 fn best_score(stdout: &str) -> i64 {
     let key = "best score: ";
