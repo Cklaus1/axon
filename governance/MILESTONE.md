@@ -25,7 +25,7 @@ services) — that remains greenfield, multi-quarter work.
 | **R3** | AI as a language primitive (routing, policy, budget, cost) | 87 | ⚠️ tier routing + live token-count live; first-class Budget type remains |
 | **R4** | Three code zones + compiler-enforced provenance | 100 | ✅ Complete |
 | **R5** | Goal-directed optimization (5 strategies, held-out eval) | 94 | ⚠️ kernel `Goal<M>` (Phase-7) remains |
-| **R6** | Capability security (lockfile, audit, `@[sensitive]`) | 91 | ⚠️ AI-audit quality + transitive taint remain |
+| **R6** | Capability security (lockfile, audit, `@[sensitive]`) | 93 | ✅ **transitive taint now closed** — a sensitive value laundered through a helper into an AI/file/exec sink is E1206 via a fixpoint param-taint analysis (`compute_exfiltrating_params`); AI-audit quality remains |
 | **R7** | Cross-platform (native / wasm / js / mobile) | 80 | ✅ interp→wasm byte-identical; **AOT-wasm runs the whole example corpus — 26/26 byte-identical stdout vs interp** (str-ABI + size_t bridges + void-main entry fix); js/mobile + host-needing programs (AI/thread/goal/fs) remain |
 | **R8** | Built-in testing + structured diagnostics (`forall`) | 100 | ✅ Complete |
 | **R9** | Layer-1/3 alignment (`Uncertain`/`Temporal`/`@[verify]`/causal) | 88 | ⚠️ SMT loop invariants + metacognition trait remain |
