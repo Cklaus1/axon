@@ -1054,11 +1054,29 @@ fn integer_division_by_literal_zero_is_e0407() {
         );
     }
 
-    // A non-zero literal divisor, a VARIABLE divisor (can't be known statically),
-    // and a float `/0.0` (which is `inf`, not a panic) must all check clean.
+    // Constant-folding: a divisor that folds to zero through arithmetic is also
+    // caught (`10 / (2 - 2)`, `10 % (0 * 5)`).
+    for (label, body) in [("fold sub", "10 / (2 - 2)"), ("fold mul", "10 % (0 * 5)")] {
+        let f = std::env::temp_dir().join(format!("axon_divfold_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, format!("fn main() -> i64 {{ {body} }}\n")).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: divisor folding to 0 must fail: {msg}");
+        assert!(msg.contains("E0407"), "{label}: expected E0407: {msg}");
+    }
+
+    // A non-zero literal/constant divisor, a VARIABLE divisor (even one a human
+    // can see is 0 — not const-folded, the runtime guards it), and a float
+    // `/0.0` (which is `inf`, not a panic) must all check clean.
     for (label, src) in [
         ("nonzero", "fn main() -> i64 { 10 / 2 }\n"),
-        ("variable", "fn main() -> i64 { let d = 0\n  10 / d }\n"),
+        ("nonzero fold", "fn main() -> i64 { 10 / (2 + 2) }\n"),
+        ("variable", "fn main() -> i64 { let d = 2 - 2\n  10 / d }\n"),
         ("float", "fn main() -> i64 { let x = 10.0 / 0.0\n  f64_to_i64(x) }\n"),
     ] {
         let f = std::env::temp_dir().join(format!("axon_divok_{}_{label}.ax", std::process::id()));

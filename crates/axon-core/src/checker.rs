@@ -1064,25 +1064,26 @@ impl CheckCtx {
                     self.check_numeric_operand(&lty, &lpath);
                     self.check_numeric_operand(&rty, &rpath);
                 }
-                // Integer division/remainder by a LITERAL zero always panics at
-                // runtime ("integer division by zero"). Catch the constant case
-                // statically as E0407. (Only an integer literal 0 — a float `/0.0`
-                // is `inf`, not a panic, and a non-literal divisor can't be known
-                // here.)
-                if matches!(op, BinOp::Div | BinOp::Rem) {
-                    if let Expr::Literal(crate::ast::Literal::Int(0)) = right.as_ref() {
-                        let file = self.file.clone();
-                        let verb = if matches!(op, BinOp::Div) { "division" } else { "remainder" };
-                        self.errors.push(
-                            CheckError::new(
-                                E0407,
-                                format!("integer {verb} by zero — this always panics at runtime"),
-                            )
-                            .node(node_path)
-                            .at(&file, 0, 0)
-                            .fix("guard the divisor (`if d != 0 { … }`) or use a non-zero constant".to_string()),
-                        );
-                    }
+                // Integer division/remainder by a divisor that CONSTANT-FOLDS to
+                // zero always panics at runtime ("integer division by zero").
+                // Catch it statically as E0407 — covers a literal `0` AND a
+                // constant integer expression like `(2 - 2)` / `(0 * 5)`. A float
+                // `/0.0` is `inf` (not a panic) and a non-constant divisor can't
+                // be known here, so both are left alone.
+                if matches!(op, BinOp::Div | BinOp::Rem)
+                    && const_eval_int(right.as_ref()) == Some(0)
+                {
+                    let file = self.file.clone();
+                    let verb = if matches!(op, BinOp::Div) { "division" } else { "remainder" };
+                    self.errors.push(
+                        CheckError::new(
+                            E0407,
+                            format!("integer {verb} by zero — this always panics at runtime"),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .fix("guard the divisor (`if d != 0 { … }`) or use a non-zero constant".to_string()),
+                    );
                 }
             }
 
@@ -2684,6 +2685,36 @@ fn literal_scalar_kind(lit: &crate::ast::Literal) -> &'static str {
         Literal::Float(_) => "float",
         Literal::Bool(_) => "bool",
         Literal::Str(_) => "str",
+    }
+}
+
+/// Best-effort constant folder for INTEGER expressions, used to catch a
+/// divide-by-a-constant-zero (E0407). Returns `Some(n)` only when the expression
+/// is a pure integer constant (literal, unary neg, or +/-/*/%/// over constants);
+/// `None` for anything non-constant (a variable, a call, a float). A nested
+/// division by zero folds to `None` (we don't panic the checker over it; the
+/// outer check still fires on whatever it can fold).
+fn const_eval_int(e: &Expr) -> Option<i64> {
+    use crate::ast::{BinOp, Literal, UnaryOp};
+    match e {
+        Expr::Literal(Literal::Int(n)) => Some(*n),
+        Expr::UnaryOp { op: UnaryOp::Neg, operand } => const_eval_int(operand)?.checked_neg(),
+        Expr::BinOp { op, left, right } => {
+            let l = const_eval_int(left)?;
+            let r = const_eval_int(right)?;
+            match op {
+                BinOp::Add => l.checked_add(r),
+                BinOp::Sub => l.checked_sub(r),
+                BinOp::Mul => l.checked_mul(r),
+                // A zero divisor here would itself be a div-by-zero; don't fold
+                // (avoid a checker panic) — return None so we simply can't prove
+                // the OUTER divisor's value through it.
+                BinOp::Div if r != 0 => l.checked_div(r),
+                BinOp::Rem if r != 0 => l.checked_rem(r),
+                _ => None,
+            }
+        }
+        _ => None,
     }
 }
 
