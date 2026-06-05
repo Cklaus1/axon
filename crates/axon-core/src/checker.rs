@@ -991,14 +991,15 @@ impl CheckCtx {
                 // Conservative: fires ONLY when the receiver is a known struct,
                 // `method` IS one of its data fields, AND no method of that name
                 // exists on the type — so genuine method calls are never touched.
-                if let Type::Struct(sname) = self.resolve_expr_type(receiver, &rpath, scope) {
+                let recv_ty = self.resolve_expr_type(receiver, &rpath, scope);
+                if let Type::Struct(sname) = &recv_ty {
                     let is_field = self
                         .struct_fields
-                        .get(&sname)
+                        .get(sname)
                         .is_some_and(|fs| fs.iter().any(|(n, _)| n == method));
                     let is_method = self
                         .type_methods
-                        .get(&sname)
+                        .get(sname)
                         .is_some_and(|ms| ms.contains(method));
                     if is_field && !is_method {
                         let file = self.file.clone();
@@ -1012,6 +1013,34 @@ impl CheckCtx {
                             .fix(format!("remove the call parentheses to read the field: `…{method}`")),
                         );
                     }
+                }
+                // Option<T>/Result<T,E> have NO methods in Axon (no-null by
+                // design: you pattern-match, there is no `.unwrap()`/`.is_some()`).
+                // A method call on one — a common reflex from other languages —
+                // was check-clean then a runtime "no method `m` on type `Option`"
+                // panic. Flag it with a match-instead hint. (Only these two: prims
+                // could gain trait impls; Option/Result definitively cannot.)
+                let opt_or_res = match &recv_ty {
+                    Type::Option(_) => Some("Option"),
+                    Type::Result(_, _) => Some("Result"),
+                    _ => None,
+                };
+                if let Some(tn) = opt_or_res {
+                    let file = self.file.clone();
+                    let hint = if tn == "Option" {
+                        "match on it instead: `match opt { Some(v) => …  None => … }`"
+                    } else {
+                        "match on it instead: `match res { Ok(v) => …  Err(e) => … }`"
+                    };
+                    self.errors.push(
+                        CheckError::new(
+                            E0403,
+                            format!("`{tn}` has no method `{method}` — Axon has no null/unwrap; {tn} is destructured by matching"),
+                        )
+                        .node(node_path)
+                        .at(&file, 0, 0)
+                        .fix(hint),
+                    );
                 }
             }
 

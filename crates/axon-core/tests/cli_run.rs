@@ -968,6 +968,29 @@ fn calling_a_data_field_as_a_method_is_e0403() {
     let _ = std::fs::remove_file(&good);
     assert_eq!(outc.status.code(), Some(0), "a real trait-method call must check clean");
     assert_eq!(outr.status.code(), Some(16), "the method call must run (4*4 == 16)");
+
+    // A method call on an Option/Result (Rust reflex — Axon has no `.unwrap()`,
+    // you pattern-match) was check-clean→runtime panic. Must be E0403 with a
+    // match-instead hint.
+    for (label, src, tn) in [
+        ("option", "fn main() {\n  let o = Some(5)\n  let x = o.unwrap()\n}\n", "Option"),
+        ("result", "fn main() {\n  let r = Ok(5)\n  let x = r.unwrap()\n}\n", "Result"),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_optm_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "{label}: method on {tn} must fail check: {msg}");
+        assert!(
+            msg.contains("E0403") && msg.contains(&format!("`{tn}` has no method")),
+            "{label}: expected E0403 explaining {tn} has no methods: {msg}"
+        );
+    }
 }
 
 #[test]
