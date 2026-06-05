@@ -124,6 +124,7 @@ pub const E1505: &str = "E1505"; // unknown #[goal(strategy: …)] — not hill_
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
 pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
+pub const W0004: &str = "W0004"; // unreachable match arm (a duplicate pattern already covers it)
 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 pub const W1103: &str = "W1103"; // @[verify] outside the SMT-provable fragment (R9); runtime gate applies
@@ -290,7 +291,7 @@ mod tests {
             E0301, E0302, E0303, E0304, E0305,
             E0306, E0307, E0308, E0309, E0310,
             E0311, E0312, E0313, E0314, E0315,
-            E0401,
+            E0401, E0402, E0403, E0404,
             E0501, E0502, E0503, E0504,
             E0601, E0602, E0603,
             E0701, E0702, E0703,
@@ -302,7 +303,7 @@ mod tests {
             E1300, E1301, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
             E1500, E1503, E1504, E1505,
-            W0001, W0002, W0003, W0701, W1103, W1210, W1310, W1311, W1410,
+            W0001, W0002, W0003, W0004, W0701, W1103, W1210, W1310, W1311, W1410,
             I0001,
         ];
         let mut seen = std::collections::HashSet::new();

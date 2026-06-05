@@ -1034,6 +1034,49 @@ fn calling_a_data_field_as_a_method_is_e0403() {
 }
 
 #[test]
+fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
+    // A later arm whose head exactly duplicates an earlier one is dead code.
+    // It must produce a W0004 WARNING — printed, but NOT failing `check` (exit 0,
+    // like other warnings), since the program still runs.
+    let dup = std::env::temp_dir().join(format!("axon_duparm_{}.ax", std::process::id()));
+    std::fs::write(
+        &dup,
+        "type S = A | B\nfn f(s: S) -> i64 { match s { S::A => 1\n  S::A => 2\n  S::B => 3 } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let out = axon().args(["check", dup.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&dup);
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(0), "a duplicate arm is a WARNING, check must still pass (exit 0): {msg}");
+    assert!(
+        msg.contains("W0004") && msg.contains("unreachable match arm"),
+        "expected a W0004 unreachable-arm warning: {msg}"
+    );
+
+    // No false positives: distinct sub-patterns (`Some(1)` vs `Some(2)`) and a
+    // normal exhaustive match must NOT warn.
+    let okm = std::env::temp_dir().join(format!("axon_okarm_{}.ax", std::process::id()));
+    std::fs::write(
+        &okm,
+        "fn f(o: Option<i64>) -> i64 { match o { Some(1) => 1\n  Some(2) => 2\n  Some(n) => n\n  None => 0 } }\nfn main() {}\n",
+    )
+    .unwrap();
+    let outo = axon().args(["check", okm.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&okm);
+    let msgo = format!(
+        "{}{}",
+        String::from_utf8_lossy(&outo.stdout),
+        String::from_utf8_lossy(&outo.stderr)
+    );
+    assert_eq!(outo.status.code(), Some(0), "a valid match must check clean");
+    assert!(!msgo.contains("W0004"), "distinct sub-patterns must NOT trigger W0004: {msgo}");
+}
+
+#[test]
 fn unknown_enum_variant_literal_is_e0404() {
     // `S::C` for an enum `S` with no variant `C` was silently accepted (it built
     // a bogus enum value), then panicked at runtime when matched ("no match arm

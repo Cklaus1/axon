@@ -1716,6 +1716,36 @@ impl CheckCtx {
             return;
         }
 
+        // Unreachable-arm detection (W0004): a later arm whose head constructor
+        // exactly duplicates an earlier one is dead code (`S::A => …  S::A => …`,
+        // `None => …  None => …`, `0 => …  0 => …`). Only flag heads we can match
+        // CONCLUSIVELY equal — skip bind/wildcard/deep-subpattern arms (a guard or
+        // a sub-pattern difference can make a repeat reachable). The first
+        // occurrence wins; warn on each subsequent duplicate.
+        {
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for arm in arms {
+                // A guard makes even an identical head potentially reachable.
+                if arm.guard.is_some() {
+                    continue;
+                }
+                if let Some(key) = conclusive_pattern_key(&arm.pattern) {
+                    if !seen.insert(key.clone()) {
+                        let file = self.file.clone();
+                        self.errors.push(
+                            CheckError::warning(
+                                crate::error::W0004,
+                                format!("unreachable match arm: `{key}` is already covered by an earlier arm"),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .fix("remove the duplicate arm, or change its pattern".to_string()),
+                        );
+                    }
+                }
+            }
+        }
+
         // A wildcard pattern or a plain identifier covers all constructors.
         let has_wildcard = arms
             .iter()
@@ -2495,6 +2525,50 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
 /// receiver (Unknown/Var/Deferred) or which dispatch through other paths
 /// (channels = builtin methods; fn/dyn = not method receivers) — those are left
 /// to inference / the runtime to avoid false E0403s.
+/// A canonical key for a match pattern's head constructor, returned ONLY when
+/// the pattern conclusively determines its coverage — so a second arm with the
+/// same key is provably unreachable (W0004). Returns `None` for patterns where a
+/// repeat could still be reachable (wildcard/ident bind-alls — though those make
+/// LATER arms unreachable, not themselves; sub-patterns that differ, e.g.
+/// `Some(1)` vs `Some(2)`; struct/variant patterns whose fields bind sub-patterns
+/// that could differ). Conservative by design: a missed duplicate is silent, a
+/// false "unreachable" would be wrong.
+fn conclusive_pattern_key(p: &Pattern) -> Option<String> {
+    match p {
+        // A fieldless or all-binding variant/struct pattern: the head alone
+        // decides coverage. `S::A`, `S::A { x }` (x just binds) → key on the name.
+        // If any field carries a NESTED non-binding sub-pattern, bail (it could
+        // differ between arms), so only accept fields that are wildcard/ident.
+        Pattern::Struct { name, fields } => {
+            if fields
+                .iter()
+                .all(|(_, fp)| matches!(fp, Pattern::Wildcard | Pattern::Ident(_)))
+            {
+                Some(name.to_string())
+            } else {
+                None
+            }
+        }
+        Pattern::None => Some("None".to_string()),
+        // A literal pattern is conclusive (`0`, `"x"`, `true`).
+        Pattern::Literal(lit) => Some(format!("lit:{lit:?}")),
+        // Some(x)/Ok(x)/Err(x) ONLY when the inner is a bind-all (so the head
+        // alone decides); a deeper sub-pattern (`Some(1)`) could differ.
+        Pattern::Some(inner) if matches!(**inner, Pattern::Wildcard | Pattern::Ident(_)) => {
+            Some("Some".to_string())
+        }
+        Pattern::Ok(inner) if matches!(**inner, Pattern::Wildcard | Pattern::Ident(_)) => {
+            Some("Ok".to_string())
+        }
+        Pattern::Err(inner) if matches!(**inner, Pattern::Wildcard | Pattern::Ident(_)) => {
+            Some("Err".to_string())
+        }
+        // Wildcard/Ident bind-alls, deep Some/Ok/Err, tuples: not keyed (a repeat
+        // of a bind-all is handled by exhaustiveness, not duplicate detection).
+        _ => None,
+    }
+}
+
 fn method_lookup_key(ty: &Type) -> Option<&'static str> {
     match ty {
         Type::Struct(_) | Type::Enum(_) => None, // handled inline (needs the name)

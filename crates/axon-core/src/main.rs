@@ -2662,6 +2662,14 @@ fn run_check_pipeline_located(
         if let Some(fnd) = &err.found {
             msg.push_str(&format!(", found {fnd}"));
         }
+        // A check-phase WARNING (e.g. W0701 uncertainty-discarded, W0004
+        // unreachable-arm) must NOT join the error set — that would fail `check`
+        // with exit 2. Print it like the resolver warnings above and move on;
+        // only genuine errors accumulate in `diags` (which drives the exit code).
+        if matches!(err.severity, axon_core::checker::Severity::Warning) {
+            eprintln!("warning: [{}] {msg}", err.code);
+            continue;
+        }
         // CheckError tracks both a byte-span and legacy line/col; prefer the
         // span (real offset), fall back to the explicit line/col when no span.
         let (line, col) = if !err.span.is_dummy() {
