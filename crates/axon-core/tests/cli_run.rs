@@ -3449,6 +3449,32 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn annotated_option_local_compiles_and_matches_on_both_engines() {
+    // Sibling of the annotated-Result fix. `let o: Option<str> = None` followed
+    // by `o = Some("hi")` failed native codegen: a bare `None` defaulted to the
+    // `{i1, i64}` layout (Expr::None hardcoded an i64 placeholder), too small for
+    // a later `Some(str)` payload — IR-verify failure / wrong-typed match
+    // binding. Fixed by propagating the annotation's inner type (a
+    // current_option_inner context) into None construction. The interpreter
+    // always handled it.
+    let cases: &[(&str, &str)] = &[
+        ("let o: Option<str> = None\n  match o { Some(v) => println(v)  None => println(\"none\") }", "none"),
+        ("let o: Option<str> = None\n  o = Some(\"hi\")\n  match o { Some(v) => println(v)  None => println(\"none\") }", "hi"),
+        ("let o: Option<i64> = Some(1)\n  o = None\n  match o { Some(v) => println(to_str(v))  None => println(\"none\") }", "none"),
+        ("let o: Option<str> = Some(\"a\")\n  match o { Some(v) => println(v)  None => println(\"none\") }", "a"),
+    ];
+    for (i, (body, expected)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_optannot_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] annotated Option");
+    }
+}
+
+#[test]
 fn invariant_i9_no_silent_success_on_degenerate_input() {
     // ARCHITECTURE INVARIANTS I-9 — "No silent success on degenerate input."
     // Overflow / inverted / empty / out-of-range arguments must produce EITHER a

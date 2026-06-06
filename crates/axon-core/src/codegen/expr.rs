@@ -170,11 +170,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 // and the match read GARBAGE at exit 0 (I-9), and passing r to a
                 // fn expecting the full layout failed IR verification.
                 let saved_rt = self.current_result_types.clone();
+                let saved_oi = self.current_option_inner.clone();
                 if let Some(Type::Result(ok_ty, err_ty)) = &sem_ty {
                     self.current_result_types = Some((*ok_ty.clone(), *err_ty.clone()));
                 }
+                if let Some(Type::Option(inner)) = &sem_ty {
+                    self.current_option_inner = Some(*inner.clone());
+                }
                 let val = self.emit_expr(value, fn_val)?;
                 self.current_result_types = saved_rt;
+                self.current_option_inner = saved_oi;
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, val.get_type(), name);
                 build_wrappers::w_store(&self.ir.builder, alloca, val);
                 self.locals.insert(name.clone(), (alloca, val.get_type()));
@@ -346,9 +351,12 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(self.emit_option(std::option::Option::Some(val), &ty))
             }
             ast::Expr::None => {
-                // Emit Option<i64 placeholder> with no inner value.
-                let placeholder = Type::I64;
-                Some(self.emit_option(std::option::Option::None, &placeholder))
+                // Use the target Option<T> inner type when known (from a `let
+                // o: Option<str> = None` annotation or an Option-typed assign
+                // target), so the layout is `{ i1, T }` — not the `{i1,i64}`
+                // default that mis-sizes a later `Some(str)` / match.
+                let inner = self.current_option_inner.clone().unwrap_or(Type::I64);
+                Some(self.emit_option(std::option::Option::None, &inner))
             }
 
             // ── Return ────────────────────────────────────────────────────────
@@ -431,11 +439,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 // `{i1,ptr}` and stored it into the `{i1,[16 x i8]}` slot —
                 // mismatched, and the later match read garbage at exit 0 (I-9).
                 let saved_rt = self.current_result_types.clone();
-                if let Some(Type::Result(ok_ty, err_ty)) = self.local_types.get(name).cloned() {
-                    self.current_result_types = Some((*ok_ty, *err_ty));
+                let saved_oi = self.current_option_inner.clone();
+                match self.local_types.get(name).cloned() {
+                    Some(Type::Result(ok_ty, err_ty)) => {
+                        self.current_result_types = Some((*ok_ty, *err_ty));
+                    }
+                    Some(Type::Option(inner)) => {
+                        self.current_option_inner = Some(*inner);
+                    }
+                    _ => {}
                 }
                 let emitted = self.emit_expr(value, fn_val);
                 self.current_result_types = saved_rt;
+                self.current_option_inner = saved_oi;
                 if let Some(val) = emitted {
                     if let Some((ptr, _llvm_ty)) = self.locals.get(name).copied() {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);

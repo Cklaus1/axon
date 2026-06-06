@@ -167,6 +167,10 @@ pub struct Codegen<'ctx> {
     local_types: HashMap<String, Type>,
     /// Set when inside a function returning `Result<T,E>`; drives canonical union layout.
     current_result_types: Option<(Type, Type)>,
+    /// Set when emitting a value whose target type is `Option<T>`; lets a bare
+    /// `None` build the correct `{ i1, T }` layout (otherwise it defaults to
+    /// `{i1,i64}` and a later `Some(str)` / match mis-sizes the payload).
+    current_option_inner: Option<Type>,
     /// Counter for generating unique anonymous function names (lambdas).
     lambda_counter: u32,
     /// Counter for generating unique global names in format strings.
@@ -287,6 +291,7 @@ impl<'ctx> Codegen<'ctx> {
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             current_result_types: None,
+            current_option_inner: None,
             lambda_counter: 0,
             fmtstr_counter: 0,
             enum_variants: HashMap::new(),
