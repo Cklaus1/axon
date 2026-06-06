@@ -86,6 +86,16 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         }
     }
 
+    // INFERRED effects per fn: the transitive closure of effects a call to it
+    // actually performs — its body's direct builtin effects ∪ the inferred
+    // effects of every fn it calls. This closes the transitive-laundering hole:
+    // a fn declaring `| {}` that calls an UN-annotated helper which does IO must
+    // still be flagged, because the helper's inferred set includes IO even
+    // though its DECLARED row is empty/open. A fn's OWN declared row does not cap
+    // its inferred set (we infer what it does, then separately check that
+    // against what it declared). Computed to a fixpoint over the call graph.
+    let inferred = infer_effects(program);
+
     let mut errors = Vec::new();
     for item in &program.items {
         let Item::FnDef(f) = item else { continue };
@@ -106,22 +116,95 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         if matches!(allowed, Allowed::Open) {
             continue;
         }
-        check_expr(&f.body, &f.name, &allowed, &declared, &mut errors);
+        check_expr(&f.body, &f.name, &allowed, &inferred, &mut errors);
     }
     errors
 }
 
+/// Compute each function's inferred (transitive) effect set to a fixpoint. A
+/// fn's effects are the builtin effects of every call in its body plus the
+/// inferred effects of every user-fn it calls. Iterated until no set grows, so
+/// effects propagate up the call graph through arbitrarily long helper chains
+/// (recursion converges because sets only grow and the effect universe is
+/// finite). This is what subsumption is checked against — not the declared row —
+/// so an effect cannot be laundered through an un-annotated intermediary.
+fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
+    // Pre-collect each fn's body so we can re-walk cheaply each iteration.
+    let fns: Vec<&crate::ast::FnDef> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::FnDef(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    // Seed each fn with its DECLARED concrete effects: a declared row is a
+    // promise the fn may perform those effects (e.g. a `| {Net}` stub whose body
+    // is still `{ 0 }`), so callers must honour them even before the body does.
+    let mut inferred: HashMap<String, HashSet<String>> = fns
+        .iter()
+        .map(|f| {
+            let seed: HashSet<String> = f
+                .effect_row
+                .as_ref()
+                .map(|r| r.effects.iter().cloned().collect())
+                .unwrap_or_default();
+            (f.name.clone(), seed)
+        })
+        .collect();
+
+    loop {
+        let mut changed = false;
+        for f in &fns {
+            // Gather the names this fn calls + the builtin effects it performs.
+            let mut calls = Vec::new();
+            collect_called_names(&f.body, &mut calls);
+            let mut acc: HashSet<String> = HashSet::new();
+            for name in &calls {
+                for eff in crate::builtins::builtin_effect_row(name) {
+                    acc.insert((*eff).to_string());
+                }
+                if let Some(callee_set) = inferred.get(name) {
+                    for eff in callee_set {
+                        acc.insert(eff.clone());
+                    }
+                }
+            }
+            let cur = inferred.get_mut(&f.name).expect("seeded");
+            let before = cur.len();
+            cur.extend(acc);
+            if cur.len() != before {
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    inferred
+}
+
+/// Collect the names of every directly-called function/builtin in `e`.
+fn collect_called_names(e: &Expr, out: &mut Vec<String>) {
+    if let Expr::Call { callee, .. } = e {
+        if let Expr::Ident(name) = callee.as_ref() {
+            out.push(name.clone());
+        }
+    }
+    for_each_child(e, &mut |child| collect_called_names(child, out));
+}
+
 /// The effects a call to `callee` performs: the builtin catalog row, or the
-/// callee's declared user-fn row, or nothing for an unknown name.
+/// callee's INFERRED (transitive) effect set, or nothing for an unknown name.
 fn callee_effects(
     callee: &str,
-    declared: &HashMap<String, HashSet<String>>,
+    inferred: &HashMap<String, HashSet<String>>,
 ) -> Vec<String> {
     let builtin = crate::builtins::builtin_effect_row(callee);
     if !builtin.is_empty() {
         return builtin.iter().map(|s| s.to_string()).collect();
     }
-    if let Some(set) = declared.get(callee) {
+    if let Some(set) = inferred.get(callee) {
         return set.iter().cloned().collect();
     }
     Vec::new()
@@ -131,17 +214,16 @@ fn check_expr(
     e: &Expr,
     caller: &str,
     allowed: &Allowed,
-    declared: &HashMap<String, HashSet<String>>,
+    inferred: &HashMap<String, HashSet<String>>,
     errors: &mut Vec<EffectError>,
 ) {
     if let Expr::Call { callee, .. } = e {
         if let Expr::Ident(name) = callee.as_ref() {
-            // A call into an OPEN-rowed user fn could perform anything its row
-            // variable stands for; but for subsumption we check only its
-            // declared CONCRETE effects (the open part is discharged by the
-            // caller forwarding its own row — full row-var unification is a
-            // later slice). Builtins are always concrete.
-            for eff in callee_effects(name, declared) {
+            // The callee's INFERRED (transitive) effects — so an effect a helper
+            // performs is attributed to it even if its declared row is empty/open
+            // (no laundering through un-annotated intermediaries). Builtins use
+            // their catalog row directly.
+            for eff in callee_effects(name, inferred) {
                 if !allowed.admits(&eff) {
                     errors.push(EffectError {
                         code: E1310,
@@ -162,7 +244,7 @@ fn check_expr(
     }
     // Recurse into children regardless, so nested calls are checked.
     for_each_child(e, &mut |child| {
-        check_expr(child, caller, allowed, declared, errors)
+        check_expr(child, caller, allowed, inferred, errors)
     });
 }
 
@@ -317,6 +399,47 @@ mod tests {
             "fn g() -> i64 | {...e} { println(\"hi\") 0 }",
         );
         assert!(errs.is_empty(), "open-row caller should not leak, got {errs:?}");
+    }
+
+    #[test]
+    fn transitive_effect_is_not_launderable() {
+        // `claims_pure` declares `| {}` but calls an UN-annotated helper that
+        // does IO. The effect must be attributed transitively — declaring an
+        // empty row while reaching IO through an intermediary is still a leak.
+        let errs = check(
+            "fn does_io(x: i64) -> i64 { println(\"io {to_str(x)}\") x }\n\
+             fn claims_pure(x: i64) -> i64 | {} { does_io(x) }",
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("claims_pure") && e.message.contains("IO")),
+            "transitive IO must be flagged on claims_pure, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn transitive_effect_through_two_hops() {
+        // IO laundered through two un-annotated hops still reaches the `| {}` fn.
+        let errs = check(
+            "fn a(x: i64) -> i64 { println(\"{to_str(x)}\") x }\n\
+             fn b(x: i64) -> i64 { a(x) }\n\
+             fn pure_c(x: i64) -> i64 | {} { b(x) }",
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("pure_c") && e.message.contains("IO")),
+            "IO through a→b→pure_c must be flagged, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn transitive_declared_row_is_satisfiable() {
+        // The same two-hop chain is fine when the fn declares the effect it
+        // transitively performs.
+        let errs = check(
+            "fn a(x: i64) -> i64 { println(\"{to_str(x)}\") x }\n\
+             fn b(x: i64) -> i64 { a(x) }\n\
+             fn io_c(x: i64) -> i64 | {IO} { b(x) }",
+        );
+        assert!(errs.is_empty(), "declared {{IO}} should admit the transitive IO, got {errs:?}");
     }
 
     #[test]
