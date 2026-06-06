@@ -442,13 +442,150 @@ pub fn prove_refinement_returns(
         // The return type must name a known refinement.
         let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else { continue };
         let Some(pred) = refinements.get(rname) else { continue };
-        // Integer fragment only.
-        if !f.params.iter().all(|p| is_i64_type(&p.ty)) {
-            continue;
+        // Integer fragment: all params i64.
+        if f.params.iter().all(|p| is_i64_type(&p.ty)) {
+            out.push(prove_one_refinement_return(f, pred, rname));
+        } else if !f.params.is_empty() && f.params.iter().all(|p| is_f64_type(&p.ty)) {
+            // Float fragment: all params f64 (e.g. `fn norm(x: f64) -> NonNegF`).
+            out.push(prove_one_refinement_return_f64(f, pred, rname));
         }
-        out.push(prove_one_refinement_return(f, pred, rname));
+        // Mixed / other param types fall outside the v1 fragment — skipped
+        // (the runtime obligation / constant checker still applies).
     }
     out
+}
+
+/// Float-fragment analog of `prove_one_refinement_return`: encode the f64 body as
+/// a Z3 Real and prove the predicate (with `_` → body) holds for all inputs.
+fn prove_one_refinement_return_f64(f: &FnDef, pred: &Expr, rname: &str) -> ProofResult {
+    let cfg = Config::new();
+    let ctx = Context::new(&cfg);
+    let params: Vec<(String, Real)> = f
+        .params
+        .iter()
+        .map(|p| (p.name.clone(), Real::new_const(&ctx, p.name.as_str())))
+        .collect();
+
+    let body = match encode_expr_real(&ctx, &f.body, &params) {
+        Some(t) => t,
+        None => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: "body uses a construct outside the straight-line float fragment".into(),
+            }
+        }
+    };
+    let pred_z3 = match encode_pred_binder_real(&ctx, pred, &body) {
+        Some(b) => b,
+        None => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: format!("refinement `{rname}`'s predicate is outside the f64 fragment"),
+            }
+        }
+    };
+    let solver = Solver::new(&ctx);
+    solver.assert(&pred_z3.not());
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Sat => {
+            let inputs = solver
+                .get_model()
+                .map(|m| {
+                    params
+                        .iter()
+                        .filter_map(|(n, c)| {
+                            // Reals print as rationals; round toward zero for the i64 report.
+                            m.eval(c, true).and_then(|v| v.as_real()).map(|(num, den)| {
+                                (n.clone(), if den != 0 { num / den } else { 0 })
+                            })
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            ProofResult::Counterexample {
+                function: f.name.clone(),
+                inputs,
+                predicate: format!("return type `{rname}`"),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: f.name.clone(),
+            reason: "Z3 returned unknown".into(),
+        },
+    }
+}
+
+/// f64 analog of `encode_pred_binder`: encode a refinement predicate as Z3 Bool
+/// with `_` → the Real body term.
+fn encode_pred_binder_real<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Real<'c>,
+) -> Option<Bool<'c>> {
+    match e {
+        Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
+            Some(encode_pred_binder_real(ctx, operand, binder_term)?.not())
+        }
+        Expr::BinOp { op, left, right } => match op {
+            BinOp::And => {
+                let l = encode_pred_binder_real(ctx, left, binder_term)?;
+                let r = encode_pred_binder_real(ctx, right, binder_term)?;
+                Some(Bool::and(ctx, &[&l, &r]))
+            }
+            BinOp::Or => {
+                let l = encode_pred_binder_real(ctx, left, binder_term)?;
+                let r = encode_pred_binder_real(ctx, right, binder_term)?;
+                Some(Bool::or(ctx, &[&l, &r]))
+            }
+            BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq => {
+                let l = encode_pred_real(ctx, left, binder_term)?;
+                let r = encode_pred_real(ctx, right, binder_term)?;
+                Some(match op {
+                    BinOp::Lt => l.lt(&r),
+                    BinOp::Gt => l.gt(&r),
+                    BinOp::LtEq => l.le(&r),
+                    BinOp::GtEq => l.ge(&r),
+                    BinOp::Eq => l._eq(&r),
+                    BinOp::NotEq => l._eq(&r).not(),
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// f64 analog of `encode_pred_int`: a Real-valued predicate sub-expression with
+/// `_` → the body. Float literals come through as `Literal::Float`.
+fn encode_pred_real<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Real<'c>,
+) -> Option<Real<'c>> {
+    match e {
+        Expr::Ident(n) if n == "_" => Some(binder_term.clone()),
+        Expr::Literal(Literal::Float(v)) => {
+            // Z3 Real from a decimal — go through a rational string.
+            Some(Real::from_real_str(ctx, &format!("{v}"), "1").unwrap_or_else(|| Real::from_real(ctx, 0, 1)))
+        }
+        Expr::Literal(Literal::Int(v)) => Some(Real::from_real(ctx, *v as i32, 1)),
+        Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
+            Some(encode_pred_real(ctx, operand, binder_term)?.unary_minus())
+        }
+        Expr::BinOp { op, left, right } => {
+            let l = encode_pred_real(ctx, left, binder_term)?;
+            let r = encode_pred_real(ctx, right, binder_term)?;
+            match op {
+                BinOp::Add => Some(&l + &r),
+                BinOp::Sub => Some(&l - &r),
+                BinOp::Mul => Some(&l * &r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 fn prove_one_refinement_return(f: &FnDef, pred: &Expr, rname: &str) -> ProofResult {
@@ -793,5 +930,27 @@ mod tests {
             }
             other => panic!("expected a counterexample, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn smt_proves_f64_refinement_return_and_finds_counterexample() {
+        // PROVEN: |x| is non-negative for every f64 input — over the reals, not just integers.
+        let r = prove_refines(
+            "type NonNegF = f64 where _ >= 0.0\n\
+             fn absf(x: f64) -> NonNegF { if x < 0.0 { 0.0 - x } else { x } }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "absf -> NonNegF must be proven over the reals, got {r:?}"
+        );
+
+        // COUNTEREXAMPLE: the identity does not guarantee strict positivity (x=0.0).
+        let r = prove_refines(
+            "type PosF = f64 where _ > 0.0\nfn idf(x: f64) -> PosF { x }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "idf -> PosF must yield a counterexample, got {r:?}"
+        );
     }
 }
