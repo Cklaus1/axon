@@ -208,7 +208,7 @@ fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 
 | 3 | ✅ Complete | Generics, traits, closures w/ captures, channels, borrow checker, comptime, spans |
 | 4 | ✅ Complete | LSP, formatter, doc gen, incremental compile, multi-file, cross-compile |
 | ASI 1–3.6 | ✅ Merged | `Uncertain<T>`, `Temporal<T>`, `@[verify]`, `@[adaptive]`, `goal_run`, `ai_complete`, `ai_extract*`, `@[contained]` |
-| 5 | 📋 Drafted | Refinement types + SMT (Z3) — see `spec/compiler-phase5.md` |
+| 5 | 🚧 In progress | **Landed (no Z3):** `@[pure]` purity checker (E1207), `@[total]` termination checker (E1208), and refinement types `T where <pred>` — named + inline (bare param `d: i64 where _!=0` and parenthesized `-> (T where P)`), transparent to base, with **constant-predicate obligations** at arg/return/struct-field sites (E1209; predicate subset: arith, comparisons, `&&`/`\|\|`/`!`, `str_len`, `str_eq`). **Remaining:** §4 Z3/SMT backend (`verify.rs::prove()`) for non-constant cases. See `spec/compiler-phase5.md` |
 | 6 | 📋 Drafted | Row-polymorphic effects + handlers — see `spec/compiler-phase6.md` |
 | 7+ | 📋 Roadmapped | `Principal`, `Store`, `Supervisor`, `LLM<Caps>`, goal/agent surface — see `ROADMAP.md` |
 | 10 v0–v1 | ✅ Landed | Codegen-free tree-walking interpreter (`interp.rs`) → `axon run`/`test`/`goal`; prose→AST surface compiler (`axon goal`, lifts ` ```axon ` blocks); ASI builtins in the interpreter. Native codegen build diagnosed as serial LLVM-IR-gen (`BUILD_DIAGNOSIS.md`); fix prototyped (`CODEGEN_WRAPPER_PROTOTYPE.md`) |
