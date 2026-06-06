@@ -3449,6 +3449,46 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn parenthesized_inline_refinement_on_return_and_param() {
+    // Phase 5 §1: the PARENTHESIZED inline refinement form `(T where P)` — the
+    // unambiguous form usable in a return position (`-> (i64 where _ >= 0)`),
+    // where a bare `where` would clash with a fn generic where-clause. Same
+    // desugar-to-synthetic-refinement path. A constant violating it is E1209.
+    // Plain groupings `(T)` and tuples `(A, B)` are unaffected.
+    let reject = [
+        "fn bad() -> (i64 where _ >= 0) { 0 - 1 }\nfn main() { println(to_str(bad())) }",
+        "fn g(n: (i64 where _ > 0)) -> i64 { n }\nfn main() { println(to_str(g(0 - 2))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_pinline_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] paren-inline violation must be caught: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    // Valid refinement returns + plain grouping/tuple (must NOT be disturbed).
+    let accept = [
+        ("fn ap(n: i64) -> (i64 where _ >= 0) { if n < 0 { 0 } else { n } }\nfn main() { println(to_str(ap(5))) }", "5"),
+        ("fn f() -> (i64) { 5 }\nfn main() { println(to_str(f())) }", "5"),
+        ("fn f() -> (i64, i64) { (1, 2) }\nfn main() { let t = f()\n println(to_str(t.0 + t.1)) }", "3"),
+    ];
+    for (i, (src, expected)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_pinline_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] paren inline");
+    }
+}
+
+#[test]
 fn inline_anonymous_refinement_on_a_parameter() {
     // Phase 5 §1 (sub-slice 2): an INLINE anonymous refinement on a parameter —
     // the spec's canonical `fn divide(n: i64, d: i64 where _ != 0)`. Desugared at

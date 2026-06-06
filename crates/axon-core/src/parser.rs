@@ -830,7 +830,12 @@ impl Parser {
                 return Ok(AxonType::Named("()".to_string()));
             }
             self.advance()?; // consume `(`
-            let mut elems = vec![self.parse_type()?];
+            // Phase 5: a parenthesised inline refinement `(T where <pred>)` — the
+            // unambiguous form for a refinement in a position (e.g. a return type)
+            // where a bare `where` would clash with a generic where-clause.
+            let inner_ty = self.parse_type()?;
+            let first_elem = self.maybe_desugar_inline_refinement(inner_ty)?;
+            let mut elems = vec![first_elem];
             let mut had_comma = false;
             while self.eat(&Token::Comma) {
                 had_comma = true;
