@@ -3449,6 +3449,37 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn f64_to_i64_saturates_on_overflow_and_nan() {
+    // f64→i64 conversion is SATURATING (Rust `as i64` since 1.45): out-of-range
+    // → i64::MAX/MIN, NaN → 0. The interpreter does this; native codegen used
+    // raw LLVM `fptosi` whose result is UNDEFINED out of range (it produced
+    // garbage i64::MIN for 1e30/NaN/+Inf — a silent wrong result, I-9). Native
+    // parity is pinned by scripts/float_to_int_parity.sh; this guards the
+    // interpreter (the reference) in the standard gate.
+    let cases = [
+        ("let f = 1.0e30\n  println(to_str(f64_to_i64(f)))", "9223372036854775807"),
+        ("let f = 0.0 - 1.0e30\n  println(to_str(f64_to_i64(f)))", "-9223372036854775808"),
+        ("let a = 0.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))", "0"),
+        ("let a = 1.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))", "9223372036854775807"),
+        ("let f = 3.7\n  println(to_str(f64_to_i64(f)))", "3"),
+    ];
+    for (i, (body, expected)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_f2i_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] conversion must not fault: {out:?}");
+        assert_eq!(
+            stdout.trim(),
+            *expected,
+            "[case {i}] f64_to_i64 must saturate to `{expected}`, got: {stdout}"
+        );
+    }
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

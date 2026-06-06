@@ -201,7 +201,52 @@ pub(crate) fn w_float_to_signed_int<'ctx>(
     int_type: inkwell::types::IntType<'ctx>,
     name: &str,
 ) -> IntValue<'ctx> {
-    b.build_float_to_signed_int(float, int_type, name).unwrap()
+    // SATURATING float→signed-int, matching the interpreter (Rust `as i64`,
+    // saturating since Rust 1.45) and avoiding LLVM `fptosi`'s UNDEFINED result
+    // for out-of-range / NaN inputs (which produced garbage like i64::MIN for
+    // 1e30, NaN, +Inf — a silent-wrong-result, ARCHITECTURE INVARIANTS I-9).
+    //
+    // Rust's semantics: NaN → 0; value ≥ int::MAX → int::MAX; value ≤ int::MIN →
+    // int::MIN; otherwise the truncated `fptosi`. We reproduce it with float
+    // compares + selects (no new basic blocks needed, so this stays a drop-in
+    // wrapper usable from `declare_builtins`). The raw fptosi is only ever
+    // evaluated for in-range inputs; the selects override the out-of-range and
+    // NaN cases, so the poison value can't be observed.
+    let raw = b.build_float_to_signed_int(float, int_type, name).unwrap();
+    let bits = int_type.get_bit_width();
+    // Only i64 (and narrower signed ints) are produced here; guard generically
+    // via the type's min/max as f64 thresholds.
+    let f_ty = float.get_type();
+    let (min_i, max_i) = match bits {
+        64 => (i64::MIN, i64::MAX),
+        32 => (i32::MIN as i64, i32::MAX as i64),
+        16 => (i16::MIN as i64, i16::MAX as i64),
+        8 => (i8::MIN as i64, i8::MAX as i64),
+        _ => return raw, // unusual width — leave as-is
+    };
+    // Thresholds as f64. (int::MAX isn't exactly representable in f64 for i64,
+    // but `>=` against the rounded value is the conservative bound Rust uses.)
+    let max_f = f_ty.const_float(max_i as f64);
+    let min_f = f_ty.const_float(min_i as f64);
+    let max_c = int_type.const_int(max_i as u64, true);
+    let min_c = int_type.const_int(min_i as u64, true);
+    let zero_c = int_type.const_zero();
+
+    // ord: float == float is false iff NaN — use UNO (unordered) to detect NaN.
+    let is_nan = b
+        .build_float_compare(inkwell::FloatPredicate::UNO, float, float, "fti_isnan")
+        .unwrap();
+    let ge_max = b
+        .build_float_compare(inkwell::FloatPredicate::OGE, float, max_f, "fti_gemax")
+        .unwrap();
+    let le_min = b
+        .build_float_compare(inkwell::FloatPredicate::OLE, float, min_f, "fti_lemin")
+        .unwrap();
+
+    // raw, then clamp high, then clamp low, then NaN→0 (innermost wins last).
+    let clamped_hi = b.build_select(ge_max, max_c, raw, "fti_hi").unwrap().into_int_value();
+    let clamped_lo = b.build_select(le_min, min_c, clamped_hi, "fti_lo").unwrap().into_int_value();
+    b.build_select(is_nan, zero_c, clamped_lo, "fti_sat").unwrap().into_int_value()
 }
 
 // ── int arithmetic ────────────────────────────────────────────────────────────
