@@ -4452,6 +4452,26 @@ fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
 }
 
 #[test]
+fn uncertain_bool_condition_branches_on_inner_value() {
+    // R9: an `Uncertain<bool>` condition (a comparison on an Uncertain operand
+    // stays Uncertain, e.g. `if a > 5` for Uncertain `a`) used to PANIC at
+    // runtime ("if condition must be bool, got Uncertain") even though it checked
+    // clean. `if`/`while` now branch on the inner bool (confidence is irrelevant
+    // to control flow), matching how `.value` reads the inner.
+    for (label, src, want) in [
+        ("if true branch", "fn main() -> i64 { let a = uncertain_new(10, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 1),
+        ("if false branch", "fn main() -> i64 { let a = uncertain_new(3, 0.9)\n  if a > 5 { 1 } else { 0 } }\n", 0),
+        ("while loop", "fn main() -> i64 { let i = 0\n  let n = uncertain_new(3, 0.9)\n  while i < n { i = i + 1 }\n  i }\n", 3),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_unccond_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(want), "{label}: an Uncertain<bool> condition must branch on its inner value");
+    }
+}
+
+#[test]
 fn uncertain_binops_propagate_minimum_confidence() {
     // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
     // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's

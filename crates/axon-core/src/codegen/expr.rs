@@ -243,6 +243,16 @@ impl<'ctx> super::Codegen<'ctx> {
                 let cond_val = self.emit_expr(cond, fn_val)?;
                 let cond_int = match cond_val {
                     BasicValueEnum::IntValue(i) => i,
+                    // An `Uncertain<bool>` condition (`if a > 5` where `a` is
+                    // Uncertain — the comparison stays Uncertain `{bool,f64,i64}`)
+                    // branches on its inner bool (field 0); confidence is
+                    // irrelevant to control flow. Matches the interpreter.
+                    BasicValueEnum::StructValue(sv) => {
+                        match self.ir.builder.build_extract_value(sv, 0, "unc_cond") {
+                            Ok(BasicValueEnum::IntValue(i)) => i,
+                            _ => return None,
+                        }
+                    }
                     _ => return None,
                 };
                 self.emit_if(cond_int.into(), then, else_.as_deref(), fn_val)
@@ -977,6 +987,19 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.builder.position_at_end(cond_bb);
         let cond_val = match self.emit_expr(cond, fn_val) {
             Some(BasicValueEnum::IntValue(i)) => i,
+            // An `Uncertain<bool>` condition branches on its inner bool (field 0),
+            // same as `if` — confidence is irrelevant to control flow.
+            Some(BasicValueEnum::StructValue(sv)) => {
+                match self.ir.builder.build_extract_value(sv, 0, "unc_wcond") {
+                    Ok(BasicValueEnum::IntValue(i)) => i,
+                    _ => {
+                        build_wrappers::w_br(&self.ir.builder, body_bb);
+                        self.loop_stack.pop();
+                        self.ir.builder.position_at_end(exit_bb);
+                        return Some(self.ir.context.i64_type().const_zero().into());
+                    }
+                }
+            }
             _ => {
                 // If condition didn't produce a value, treat as infinite loop.
                 build_wrappers::w_br(&self.ir.builder, body_bb);

@@ -96,14 +96,25 @@ impl<'p> Interp<'p> {
                 eval_unary(op, v)
             }
 
-            Expr::If { cond, then, else_ } => match self.eval(cond, env)? {
-                Value::Bool(true) => self.eval(then, env),
-                Value::Bool(false) => match else_ {
-                    Some(e) => self.eval(e, env),
-                    None => Ok(Value::Unit),
-                },
-                other => panic(format!("if condition must be bool, got {}", other.type_name())),
-            },
+            Expr::If { cond, then, else_ } => {
+                let cv = self.eval(cond, env)?;
+                // An `Uncertain<bool>` condition (e.g. `if a > 5` where `a` is
+                // Uncertain — the comparison stays Uncertain) branches on its
+                // inner bool; confidence is irrelevant to control flow. Unwrap it
+                // to the inner value before the bool match.
+                let cv = match uncertain_parts(&cv) {
+                    Some((inner, _conf)) => inner,
+                    None => cv,
+                };
+                match cv {
+                    Value::Bool(true) => self.eval(then, env),
+                    Value::Bool(false) => match else_ {
+                        Some(e) => self.eval(e, env),
+                        None => Ok(Value::Unit),
+                    },
+                    other => panic(format!("if condition must be bool, got {}", other.type_name())),
+                }
+            }
 
             Expr::Match { subject, arms } => {
                 let v = self.eval(subject, env)?;
@@ -128,7 +139,14 @@ impl<'p> Interp<'p> {
 
             Expr::While { cond, body } => {
                 loop {
-                    match self.eval(cond, env)? {
+                    let cv = self.eval(cond, env)?;
+                    // An `Uncertain<bool>` condition branches on its inner bool
+                    // (confidence is irrelevant to control flow) — same as `if`.
+                    let cv = match uncertain_parts(&cv) {
+                        Some((inner, _)) => inner,
+                        None => cv,
+                    };
+                    match cv {
                         Value::Bool(true) => {}
                         Value::Bool(false) => break,
                         other => {
