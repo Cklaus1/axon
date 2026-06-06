@@ -320,12 +320,26 @@ fn encode_expr_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)
             let b = encode_expr_real(ctx, else_e, params)?;
             Some(c.ite(&a, &b))
         }
-        Expr::Block(stmts) => match stmts.as_slice() {
-            [only] => encode_expr_real(ctx, &only.expr, params),
-            _ => None,
-        },
+        Expr::Block(stmts) => encode_block_real(ctx, stmts, params),
         _ => None,
     }
+}
+
+/// Float counterpart of [`encode_block`]: fold leading `let` bindings into the
+/// environment, then encode the tail expression.
+fn encode_block_real<'c>(
+    ctx: &'c Context,
+    stmts: &[Stmt],
+    params: &[(String, Real<'c>)],
+) -> Option<Real<'c>> {
+    let (tail, lets) = stmts.split_last()?;
+    let mut env: Vec<(String, Real<'c>)> = params.to_vec();
+    for s in lets {
+        let Expr::Let { name, value, .. } = &s.expr else { return None };
+        let term = encode_expr_real(ctx, value, &env)?;
+        env.push((name.clone(), term));
+    }
+    encode_expr_real(ctx, &tail.expr, &env)
 }
 
 /// Encode a boolean condition over `Real` terms (float counterpart of
@@ -380,14 +394,20 @@ fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> 
     }
 }
 
-/// A block's value is its final expression (no `let`-bindings in the v1
-/// fragment — they'd need substitution; keep v1 to straight-line returns).
+/// A block's value is its final expression. Leading `let name = E;` bindings are
+/// folded into the environment by substitution (each `E` is encoded in the
+/// bindings visible so far, then bound to `name`), so multi-line straight-line
+/// bodies like `let d = a - b; d * d` are in-fragment. Any non-`let` statement
+/// before the tail has an effect we don't model → out of fragment.
 fn encode_block<'c>(ctx: &'c Context, stmts: &[Stmt], params: &[(String, Int<'c>)]) -> Option<Int<'c>> {
-    // Only a single tail expression is in-fragment.
-    match stmts {
-        [only] => encode_expr(ctx, &only.expr, params),
-        _ => None,
+    let (tail, lets) = stmts.split_last()?;
+    let mut env: Vec<(String, Int<'c>)> = params.to_vec();
+    for s in lets {
+        let Expr::Let { name, value, .. } = &s.expr else { return None };
+        let term = encode_expr(ctx, value, &env)?;
+        env.push((name.clone(), term));
     }
+    encode_expr(ctx, &tail.expr, &env)
 }
 
 /// Encode a boolean condition (a comparison of integer terms) as a Z3 `Bool`.
@@ -951,6 +971,39 @@ mod tests {
         assert!(
             matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
             "idf -> PosF must yield a counterexample, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_proves_refinement_return_through_let_bindings() {
+        // A multi-line body with `let` bindings: `d = a - b; d * d >= 0` for all a, b.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn dist2(a: i64, b: i64) -> NonNeg { let d = a - b\n d * d }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "let-bound (a-b)^2 >= 0 must be proven, got {r:?}"
+        );
+
+        // The same over the reals, chaining two `let`s.
+        let r = prove_refines(
+            "type NonNegF = f64 where _ >= 0.0\n\
+             fn sqdiff(x: f64, y: f64) -> NonNegF { let d = x - y\n let s = d * d\n s }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "let-bound real (x-y)^2 >= 0 must be proven, got {r:?}"
+        );
+
+        // A `let` that does NOT rescue a false claim still yields a counterexample.
+        let r = prove_refines(
+            "type Positive = i64 where _ > 0\n\
+             fn viaLet(n: i64) -> Positive { let m = n\n m }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "let-bound identity must still be refuted at n=0, got {r:?}"
         );
     }
 }
