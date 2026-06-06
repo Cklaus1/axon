@@ -2724,6 +2724,45 @@ fn llm_gateway_stdlib_module_tests_pass() {
 }
 
 #[test]
+fn adaptive_returning_an_uncertain_or_temporal_is_optimized() {
+    // R5/R9: an `@[adaptive]` fn that returns `Uncertain<i64>`/`Temporal<i64>`
+    // (e.g. an AI scorer whose score carries a confidence) was SILENTLY NOT
+    // OPTIMIZED — goal_run's return-type check required a bare i64, so a wrapped
+    // return fell through to the empty-provenance fallback that returns the
+    // TARGET. Now the wrapper is recognized (inner type i64) and the score read
+    // from the inner value, so it actually hill-climbs to the peak.
+    //
+    // Objective peaks at 100 (x=50); target 999 is unreachable, so a fallback
+    // would return 999 while real optimization returns ~100.
+    for (label, ret, ctor) in [
+        ("uncertain", "Uncertain<i64>", "uncertain_new(s, 0.9)"),
+        ("temporal", "Temporal<i64>", "temporal_new(s, 100, 0.1)"),
+    ] {
+        let src = format!(
+            "@[adaptive]\n\
+             fn score(x: i64) -> {ret} {{ let s = 100 - (x - 50) * (x - 50)\n  {ctor} }}\n\
+             fn main() -> i64 {{ let b = goal_run(\"score\", 999.0, 40)\n  println(\"best {{to_str_f64(b)}}\")\n  0 }}\n"
+        );
+        let f = std::env::temp_dir().join(format!("axon_wadapt_{}_{label}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let best: f64 = stdout
+            .lines()
+            .find_map(|l| l.strip_prefix("best "))
+            .and_then(|s| s.trim().parse().ok())
+            .unwrap_or_else(|| panic!("{label}: no 'best' line: {stdout}"));
+        // A real optimization reaches the peak (>= 90); the target-fallback bug
+        // returned 999. Assert it's near the peak, not the unreachable target.
+        assert!(
+            best >= 90.0 && best <= 100.0,
+            "{label}: adaptive wrapper return must be OPTIMIZED to the peak (~100), got {best} (999 = the unoptimized target fallback)"
+        );
+    }
+}
+
+#[test]
 fn goal_run_multistart_nails_the_global_optimum() {
     // Multi-start hill climb: random restart + local refinement.
     // The same two-peak objective where vanilla hill-climb-from-0 gets

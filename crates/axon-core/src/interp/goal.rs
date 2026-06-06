@@ -23,8 +23,8 @@ impl<'p> Interp<'p> {
                 && f.params.iter().all(|p| is_i64_type(&p.ty));
             let all_f64_params = !f.params.is_empty()
                 && f.params.iter().all(|p| is_f64_type(&p.ty));
-            let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
-            let f64_ret = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+            let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+            let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
             if is_adaptive {
                 if all_i64_params && i64_ret {
                     if f.params.len() == 1 {
@@ -89,7 +89,7 @@ impl<'p> Interp<'p> {
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty()
             && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, n_samples));
         }
@@ -112,13 +112,15 @@ impl<'p> Interp<'p> {
                 let v = lo + (next_rand_u64() as u128 % range.max(1)) as i64;
                 probe.push(Value::Int(v));
             }
-            let score = match self.call_fn(f, probe)? {
-                Value::Int(n) => n as f64,
-                Value::Float(v) => v,
-                other => return panic(format!(
+            let result = self.call_fn(f, probe)?;
+            // numeric_score unwraps a soft wrapper (Uncertain<i64>/Temporal<i64>)
+            // to its inner score, so an AI scorer returning an Uncertain is optimized.
+            let score = match numeric_score(&result) {
+                Some(s) => s,
+                None => return panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
-                    other.type_name()
+                    result.type_name()
                 )),
             };
             let d = (score - target).abs();
@@ -171,7 +173,7 @@ impl<'p> Interp<'p> {
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty()
             && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, 0));
         }
@@ -241,7 +243,7 @@ impl<'p> Interp<'p> {
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
+        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, 0));
         }
@@ -250,10 +252,10 @@ impl<'p> Interp<'p> {
 
         let eval = |probe: &[i64]| -> Result<f64, Flow> {
             let args: Vec<Value> = probe.iter().map(|&x| Value::Int(x)).collect();
-            match self.call_fn(f, args)? {
-                Value::Int(n) => Ok(n as f64),
-                Value::Float(v) => Ok(v),
-                other => panic(format!(
+            let other = self.call_fn(f, args)?;
+            match numeric_score(&other) {
+                Some(s) => Ok(s),
+                None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name, other.type_name()
                 )),
@@ -342,8 +344,8 @@ impl<'p> Interp<'p> {
                 && f.params.iter().all(|p| is_i64_type(&p.ty));
             let all_f64_params = !f.params.is_empty()
                 && f.params.iter().all(|p| is_f64_type(&p.ty));
-            let i64_ret = f.return_type.as_ref().map(is_i64_type).unwrap_or(false);
-            let f64_ret = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
+            let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+            let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
             if is_adaptive {
                 if all_i64_params && i64_ret {
                     return if f.params.len() == 1 {
@@ -366,10 +368,10 @@ impl<'p> Interp<'p> {
     /// [`Interp::call_fn`], so the provenance store accumulates as a side effect.
     pub(super) fn hill_climb_i64(&self, f: &FnDef, target: f64, max_evals: i64) -> Result<f64, Flow> {
         let eval_at = |x: i64| -> Result<f64, Flow> {
-            match self.call_fn(f, vec![Value::Int(x)])? {
-                Value::Int(n) => Ok(n as f64),
-                Value::Float(v) => Ok(v),
-                other => panic(format!(
+            let other = self.call_fn(f, vec![Value::Int(x)])?;
+            match numeric_score(&other) {
+                Some(s) => Ok(s),
+                None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
                     other.type_name()
@@ -498,10 +500,10 @@ impl<'p> Interp<'p> {
         };
         let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
             let args = xs.iter().map(|&x| Value::Int(x)).collect();
-            match self.call_fn(f, args)? {
-                Value::Int(n) => Ok(n as f64),
-                Value::Float(v) => Ok(v),
-                other => panic(format!(
+            let other = self.call_fn(f, args)?;
+            match numeric_score(&other) {
+                Some(s) => Ok(s),
+                None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
                     other.type_name()
@@ -676,13 +678,13 @@ impl<'p> Interp<'p> {
         };
         let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
             let args = xs.iter().map(|&x| Value::Float(x)).collect();
-            match self.call_fn(f, args)? {
-                Value::Float(v) => Ok(v),
-                Value::Int(n) => Ok(n as f64),
-                other => panic(format!(
+            let result = self.call_fn(f, args)?;
+            match numeric_score(&result) {
+                Some(s) => Ok(s),
+                None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
-                    other.type_name()
+                    result.type_name()
                 )),
             }
         };
@@ -967,12 +969,12 @@ impl<'p> Interp<'p> {
             Some(v) => { self.provenance_inputs_f64.borrow_mut().insert(name.to_string(), v); }
             None => { self.provenance_inputs_f64.borrow_mut().remove(name); }
         }
-        let score = match result? {
-            Value::Int(n) => n as f64,
-            Value::Float(x) => x,
-            other => return Err(Flow::Panic(format!(
+        let metric_result = result?;
+        let score = match numeric_score(&metric_result) {
+            Some(s) => s,
+            None => return Err(Flow::Panic(format!(
                 "goal_eval: metric `{name}` must return a number, got {}",
-                other.type_name()
+                metric_result.type_name()
             ))),
         };
         Ok(score)

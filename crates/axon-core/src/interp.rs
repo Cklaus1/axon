@@ -1366,7 +1366,12 @@ fn numeric_score(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => Some(*n as f64),
         Value::Float(f) => Some(*f),
-        _ => None,
+        // An `@[adaptive]` fn that returns `Uncertain<T>`/`Temporal<T>` (e.g. an
+        // AI scorer whose score carries a confidence) scores on its INNER value —
+        // the same soft-typing rule as everywhere else. Without this, the
+        // optimizer recorded no score for such a fn and `goal_run` silently fell
+        // back to the target (no optimization happened at all).
+        _ => value::soft_inner(v).and_then(|inner| numeric_score(&inner)),
     }
 }
 
@@ -1462,6 +1467,34 @@ fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, cre
 
 fn is_i64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "i64")
+}
+
+/// An `@[adaptive]` fn's return type is i64-SCORED when it's `i64` OR a soft
+/// wrapper around i64 (`Uncertain<i64>`/`Temporal<i64>`) — the optimizer reads
+/// the score from the inner value (numeric_score unwraps it). Without this, an
+/// AI scorer `-> Uncertain<i64>` wasn't recognized as i64-returning, so goal_run
+/// never entered the hill-climb and silently returned the target (no optimization).
+fn is_i64_scored_ret(ty: &crate::ast::AxonType) -> bool {
+    use crate::ast::AxonType::*;
+    match ty {
+        Named(n) => n == "i64",
+        Generic { base, args } if (base == "Uncertain" || base == "Temporal") => {
+            args.first().map(is_i64_type).unwrap_or(false)
+        }
+        _ => false,
+    }
+}
+
+/// Same as `is_i64_scored_ret` for f64.
+fn is_f64_scored_ret(ty: &crate::ast::AxonType) -> bool {
+    use crate::ast::AxonType::*;
+    match ty {
+        Named(n) => n == "f64",
+        Generic { base, args } if (base == "Uncertain" || base == "Temporal") => {
+            args.first().map(is_f64_type).unwrap_or(false)
+        }
+        _ => false,
+    }
 }
 
 fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
