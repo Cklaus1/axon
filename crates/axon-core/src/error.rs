@@ -103,6 +103,7 @@ pub const E1205: &str = "E1205"; // axon.lock is malformed / unknown version
 pub const E1206: &str = "E1206"; // a @[sensitive] value flows into an external AI call (PRD §4 privacy)
 pub const E1207: &str = "E1207"; // a @[pure] function performs/contains an impure operation (Phase 5 §2, P01/P02)
 pub const E1208: &str = "E1208"; // a @[total] function has no strictly-decreasing measure at a recursive call (Phase 5 §3)
+pub const E1209: &str = "E1209"; // a constant argument provably violates a refinement-type predicate (Phase 5 §1 R02)
 
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope
@@ -306,7 +307,7 @@ mod tests {
             E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908, E0910,
             E1001, E1002, E1003, E1004,
             E1101, E1102,
-            E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208,
+            E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
             E1300, E1301, E1302,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
             E1500, E1503, E1504, E1505,

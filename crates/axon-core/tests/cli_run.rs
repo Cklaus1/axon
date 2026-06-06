@@ -3449,6 +3449,56 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_constant_argument_proof_obligation_e1209() {
+    // Phase 5 §1 R02 (sub-slice 3): the PAYOFF — a refinement actually CATCHES
+    // bugs. At a call f(arg) where the parameter is a refinement `T where P`, if
+    // arg is a compile-time constant, the predicate is evaluated with `_` bound
+    // to it. A provably-false predicate is E1209 at compile time (no Z3, no
+    // runtime). A non-constant argument is deferred (sound — never a false
+    // positive). Covers i64 predicates and `str_len(_)` on a string literal.
+    let reject = [
+        "type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> i64 { n * 2 }\nfn main() { println(to_str(dbl(0 - 5))) }",
+        "type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> i64 { n * 2 }\nfn main() { println(to_str(dbl(0))) }",
+        "type Pct = i64 where _ >= 0 && _ <= 100\nfn use_p(p: Pct) -> i64 { p }\nfn main() { println(to_str(use_p(150))) }",
+        "type NonEmpty = str where str_len(_) > 0\nfn f(s: NonEmpty) -> i64 { char_at(s, 0) }\nfn main() { println(to_str(f(\"\"))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refobl_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] constant must be caught: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    // Satisfying constants + non-constant (deferred) arguments must NOT error.
+    let accept = [
+        "type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> i64 { n * 2 }\nfn main() { println(to_str(dbl(5))) }",
+        "type Pct = i64 where _ >= 0 && _ <= 100\nfn use_p(p: Pct) -> i64 { p }\nfn main() { println(to_str(use_p(50))) }",
+        // Non-constant arg — deferred, not flagged.
+        "type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> i64 { n * 2 }\nfn main() { let x = 5\n println(to_str(dbl(x))) }",
+        "type NonEmpty = str where str_len(_) > 0\nfn f(s: NonEmpty) -> i64 { char_at(s, 0) }\nfn main() { println(to_str(f(\"hi\"))) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refobl_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] satisfying/deferred must run: {combined}");
+        assert!(!combined.contains("E1209"), "[accept {i}] no E1209 expected: {combined}");
+    }
+}
+
+#[test]
 fn named_refinement_type_is_usable_and_erases_to_its_base() {
     // Phase 5 §1 (sub-slices 1+1c): a named refinement `type Name = T where P`
     // parses, is a valid type annotation (no E0308), and is TRANSPARENT to its

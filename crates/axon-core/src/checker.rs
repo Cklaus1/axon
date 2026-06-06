@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::{levenshtein, E1206, E1207, E1208, E1500, E1503, E1504, E1505};
+use crate::error::{levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -193,6 +193,15 @@ const PRIMITIVE_NAMES: &[&str] = &[
 /// deferred until that lands.
 const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 
+/// Phase 5: the value a refinement predicate's binder `_` is bound to when
+/// discharging a constant-argument obligation. Only forms this slice can fold
+/// are represented (an i64 constant, or a known string length for `str_len(_)`).
+#[derive(Clone, Copy)]
+enum RefineVal {
+    Int(i64),
+    StrLen(i64),
+}
+
 fn is_known_type_name(
     name: &str,
     struct_fields: &HashMap<String, Vec<(String, Type)>>,
@@ -280,6 +289,15 @@ pub struct CheckCtx {
     /// resolved to the base wherever a value's type is computed (so `n: Positive`
     /// is treated as `i64` for arithmetic / arg compatibility / etc.).
     refinement_base: HashMap<String, Type>,
+    /// Phase 5: named refinement → its predicate Expr (the binder is `_`). Used
+    /// to discharge the constant-argument proof obligation (sub-slice 3): at a
+    /// call `f(arg)` whose param is a refinement, if `arg` is a compile-time
+    /// constant, the predicate is evaluated with `_` bound to it (E1201/E1202).
+    refinement_pred: HashMap<String, Expr>,
+    /// Phase 5: per-user-fn, the refinement name of each parameter slot (None for
+    /// an unrefined param). Populated from fn signatures so a call site can find
+    /// which arguments carry a proof obligation.
+    fn_param_refinements: HashMap<String, Vec<Option<String>>>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -329,6 +347,8 @@ impl CheckCtx {
             adaptive_fns: HashSet::new(),
             pure_fns: HashSet::new(),
             refinement_base: HashMap::new(),
+            refinement_pred: HashMap::new(),
+            fn_param_refinements: HashMap::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -412,9 +432,31 @@ impl CheckCtx {
                     self.pure_fns.insert(f.name.clone());
                 }
             }
-            // Phase 5: register named refinements → their erased base Type.
+            // Phase 5: register named refinements → erased base + predicate.
             if let Item::RefineDef(r) = item {
                 self.refinement_base.insert(r.name.clone(), axon_type_to_type(&r.base));
+                self.refinement_pred.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        // Phase 5: record each user fn's per-param refinement name (None if the
+        // param isn't a refinement) so a call site can find proof obligations.
+        if !self.refinement_pred.is_empty() {
+            for item in &program.items {
+                if let Item::FnDef(f) = item {
+                    let slots: Vec<Option<String>> = f
+                        .params
+                        .iter()
+                        .map(|p| match &p.ty {
+                            AxonType::Named(n) if self.refinement_pred.contains_key(n) => {
+                                Some(n.clone())
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if slots.iter().any(|s| s.is_some()) {
+                        self.fn_param_refinements.insert(f.name.clone(), slots);
+                    }
+                }
             }
         }
         if !self.pure_fns.is_empty() {
@@ -829,6 +871,136 @@ impl CheckCtx {
         self.current_ret_ty = prev_ret;
         self.current_generic_params = prev_generics;
         self.current_span = prev_span;
+    }
+
+    /// Phase 5 §1 sub-slice 3 — the constant-argument proof obligation (R02).
+    /// At a call `f(arg₁, …)` whose parameter `i` is a refinement `T where P`,
+    /// if `argᵢ` is a compile-time constant, evaluate `P[argᵢ/_]`: a `false`
+    /// result is E1201 (the refinement is provably violated). A non-constant
+    /// argument can't be discharged here — that needs the SMT backend (§4) — so
+    /// it's silently left for the runtime/solver (no E1202 noise yet). No Z3.
+    fn check_refinement_args(&mut self, fn_name: &str, args: &[Expr], node_path: &str) {
+        let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else { return };
+        for (i, arg) in args.iter().enumerate() {
+            let Some(Some(rname)) = slots.get(i) else { continue };
+            let Some(pred) = self.refinement_pred.get(rname).cloned() else { continue };
+            // The binder value: an i64 constant, or a string literal's length
+            // (for `str_len(_)` predicates). Anything else is non-constant and
+            // deferred (no obligation discharged here).
+            let bound = if let Some(v) = const_eval_int(arg) {
+                RefineVal::Int(v)
+            } else if let Expr::Literal(crate::ast::Literal::Str(s)) = arg {
+                RefineVal::StrLen(s.chars().count() as i64)
+            } else {
+                continue;
+            };
+            // Only a PROVABLY-false predicate is an error; satisfied or
+            // not-statically-evaluable both defer (the latter to §4 / runtime).
+            if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+                let file = self.file.clone();
+                let span = self.current_span;
+                let shown = match bound {
+                    RefineVal::Int(v) => v.to_string(),
+                    RefineVal::StrLen(_) => format!("{arg:?}"),
+                };
+                self.errors.push(
+                    CheckError::new(
+                        E1209,
+                        format!(
+                            "argument {i} of `{fn_name}` ({shown}) violates the refinement \
+                             `{rname}` — the constant does not satisfy the type's predicate"
+                        ),
+                    )
+                    .node(format!("{node_path}.arg_{i}"))
+                    .at(&file, 0, 0)
+                    .with_span(span)
+                    .fix(format!(
+                        "pass a value that satisfies `{rname}`'s predicate, or change the \
+                         parameter type"
+                    )),
+                );
+            }
+        }
+    }
+
+    /// Evaluate a refinement predicate with the binder `_` bound to a constant
+    /// value. Supports the Phase-5 predicate subset over constants: integer
+    /// arithmetic, comparisons, `&&`/`||`/`!`, and `str_len(_)` on a known
+    /// length. Returns `None` when the predicate uses a form this slice can't
+    /// fold (then the obligation is deferred, not failed).
+    fn eval_refinement_pred(pred: &Expr, bound: RefineVal) -> Option<bool> {
+        Self::eval_pred_bool(pred, &bound)
+    }
+
+    fn eval_pred_bool(e: &Expr, b: &RefineVal) -> Option<bool> {
+        use crate::ast::BinOp;
+        match e {
+            Expr::Literal(crate::ast::Literal::Bool(v)) => Some(*v),
+            Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
+                Some(!Self::eval_pred_bool(operand, b)?)
+            }
+            Expr::BinOp { op, left, right } => match op {
+                BinOp::And => Some(Self::eval_pred_bool(left, b)? && Self::eval_pred_bool(right, b)?),
+                BinOp::Or => Some(Self::eval_pred_bool(left, b)? || Self::eval_pred_bool(right, b)?),
+                BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
+                    let l = Self::eval_pred_int(left, b)?;
+                    let r = Self::eval_pred_int(right, b)?;
+                    Some(match op {
+                        BinOp::Eq => l == r,
+                        BinOp::NotEq => l != r,
+                        BinOp::Lt => l < r,
+                        BinOp::Gt => l > r,
+                        BinOp::LtEq => l <= r,
+                        BinOp::GtEq => l >= r,
+                        _ => unreachable!(),
+                    })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Evaluate an integer-valued sub-expression of a predicate, with `_` bound.
+    fn eval_pred_int(e: &Expr, b: &RefineVal) -> Option<i64> {
+        use crate::ast::{BinOp, Literal, UnaryOp};
+        match e {
+            // The binder `_` → the bound integer value.
+            Expr::Ident(n) if n == "_" => match b {
+                RefineVal::Int(v) => Some(*v),
+                RefineVal::StrLen(_) => None,
+            },
+            // `str_len(_)` → the bound string's length (when the value is a str).
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(fname) = callee.as_ref() {
+                    if fname == "str_len" && args.len() == 1 {
+                        if let Expr::Ident(n) = &args[0] {
+                            if n == "_" {
+                                if let RefineVal::StrLen(len) = b {
+                                    return Some(*len);
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            Expr::Literal(Literal::Int(n)) => Some(*n),
+            Expr::UnaryOp { op: UnaryOp::Neg, operand } => Self::eval_pred_int(operand, b)?.checked_neg(),
+            Expr::BinOp { op, left, right } => {
+                let l = Self::eval_pred_int(left, b)?;
+                let r = Self::eval_pred_int(right, b)?;
+                match op {
+                    BinOp::Add => l.checked_add(r),
+                    BinOp::Sub => l.checked_sub(r),
+                    BinOp::Mul => l.checked_mul(r),
+                    BinOp::Div if r != 0 => l.checked_div(r),
+                    BinOp::Rem if r != 0 => l.checked_rem(r),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     /// Phase 5: replace any named-refinement type with its erased base,
@@ -1508,6 +1680,7 @@ impl CheckCtx {
                         }
                     }
                     self.check_call_arity_and_types(name, args, node_path, scope);
+                    self.check_refinement_args(name, args, node_path);
                 }
             }
 
