@@ -22,6 +22,17 @@ pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
     None
 }
 
+/// The inner present `value` of a `Temporal<T>`, or `None` otherwise. Used by the
+/// Temporal binary-op soft-typing path.
+fn soft_temporal_inner(v: &Value) -> Option<Value> {
+    if let Value::Struct { name, fields } = v {
+        if name == "Temporal" {
+            return Some(fields.get("value").cloned().unwrap_or(Value::Int(0)));
+        }
+    }
+    None
+}
+
 /// The plain inner value of a SOFT-TYPED wrapper — `Uncertain<T>` or `Temporal<T>`
 /// (both carry a `value` field 0) — for the soft-typing rule that lets such a
 /// value flow into a plain-`T` slot (if/while condition, scalar param, scalar
@@ -62,13 +73,23 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         }
     }
 
-    // NOTE: no `Temporal<T>` binary-op propagation here. `t > 5` / `t + n` works
-    // in the interp by unwrapping but NATIVE CODEGEN has no Temporal-binop path
-    // (it has emit_binop_uncertain only), so adding it interp-only would create
-    // an interp↔codegen divergence. The boundary soft-typing (Temporal flowing
-    // into a plain-T param/return — see call_fn) IS parity-safe and landed; a
-    // Temporal operator path in both engines is a separate follow-on. The value
-    // at a time is read via `temporal_at`.
+    // ── Temporal<T> binary-op soft typing ────────────────────────────────────
+    // A `Temporal<T>` operand is soft-compatible with `T`: operate on the inner
+    // PRESENT value and return a PLAIN result (Temporal's horizon/decay aren't
+    // meaningfully composed by a single binop, so `t > 5` yields a plain bool,
+    // `t + n` a plain int — distinct from Uncertain, which stays Uncertain to
+    // carry confidence). Lets `if t > 5` / `t + n` work instead of panicking
+    // "cannot apply Gt to Temporal". Matched by codegen's Temporal-binop path so
+    // native==interp. The decayed value at a time is read via `temporal_at`.
+    {
+        let lt = soft_temporal_inner(&l);
+        let rt = soft_temporal_inner(&r);
+        if lt.is_some() || rt.is_some() {
+            let lv = lt.unwrap_or_else(|| l.clone());
+            let rv = rt.unwrap_or_else(|| r.clone());
+            return eval_binop_vals(op, lv, rv);
+        }
+    }
 
     match (op, l, r) {
         // Integer arithmetic — checked by default. Overflow is a *graceful

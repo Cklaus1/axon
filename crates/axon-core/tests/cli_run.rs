@@ -4528,6 +4528,8 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     for (label, src, want) in [
         ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  id(t) }\n", 7),
         ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  r + 1 }\n", 10),
+        ("temporal compare", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  if t > 5 { 1 } else { 0 } }\n", 1),
+        ("temporal arithmetic", "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  t + 3 }\n", 10),
     ] {
         let f = std::env::temp_dir().join(format!("axon_temp_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
         std::fs::write(&f, src).unwrap();

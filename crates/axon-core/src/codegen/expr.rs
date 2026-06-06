@@ -179,6 +179,32 @@ impl<'ctx> super::Codegen<'ctx> {
                 if is_unc(&lt_sem) || is_unc(&rt_sem) {
                     return self.emit_binop_uncertain(op, left, right, &lt_sem, &rt_sem, fn_val);
                 }
+                // Layer-2 ASI: a `Temporal<T>` operand unwraps to its present
+                // value (field 0) and operates as a plain `T` — a plain result,
+                // no propagation (mirrors the interp's Temporal binop path). Lets
+                // `t > 5` / `t + n` compile instead of an IR type mismatch.
+                let is_temp = |t: &Option<Type>| matches!(t, Some(Type::Temporal(_)));
+                if is_temp(&lt_sem) || is_temp(&rt_sem) {
+                    let mut lhs = self.emit_expr(left, fn_val)?;
+                    let mut rhs = self.emit_expr(right, fn_val)?;
+                    if is_temp(&lt_sem) {
+                        if let BasicValueEnum::StructValue(sv) = lhs {
+                            lhs = self.ir.builder.build_extract_value(sv, 0, "temp_l").ok()?;
+                        }
+                    }
+                    if is_temp(&rt_sem) {
+                        if let BasicValueEnum::StructValue(sv) = rhs {
+                            rhs = self.ir.builder.build_extract_value(sv, 0, "temp_r").ok()?;
+                        }
+                    }
+                    // The inner T from whichever side is Temporal.
+                    let inner_ty = match (&lt_sem, &rt_sem) {
+                        (Some(Type::Temporal(t)), _) => (**t).clone(),
+                        (_, Some(Type::Temporal(t))) => (**t).clone(),
+                        _ => Type::I64,
+                    };
+                    return Some(self.emit_binop(op, lhs, rhs, &inner_ty));
+                }
                 let lhs = self.emit_expr(left, fn_val)?;
                 let rhs = self.emit_expr(right, fn_val)?;
                 // Prefer the semantic type from inference (distinguishes u32/u64
