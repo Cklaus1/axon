@@ -3449,6 +3449,48 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_struct_field_proof_obligation_e1209() {
+    // Phase 5 §1 R04: a constant value assigned to a refinement-typed struct
+    // field must satisfy the predicate at construction (E1209). Completes the
+    // constant-obligation family (argument, return, struct field). Same comptime
+    // eval + soundness: non-constant field values defer.
+    let reject = [
+        "type Positive = i64 where _ > 0\ntype Box = { v: Positive }\nfn main() { let b = Box { v: 0 - 5 }\n println(to_str(b.v)) }",
+        "type NonEmpty = str where str_len(_) > 0\ntype Name = { s: NonEmpty }\nfn main() { let n = Name { s: \"\" }\n println(n.s) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_reffield_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] bad field must be caught: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        "type Positive = i64 where _ > 0\ntype Box = { v: Positive }\nfn main() { let b = Box { v: 7 }\n println(to_str(b.v)) }",
+        "type Positive = i64 where _ > 0\ntype Box = { v: Positive }\nfn id(n: i64) -> i64 { n }\nfn main() { let b = Box { v: id(3) }\n println(to_str(b.v)) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_reffield_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] valid field must run: {combined}");
+        assert!(!combined.contains("E1209"), "[accept {i}] no E1209: {combined}");
+    }
+}
+
+#[test]
 fn refinement_return_site_proof_obligation_e1209() {
     // Phase 5 §1 R03 (sub-slice 4): a function with a named-refinement RETURN
     // type must satisfy the predicate for every constant return — both the

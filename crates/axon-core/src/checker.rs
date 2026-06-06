@@ -302,6 +302,10 @@ pub struct CheckCtx {
     /// an unrefined param). Populated from fn signatures so a call site can find
     /// which arguments carry a proof obligation.
     fn_param_refinements: HashMap<String, Vec<Option<String>>>,
+    /// Phase 5: per-struct, `field_name → refinement_name` for fields whose
+    /// declared type is a refinement. Drives the R04 struct-construction
+    /// obligation (a constant field value is checked against the predicate).
+    struct_field_refinements: HashMap<String, HashMap<String, String>>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -354,6 +358,7 @@ impl CheckCtx {
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
             fn_param_refinements: HashMap::new(),
+            struct_field_refinements: HashMap::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -460,6 +465,22 @@ impl CheckCtx {
                         .collect();
                     if slots.iter().any(|s| s.is_some()) {
                         self.fn_param_refinements.insert(f.name.clone(), slots);
+                    }
+                }
+                // Struct fields whose declared type is a refinement (R04).
+                if let Item::TypeDef(td) = item {
+                    let refs: HashMap<String, String> = td
+                        .fields
+                        .iter()
+                        .filter_map(|f| match &f.ty {
+                            AxonType::Named(n) if self.refinement_pred.contains_key(n) => {
+                                Some((f.name.clone(), n.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect();
+                    if !refs.is_empty() {
+                        self.struct_field_refinements.insert(td.name.clone(), refs);
                     }
                 }
             }
@@ -971,6 +992,49 @@ impl CheckCtx {
                 .with_span(span)
                 .fix(format!(
                     "return a value that satisfies `{rname}`'s predicate, or change the return type"
+                )),
+            );
+        }
+    }
+
+    /// Phase 5 R04 — the struct-construction obligation. A constant value
+    /// assigned to a refinement-typed field must satisfy the predicate (E1209).
+    fn check_field_refinement(
+        &mut self,
+        rname: &str,
+        fname: &str,
+        struct_name: &str,
+        fexpr: &Expr,
+        node_path: &str,
+    ) {
+        let Some(pred) = self.refinement_pred.get(rname).cloned() else { return };
+        let bound = if let Some(v) = const_eval_int(fexpr) {
+            RefineVal::Int(v)
+        } else if let Expr::Literal(crate::ast::Literal::Str(s)) = fexpr {
+            RefineVal::StrLen(s.chars().count() as i64)
+        } else {
+            return;
+        };
+        if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+            let file = self.file.clone();
+            let span = self.current_span;
+            let shown = match bound {
+                RefineVal::Int(v) => v.to_string(),
+                RefineVal::StrLen(_) => format!("{fexpr:?}"),
+            };
+            self.errors.push(
+                CheckError::new(
+                    E1209,
+                    format!(
+                        "field `{fname}` of `{struct_name}` is set to {shown}, which violates its \
+                         refinement type `{rname}` — the constant does not satisfy the predicate"
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "set `{fname}` to a value that satisfies `{rname}`'s predicate"
                 )),
             );
         }
@@ -2089,6 +2153,16 @@ impl CheckCtx {
                 // for structs via E0101; this walks nested exprs for other rules).
                 for (i, (_fname, fexpr)) in fields.iter().enumerate() {
                     self.check_expr(fexpr, &format!("{node_path}.field_{i}"), scope);
+                }
+                // R04: a constant field value whose declared field type is a
+                // refinement must satisfy the predicate.
+                if let Some(field_refs) = self.struct_field_refinements.get(name).cloned() {
+                    for (i, (fname, fexpr)) in fields.iter().enumerate() {
+                        let Some(rname) = field_refs.get(fname) else { continue };
+                        self.check_field_refinement(
+                            rname, fname, name, fexpr, &format!("{node_path}.field_{i}"),
+                        );
+                    }
                 }
                 // Duplicate field in the literal (`P { x: 1, x: 2 }`): last-wins
                 // silently dropped the first value. Flag each repeat as E0406.
