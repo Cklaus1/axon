@@ -55,6 +55,21 @@ fn greet(name: NonEmpty) -> i64 {
     str_len(name)
 }
 
+// A refinement RETURN type. `axon verify` (built with `--features smt`) proves
+// statically — via Z3, over ALL i64 inputs — that the body always satisfies the
+// refinement: |n| is never negative, so `abs_nn` really does return a `NonNeg`.
+type NonNeg = i64 where _ >= 0
+fn abs_nn(n: i64) -> NonNeg {
+    if n < 0 { 0 - n } else { n }
+}
+
+// Refinement SUBTYPING across a call. `abs_nn` returns a `NonNeg`; `scale`'s
+// first parameter wants a `Positive`. Forwarding here would need `NonNeg ⟹
+// Positive`, which is false at 0 — so this file forwards into a `NonNeg` sink
+// instead, which `axon verify` proves safe (`Positive ⟹ NonNeg` always holds).
+fn nn_sink(x: NonNeg) -> i64 { x }
+fn forward_pos(p: Positive) -> i64 { nn_sink(p) }
+
 fn main() {
     // All arguments below SATISFY their refinements, so this checks and runs.
     println("factorial(5)   = {to_str(factorial(5))}")
@@ -75,4 +90,8 @@ fn main() {
     // Refinements erase to their base type, so ordinary arithmetic just works.
     let p: Positive = 10
     println("positive * 2   = {to_str(p * 2)}")
+
+    // A statically-proved refinement return, and a forwarded refinement arg.
+    println("abs_nn(-7)     = {to_str(abs_nn(0 - 7))}")
+    println("forward_pos(4) = {to_str(forward_pos(4))}")
 }
