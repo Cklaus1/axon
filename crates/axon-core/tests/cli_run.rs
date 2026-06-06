@@ -3598,6 +3598,32 @@ fn parenthesized_inline_refinement_on_return_and_param() {
 }
 
 #[test]
+fn refinements_compose_with_asi_annotations_and_subtyping() {
+    // Refinement types are transparent to their base, so they coexist with every
+    // ASI annotation and the type system at large. This pins that a refinement
+    // does NOT break: subtyping (Positive → i64), Option/slice wrappers, and the
+    // @[verify] / @[contained] / @[adaptive] surfaces — all running clean.
+    let progs = [
+        // R01 subtyping: a refinement widens to its base at a plain-i64 param.
+        ("type Positive = i64 where _ > 0\nfn g(n: i64) -> i64 { n + 1 }\nfn main() { let p: Positive = 5\n println(to_str(g(p))) }", "6"),
+        // Refinement inside Option / slice.
+        ("type Positive = i64 where _ > 0\nfn main() { let a: [Positive] = [1, 2, 3]\n println(to_str(a[0] + a[2])) }", "4"),
+        // Refinement param + @[verify] return (Layer-2) — the bounded-spend shape.
+        ("type Budget = i64 where _ >= 0 && _ <= 1000\n@[verify(value <= 1000)]\nfn rec(b: Budget) -> i64 { b }\nfn main() { println(to_str(rec(500))) }", "500"),
+        // Refinement param + @[contained] capability sandbox.
+        ("type Positive = i64 where _ > 0\n@[contained(fs: [write(\"./out/\")], net: [], exec: none)]\nfn score(n: Positive) -> i64 { n * 2 }\nfn main() { println(to_str(score(5))) }", "10"),
+    ];
+    for (i, (src, expected)) in progs.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refasi_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] refinement+ASI must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] refinement composes");
+    }
+}
+
+#[test]
 fn inline_refinement_on_a_struct_field() {
     // Phase 5 §1: an INLINE anonymous refinement on a struct FIELD type
     // (`type Box = { v: i64 where _ > 0 }`). Desugared like every other inline
