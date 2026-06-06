@@ -63,6 +63,20 @@ fi
 
 fail=0
 
+# nbuild SRC OUT — native-build SRC to OUT, retrying ONCE on failure. A real
+# compile error fails both times; a transient (build-lock contention, a stale
+# bitcode-cache write race) usually passes the retry. The startup probe already
+# proved codegen works, so a per-case build failure is almost always transient —
+# without this retry it was reported as a spurious "interp↔codegen divergence"
+# under heavy host load. Returns 0 on success, 1 on a persistent failure.
+nbuild() {
+  local src="$1" out="$2"
+  "$AXON" build "$src" -o "$out" --no-cache >/dev/null 2>&1 && return 0
+  # brief backoff, then one retry
+  sleep 1
+  "$AXON" build "$src" -o "$out" --no-cache >/dev/null 2>&1
+}
+
 # fuzz NAME DOMAIN ARITY EXPR
 #   DOMAIN selects the placeholder generator (A, and B for arity 2):
 #     i64  — integers in ±1e9 (edges 0,±1,±2,±1e9,±999999999). NON-overflowing
@@ -148,7 +162,7 @@ fuzz() {
   i_out="$("$AXON" run "$src" 2>/dev/null)"; i_exit=$?
 
   # native (build once, run)
-  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+  if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>/dev/null)"; n_exit=$?
@@ -176,7 +190,7 @@ nan_case() {
   printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
   local i_out n_out
   i_out="$("$AXON" run "$src" 2>/dev/null)"
-  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+  if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>/dev/null)"
@@ -205,7 +219,7 @@ expect_overflow() {
   local i_out i_exit n_out n_exit
   # Capture stderr (the panic message lands there) + exit code, both engines.
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+  if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
@@ -235,7 +249,7 @@ expect_equal() {
   printf 'fn main() {\n    %s\n    println(to_str(%s))\n}\n' "$setup" "$expr" > "$src"
   local i_out i_exit n_out n_exit
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+  if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
@@ -255,7 +269,7 @@ expect_runtime_panic() {
   printf 'fn main() {\n%b\n}\n' "$body" > "$src"
   local i_out i_exit n_out n_exit
   i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
-  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+  if ! nbuild "$src" "$WORK/$name.bin"; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
   n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
