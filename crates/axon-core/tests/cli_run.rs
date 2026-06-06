@@ -20,6 +20,18 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
+fn phase6_with_handler_parses_and_runs_as_body() {
+    // The handler surface slice: a `with <handler> { body }` parses and runs as
+    // its body (handlers are inert — no discharge yet). Both the named and
+    // inline forms work, and `axon run` succeeds with the expected output.
+    let out = axon().args(["run", &fixture("with_handler.ax")]).output().unwrap();
+    assert!(out.status.success(), "with-handler program should run: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("done 11"), "named handler body runs: {stdout}");
+    assert!(stdout.contains("safe 6"), "inline handler body runs: {stdout}");
+}
+
+#[test]
 fn phase6_effect_row_subsumption_is_enforced_by_check() {
     // Regression guard for the CLI-pipeline wiring: the Phase-6 effect checker
     // (effects::check_effects, E1310) must run in the SAME cmd_check path the

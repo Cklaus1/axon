@@ -1,0 +1,15 @@
+// Phase 6 handler surface: `with` blocks parse and run as their body (handlers
+// are inert in this slice — no discharge / resume yet), and native == interp.
+fn risky(x: i64) -> i64 | {IO} {
+    println("risky {to_str(x)}")
+    x + 1
+}
+fn safe(x: i64) -> i64 {
+    with handler { on IO(p) => resume(p)  return(v) => v } {
+        risky(x)
+    }
+}
+fn main() {
+    let r = with retry { risky(10) }
+    println("done {to_str(r)} safe {to_str(safe(5))}")
+}

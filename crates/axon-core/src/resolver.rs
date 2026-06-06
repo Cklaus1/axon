@@ -719,6 +719,16 @@ impl<'a> Resolver<'a> {
                 self.table.pop_scope();
             }
 
+            // Phase 6 (surface slice): `with <handler> { body }`. Resolve the
+            // body. Inline-handler ARM bodies are NOT name-resolved yet: they
+            // are inert (never dispatched in this slice) and legitimately use
+            // handler-special forms like `resume` that have no binding until the
+            // discharge/resume semantics land. Resolving them now would wrongly
+            // report `resume` as an unknown name.
+            Expr::WithHandler { body, .. } => {
+                self.resolve_expr(body);
+            }
+
             // ── Bindings: define then resolve the value ───────────────────
             //
             // The value is resolved *before* the name is defined so that
@@ -1276,6 +1286,14 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
                 }
             }
         }
+        Expr::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_mut() {
+                for arm in arms.iter_mut().chain(return_arm.as_deref_mut()) {
+                    fill_captures_expr(&mut arm.body, outer);
+                }
+            }
+            fill_captures_expr(body, outer);
+        }
         // Terminal nodes — no sub-expressions.
         Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Return(None)
         | Expr::Break | Expr::Continue => {}
@@ -1399,6 +1417,17 @@ fn collect_free_vars(
                     collect_free_vars(e, bound, free);
                 }
             }
+        }
+        Expr::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms.iter().chain(return_arm.as_deref()) {
+                    // The arm's payload binding shadows within the arm body.
+                    let mut inner = bound.clone();
+                    collect_pattern_bindings(&arm.binding, &mut inner);
+                    collect_free_vars(&arm.body, &inner, free);
+                }
+            }
+            collect_free_vars(body, bound, free);
         }
         Expr::Literal(_) | Expr::None | Expr::Return(None)
         | Expr::Break | Expr::Continue => {}
@@ -1563,6 +1592,14 @@ fn collect_binds_and_uses(
             for (_, v) in fields {
                 collect_binds_and_uses(v, bound, bound_count, used);
             }
+        }
+        E::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms.iter().chain(return_arm.as_deref()) {
+                    collect_binds_and_uses(&arm.body, bound, bound_count, used);
+                }
+            }
+            collect_binds_and_uses(body, bound, bound_count, used);
         }
         // Leaves with no sub-expressions / no uses.
         E::Literal(_) | E::None | E::Return(None) | E::Break | E::Continue => {}

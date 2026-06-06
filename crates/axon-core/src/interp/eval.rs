@@ -27,6 +27,11 @@ impl<'p> Interp<'p> {
 
             Expr::Block(stmts) => self.eval_block(stmts, env),
 
+            // Phase 6 (surface slice): a `with <handler> { body }` evaluates to
+            // its body. Effect discharge / `resume` are later slices; for now the
+            // handler is inert, so the body runs exactly as if unwrapped.
+            Expr::WithHandler { body, .. } => self.eval(body, env),
+
             Expr::Let { name, value, .. }
             | Expr::Own { name, value, .. }
             | Expr::RefBind { name, value, .. } => {

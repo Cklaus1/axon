@@ -53,6 +53,10 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
     match expr {
         Expr::Block(stmts) =>
             Expr::Block(stmts.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect()),
+        Expr::WithHandler { handler, body } => Expr::WithHandler {
+            handler: Box::new(handler.map_arm_bodies(|e| subst_expr(e, subst))),
+            body: Box::new(subst_expr(body, subst)),
+        },
 
         Expr::Let { name, ty, value } =>
             Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
@@ -338,6 +342,14 @@ impl MonoContext {
             Expr::Block(stmts) => {
                 for s in stmts { self.collect_from_expr(&s.expr); }
             }
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms.iter().chain(return_arm.as_deref()) {
+                        self.collect_from_expr(&arm.body);
+                    }
+                }
+                self.collect_from_expr(body);
+            }
             Expr::Call { callee, args, .. } => {
                 self.collect_from_expr(callee);
                 for a in args { self.collect_from_expr(a); }
@@ -479,6 +491,10 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         Expr::Block(stmts) => Expr::Block(
             stmts.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect()
         ),
+        Expr::WithHandler { handler, body } => Expr::WithHandler {
+            handler: Box::new(handler.map_arm_bodies(|e| rename_calls_expr(e, rename))),
+            body: Box::new(rename_calls_expr(body, rename)),
+        },
         Expr::Let { name, ty, value } => Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::Own { name, ty, value } => Expr::Own { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
         Expr::RefBind { name, ty, value } => Expr::RefBind { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },

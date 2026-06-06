@@ -416,6 +416,17 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
 
         // Recurse into all compound expressions.
         Expr::Block(stmts) => check_stmts(stmts, ctx),
+        // Phase 6: capability checks must see through a `with` block — both the
+        // handler arm bodies and the wrapped body can make capability-relevant
+        // calls.
+        Expr::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms.iter().chain(return_arm.as_deref()) {
+                    check_expr(&arm.body, ctx);
+                }
+            }
+            check_expr(body, ctx);
+        }
         Expr::Let { value, .. }
         | Expr::Own { value, .. }
         | Expr::RefBind { value, .. } => check_expr(value, ctx),

@@ -296,6 +296,14 @@ pub enum Expr {
         body: Vec<Stmt>,
     },
     Assign { name: String, value: Box<Expr> },
+    /// Phase 6: `with <handler> { body }` — run `body` under an effect handler.
+    /// The handler is either a named reference or an inline `handler { … }`. In
+    /// this surface slice the node is parsed and preserved but evaluates to its
+    /// body unchanged (no effect discharge / `resume` yet — later slices).
+    WithHandler {
+        handler: Box<HandlerExpr>,
+        body: Box<Expr>,
+    },
     /// Place assignment: `<place> = <value>`, where `place` is an `Index` or
     /// `FieldAccess` (e.g. `xs[i] = v`, `s.field = v`). Bare `ident = v` uses
     /// `Assign` instead.
@@ -351,6 +359,59 @@ pub struct MatchArm {
     pub pattern: Pattern,
     pub guard: Option<Expr>,
     pub body: Expr,
+}
+
+/// Phase 6: the handler in a `with <handler> { … }` expression — either a named
+/// reference (`with retry_on_net { … }`) or an inline structural handler
+/// (`with handler { on Net(r) => … }`). This surface slice captures the syntax;
+/// effect discharge and `resume` semantics arrive in later slices.
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub enum HandlerExpr {
+    /// `with <name> { … }` — a handler defined elsewhere, resolved by name.
+    Named(String),
+    /// `with handler { <arms> } { … }` — an inline structural handler.
+    Inline {
+        arms: Vec<HandlerArm>,
+        /// The optional `return(v) => e` final-value rewrite.
+        return_arm: Option<Box<HandlerArm>>,
+    },
+}
+
+/// One arm of an inline handler: `on <Effect>(<binding>) => <body>`, or the
+/// `return(<binding>) => <body>` final-value rewrite (where `effect` is empty).
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub struct HandlerArm {
+    /// The effect name this arm intercepts (e.g. `"Net"`). Empty for a
+    /// `return(...)` arm.
+    pub effect: String,
+    /// The pattern bound to the intercepted operation's payload / final value.
+    pub binding: Pattern,
+    pub body: Expr,
+}
+
+impl HandlerExpr {
+    /// Rebuild this handler with each arm body rewritten by `f`. A `Named`
+    /// handler has no inline bodies and is returned unchanged. Used by AST
+    /// transforms (monomorphization, renaming) so handler arm bodies are
+    /// transformed consistently with the rest of the tree.
+    pub fn map_arm_bodies(&self, mut f: impl FnMut(&Expr) -> Expr) -> HandlerExpr {
+        match self {
+            HandlerExpr::Named(n) => HandlerExpr::Named(n.clone()),
+            HandlerExpr::Inline { arms, return_arm } => {
+                let map_arm = |a: &HandlerArm, f: &mut dyn FnMut(&Expr) -> Expr| HandlerArm {
+                    effect: a.effect.clone(),
+                    binding: a.binding.clone(),
+                    body: f(&a.body),
+                };
+                HandlerExpr::Inline {
+                    arms: arms.iter().map(|a| map_arm(a, &mut f)).collect(),
+                    return_arm: return_arm.as_ref().map(|a| Box::new(map_arm(a, &mut f))),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

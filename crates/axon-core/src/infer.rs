@@ -545,6 +545,21 @@ impl InferCtx {
             }
 
             // ── Block ─────────────────────────────────────────────────────────
+            // Phase 6: a `with <handler> { body }` has the type of its body
+            // (handlers don't change the result type in this surface slice). Any
+            // inline-handler arm bodies are inferred for their side effects on
+            // the type environment, then discarded.
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms.iter().chain(return_arm.as_deref()) {
+                        scope.push();
+                        let _ = self.infer_expr(&arm.body, scope, ret_ty);
+                        scope.pop();
+                    }
+                }
+                self.infer_expr(body, scope, ret_ty)
+            }
+
             Expr::Block(stmts) => {
                 scope.push();
                 let mut last = Type::Unit;

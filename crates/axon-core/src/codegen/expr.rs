@@ -101,6 +101,12 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Literal ──────────────────────────────────────────────────────
             ast::Expr::Literal(lit) => Some(self.emit_literal(lit)),
 
+            // Phase 6 (surface slice): a `with <handler> { body }` lowers to its
+            // body — handlers are inert (no effect discharge / resume yet), and
+            // effect rows are erased before codegen, so the IR is exactly the
+            // body's. Handler arm bodies are not emitted (never dispatched yet).
+            ast::Expr::WithHandler { body, .. } => self.emit_expr(body, fn_val),
+
             // ── Identifier (load from local) ─────────────────────────────────
             ast::Expr::Ident(name) => {
                 if let Some((ptr, llvm_ty)) = self.locals.get(name).cloned() {

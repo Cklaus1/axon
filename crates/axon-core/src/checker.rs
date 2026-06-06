@@ -1371,6 +1371,14 @@ impl CheckCtx {
                     Self::collect_purity_violations(&s.expr, pure_fns, out);
                 }
             }
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms.iter().chain(return_arm.as_deref()) {
+                        Self::collect_purity_violations(&arm.body, pure_fns, out);
+                    }
+                }
+                Self::collect_purity_violations(body, pure_fns, out);
+            }
             Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
                 Self::collect_purity_violations(value, pure_fns, out);
             }
@@ -1626,6 +1634,14 @@ impl CheckCtx {
                     g(e);
                 }
             }),
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms.iter().chain(return_arm.as_deref()) {
+                        g(&arm.body);
+                    }
+                }
+                g(body);
+            }
             Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
             | Expr::Return(None) | Expr::Lambda { .. } => {}
         }
@@ -1824,6 +1840,17 @@ impl CheckCtx {
                         self.check_stmt(stmt, &stmt_path, scope);
                     }
                 }
+            }
+
+            // Phase 6: `with <handler> { body }`. Check the handler arm bodies
+            // and the wrapped body (the handler is otherwise inert in this slice).
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for (i, arm) in arms.iter().chain(return_arm.as_deref()).enumerate() {
+                        self.check_expr(&arm.body, &format!("{node_path}.handler_arm_{i}"), scope);
+                    }
+                }
+                self.check_expr(body, &format!("{node_path}.with_body"), scope);
             }
 
             // ── Binding forms ────────────────────────────────────────────────
@@ -4167,6 +4194,14 @@ fn collect_explicit_returns<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
                 collect_explicit_returns(&s.expr, out);
             }
         }
+        E::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms.iter().chain(return_arm.as_deref()) {
+                    collect_explicit_returns(&arm.body, out);
+                }
+            }
+            collect_explicit_returns(body, out);
+        }
         E::For { start, end, body, .. } => {
             collect_explicit_returns(start, out);
             collect_explicit_returns(end, out);
@@ -4279,6 +4314,14 @@ fn each_subexpr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             for s in stmts {
                 f(&s.expr);
             }
+        }
+        E::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms.iter().chain(return_arm.as_deref()) {
+                    f(&arm.body);
+                }
+            }
+            f(body);
         }
         E::Let { value, .. } | E::Own { value, .. } | E::RefBind { value, .. } => f(value),
         E::Call { callee, args, .. } => {

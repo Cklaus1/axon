@@ -405,6 +405,38 @@ impl Formatter {
             Expr::Ident(name) => self.write(name),
             Expr::Literal(lit) => self.emit_literal(lit),
 
+            // Phase 6: `with <handler> { body }`.
+            Expr::WithHandler { handler, body } => {
+                self.write("with ");
+                match handler.as_ref() {
+                    crate::ast::HandlerExpr::Named(n) => {
+                        self.write(n);
+                        self.write(" ");
+                    }
+                    crate::ast::HandlerExpr::Inline { arms, return_arm } => {
+                        self.write("handler { ");
+                        for arm in arms {
+                            self.write("on ");
+                            self.write(&arm.effect);
+                            self.write("(");
+                            self.emit_pattern(&arm.binding);
+                            self.write(") => ");
+                            self.emit_expr(&arm.body);
+                            self.write(" ");
+                        }
+                        if let Some(ra) = return_arm {
+                            self.write("return(");
+                            self.emit_pattern(&ra.binding);
+                            self.write(") => ");
+                            self.emit_expr(&ra.body);
+                            self.write(" ");
+                        }
+                        self.write("} ");
+                    }
+                }
+                self.emit_block_body(body);
+            }
+
             Expr::Block(stmts) => {
                 // Re-sugar the `for x in coll` parser desugar instead of leaking
                 // its internal `__forarr_*` / `__fori_*` names.

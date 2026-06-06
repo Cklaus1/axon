@@ -192,6 +192,16 @@ impl OwnershipGraph {
                 }
             }
 
+            // Phase 6: walk the handler arm bodies and the `with` body for moves.
+            Expr::WithHandler { handler, body } => {
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms.iter().chain(return_arm.as_deref()) {
+                        self.check_expr(&arm.body);
+                    }
+                }
+                self.check_expr(body);
+            }
+
             Expr::Let { name, value, .. } => {
                 let ty = infer_expr_type(value, &self.types);
                 self.check_move_expr(value);

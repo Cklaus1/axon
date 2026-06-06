@@ -765,6 +765,73 @@ impl Parser {
         Ok(crate::ast::EffectRow { effects, row_var, span: Span::new(start, end) })
     }
 
+    /// Lookahead: is the `with` at the cursor a Phase-6 handler block? True when
+    /// it is followed by `handler` (inline) or by an identifier (the named
+    /// handler) — both forms then have a `{ … } { body }` shape. A bare variable
+    /// `with` used as a value is not followed by either in a way that forms a
+    /// handler head, so this stays conservative.
+    fn peek_is_with_handler(&self) -> bool {
+        match self.tokens.get(self.pos + 1) {
+            // `with handler { … } { body }`
+            Some(Token::Ident(s)) if s == "handler" => true,
+            // `with <name> { body }` — a named handler reference.
+            Some(Token::Ident(_)) => matches!(self.tokens.get(self.pos + 2), Some(Token::LBrace)),
+            _ => false,
+        }
+    }
+
+    /// Phase 6: parse `with <handler> { body }`. The handler is either the
+    /// inline `handler { on E(p) => e … return(p) => e }` form or a bare name.
+    fn parse_with_handler(&mut self) -> Result<Expr> {
+        // consume `with`
+        let _ = self.advance();
+        let handler = self.parse_handler()?;
+        let body = self.parse_block()?;
+        Ok(Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) })
+    }
+
+    /// Parse the handler head: `handler { <arms> }` (inline) or `<name>` (named).
+    fn parse_handler(&mut self) -> Result<crate::ast::HandlerExpr> {
+        if matches!(self.peek(), Some(Token::Ident(s)) if s == "handler") {
+            let _ = self.advance(); // `handler`
+            self.expect(&Token::LBrace)?;
+            let mut arms = Vec::new();
+            let mut return_arm = None;
+            while !self.at(&Token::RBrace) {
+                // `return ( pat ) => body`  or  `on Eff ( pat ) => body`.
+                let is_return = matches!(self.peek(), Some(Token::Return))
+                    || matches!(self.peek(), Some(Token::Ident(s)) if s == "return");
+                let effect = if is_return {
+                    let _ = self.advance();
+                    String::new()
+                } else {
+                    // `on`
+                    if matches!(self.peek(), Some(Token::Ident(s)) if s == "on") {
+                        let _ = self.advance();
+                    }
+                    self.expect_ident()?
+                };
+                self.expect(&Token::LParen)?;
+                let binding = self.parse_pattern()?;
+                self.expect(&Token::RParen)?;
+                self.expect(&Token::FatArrow)?;
+                let body = self.parse_expr()?;
+                let arm = crate::ast::HandlerArm { effect, binding, body };
+                if is_return {
+                    return_arm = Some(Box::new(arm));
+                } else {
+                    arms.push(arm);
+                }
+            }
+            self.expect(&Token::RBrace)?;
+            Ok(crate::ast::HandlerExpr::Inline { arms, return_arm })
+        } else {
+            // Named handler reference.
+            let name = self.expect_ident()?;
+            Ok(crate::ast::HandlerExpr::Named(name))
+        }
+    }
+
     fn parse_params(&mut self) -> Result<Vec<Param>> {
         let mut params = Vec::new();
         while !self.at(&Token::RParen) {
@@ -1267,6 +1334,13 @@ impl Parser {
             Some(Token::Spawn)    => self.parse_spawn(),
             Some(Token::Select)   => self.parse_select(),
             Some(Token::Chan)     => self.parse_chan_new(),
+            // Phase 6: `with <handler> { body }`. `with` is a bare identifier, so
+            // only treat it as a handler block when it's followed by a handler
+            // head (`handler {` or `<name> {`); a plain variable named `with` is
+            // unaffected because that is never followed by `{` in expr position.
+            Some(Token::Ident(s)) if s == "with" && self.peek_is_with_handler() => {
+                self.parse_with_handler()
+            }
             // Assignment: Ident = expr (but NOT == which is a comparison)
             // ASI: if `=` is on a new line it starts a new statement, not an assignment.
             Some(Token::Ident(_))
@@ -3239,6 +3313,43 @@ mod tests {
             vec![("T".to_string(), vec!["Display".to_string()])],
             "only T should carry a bound, got {:?}", f.generic_bounds
         );
+    }
+
+    #[test]
+    fn parse_phase6_with_handler() {
+        // Named handler: `with retry { body }`.
+        let prog = parse("fn f() -> i64 { with retry { 1 } }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        match &stmts[0].expr {
+            Expr::WithHandler { handler, .. } => {
+                assert!(matches!(handler.as_ref(), crate::ast::HandlerExpr::Named(n) if n == "retry"));
+            }
+            other => panic!("expected WithHandler, got {other:?}"),
+        }
+
+        // Inline handler with an `on` arm and a `return` arm.
+        let prog = parse(
+            "fn f() -> i64 { with handler { on IO(p) => p  return(v) => v } { 7 } }",
+        );
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        match &stmts[0].expr {
+            Expr::WithHandler { handler, body } => {
+                let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() else {
+                    panic!("expected an inline handler");
+                };
+                assert_eq!(arms.len(), 1);
+                assert_eq!(arms[0].effect, "IO");
+                assert!(return_arm.is_some(), "return arm must be parsed");
+                assert!(matches!(body.as_ref(), Expr::Block(_)));
+            }
+            other => panic!("expected WithHandler, got {other:?}"),
+        }
+
+        // A bare variable named `with` is unaffected (not followed by a handler head).
+        let prog = parse("fn f() -> i64 { let with = 3\n with }");
+        assert_eq!(prog.items.len(), 1);
     }
 
     #[test]

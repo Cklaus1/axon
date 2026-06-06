@@ -356,6 +356,7 @@ impl<'a> Evaluator<'a> {
 fn expr_kind_name(e: &Expr) -> &'static str {
     match e {
         Expr::Block(_)       => "block",
+        Expr::WithHandler { .. } => "with-handler",
         Expr::Let { .. }     => "let",
         Expr::Own { .. }     => "own",
         Expr::RefBind { .. } => "ref",
