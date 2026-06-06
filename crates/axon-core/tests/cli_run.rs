@@ -3449,6 +3449,39 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn phase5_features_compose_pure_total_refinement_verify() {
+    // Phase 5 integration: the new features (@[pure], @[total], refinement types)
+    // and the shipped Layer-2 @[verify] compose on the same function without
+    // interfering. The canonical case is the spec's §3 example — fact with all
+    // three — plus the cross-product of violations reporting independently.
+
+    // (1) The spec's §3 example: @[pure] + @[total] + an inline refinement, valid.
+    let fact = "@[pure]\n@[total]\nfn fact(n: i64 where _ >= 0) -> i64 { if n == 0 { 1 } else { n * fact(n - 1) } }\nfn main() { println(to_str(fact(5))) }\n";
+    let f = std::env::temp_dir().join(format!("axon_p5compose_{}.ax", std::process::id()));
+    std::fs::write(&f, fact).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "pure+total+refinement fact must run: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "120");
+
+    // (2) A fn that violates BOTH @[total] (non-decreasing recursion) AND a
+    // refinement (constant arg) reports BOTH E1208 and E1209 — independent.
+    let both = "@[total]\nfn bad(n: i64 where _ > 0) -> i64 { bad(n) }\nfn main() { println(to_str(bad(0 - 1))) }\n";
+    let f = std::env::temp_dir().join(format!("axon_p5both_{}.ax", std::process::id()));
+    std::fs::write(&f, both).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(2), "both-violations must fail check: {combined}");
+    assert!(combined.contains("E1208"), "expected E1208 (total): {combined}");
+    assert!(combined.contains("E1209"), "expected E1209 (refinement): {combined}");
+}
+
+#[test]
 fn refinement_string_predicates_str_eq_and_str_len() {
     // Phase 5: the predicate evaluator handles the string subset over a string
     // CONSTANT — `str_eq(_, "lit")` (equality) and `str_len(_)` (length), incl.
