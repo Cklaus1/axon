@@ -2811,6 +2811,14 @@ fn run_check_pipeline_located(
         push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
     }
 
+    // Step 5b: Phase 6 effect-row subsumption (E1310) — a call performs an
+    // effect outside the enclosing fn's declared row. `main` without a clause is
+    // the top-level escape hatch, so existing programs are unaffected.
+    for err in axon_core::effects::check_effects(program) {
+        let (line, col) = loc(&err.span);
+        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
+    }
+
     // Step 6: static `@[verify(...)]` checking — E1101 when a verify postcondition
     // is provably unsatisfiable by the function's computed confidence bound.
     // (Same CLI-pipeline gap as the capability check; non-`confidence` predicates

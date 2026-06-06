@@ -1,0 +1,7 @@
+// A fn that declares `| {}` (pure) but calls an IO builtin — must be rejected
+// by the Phase-6 effect checker via the real CLI pipeline (E1310).
+fn pure_but_prints(x: i64) -> i64 | {} {
+    println("leaking {to_str(x)}")
+    x + 1
+}
+fn main() { println("{to_str(pure_but_prints(1))}") }

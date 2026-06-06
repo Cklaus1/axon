@@ -110,6 +110,13 @@ pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fal
 pub const E1301: &str = "E1301"; // ai_complete exceeded the fn's @[ai(policy(budget: N))] (R3c)
 pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-configured model
 
+// Phase 6 effect-row errors. The spec's nominal E1300-E1308 numbering collided
+// with the AI-policy codes above (E1300-E1302), so effect-row diagnostics use
+// the free E1310 block. E1310 covers spec rules E02 (subsumption) and E05 (a
+// pure fn calling something effectful): a call performs an effect the enclosing
+// fn's declared row does not contain.
+pub const E1310: &str = "E1310"; // effect-row leak: call performs effect E ∉ the caller's declared row
+
 // Self-improving-compiler errors (R10: pass verification harness)
 pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member
 pub const E1402: &str = "E1402"; // G2 safety: pass adds a capability the original lacked (I-12)
@@ -309,6 +316,7 @@ mod tests {
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
             E1300, E1301, E1302,
+            E1310,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
             E1500, E1503, E1504, E1505,
             W0001, W0002, W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410,

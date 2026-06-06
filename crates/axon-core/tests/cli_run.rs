@@ -20,6 +20,28 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
+fn phase6_effect_row_subsumption_is_enforced_by_check() {
+    // Regression guard for the CLI-pipeline wiring: the Phase-6 effect checker
+    // (effects::check_effects, E1310) must run in the SAME cmd_check path the
+    // user hits — not only the library check_pipeline. A fn declaring the empty
+    // row `| {}` that calls an IO builtin is rejected; the `| {IO}` variant is
+    // clean. (This is the exact gap where the pass was added to one pipeline but
+    // not the one `axon check` invokes.)
+    let bad = axon().args(["check", &fixture("effect_row_leak.ax")]).output().unwrap();
+    assert_eq!(bad.status.code(), Some(2), "effect-row leak must be rejected");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(msg.contains("E1310"), "expected E1310, got: {msg}");
+    assert!(msg.contains("IO"), "message should name the IO effect: {msg}");
+
+    let ok = axon().args(["check", &fixture("effect_row_ok.ax")]).output().unwrap();
+    assert!(ok.status.success(), "a fn that declares `| {{IO}}` should check clean");
+}
+
+#[test]
 fn contained_capability_sandbox_is_enforced_by_check() {
     // Regression: `@[contained(...)]` I/O sandboxing must be enforced by the CLI
     // check pipeline, not only the library path. A write outside the fs allowlist

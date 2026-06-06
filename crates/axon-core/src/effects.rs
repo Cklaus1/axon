@@ -1,0 +1,338 @@
+//! Phase 6 effect-row checking (§2 semantic rules E02 / E05).
+//!
+//! A function may declare an effect row (`fn f() -> T | {IO, Net}`). This pass
+//! enforces **subsumption** (E02): at every call site inside a fn that declared
+//! a row, the callee's effect row must be a subset of the caller's declared row.
+//! A function that declares the explicit empty row `| {}` is pure and may call
+//! nothing effectful (rule E05) — that falls out of the subset check against an
+//! empty set.
+//!
+//! **Migration-window semantics (opt-in).** A function with NO row clause is
+//! treated as OPEN (unconstrained), not as the empty/pure row. This is a
+//! deliberate, temporary relaxation of spec rule E01 so that every Phase 1–5
+//! source — which has no row clauses and freely does IO in helper functions —
+//! keeps compiling unchanged (the spec's backwards-compatibility guarantee).
+//! You opt a function into effect checking by writing its row: `| {IO}` admits
+//! IO, `| {}` forbids all effects. Once the stdlib/examples carry rows, the
+//! default can flip to E01 (absent = pure). Mirrors how `@[pure]`/`@[total]`
+//! were inert until applied.
+//!
+//! Builtin rows come from [`crate::builtins::builtin_effect_row`] (§3 catalog);
+//! user-function rows come from their declared clause. A call to an unknown name
+//! (e.g. a type constructor, a not-yet-resolved symbol) contributes no effects —
+//! name resolution reports unknowns; we never invent an effect.
+//!
+//! **`main` escape hatch (§3):** `main`'s default declared row is "everything",
+//! so a top-level program that prints / calls AI without annotating `main`
+//! still checks. Concretely, a `main` with NO row clause is treated as allowing
+//! every effect; a `main` WITH an explicit clause is held to it like any fn.
+//!
+//! Row VARIABLES (`...e`) make a row open: such a function is treated as
+//! allowing any effect (a forwarded callback can carry anything). Closing the
+//! row (rule E03) and handler discharge (E04) are later slices; until then an
+//! open row conservatively admits, never falsely rejects.
+//!
+//! Enforcement is intentionally erase-only at runtime: this pass produces
+//! diagnostics; codegen and the interpreter ignore rows entirely.
+
+use crate::ast::{Expr, Item, Program};
+use crate::error::E1310;
+use crate::span::Span;
+use std::collections::{HashMap, HashSet};
+
+/// One effect-row violation (a leaked effect at a call site).
+#[derive(Debug, Clone)]
+pub struct EffectError {
+    pub code: &'static str,
+    pub message: String,
+    pub span: Span,
+}
+
+/// The allowed effects of a function: a concrete set, or "open" (a row variable
+/// or the `main` escape hatch) which admits any effect.
+#[derive(Clone)]
+enum Allowed {
+    Open,
+    Set(HashSet<String>),
+}
+
+impl Allowed {
+    fn admits(&self, eff: &str) -> bool {
+        match self {
+            Allowed::Open => true,
+            Allowed::Set(s) => s.contains(eff),
+        }
+    }
+}
+
+/// Check effect-row subsumption across `program`. Returns one E1310 per call
+/// site that performs an effect outside the enclosing function's declared row.
+pub fn check_effects(program: &Program) -> Vec<EffectError> {
+    // fn name → its declared concrete effect set (independent of openness).
+    let mut declared: HashMap<String, HashSet<String>> = HashMap::new();
+    // fn name → whether its row is open (a row variable present).
+    let mut open: HashMap<String, bool> = HashMap::new();
+    for item in &program.items {
+        if let Item::FnDef(f) = item {
+            let (set, is_open) = match &f.effect_row {
+                Some(row) => (
+                    row.effects.iter().cloned().collect(),
+                    row.row_var.is_some(),
+                ),
+                None => (HashSet::new(), false),
+            };
+            declared.insert(f.name.clone(), set);
+            open.insert(f.name.clone(), is_open);
+        }
+    }
+
+    let mut errors = Vec::new();
+    for item in &program.items {
+        let Item::FnDef(f) = item else { continue };
+        // The caller's allowed effects. Three ways to be Open (unconstrained):
+        //   1. no row clause at all (migration window — opt-in; see module docs),
+        //   2. `main` (the top-level escape hatch — admits everything),
+        //   3. an open row variable `...e`.
+        // Otherwise the caller is held to its declared concrete set.
+        let is_open = f.effect_row.is_none()
+            || f.name == "main"
+            || open.get(&f.name).copied().unwrap_or(false);
+        let allowed = if is_open {
+            Allowed::Open
+        } else {
+            Allowed::Set(declared.get(&f.name).cloned().unwrap_or_default())
+        };
+        // Open callers can never leak — skip the walk entirely.
+        if matches!(allowed, Allowed::Open) {
+            continue;
+        }
+        check_expr(&f.body, &f.name, &allowed, &declared, &mut errors);
+    }
+    errors
+}
+
+/// The effects a call to `callee` performs: the builtin catalog row, or the
+/// callee's declared user-fn row, or nothing for an unknown name.
+fn callee_effects(
+    callee: &str,
+    declared: &HashMap<String, HashSet<String>>,
+) -> Vec<String> {
+    let builtin = crate::builtins::builtin_effect_row(callee);
+    if !builtin.is_empty() {
+        return builtin.iter().map(|s| s.to_string()).collect();
+    }
+    if let Some(set) = declared.get(callee) {
+        return set.iter().cloned().collect();
+    }
+    Vec::new()
+}
+
+fn check_expr(
+    e: &Expr,
+    caller: &str,
+    allowed: &Allowed,
+    declared: &HashMap<String, HashSet<String>>,
+    errors: &mut Vec<EffectError>,
+) {
+    if let Expr::Call { callee, .. } = e {
+        if let Expr::Ident(name) = callee.as_ref() {
+            // A call into an OPEN-rowed user fn could perform anything its row
+            // variable stands for; but for subsumption we check only its
+            // declared CONCRETE effects (the open part is discharged by the
+            // caller forwarding its own row — full row-var unification is a
+            // later slice). Builtins are always concrete.
+            for eff in callee_effects(name, declared) {
+                if !allowed.admits(&eff) {
+                    errors.push(EffectError {
+                        code: E1310,
+                        message: format!(
+                            "`{caller}` calls `{name}`, which performs effect `{eff}`, \
+                             but `{caller}`'s declared effect row does not include `{eff}` \
+                             (add `{eff}` to the row, or handle the effect)"
+                        ),
+                        // Phase-6 Expr nodes carry no span yet, so the
+                        // diagnostic is whole-file; the message names both fns
+                        // and the effect, which is enough to locate it. A future
+                        // slice can thread call-site spans through.
+                        span: Span::dummy(),
+                    });
+                }
+            }
+        }
+    }
+    // Recurse into children regardless, so nested calls are checked.
+    for_each_child(e, &mut |child| {
+        check_expr(child, caller, allowed, declared, errors)
+    });
+}
+
+/// Apply `f` to each direct child expression of `e`. Mirrors the shape of the
+/// checker's own expression walker so every call site is reached.
+fn for_each_child(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    match e {
+        Expr::Call { callee, args, .. } => {
+            f(callee);
+            for a in args {
+                f(a);
+            }
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            f(receiver);
+            for a in args {
+                f(a);
+            }
+        }
+        Expr::BinOp { left, right, .. } => {
+            f(left);
+            f(right);
+        }
+        Expr::UnaryOp { operand, .. } => f(operand),
+        Expr::Question(inner) => f(inner),
+        Expr::If { cond, then, else_ } => {
+            f(cond);
+            f(then);
+            if let Some(e) = else_ {
+                f(e);
+            }
+        }
+        Expr::Match { subject, arms } => {
+            f(subject);
+            for arm in arms {
+                f(&arm.body);
+            }
+        }
+        Expr::Block(stmts) => {
+            for s in stmts {
+                f(&s.expr);
+            }
+        }
+        Expr::Let { value, .. } => f(value),
+        Expr::Assign { value, .. } => f(value),
+        Expr::While { cond, body } => {
+            f(cond);
+            for s in body {
+                f(&s.expr);
+            }
+        }
+        Expr::WhileLet { expr, body, .. } => {
+            f(expr);
+            for s in body {
+                f(&s.expr);
+            }
+        }
+        Expr::Lambda { body, .. } => f(body),
+        Expr::StructLit { fields, .. } => {
+            for (_, v) in fields {
+                f(v);
+            }
+        }
+        Expr::FieldAccess { receiver, .. } => f(receiver),
+        Expr::Index { receiver, index } => {
+            f(receiver);
+            f(index);
+        }
+        Expr::Array(items) | Expr::Tuple(items) => {
+            for it in items {
+                f(it);
+            }
+        }
+        Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => f(inner),
+        Expr::FmtStr { parts } => {
+            for p in parts {
+                if let crate::ast::FmtPart::Expr(e) = p {
+                    f(e);
+                }
+            }
+        }
+        Expr::Return(Some(inner)) => f(inner),
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse_source;
+
+    fn check(src: &str) -> Vec<EffectError> {
+        check_effects(&parse_source(src).expect("parse"))
+    }
+
+    #[test]
+    fn explicit_empty_row_fn_calling_io_builtin_leaks() {
+        // Opting in with the explicit empty row `| {}` makes the fn pure; calling
+        // println (which is {IO}) then leaks.
+        let errs = check("fn f(x: i64) -> i64 | {} { println(\"hi\") x }");
+        assert_eq!(errs.len(), 1, "expected one E1310, got {errs:?}");
+        assert_eq!(errs[0].code, E1310);
+        assert!(errs[0].message.contains("IO"), "must name the IO effect: {}", errs[0].message);
+    }
+
+    #[test]
+    fn no_row_clause_is_open_during_migration() {
+        // A fn with NO clause is unconstrained (opt-in) — Phase 1-5 helpers that
+        // do IO without annotation must keep compiling. This is the migration
+        // relaxation of rule E01.
+        let errs = check("fn helper(x: i64) -> i64 { println(\"hi\") x }");
+        assert!(errs.is_empty(), "no-clause fn should be open, got {errs:?}");
+    }
+
+    #[test]
+    fn fn_declaring_the_effect_is_ok() {
+        // The same call is fine once the fn declares `| {IO}`.
+        let errs = check("fn f(x: i64) -> i64 | {IO} { println(\"hi\") x }");
+        assert!(errs.is_empty(), "declared row should admit the call, got {errs:?}");
+    }
+
+    #[test]
+    fn main_escape_hatch_admits_everything() {
+        // `main` with no clause is the top-level escape hatch — IO/AI/etc are OK.
+        let errs = check("fn main() { println(\"hi\") }");
+        assert!(errs.is_empty(), "main escape hatch should admit IO, got {errs:?}");
+    }
+
+    #[test]
+    fn subset_is_allowed_superset_leaks() {
+        // Declared {IO, Net}: an {IO} call is a subset (ok). Declared {IO}: a
+        // {Net}-bearing call (fetch declares Net) leaks.
+        let ok = check(
+            "fn fetch(u: str) -> i64 | {Net} { 0 }\n\
+             fn g() -> i64 | {IO, Net} { fetch(\"x\") }",
+        );
+        assert!(ok.is_empty(), "Net ⊆ {{IO,Net}} should be ok, got {ok:?}");
+
+        let leak = check(
+            "fn fetch(u: str) -> i64 | {Net} { 0 }\n\
+             fn g() -> i64 | {IO} { fetch(\"x\") }",
+        );
+        assert_eq!(leak.len(), 1, "Net ⊄ {{IO}} should leak once, got {leak:?}");
+        assert!(leak[0].message.contains("Net"));
+    }
+
+    #[test]
+    fn open_row_caller_admits_anything() {
+        // A caller whose row is open (`...e`) is conservatively allowed to call
+        // anything — no false leak (full row-var unification is a later slice).
+        let errs = check(
+            "fn g() -> i64 | {...e} { println(\"hi\") 0 }",
+        );
+        assert!(errs.is_empty(), "open-row caller should not leak, got {errs:?}");
+    }
+
+    #[test]
+    fn pure_calling_pure_is_clean() {
+        // No effects anywhere — the common case must stay silent.
+        let errs = check("fn add(a: i64, b: i64) -> i64 { a + b }\nfn g() -> i64 { add(1, 2) }");
+        assert!(errs.is_empty(), "pure→pure must be clean, got {errs:?}");
+    }
+
+    #[test]
+    fn leak_through_nested_call_position() {
+        // The effectful call is buried in an if-branch, not the tail. The fn
+        // opts into checking with the explicit empty row.
+        let errs = check(
+            "fn f() -> i64 | {} { if true { println(\"x\") 1 } else { 2 } }",
+        );
+        assert_eq!(errs.len(), 1, "nested IO call should still leak, got {errs:?}");
+    }
+}

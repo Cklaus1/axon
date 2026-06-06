@@ -1,0 +1,6 @@
+// The same fn, now declaring `| {IO}` — the call is admitted, checks clean.
+fn prints_ok(x: i64) -> i64 | {IO} {
+    println("declared {to_str(x)}")
+    x + 1
+}
+fn main() { println("{to_str(prints_ok(1))}") }
