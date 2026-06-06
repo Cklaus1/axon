@@ -1421,9 +1421,16 @@ struct GoalSpec {
 
 /// Build an `Uncertain { value, confidence }` struct value.
 fn make_uncertain(value: Value, confidence: f64) -> Value {
+    // `source_tag` (0=user-constructed, 1=AI-sourced, 2=runtime) is a field of the
+    // Uncertain struct — the checker lists it as a valid field and codegen builds
+    // the 3-field `{value, confidence, source_tag}` layout. Without it here,
+    // `u.source_tag` type-checked but panicked at runtime ("no field source_tag")
+    // and the interp's 2-field struct diverged from codegen's 3-field one.
+    // Default 0 (user-constructed), matching codegen's `source_tag = 0`.
     let mut fields = HashMap::new();
     fields.insert("value".to_string(), value);
     fields.insert("confidence".to_string(), Value::Float(confidence));
+    fields.insert("source_tag".to_string(), Value::Int(0));
     Value::Struct { name: "Uncertain".to_string(), fields }
 }
 

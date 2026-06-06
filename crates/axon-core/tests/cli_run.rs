@@ -4528,6 +4528,27 @@ fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
 }
 
 #[test]
+fn uncertain_source_tag_field_is_accessible() {
+    // The checker lists `source_tag` as a valid Uncertain field (alongside
+    // `value`/`confidence`), and codegen builds the 3-field `{value, confidence,
+    // source_tag}` struct — but the interp's make_uncertain only built 2 fields,
+    // so `u.source_tag` type-checked then PANICKED at runtime ("no field
+    // source_tag"), AND the interp's 2-field struct diverged from codegen's 3.
+    // It now returns 0 (user-constructed) on both engines.
+    let f = std::env::temp_dir().join(format!("axon_srctag_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { let u = uncertain_new(5, 0.9)\n  u.source_tag }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "u.source_tag must return 0 (user-constructed), not panic");
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!msg.contains("no field"), "must not panic on the source_tag field: {msg}");
+}
+
+#[test]
 fn uncertain_bool_condition_branches_on_inner_value() {
     // R9: an `Uncertain<bool>` condition (a comparison on an Uncertain operand
     // stays Uncertain, e.g. `if a > 5` for Uncertain `a`) used to PANIC at
