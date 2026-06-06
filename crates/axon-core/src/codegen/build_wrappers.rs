@@ -261,6 +261,45 @@ pub(crate) fn w_int_add<'ctx>(
     b.build_int_add(l, r, name).unwrap()
 }
 
+/// SATURATING signed add — `a + b` clamped to [int::MIN, int::MAX] on overflow,
+/// matching the interpreter's `saturating_add` (used by `arr_sum_i64`'s
+/// accumulator). Avoids the raw wrapping add (which silently produced a wrong
+/// total on overflow — I-9). Overflow detection by sign: signed addition
+/// overflows iff both operands share a sign AND the result's sign differs from
+/// them. On overflow the saturated value is int::MAX when the operands were
+/// positive, int::MIN when negative. Pure compares + selects (no new blocks).
+#[inline(never)]
+pub(crate) fn w_int_add_sat<'ctx>(
+    b: &Builder<'ctx>,
+    l: IntValue<'ctx>,
+    r: IntValue<'ctx>,
+    name: &str,
+) -> IntValue<'ctx> {
+    let ity = l.get_type();
+    let sum = b.build_int_add(l, r, name).unwrap();
+    let zero = ity.const_zero();
+    // sign bits
+    let l_neg = b.build_int_compare(inkwell::IntPredicate::SLT, l, zero, "sat_lneg").unwrap();
+    let r_neg = b.build_int_compare(inkwell::IntPredicate::SLT, r, zero, "sat_rneg").unwrap();
+    let s_neg = b.build_int_compare(inkwell::IntPredicate::SLT, sum, zero, "sat_sneg").unwrap();
+    // operands same sign?  (l_neg == r_neg)
+    let same_sign = b.build_int_compare(inkwell::IntPredicate::EQ, l_neg, r_neg, "sat_same").unwrap();
+    // result sign differs from operands? (s_neg != l_neg)
+    let sign_flip = b.build_int_compare(inkwell::IntPredicate::NE, s_neg, l_neg, "sat_flip").unwrap();
+    let overflow = b.build_and(same_sign, sign_flip, "sat_ovf").unwrap();
+    // saturate target: operands positive → MAX, negative → MIN.
+    let bits = ity.get_bit_width();
+    let (min_v, max_v): (u64, u64) = match bits {
+        64 => (i64::MIN as u64, i64::MAX as u64),
+        32 => (i32::MIN as i64 as u64, i32::MAX as u64),
+        _ => return sum, // only the i64/i32 accumulators use this
+    };
+    let max_c = ity.const_int(max_v, true);
+    let min_c = ity.const_int(min_v, true);
+    let sat_target = b.build_select(l_neg, min_c, max_c, "sat_tgt").unwrap().into_int_value();
+    b.build_select(overflow, sat_target, sum, "sat_res").unwrap().into_int_value()
+}
+
 #[inline(never)]
 pub(crate) fn w_int_sub<'ctx>(
     b: &Builder<'ctx>,

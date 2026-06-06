@@ -2376,6 +2376,16 @@ impl<'ctx> super::Codegen<'ctx> {
             let _ = self.ir.module.add_function("__axon_bounds_panic", bp_ty, None);
         }
 
+        // ── Generic message panic (fixed-string runtime faults) ──────────────
+        //   __axon_msg_panic(msg_ptr, msg_len) -> noreturn
+        // For faults with a build-time-known message (e.g. "arr_max_i64: array
+        // is empty"). Native used to call the bare C exit(101) with NO message,
+        // diverging from the interpreter's text; this prints the same line.
+        {
+            let mp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_msg_panic", mp_ty, None);
+        }
+
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
         //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
         //

@@ -1837,6 +1837,25 @@ pub extern "C" fn __axon_bounds_panic(idx: i64, len: i64) -> ! {
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+/// Generic runtime panic with a caller-supplied message (Axon `str` ABI). For
+/// faults whose message is a fixed string known at IR-build time — e.g.
+/// `arr_max_i64: array is empty`. Codegen emits the message as a global string
+/// and calls this on the fault branch, so native prints the SAME `axon: panic:
+/// <msg>` line the interpreter prints and exits 101 (previously native called
+/// the bare C `exit(101)` with NO message, diverging from the interpreter's
+/// text).
+#[no_mangle]
+pub extern "C" fn __axon_msg_panic(msg_ptr: *const u8, msg_len: i64) -> ! {
+    let msg = if msg_ptr.is_null() || msg_len <= 0 {
+        "runtime panic"
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(msg_ptr, msg_len as usize) };
+        std::str::from_utf8(bytes).unwrap_or("runtime panic")
+    };
+    eprintln!("axon: panic: {msg}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(

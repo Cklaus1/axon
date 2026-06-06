@@ -208,6 +208,29 @@ expect_overflow() {
 #   A non-overflow runtime fault (div-by-zero via a variable, OOB index, …) that
 #   must panic IDENTICALLY on both engines (exit 101, same stderr). Same contract
 #   shape as expect_overflow; separate name for readability at the call site.
+# expect_equal NAME SETUP EXPR EXPECT
+#   A non-panicking fixed case: SETUP is a `let` (e.g. an array literal the awk
+#   generator can't build), EXPR is wrapped in to_str(). Asserts both engines
+#   print EXPECT identically (and exit 0). For array-reducer / saturation cases.
+expect_equal() {
+  local name="$1" setup="$2" expr="$3" expect="$4"
+  local src="$WORK/$name.ax"
+  printf 'fn main() {\n    %s\n    println(to_str(%s))\n}\n' "$setup" "$expr" > "$src"
+  local i_out i_exit n_out n_exit
+  i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
+  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+    echo "  FAIL $name: native build failed"; fail=1; return
+  fi
+  n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
+  if [ "$i_exit" != "$n_exit" ] || [ "$i_out" != "$n_out" ]; then
+    echo "  FAIL $name: interp(exit=$i_exit,'$i_out') != native(exit=$n_exit,'$n_out')"; fail=1; return
+  fi
+  if [ "$i_out" != "$expect" ]; then
+    echo "  FAIL $name: both agree on '$i_out' but expected '$expect'"; fail=1; return
+  fi
+  echo "  OK   $name: interp==native=='$i_out'"
+}
+
 expect_runtime_panic() {
   local name="$1" body="$2"
   local src="$WORK/$name.ax"
@@ -307,6 +330,18 @@ expect_runtime_panic div_zero '    let z = 0\n    println(to_str(5 / z))'
 expect_runtime_panic mod_zero '    let z = 0\n    println(to_str(5 % z))'
 expect_runtime_panic arr_oob  '    let a = [1, 2, 3]\n    let i = 9\n    println(to_str(a[i]))'
 expect_runtime_panic arr_neg  '    let a = [1, 2, 3]\n    let i = 0 - 1\n    println(to_str(a[i]))'
+# ── array reducers — fixed cases (the awk generator doesn't build array args) ──
+# arr_sum_i64 saturates on overflow (interp uses saturating_add; native now too).
+# arr_max/min/argmax/argmin panic with a MESSAGE on empty (native used to exit
+# 101 silently). Each must agree byte-for-byte on stdout/stderr + exit.
+expect_equal arr_sum_ovf    'let a = [9223372036854775807, 1]'        'arr_sum_i64(a)' '9223372036854775807'
+expect_equal arr_sum_ovfneg 'let a = [0 - 9223372036854775807, 0 - 5]' 'arr_sum_i64(a)' '-9223372036854775808'
+expect_equal arr_sum_ok     'let a = [3, 1, 4, 1, 5]'                  'arr_sum_i64(a)' '14'
+expect_runtime_panic arr_max_empty    '    let a: [i64] = []\n    println(to_str(arr_max_i64(a)))'
+expect_runtime_panic arr_min_empty    '    let a: [i64] = []\n    println(to_str(arr_min_i64(a)))'
+expect_runtime_panic arr_argmax_empty '    let a: [i64] = []\n    println(to_str(arr_argmax_i64(a)))'
+expect_runtime_panic arr_maxf_empty   '    let a: [f64] = []\n    println(to_str_f64(arr_max_f64(a)))'
+expect_runtime_panic arr_argminf_empty '    let a: [f64] = []\n    println(to_str(arr_argmin_f64(a)))'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
 echo "fuzz_parity: PASS — random + NaN/inf + overflow + runtime-panic descriptors all agree (native==interp) ✓"

@@ -1776,10 +1776,25 @@ impl<'ctx> super::Codegen<'ctx> {
                 &self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "arr_isempty");
             build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, nonempty_bb);
             self.ir.builder.position_at_end(empty_bb);
-            // Use the C `exit(i32)` (declared in declare_builtins), NOT the
-            // Axon-source `exit` wrapper in self.functions (which is `exit_axon`
-            // and takes an i64). Matches the interpreter's panic exit code 101.
-            if let Some(exit_fn) = self.ir.module.get_function("exit") {
+            // Panic with the SAME message the interpreter prints (e.g.
+            // "arr_max_i64: array is empty") via __axon_msg_panic (exit 101).
+            // Previously this called the bare C exit(101) with NO message, so
+            // native diverged from the interpreter's stderr text.
+            let msg = match &op {
+                ArrReduce::Extreme { is_max: true } | ArrReduce::ArgExtreme { is_max: true } => {
+                    if matches!(op, ArrReduce::ArgExtreme { .. }) { "arr_argmax_i64: array is empty" }
+                    else { "arr_max_i64: array is empty" }
+                }
+                _ => {
+                    if matches!(op, ArrReduce::ArgExtreme { .. }) { "arr_argmin_i64: array is empty" }
+                    else { "arr_min_i64: array is empty" }
+                }
+            };
+            if let Some(panic_fn) = self.ir.module.get_function("__axon_msg_panic") {
+                let g = build_wrappers::w_global_string_ptr(&self.ir.builder, msg, "arr_empty_msg");
+                let len = i64_ty.const_int(msg.len() as u64, false);
+                build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), len.into()], "");
+            } else if let Some(exit_fn) = self.ir.module.get_function("exit") {
                 let code = self.ir.context.i32_type().const_int(101, false);
                 build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
             }
@@ -1829,7 +1844,10 @@ impl<'ctx> super::Codegen<'ctx> {
         match &op {
             ArrReduce::Sum | ArrReduce::Mean => {
                 let acc = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), acc_slot, "arr_a").into_int_value();
-                let nacc = build_wrappers::w_int_add(&self.ir.builder, acc, elem, "arr_na");
+                // SATURATING add — matches the interpreter's saturating_add
+                // accumulator. Raw wrapping add silently produced a wrong total
+                // on i64 overflow (I-9).
+                let nacc = build_wrappers::w_int_add_sat(&self.ir.builder, acc, elem, "arr_na");
                 build_wrappers::w_store(&self.ir.builder, acc_slot, nacc.into());
             }
             ArrReduce::Contains(needle) => {
@@ -3421,7 +3439,20 @@ impl<'ctx> super::Codegen<'ctx> {
             let is_empty = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "af_e");
             build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, ne_bb);
             self.ir.builder.position_at_end(empty_bb);
-            if let Some(exit_fn) = self.ir.module.get_function("exit") {
+            // Same message the interpreter prints (e.g. "arr_max_f64: array is
+            // empty") via __axon_msg_panic — was a bare exit(101) with no text.
+            let msg = match &op {
+                ArrReduceF64::Extreme { is_max: true } => "arr_max_f64: array is empty",
+                ArrReduceF64::Extreme { is_max: false } => "arr_min_f64: array is empty",
+                ArrReduceF64::ArgExtreme { is_max: true } => "arr_argmax_f64: array is empty",
+                ArrReduceF64::ArgExtreme { is_max: false } => "arr_argmin_f64: array is empty",
+                _ => "array is empty",
+            };
+            if let Some(panic_fn) = self.ir.module.get_function("__axon_msg_panic") {
+                let g = build_wrappers::w_global_string_ptr(&self.ir.builder, msg, "af_empty_msg");
+                let mlen = i64_ty.const_int(msg.len() as u64, false);
+                build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), mlen.into()], "");
+            } else if let Some(exit_fn) = self.ir.module.get_function("exit") {
                 let code = self.ir.context.i32_type().const_int(101, false);
                 build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
             }
