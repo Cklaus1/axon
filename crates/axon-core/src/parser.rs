@@ -1763,7 +1763,19 @@ impl Parser {
             {
                 self.advance()?; // `tier`
                 self.advance()?; // `:`
-                let name = self.expect_ident()?; // the tier value (cheap|balanced|strong)
+                // The tier value (cheap|balanced|strong) — accept it as a bare
+                // identifier (`tier: strong`) OR a string literal (`tier:
+                // "strong"`), the form a user naturally reaches for. Both yield
+                // the same tier name; an unknown name is rejected downstream
+                // (E1302) with the configured-tiers list.
+                let name = match self.peek() {
+                    Some(Token::Str(s)) => {
+                        let s = s.clone();
+                        self.advance()?;
+                        s
+                    }
+                    _ => self.expect_ident()?,
+                };
                 tier = Some(name);
                 // `tier:` must be the last argument.
                 if self.eat(&Token::Comma) && !self.at(&Token::RParen) {

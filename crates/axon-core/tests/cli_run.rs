@@ -7205,6 +7205,36 @@ fn unknown_per_call_tier_is_e1302() {
     assert!(msg.contains("E1302"), "unknown per-call tier must be E1302: {msg}");
 }
 
+#[test]
+fn per_call_tier_accepts_a_string_literal_value() {
+    // R3b ergonomics: `tier:` accepts the value as a bare identifier
+    // (`tier: strong`) OR a string literal (`tier: "strong"`) — the form a user
+    // naturally reaches for. Both must parse, run identically, and reject an
+    // unknown name with E1302.
+    let ident = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: strong)\n  ai_cost_spent() }\n";
+    let string = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: \"strong\")\n  ai_cost_spent() }\n";
+    let run = |src: &str| -> i32 {
+        let f = std::env::temp_dir().join(format!("axon_tierstr_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        out.status.code().unwrap_or(-1)
+    };
+    let i = run(ident);
+    let s = run(string);
+    assert!(i > 0, "the identifier tier form must run and meter (got exit {i})");
+    assert_eq!(i, s, "the string tier form must behave identically to the identifier form");
+
+    // A bad string tier is still the clean closed-enum rejection.
+    let bad = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: \"bogus\")\n  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_tierbad_{}.ax", std::process::id()));
+    std::fs::write(&f, bad).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E1302"), "a bad string tier must still be E1302: {msg}");
+}
+
 // ---------------------------------------------------------------------------
 // R1e drift tripwire — keep codegen to ONE IR-emission path.
 //
