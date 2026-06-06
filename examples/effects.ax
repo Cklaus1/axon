@@ -1,0 +1,43 @@
+// Phase 6 — row-polymorphic effects.
+//
+// A function may declare an EFFECT ROW after its return type: `| {IO, Net}`.
+// The row names the side effects the function is permitted to perform. The
+// compiler then checks SUBSUMPTION (`axon check`): at every call site inside a
+// row-declaring function, the effects the callee performs — computed
+// transitively, so nothing can hide behind a helper — must be a subset of the
+// caller's declared row. A leak is a static error (E1310).
+//
+// Effects are ERASED before codegen, so `axon run` == `axon build` and there is
+// zero runtime cost. During the migration window a function with NO row clause
+// is unconstrained; you opt into checking by writing a row.
+//
+// Run:   axon run   examples/effects.ax
+// Build: axon build examples/effects.ax
+
+// A pure computation. The explicit empty row `| {}` opts in and promises NO
+// effects — the compiler holds it to that.
+fn double(n: i64) -> i64 | {} {
+    n + n
+}
+
+// A function that prints MUST declare `IO`, or `axon check` rejects it. The
+// declared row documents exactly what the function may do.
+fn announce(label: str, n: i64) -> i64 | {IO} {
+    println("{label} = {to_str(n)}")
+    n
+}
+
+// Effects compose along the call graph. `report` itself only prints, but it
+// calls `announce` (which is {IO}), so `report` must also declare `IO`. If it
+// declared `| {}` here, the compiler would flag the transitive IO leak.
+fn report(n: i64) -> i64 | {IO} {
+    announce("doubled", double(n))
+}
+
+// `main` is the top-level escape hatch: it may perform any effect without an
+// explicit row, so a whole program stays ergonomic while its subordinate
+// functions remain honestly annotated.
+fn main() {
+    let r = report(21)
+    println("result = {to_str(r)}")
+}
