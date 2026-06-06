@@ -2337,6 +2337,31 @@ impl<'ctx> super::Codegen<'ctx> {
             let _ = vp_fn;
         }
 
+        // ── Checked-arithmetic runtime trap (I-9 parity with the interpreter) ─
+        //   __axon_arith_panic(kind: i64, op_ptr, op_len, a: i64, b: i64) -> noreturn
+        //
+        // Codegen injects a guarded call to this on the failure branch of every
+        // signed-i64 `+`/`-`/`*` (overflow) and `/`/`%` (divisor == 0). The
+        // interpreter checks these in `interp/value.rs` and exits 101 on the
+        // fault; native used to silently two's-complement-wrap (a wrong answer,
+        // I-9) or raw-SIGFPE (exit 136, no message). This brings native into
+        // line: same `axon: panic: …` text, same exit 101. The message is
+        // formatted in the runtime from the operands (the overflow text embeds
+        // the runtime values, unknown at IR-build time).
+        {
+            let ap_ty = void_ty.fn_type(
+                &[
+                    i64_ty.into(),  // kind: 0 overflow, 1 div0, 2 rem0
+                    i8_ptr.into(),  // op_ptr (operator glyph, overflow only)
+                    i64_ty.into(),  // op_len
+                    i64_ty.into(),  // a (left operand)
+                    i64_ty.into(),  // b (right operand)
+                ],
+                false,
+            );
+            let _ = self.ir.module.add_function("__axon_arith_panic", ap_ty, None);
+        }
+
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
         //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
         //

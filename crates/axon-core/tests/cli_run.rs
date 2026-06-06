@@ -3287,6 +3287,81 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
 }
 
 #[test]
+fn checked_integer_arithmetic_panics_gracefully_not_silently() {
+    // The interpreter is the reference semantics: signed-i64 +/-/* overflow and
+    // /,% by zero are CHECKED — a graceful `axon: panic: …` (exit 101), never a
+    // silent two's-complement wrap (a wrong answer; ARCHITECTURE INVARIANTS
+    // I-9) and never a raw SIGFPE. (Native codegen matches this — verified by
+    // scripts/checked_arith_parity.sh in the strict gate; this guard pins the
+    // interpreter side, which runs in the standard gate.)
+    // NOTE: the fault operands must be VARIABLES, not literals — a literal
+    // `5 / 0` is folded and rejected at compile time (E0407, exit 2). The
+    // RUNTIME checked-arithmetic path is what we're pinning here, so route the
+    // zero / overflow through a binding the static folder can't see through.
+    let cases = [
+        // (body, must-panic, substring of the expected message)
+        ("let z = 0\n  println(to_str(5 / z))", true, "integer division by zero"),
+        ("let z = 0\n  println(to_str(5 % z))", true, "integer remainder by zero"),
+        (
+            "let big = 9223372036854775807\n  println(to_str(big + 1))",
+            true,
+            "integer overflow",
+        ),
+        (
+            "let big = 9223372036854775807\n  println(to_str(big * 2))",
+            true,
+            "integer overflow",
+        ),
+        // INT_MIN / -1 is DEFINED (wrapping → INT_MIN), not a panic.
+        (
+            "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(mm / (0 - 1)))",
+            false,
+            "-9223372036854775808",
+        ),
+        // 20! fits; must NOT panic.
+        (
+            "let f = 1\n  let i = 1\n  while i <= 20 {\n    f = f * i\n    i = i + 1\n  }\n  println(to_str(f))",
+            false,
+            "2432902008176640000",
+        ),
+    ];
+    for (i, (body, must_panic, needle)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir()
+            .join(format!("axon_ckarith_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if *must_panic {
+            assert_eq!(
+                out.status.code(),
+                Some(101),
+                "[case {i}] a checked-arithmetic fault must exit 101 (graceful panic), got: {out:?}"
+            );
+            assert!(
+                combined.contains("axon: panic:") && combined.contains(needle),
+                "[case {i}] expected a panic mentioning `{needle}`, got: {combined}"
+            );
+        } else {
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[case {i}] a defined operation must NOT panic, got: {out:?}"
+            );
+            assert!(
+                combined.contains(needle),
+                "[case {i}] expected output `{needle}`, got: {combined}"
+            );
+        }
+    }
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

@@ -505,6 +505,173 @@ impl<'ctx> super::Codegen<'ctx> {
 
     // ── Binary operation emission ─────────────────────────────────────────────
 
+    /// Emit a guarded call to `__axon_arith_panic` on the *current* block's
+    /// failure branch, then leave the builder positioned at a fresh "ok" block
+    /// so the caller can continue emitting the success value. `cond_fail` is the
+    /// i1 "the fault happened" predicate. `kind` selects the runtime message (0
+    /// overflow / 1 div0 / 2 rem0); `a`/`b` are the operands passed through for
+    /// the overflow message (ignored by the runtime for kinds 1/2). This mirrors
+    /// the `__axon_verify_panic` emission shape in `asi.rs`.
+    fn emit_arith_guard(
+        &mut self,
+        cond_fail: inkwell::values::IntValue<'ctx>,
+        kind: i64,
+        op_glyph: &str,
+        a: inkwell::values::IntValue<'ctx>,
+        b: inkwell::values::IntValue<'ctx>,
+    ) {
+        let panic_fn = match self.ir.module.get_function("__axon_arith_panic") {
+            Some(f) => f,
+            None => return, // runtime extern absent — leave the raw op (defensive)
+        };
+        let cur_block = match self.ir.builder.get_insert_block() {
+            Some(b) if b.get_terminator().is_none() => b,
+            _ => return,
+        };
+        let llvm_fn = match cur_block.get_parent() {
+            Some(f) => f,
+            None => return,
+        };
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "arith_panic");
+        let ok_bb = self.ir.context.append_basic_block(llvm_fn, "arith_ok");
+        // cond_fail ? panic : ok
+        build_wrappers::w_cond_br(&self.ir.builder, cond_fail, panic_bb, ok_bb);
+
+        // Panic path: call the runtime trap, then `unreachable`.
+        self.ir.builder.position_at_end(panic_bb);
+        let i64_ty = self.ir.context.i64_type();
+        let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_glyph, "arith_op");
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            panic_fn,
+            &[
+                i64_ty.const_int(kind as u64, true).into(),
+                op_g.into(),
+                i64_ty.const_int(op_glyph.len() as u64, false).into(),
+                a.into(),
+                b.into(),
+            ],
+            "",
+        );
+        build_wrappers::w_unreachable(&self.ir.builder);
+
+        // Continue at the ok block.
+        self.ir.builder.position_at_end(ok_bb);
+    }
+
+    /// Constant-fold a checked signed-i64 op when BOTH operands are compile-time
+    /// constants and the checked operation succeeds (no overflow / no div0).
+    /// Returns the folded constant so the caller can skip the runtime guard
+    /// entirely — both a perf win and the reason a pure-constant program (e.g.
+    /// `21 + 21`) emits NO `__axon_arith_panic` extern. Returns `None` when an
+    /// operand isn't constant or the fold would fault (leave it to the runtime
+    /// guard, which produces the same panic the interpreter does). Mirrors the
+    /// interpreter's checked_add/sub/mul + zero-divisor / wrapping_div.
+    fn try_const_fold_int(
+        &self,
+        op: &ast::BinOp,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let a = l.get_sign_extended_constant()?;
+        let b = r.get_sign_extended_constant()?;
+        let folded: i64 = match op {
+            ast::BinOp::Add => a.checked_add(b)?,
+            ast::BinOp::Sub => a.checked_sub(b)?,
+            ast::BinOp::Mul => a.checked_mul(b)?,
+            ast::BinOp::Div => {
+                if b == 0 { return None; }
+                a.wrapping_div(b)
+            }
+            ast::BinOp::Rem => {
+                if b == 0 { return None; }
+                a.wrapping_rem(b)
+            }
+            _ => return None,
+        };
+        Some(self.ir.context.i64_type().const_int(folded as u64, true).into())
+    }
+
+    /// Checked signed-i64 `+`/`-`/`*` using the LLVM `llvm.s{add,sub,mul}.with
+    /// .overflow` intrinsics. Returns the result; on overflow control never
+    /// reaches the return — `emit_arith_guard` diverts to the runtime trap
+    /// (exit 101), matching the interpreter's checked arithmetic (I-9). Returns
+    /// `None` if the intrinsic can't be resolved, so the caller falls back to
+    /// the raw (unchecked) op rather than miscompiling.
+    fn emit_checked_overflow_op(
+        &mut self,
+        intrinsic_name: &str,
+        op_glyph: &str,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let i64_ty = self.ir.context.i64_type();
+        let intr = inkwell::intrinsics::Intrinsic::find(intrinsic_name)?;
+        let decl = intr.get_declaration(&self.ir.module, &[i64_ty.into()])?;
+        let call = build_wrappers::w_call(
+            &self.ir.builder,
+            decl,
+            &[l.into(), r.into()],
+            "ovf",
+        );
+        let agg = call.try_as_basic_value().left()?.into_struct_value();
+        // Field 0 = result, field 1 = i1 overflow flag.
+        let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovf_res");
+        let flag = build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovf_flag")
+            .into_int_value();
+        self.emit_arith_guard(flag, 0, op_glyph, l, r);
+        Some(result)
+    }
+
+    /// Checked signed-i64 `/` or `%`. Guards divisor == 0 (→ runtime trap, exit
+    /// 101) and neutralises the `INT_MIN / -1` hardware trap with a select that
+    /// reproduces the interpreter's `wrapping_div`/`wrapping_rem` (INT_MIN for
+    /// div, 0 for rem) — so native never SIGFPEs (exit 136) where the
+    /// interpreter returns a defined value or a clean panic.
+    fn emit_checked_div_rem(
+        &mut self,
+        is_rem: bool,
+        l: inkwell::values::IntValue<'ctx>,
+        r: inkwell::values::IntValue<'ctx>,
+    ) -> BasicValueEnum<'ctx> {
+        let i64_ty = self.ir.context.i64_type();
+        let zero = i64_ty.const_zero();
+        // divisor == 0 → trap (kind 1 div0 / 2 rem0).
+        let is_zero = build_wrappers::w_int_compare(
+            &self.ir.builder, IntPredicate::EQ, r, zero, "divzero",
+        );
+        self.emit_arith_guard(is_zero, if is_rem { 2 } else { 1 }, if is_rem { "%" } else { "/" }, l, r);
+
+        // Guard INT_MIN / -1 (the one signed-division case that traps in
+        // hardware). Replace the divisor with 1 on that path and patch the
+        // result via select, matching wrapping_div/wrapping_rem.
+        let int_min = i64_ty.const_int(i64::MIN as u64, false);
+        let neg_one = i64_ty.const_int((-1i64) as u64, true);
+        let l_is_min = build_wrappers::w_int_compare(
+            &self.ir.builder, IntPredicate::EQ, l, int_min, "l_is_min",
+        );
+        let r_is_neg1 = build_wrappers::w_int_compare(
+            &self.ir.builder, IntPredicate::EQ, r, neg_one, "r_is_neg1",
+        );
+        let is_trap = self.ir.builder.build_and(l_is_min, r_is_neg1, "minneg1").unwrap();
+        // Safe divisor: 1 when the trap case, else r.
+        let one = i64_ty.const_int(1, false);
+        let safe_r = self.ir.builder
+            .build_select(is_trap, one, r, "safe_div")
+            .unwrap()
+            .into_int_value();
+        let raw = if is_rem {
+            build_wrappers::w_int_signed_rem(&self.ir.builder, l, safe_r, "rem")
+        } else {
+            build_wrappers::w_int_signed_div(&self.ir.builder, l, safe_r, "div")
+        };
+        // wrapping_div(INT_MIN,-1)=INT_MIN ; wrapping_rem(INT_MIN,-1)=0.
+        let patched = if is_rem { zero } else { int_min };
+        self.ir.builder
+            .build_select(is_trap, patched, raw, "divrem_fix")
+            .unwrap()
+    }
+
     pub(super) fn emit_binop(
         &mut self,
         op: &ast::BinOp,
@@ -518,6 +685,26 @@ impl<'ctx> super::Codegen<'ctx> {
         match (lhs, rhs) {
             // Integer arithmetic.
             (BasicValueEnum::IntValue(l), BasicValueEnum::IntValue(r)) => match op {
+                // Checked signed-i64 +/-/* and /,% — match the interpreter's
+                // checked arithmetic (overflow / div-by-zero → graceful panic
+                // exit 101, never a silent wrap or a raw SIGFPE; I-9). Only the
+                // i64 signed path is checked (the interpreter's `Int` is i64);
+                // narrower or unsigned ints keep the raw op.
+                ast::BinOp::Add if !is_unsigned && l.get_type().get_bit_width() == 64 => self
+                    .try_const_fold_int(op, l, r)
+                    .or_else(|| self.emit_checked_overflow_op("llvm.sadd.with.overflow", "+", l, r))
+                    .unwrap_or_else(|| build_wrappers::w_int_add(&self.ir.builder, l, r, "add").into()),
+                ast::BinOp::Sub if !is_unsigned && l.get_type().get_bit_width() == 64 => self
+                    .try_const_fold_int(op, l, r)
+                    .or_else(|| self.emit_checked_overflow_op("llvm.ssub.with.overflow", "-", l, r))
+                    .unwrap_or_else(|| build_wrappers::w_int_sub(&self.ir.builder, l, r, "sub").into()),
+                ast::BinOp::Mul if !is_unsigned && l.get_type().get_bit_width() == 64 => self
+                    .try_const_fold_int(op, l, r)
+                    .or_else(|| self.emit_checked_overflow_op("llvm.smul.with.overflow", "*", l, r))
+                    .unwrap_or_else(|| build_wrappers::w_int_mul(&self.ir.builder, l, r, "mul").into()),
+                ast::BinOp::Div if !is_unsigned && l.get_type().get_bit_width() == 64 =>
+                    self.try_const_fold_int(op, l, r)
+                        .unwrap_or_else(|| self.emit_checked_div_rem(false, l, r)),
                 ast::BinOp::Add => build_wrappers::w_int_add(&self.ir.builder, l, r, "add").into(),
                 ast::BinOp::Sub => build_wrappers::w_int_sub(&self.ir.builder, l, r, "sub").into(),
                 ast::BinOp::Mul => build_wrappers::w_int_mul(&self.ir.builder, l, r, "mul").into(),
@@ -568,6 +755,9 @@ impl<'ctx> super::Codegen<'ctx> {
                     )
                     .unwrap()
                     .into(),
+                ast::BinOp::Rem if !is_unsigned && l.get_type().get_bit_width() == 64 =>
+                    self.try_const_fold_int(op, l, r)
+                        .unwrap_or_else(|| self.emit_checked_div_rem(true, l, r)),
                 ast::BinOp::Rem => if is_unsigned {
                     build_wrappers::w_int_unsigned_rem(&self.ir.builder, l, r, "urem").into()
                 } else {

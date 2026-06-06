@@ -1768,6 +1768,58 @@ pub extern "C" fn __axon_verify_panic(
     std::process::exit(VERIFY_FAILED_EXIT_CODE);
 }
 
+/// The exit code for a genuine runtime panic (integer overflow, division by
+/// zero, and the other checked-arithmetic traps). Matches the interpreter's
+/// `interp::run` panic path, which exits 101 on `Flow::Panic` — so a native
+/// binary and `axon run` report the SAME code for the same fault. (101 is also
+/// Rust's own default panic exit, which is where the interpreter's value came
+/// from.) Distinct from VERIFY_FAILED_EXIT_CODE (3 — a policy rejection).
+pub const RUNTIME_PANIC_EXIT_CODE: i32 = 101;
+
+/// Runtime trap for a checked-arithmetic fault in native code — integer
+/// overflow (`+`/`-`/`*`) or division/remainder by zero. Emitted by codegen as a
+/// guarded call on the failing branch (mirrors the `__axon_verify_panic`
+/// pattern). Prints the SAME `axon: panic: <msg>` line the interpreter prints for
+/// the same fault and exits 101 — NOT a raw SIGFPE (exit 136, no message) from a
+/// hardware divide, and NOT a silent two's-complement wrap (the worst case: a
+/// wrong answer masquerading as success, ARCHITECTURE INVARIANTS I-9). The
+/// interpreter is the reference semantics (`interp/value.rs` checked
+/// arithmetic); this brings native into line.
+///
+/// The message is formatted HERE from the operands so it matches the
+/// interpreter's text byte-for-byte (the overflow message embeds the runtime
+/// operand values, which codegen cannot know at IR-build time):
+///   * `kind` 0 — overflow → `"integer overflow: {a} {op} {b} exceeds i64"`
+///   * `kind` 1 — div by zero → `"integer division by zero"`
+///   * `kind` 2 — remainder by zero → `"integer remainder by zero"`
+///
+/// `op_ptr`/`op_len` are the Axon `str` ABI for the operator glyph (`"+"`,
+/// `"-"`, `"*"`) used only in the overflow message; ignored for kinds 1/2.
+#[no_mangle]
+pub extern "C" fn __axon_arith_panic(
+    kind: i64,
+    op_ptr: *const u8,
+    op_len: i64,
+    a: i64,
+    b: i64,
+) -> ! {
+    let msg = match kind {
+        1 => "integer division by zero".to_string(),
+        2 => "integer remainder by zero".to_string(),
+        _ => {
+            let op = if op_ptr.is_null() || op_len <= 0 {
+                "+"
+            } else {
+                let bytes = unsafe { std::slice::from_raw_parts(op_ptr, op_len as usize) };
+                std::str::from_utf8(bytes).unwrap_or("+")
+            };
+            format!("integer overflow: {a} {op} {b} exceeds i64")
+        }
+    };
+    eprintln!("axon: panic: {msg}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(
