@@ -3449,6 +3449,42 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_string_predicates_str_eq_and_str_len() {
+    // Phase 5: the predicate evaluator handles the string subset over a string
+    // CONSTANT — `str_eq(_, "lit")` (equality) and `str_len(_)` (length), incl.
+    // composite `&&`. The binder now carries the string value, so equality and
+    // length both fold. A violating string literal is E1209.
+    let reject = [
+        "type Yes = str where str_eq(_, \"yes\")\nfn f(s: Yes) -> i64 { str_len(s) }\nfn main() { println(to_str(f(\"no\"))) }",
+        "type G = str where str_len(_) >= 2 && str_eq(_, \"hi\")\nfn f(s: G) -> i64 { str_len(s) }\nfn main() { println(to_str(f(\"ho\"))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_streq_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] string predicate must catch: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        "type Yes = str where str_eq(_, \"yes\")\nfn f(s: Yes) -> i64 { str_len(s) }\nfn main() { println(to_str(f(\"yes\"))) }",
+        "type G = str where str_len(_) >= 2 && str_eq(_, \"hi\")\nfn f(s: G) -> i64 { str_len(s) }\nfn main() { println(to_str(f(\"hi\"))) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_streq_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] satisfying string must run: {out:?}");
+    }
+}
+
+#[test]
 fn parenthesized_inline_refinement_on_return_and_param() {
     // Phase 5 §1: the PARENTHESIZED inline refinement form `(T where P)` — the
     // unambiguous form usable in a return position (`-> (i64 where _ >= 0)`),

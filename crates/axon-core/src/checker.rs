@@ -195,11 +195,12 @@ const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 
 /// Phase 5: the value a refinement predicate's binder `_` is bound to when
 /// discharging a constant-argument obligation. Only forms this slice can fold
-/// are represented (an i64 constant, or a known string length for `str_len(_)`).
-#[derive(Clone, Copy)]
+/// are represented (an i64 constant, or a string-literal value — which serves
+/// both `str_len(_)` length reasoning and `str_eq(_, "lit")` equality).
+#[derive(Clone)]
 enum RefineVal {
     Int(i64),
-    StrLen(i64),
+    Str(String),
 }
 
 fn is_known_type_name(
@@ -925,18 +926,18 @@ impl CheckCtx {
             let bound = if let Some(v) = const_eval_int(arg) {
                 RefineVal::Int(v)
             } else if let Expr::Literal(crate::ast::Literal::Str(s)) = arg {
-                RefineVal::StrLen(s.chars().count() as i64)
+                RefineVal::Str(s.clone())
             } else {
                 continue;
             };
             // Only a PROVABLY-false predicate is an error; satisfied or
             // not-statically-evaluable both defer (the latter to §4 / runtime).
-            if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+            if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
                 let file = self.file.clone();
                 let span = self.current_span;
                 let shown = match bound {
                     RefineVal::Int(v) => v.to_string(),
-                    RefineVal::StrLen(_) => format!("{arg:?}"),
+                    RefineVal::Str(s) => format!("{s:?}"),
                 };
                 self.errors.push(
                     CheckError::new(
@@ -968,16 +969,16 @@ impl CheckCtx {
         let bound = if let Some(v) = const_eval_int(ret_expr) {
             RefineVal::Int(v)
         } else if let Expr::Literal(crate::ast::Literal::Str(s)) = ret_expr {
-            RefineVal::StrLen(s.chars().count() as i64)
+            RefineVal::Str(s.clone())
         } else {
             return;
         };
-        if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+        if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
             let file = self.file.clone();
             let span = self.current_span;
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
-                RefineVal::StrLen(_) => format!("{ret_expr:?}"),
+                RefineVal::Str(s) => format!("{s:?}"),
             };
             self.errors.push(
                 CheckError::new(
@@ -1011,16 +1012,16 @@ impl CheckCtx {
         let bound = if let Some(v) = const_eval_int(fexpr) {
             RefineVal::Int(v)
         } else if let Expr::Literal(crate::ast::Literal::Str(s)) = fexpr {
-            RefineVal::StrLen(s.chars().count() as i64)
+            RefineVal::Str(s.clone())
         } else {
             return;
         };
-        if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+        if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
             let file = self.file.clone();
             let span = self.current_span;
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
-                RefineVal::StrLen(_) => format!("{fexpr:?}"),
+                RefineVal::Str(s) => format!("{s:?}"),
             };
             self.errors.push(
                 CheckError::new(
@@ -1045,8 +1046,8 @@ impl CheckCtx {
     /// arithmetic, comparisons, `&&`/`||`/`!`, and `str_len(_)` on a known
     /// length. Returns `None` when the predicate uses a form this slice can't
     /// fold (then the obligation is deferred, not failed).
-    fn eval_refinement_pred(pred: &Expr, bound: RefineVal) -> Option<bool> {
-        Self::eval_pred_bool(pred, &bound)
+    fn eval_refinement_pred(pred: &Expr, bound: &RefineVal) -> Option<bool> {
+        Self::eval_pred_bool(pred, bound)
     }
 
     fn eval_pred_bool(e: &Expr, b: &RefineVal) -> Option<bool> {
@@ -1055,6 +1056,34 @@ impl CheckCtx {
             Expr::Literal(crate::ast::Literal::Bool(v)) => Some(*v),
             Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
                 Some(!Self::eval_pred_bool(operand, b)?)
+            }
+            // `str_eq(_, "lit")` / `str_eq("lit", _)` — equality of the bound
+            // string against a literal (the only string op besides str_len in the
+            // Phase-5 predicate subset).
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(fname) = callee.as_ref() {
+                    if fname == "str_eq" && args.len() == 2 {
+                        // One side must be the binder `_` (→ the bound string),
+                        // the other a string literal. Resolve both and compare.
+                        let bound_str = match b {
+                            RefineVal::Str(s) => Some(s.clone()),
+                            RefineVal::Int(_) => None,
+                        };
+                        let is_binder = |e: &Expr| matches!(e, Expr::Ident(n) if n == "_");
+                        let (lhs, rhs) = (&args[0], &args[1]);
+                        let pair = if is_binder(lhs) {
+                            (bound_str.clone(), Self::pred_str_literal(rhs))
+                        } else if is_binder(rhs) {
+                            (bound_str.clone(), Self::pred_str_literal(lhs))
+                        } else {
+                            (None, None)
+                        };
+                        if let (Some(v), Some(l)) = pair {
+                            return Some(v == l);
+                        }
+                    }
+                }
+                None
             }
             Expr::BinOp { op, left, right } => match op {
                 BinOp::And => Some(Self::eval_pred_bool(left, b)? && Self::eval_pred_bool(right, b)?),
@@ -1085,16 +1114,16 @@ impl CheckCtx {
             // The binder `_` → the bound integer value.
             Expr::Ident(n) if n == "_" => match b {
                 RefineVal::Int(v) => Some(*v),
-                RefineVal::StrLen(_) => None,
+                RefineVal::Str(_) => None,
             },
-            // `str_len(_)` → the bound string's length (when the value is a str).
+            // `str_len(_)` → the bound string's char count (str binder only).
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
                     if fname == "str_len" && args.len() == 1 {
                         if let Expr::Ident(n) = &args[0] {
                             if n == "_" {
-                                if let RefineVal::StrLen(len) = b {
-                                    return Some(*len);
+                                if let RefineVal::Str(s) = b {
+                                    return Some(s.chars().count() as i64);
                                 }
                             }
                         }
@@ -1116,6 +1145,14 @@ impl CheckCtx {
                     _ => None,
                 }
             }
+            _ => None,
+        }
+    }
+
+    /// A string literal's value (NOT the binder) — the comparand in `str_eq`.
+    fn pred_str_literal(e: &Expr) -> Option<String> {
+        match e {
+            Expr::Literal(crate::ast::Literal::Str(s)) => Some(s.clone()),
             _ => None,
         }
     }
