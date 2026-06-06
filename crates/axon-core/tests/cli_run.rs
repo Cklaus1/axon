@@ -3449,6 +3449,30 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn named_refinement_type_is_usable_and_erases_to_its_base() {
+    // Phase 5 §1 (sub-slices 1+1c): a named refinement `type Name = T where P`
+    // parses, is a valid type annotation (no E0308), and is TRANSPARENT to its
+    // base T at the value level — usable as a param type, return type, and local
+    // annotation, type-checking exactly as T (the predicate P is a static proof
+    // obligation, landed in a later sub-slice; it does not change the runtime
+    // representation). Both infer and the checker must resolve Name → base.
+    let cases: &[(&str, &str)] = &[
+        ("type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> i64 { n * 2 }\nfn main() { println(to_str(dbl(5))) }", "10"),
+        ("type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> Positive { n * 2 }\nfn main() { println(to_str(dbl(5))) }", "10"),
+        ("type NonEmpty = str where str_len(_) > 0\nfn first(s: NonEmpty) -> i64 { char_at(s, 0) }\nfn main() { println(to_str(first(\"hi\"))) }", "104"),
+        ("type Positive = i64 where _ > 0\nfn main() { let x: Positive = 5\n println(to_str(x + 1)) }", "6"),
+    ];
+    for (i, (prog, expected)) in cases.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refine_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, prog).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] refinement-typed program must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] refinement erases to base");
+    }
+}
+
+#[test]
 fn total_attribute_requires_a_decreasing_measure_e1208() {
     // Phase 5 §3: a `@[total]` function must terminate. The checker discharges
     // an automatic decreasing-measure obligation at every recursive call:

@@ -275,9 +275,11 @@ pub struct CheckCtx {
     /// `@[pure]` fn names (Phase 5 §2). A `@[pure]` fn may only call other
     /// `@[pure]` fns and the pure-builtin allowlist; `check_purity` enforces it.
     pure_fns: HashSet<String>,
-    /// Phase 5: named refinement type names (`type Positive = i64 where …`),
-    /// recognised as valid type annotations (no E0308); erased to their base.
-    refinement_names: HashSet<String>,
+    /// Phase 5: named refinement types (`type Positive = i64 where …`) → their
+    /// erased base `Type`. Recognised as valid type annotations (no E0308) and
+    /// resolved to the base wherever a value's type is computed (so `n: Positive`
+    /// is treated as `i64` for arithmetic / arg compatibility / etc.).
+    refinement_base: HashMap<String, Type>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -326,7 +328,7 @@ impl CheckCtx {
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
             pure_fns: HashSet::new(),
-            refinement_names: HashSet::new(),
+            refinement_base: HashMap::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -410,9 +412,9 @@ impl CheckCtx {
                     self.pure_fns.insert(f.name.clone());
                 }
             }
-            // Phase 5: register named refinements as valid type names.
+            // Phase 5: register named refinements → their erased base Type.
             if let Item::RefineDef(r) = item {
-                self.refinement_names.insert(r.name.clone());
+                self.refinement_base.insert(r.name.clone(), axon_type_to_type(&r.base));
             }
         }
         if !self.pure_fns.is_empty() {
@@ -799,9 +801,12 @@ impl CheckCtx {
         let fn_path = format!("#fn_{}", f.name);
         let mut scope: HashMap<String, Type> = HashMap::new();
 
-        // Seed scope with parameters (same enum-aware resolution as the return type).
+        // Seed scope with parameters (same enum-aware resolution as the return
+        // type). Phase 5: a refinement-typed param erases to its base, so
+        // `n: Positive` binds as `i64` for arithmetic / arg compatibility.
         for param in &f.params {
-            scope.insert(param.name.clone(), enumify(axon_type_to_type(&param.ty), &known_enums));
+            let pty = self.resolve_refinements(enumify(axon_type_to_type(&param.ty), &known_enums));
+            scope.insert(param.name.clone(), pty);
         }
 
         // R5: #[goal] fns bind `goal_met` in their body scope.
@@ -824,6 +829,29 @@ impl CheckCtx {
         self.current_ret_ty = prev_ret;
         self.current_generic_params = prev_generics;
         self.current_span = prev_span;
+    }
+
+    /// Phase 5: replace any named-refinement type with its erased base,
+    /// recursively (a refinement resolves to `Struct(name)` via
+    /// `axon_type_to_type`; swap it for the registered base). Idempotent for
+    /// non-refinement types.
+    fn resolve_refinements(&self, ty: Type) -> Type {
+        match ty {
+            Type::Struct(ref n) | Type::Deferred(ref n) => {
+                if let Some(base) = self.refinement_base.get(n) {
+                    base.clone()
+                } else {
+                    ty
+                }
+            }
+            Type::Option(i) => Type::Option(Box::new(self.resolve_refinements(*i))),
+            Type::Slice(i) => Type::Slice(Box::new(self.resolve_refinements(*i))),
+            Type::Result(a, b) => Type::Result(
+                Box::new(self.resolve_refinements(*a)),
+                Box::new(self.resolve_refinements(*b)),
+            ),
+            other => other,
+        }
     }
 
     /// Phase 5 §2 — enforce `@[pure]` (P01/P02/P04). Walks the body of a
@@ -2757,7 +2785,7 @@ impl CheckCtx {
                 }
                 let known_enums = self.known_enums.clone();
                 if !is_known_type_name(name, &self.struct_fields, &known_enums)
-                    && !self.refinement_names.contains(name)
+                    && !self.refinement_base.contains_key(name)
                 {
                     let mut candidates: Vec<String> =
                         PRIMITIVE_NAMES.iter().map(|s| s.to_string()).collect();
