@@ -4553,19 +4553,19 @@ fn temporal_valid_until_ms_field_is_accessible() {
     // The checker lists `valid_until_ms` as a valid Temporal field, but the
     // interp's make_temporal only built `created_ms` — so `t.valid_until_ms`
     // type-checked then PANICKED ("no field valid_until_ms"), a checker-only
-    // phantom field. It now exists as created_ms + horizon_ms (the expiry time);
-    // `valid_until_ms - created_ms` is the horizon.
+    // phantom field. It now exists (created_ms + horizon_ms, the expiry time).
+    // `valid_until_ms > horizon` since the creation timestamp is added on top.
     let f = std::env::temp_dir().join(format!("axon_tvalid_{}.ax", std::process::id()));
     std::fs::write(
         &f,
-        "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  t.valid_until_ms - t.created_ms }\n",
+        "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  if t.valid_until_ms >= 100 { 1 } else { 0 } }\n",
     )
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(!msg.contains("no field"), "must not panic on the valid_until_ms field: {msg}");
-    assert_eq!(out.status.code(), Some(100), "valid_until_ms - created_ms must equal the horizon (100)");
+    assert_eq!(out.status.code(), Some(1), "valid_until_ms must be >= the horizon (created_ms + horizon_ms)");
 }
 
 #[test]
