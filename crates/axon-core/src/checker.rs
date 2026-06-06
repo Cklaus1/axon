@@ -275,6 +275,9 @@ pub struct CheckCtx {
     /// `@[pure]` fn names (Phase 5 §2). A `@[pure]` fn may only call other
     /// `@[pure]` fns and the pure-builtin allowlist; `check_purity` enforces it.
     pure_fns: HashSet<String>,
+    /// Phase 5: named refinement type names (`type Positive = i64 where …`),
+    /// recognised as valid type annotations (no E0308); erased to their base.
+    refinement_names: HashSet<String>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -323,6 +326,7 @@ impl CheckCtx {
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
             pure_fns: HashSet::new(),
+            refinement_names: HashSet::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -405,6 +409,10 @@ impl CheckCtx {
                 if f.attrs.iter().any(|a| a.name == "pure") {
                     self.pure_fns.insert(f.name.clone());
                 }
+            }
+            // Phase 5: register named refinements as valid type names.
+            if let Item::RefineDef(r) = item {
+                self.refinement_names.insert(r.name.clone());
             }
         }
         if !self.pure_fns.is_empty() {
@@ -638,6 +646,10 @@ impl CheckCtx {
                     self.check_fn(m);
                 }
             }
+            // Phase 5: a named refinement `type Name = T where P`. Sub-slice 1
+            // registers the form; predicate well-formedness + proof obligations
+            // (R01-R05, constant-arg comptime / SMT) are later sub-slices.
+            Item::RefineDef(_) => {}
             Item::EnumDef(_) | Item::ModDecl(_) | Item::UseDecl(_) | Item::TraitDef(_)
             | Item::LetDef { .. } => {}
         }
@@ -2744,7 +2756,9 @@ impl CheckCtx {
                     return;
                 }
                 let known_enums = self.known_enums.clone();
-                if !is_known_type_name(name, &self.struct_fields, &known_enums) {
+                if !is_known_type_name(name, &self.struct_fields, &known_enums)
+                    && !self.refinement_names.contains(name)
+                {
                     let mut candidates: Vec<String> =
                         PRIMITIVE_NAMES.iter().map(|s| s.to_string()).collect();
                     for k in self.struct_fields.keys() {

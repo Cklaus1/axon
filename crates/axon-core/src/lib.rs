@@ -286,6 +286,7 @@ fn top_level_name(item: &ast::Item) -> Option<String> {
         ast::Item::TraitDef(t) => Some(t.name.clone()),
         ast::Item::ModDecl(m) => Some(m.name.clone()),
         ast::Item::LetDef { name, .. } => Some(name.clone()),
+        ast::Item::RefineDef(r) => Some(r.name.clone()),
         ast::Item::ImplBlock(_) | ast::Item::UseDecl(_) => None,
     }
 }

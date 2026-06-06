@@ -227,6 +227,11 @@ pub struct InferCtx {
     pub struct_generic_params: HashMap<String, Vec<String>>,
     /// Variant name lists for user-defined enum types.
     pub enum_variants: HashMap<String, Vec<String>>,
+    /// Phase 5: named refinement types → their (erased) base AxonType. A
+    /// `type Positive = i64 where _ > 0` resolves `Positive` to `i64` — the
+    /// refinement is transparent at the value/layout level (the predicate is a
+    /// static proof obligation, not a runtime representation change).
+    pub refinement_base: HashMap<String, AxonType>,
     /// Fix #2: payload field types per variant.
     /// Maps `enum_name → variant_name → [(field_name, field_type)]`.
     pub enum_variant_fields: HashMap<String, HashMap<String, Vec<(String, Type)>>>,
@@ -264,6 +269,7 @@ impl InferCtx {
             struct_fields: HashMap::new(),
             struct_generic_params: HashMap::new(),
             enum_variants: HashMap::new(),
+            refinement_base: HashMap::new(),
             enum_variant_fields: HashMap::new(),
             trait_method_sigs: HashMap::new(),
             module_bindings: HashMap::new(),
@@ -302,6 +308,11 @@ impl InferCtx {
             AxonType::Named(name) => {
                 if let Some(ty) = Type::from_name(name) {
                     ty
+                } else if let Some(base) = self.refinement_base.get(name) {
+                    // Phase 5: a named refinement is transparent — resolve to its
+                    // base type. (Clone to drop the borrow before recursing.)
+                    let base = base.clone();
+                    self.resolve_ast_type(&base)
                 } else if self.struct_fields.contains_key(name) {
                     Type::Struct(name.clone())
                 } else if self.enum_variants.contains_key(name) {
@@ -376,6 +387,10 @@ impl InferCtx {
                     // Register enum name so forward refs resolve to Type::Enum.
                     let variants = ed.variants.iter().map(|v| v.name.clone()).collect();
                     self.enum_variants.insert(ed.name.clone(), variants);
+                }
+                Item::RefineDef(r) => {
+                    // Phase 5: a named refinement resolves to its (erased) base.
+                    self.refinement_base.insert(r.name.clone(), r.base.clone());
                 }
                 Item::ImplBlock(blk) => {
                     // Register impl methods as placeholder sigs (mangled name: TypeName__method).

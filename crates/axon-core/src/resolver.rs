@@ -535,6 +535,11 @@ impl<'a> Resolver<'a> {
                     };
                     self.table.define(name.clone(), sym);
                 }
+                Item::RefineDef(_) => {
+                    // Phase 5: a named refinement is a type alias; it introduces a
+                    // type name, not a value. No value-symbol to define here (the
+                    // type-name registry is built by the checker/infer layers).
+                }
             }
         }
     }

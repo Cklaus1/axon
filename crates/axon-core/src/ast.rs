@@ -27,6 +27,21 @@ pub enum Item {
     ImplBlock(ImplBlock),
     /// Module-level comptime constant: `let NAME = comptime { expr }`
     LetDef { name: String, value: Box<Expr>, span: Span },
+    /// Phase 5: a named refinement type `type Name = BaseType where <pred>`.
+    /// The predicate's implicit binder `_` refers to the value of the base type.
+    RefineDef(RefineDef),
+}
+
+#[derive(Debug, Clone)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub struct RefineDef {
+    pub name: String,
+    /// The underlying (erased-at-runtime) base type.
+    pub base: AxonType,
+    /// The refinement predicate; `_` is the implicit binder for the value.
+    pub predicate: Box<Expr>,
+    pub attrs: Vec<Attr>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]

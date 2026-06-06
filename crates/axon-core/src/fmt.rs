@@ -100,6 +100,15 @@ impl Formatter {
                 self.emit_expr(value);
                 self.nl();
             }
+            Item::RefineDef(r) => {
+                self.write("type ");
+                self.write(&r.name);
+                self.write(" = ");
+                self.emit_axon_type(&r.base);
+                self.write(" where ");
+                self.emit_expr(&r.predicate);
+                self.nl();
+            }
             Item::UseDecl(_) | Item::ModDecl(_) => {}
         }
     }

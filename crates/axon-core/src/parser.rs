@@ -895,6 +895,31 @@ impl Parser {
 
         // Sum-type form: the RHS starts with a variant name, not `{`.
         if !self.at(&Token::LBrace) {
+            // Phase 5 named refinement: `type Name = BaseType where <pred>`. A
+            // refinement RHS is a single base TYPE followed by `where`; an enum
+            // RHS is a variant name optionally followed by `{ … }` fields and/or
+            // `| more`. Disambiguate by parsing a type first and peeking for
+            // `where` — but only when the RHS can't be a multi-variant enum. We
+            // detect the refinement by: a bare type name with NO variant fields,
+            // immediately followed by `where`.
+            let checkpoint = self.pos;
+            if let Ok(base) = self.parse_type() {
+                if self.at(&Token::Where) {
+                    self.expect(&Token::Where)?;
+                    let predicate = self.parse_expr()?;
+                    let end = self.current_span().end;
+                    return Ok(Item::RefineDef(RefineDef {
+                        name,
+                        base,
+                        predicate: Box::new(predicate),
+                        attrs,
+                        span: Span::new(start, end),
+                    }));
+                }
+            }
+            // Not a refinement — rewind and parse as an enum.
+            self.pos = checkpoint;
+
             let mut variants = Vec::new();
             loop {
                 let vname = self.expect_ident()?;
