@@ -102,6 +102,23 @@ if [ "$STRICT" = 1 ]; then
   # cleanly. Under --strict only (links LLVM + may run wasmtime; ~2 min).
   echo "── gate: parity suite (interp ↔ codegen / AOT-wasm) ─────────────"
   ./scripts/parity_all.sh --quiet || fail "parity suite"
+
+  # Coverage gap closed (the [[coverage-vacuous-pass-guard]] class): the entire
+  # `smt` feature — Phase 5 §4's Z3-backed @[verify] + refinement-return prover
+  # (smt.rs, 18 unit tests) — is behind `#[cfg(feature = "smt")]` and so was
+  # NEVER built or tested by any gate stage. A regression in the prover stayed
+  # green. --strict now clippy-gates and tests it. The feature links the system
+  # libz3 dynamically; when libz3 isn't installed we SKIP cleanly (like the wasm
+  # harnesses) rather than fail, so the gate still works on a Z3-less box.
+  if echo 'int main(){return 0;}' | cc -xc - -lz3 -o /dev/null 2>/dev/null; then
+    echo "── gate: clippy + tests (smt feature, Z3) ───────────────────────"
+    cargo clippy --no-default-features -p axon-core --features smt --all-targets -- -D warnings \
+      || fail "smt-feature clippy"
+    cargo test --no-default-features -p axon-core --features smt --lib smt \
+      || fail "smt unit tests"
+  else
+    echo "── gate: smt feature SKIPPED (libz3 not found; install to enable) ─"
+  fi
 fi
 
 echo ""
