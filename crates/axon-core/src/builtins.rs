@@ -1254,6 +1254,47 @@ pub fn is_impure_builtin(name: &str) -> bool {
     )
 }
 
+/// Phase 6 §3: the effect row of a builtin — the set of concrete effects a call
+/// to it performs. The empty slice is the pure row `{}` (the vast majority of
+/// builtins: arithmetic, string ops, conversions, assertions, Uncertain/Temporal
+/// projections). Only the small impure surface carries effects; this is the
+/// per-builtin refinement of [`is_impure_builtin`] used by the effect checker to
+/// seed each call site's row. Binding follows the spec §3 catalog table.
+pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
+    match name {
+        // AI / model inference — reaches the network for a model call.
+        "ai_complete"
+        | "ai_extract_i64" | "ai_extract_f64" | "ai_extract_str" | "ai_extract_bool"
+        | "ai_extract_uncertain_i64" | "ai_extract_uncertain_f64"
+        | "ai_cost_spent" => &["AI", "Net"],
+
+        // I/O — console, files, process spawning, environment, exit.
+        "println" | "print" | "eprintln" | "eprint"
+        | "read_line" | "read_file" | "write_file"
+        | "env_var" | "exit" => &["IO"],
+        "exec" => &["IO"],
+
+        // Time / scheduling.
+        "now_ms" | "sleep_ms" => &["Time"],
+
+        // Randomness / nondeterminism.
+        "random_i64" | "random_f64" => &["Random"],
+
+        // Online optimization — goal_run can re-call adaptive fns, log, and read
+        // provenance, so it spans {AI, Net, IO}; the read-only goal_* accessors
+        // touch process-global optimizer state (modeled as IO).
+        "goal_run" => &["AI", "Net", "IO"],
+        "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
+        | "goal_best_score" | "goal_history" | "goal_clear" => &["IO"],
+
+        // Channels / concurrency.
+        "chan_new" | "chan_send" | "chan_recv" => &["Chan"],
+
+        // Everything else is pure.
+        _ => &[],
+    }
+}
+
 /// Every entry in [`BUILTINS`] is included.  Callers in `infer.rs` should
 /// merge this map into their global signature table at startup.
 pub fn builtin_sigs() -> HashMap<String, BuiltinSig> {
@@ -1376,5 +1417,32 @@ mod tests {
             assert!(set.contains(expected), "expected deferred attr `{expected}` not found");
         }
         assert!(!set.contains("verify"), "`verify` should no longer be deferred");
+    }
+
+    #[test]
+    fn builtin_effect_row_agrees_with_impurity() {
+        // The Phase-6 effect catalog must stay in lockstep with is_impure_builtin:
+        // a builtin has a non-empty effect row IFF it is impure. A drift here
+        // (e.g. a new impure builtin given no row) would silently let an effect
+        // escape the checker — guard against it across the whole BUILTINS table.
+        for b in BUILTINS {
+            let row = builtin_effect_row(b.name);
+            let impure = is_impure_builtin(b.name);
+            assert_eq!(
+                !row.is_empty(),
+                impure,
+                "`{}`: effect row {:?} disagrees with is_impure_builtin={impure}",
+                b.name, row
+            );
+        }
+        // Spot-check the catalog's specific row assignments (spec §3).
+        assert_eq!(builtin_effect_row("println"), &["IO"]);
+        assert_eq!(builtin_effect_row("ai_complete"), &["AI", "Net"]);
+        assert_eq!(builtin_effect_row("random_i64"), &["Random"]);
+        assert_eq!(builtin_effect_row("now_ms"), &["Time"]);
+        assert_eq!(builtin_effect_row("chan_send"), &["Chan"]);
+        assert_eq!(builtin_effect_row("goal_run"), &["AI", "Net", "IO"]);
+        assert!(builtin_effect_row("to_str").is_empty(), "to_str is pure");
+        assert!(builtin_effect_row("abs_i32").is_empty(), "abs_i32 is pure");
     }
 }
