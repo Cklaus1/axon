@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::{levenshtein, E1206, E1207, E1500, E1503, E1504, E1505};
+use crate::error::{levenshtein, E1206, E1207, E1208, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -413,6 +413,17 @@ impl CheckCtx {
                     if self.pure_fns.contains(&f.name) {
                         self.check_purity(f);
                     }
+                }
+            }
+        }
+
+        // Phase 5 §3: a @[total] fn must terminate. For a recursive @[total] fn,
+        // require a strictly-decreasing well-founded measure at every recursive
+        // call; a non-recursive @[total] fn passes silently. E1208 otherwise.
+        for item in &program.items {
+            if let Item::FnDef(f) = item {
+                if f.attrs.iter().any(|a| a.name == "total") {
+                    self.check_totality(f);
                 }
             }
         }
@@ -954,6 +965,187 @@ impl CheckCtx {
                 }
             }
             // Leaves / no child exprs to walk.
+            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
+            | Expr::Return(None) | Expr::Lambda { .. } => {}
+        }
+    }
+
+    /// Phase 5 §3 — discharge the `@[total]` termination obligation. Collect
+    /// every self-recursive call site; if there are none, the fn is trivially
+    /// total (pass silently). Otherwise require ONE parameter index that
+    /// strictly decreases at EVERY recursive call — an automatic well-founded
+    /// measure. Two measure kinds are recognised (the rest of §3 needs the
+    /// refinement/SMT machinery):
+    ///   - i64 param: the recursive call passes `p - K` (K>0) or `p / K` (K>1),
+    ///     i.e. a strictly-smaller derivation of the same parameter.
+    ///   - slice param: the recursive call passes `tail(p)` / `arr_drop(p, K)` /
+    ///     `arr_tail(p)` — a strictly-shorter slice.
+    ///
+    /// Mutual recursion is out of scope (only self-recursion is analysed). E1208
+    /// when no single index decreases across all sites.
+    fn check_totality(&mut self, f: &FnDef) {
+        let mut sites: Vec<Vec<Expr>> = Vec::new();
+        Self::collect_self_calls(&f.body, &f.name, &mut sites);
+        if sites.is_empty() {
+            return; // non-recursive → trivially total.
+        }
+        let arity = f.params.len();
+        // A parameter index "works" if its argument strictly decreases at EVERY
+        // recursive call site.
+        let decreasing_idx = (0..arity).find(|&i| {
+            sites.iter().all(|args| {
+                args.get(i)
+                    .map(|a| Self::arg_strictly_decreases(a, &f.params[i].name))
+                    .unwrap_or(false)
+            })
+        });
+        if decreasing_idx.is_none() {
+            let file = self.file.clone();
+            let fname = f.name.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1208,
+                    format!(
+                        "`@[total]` function `{fname}` has no strictly-decreasing measure at its \
+                         recursive call(s) — the checker could not prove it terminates"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(f.span)
+                .fix(
+                    "make a single argument strictly smaller at every recursive call \
+                     (e.g. `n - 1` on an i64 parameter, or `tail(v)` on a slice parameter), \
+                     or remove `@[total]`"
+                        .to_string(),
+                ),
+            );
+        }
+    }
+
+    /// Collect the argument lists of every self-recursive call to `name` in
+    /// `expr`. Each entry is one call site's args.
+    fn collect_self_calls(expr: &Expr, name: &str, out: &mut Vec<Vec<Expr>>) {
+        if let Expr::Call { callee, args, .. } = expr {
+            if matches!(callee.as_ref(), Expr::Ident(n) if n == name) {
+                out.push(args.clone());
+            }
+        }
+        Self::for_each_child(expr, &mut |c| Self::collect_self_calls(c, name, out));
+    }
+
+    /// True if `arg` is a strictly-smaller derivation of the parameter `pname`:
+    /// `pname - K` (K>0), `pname / K` (K>1), or a shortening builtin applied to
+    /// `pname` (`tail`/`arr_tail`/`arr_drop`).
+    fn arg_strictly_decreases(arg: &Expr, pname: &str) -> bool {
+        match arg {
+            // pname - positive-literal   /   pname / literal>1
+            Expr::BinOp { op, left, right } => {
+                let left_is_param = matches!(left.as_ref(), Expr::Ident(n) if n == pname);
+                match op {
+                    crate::ast::BinOp::Sub => {
+                        left_is_param && Self::is_positive_int_literal(right)
+                    }
+                    crate::ast::BinOp::Div => {
+                        left_is_param && Self::int_literal_value(right).map(|v| v > 1).unwrap_or(false)
+                    }
+                    _ => false,
+                }
+            }
+            // tail(pname) / arr_tail(pname) / arr_drop(pname, _)
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(fname) = callee.as_ref() {
+                    let shortens = matches!(fname.as_str(), "tail" | "arr_tail" | "arr_drop" | "arr_skip");
+                    let first_is_param = args.first().is_some_and(|a| {
+                        let inner = match a {
+                            Expr::UnaryOp { op: crate::ast::UnaryOp::Ref, operand } => operand.as_ref(),
+                            other => other,
+                        };
+                        matches!(inner, Expr::Ident(n) if n == pname)
+                    });
+                    shortens && first_is_param
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn is_positive_int_literal(e: &Expr) -> bool {
+        Self::int_literal_value(e).map(|v| v > 0).unwrap_or(false)
+    }
+
+    /// The i64 value of an integer literal (handles `0 - n` only as non-literal).
+    fn int_literal_value(e: &Expr) -> Option<i64> {
+        match e {
+            Expr::Literal(crate::ast::Literal::Int(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    /// Apply `g` to every direct child expression of `expr` (one level). Shared
+    /// recursion helper.
+    fn for_each_child(expr: &Expr, g: &mut dyn FnMut(&Expr)) {
+        match expr {
+            Expr::Block(stmts) => stmts.iter().for_each(|s| g(&s.expr)),
+            Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. }
+            | Expr::Question(value) | Expr::Comptime(value) | Expr::Spawn(value)
+            | Expr::Assign { value, .. } => g(value),
+            Expr::UnaryOp { operand, .. } => g(operand),
+            Expr::Call { callee, args, .. } => {
+                g(callee);
+                for a in args { g(a); }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                g(receiver);
+                for a in args { g(a); }
+            }
+            Expr::BinOp { left, right, .. } => {
+                g(left);
+                g(right);
+            }
+            Expr::Match { subject, arms } => {
+                g(subject);
+                arms.iter().for_each(|a| g(&a.body));
+            }
+            Expr::If { cond, then, else_ } => {
+                g(cond);
+                g(then);
+                if let Some(e) = else_ {
+                    g(e);
+                }
+            }
+            Expr::Return(Some(inner)) | Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => g(inner),
+            Expr::FieldAccess { receiver, .. } => g(receiver),
+            Expr::Index { receiver, index } => {
+                g(receiver);
+                g(index);
+            }
+            Expr::Tuple(es) | Expr::Array(es) => { for e in es { g(e); } }
+            Expr::StructLit { fields, .. } => fields.iter().for_each(|(_, fe)| g(fe)),
+            Expr::While { cond, body, .. } => {
+                g(cond);
+                body.iter().for_each(|s| g(&s.expr));
+            }
+            Expr::WhileLet { expr, body, .. } => {
+                g(expr);
+                body.iter().for_each(|s| g(&s.expr));
+            }
+            Expr::For { start, end, body, .. } => {
+                g(start);
+                g(end);
+                body.iter().for_each(|s| g(&s.expr));
+            }
+            Expr::AssignTo { place, value } => {
+                g(place);
+                g(value);
+            }
+            Expr::Select(_) => {}
+            Expr::FmtStr { parts } => parts.iter().for_each(|p| {
+                if let crate::ast::FmtPart::Expr(e) = p {
+                    g(e);
+                }
+            }),
             Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
             | Expr::Return(None) | Expr::Lambda { .. } => {}
         }

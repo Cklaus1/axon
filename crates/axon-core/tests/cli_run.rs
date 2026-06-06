@@ -3449,6 +3449,57 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn total_attribute_requires_a_decreasing_measure_e1208() {
+    // Phase 5 §3: a `@[total]` function must terminate. The checker discharges
+    // an automatic decreasing-measure obligation at every recursive call:
+    // accepts `n - K` / `n / K` on an i64 param, a shortening builtin on a slice
+    // param, and any non-recursive `@[total]` fn; rejects (E1208) when no single
+    // argument strictly decreases. It is intentionally SOUND-not-complete — it
+    // refuses a terminating fn whose measure isn't one of these simple forms
+    // (e.g. Euclid's `gcd(b, a % b)`), which needs the user-supplied
+    // `@[total(measure: …)]` form (future work). Never accepts a non-terminator.
+    let accept = [
+        "@[total]\nfn fact(n: i64) -> i64 { if n == 0 { 1 } else { n * fact(n - 1) } }\nfn main() { println(to_str(fact(5))) }",
+        "@[total]\nfn add(a: i64, b: i64) -> i64 { a + b }\nfn main() { println(to_str(add(2, 3))) }",
+        "@[total]\nfn cdown(n: i64) -> i64 { if n <= 1 { 0 } else { 1 + cdown(n / 2) } }\nfn main() { println(to_str(cdown(16))) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_total_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] @[total] must check clean: {combined}");
+        assert!(!combined.contains("E1208"), "[accept {i}] no E1208 expected: {combined}");
+        assert!(!combined.contains("W0001"), "[accept {i}] @[total] must be a known attr: {combined}");
+    }
+
+    let reject = [
+        // recursive call passes the parameter unchanged → infinite loop.
+        "@[total]\nfn loop_f(n: i64) -> i64 { if n == 0 { 0 } else { loop_f(n) } }\nfn main() { println(to_str(loop_f(3))) }",
+        // recursive call INCREASES the argument.
+        "@[total]\nfn up(n: i64) -> i64 { if n > 100 { n } else { up(n + 1) } }\nfn main() { println(to_str(up(0))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_total_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] non-decreasing @[total] must fail: {combined}");
+        assert!(combined.contains("E1208"), "[reject {i}] expected E1208: {combined}");
+    }
+}
+
+#[test]
 fn pure_attribute_enforces_purity_e1207() {
     // Phase 5 §2 (P01/P02/P04/P05): a `@[pure]` function may only call other
     // `@[pure]` functions and pure builtins. An impure call (I/O, AI, time,
