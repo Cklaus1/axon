@@ -696,9 +696,45 @@ impl Parser {
         } else {
             None
         };
+        // Phase 6: an optional effect-row clause `| {IO, Net, ...e}` between the
+        // return type and the body. Absent ⇒ pure (empty row), so every Phase
+        // 1–5 source parses unchanged.
+        let effect_row = if self.at(&Token::Pipe) {
+            Some(self.parse_effect_row()?)
+        } else {
+            None
+        };
         let body = self.parse_block()?;
         let end = self.current_span().end;
-        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, verify: None, span: Span::new(start, end) })
+        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, verify: None, effect_row, span: Span::new(start, end) })
+    }
+
+    /// Phase 6: parse an effect-row clause `| { eff (, eff)* }`, where each `eff`
+    /// is a concrete effect name or a row-extension `...e` (the trailing row
+    /// variable). The leading `|` is at the cursor. Surface enforcement of the
+    /// rows (E1300–E1308) is a later slice; this only captures the structure.
+    fn parse_effect_row(&mut self) -> Result<crate::ast::EffectRow> {
+        let start = self.current_span().start;
+        self.expect(&Token::Pipe)?;
+        self.expect(&Token::LBrace)?;
+        let mut effects = Vec::new();
+        let mut row_var = None;
+        while !self.at(&Token::RBrace) {
+            // A row-extension `...e` (lexed as `..` then optional `.`) closes the
+            // row with a trailing variable; it must be the last term.
+            if self.eat(&Token::DotDot) {
+                let _ = self.eat(&Token::Dot); // the third dot of `...`
+                row_var = Some(self.expect_ident()?);
+                break;
+            }
+            effects.push(self.expect_ident()?);
+            if !self.eat(&Token::Comma) {
+                break;
+            }
+        }
+        self.expect(&Token::RBrace)?;
+        let end = self.current_span().end;
+        Ok(crate::ast::EffectRow { effects, row_var, span: Span::new(start, end) })
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>> {
@@ -795,15 +831,27 @@ impl Parser {
 
     fn parse_type(&mut self) -> Result<AxonType> {
         let first = self.parse_type_atom()?;
-        // TypeScript-style union: `A|B|C`. Collect successive `| T` atoms.
-        if self.at(&Token::Pipe) {
+        // TypeScript-style union: `A|B|C`. Collect successive `| T` atoms — but a
+        // `|` immediately followed by `{` is a Phase-6 effect-row clause on the
+        // enclosing fn signature (`-> T | {IO}`), NOT a union member, so leave it
+        // for parse_fn to consume.
+        if self.at(&Token::Pipe) && !self.peek_is_effect_row() {
             let mut members = vec![first];
-            while self.eat(&Token::Pipe) {
+            // Consume `| T` members, but stop before a `| {…}` effect row.
+            while !self.peek_is_effect_row() && self.eat(&Token::Pipe) {
                 members.push(self.parse_type_atom()?);
             }
             return Ok(AxonType::Union(members));
         }
         Ok(first)
+    }
+
+    /// True when the cursor is at a `|` that begins a Phase-6 effect row (`| {`),
+    /// rather than a type union (`| T`). Used to keep the row clause out of the
+    /// return type so `parse_fn` can attach it to the signature.
+    fn peek_is_effect_row(&self) -> bool {
+        matches!(self.tokens.get(self.pos), Some(Token::Pipe))
+            && matches!(self.tokens.get(self.pos + 1), Some(Token::LBrace))
     }
 
     fn parse_type_atom(&mut self) -> Result<AxonType> {
@@ -3163,5 +3211,40 @@ mod tests {
             vec![("T".to_string(), vec!["Display".to_string()])],
             "only T should carry a bound, got {:?}", f.generic_bounds
         );
+    }
+
+    #[test]
+    fn parse_phase6_effect_row_clause() {
+        // No clause ⇒ pure (None).
+        let prog = parse("fn add(a: i64, b: i64) -> i64 { a + b }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        assert!(f.effect_row.is_none(), "no clause means the empty/pure row");
+
+        // Concrete effects in declaration order.
+        let prog = parse("fn save(p: str) -> i64 | {IO, Net} { 0 }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let row = f.effect_row.as_ref().expect("a row clause");
+        assert_eq!(row.effects, vec!["IO".to_string(), "Net".to_string()]);
+        assert!(row.row_var.is_none());
+
+        // Row-extension `...e` closes an open row.
+        let prog = parse("fn with_log(x: i64) -> i64 | {IO, ...e} { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let row = f.effect_row.as_ref().expect("a row clause");
+        assert_eq!(row.effects, vec!["IO".to_string()]);
+        assert_eq!(row.row_var.as_deref(), Some("e"));
+
+        // A bare row variable with no concrete effects.
+        let prog = parse("fn forward(x: i64) -> i64 | {...e} { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let row = f.effect_row.as_ref().expect("a row clause");
+        assert!(row.effects.is_empty());
+        assert_eq!(row.row_var.as_deref(), Some("e"));
+
+        // An explicitly empty row `| {}` parses to an empty, closed row.
+        let prog = parse("fn pure_x(x: i64) -> i64 | {} { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let row = f.effect_row.as_ref().expect("an (empty) row clause");
+        assert!(row.effects.is_empty() && row.row_var.is_none());
     }
 }

@@ -1645,6 +1645,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1668,6 +1669,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: crate::span::Span::dummy(),
         })
     }
@@ -1690,6 +1692,7 @@ mod tests {
                 .collect(),
             contained: None,
             verify: None,
+            effect_row: None,
             span: crate::span::Span::dummy(),
         })
     }

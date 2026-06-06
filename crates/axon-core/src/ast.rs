@@ -63,6 +63,25 @@ pub struct FnDef {
     pub contained: Option<ContainedSpec>,
     /// ASI Layer-2: parsed `@[verify(expr)]` predicate, if present.
     pub verify: Option<VerifySpec>,
+    /// Phase 6: declared effect row (`| {IO, Net}`). `None` means no clause was
+    /// written, which is the empty/pure row `{}` (semantic rule E01). Parsed and
+    /// preserved here; enforcement (E1300–E1308) lands in later Phase-6 slices.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub effect_row: Option<EffectRow>,
+    pub span: Span,
+}
+
+/// Phase 6: a row-polymorphic effect set on a function signature — the concrete
+/// effects it may perform plus an optional trailing row variable for
+/// polymorphism (`| {IO, ...e}`). An absent clause is the empty row (pure).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
+pub struct EffectRow {
+    /// Concrete effect names in declaration order (e.g. `["IO", "Net"]`).
+    pub effects: Vec<String>,
+    /// Trailing row variable from `...e`, if the row is open (e.g. `Some("e")`).
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub row_var: Option<String>,
     pub span: Span,
 }
 

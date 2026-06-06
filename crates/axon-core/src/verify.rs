@@ -642,6 +642,7 @@ mod tests {
                 predicate: Box::new(p),
                 span: Span::dummy(),
             }),
+            effect_row: None,
             span: Span::dummy(),
         }
     }

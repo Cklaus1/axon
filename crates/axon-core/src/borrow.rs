@@ -409,6 +409,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         }
     }

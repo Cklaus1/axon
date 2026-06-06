@@ -193,6 +193,7 @@ fn subst_fn(fndef: &FnDef, subst: &TypeSubst) -> FnDef {
         attrs: fndef.attrs.clone(),
         contained: fndef.contained.clone(),
         verify: fndef.verify.clone(),
+        effect_row: fndef.effect_row.clone(),
         span: fndef.span,
     }
 }

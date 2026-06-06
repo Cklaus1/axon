@@ -1940,6 +1940,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
         let program = Program {
@@ -2039,6 +2040,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
 
@@ -2059,6 +2061,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
 
@@ -2092,6 +2095,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
 
@@ -2119,6 +2123,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
 
@@ -2176,6 +2181,7 @@ mod tests {
             attrs: vec![],
             contained: None,
             verify: None,
+            effect_row: None,
             span: Span::dummy(),
         };
 

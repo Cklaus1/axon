@@ -165,9 +165,28 @@ impl Formatter {
             self.write(" -> ");
             self.emit_axon_type(ret);
         }
+        if let Some(row) = &f.effect_row {
+            self.emit_effect_row(row);
+        }
         self.write(" ");
         self.emit_block_body(&f.body);
         self.nl();
+    }
+
+    /// Phase 6: render an effect-row clause `| {IO, Net, ...e}`. Concrete
+    /// effects keep declaration order; a row variable is appended as `...e`.
+    fn emit_effect_row(&mut self, row: &crate::ast::EffectRow) {
+        self.write(" | {");
+        for (i, eff) in row.effects.iter().enumerate() {
+            if i > 0 { self.write(", "); }
+            self.write(eff);
+        }
+        if let Some(v) = &row.row_var {
+            if !row.effects.is_empty() { self.write(", "); }
+            self.write("...");
+            self.write(v);
+        }
+        self.write("}");
     }
 
     // ── Types ─────────────────────────────────────────────────────────────────
@@ -948,6 +967,21 @@ mod tests {
         let (out1, out2) = round_trip(src);
         assert_eq!(out1, out2);
         assert!(out1.contains("?"), "? should appear in output: {out1}");
+    }
+
+    #[test]
+    fn fmt_phase6_effect_row_preserved() {
+        // The effect-row clause survives a format round-trip, idempotently.
+        let src = "fn save(p: str) -> i64 | {IO, Net} { 0 }\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+        assert!(out1.contains("| {IO, Net}"), "row clause should appear: {out1}");
+
+        // Row-extension form `...e`.
+        let src = "fn with_log(x: i64) -> i64 | {IO, ...e} { x }\n";
+        let (out1, out2) = round_trip(src);
+        assert_eq!(out1, out2);
+        assert!(out1.contains("| {IO, ...e}"), "open row should appear: {out1}");
     }
 
     #[test]
