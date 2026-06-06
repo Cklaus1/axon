@@ -37,6 +37,15 @@ hardened — sensitive-data taint all 4 paths, capability sandbox transitive,
 agent audit-trail transitive, `@[verify]` scalar enforcement, full
 Uncertain/Temporal soft-typing surface; all native==interp.)
 
+**Tier-1 stdlib foundation COMPLETE in userland (ROADMAP §2.6 "the stdlib defines
+the paradigm").** All 14 Tier-1 types now ship as `examples/stdlib/*.ax` modules
+with @[test] suites gated in CI: Goal, Constraint, Budget (+`Budget<R...>`
+multi-resource), Principal, Agent, Store, Supervisor, LLM<Caps>, Reward, Trace,
+AuditEvent, Source, Effect, Tool. Each is the value-level core of its kernel
+runtime-service counterpart (Phase 6/7/9/13 wire them to live execution). 21
+stdlib modules, all test-green. This is the paradigm-defining surface — the
+stdlib is `Goal/Budget/Principal/Effect/...`, not `Vec/HashMap/Iterator`.
+
 ## What "done and verified" means here
 
 Every ✅/⚠️ above is backed by passing acceptance tests, not aspiration:
