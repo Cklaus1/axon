@@ -3449,6 +3449,58 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn pure_attribute_enforces_purity_e1207() {
+    // Phase 5 §2 (P01/P02/P04/P05): a `@[pure]` function may only call other
+    // `@[pure]` functions and pure builtins. An impure call (I/O, AI, time,
+    // randomness, channels, or a non-pure user fn) is E1207. A genuinely pure
+    // fn — and `@[pure]` calling `@[pure]` — passes clean (no E1207, no W0001
+    // unknown-attribute warning).
+    let accept = [
+        "@[pure]\nfn ab(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\nfn main() { println(to_str(ab(0 - 5))) }",
+        "@[pure]\nfn dbl(x: i64) -> i64 { x * 2 }\n@[pure]\nfn quad(x: i64) -> i64 { dbl(dbl(x)) }\nfn main() { println(to_str(quad(3))) }",
+        "@[pure]\nfn ir(lo: i64, hi: i64, x: i64) -> bool { lo <= x && x <= hi }\nfn main() { println(to_str_bool(ir(0, 9, 5))) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_pure_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] pure fn must check clean: {combined}");
+        assert!(!combined.contains("E1207"), "[accept {i}] no E1207 expected: {combined}");
+        assert!(!combined.contains("W0001"), "[accept {i}] @[pure] must be a known attr: {combined}");
+    }
+
+    // (program, the impure callee the diagnostic should name)
+    let reject = [
+        ("@[pure]\nfn bad(n: i64) -> i64 { println(\"x\")\n n }\nfn main() { println(to_str(bad(5))) }", "println"),
+        ("@[pure]\nfn t() -> i64 { now_ms() }\nfn main() { println(to_str(t())) }", "now_ms"),
+        ("@[pure]\nfn r() -> i64 { random_i64(0, 9) }\nfn main() { println(to_str(r())) }", "random_i64"),
+        ("fn helper(x: i64) -> i64 { x + 1 }\n@[pure]\nfn p(x: i64) -> i64 { helper(x) }\nfn main() { println(to_str(p(5))) }", "helper"),
+    ];
+    for (i, (src, callee)) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_pure_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] impure pure-fn must fail check: {combined}");
+        assert!(
+            combined.contains("E1207") && combined.contains(callee),
+            "[reject {i}] expected E1207 naming `{callee}`: {combined}"
+        );
+    }
+}
+
+#[test]
 fn generic_fn_returning_sum_type_resolves_concrete_layout() {
     // A generic fn whose return mentions a type param — `wrap<T>(x: T) ->
     // Option<T>`, `ok_of<T>(x: T) -> Result<T, str>` — used to fail native

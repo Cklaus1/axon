@@ -21,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 use crate::ast::{
     AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
 };
-use crate::error::{levenshtein, E1206, E1500, E1503, E1504, E1505};
+use crate::error::{levenshtein, E1206, E1207, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -272,6 +272,9 @@ pub struct CheckCtx {
     confidence_observed: HashSet<String>,
     /// `@[adaptive]` fn names (populated in `check_program`).
     adaptive_fns: HashSet<String>,
+    /// `@[pure]` fn names (Phase 5 §2). A `@[pure]` fn may only call other
+    /// `@[pure]` fns and the pure-builtin allowlist; `check_purity` enforces it.
+    pure_fns: HashSet<String>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -319,6 +322,7 @@ impl CheckCtx {
             current_span: crate::span::Span::dummy(),
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
+            pure_fns: HashSet::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -388,6 +392,27 @@ impl CheckCtx {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "adaptive") {
                     self.adaptive_fns.insert(f.name.clone());
+                }
+            }
+        }
+
+        // Phase 5 §2: collect @[pure] fn names, then enforce purity (P01/P02/P04).
+        // A @[pure] fn may only call other @[pure] fns + the pure-builtin
+        // allowlist; an impure call is E1207. Done as a pre-pass so a @[pure] fn
+        // calling another (forward-declared) @[pure] fn is accepted (P05).
+        for item in &program.items {
+            if let Item::FnDef(f) = item {
+                if f.attrs.iter().any(|a| a.name == "pure") {
+                    self.pure_fns.insert(f.name.clone());
+                }
+            }
+        }
+        if !self.pure_fns.is_empty() {
+            for item in &program.items {
+                if let Item::FnDef(f) = item {
+                    if self.pure_fns.contains(&f.name) {
+                        self.check_purity(f);
+                    }
                 }
             }
         }
@@ -776,6 +801,162 @@ impl CheckCtx {
         self.current_ret_ty = prev_ret;
         self.current_generic_params = prev_generics;
         self.current_span = prev_span;
+    }
+
+    /// Phase 5 §2 — enforce `@[pure]` (P01/P02/P04). Walks the body of a
+    /// `@[pure]` function and emits E1207 for any operation that is not
+    /// referentially transparent: a call to an impure builtin or to a non-pure
+    /// user function (P01/P04), `spawn`/channel ops, or a `?`-less side effect.
+    /// `@[pure]` propagates one way (P05): a non-pure fn may call a pure one, but
+    /// not the reverse — checked here because `pure_fns` is fully populated.
+    fn check_purity(&mut self, f: &FnDef) {
+        let span = f.span;
+        let fname = f.name.clone();
+        let mut violations: Vec<(String, &'static str)> = Vec::new();
+        Self::collect_purity_violations(&f.body, &self.pure_fns, &mut violations);
+        for (callee, kind) in violations {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1207,
+                    format!(
+                        "`@[pure]` function `{fname}` performs an impure operation: {kind} `{callee}` \
+                         — a pure function may only call other `@[pure]` functions and pure builtins"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "remove the `@[pure]` attribute from `{fname}`, or replace `{callee}` with a pure \
+                     equivalent (no I/O, AI, channels, randomness, time, or mutation)"
+                )),
+            );
+        }
+    }
+
+    /// Recursively collect impure operations inside a `@[pure]` function body.
+    /// `(name, kind)` where kind ∈ {"impure builtin", "non-pure function",
+    /// "concurrency primitive"}.
+    fn collect_purity_violations(
+        expr: &Expr,
+        pure_fns: &HashSet<String>,
+        out: &mut Vec<(String, &'static str)>,
+    ) {
+        match expr {
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if crate::builtins::is_impure_builtin(name) {
+                        out.push((name.clone(), "impure builtin"));
+                    } else if crate::builtins::is_known_builtin(name) {
+                        // a pure (or pure-allowlisted) builtin — fine.
+                    } else if !pure_fns.contains(name) {
+                        // A user function not marked `@[pure]` (P01). Unknown
+                        // names are left to E0001; here we only flag a resolved
+                        // user fn that exists but lacks `@[pure]`.
+                        out.push((name.clone(), "non-pure function"));
+                    }
+                }
+                Self::collect_purity_violations(callee, pure_fns, out);
+                for a in args {
+                    Self::collect_purity_violations(a, pure_fns, out);
+                }
+            }
+            Expr::MethodCall { receiver, args, .. } => {
+                Self::collect_purity_violations(receiver, pure_fns, out);
+                for a in args {
+                    Self::collect_purity_violations(a, pure_fns, out);
+                }
+            }
+            Expr::Spawn(inner) => {
+                out.push(("spawn".to_string(), "concurrency primitive"));
+                Self::collect_purity_violations(inner, pure_fns, out);
+            }
+            Expr::Select(_) => {
+                out.push(("select".to_string(), "concurrency primitive"));
+            }
+            // Structural recursion over every child-bearing variant.
+            Expr::Block(stmts) => {
+                for s in stmts {
+                    Self::collect_purity_violations(&s.expr, pure_fns, out);
+                }
+            }
+            Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+                Self::collect_purity_violations(value, pure_fns, out);
+            }
+            Expr::BinOp { left, right, .. } => {
+                Self::collect_purity_violations(left, pure_fns, out);
+                Self::collect_purity_violations(right, pure_fns, out);
+            }
+            Expr::UnaryOp { operand, .. } | Expr::Question(operand) | Expr::Comptime(operand) => {
+                Self::collect_purity_violations(operand, pure_fns, out);
+            }
+            Expr::Match { subject, arms } => {
+                Self::collect_purity_violations(subject, pure_fns, out);
+                for arm in arms {
+                    Self::collect_purity_violations(&arm.body, pure_fns, out);
+                }
+            }
+            Expr::If { cond, then, else_ } => {
+                Self::collect_purity_violations(cond, pure_fns, out);
+                Self::collect_purity_violations(then, pure_fns, out);
+                if let Some(e) = else_ {
+                    Self::collect_purity_violations(e, pure_fns, out);
+                }
+            }
+            Expr::Return(Some(inner)) => Self::collect_purity_violations(inner, pure_fns, out),
+            Expr::FieldAccess { receiver, .. } => Self::collect_purity_violations(receiver, pure_fns, out),
+            Expr::Index { receiver, index } => {
+                Self::collect_purity_violations(receiver, pure_fns, out);
+                Self::collect_purity_violations(index, pure_fns, out);
+            }
+            Expr::Tuple(es) | Expr::Array(es) => {
+                for e in es {
+                    Self::collect_purity_violations(e, pure_fns, out);
+                }
+            }
+            Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
+                Self::collect_purity_violations(inner, pure_fns, out);
+            }
+            Expr::StructLit { fields, .. } => {
+                for (_, fe) in fields {
+                    Self::collect_purity_violations(fe, pure_fns, out);
+                }
+            }
+            Expr::While { cond, body, .. } => {
+                Self::collect_purity_violations(cond, pure_fns, out);
+                for s in body {
+                    Self::collect_purity_violations(&s.expr, pure_fns, out);
+                }
+            }
+            Expr::WhileLet { expr, body, .. } => {
+                Self::collect_purity_violations(expr, pure_fns, out);
+                for s in body {
+                    Self::collect_purity_violations(&s.expr, pure_fns, out);
+                }
+            }
+            Expr::Assign { value, .. } => Self::collect_purity_violations(value, pure_fns, out),
+            Expr::AssignTo { place, value } => {
+                Self::collect_purity_violations(place, pure_fns, out);
+                Self::collect_purity_violations(value, pure_fns, out);
+            }
+            Expr::For { start, end, body, .. } => {
+                Self::collect_purity_violations(start, pure_fns, out);
+                Self::collect_purity_violations(end, pure_fns, out);
+                for s in body {
+                    Self::collect_purity_violations(&s.expr, pure_fns, out);
+                }
+            }
+            Expr::FmtStr { parts } => {
+                for p in parts {
+                    if let crate::ast::FmtPart::Expr(e) = p {
+                        Self::collect_purity_violations(e, pure_fns, out);
+                    }
+                }
+            }
+            // Leaves / no child exprs to walk.
+            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
+            | Expr::Return(None) | Expr::Lambda { .. } => {}
+        }
     }
 
     /// Pre-walk an expression tree, recording every identifier name `x` where

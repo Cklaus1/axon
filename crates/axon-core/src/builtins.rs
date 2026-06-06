@@ -1218,6 +1218,42 @@ pub struct BuiltinSig {
 
 /// Build a `HashMap` keyed by function name for O(1) lookup during inference.
 ///
+/// True if `name` is a known builtin (appears in [`BUILTINS`]). Used by the
+/// purity checker to distinguish a builtin call from a user-function call.
+pub fn is_known_builtin(name: &str) -> bool {
+    BUILTINS.iter().any(|b| b.name == name)
+}
+
+/// Phase 5 §2 P04 — builtins that are IMPURE: they do I/O, AI calls, touch the
+/// clock/RNG, spawn, mutate external state, or terminate the process. A
+/// `@[pure]` function may not call any of these (E1207). Every OTHER builtin is
+/// treated as pure (the P04 allowlist is "all builtins except these"), which is
+/// conservative-safe because the impure surface is a small, enumerable set while
+/// the pure surface (arithmetic, comparisons, string projections, conversions)
+/// is large and grows.
+pub fn is_impure_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        // AI / model calls
+        "ai_complete"
+            | "ai_extract_i64" | "ai_extract_f64" | "ai_extract_str" | "ai_extract_bool"
+            | "ai_extract_uncertain_i64" | "ai_extract_uncertain_f64"
+            | "ai_cost_spent"
+            // I/O
+            | "println" | "print" | "eprintln" | "eprint"
+            | "read_line" | "read_file" | "write_file"
+            | "exec"
+            // time / scheduling / randomness — non-deterministic
+            | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
+            // environment / process control
+            | "env_var" | "exit"
+            // online optimization / channels / concurrency
+            | "goal_run" | "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
+            | "goal_best_score" | "goal_history" | "goal_clear"
+            | "chan_new" | "chan_send" | "chan_recv"
+    )
+}
+
 /// Every entry in [`BUILTINS`] is included.  Callers in `infer.rs` should
 /// merge this map into their global signature table at startup.
 pub fn builtin_sigs() -> HashMap<String, BuiltinSig> {
@@ -1259,6 +1295,12 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     // counterexample (R8). Handled in the test runner (main.rs) +
     // `interp::run_property_test`.
     "forall",
+    // Phase 5 (§2): `@[pure]` admits a fn into the predicate language; its
+    // semantics (P01/P02/P04/P05) are enforced by `checker::check_purity`
+    // (E1207). `@[total]` marks a termination obligation (§3). Both are known
+    // attributes here so they don't warn (W0001); the checker does the work.
+    "pure",
+    "total",
 ];
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
