@@ -589,6 +589,38 @@ fn verify_unsatisfiable_postcondition_rejected_by_check() {
 }
 
 #[test]
+fn verify_confidence_on_a_temporal_return_is_not_falsely_rejected() {
+    // A `@[verify(confidence >= K)]` on a Temporal-returning fn was wrongly
+    // rejected (E1101 "minimum reachable confidence 0") — the static
+    // confidence-lattice classifier knew `uncertain_new` but not `temporal_new`,
+    // so a Temporal-returning fn fell through to Unknown → 0. A Temporal's
+    // confidence is 1.0 at creation (it decays only via temporal_at at runtime),
+    // so `temporal_new` is now classified Known(1.0).
+    let fresh = "@[verify(confidence >= 0.8)]\n\
+        fn gate(x: i64) -> Temporal<i64> { temporal_new(x, 100, 0.1) }\n\
+        fn main() -> i64 { let t = gate(5)\n  t.value }\n";
+    let f = std::env::temp_dir().join(format!("axon_tverify_{}.ax", std::process::id()));
+    std::fs::write(&f, fresh).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "a fresh-Temporal confidence verify must check clean: {msg}");
+    assert!(!msg.contains("E1101"), "must NOT falsely reject the Temporal confidence: {msg}");
+
+    // A temporal_at result decays by a runtime offset → defers to the runtime
+    // gate (no static reject), like the other runtime sources.
+    let decayed = "@[verify(confidence >= 0.8)]\n\
+        fn gate(x: i64) -> Temporal<i64> { let t = temporal_new(x, 100, 0.5)\n  temporal_at(t, 5) }\n\
+        fn main() -> i64 { let t = gate(5)\n  t.value }\n";
+    let f2 = std::env::temp_dir().join(format!("axon_tverify2_{}.ax", std::process::id()));
+    std::fs::write(&f2, decayed).unwrap();
+    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    let msg2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
+    assert_eq!(out2.status.code(), Some(0), "a temporal_at result must defer to the runtime gate (not static reject): {msg2}");
+}
+
+#[test]
 fn run_hello_prints_greeting() {
     let out = axon().args(["run", &ex("hello.ax")]).output().unwrap();
     assert!(out.status.success(), "hello.ax exited {:?}", out.status.code());

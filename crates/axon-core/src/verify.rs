@@ -555,6 +555,17 @@ impl<'a> Analyzer<'a> {
             }
             // `uncertain_deterministic(value)` — confidence is exactly 1.0.
             "uncertain_deterministic" => Confidence::Known(1.0),
+            // `temporal_new(value, horizon, decay)` — a Temporal's confidence is
+            // exactly 1.0 AT CREATION (it decays only as `temporal_at` projects it
+            // forward in time, which is a runtime concern). A fn returning a fresh
+            // Temporal therefore has Known(1.0) present confidence — so
+            // `@[verify(confidence >= K)]` on a Temporal-returning fn is no longer
+            // wrongly rejected as "min confidence 0" (the classifier didn't know
+            // temporal_new and fell through to Unknown → 0).
+            "temporal_new" => Confidence::Known(1.0),
+            // `temporal_at(t, offset)` decays confidence by a RUNTIME offset —
+            // defer to the runtime gate, like the other runtime sources.
+            "temporal_at" => Confidence::Runtime,
             // Runtime sources: the LLM reports a confidence at runtime that
             // `__axon_verify_panic` (Layer 3.5) will gate.  Static analysis
             // stays silent and defers to the runtime check.
