@@ -2468,6 +2468,21 @@ fn safe_self_improve_demo_composes_full_stack() {
 }
 
 #[test]
+fn source_stdlib_module_tests_pass() {
+    // Tier-1 Source userland module (`Constant|User|AI|Net|System`, ROADMAP §6) —
+    // the provenance/trust lattice. The load-bearing op is `src_join`: combining
+    // two values yields the LEAST-trusted source (taint flows down — Constant+AI
+    // → AI), the info-flow rule that makes "don't act on unvalidated AI output"
+    // checkable via `src_trusted_enough` (a min-trust floor) + `src_needs_validation`
+    // (AI/Net can be confidently wrong). 6 @[test]s, headed by
+    // test_join_takes_the_least_trusted.
+    let out = axon().args(["test", &ex("stdlib/source.ax")]).output().unwrap();
+    assert!(out.status.success(), "source.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn audit_event_stdlib_module_tests_pass() {
     // Tier-1 AuditEvent userland module ("typed effect record", ROADMAP §6). The
     // value-level counterpart to the runtime agent_action JSONL: record WHO did

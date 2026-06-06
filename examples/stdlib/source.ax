@@ -1,0 +1,126 @@
+// Tier-1 stdlib: Source — the provenance / trust lattice of a value.
+//
+// ROADMAP §6 Tier-1 type `Source` (`Constant | User | AI | Net | System`). Every
+// value in an ASI system has a PROVENANCE: a hard-coded constant, something a
+// user typed, an AI inference, a network response, or a system reading. These
+// form a TRUST LATTICE — a constant is maximally trusted (it's in the source
+// code), an AI/network value least (it could be wrong or adversarial). The
+// runtime already stamps a `source_tag` on Uncertain values; this is the
+// value-level type for reasoning about it.
+//
+// The load-bearing operation is the JOIN: when you combine two values, the
+// result's source is the LEAST-trusted of the two (`src_join`). Trust only ever
+// flows DOWN — a value derived from a Constant and an AI inference is AI-tainted,
+// because the AI part could be wrong. This is the info-flow rule that makes
+// "don't act on unvalidated AI output" checkable: `src_trusted_enough` gates an
+// action on a minimum trust floor.
+//
+// Trust order (higher = more trusted): Constant(4) > User(3) > System(2) >
+// Net(1) > AI(0). (User above System: a human's stated intent outranks a sensor
+// reading when they conflict; AI lowest: it is the one source that can be
+// confidently, plausibly wrong.)
+//
+//   axon test examples/stdlib/source.ax
+//   axon run  examples/stdlib/source.ax
+
+// Source tags, carrying their trust level (higher = more trusted).
+fn src_ai() -> i64 { 0 }
+fn src_net() -> i64 { 1 }
+fn src_system() -> i64 { 2 }
+fn src_user() -> i64 { 3 }
+fn src_constant() -> i64 { 4 }
+
+// The trust level of a source (the tag IS the level here, but go through this so
+// the ordering has one definition site).
+fn src_trust(s: i64) -> i64 {
+    clamp_i64(s, 0, 4)
+}
+
+// JOIN: combining two values yields the LEAST-trusted source — taint flows down.
+// A value built from a Constant and an AI inference is AI-tainted.
+fn src_join(a: i64, b: i64) -> i64 {
+    if src_trust(a) <= src_trust(b) { a } else { b }
+}
+
+// Is `s` trusted at least as much as `floor`? The gate for "don't act on
+// unvalidated low-trust data" — e.g. require >= User before a destructive op.
+fn src_trusted_enough(s: i64, floor: i64) -> bool {
+    src_trust(s) >= src_trust(floor)
+}
+
+// Does this source need human/explicit validation before it drives an action?
+// AI and Net are the two sources that can be confidently wrong or adversarial.
+fn src_needs_validation(s: i64) -> bool {
+    s == src_ai() || s == src_net()
+}
+
+@[test]
+fn test_trust_ordering() {
+    assert(src_trust(src_constant()) > src_trust(src_user()))
+    assert(src_trust(src_user()) > src_trust(src_system()))
+    assert(src_trust(src_system()) > src_trust(src_net()))
+    assert(src_trust(src_net()) > src_trust(src_ai()))
+}
+
+@[test]
+fn test_join_takes_the_least_trusted() {
+    // Constant + AI → AI (the AI taint dominates).
+    assert_eq(src_join(src_constant(), src_ai()), src_ai())
+    // User + System → System.
+    assert_eq(src_join(src_user(), src_system()), src_system())
+    // Constant + User → User.
+    assert_eq(src_join(src_constant(), src_user()), src_user())
+}
+
+@[test]
+fn test_join_is_commutative() {
+    assert_eq(src_join(src_ai(), src_constant()), src_join(src_constant(), src_ai()))
+    assert_eq(src_join(src_net(), src_user()), src_join(src_user(), src_net()))
+}
+
+@[test]
+fn test_join_with_self_is_identity() {
+    assert_eq(src_join(src_ai(), src_ai()), src_ai())
+    assert_eq(src_join(src_constant(), src_constant()), src_constant())
+}
+
+@[test]
+fn test_trusted_enough_gate() {
+    // A constant clears a "require >= User" floor; an AI value does not.
+    assert(src_trusted_enough(src_constant(), src_user()))
+    assert(!src_trusted_enough(src_ai(), src_user()))
+    // Equal trust clears its own floor.
+    assert(src_trusted_enough(src_user(), src_user()))
+}
+
+@[test]
+fn test_needs_validation() {
+    assert(src_needs_validation(src_ai()))
+    assert(src_needs_validation(src_net()))
+    assert(!src_needs_validation(src_constant()))
+    assert(!src_needs_validation(src_user()))
+    assert(!src_needs_validation(src_system()))
+}
+
+fn main() {
+    // A pipeline: a config constant + a user input + an AI inference combine into
+    // a recommendation. Its source is the JOIN — least-trusted wins.
+    let config = src_constant()
+    let input = src_user()
+    let inference = src_ai()
+    let recommendation = src_join(src_join(config, input), inference)
+    println("recommendation source trust: {to_str(src_trust(recommendation))} (0=AI .. 4=Constant)")
+
+    if src_needs_validation(recommendation) {
+        println("→ this value is AI/Net-derived: validate before acting on it")
+    } else {
+        println("→ trusted enough to act on directly")
+    }
+
+    // The destructive-op gate: require at least User-level trust.
+    if src_trusted_enough(recommendation, src_user()) {
+        println("→ clears the User-trust floor for a destructive action")
+    } else {
+        println("→ BLOCKED from a destructive action: below the User-trust floor")
+    }
+}

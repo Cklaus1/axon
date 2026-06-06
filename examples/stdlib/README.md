@@ -81,6 +81,15 @@ measures an actor's footprint (how many distinct effect kinds it touched — a
 fs+net+exec actor is higher-risk than a read-only one). The queryable trail is
 why a typed audit record beats free-text logging.
 
+`source.ax` — Tier-1 `Source` (`Constant | User | AI | Net | System`), the
+provenance/trust lattice every value carries (the value-level type for the
+runtime `source_tag`). The load-bearing op is `src_join`: combining two values
+yields the LEAST-trusted source — taint flows DOWN, so a value built from a
+Constant and an AI inference is AI-tainted. `src_trusted_enough` gates an action
+on a minimum trust floor and `src_needs_validation` flags the AI/Net sources that
+can be confidently wrong — making "don't act on unvalidated AI output" a
+checkable rule rather than a convention.
+
 ## Run them
 
 ```bash
