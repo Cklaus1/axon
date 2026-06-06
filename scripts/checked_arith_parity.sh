@@ -81,6 +81,18 @@ CASES[abs_i64_min]='let m = 0 - 9223372036854775807
 CASES[pow_neg_exp]='let e = 0 - 1
     println(to_str(pow_i64(2, e)))'
 CASES[abs_ok]='println(to_str(abs_i64(0 - 42)))'
+# Array bounds: OOB read must panic 101 with the interp message on BOTH engines
+# (native used to do an unchecked GEP → garbage value / arbitrary-memory read at
+# exit 0). Index via a variable so nothing folds; len-3 slice.
+CASES[arr_oob_high]='let a = [10, 20, 30]
+    let i = 5
+    println(to_str(a[i]))'
+CASES[arr_oob_neg]='let a = [10, 20, 30]
+    let i = 0 - 1
+    println(to_str(a[i]))'
+CASES[arr_in_bounds]='let a = [10, 20, 30]
+    let i = 2
+    println(to_str(a[i]))'
 
 fail=0
 for label in "${!CASES[@]}"; do

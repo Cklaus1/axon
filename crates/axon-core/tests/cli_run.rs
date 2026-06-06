@@ -3406,6 +3406,49 @@ fn abs_and_pow_overflow_panic_gracefully_with_a_clean_message() {
 }
 
 #[test]
+fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
+    // Indexing past the end (or with a negative index) is a runtime fault: the
+    // interpreter bounds-checks (`index {i} out of bounds (len {n})`, exit 101).
+    // Native codegen used to do an UNCHECKED GEP — a[5] on a len-3 slice
+    // returned garbage and a[-1] read arbitrary memory, both at exit 0 (a silent
+    // wrong result AND a memory-safety hole). Native parity is pinned by
+    // scripts/checked_arith_parity.sh in the strict gate; this guards the
+    // interpreter (the reference) in the standard gate. Index via a variable so
+    // the value isn't const-folded into a static check.
+    let cases = [
+        ("let a = [10, 20, 30]\n  let i = 5\n  println(to_str(a[i]))", true, "out of bounds (len 3)"),
+        ("let a = [10, 20, 30]\n  let i = 0 - 1\n  println(to_str(a[i]))", true, "out of bounds (len 3)"),
+        ("let a = [10, 20, 30]\n  let i = 2\n  println(to_str(a[i]))", false, "30"),
+    ];
+    for (i, (body, must_panic, needle)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_aoob_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if *must_panic {
+            assert_eq!(
+                out.status.code(),
+                Some(101),
+                "[case {i}] an out-of-bounds index must exit 101, got: {out:?}"
+            );
+            assert!(
+                combined.contains("axon: panic:") && combined.contains(needle),
+                "[case {i}] expected a bounds panic mentioning `{needle}`, got: {combined}"
+            );
+        } else {
+            assert_eq!(out.status.code(), Some(0), "[case {i}] valid index must not panic: {out:?}");
+            assert!(combined.contains(needle), "[case {i}] expected `{needle}`, got: {combined}");
+        }
+    }
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

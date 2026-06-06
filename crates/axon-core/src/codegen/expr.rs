@@ -592,6 +592,54 @@ impl<'ctx> super::Codegen<'ctx> {
         Some(self.ir.context.i64_type().const_int(folded as u64, true).into())
     }
 
+    /// Emit a bounds guard for an `a[i]` access: if `idx < 0 || idx >= len`,
+    /// divert to `__axon_bounds_panic(idx, len)` (exit 101, same message the
+    /// interpreter prints), else fall through to the load. Leaves the builder
+    /// positioned at the "in-bounds" block. No-op (raw access kept) if the
+    /// runtime extern is absent or the current block is already terminated.
+    fn emit_bounds_guard(
+        &mut self,
+        idx: inkwell::values::IntValue<'ctx>,
+        len: inkwell::values::IntValue<'ctx>,
+    ) {
+        let panic_fn = match self.ir.module.get_function("__axon_bounds_panic") {
+            Some(f) => f,
+            None => return,
+        };
+        let cur_block = match self.ir.builder.get_insert_block() {
+            Some(b) if b.get_terminator().is_none() => b,
+            _ => return,
+        };
+        let llvm_fn = match cur_block.get_parent() {
+            Some(f) => f,
+            None => return,
+        };
+        // idx < 0  (signed)  OR  idx >= len  (signed) → out of bounds.
+        let zero = self.ir.context.i64_type().const_zero();
+        let neg = build_wrappers::w_int_compare(
+            &self.ir.builder, IntPredicate::SLT, idx, zero, "idx_neg",
+        );
+        let over = build_wrappers::w_int_compare(
+            &self.ir.builder, IntPredicate::SGE, idx, len, "idx_over",
+        );
+        let oob = self.ir.builder.build_or(neg, over, "oob").unwrap();
+
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "bounds_panic");
+        let ok_bb = self.ir.context.append_basic_block(llvm_fn, "bounds_ok");
+        build_wrappers::w_cond_br(&self.ir.builder, oob, panic_bb, ok_bb);
+
+        self.ir.builder.position_at_end(panic_bb);
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            panic_fn,
+            &[idx.into(), len.into()],
+            "",
+        );
+        build_wrappers::w_unreachable(&self.ir.builder);
+
+        self.ir.builder.position_at_end(ok_bb);
+    }
+
     /// Checked signed-i64 `+`/`-`/`*` using the LLVM `llvm.s{add,sub,mul}.with
     /// .overflow` intrinsics. Returns the result; on overflow control never
     /// reaches the return — `emit_arith_guard` diverts to the runtime trap
@@ -1664,6 +1712,16 @@ impl<'ctx> super::Codegen<'ctx> {
         );
         let slice_alloca = build_wrappers::w_alloca(&self.ir.builder, slice_ty.into(), "slicetmp");
         build_wrappers::w_store(&self.ir.builder, slice_alloca, slice_val);
+        // Bounds check (I-9 + memory safety): trap on idx<0 || idx>=len before
+        // the load, matching the interpreter. Extract len (field 0) first.
+        let len_field_ptr = self.ir.builder
+            .build_struct_gep(slice_ty, slice_alloca, 0, "lenptr")
+            .unwrap();
+        let len_val = self.ir.builder
+            .build_load(i64_ty, len_field_ptr, "lenval")
+            .unwrap()
+            .into_int_value();
+        self.emit_bounds_guard(idx_int, len_val);
         let data_field_ptr = self.ir.builder
             .build_struct_gep(slice_ty, slice_alloca, 1, "dataptr")
             .unwrap();

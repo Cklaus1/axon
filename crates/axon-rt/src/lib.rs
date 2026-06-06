@@ -1823,6 +1823,20 @@ pub extern "C" fn __axon_arith_panic(
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+/// Runtime trap for an out-of-bounds array/slice index in native code. Emitted
+/// by codegen as a guarded call before every `a[i]` load when `i < 0 || i >=
+/// len`. Prints the SAME message the interpreter prints (`index {idx} out of
+/// bounds (len {len})`, eval.rs) and exits 101 — NOT an unchecked raw GEP read
+/// (which returns garbage / reads arbitrary memory at exit 0, both a
+/// silent-wrong-result I-9 violation AND a memory-safety hole). `idx` is the
+/// signed index as written (a negative index prints as negative, matching the
+/// interpreter, which casts to usize and overflows the bound).
+#[no_mangle]
+pub extern "C" fn __axon_bounds_panic(idx: i64, len: i64) -> ! {
+    eprintln!("axon: panic: index {idx} out of bounds (len {len})");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(

@@ -2362,6 +2362,20 @@ impl<'ctx> super::Codegen<'ctx> {
             let _ = self.ir.module.add_function("__axon_arith_panic", ap_ty, None);
         }
 
+        // ── Array bounds-check runtime trap (I-9 + memory-safety parity) ──────
+        //   __axon_bounds_panic(idx: i64, len: i64) -> noreturn
+        //
+        // Codegen guards every `a[i]` load with `i < 0 || i >= len` and calls
+        // this on the failing branch. The interpreter bounds-checks
+        // (eval.rs, "index {i} out of bounds (len {n})", exit 101); native used
+        // to do an UNCHECKED raw GEP — a[5] on a len-3 slice returned garbage and
+        // a[-1] read arbitrary memory, both at exit 0 (a silent wrong result AND
+        // a memory-safety hole). This brings native into line.
+        {
+            let bp_ty = void_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_bounds_panic", bp_ty, None);
+        }
+
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
         //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
         //
