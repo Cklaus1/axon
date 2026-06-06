@@ -4522,6 +4522,19 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let out = axon().args(["run", keep.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&keep);
     assert_eq!(out.status.code(), Some(5), "an Uncertain<T>-declared return must keep the Uncertain");
+
+    // The SAME soft-typing applies to `Temporal<T>` at the boundary: it unwraps
+    // to its present `value` when flowing into a plain-T param or scalar return.
+    for (label, src, want) in [
+        ("temporal param", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  id(t) }\n", 7),
+        ("temporal return", "fn make() -> i64 { temporal_new(9, 100, 0.1) }\nfn main() -> i64 { let r = make()\n  r + 1 }\n", 10),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_temp_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(want), "{label}: a Temporal flowing into a plain-T slot must unwrap to its value");
+    }
 }
 
 #[test]

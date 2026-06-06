@@ -830,19 +830,16 @@ impl<'p> Interp<'p> {
         let mut env = Env::new();
         for (p, a) in f.params.iter().zip(args) {
             // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
-            // (the checker allows it). If the declared param type is NOT itself an
-            // Uncertain but the argument IS one, unwrap to the inner value so the
-            // body sees a plain `T` (else `x * 2` on the Uncertain struct silently
-            // produced 0). Confidence is dropped at this T-typed boundary.
-            let param_is_uncertain = matches!(
+            // (the checker allows it). If the declared param type is NOT itself a
+            // soft wrapper but the argument IS one, unwrap to the inner value so
+            // the body sees a plain `T` (else `x * 2` on the struct silently
+            // produced 0). Confidence/horizon dropped at this T-typed boundary.
+            let param_is_soft = matches!(
                 &p.ty,
-                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain"
+                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain" || base == "Temporal"
             );
-            let a = if !param_is_uncertain {
-                match value::uncertain_parts(&a) {
-                    Some((inner, _conf)) => inner,
-                    None => a,
-                }
+            let a = if !param_is_soft {
+                value::soft_inner(&a).unwrap_or(a)
             } else {
                 a
             };
@@ -898,23 +895,20 @@ impl<'p> Interp<'p> {
             Err(other) => return Err(other),
         };
         // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
-        // scalar) whose body produces an `Uncertain<T>` unwraps to the inner
-        // value (confidence dropped at the T-typed boundary) — the same rule as
-        // a plain-T parameter. Without this, `fn f() -> i64 { uncertain }` leaked
-        // the struct and `f() + 1` silently produced 0. A fn declared
-        // `-> Uncertain<T>` keeps the Uncertain.
+        // scalar) whose body produces an `Uncertain<T>`/`Temporal<T>` unwraps to
+        // the inner value — the same rule as a plain-T parameter. Without this,
+        // `fn f() -> i64 { uncertain }` leaked the struct and `f() + 1` silently
+        // produced 0. A fn declared `-> Uncertain<T>`/`-> Temporal<T>` keeps it.
         {
             // Only unwrap when the declared return is a plain SCALAR (i64/i32/
-            // f64/bool); a str/struct/tuple/Uncertain return is left untouched.
-            // (`uncertain_parts` already returns None for non-Uncertain values,
-            // so this is belt-and-suspenders, mirroring the codegen scoping.)
+            // f64/bool); a str/struct/tuple/soft-wrapper return is left untouched.
             let ret_is_scalar = matches!(
                 &f.return_type,
                 Some(crate::ast::AxonType::Named(n))
                     if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
             );
             if ret_is_scalar {
-                if let Some((inner, _conf)) = value::uncertain_parts(&result) {
+                if let Some(inner) = value::soft_inner(&result) {
                     result = inner;
                 }
             }

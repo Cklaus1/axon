@@ -102,8 +102,8 @@ impl<'p> Interp<'p> {
                 // Uncertain — the comparison stays Uncertain) branches on its
                 // inner bool; confidence is irrelevant to control flow. Unwrap it
                 // to the inner value before the bool match.
-                let cv = match uncertain_parts(&cv) {
-                    Some((inner, _conf)) => inner,
+                let cv = match soft_inner(&cv) {
+                    Some(inner) => inner,
                     None => cv,
                 };
                 match cv {
@@ -142,8 +142,8 @@ impl<'p> Interp<'p> {
                     let cv = self.eval(cond, env)?;
                     // An `Uncertain<bool>` condition branches on its inner bool
                     // (confidence is irrelevant to control flow) — same as `if`.
-                    let cv = match uncertain_parts(&cv) {
-                        Some((inner, _)) => inner,
+                    let cv = match soft_inner(&cv) {
+                        Some(inner) => inner,
                         None => cv,
                     };
                     match cv {

@@ -22,6 +22,20 @@ pub(super) fn uncertain_parts(v: &Value) -> Option<(Value, f64)> {
     None
 }
 
+/// The plain inner value of a SOFT-TYPED wrapper — `Uncertain<T>` or `Temporal<T>`
+/// (both carry a `value` field 0) — for the soft-typing rule that lets such a
+/// value flow into a plain-`T` slot (if/while condition, scalar param, scalar
+/// return). `None` for any other value. Confidence/horizon are dropped at the
+/// T-typed boundary.
+pub(super) fn soft_inner(v: &Value) -> Option<Value> {
+    if let Value::Struct { name, fields } = v {
+        if name == "Uncertain" || name == "Temporal" {
+            return Some(fields.get("value").cloned().unwrap_or(Value::Int(0)));
+        }
+    }
+    None
+}
+
 pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
     use BinOp::*;
     use Value::{Bool, Float, Int, Str};
@@ -47,6 +61,14 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
             return Ok(make_uncertain(inner, new_conf));
         }
     }
+
+    // NOTE: no `Temporal<T>` binary-op propagation here. `t > 5` / `t + n` works
+    // in the interp by unwrapping but NATIVE CODEGEN has no Temporal-binop path
+    // (it has emit_binop_uncertain only), so adding it interp-only would create
+    // an interp↔codegen divergence. The boundary soft-typing (Temporal flowing
+    // into a plain-T param/return — see call_fn) IS parity-safe and landed; a
+    // Temporal operator path in both engines is a separate follow-on. The value
+    // at a time is read via `temporal_at`.
 
     match (op, l, r) {
         // Integer arithmetic — checked by default. Overflow is a *graceful
