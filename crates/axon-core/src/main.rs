@@ -1377,8 +1377,17 @@ fn cmd_verify(file: PathBuf) {
         }
     };
     let results = prove_verify_bounds(&program);
-    if results.is_empty() {
-        println!("axon verify: no @[verify] functions to prove");
+    // Phase 5 §4: collect refinement predicates so refinement-RETURN obligations
+    // are proved too (not just @[verify]).
+    let mut refinements: std::collections::HashMap<String, axon_core::ast::Expr> =
+        std::collections::HashMap::new();
+    for item in &program.items {
+        if let axon_core::ast::Item::RefineDef(r) = item {
+            refinements.insert(r.name.clone(), (*r.predicate).clone());
+        }
+    }
+    if results.is_empty() && refinements.is_empty() {
+        println!("axon verify: no @[verify] functions or refinement returns to prove");
         process::exit(0);
     }
     let mut any_violation = false;
@@ -1407,6 +1416,38 @@ fn cmd_verify(file: PathBuf) {
             }
         }
     }
+
+    // Phase 5 §4: also statically prove refinement-RETURN obligations — a fn
+    // whose return type is a named refinement returns a value satisfying the
+    // predicate for ALL inputs (the non-constant proof the checker defers).
+    if !refinements.is_empty() {
+        for r in axon_core::smt::prove_refinement_returns(&program, &refinements) {
+            match r {
+                ProofResult::Proven { function } => {
+                    println!("  ✓ proven: `{function}` returns a value satisfying its refinement for all inputs");
+                }
+                ProofResult::Counterexample { function, inputs, predicate } => {
+                    any_violation = true;
+                    let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
+                    emit_error(
+                        &format!(
+                            "[{}] `{function}`'s {predicate} is violated at {} (SMT counterexample)",
+                            axon_core::error::E1102,
+                            args.join(", ")
+                        ),
+                        !std::io::stderr().is_terminal(),
+                    );
+                }
+                ProofResult::Unsupported { function, reason } => {
+                    eprintln!(
+                        "  warning: [{}] refinement return on `{function}` not statically provable — {reason}",
+                        axon_core::error::W1103
+                    );
+                }
+            }
+        }
+    }
+
     process::exit(if any_violation { 2 } else { 0 });
 }
 

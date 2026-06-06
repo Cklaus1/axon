@@ -420,6 +420,162 @@ fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "f64")
 }
 
+// ── Phase 5 §4: refinement-RETURN proofs ─────────────────────────────────────
+
+/// Statically prove that every function with a named-refinement *return type*
+/// satisfies its predicate for ALL inputs — the non-constant proof the checker's
+/// constant evaluator can't do. e.g. `fn abs_pos(n: i64) -> Positive { if n < 0
+/// { 0 - n } else { n } }` where `type Positive = i64 where _ > 0`. Encode the
+/// body as `R(params)`, bind the predicate's `_` to `R`, and ask Z3 whether the
+/// predicate can be VIOLATED (`∃ params. ¬pred[R/_]` unsat ⇒ proven). Same
+/// integer fragment as the @[verify] prover.
+///
+/// `refinements` maps a refinement type name → its predicate Expr (the binder is
+/// `_`). Returns one ProofResult per refinement-returning fn in the fragment.
+pub fn prove_refinement_returns(
+    program: &Program,
+    refinements: &std::collections::HashMap<String, Expr>,
+) -> Vec<ProofResult> {
+    let mut out = Vec::new();
+    for item in &program.items {
+        let Item::FnDef(f) = item else { continue };
+        // The return type must name a known refinement.
+        let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else { continue };
+        let Some(pred) = refinements.get(rname) else { continue };
+        // Integer fragment only.
+        if !f.params.iter().all(|p| is_i64_type(&p.ty)) {
+            continue;
+        }
+        out.push(prove_one_refinement_return(f, pred, rname));
+    }
+    out
+}
+
+fn prove_one_refinement_return(f: &FnDef, pred: &Expr, rname: &str) -> ProofResult {
+    let cfg = Config::new();
+    let ctx = Context::new(&cfg);
+    let params: Vec<(String, Int)> = f
+        .params
+        .iter()
+        .map(|p| (p.name.clone(), Int::new_const(&ctx, p.name.as_str())))
+        .collect();
+
+    // Encode the body as an Int term R(params).
+    let body = match encode_expr(&ctx, &f.body, &params) {
+        Some(t) => t,
+        None => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: "body uses a construct outside the straight-line integer fragment".into(),
+            }
+        }
+    };
+
+    // Encode the predicate with `_` bound to the body term.
+    let pred_z3 = match encode_pred_binder(&ctx, pred, &body) {
+        Some(b) => b,
+        None => {
+            return ProofResult::Unsupported {
+                function: f.name.clone(),
+                reason: format!("refinement `{rname}`'s predicate is outside the i64 fragment"),
+            }
+        }
+    };
+
+    let solver = Solver::new(&ctx);
+    solver.assert(&pred_z3.not());
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Sat => {
+            let inputs = solver
+                .get_model()
+                .map(|m| {
+                    params
+                        .iter()
+                        .filter_map(|(n, c)| m.eval(c, true).and_then(|v| v.as_i64()).map(|v| (n.clone(), v)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            ProofResult::Counterexample {
+                function: f.name.clone(),
+                inputs,
+                predicate: format!("return type `{rname}`"),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: f.name.clone(),
+            reason: "Z3 returned unknown".into(),
+        },
+    }
+}
+
+/// Encode a refinement predicate as a Z3 Bool, with the binder `_` mapped to
+/// `binder_term`. Supports comparisons of i64 terms + `&&`/`||`/`!`.
+fn encode_pred_binder<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Int<'c>,
+) -> Option<Bool<'c>> {
+    match e {
+        Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
+            Some(encode_pred_binder(ctx, operand, binder_term)?.not())
+        }
+        Expr::BinOp { op, left, right } => match op {
+            BinOp::And => {
+                let l = encode_pred_binder(ctx, left, binder_term)?;
+                let r = encode_pred_binder(ctx, right, binder_term)?;
+                Some(Bool::and(ctx, &[&l, &r]))
+            }
+            BinOp::Or => {
+                let l = encode_pred_binder(ctx, left, binder_term)?;
+                let r = encode_pred_binder(ctx, right, binder_term)?;
+                Some(Bool::or(ctx, &[&l, &r]))
+            }
+            BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq => {
+                let l = encode_pred_int(ctx, left, binder_term)?;
+                let r = encode_pred_int(ctx, right, binder_term)?;
+                Some(match op {
+                    BinOp::Lt => l.lt(&r),
+                    BinOp::Gt => l.gt(&r),
+                    BinOp::LtEq => l.le(&r),
+                    BinOp::GtEq => l.ge(&r),
+                    BinOp::Eq => l._eq(&r),
+                    BinOp::NotEq => l._eq(&r).not(),
+                    _ => unreachable!(),
+                })
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Encode an int sub-expression of a refinement predicate, with `_` → binder.
+fn encode_pred_int<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Int<'c>,
+) -> Option<Int<'c>> {
+    match e {
+        Expr::Ident(n) if n == "_" => Some(binder_term.clone()),
+        Expr::Literal(Literal::Int(v)) => Some(Int::from_i64(ctx, *v)),
+        Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
+            Some(encode_pred_int(ctx, operand, binder_term)?.unary_minus())
+        }
+        Expr::BinOp { op, left, right } => {
+            let l = encode_pred_int(ctx, left, binder_term)?;
+            let r = encode_pred_int(ctx, right, binder_term)?;
+            match op {
+                BinOp::Add => Some(&l + &r),
+                BinOp::Sub => Some(&l - &r),
+                BinOp::Mul => Some(&l * &r),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -594,5 +750,48 @@ mod tests {
              fn absf(x: f64) -> f64 { if x >= 0.0 { x } else { 0.0 - x } }",
         );
         assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+    }
+
+    // ── Phase 5 §4: refinement-RETURN proofs ─────────────────────────────────
+
+    fn prove_refines(src: &str) -> Vec<ProofResult> {
+        let program = parse_source(src).expect("parse");
+        let mut refs = std::collections::HashMap::new();
+        for item in &program.items {
+            if let Item::RefineDef(r) = item {
+                refs.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        prove_refinement_returns(&program, &refs)
+    }
+
+    #[test]
+    fn smt_proves_refinement_return_and_finds_counterexample() {
+        // PROVEN: abs returns a NonNeg for every input (the spec's abs_pos).
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn my_abs(n: i64) -> NonNeg { if n < 0 { 0 - n } else { n } }",
+        );
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "abs -> NonNeg must be proven, got {r:?}"
+        );
+
+        // PROVEN: n*n is always >= 0 — a non-trivial property over all integers.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\nfn sq(n: i64) -> NonNeg { n * n }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "n*n >= 0, got {r:?}");
+
+        // COUNTEREXAMPLE: returning n unchanged does NOT guarantee > 0 (n=0).
+        let r = prove_refines(
+            "type Positive = i64 where _ > 0\nfn id(n: i64) -> Positive { n }",
+        );
+        match r.as_slice() {
+            [ProofResult::Counterexample { inputs, .. }] => {
+                assert!(inputs.iter().any(|(_, v)| *v <= 0), "counterexample must be <= 0: {inputs:?}");
+            }
+            other => panic!("expected a counterexample, got {other:?}"),
+        }
     }
 }
