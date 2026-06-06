@@ -201,9 +201,21 @@ fn hill_climb_i64(
     let cap_evals = max_evals; // negative or zero ⇒ no cap (loop exits via step)
     let unlimited = cap_evals <= 0;
 
-    let mut step: i64 = {
-        let abs = cur_input.unsigned_abs() as i64;
-        std::cmp::max(1, abs / 4)
+    // Coarse-then-fine step seeding — MUST MATCH the interpreter's
+    // `hill_climb_i64` (interp/goal.rs) or native goal_run diverges. The old
+    // `step = max(1, |x|/4)` formula locked a cold start (cur_input==0) into a
+    // unit-step crawl that 40 evals never escaped (it reached only ~x=20 on a
+    // peak at x=50, returning a far-from-optimal score while the interpreter,
+    // which seeds wide, reached the peak). Two modes:
+    //  - Fresh start (cur_input == 0): seed `step ≈ max_evals * 4` so the first
+    //    probes leap across the range and the halving cascade binary-searches
+    //    toward the peak.
+    //  - Continuation / nonzero start: narrow `|x|/4` seed to fine-tune (keeps
+    //    the cross-run continuation semantics).
+    let mut step: i64 = if cur_input == 0 {
+        if unlimited { 4096 } else { std::cmp::max(16, cap_evals.saturating_mul(4)) }
+    } else {
+        std::cmp::max(1, (cur_input.unsigned_abs() as i64) / 4)
     };
 
     while step >= 1 {
