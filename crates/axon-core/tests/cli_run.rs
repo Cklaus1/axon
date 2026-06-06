@@ -4549,6 +4549,26 @@ fn uncertain_source_tag_field_is_accessible() {
 }
 
 #[test]
+fn temporal_valid_until_ms_field_is_accessible() {
+    // The checker lists `valid_until_ms` as a valid Temporal field, but the
+    // interp's make_temporal only built `created_ms` — so `t.valid_until_ms`
+    // type-checked then PANICKED ("no field valid_until_ms"), a checker-only
+    // phantom field. It now exists as created_ms + horizon_ms (the expiry time);
+    // `valid_until_ms - created_ms` is the horizon.
+    let f = std::env::temp_dir().join(format!("axon_tvalid_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { let t = temporal_new(7, 100, 0.1)\n  t.valid_until_ms - t.created_ms }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!msg.contains("no field"), "must not panic on the valid_until_ms field: {msg}");
+    assert_eq!(out.status.code(), Some(100), "valid_until_ms - created_ms must equal the horizon (100)");
+}
+
+#[test]
 fn uncertain_bool_condition_branches_on_inner_value() {
     // R9: an `Uncertain<bool>` condition (a comparison on an Uncertain operand
     // stays Uncertain, e.g. `if a > 5` for Uncertain `a`) used to PANIC at

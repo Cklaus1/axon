@@ -1434,9 +1434,13 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     Value::Struct { name: "Uncertain".to_string(), fields }
 }
 
-/// Build a `Temporal { value, confidence, horizon_ms, decay, created_ms }`
-/// struct value. `confidence` is the present trust in the value (1.0 at
-/// creation), which `temporal_at` decays as time advances (PRD §"Temporal").
+/// Build a `Temporal { value, confidence, horizon_ms, decay, created_ms,
+/// valid_until_ms }` struct value. `confidence` is the present trust in the value
+/// (1.0 at creation), which `temporal_at` decays as time advances (PRD
+/// §"Temporal"). `created_ms` is internal (read by temporal_at/is_valid);
+/// `valid_until_ms` = created_ms + horizon_ms is the user-facing expiry timestamp
+/// the checker exposes as a field — without it, `t.valid_until_ms` type-checked
+/// then panicked "no field valid_until_ms" (a checker-only phantom field).
 fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, created_ms: i64) -> Value {
     let mut fields = HashMap::new();
     fields.insert("value".to_string(), value);
@@ -1444,6 +1448,10 @@ fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, cre
     fields.insert("horizon_ms".to_string(), Value::Int(horizon_ms));
     fields.insert("decay".to_string(), Value::Float(decay));
     fields.insert("created_ms".to_string(), Value::Int(created_ms));
+    fields.insert(
+        "valid_until_ms".to_string(),
+        Value::Int(created_ms.saturating_add(horizon_ms)),
+    );
     Value::Struct { name: "Temporal".to_string(), fields }
 }
 
