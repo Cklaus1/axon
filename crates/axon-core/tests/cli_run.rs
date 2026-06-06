@@ -3449,6 +3449,31 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn generic_fn_returning_sum_type_resolves_concrete_layout() {
+    // A generic fn whose return mentions a type param — `wrap<T>(x: T) ->
+    // Option<T>`, `ok_of<T>(x: T) -> Result<T, str>` — used to fail native
+    // codegen (E0701: the match's `Some(v)`/`Ok(v)` binding had an unresolved
+    // type). Fixed by substituting the type param at the call site from the
+    // argument types (resolve_call_return_type). The interpreter always worked.
+    // NOTE: a generic over a SLICE param (`first<T>(a: [T]) -> Option<T>`) is a
+    // separate, deeper monomorphization gap — still a clean build refusal (I-9
+    // safe), tracked but not covered here.
+    let cases: &[(&str, &str)] = &[
+        ("fn wrap<T>(x: T) -> Option<T> { Some(x) }\nfn main() { match wrap(5) { Some(v) => println(to_str(v))  None => println(\"n\") } }", "5"),
+        ("fn ok_of<T>(x: T) -> Result<T, str> { Ok(x) }\nfn main() { match ok_of(9) { Ok(v) => println(to_str(v))  Err(e) => println(e) } }", "9"),
+        ("fn id<T>(x: T) -> T { x }\nfn main() { println(to_str(id(42))) }", "42"),
+    ];
+    for (i, (prog, expected)) in cases.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_genret_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, prog).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] generic sum-type return");
+    }
+}
+
+#[test]
 fn sum_type_in_struct_field_and_array_element_sized_from_declared_type() {
     // Two more annotation-propagation sites. A `Result`/`Option` value built as a
     // STRUCT FIELD (`Box { r: Err("x") }`) or an ARRAY ELEMENT

@@ -1133,6 +1133,103 @@ impl<'ctx> Codegen<'ctx> {
         }
     }
 
+    /// Resolve the concrete return type of a CALL to a (possibly generic)
+    /// function. For a generic fn like `first<T>(a: [T]) -> Option<T>`, the
+    /// declared return carries `TypeParam("T")`; without substitution a
+    /// `match first(xs) { Some(v) => … }` can't lay out the `Some(v)` binding
+    /// (the binding's type stays unresolved → E0701). This binds each type param
+    /// by matching the declared param AxonTypes against the actual arguments'
+    /// inferred types, then substitutes into the declared return type. Returns
+    /// `None` when the fn is unknown or a param binding can't be inferred (the
+    /// caller then keeps the unresolved declared type, unchanged behavior).
+    fn resolve_call_return_type(&self, name: &str, args: &[ast::Expr]) -> Option<Type> {
+        let ret = self.fn_return_types.get(name)?.clone();
+        // The fn's declared generic param names (e.g. ["T"]). A bare `T` parses
+        // as `AxonType::Named("T")` → `Type::Struct("T")`, so we can't tell it's
+        // a param from the Type alone — use this set to recognise them.
+        let gp: &[String] = self.generic_fn_params.get(name).map(|v| v.as_slice()).unwrap_or(&[]);
+        if gp.is_empty() || !Self::type_has_param(&ret, gp) {
+            return Some(ret);
+        }
+        let params = self.fn_axon_params.get(name)?;
+        // Build a param -> concrete binding by matching declared params against
+        // the actual args (peeling `&` and one level of `[T]`/Option/etc).
+        let mut binding: HashMap<String, Type> = HashMap::new();
+        for (decl, arg) in params.iter().zip(args.iter()) {
+            let arg_inner = match arg {
+                ast::Expr::UnaryOp { op: ast::UnaryOp::Ref, operand } => operand.as_ref(),
+                other => other,
+            };
+            if let Some(arg_ty) = self.infer_expr_sem_type(arg_inner) {
+                Self::bind_type_params(&self.axon_type_to_semantic(decl), &arg_ty, gp, &mut binding);
+            }
+        }
+        if binding.is_empty() {
+            return None;
+        }
+        Some(Self::subst_type_params(&ret, &binding))
+    }
+
+    /// True if `ty` mentions one of the generic param names `gp` (as a bare
+    /// `Struct(name)` — how a type param survives `axon_type_to_semantic`).
+    fn type_has_param(ty: &Type, gp: &[String]) -> bool {
+        match ty {
+            Type::Struct(n) | Type::TypeParam(n) => gp.iter().any(|p| p == n),
+            Type::Option(i) | Type::Slice(i) | Type::Chan(i)
+            | Type::Uncertain(i) | Type::Temporal(i) => Self::type_has_param(i, gp),
+            Type::Result(a, b) => Self::type_has_param(a, gp) || Self::type_has_param(b, gp),
+            Type::Tuple(es) => es.iter().any(|e| Self::type_has_param(e, gp)),
+            Type::Fn(ps, r) => ps.iter().any(|p| Self::type_has_param(p, gp)) || Self::type_has_param(r, gp),
+            _ => false,
+        }
+    }
+
+    /// Unify a declared (possibly-generic) type against a concrete one, filling
+    /// `out` with param-name -> concrete bindings. `gp` is the set of names that
+    /// are type params (a bare `Struct(n)` whose n ∈ gp is a param, not a real
+    /// struct).
+    fn bind_type_params(decl: &Type, concrete: &Type, gp: &[String], out: &mut HashMap<String, Type>) {
+        match (decl, concrete) {
+            (Type::Struct(n) | Type::TypeParam(n), c) if gp.iter().any(|p| p == n) => {
+                out.entry(n.clone()).or_insert_with(|| c.clone());
+            }
+            (Type::Option(d), Type::Option(c))
+            | (Type::Slice(d), Type::Slice(c))
+            | (Type::Chan(d), Type::Chan(c))
+            | (Type::Uncertain(d), Type::Uncertain(c))
+            | (Type::Temporal(d), Type::Temporal(c)) => Self::bind_type_params(d, c, gp, out),
+            (Type::Result(da, db), Type::Result(ca, cb)) => {
+                Self::bind_type_params(da, ca, gp, out);
+                Self::bind_type_params(db, cb, gp, out);
+            }
+            (Type::Tuple(ds), Type::Tuple(cs)) => {
+                for (d, c) in ds.iter().zip(cs.iter()) {
+                    Self::bind_type_params(d, c, gp, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Substitute param-name occurrences in `ty` using `binding` (keys are the
+    /// generic param names; they appear as `Struct(name)`/`TypeParam(name)`).
+    fn subst_type_params(ty: &Type, binding: &HashMap<String, Type>) -> Type {
+        match ty {
+            Type::Struct(n) | Type::TypeParam(n) => binding.get(n).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Option(i) => Type::Option(Box::new(Self::subst_type_params(i, binding))),
+            Type::Slice(i) => Type::Slice(Box::new(Self::subst_type_params(i, binding))),
+            Type::Chan(i) => Type::Chan(Box::new(Self::subst_type_params(i, binding))),
+            Type::Uncertain(i) => Type::Uncertain(Box::new(Self::subst_type_params(i, binding))),
+            Type::Temporal(i) => Type::Temporal(Box::new(Self::subst_type_params(i, binding))),
+            Type::Result(a, b) => Type::Result(
+                Box::new(Self::subst_type_params(a, binding)),
+                Box::new(Self::subst_type_params(b, binding)),
+            ),
+            Type::Tuple(es) => Type::Tuple(es.iter().map(|e| Self::subst_type_params(e, binding)).collect()),
+            other => other.clone(),
+        }
+    }
+
     /// Convert an `ast::AxonType` directly to an LLVM type.
     fn llvm_type_from_axon(&self, ty: &ast::AxonType) -> Option<BasicTypeEnum<'ctx>> {
         let sem = self.axon_type_to_semantic(ty);
@@ -1237,7 +1334,12 @@ impl<'ctx> Codegen<'ctx> {
                             return self.infer_expr_sem_type(inner);
                         }
                     }
-                    self.fn_return_types.get(name).cloned()
+                    // Resolve a generic return (`first<T>(..) -> Option<T>`) to
+                    // the concrete type by binding T from the args; falls back to
+                    // the declared (possibly-unresolved) type when not generic or
+                    // not inferable.
+                    self.resolve_call_return_type(name, args)
+                        .or_else(|| self.fn_return_types.get(name).cloned())
                 } else {
                     None
                 }
