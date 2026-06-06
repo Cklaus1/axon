@@ -3598,6 +3598,43 @@ fn parenthesized_inline_refinement_on_return_and_param() {
 }
 
 #[test]
+fn inline_refinement_on_a_struct_field() {
+    // Phase 5 §1: an INLINE anonymous refinement on a struct FIELD type
+    // (`type Box = { v: i64 where _ > 0 }`). Desugared like every other inline
+    // position; the R04 struct-construction obligation then checks a constant
+    // field value (E1209). Supports multiple refined fields per struct.
+    let reject = [
+        "type Box = { v: i64 where _ > 0 }\nfn main() { let b = Box { v: 0 - 3 }\n println(to_str(b.v)) }",
+        "type Range = { lo: i64 where _ >= 0, hi: i64 where _ <= 100 }\nfn main() { let r = Range { lo: 5, hi: 150 }\n println(to_str(r.lo + r.hi)) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_finline_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] field-refinement violation must catch: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        ("type Box = { v: i64 where _ > 0 }\nfn main() { let b = Box { v: 5 }\n println(to_str(b.v)) }", "5"),
+        ("type Range = { lo: i64 where _ >= 0, hi: i64 where _ <= 100 }\nfn main() { let r = Range { lo: 5, hi: 50 }\n println(to_str(r.lo + r.hi)) }", "55"),
+    ];
+    for (i, (src, expected)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_finline_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] field inline refine");
+    }
+}
+
+#[test]
 fn inline_anonymous_refinement_on_a_parameter() {
     // Phase 5 §1 (sub-slice 2): an INLINE anonymous refinement on a parameter —
     // the spec's canonical `fn divide(n: i64, d: i64 where _ != 0)`. Desugared at

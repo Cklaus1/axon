@@ -985,6 +985,9 @@ impl Parser {
             let fname = self.expect_ident()?;
             self.expect(&Token::Colon)?;
             let ty = self.parse_type()?;
+            // Phase 5: inline anonymous refinement on a struct field type
+            // (`{ v: i64 where _ > 0 }`).
+            let ty = self.maybe_desugar_inline_refinement(ty)?;
             fields.push(TypeField { name: fname, ty });
             self.eat(&Token::Comma);
         }
