@@ -111,7 +111,7 @@ fn prove_one_int_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
         }
     }
 
-    let cfg = Config::new();
+    let cfg = solver_config();
     let ctx = Context::new(&cfg);
 
     // One Z3 Int const per parameter.
@@ -202,7 +202,7 @@ fn prove_one_f64(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
             };
         }
     }
-    let cfg = Config::new();
+    let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Real)> = f
         .params
@@ -429,13 +429,67 @@ fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "f64")
 }
 
-// ── Call inlining (β-reduction pre-pass) ─────────────────────────────────────
+// ── Proof-budget configuration ───────────────────────────────────────────────
 
-/// Maximum inlining depth: a callee may itself call another in-fragment fn, up
-/// to this many nested expansions. Bounds work and stops runaway recursion (a
-/// self-recursive fn simply hits the limit and stays an un-inlined `Call`, which
-/// the encoder then reports Unsupported — never a false proof).
-const INLINE_DEPTH: u32 = 4;
+/// Default maximum inlining depth: a callee may itself call another in-fragment
+/// fn, up to this many nested expansions. Bounds work and stops runaway
+/// recursion (a self-recursive fn simply hits the limit and stays an un-inlined
+/// `Call`, which the encoder then reports Unsupported — never a false proof).
+/// Override with `AXON_PROOF_DEPTH`.
+const INLINE_DEPTH_DEFAULT: u32 = 4;
+
+/// Default per-query Z3 timeout (ms). A hard refinement that would otherwise
+/// hang the solver instead returns `unknown` → Unsupported (the runtime
+/// obligation still applies). Override with `AXON_PROOF_TIMEOUT_MS`.
+const PROOF_TIMEOUT_MS_DEFAULT: u64 = 10_000;
+
+/// Inlining depth from `AXON_PROOF_DEPTH`, clamped to [0, 64]; default
+/// `INLINE_DEPTH_DEFAULT`. 0 disables call-inlining entirely.
+fn inline_depth() -> u32 {
+    inline_depth_from(std::env::var("AXON_PROOF_DEPTH").ok().as_deref())
+}
+
+/// Pure core of [`inline_depth`] (parse + clamp), split out so it can be tested
+/// without mutating process-global env state — mirrors `interp::max_depth_from_env`.
+fn inline_depth_from(s: Option<&str>) -> u32 {
+    s.and_then(|s| s.trim().parse::<u32>().ok())
+        .map(|d| d.min(64))
+        .unwrap_or(INLINE_DEPTH_DEFAULT)
+}
+
+/// A nonzero Z3 timeout below this (ms) is floored to it. Z3 wedges on
+/// sub-resolution timeouts (observed: 1–2ms hangs indefinitely) because the
+/// timeout timer setup races the solver — so a user who sets `=1` to "fail fast"
+/// would instead get a hang. Flooring keeps the knob useful (hundreds of ms and
+/// up work as expected) while making the degenerate case impossible.
+const PROOF_TIMEOUT_MS_FLOOR: u64 = 10;
+
+/// Pure core of the timeout read: parse `AXON_PROOF_TIMEOUT_MS`, default
+/// `PROOF_TIMEOUT_MS_DEFAULT`. 0 means "no timeout" (passed through); any other
+/// value is floored to `PROOF_TIMEOUT_MS_FLOOR` to avoid the Z3 small-timeout wedge.
+fn proof_timeout_ms_from(s: Option<&str>) -> u64 {
+    let ms = s
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .unwrap_or(PROOF_TIMEOUT_MS_DEFAULT);
+    if ms == 0 {
+        0
+    } else {
+        ms.max(PROOF_TIMEOUT_MS_FLOOR)
+    }
+}
+
+/// A Z3 `Config` with the per-query timeout from `AXON_PROOF_TIMEOUT_MS` (ms),
+/// default `PROOF_TIMEOUT_MS_DEFAULT`. A value of 0 disables the timeout (Z3
+/// runs unbounded). Every prover builds its config here so the budget is
+/// uniform across the integer, float, verify, and refinement paths.
+fn solver_config() -> Config {
+    let mut cfg = Config::new();
+    let ms = proof_timeout_ms_from(std::env::var("AXON_PROOF_TIMEOUT_MS").ok().as_deref());
+    if ms > 0 {
+        cfg.set_timeout_msec(ms);
+    }
+    cfg
+}
 
 /// Rewrite an expression by β-reducing calls to straight-line in-program
 /// functions: `f(a, b)` with `fn f(x, y) { BODY }` becomes `BODY[x:=a, y:=b]`.
@@ -592,7 +646,7 @@ pub fn prove_refinement_returns(
         let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else { continue };
         let Some(pred) = refinements.get(rname) else { continue };
         // β-reduce calls to in-program helpers so the body is straight-line.
-        let body = inline_calls(&f.body, &fns, INLINE_DEPTH);
+        let body = inline_calls(&f.body, &fns, inline_depth());
         // Integer fragment: all params i64.
         if f.params.iter().all(|p| is_i64_type(&p.ty)) {
             out.push(prove_one_refinement_return(f, &body, pred, rname));
@@ -609,7 +663,7 @@ pub fn prove_refinement_returns(
 /// Float-fragment analog of `prove_one_refinement_return`: encode the f64 body as
 /// a Z3 Real and prove the predicate (with `_` → body) holds for all inputs.
 fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
-    let cfg = Config::new();
+    let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Real)> = f
         .params
@@ -740,7 +794,7 @@ fn encode_pred_real<'c>(
 }
 
 fn prove_one_refinement_return(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
-    let cfg = Config::new();
+    let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Int)> = f
         .params
@@ -1175,5 +1229,51 @@ mod tests {
             r.iter().any(|p| matches!(p, ProofResult::Counterexample { function, .. } if function == "pos")),
             "inlined identity must still be refuted, got {r:?}"
         );
+    }
+
+    #[test]
+    fn smt_proof_budget_env_parsing() {
+        // Depth: default, explicit, 0 (disable), clamp to 64, and junk → default.
+        assert_eq!(inline_depth_from(None), INLINE_DEPTH_DEFAULT);
+        assert_eq!(inline_depth_from(Some("2")), 2);
+        assert_eq!(inline_depth_from(Some("0")), 0);
+        assert_eq!(inline_depth_from(Some("999")), 64);
+        assert_eq!(inline_depth_from(Some(" 3 ")), 3);
+        assert_eq!(inline_depth_from(Some("nope")), INLINE_DEPTH_DEFAULT);
+        // Timeout: default, explicit, 0 (unbounded), junk → default, and the
+        // small-value floor that dodges the Z3 sub-resolution-timeout wedge.
+        assert_eq!(proof_timeout_ms_from(None), PROOF_TIMEOUT_MS_DEFAULT);
+        assert_eq!(proof_timeout_ms_from(Some("500")), 500);
+        assert_eq!(proof_timeout_ms_from(Some("0")), 0);
+        assert_eq!(proof_timeout_ms_from(Some("x")), PROOF_TIMEOUT_MS_DEFAULT);
+        assert_eq!(proof_timeout_ms_from(Some("1")), PROOF_TIMEOUT_MS_FLOOR);
+        assert_eq!(proof_timeout_ms_from(Some("10000")), 10000);
+    }
+
+    #[test]
+    fn smt_inlining_respects_depth_argument() {
+        // Directly exercise the pre-pass: at depth 0 the call survives un-inlined
+        // (→ Unsupported when encoded); at the default depth it expands to `n*n`.
+        let program = parse_source(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn sq(x: i64) -> i64 { x * x }\n\
+             fn wrap(n: i64) -> NonNeg { sq(n) }",
+        )
+        .expect("parse");
+        let fns = program_fns(&program);
+        let wrap = program
+            .items
+            .iter()
+            .find_map(|it| match it {
+                Item::FnDef(f) if f.name == "wrap" => Some(f),
+                _ => None,
+            })
+            .expect("wrap");
+        // depth 0: the call survives (the body is a Block wrapping it).
+        let kept = inline_calls(&wrap.body, &fns, 0);
+        assert!(format!("{kept:?}").contains("Call"), "depth 0 must keep the call: {kept:?}");
+        // depth >= 1: the call is gone (expanded to arithmetic).
+        let inlined = inline_calls(&wrap.body, &fns, 4);
+        assert!(!format!("{inlined:?}").contains("Call"), "call must be inlined: {inlined:?}");
     }
 }
