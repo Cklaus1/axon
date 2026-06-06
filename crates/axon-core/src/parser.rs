@@ -178,6 +178,11 @@ pub struct Parser {
     synthetic_refinements: Vec<RefineDef>,
     /// Counter for unique synthetic refinement names.
     synthetic_refine_count: usize,
+    /// Phase 6: set when the file opens with the `surface` marker. In a surface
+    /// file, raw effect-row syntax `| {…}` is rejected (E1306) — product code
+    /// declares effects through annotations, not substrate plumbing. Default
+    /// `false` (substrate) preserves all Phase 1–5 behavior.
+    surface_mode: bool,
 }
 
 /// Max nested-expression depth before a graceful parse error. Far beyond any
@@ -203,16 +208,16 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
+        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
+        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
+        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
     }
 
     fn current_span(&self) -> Span {
@@ -346,6 +351,21 @@ impl Parser {
     // ── Program ──────────────────────────────────────────────────────────────
 
     pub fn parse_program(&mut self) -> Result<Program> {
+        // Phase 6 §1: an optional `substrate` / `surface` marker as the first
+        // token tunes which constructs the file admits. Absent ⇒ substrate (the
+        // Phase 1–5 default). `surface` rejects raw effect-row syntax (E1306).
+        // The marker is a bare identifier (not a reserved keyword); only the
+        // leading position is special — `surface` elsewhere is an ordinary name.
+        // It must be on its own (the next token starts an item), so a program
+        // that happens to begin with a bare `surface` expression is unaffected:
+        // top-level positions only ever start items here.
+        if let Some(Token::Ident(name)) = self.peek() {
+            let mode = name.clone();
+            if mode == "surface" || mode == "substrate" {
+                self.surface_mode = mode == "surface";
+                let _ = self.advance();
+            }
+        }
         let mut items = Vec::new();
         while self.peek().is_some() {
             items.push(self.parse_item()?);
@@ -714,6 +734,14 @@ impl Parser {
     /// variable). The leading `|` is at the cursor. Surface enforcement of the
     /// rows (E1300–E1308) is a later slice; this only captures the structure.
     fn parse_effect_row(&mut self) -> Result<crate::ast::EffectRow> {
+        // §1: surface files reject raw effect-row syntax (E1306) — they declare
+        // effects via annotations, not substrate plumbing.
+        if self.surface_mode {
+            return Err(ParseError::Other(
+                "[E1306] effect-row syntax `| {…}` is not allowed in a `surface` file; \
+                 declare effects via annotations, or mark the file `substrate`".into(),
+            ));
+        }
         let start = self.current_span().start;
         self.expect(&Token::Pipe)?;
         self.expect(&Token::LBrace)?;
@@ -3211,6 +3239,28 @@ mod tests {
             vec![("T".to_string(), vec!["Display".to_string()])],
             "only T should carry a bound, got {:?}", f.generic_bounds
         );
+    }
+
+    #[test]
+    fn parse_phase6_surface_marker_gates_rows() {
+        // A `surface` file rejects raw effect-row syntax (E1306).
+        let src = "surface\nfn f(x: i64) -> i64 | {IO} { x }";
+        let err = crate::parse_source(src).expect_err("surface + row must fail");
+        assert!(format!("{err}").contains("E1306"), "expected E1306, got {err}");
+
+        // A `substrate` file (and the default) admits rows.
+        let prog = parse("substrate\nfn f(x: i64) -> i64 | {IO} { x }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        assert!(f.effect_row.is_some(), "substrate file should keep the row");
+
+        // A `surface` file with no rows parses fine, and the marker is consumed
+        // (not treated as an item).
+        let prog = parse("surface\nfn add(a: i64, b: i64) -> i64 { a + b }");
+        assert_eq!(prog.items.len(), 1, "marker must not become an item: {:?}", prog.items.len());
+
+        // `surface` / `substrate` as an ordinary identifier elsewhere is fine.
+        let prog = parse("fn f() -> i64 { let surface = 5\n surface }");
+        assert_eq!(prog.items.len(), 1);
     }
 
     #[test]

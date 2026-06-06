@@ -115,6 +115,7 @@ pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-config
 // the free E1310 block. E1310 covers spec rules E02 (subsumption) and E05 (a
 // pure fn calling something effectful): a call performs an effect the enclosing
 // fn's declared row does not contain.
+pub const E1306: &str = "E1306"; // raw effect-row syntax `| {…}` used in a `surface`-marked file
 pub const E1310: &str = "E1310"; // effect-row leak: call performs effect E ∉ the caller's declared row
 
 // Self-improving-compiler errors (R10: pass verification harness)
@@ -316,7 +317,7 @@ mod tests {
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
             E1300, E1301, E1302,
-            E1310,
+            E1306, E1310,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
             E1500, E1503, E1504, E1505,
             W0001, W0002, W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410,
