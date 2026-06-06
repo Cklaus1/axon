@@ -244,6 +244,10 @@ pub struct CheckCtx {
     pub errors: Vec<CheckError>,
     /// Current function's declared return type (set during `check_fn`).
     current_ret_ty: Option<Type>,
+    /// Phase 5: the refinement name of the CURRENT function's return type, if it
+    /// is a named refinement (`-> Positive`). Drives the return-site obligation
+    /// (R03): a constant return value is checked against the predicate.
+    current_ret_refinement: Option<String>,
     /// Exact node-path of the CURRENT function body (`#fn_<name>.body`). The
     /// R07 body-tail return-type check (E0307) must fire ONLY for this path —
     /// `ends_with(".body")` alone also matches match-arm bodies
@@ -334,6 +338,7 @@ impl CheckCtx {
             expr_types: HashMap::new(),
             errors: Vec::new(),
             current_ret_ty: Option::None,
+            current_ret_refinement: Option::None,
             fn_body_path: String::new(),
             known_enums: Vec::new(),
             enum_variants: HashMap::new(),
@@ -835,10 +840,18 @@ impl CheckCtx {
         let resolved_ret = f
             .return_type
             .as_ref()
-            .map(|t| enumify(axon_type_to_type(t), &known_enums))
+            .map(|t| self.resolve_refinements(enumify(axon_type_to_type(t), &known_enums)))
             .unwrap_or(Type::Unit);
 
         let prev_ret = self.current_ret_ty.replace(resolved_ret);
+        // Phase 5: track a named-refinement return type for the R03 obligation.
+        let ret_refinement = match &f.return_type {
+            Option::Some(AxonType::Named(n)) if self.refinement_pred.contains_key(n) => {
+                Option::Some(n.clone())
+            }
+            _ => Option::None,
+        };
+        let prev_ret_refine = std::mem::replace(&mut self.current_ret_refinement, ret_refinement);
 
         let fn_path = format!("#fn_{}", f.name);
         let mut scope: HashMap<String, Type> = HashMap::new();
@@ -869,6 +882,7 @@ impl CheckCtx {
 
         self.confidence_observed = prev_observed;
         self.current_ret_ty = prev_ret;
+        self.current_ret_refinement = prev_ret_refine;
         self.current_generic_params = prev_generics;
         self.current_span = prev_span;
     }
@@ -920,6 +934,45 @@ impl CheckCtx {
                     )),
                 );
             }
+        }
+    }
+
+    /// Phase 5 R03 — the return-site obligation. When the current function's
+    /// return type is a named refinement and `ret_expr` is a compile-time
+    /// constant, the predicate must hold for it (else E1209). Same soundness as
+    /// the argument obligation: only a provably-false constant errors.
+    fn check_return_refinement(&mut self, ret_expr: &Expr, node_path: &str) {
+        let Some(rname) = self.current_ret_refinement.clone() else { return };
+        let Some(pred) = self.refinement_pred.get(&rname).cloned() else { return };
+        let bound = if let Some(v) = const_eval_int(ret_expr) {
+            RefineVal::Int(v)
+        } else if let Expr::Literal(crate::ast::Literal::Str(s)) = ret_expr {
+            RefineVal::StrLen(s.chars().count() as i64)
+        } else {
+            return;
+        };
+        if Self::eval_refinement_pred(&pred, bound) == Some(false) {
+            let file = self.file.clone();
+            let span = self.current_span;
+            let shown = match bound {
+                RefineVal::Int(v) => v.to_string(),
+                RefineVal::StrLen(_) => format!("{ret_expr:?}"),
+            };
+            self.errors.push(
+                CheckError::new(
+                    E1209,
+                    format!(
+                        "the returned constant ({shown}) violates the refinement return type \
+                         `{rname}` — it does not satisfy the type's predicate"
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "return a value that satisfies `{rname}`'s predicate, or change the return type"
+                )),
+            );
         }
     }
 
@@ -1545,6 +1598,9 @@ impl CheckCtx {
                             let expr_ty =
                                 self.resolve_expr_type(&stmt.expr, &stmt_path, scope);
                             self.check_return_type_match(&expr_ty, node_path, &stmt_path);
+                            // R03: the body-tail (implicit return) into a
+                            // refinement return type must satisfy the predicate.
+                            self.check_return_refinement(&stmt.expr, &stmt_path);
                         }
                     } else {
                         // Non-final statement: R02 if a call returns Result
@@ -1884,6 +1940,9 @@ impl CheckCtx {
                     // R07: returned value must match declared return type.
                     let val_ty = self.resolve_expr_type(v, &vpath, scope);
                     self.check_return_type_match(&val_ty, node_path, &vpath);
+                    // R03: a constant return into a refinement return type must
+                    // satisfy the predicate.
+                    self.check_return_refinement(v, &vpath);
                 } else {
                     // Bare `return;` implies Unit.
                     self.check_return_type_match(&Type::Unit, node_path, node_path);

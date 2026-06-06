@@ -3449,6 +3449,53 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_return_site_proof_obligation_e1209() {
+    // Phase 5 §1 R03 (sub-slice 4): a function with a named-refinement RETURN
+    // type must satisfy the predicate for every constant return — both the
+    // body-tail (implicit) and an explicit `return e`. Same comptime evaluation
+    // and soundness as the argument obligation: only a provably-false constant
+    // errors (E1209); a non-constant return defers. Also confirms the refinement
+    // return type is TRANSPARENT to its base (no spurious E0307 mismatch).
+    let reject = [
+        "type Positive = i64 where _ > 0\nfn neg() -> Positive { 0 - 3 }\nfn main() { println(to_str(neg())) }",
+        "type Positive = i64 where _ > 0\nfn f(b: bool) -> Positive { if b { return 0 - 1 }\n 5 }\nfn main() { println(to_str(f(true))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refret_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] bad return must be caught: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        "type Positive = i64 where _ > 0\nfn good() -> Positive { 7 }\nfn main() { println(to_str(good())) }",
+        // Non-constant return — deferred, and no spurious E0307 (transparent).
+        "type Positive = i64 where _ > 0\nfn dbl(n: i64) -> Positive { n * 2 }\nfn main() { println(to_str(dbl(3))) }",
+        // Param AND return both refinements.
+        "type Positive = i64 where _ > 0\nfn dbl(n: Positive) -> Positive { n * 2 }\nfn main() { println(to_str(dbl(5))) }",
+    ];
+    for (i, src) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_refret_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] valid return must run: {combined}");
+        assert!(!combined.contains("E1209") && !combined.contains("E0307"), "[accept {i}] no error: {combined}");
+    }
+}
+
+#[test]
 fn refinement_constant_argument_proof_obligation_e1209() {
     // Phase 5 §1 R02 (sub-slice 3): the PAYOFF — a refinement actually CATCHES
     // bugs. At a call f(arg) where the parameter is a refinement `T where P`, if
