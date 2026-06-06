@@ -72,6 +72,15 @@ a wall-clock read, a live call on a should-be-pure path). Determinism auditing i
 the reason a replayable trace exists, and that's exactly what the divergence
 check surfaces.
 
+`audit_event.ax` — Tier-1 `AuditEvent` ("typed effect record"), the value-level
+counterpart to the runtime `agent_action` audit JSONL. An `AuditLog { actors,
+effects, allowed }` records WHO did WHAT effect (the fs/net/exec capability
+taxonomy) and whether it was permitted; `audit_any_denied` flags a recorded
+policy breach, `audit_count_effect` counts a kind, and `audit_actor_effect_breadth`
+measures an actor's footprint (how many distinct effect kinds it touched — a
+fs+net+exec actor is higher-risk than a read-only one). The queryable trail is
+why a typed audit record beats free-text logging.
+
 ## Run them
 
 ```bash

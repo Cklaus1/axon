@@ -1,0 +1,166 @@
+// Tier-1 stdlib: AuditEvent — a typed effect record + a queryable audit log.
+//
+// ROADMAP §6 Tier-1 type `AuditEvent` ("typed effect record"). The value-level
+// counterpart to the runtime `event:"agent_action"` JSONL the engine writes for
+// every capability-bearing call (R4 §4.3, the I-13 un-opt-out-able audit). An
+// AuditEvent records WHO did WHAT effect and whether it was ALLOWED; an AuditLog
+// is the accumulated trail you can QUERY — "what did this actor touch?", "were
+// any effects denied?" (a policy breach recorded in the trail), "how much net /
+// exec happened?". That query surface is the reason a typed audit record exists
+// rather than free-text logging.
+//
+// Effects are the capability taxonomy as i64 tags (matching capabilities.rs:
+// fs:read / fs:write / net / exec). Three parallel [i64] arrays (actor, effect,
+// allowed-as-0/1) model the log, pre-tuple-array userland.
+//
+//   axon test examples/stdlib/audit_event.ax
+//   axon run  examples/stdlib/audit_event.ax
+
+// Effect tags (the capability taxonomy).
+fn eff_fs_read() -> i64 { 0 }
+fn eff_fs_write() -> i64 { 1 }
+fn eff_net() -> i64 { 2 }
+fn eff_exec() -> i64 { 3 }
+
+type AuditLog = {
+    actors: [i64],    // who did each effect (an actor id)
+    effects: [i64],   // which effect (eff_* tag)
+    allowed: [i64],   // 1 = permitted, 0 = denied (a policy breach in the trail)
+}
+
+fn audit_new() -> AuditLog {
+    AuditLog { actors: [], effects: [], allowed: [] }
+}
+
+// Record one typed effect event. Immutable: returns a new log.
+fn audit_record(log: AuditLog, actor: i64, effect: i64, allowed: bool) -> AuditLog {
+    let a = if allowed { 1 } else { 0 }
+    AuditLog {
+        actors: arr_push(&log.actors, actor),
+        effects: arr_push(&log.effects, effect),
+        allowed: arr_push(&log.allowed, a),
+    }
+}
+
+// Total events recorded.
+fn audit_len(log: AuditLog) -> i64 {
+    len(log.actors)
+}
+
+// How many events exercised a given effect kind (e.g. count all `net` calls).
+fn audit_count_effect(log: AuditLog, effect: i64) -> i64 {
+    let n = len(log.effects)
+    let i = 0
+    let c = 0
+    while i < n {
+        if log.effects[i] == effect { c = c + 1 } else { c = c }
+        i = i + 1
+    }
+    c
+}
+
+// Was ANY event denied? A denied effect in the trail is a recorded policy breach
+// — the single most important query of an audit log (did the sandbox ever say no
+// and get overridden, or did something attempt an effect it lacked the cap for).
+fn audit_any_denied(log: AuditLog) -> bool {
+    let n = len(log.allowed)
+    let i = 0
+    let denied = false
+    while i < n {
+        if log.allowed[i] == 0 { denied = true } else { denied = denied }
+        i = i + 1
+    }
+    denied
+}
+
+// How many distinct EFFECT KINDS this actor exercised — the breadth of an
+// actor's footprint (an actor that touches fs+net+exec is higher-risk than one
+// that only reads). Checks each of the 4 taxonomy kinds.
+fn audit_actor_effect_breadth(log: AuditLog, actor: i64) -> i64 {
+    let n = len(log.actors)
+    let saw_fsr = false
+    let saw_fsw = false
+    let saw_net = false
+    let saw_exec = false
+    let i = 0
+    while i < n {
+        if log.actors[i] == actor {
+            let e = log.effects[i]
+            if e == eff_fs_read() { saw_fsr = true } else { saw_fsr = saw_fsr }
+            if e == eff_fs_write() { saw_fsw = true } else { saw_fsw = saw_fsw }
+            if e == eff_net() { saw_net = true } else { saw_net = saw_net }
+            if e == eff_exec() { saw_exec = true } else { saw_exec = saw_exec }
+        } else {
+            saw_fsr = saw_fsr
+        }
+        i = i + 1
+    }
+    let c0 = if saw_fsr { 1 } else { 0 }
+    let c1 = if saw_fsw { 1 } else { 0 }
+    let c2 = if saw_net { 1 } else { 0 }
+    let c3 = if saw_exec { 1 } else { 0 }
+    c0 + c1 + c2 + c3
+}
+
+@[test]
+fn test_audit_records_events() {
+    let log = audit_record(audit_record(audit_new(), 1, eff_net(), true), 1, eff_fs_write(), true)
+    assert_eq(audit_len(log), 2)
+}
+
+@[test]
+fn test_count_effect() {
+    let log = audit_record(audit_record(audit_record(audit_new(), 1, eff_net(), true), 2, eff_net(), true), 1, eff_exec(), true)
+    assert_eq(audit_count_effect(log, eff_net()), 2)
+    assert_eq(audit_count_effect(log, eff_exec()), 1)
+    assert_eq(audit_count_effect(log, eff_fs_read()), 0)
+}
+
+@[test]
+fn test_any_denied_clean_trail() {
+    let log = audit_record(audit_record(audit_new(), 1, eff_net(), true), 1, eff_fs_read(), true)
+    assert(!audit_any_denied(log))
+}
+
+@[test]
+fn test_any_denied_catches_a_breach() {
+    // The trail records that actor 2 was DENIED an exec — a policy breach the
+    // audit makes visible after the fact.
+    let log = audit_record(audit_record(audit_new(), 1, eff_net(), true), 2, eff_exec(), false)
+    assert(audit_any_denied(log))
+}
+
+@[test]
+fn test_actor_effect_breadth() {
+    // Actor 1 touches net + fs_write + exec (breadth 3); actor 2 only reads fs.
+    let l0 = audit_record(audit_new(), 1, eff_net(), true)
+    let l1 = audit_record(l0, 1, eff_fs_write(), true)
+    let l2 = audit_record(l1, 1, eff_exec(), true)
+    let l3 = audit_record(l2, 1, eff_net(), true)   // a repeat — does not widen breadth
+    let l4 = audit_record(l3, 2, eff_fs_read(), true)
+    assert_eq(audit_actor_effect_breadth(l4, 1), 3)
+    assert_eq(audit_actor_effect_breadth(l4, 2), 1)
+}
+
+@[test]
+fn test_empty_log() {
+    assert_eq(audit_len(audit_new()), 0)
+    assert(!audit_any_denied(audit_new()))
+    assert_eq(audit_actor_effect_breadth(audit_new(), 1), 0)
+}
+
+fn main() {
+    // Two agents act; the audit trail makes their footprint queryable.
+    let l0 = audit_record(audit_new(), 1, eff_net(), true)        // agent 1: net call
+    let l1 = audit_record(l0, 1, eff_fs_write(), true)            // agent 1: writes a file
+    let l2 = audit_record(l1, 2, eff_net(), true)                // agent 2: net call
+    let log = audit_record(l2, 2, eff_exec(), false)             // agent 2: DENIED an exec
+
+    println("audit: {to_str(audit_len(log))} events, {to_str(audit_count_effect(log, eff_net()))} net calls")
+    println("agent 1 effect breadth: {to_str(audit_actor_effect_breadth(log, 1))} kinds")
+    if audit_any_denied(log) {
+        println("⚠ the trail contains a DENIED effect — a policy breach to investigate")
+    } else {
+        println("trail clean: every recorded effect was permitted")
+    }
+}

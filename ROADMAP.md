@@ -213,7 +213,7 @@ When this works end-to-end, Axon is real.
 | `Tool` | typed callable with effect signature | 1 |
 | `LLM<Caps>` | model + budget + fallback | 1 | *(userland landed: `examples/stdlib/llm_gateway.ax` — a first-class LLM value mediating every call with per-TOKEN cost metering (distinct from R3c's per-call-count meter) and graceful fallback-on-overrun (latches, doesn't crash). Kernel `llm_gateway` runtime service wiring this to live `ai_complete` token accounting is Phase-7.)* |
 | `Trace` | replayable execution record | 1 | *(userland landed: `examples/stdlib/trace.ax` — a `Trace{actions,results}` value with `trace_record`/`trace_equiv`/`trace_divergence`; the divergence check returns the FIRST step where a replay drifts from the recording — the determinism-audit a replay engine exists for. The value-level counterpart to the runtime provenance log `axon trace` reads. Kernel replay engine (Phase 9) wires this to actual re-execution.)* |
-| `AuditEvent` | typed effect record | 1 |
+| `AuditEvent` | typed effect record | 1 | *(userland landed: `examples/stdlib/audit_event.ax` — an `AuditLog{actors,effects,allowed}` recording WHO did WHAT effect (fs/net/exec) + allowed/denied; `audit_any_denied` (a recorded policy breach), `audit_count_effect`, `audit_actor_effect_breadth` (an actor's footprint). The value-level counterpart to the runtime `agent_action` JSONL. Kernel typed-effect emission at every capability call site is the runtime side.)* |
 | `Sandbox<P>` | runtime effect-row enforcement | 1.5 |
 | `Distribution<T>`, `Belief<T>` | probabilistic types | 2 (Phase 13) |
 | `World<T>`, `Counterfactual<T>` | simulation primitives | 2 |

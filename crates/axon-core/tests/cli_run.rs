@@ -2468,6 +2468,21 @@ fn safe_self_improve_demo_composes_full_stack() {
 }
 
 #[test]
+fn audit_event_stdlib_module_tests_pass() {
+    // Tier-1 AuditEvent userland module ("typed effect record", ROADMAP §6). The
+    // value-level counterpart to the runtime agent_action JSONL: record WHO did
+    // WHAT effect (the fs/net/exec capability taxonomy) and whether it was
+    // ALLOWED, into a queryable AuditLog. `audit_any_denied` (was any effect
+    // denied — a recorded policy breach), `audit_count_effect`,
+    // `audit_actor_effect_breadth` (how many effect kinds an actor touched — its
+    // footprint). 6 @[test]s, headed by test_any_denied_catches_a_breach.
+    let out = axon().args(["test", &ex("stdlib/audit_event.ax")]).output().unwrap();
+    assert!(out.status.success(), "audit_event.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn trace_stdlib_module_tests_pass() {
     // Tier-1 Trace userland module ("replayable execution record", ROADMAP §6).
     // The value-level counterpart to the runtime provenance log: record a run's
