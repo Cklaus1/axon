@@ -173,31 +173,56 @@ nan_case() {
 }
 
 # expect_overflow NAME EXPR
-#   An i64 expression that OVERFLOWS. This is a KNOWN, documented divergence, NOT
-#   an equality case (compare: ExitCode): the interpreter uses checked arithmetic
-#   and aborts gracefully (non-zero exit, no stdout), while native codegen emits
-#   wrapping two's-complement IR (exit 0, a wrapped value). The descriptor
-#   asserts exactly that CONTRACT — interp aborts non-zero, native does not —
-#   so a regression either way (interp silently wrapping, or native starting to
-#   abort) is caught, without pretending the two agree.
+#   An i64 expression that OVERFLOWS. As of the checked-arithmetic codegen fix
+#   this is NO LONGER a divergence — both engines now panic IDENTICALLY (exit
+#   101, the same `axon: panic: integer overflow: …` message). The interpreter
+#   was always checked; native used to silently two's-complement-wrap (exit 0, a
+#   wrong answer — I-9). This descriptor now asserts the STRONGER contract: the
+#   two engines agree byte-for-byte on stderr AND exit code. A regression in
+#   EITHER direction (native silently wrapping again, or the message drifting)
+#   fails here. (compare: Stderr+ExitCode, both must be exit 101.)
 expect_overflow() {
   local name="$1" expr="$2"
   local src="$WORK/$name.ax"
   printf 'fn main() -> i64 {\n    println(to_str(%s))\n    0\n}\n' "$expr" > "$src"
-  local i_out i_exit n_exit
-  i_out="$("$AXON" run "$src" 2>/dev/null)"; i_exit=$?
+  local i_out i_exit n_out n_exit
+  # Capture stderr (the panic message lands there) + exit code, both engines.
+  i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
   if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
     echo "  FAIL $name: native build failed"; fail=1; return
   fi
-  "$WORK/$name.bin" >/dev/null 2>&1; n_exit=$?
-  # Contract: interp aborts (non-zero) on the overflow; stdout empty.
-  if [ "$i_exit" = 0 ]; then
-    echo "  FAIL $name: interp did NOT abort on overflow (exit 0, out='$i_out') — checked-arith regression?"; fail=1; return
+  n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
+  if [ "$i_exit" != 101 ]; then
+    echo "  FAIL $name: interp exit=$i_exit (expected 101 — checked-arith regression?)"; fail=1; return
   fi
-  if [ -n "$i_out" ]; then
-    echo "  FAIL $name: interp printed '$i_out' before aborting — expected no output"; fail=1; return
+  if [ "$i_exit" != "$n_exit" ]; then
+    echo "  FAIL $name: exit interp=$i_exit native=$n_exit — native must also panic 101, not wrap"; fail=1; return
   fi
-  echo "  OK   $name: interp aborts (exit $i_exit), native wraps (exit $n_exit) — documented i64-overflow divergence"
+  if [ "$i_out" != "$n_out" ]; then
+    echo "  FAIL $name: panic message divergence interp='$i_out' native='$n_out'"; fail=1; return
+  fi
+  echo "  OK   $name: interp==native panic (exit 101) — checked overflow"
+}
+
+# expect_runtime_panic NAME EXPR
+#   A non-overflow runtime fault (div-by-zero via a variable, OOB index, …) that
+#   must panic IDENTICALLY on both engines (exit 101, same stderr). Same contract
+#   shape as expect_overflow; separate name for readability at the call site.
+expect_runtime_panic() {
+  local name="$1" body="$2"
+  local src="$WORK/$name.ax"
+  # `%b` so the \n escapes inside $body expand to real newlines.
+  printf 'fn main() {\n%b\n}\n' "$body" > "$src"
+  local i_out i_exit n_out n_exit
+  i_out="$("$AXON" run "$src" 2>&1)"; i_exit=$?
+  if ! "$AXON" build "$src" -o "$WORK/$name.bin" --no-cache >/dev/null 2>&1; then
+    echo "  FAIL $name: native build failed"; fail=1; return
+  fi
+  n_out="$("$WORK/$name.bin" 2>&1)"; n_exit=$?
+  if [ "$i_exit" != 101 ] || [ "$i_exit" != "$n_exit" ] || [ "$i_out" != "$n_out" ]; then
+    echo "  FAIL $name: interp(exit=$i_exit,'$i_out') != native(exit=$n_exit,'$n_out')"; fail=1; return
+  fi
+  echo "  OK   $name: interp==native panic (exit 101)"
 }
 
 echo "fuzz_parity: seed=$SEED, up to $((N)) random + edge inputs per builtin"
@@ -260,12 +285,29 @@ nan_case nan_sqrt_neg 'sqrt(0.0 - 1.0)'        'nan'
 nan_case nan_zero_div '0.0 / 0.0'              'nan'
 nan_case inf_pos      '1.0 / 0.0'              'inf'
 nan_case inf_neg      '(0.0 - 1.0) / 0.0'      '-inf'
-# ── slice 2b: i64 overflow boundary (compare: ExitCode — documented divergence)
+# ── i64 multiply / divide / remainder (checked: see emit_binop) ───────────────
+# mul over the `pos` domain (bounded so the random spread doesn't overflow on
+# every draw; the overflow boundary is asserted explicitly below). div/rem use a
+# non-zero divisor `(B % K + 1)` so the random body stays defined — the
+# zero-divisor fault is a separate explicit panic case.
+fuzz mul_i64   pos 2 'A * (B % 1000)'
+fuzz div_i64   i64 2 'A / (B % 1000 + 1)'
+fuzz rem_i64   i64 2 'A % (B % 1000 + 1)'
+# ── f64→i64 saturating conversion (raw fptosi was UB out of range; now clamps) ─
+# The f64 domain edges already span ±1e15 etc.; f2i across them proves native
+# saturates (i64::MAX/MIN) and NaN→0 exactly like the interpreter's `as i64`.
+fuzz f2i_sat   f64 1 'f64_to_i64(A * 1.0e20)'
+# ── i64 overflow boundary — now an EQUALITY contract (both panic 101) ──────────
 expect_overflow ovf_add  '9223372036854775807 + 1'
 expect_overflow ovf_sub  '(0 - 9223372036854775807 - 1) - 1'
 expect_overflow ovf_mul  '9223372036854775807 * 2'
 expect_overflow ovf_neg  '0 - (0 - 9223372036854775807 - 1)'
+# ── other runtime faults — both engines must panic identically (exit 101) ─────
+expect_runtime_panic div_zero '    let z = 0\n    println(to_str(5 / z))'
+expect_runtime_panic mod_zero '    let z = 0\n    println(to_str(5 % z))'
+expect_runtime_panic arr_oob  '    let a = [1, 2, 3]\n    let i = 9\n    println(to_str(a[i]))'
+expect_runtime_panic arr_neg  '    let a = [1, 2, 3]\n    let i = 0 - 1\n    println(to_str(a[i]))'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — 37 random + 4 NaN/inf + 4 overflow-boundary descriptors agree with the documented I-2 contract ✓"
+echo "fuzz_parity: PASS — random + NaN/inf + overflow + runtime-panic descriptors all agree (native==interp) ✓"
 exit 0
