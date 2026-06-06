@@ -3199,6 +3199,52 @@ fn dict_get_or_and_dict_inc_compress_idioms() {
 }
 
 #[test]
+fn unit_arg_to_deferred_param_is_a_clean_type_error_not_a_panic() {
+    // REGRESSION: `dict_set`/`dict_inc` mutate in place and return `()`, and
+    // their first param is the *deferred* `Dict` type. The arg-type checker
+    // skips deferred params (R12 — generics/unresolved), which used to swallow
+    // a `()` flowing into a `Dict` slot from a NESTED mutate call:
+    //
+    //     let d = dict_set(dict_set(dict_new(), "a", 1), "b", 2)
+    //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returns ()
+    //
+    // The mistake then surfaced only at runtime as an interpreter panic
+    // ("dict_set: expected dict, got ()") and in codegen as an IR-verification
+    // crash (E0701) — never as a clean compile-time diagnostic. A `()` is fully
+    // concrete and can never satisfy a non-`()` param, deferred or not, so the
+    // checker now rejects it up front with E0306. `check`/`run` exit 2.
+    let src = "fn main() {\n  \
+        let d = dict_set(dict_set(dict_new(), \"a\", 1), \"b\", 2)\n  \
+        match dict_to_str(d) { Ok(s) => println(s)  Err(e) => println(e) }\n\
+    }\n";
+    let f = std::env::temp_dir().join(format!("axon_unitarg_{}.ax", std::process::id()));
+    std::fs::write(&f, src).unwrap();
+
+    // `check` rejects with a type error (exit 2), not a panic (101).
+    let chk = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    assert_eq!(chk.status.code(), Some(2), "check should reject (): {:?}", chk);
+    let chk_err = format!(
+        "{}{}",
+        String::from_utf8_lossy(&chk.stderr),
+        String::from_utf8_lossy(&chk.stdout)
+    );
+    assert!(
+        chk_err.contains("E0306") && chk_err.contains("found ()"),
+        "expected an E0306 `found ()` diagnostic, got: {chk_err}"
+    );
+
+    // `run` reaches the same gate — exit 2, NOT the old runtime panic (101).
+    let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(run.status.code(), Some(2), "run should gate at the checker, not panic: {:?}", run);
+    let run_err = String::from_utf8_lossy(&run.stderr);
+    assert!(
+        !run_err.contains("expected dict, got ()"),
+        "the runtime panic must not be reachable — it should be caught at check time: {run_err}"
+    );
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

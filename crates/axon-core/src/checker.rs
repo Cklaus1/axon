@@ -1667,6 +1667,38 @@ impl CheckCtx {
             let arg_path = format!("{node_path}.arg_{i}");
             let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
 
+            // `()` is never assignable to a non-`()` parameter — not even a
+            // *deferred* one. This must run BEFORE the deferred/unknown skip
+            // below: builtins like `dict_set`/`dict_inc` return `()` and take a
+            // deferred `Dict` first arg, so a nested `dict_set(dict_set(d,…),…)`
+            // feeds `()` into the deferred `Dict` slot. The skip would swallow
+            // it (deferred param) and the mistake would only surface as an
+            // interpreter panic ("dict_set: expected dict, got ()") or a codegen
+            // E0701 — never as a clean compile-time diagnostic. `()` is fully
+            // concrete, so we can reject it regardless of the param's deferral.
+            if arg_ty == Type::Unit && *param_ty != Type::Unit {
+                let file = self.file.clone();
+                let span = self.current_span;
+                self.errors.push(
+                    CheckError::new(
+                        E0306,
+                        format!("argument {i} of `{name}` has the wrong type"),
+                    )
+                    .node(&arg_path)
+                    .at(&file, 0, 0)
+                    .with_span(span)
+                    .expected(param_ty.display())
+                    .found(Type::Unit.display())
+                    .fix(format!(
+                        "this argument is `()` — the value of a `()`-returning call (e.g. \
+                         `dict_set`/`dict_inc` mutate in place and return `()`); bind the \
+                         original `{}` to a variable and pass that instead of nesting the call",
+                        param_ty.display()
+                    )),
+                );
+                continue;
+            }
+
             // Skip when either side is unresolved or deferred (R12).
             // Also skip when either type recursively contains TypeParam/Unknown (generic callers).
             if arg_ty == Type::Unknown
