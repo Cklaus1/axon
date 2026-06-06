@@ -901,16 +901,18 @@ impl<'ctx> Codegen<'ctx> {
                 crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
             {
                 let ret_sem = f.return_type.as_ref().map(|t| self.axon_type_to_semantic(t));
-                let ret_is_uncertain = matches!(ret_sem, Some(Type::Uncertain(_)));
+                // Uncertain AND Temporal both carry value(0)/confidence(1) fields,
+                // so a `value`/`confidence` predicate applies to either.
+                let ret_is_wrapper =
+                    matches!(ret_sem, Some(Type::Uncertain(_)) | Some(Type::Temporal(_)));
                 let ret_is_scalar = matches!(
                     ret_sem,
                     Some(Type::I64 | Type::I32 | Type::F64 | Type::Bool)
                 );
-                // Arm when: `confidence`/`value` on an Uncertain return (the
-                // original path), OR `value` on a SCALAR return (the parity fix —
-                // a `@[verify(value <= 500)]` bound on a plain-typed fn must be
-                // enforced natively too, matching the interpreter).
-                let armable = (ret_is_uncertain && (ident == "confidence" || ident == "value"))
+                // Arm when: `confidence`/`value` on an Uncertain/Temporal return,
+                // OR `value` on a SCALAR return (a `@[verify(value <= 500)]` bound
+                // must be enforced natively too, matching the interpreter).
+                let armable = (ret_is_wrapper && (ident == "confidence" || ident == "value"))
                     || (ret_is_scalar && ident == "value");
                 if armable {
                     let op_str = crate::verify::binop_to_verify_str(&op);

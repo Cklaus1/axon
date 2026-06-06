@@ -983,7 +983,12 @@ impl<'p> Interp<'p> {
         //    enforced at runtime — closing ROADMAP §9.5 F6.
         if let Some(spec) = &f.verify {
             if let Value::Struct { name, fields } = &result {
-                if name == "Uncertain" {
+                // `@[verify]` enforces a postcondition on the returned value's
+                // `value`/`confidence` fields. Both `Uncertain` and `Temporal`
+                // carry those fields, so the same gate applies to both — a
+                // `@[verify(value <= 500)]` on a Temporal-returning fn was
+                // silently UNENFORCED before (only Uncertain hit this branch).
+                if name == "Uncertain" || name == "Temporal" {
                     let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
                     let val_str = fields.get("value").map(display).unwrap_or_else(|| "?".into());
                     let conf_str = fields.get("confidence").map(display).unwrap_or_else(|| "?".into());

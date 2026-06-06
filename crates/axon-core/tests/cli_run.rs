@@ -1784,6 +1784,35 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
     }
 }
 
+#[test]
+fn verify_is_enforced_on_a_temporal_return_at_runtime() {
+    // `@[verify(value <= K)]` on a Temporal-returning fn was SILENTLY UNENFORCED
+    // (the runtime gate only matched the Uncertain struct; a Temporal struct hit
+    // neither the struct nor the scalar branch). Both Uncertain and Temporal
+    // carry value/confidence fields, so the same gate now applies — a breach is
+    // a verify-failure (exit 3), a satisfied bound runs clean. Native==interp.
+    let breach = "@[verify(value <= 500)]\n\
+        fn gate(x: i64) -> Temporal<i64> { temporal_new(x, 100, 0.1) }\n\
+        fn main() -> i64 { let t = gate(900)\n  t.value }\n";
+    let f = std::env::temp_dir().join(format!("axon_tvbreach_{}.ax", std::process::id()));
+    std::fs::write(&f, breach).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(3), "a Temporal @[verify(value)] breach must exit 3: {msg}");
+    assert!(msg.contains("verify failed"), "breach must report a verify failure: {msg}");
+
+    // A satisfied bound runs clean (returns the value).
+    let ok = "@[verify(value <= 500)]\n\
+        fn gate(x: i64) -> Temporal<i64> { temporal_new(x, 100, 0.1) }\n\
+        fn main() -> i64 { let t = gate(100)\n  t.value }\n";
+    let f2 = std::env::temp_dir().join(format!("axon_tvok_{}.ax", std::process::id()));
+    std::fs::write(&f2, ok).unwrap();
+    let out2 = axon().args(["run", f2.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f2);
+    assert_eq!(out2.status.code(), Some(100), "a satisfied Temporal @[verify] must run clean (value 100)");
+}
+
 /// Parse the integer from a "best score: N (target …)" line.
 fn best_score(stdout: &str) -> i64 {
     let key = "best score: ";
