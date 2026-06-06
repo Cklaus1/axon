@@ -31,7 +31,11 @@ services) — that remains greenfield, multi-quarter work.
 | **R9** | Layer-1/3 alignment (`Uncertain`/`Temporal`/`@[verify]`/causal) | 92 | ✅ **`@[verify]` enforced on scalar returns** (both engines) + **full `Uncertain`/`Temporal` SOFT-TYPING surface complete in both engines** — a soft wrapper flowing into a plain-T slot (if/while cond, scalar param, scalar return, binop) unwraps to its inner value; was silent-0 / runtime-panic / IR-abort. native==interp throughout. SMT loop invariants + full metacognition trait remain |
 | **R10** | Self-improving compiler (4-gate firewall, AI discoverer) | 99 | ✅ static + live AI discoverer; growing the template menu is the only follow-on |
 
-**Average 93.6% · language-core (R1-6,8-10) ~94% · full-platform vision ~15%.**
+**Average 93.7% · language-core (R1-6,8-10) ~95% · full-platform vision ~15%.**
+(Recomputed after the safety-hardening session: R6 91→97, R9 88→92, R4 I-13
+hardened — sensitive-data taint all 4 paths, capability sandbox transitive,
+agent audit-trail transitive, `@[verify]` scalar enforcement, full
+Uncertain/Temporal soft-typing surface; all native==interp.)
 
 ## What "done and verified" means here
 
