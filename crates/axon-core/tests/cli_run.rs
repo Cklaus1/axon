@@ -3199,48 +3199,90 @@ fn dict_get_or_and_dict_inc_compress_idioms() {
 }
 
 #[test]
-fn unit_arg_to_deferred_param_is_a_clean_type_error_not_a_panic() {
-    // REGRESSION: `dict_set`/`dict_inc` mutate in place and return `()`, and
-    // their first param is the *deferred* `Dict` type. The arg-type checker
-    // skips deferred params (R12 — generics/unresolved), which used to swallow
-    // a `()` flowing into a `Dict` slot from a NESTED mutate call:
-    //
-    //     let d = dict_set(dict_set(dict_new(), "a", 1), "b", 2)
-    //                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ returns ()
-    //
-    // The mistake then surfaced only at runtime as an interpreter panic
-    // ("dict_set: expected dict, got ()") and in codegen as an IR-verification
-    // crash (E0701) — never as a clean compile-time diagnostic. A `()` is fully
-    // concrete and can never satisfy a non-`()` param, deferred or not, so the
-    // checker now rejects it up front with E0306. `check`/`run` exit 2.
-    let src = "fn main() {\n  \
-        let d = dict_set(dict_set(dict_new(), \"a\", 1), \"b\", 2)\n  \
-        match dict_to_str(d) { Ok(s) => println(s)  Err(e) => println(e) }\n\
+fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_panic() {
+    // REGRESSION: the arg-type checker skips any param whose type is *deferred*
+    // (R12 — Dict/Uncertain/Temporal/Goal + generics/unresolved). That skip is
+    // correct for a generic `T` slot but used to swallow a fully-concrete,
+    // provably-wrong arg flowing into a deferred *opaque* slot. The dict
+    // builtins are the trap: they mutate in place and return `()` (dict_set /
+    // dict_inc), return `Option<V>` (dict_get), or `Result<str,str>`
+    // (dict_to_str) — and take a deferred `Dict` first param. Feeding any of
+    // those back into a `Dict` slot —
+    //     dict_set(dict_set(d, …), …)   // () into Dict
+    //     dict_set(dict_get(d, k), …)   // Option into Dict
+    //     dict_len(dict_to_str(d))      // Result into Dict
+    // — slipped through `check` (exit 0!) and surfaced only as an interpreter
+    // panic ("expected dict, got Option") or a codegen E0701 crash. These
+    // wrapper types are concrete and never unify with a deferred opaque type, so
+    // the checker now rejects them up front with E0306. (A generic value slot
+    // like dict_set's `v: T` is a type-param, NOT an opaque deferred type, so
+    // storing an Option as a dict *value* is still allowed — covered below.)
+    let cases = [
+        // (label, body, the `found` substring the diagnostic must contain)
+        (
+            "unit",
+            "let d = dict_set(dict_set(dict_new(), \"a\", 1), \"b\", 2)\n  let _ = d\n",
+            "found ()",
+        ),
+        (
+            "option",
+            "let d = dict_new()\n  dict_set(d, \"a\", 1)\n  let o = dict_get(d, \"a\")\n  dict_set(o, \"b\", 2)\n",
+            "found Option<_>",
+        ),
+        (
+            "result",
+            "let d = dict_new()\n  dict_set(d, \"a\", 1)\n  let r = dict_to_str(d)\n  let n = dict_len(r)\n  let _ = n\n",
+            "found Result<_, _>",
+        ),
+    ];
+    for (label, body, found) in cases {
+        let src = format!("fn main() {{\n  {body}}}\n");
+        let f = std::env::temp_dir()
+            .join(format!("axon_wraparg_{label}_{}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+
+        // `check` rejects with E0306 (exit 2), not a panic (101).
+        let chk = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        assert_eq!(chk.status.code(), Some(2), "[{label}] check should reject: {chk:?}");
+        let chk_err = format!(
+            "{}{}",
+            String::from_utf8_lossy(&chk.stderr),
+            String::from_utf8_lossy(&chk.stdout)
+        );
+        assert!(
+            chk_err.contains("E0306") && chk_err.contains(found),
+            "[{label}] expected an E0306 `{found}` diagnostic, got: {chk_err}"
+        );
+
+        // `run` reaches the same gate — exit 2, NOT the old runtime panic.
+        let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(run.status.code(), Some(2), "[{label}] run should gate at checker: {run:?}");
+        let run_err = String::from_utf8_lossy(&run.stderr);
+        assert!(
+            !run_err.contains("expected dict, got"),
+            "[{label}] the runtime panic must be unreachable: {run_err}"
+        );
+    }
+
+    // NEGATIVE: storing an `Option` as a dict VALUE (the `v: T` slot, a
+    // type-param — NOT an opaque deferred type) must STILL type-check. The guard
+    // must distinguish `Deferred("Dict")` (opaque, reject wrappers) from
+    // `Deferred("T")` (generic, accept anything).
+    let ok = "fn main() {\n  \
+        let d = dict_new()\n  \
+        let o = dict_get(d, \"x\")\n  \
+        dict_set(d, \"k\", o)\n  \
+        let _ = d\n\
     }\n";
-    let f = std::env::temp_dir().join(format!("axon_unitarg_{}.ax", std::process::id()));
-    std::fs::write(&f, src).unwrap();
-
-    // `check` rejects with a type error (exit 2), not a panic (101).
+    let f = std::env::temp_dir().join(format!("axon_wrapok_{}.ax", std::process::id()));
+    std::fs::write(&f, ok).unwrap();
     let chk = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
-    assert_eq!(chk.status.code(), Some(2), "check should reject (): {:?}", chk);
-    let chk_err = format!(
-        "{}{}",
-        String::from_utf8_lossy(&chk.stderr),
-        String::from_utf8_lossy(&chk.stdout)
-    );
-    assert!(
-        chk_err.contains("E0306") && chk_err.contains("found ()"),
-        "expected an E0306 `found ()` diagnostic, got: {chk_err}"
-    );
-
-    // `run` reaches the same gate — exit 2, NOT the old runtime panic (101).
-    let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(run.status.code(), Some(2), "run should gate at the checker, not panic: {:?}", run);
-    let run_err = String::from_utf8_lossy(&run.stderr);
-    assert!(
-        !run_err.contains("expected dict, got ()"),
-        "the runtime panic must not be reachable — it should be caught at check time: {run_err}"
+    assert_eq!(
+        chk.status.code(),
+        Some(0),
+        "storing an Option as a dict value (v: T slot) must still type-check: {chk:?}"
     );
 }
 

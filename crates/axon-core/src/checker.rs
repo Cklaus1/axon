@@ -1667,18 +1667,72 @@ impl CheckCtx {
             let arg_path = format!("{node_path}.arg_{i}");
             let arg_ty = self.resolve_expr_type(arg, &arg_path, scope);
 
-            // `()` is never assignable to a non-`()` parameter — not even a
-            // *deferred* one. This must run BEFORE the deferred/unknown skip
-            // below: builtins like `dict_set`/`dict_inc` return `()` and take a
-            // deferred `Dict` first arg, so a nested `dict_set(dict_set(d,…),…)`
-            // feeds `()` into the deferred `Dict` slot. The skip would swallow
-            // it (deferred param) and the mistake would only surface as an
-            // interpreter panic ("dict_set: expected dict, got ()") or a codegen
-            // E0701 — never as a clean compile-time diagnostic. `()` is fully
-            // concrete, so we can reject it regardless of the param's deferral.
-            if arg_ty == Type::Unit && *param_ty != Type::Unit {
+            // A *concrete wrapper* arg (`()`, `Option<_>`, `Result<_,_>`) can
+            // never satisfy a *deferred opaque* parameter (`Dict`, `Uncertain`,
+            // `Temporal`, `Goal`). This must run BEFORE the deferred/unknown skip
+            // below, which fires on `param_ty.is_deferred()` REGARDLESS of the
+            // arg — so it would swallow a provably-wrong arg.
+            //
+            // The trap: builtins like `dict_set`/`dict_inc` mutate in place and
+            // return `()`, `dict_get` returns `Option<V>`, `dict_to_str` returns
+            // `Result<str,str>` — and their first param is the deferred `Dict`.
+            // Feeding any of those back into a `Dict` slot —
+            //     dict_set(dict_set(d,…),…)   // () into Dict
+            //     dict_set(dict_get(d,k),…)   // Option into Dict
+            //     dict_len(dict_to_str(d))    // Result into Dict
+            // — was waved through by the deferred-skip and surfaced only as an
+            // interpreter panic ("expected dict, got Option") or a codegen E0701,
+            // never as a clean compile-time error.
+            //
+            // These wrapper variants are fully concrete and are NEVER what a
+            // deferred opaque type unifies to (`Type::Deferred` only ever wraps
+            // Dict/Uncertain/Temporal/Goal — checked: it never wraps
+            // Option/Result/Unit). A generic *value* slot (`dict_set`'s `v: T`)
+            // is `Type::TypeParam`, NOT deferred — so legitimately storing an
+            // `Option` as a dict value is unaffected.
+            let arg_is_concrete_wrapper = matches!(
+                arg_ty,
+                Type::Unit | Type::Option(_) | Type::Result(_, _)
+            );
+            // Only an *opaque* deferred param (Dict/Uncertain/Temporal/Goal)
+            // rejects these wrappers. A bare generic type-param also resolves to
+            // `Type::Deferred` (e.g. `dict_set`'s value `v: T` → `Deferred("T")`),
+            // but a `T` slot legitimately accepts ANY value — including an
+            // `Option` stored as a dict value. Distinguish the two by the
+            // deferred name: an opaque type starts with a DEFERRED_PREFIXES entry;
+            // a type-param (`T`, `K`, `V`, `E`) does not.
+            let param_is_opaque_deferred = matches!(param_ty, Type::Deferred(n)
+                if DEFERRED_PREFIXES.iter().any(|p| n.starts_with(p)));
+            if arg_is_concrete_wrapper && param_is_opaque_deferred {
                 let file = self.file.clone();
                 let span = self.current_span;
+                // Friendlier `found` label: the inner of these synthesized
+                // wrappers is `Unknown` (the payload is genuinely unresolved),
+                // which would render as `Option<<unknown>>`. Show `Option<_>` /
+                // `Result<_,_>` / `()` instead.
+                let found_disp = match &arg_ty {
+                    Type::Unit => "()".to_string(),
+                    Type::Option(_) => "Option<_>".to_string(),
+                    _ => "Result<_, _>".to_string(),
+                };
+                let hint = match &arg_ty {
+                    Type::Unit => format!(
+                        "this argument is `()` — the value of a `()`-returning call (e.g. \
+                         `dict_set`/`dict_inc` mutate in place and return `()`); bind the \
+                         original `{}` to a variable and pass that instead of nesting the call",
+                        param_ty.display()
+                    ),
+                    Type::Option(_) => format!(
+                        "this argument is an `{found_disp}` (e.g. from `dict_get`); unwrap it \
+                         with `match`/`unwrap_or` to obtain a `{}` before passing it",
+                        param_ty.display()
+                    ),
+                    _ => format!(
+                        "this argument is a `{found_disp}` (e.g. from `dict_to_str`); unwrap it \
+                         with `match`/`?` to obtain a `{}` before passing it",
+                        param_ty.display()
+                    ),
+                };
                 self.errors.push(
                     CheckError::new(
                         E0306,
@@ -1688,13 +1742,8 @@ impl CheckCtx {
                     .at(&file, 0, 0)
                     .with_span(span)
                     .expected(param_ty.display())
-                    .found(Type::Unit.display())
-                    .fix(format!(
-                        "this argument is `()` — the value of a `()`-returning call (e.g. \
-                         `dict_set`/`dict_inc` mutate in place and return `()`); bind the \
-                         original `{}` to a variable and pass that instead of nesting the call",
-                        param_ty.display()
-                    )),
+                    .found(found_disp)
+                    .fix(hint),
                 );
                 continue;
             }
@@ -2717,7 +2766,26 @@ impl CheckCtx {
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Option::Some(sig) = self.fn_sigs.get(name.as_str()) {
                         if type_contains_unresolved(&sig.ret) {
-                            return Type::Unknown;
+                            // Collapsing the whole return to `Unknown` loses the
+                            // OUTER wrapper shape — and the arg-type loop's
+                            // `arg_ty == Unknown` skip then swallows it. For a
+                            // builtin whose return is `Option<T>`/`Result<T,E>`
+                            // with only the INNER type unresolved (e.g.
+                            // `dict_get -> Option<T>`, `dict_to_str ->
+                            // Result<str,str>`), keep the wrapper but blank the
+                            // inner to `Unknown`. That preserves enough shape for
+                            // the concrete-wrapper-into-deferred-slot guard to
+                            // fire (passing `dict_get(d,k)` straight into a `Dict`
+                            // slot is a type error) while still treating the
+                            // payload as unresolved everywhere else.
+                            return match &sig.ret {
+                                Type::Option(_) => Type::Option(Box::new(Type::Unknown)),
+                                Type::Result(_, _) => Type::Result(
+                                    Box::new(Type::Unknown),
+                                    Box::new(Type::Unknown),
+                                ),
+                                _ => Type::Unknown,
+                            };
                         }
                         return sig.ret.clone();
                     }
