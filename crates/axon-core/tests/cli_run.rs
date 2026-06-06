@@ -2468,6 +2468,21 @@ fn safe_self_improve_demo_composes_full_stack() {
 }
 
 #[test]
+fn trace_stdlib_module_tests_pass() {
+    // Tier-1 Trace userland module ("replayable execution record", ROADMAP §6).
+    // The value-level counterpart to the runtime provenance log: record a run's
+    // steps, REPLAY it, and detect DIVERGENCE — `trace_equiv` (a faithful replay
+    // reproduces the trace) + `trace_divergence` (the FIRST diverging step, the
+    // bisection point for a non-determinism bug). 6 @[test]s, headed by
+    // test_divergent_result_is_caught (same actions, a drifted result → caught at
+    // the exact step) — the determinism-audit the replay engine exists for.
+    let out = axon().args(["test", &ex("stdlib/trace.ax")]).output().unwrap();
+    assert!(out.status.success(), "trace.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn budget_stdlib_module_tests_pass() {
     // Tier-1 Budget userland module. The single-resource `Budget { used, cap }`
     // plus `Budget<R...>` — "extensible cost over resource set R" (ROADMAP §6

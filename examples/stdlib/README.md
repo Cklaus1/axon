@@ -61,6 +61,17 @@ single metric, `reward_penalize` subtracts a cost dimension, `reward_min` /
 Lets demos drop the magic-number score expressions buried in
 `@[adaptive]` fns.
 
+## Provenance / replay
+
+`trace.ax` — Tier-1 `Trace` ("replayable execution record"), the value-level
+counterpart to the runtime provenance log (`axon trace`). A `Trace { actions,
+results }` records the steps a run took; `trace_record` appends, `trace_equiv`
+checks a replay reproduced the original, and `trace_divergence` returns the FIRST
+diverging step — the bisection point for a non-determinism bug (an unseeded RNG,
+a wall-clock read, a live call on a should-be-pure path). Determinism auditing is
+the reason a replayable trace exists, and that's exactly what the divergence
+check surfaces.
+
 ## Run them
 
 ```bash

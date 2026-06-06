@@ -1,0 +1,167 @@
+// Tier-1 stdlib: Trace — a replayable execution record.
+//
+// ROADMAP §6 Tier-1 type `Trace` ("replayable execution record"). A Trace is the
+// VALUE-level counterpart to the runtime provenance log (`axon trace` reads the
+// JSONL the engine writes): a record of the steps an autonomous run took, that
+// you can REPLAY and check for DIVERGENCE. The whole point of a replayable trace
+// is determinism auditing — replaying a recorded run must reproduce it; a replay
+// that DIVERGES is a non-determinism bug (an unseeded RNG, a wall-clock read, a
+// live network call that crept into a path that should be pure). The replay
+// engine's job is to catch exactly that.
+//
+// Modeled with two parallel `[i64]` arrays (action tag + result per step) since
+// this is pre-tuple-array userland. A step is `(action, result)`: `action` is an
+// opaque op tag (which tool/branch ran), `result` the i64 outcome it produced.
+//
+//   axon test examples/stdlib/trace.ax
+//   axon run  examples/stdlib/trace.ax
+
+type Trace = {
+    actions: [i64],   // the op tag at each step (what ran)
+    results: [i64],   // the outcome each op produced
+}
+
+fn trace_new() -> Trace {
+    Trace { actions: [], results: [] }
+}
+
+// Append one recorded step. Immutable: returns a new Trace.
+fn trace_record(t: Trace, action: i64, result: i64) -> Trace {
+    Trace {
+        actions: arr_push(&t.actions, action),
+        results: arr_push(&t.results, result),
+    }
+}
+
+// Number of recorded steps.
+fn trace_len(t: Trace) -> i64 {
+    len(t.actions)
+}
+
+// The result recorded at step `i`, or -1 if out of range.
+fn trace_result_at(t: Trace, i: i64) -> i64 {
+    if i < 0 { 0 - 1 } else { if i >= len(t.results) { 0 - 1 } else { t.results[i] } }
+}
+
+// Two traces are EQUIVALENT iff they recorded the same actions in the same order
+// AND each produced the same result — i.e. a replay reproduced the original. A
+// difference in length, action order, or any result means DIVERGENCE.
+fn trace_equiv(a: Trace, b: Trace) -> bool {
+    if len(a.actions) != len(b.actions) {
+        false
+    } else {
+        let n = len(a.actions)
+        let i = 0
+        let ok = true
+        while i < n {
+            let same_act = a.actions[i] == b.actions[i]
+            let same_res = a.results[i] == b.results[i]
+            if same_act && same_res { ok = ok } else { ok = false }
+            i = i + 1
+        }
+        ok
+    }
+}
+
+// The index of the FIRST diverging step between a recorded trace and its replay,
+// or -1 when they are equivalent. This is what a replay engine reports: "the runs
+// agreed up to step k, then diverged" — the bisection point for the
+// non-determinism bug. A length difference past the shorter trace counts as
+// divergence at the first missing step.
+fn trace_divergence(a: Trace, b: Trace) -> i64 {
+    let n = min_i64(len(a.actions), len(b.actions))
+    let i = 0
+    let found = 0 - 1
+    while i < n {
+        let same_act = a.actions[i] == b.actions[i]
+        let same_res = a.results[i] == b.results[i]
+        if same_act && same_res {
+            i = i + 1
+        } else {
+            found = i
+            i = n
+        }
+    }
+    // Equal on the common prefix but different lengths → diverges at the prefix end.
+    if found < 0 {
+        if len(a.actions) == len(b.actions) { 0 - 1 } else { n }
+    } else {
+        found
+    }
+}
+
+@[test]
+fn test_trace_records_steps() {
+    let t = trace_record(trace_record(trace_new(), 1, 100), 2, 200)
+    assert_eq(trace_len(t), 2)
+    assert_eq(trace_result_at(t, 0), 100)
+    assert_eq(trace_result_at(t, 1), 200)
+    assert_eq(trace_result_at(t, 9), 0 - 1)
+}
+
+@[test]
+fn test_identical_replay_is_equivalent() {
+    // A deterministic replay reproduces the recorded trace exactly.
+    let original = trace_record(trace_record(trace_new(), 1, 10), 2, 20)
+    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 20)
+    assert(trace_equiv(original, replay))
+    assert_eq(trace_divergence(original, replay), 0 - 1)
+}
+
+@[test]
+fn test_divergent_result_is_caught() {
+    // Same actions, but step 1 produced a DIFFERENT result on replay (the
+    // signature of non-determinism). Equiv fails; divergence points at step 1.
+    let original = trace_record(trace_record(trace_new(), 1, 10), 2, 20)
+    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 99)
+    assert(!trace_equiv(original, replay))
+    assert_eq(trace_divergence(original, replay), 1)
+}
+
+@[test]
+fn test_divergent_action_is_caught() {
+    // The replay took a DIFFERENT branch at step 0 (action 1 vs 7).
+    let original = trace_record(trace_new(), 1, 10)
+    let replay = trace_record(trace_new(), 7, 10)
+    assert(!trace_equiv(original, replay))
+    assert_eq(trace_divergence(original, replay), 0)
+}
+
+@[test]
+fn test_length_mismatch_diverges_at_the_short_end() {
+    // The replay ran one extra step — they agree on the common prefix, then
+    // diverge at the point the shorter trace ended.
+    let original = trace_record(trace_new(), 1, 10)
+    let replay = trace_record(trace_record(trace_new(), 1, 10), 2, 20)
+    assert(!trace_equiv(original, replay))
+    assert_eq(trace_divergence(original, replay), 1)
+}
+
+@[test]
+fn test_empty_traces_are_equivalent() {
+    assert(trace_equiv(trace_new(), trace_new()))
+    assert_eq(trace_divergence(trace_new(), trace_new()), 0 - 1)
+}
+
+fn main() {
+    // Record a 3-step run, then replay it. A faithful (deterministic) replay is
+    // equivalent; a replay where step 1 drifted is caught with the exact step.
+    let recorded = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 7), 3, 99)
+    println("recorded {to_str(trace_len(recorded))} steps")
+
+    let good_replay = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 7), 3, 99)
+    if trace_equiv(recorded, good_replay) {
+        println("faithful replay: equivalent (deterministic) ✓")
+    } else {
+        println("faithful replay: DIVERGED at step {to_str(trace_divergence(recorded, good_replay))}")
+    }
+
+    // A replay where step 1's result drifted (e.g. an unseeded random crept in).
+    let bad_replay = trace_record(trace_record(trace_record(trace_new(), 1, 42), 2, 13), 3, 99)
+    let d = trace_divergence(recorded, bad_replay)
+    if d < 0 {
+        println("drifted replay: equivalent")
+    } else {
+        println("drifted replay: DIVERGED at step {to_str(d)} — non-determinism caught")
+    }
+}

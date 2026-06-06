@@ -212,7 +212,7 @@ When this works end-to-end, Axon is real.
 | `Agent` | input / output / tools / policy / effects | 1 |
 | `Tool` | typed callable with effect signature | 1 |
 | `LLM<Caps>` | model + budget + fallback | 1 | *(userland landed: `examples/stdlib/llm_gateway.ax` — a first-class LLM value mediating every call with per-TOKEN cost metering (distinct from R3c's per-call-count meter) and graceful fallback-on-overrun (latches, doesn't crash). Kernel `llm_gateway` runtime service wiring this to live `ai_complete` token accounting is Phase-7.)* |
-| `Trace` | replayable execution record | 1 |
+| `Trace` | replayable execution record | 1 | *(userland landed: `examples/stdlib/trace.ax` — a `Trace{actions,results}` value with `trace_record`/`trace_equiv`/`trace_divergence`; the divergence check returns the FIRST step where a replay drifts from the recording — the determinism-audit a replay engine exists for. The value-level counterpart to the runtime provenance log `axon trace` reads. Kernel replay engine (Phase 9) wires this to actual re-execution.)* |
 | `AuditEvent` | typed effect record | 1 |
 | `Sandbox<P>` | runtime effect-row enforcement | 1.5 |
 | `Distribution<T>`, `Belief<T>` | probabilistic types | 2 (Phase 13) |
