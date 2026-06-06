@@ -3540,9 +3540,19 @@ fn annotated_result_local_compiles_and_matches_on_both_engines() {
     // yields `Result<i64, Unknown>` (the value can't reveal the Err type). The
     // match then typed the Err payload wrong. Fixed by preferring the
     // annotation. The interpreter always handled this; native now does too.
-    let cases = [
+    // The full annotated `Result<i64, str>` LLVM layout is `{ i1, [16 x i8] }`
+    // (max of the i64 ok and str err payloads). Several paths used to size it
+    // from the Ok VALUE alone (`{i1, i64}`, 8 bytes) — too small for an Err(str),
+    // causing a reassignment to store a wrong-sized payload (garbage at exit 0,
+    // I-9) and a pass-to-fn to fail IR verification. Cover construction, the Err
+    // value, reassignment in BOTH directions, and passing to a function.
+    let cases: &[(&str, &str)] = &[
         ("let r: Result<i64, str> = Ok(7)\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "7"),
         ("let r: Result<i64, str> = Err(\"boom\")\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "boom"),
+        // Reassign Ok→Err: the slot must hold the full layout, not garbage.
+        ("let r: Result<i64, str> = Ok(1)\n  r = Err(\"no\")\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "no"),
+        // Reassign Err→Ok.
+        ("let r: Result<i64, str> = Err(\"x\")\n  r = Ok(9)\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "9"),
     ];
     for (i, (body, expected)) in cases.iter().enumerate() {
         let src = format!("fn main() {{\n  {body}\n}}\n");
@@ -3557,6 +3567,20 @@ fn annotated_result_local_compiles_and_matches_on_both_engines() {
             "[case {i}] annotated Result match"
         );
     }
+
+    // Passing an annotated Result local to a function (the local's layout must
+    // match the fn param's full canonical layout — used to fail IR verify).
+    let nested = "fn main() {\n  \
+        let r: Result<i64, str> = Ok(3)\n  \
+        println(to_str(uo(r, 0)))\n\
+    }\n\
+    fn uo(r: Result<i64, str>, d: i64) -> i64 { match r { Ok(v) => v  Err(e) => d } }\n";
+    let f = std::env::temp_dir().join(format!("axon_resnest_{}.ax", std::process::id()));
+    std::fs::write(&f, nested).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0), "passing an annotated Result to a fn must run clean: {out:?}");
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
 }
 
 #[test]

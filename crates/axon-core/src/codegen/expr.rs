@@ -160,7 +160,21 @@ impl<'ctx> super::Codegen<'ctx> {
                     .as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
                     .or_else(|| self.infer_expr_sem_type(value));
+                // When the annotation is a Result<T,E>, set current_result_types
+                // around the VALUE emission so `emit_result` allocates the full
+                // canonical union layout `{ i1, [max(sizeof T, sizeof E)] }`
+                // instead of the value-only fallback `{ i1, sizeof(Ok-value) }`.
+                // Without this, `let r: Result<i64,str> = Ok(1)` lays r out as
+                // `{i1,i64}` (8-byte payload), too small for a later `Err(str)`
+                // (16 bytes) — a reassignment then stored a wrong-sized payload
+                // and the match read GARBAGE at exit 0 (I-9), and passing r to a
+                // fn expecting the full layout failed IR verification.
+                let saved_rt = self.current_result_types.clone();
+                if let Some(Type::Result(ok_ty, err_ty)) = &sem_ty {
+                    self.current_result_types = Some((*ok_ty.clone(), *err_ty.clone()));
+                }
                 let val = self.emit_expr(value, fn_val)?;
+                self.current_result_types = saved_rt;
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, val.get_type(), name);
                 build_wrappers::w_store(&self.ir.builder, alloca, val);
                 self.locals.insert(name.clone(), (alloca, val.get_type()));
@@ -410,7 +424,19 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // ── Assign (rebind existing local without let) ────────────────────
             ast::Expr::Assign { name, value } => {
-                if let Some(val) = self.emit_expr(value, fn_val) {
+                // If the target local is a Result<T,E>, emit the new value with
+                // current_result_types set so a reassigned `Err(..)`/`Ok(..)`
+                // builds the SAME canonical union layout the slot was allocated
+                // for. Without this, `r = Err("no")` (str payload) built a
+                // `{i1,ptr}` and stored it into the `{i1,[16 x i8]}` slot —
+                // mismatched, and the later match read garbage at exit 0 (I-9).
+                let saved_rt = self.current_result_types.clone();
+                if let Some(Type::Result(ok_ty, err_ty)) = self.local_types.get(name).cloned() {
+                    self.current_result_types = Some((*ok_ty, *err_ty));
+                }
+                let emitted = self.emit_expr(value, fn_val);
+                self.current_result_types = saved_rt;
+                if let Some(val) = emitted {
                     if let Some((ptr, _llvm_ty)) = self.locals.get(name).copied() {
                         build_wrappers::w_store(&self.ir.builder, ptr, val);
                     }
