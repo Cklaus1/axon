@@ -3449,6 +3449,46 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_predicate_calls_a_pure_function() {
+    // Phase 5 §1 predicate language: a refinement predicate may CALL a @[pure]
+    // function (depth ≤ 4), inlined over the constant binder — composing the
+    // @[pure] and refinement features. is_even / my_abs / nested quad all fold;
+    // a violating constant is E1209. (A pure fn body's `if`/block tail is
+    // evaluated; impure fns can't be called — @[pure] is enforced separately.)
+    let reject = [
+        "@[pure]\nfn is_even(n: i64) -> bool { n % 2 == 0 }\ntype Even = i64 where is_even(_)\nfn f(n: Even) -> i64 { n }\nfn main() { println(to_str(f(3))) }",
+        "@[pure]\nfn my_abs(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\ntype Big = i64 where my_abs(_) > 10\nfn f(n: Big) -> i64 { n }\nfn main() { println(to_str(f(5))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_purepred_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] pure-pred violation must catch: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        ("@[pure]\nfn is_even(n: i64) -> bool { n % 2 == 0 }\ntype Even = i64 where is_even(_)\nfn f(n: Even) -> i64 { n }\nfn main() { println(to_str(f(4))) }", "4"),
+        ("@[pure]\nfn my_abs(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\ntype Big = i64 where my_abs(_) > 10\nfn f(n: Big) -> i64 { n }\nfn main() { println(to_str(f(0 - 20))) }", "-20"),
+        // Nested pure calls (depth): quad(2) = dbl(dbl(2)) = 8.
+        ("@[pure]\nfn dbl(n: i64) -> i64 { n * 2 }\n@[pure]\nfn quad(n: i64) -> i64 { dbl(dbl(n)) }\ntype Q = i64 where quad(_) == 8\nfn f(n: Q) -> i64 { n }\nfn main() { println(to_str(f(2))) }", "2"),
+    ];
+    for (i, (src, expected)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_purepred_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] pure-fn predicate");
+    }
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

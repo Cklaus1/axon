@@ -289,6 +289,11 @@ pub struct CheckCtx {
     /// `@[pure]` fn names (Phase 5 §2). A `@[pure]` fn may only call other
     /// `@[pure]` fns and the pure-builtin allowlist; `check_purity` enforces it.
     pure_fns: HashSet<String>,
+    /// Phase 5: `@[pure]` fn → (param names, body expr). Lets a refinement
+    /// predicate CALL a pure function over the bound constant (depth ≤ 4),
+    /// inlining its body in the constant evaluator. Pure fns are I/O-free
+    /// (enforced by check_purity), so this is a safe compile-time evaluation.
+    pure_fn_defs: HashMap<String, (Vec<String>, Expr)>,
     /// Phase 5: named refinement types (`type Positive = i64 where …`) → their
     /// erased base `Type`. Recognised as valid type annotations (no E0308) and
     /// resolved to the base wherever a value's type is computed (so `n: Positive`
@@ -356,6 +361,7 @@ impl CheckCtx {
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
             pure_fns: HashSet::new(),
+            pure_fn_defs: HashMap::new(),
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
             fn_param_refinements: HashMap::new(),
@@ -441,6 +447,9 @@ impl CheckCtx {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "pure") {
                     self.pure_fns.insert(f.name.clone());
+                    // Record (params, body) for inlining into a predicate.
+                    let pnames: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
+                    self.pure_fn_defs.insert(f.name.clone(), (pnames, f.body.clone()));
                 }
             }
             // Phase 5: register named refinements → erased base + predicate.
@@ -932,7 +941,7 @@ impl CheckCtx {
             };
             // Only a PROVABLY-false predicate is an error; satisfied or
             // not-statically-evaluable both defer (the latter to §4 / runtime).
-            if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
+            if self.eval_refinement_pred(&pred, &bound) == Some(false) {
                 let file = self.file.clone();
                 let span = self.current_span;
                 let shown = match bound {
@@ -973,7 +982,7 @@ impl CheckCtx {
         } else {
             return;
         };
-        if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
+        if self.eval_refinement_pred(&pred, &bound) == Some(false) {
             let file = self.file.clone();
             let span = self.current_span;
             let shown = match bound {
@@ -1016,7 +1025,7 @@ impl CheckCtx {
         } else {
             return;
         };
-        if Self::eval_refinement_pred(&pred, &bound) == Some(false) {
+        if self.eval_refinement_pred(&pred, &bound) == Some(false) {
             let file = self.file.clone();
             let span = self.current_span;
             let shown = match bound {
@@ -1043,54 +1052,48 @@ impl CheckCtx {
 
     /// Evaluate a refinement predicate with the binder `_` bound to a constant
     /// value. Supports the Phase-5 predicate subset over constants: integer
-    /// arithmetic, comparisons, `&&`/`||`/`!`, and `str_len(_)` on a known
-    /// length. Returns `None` when the predicate uses a form this slice can't
-    /// fold (then the obligation is deferred, not failed).
-    fn eval_refinement_pred(pred: &Expr, bound: &RefineVal) -> Option<bool> {
-        Self::eval_pred_bool(pred, bound)
+    /// arithmetic, comparisons, `&&`/`||`/`!`, `str_len`/`str_eq`, and CALLS into
+    /// `@[pure]` functions (depth ≤ 4 — the body is inlined with its parameters
+    /// bound to the evaluated arguments). Returns `None` when the predicate uses
+    /// a form this evaluator can't fold (the obligation is then deferred).
+    fn eval_refinement_pred(&self, pred: &Expr, bound: &RefineVal) -> Option<bool> {
+        let mut env = HashMap::new();
+        env.insert("_".to_string(), bound.clone());
+        self.eval_pred_bool(pred, &env, 0)
     }
 
-    fn eval_pred_bool(e: &Expr, b: &RefineVal) -> Option<bool> {
+    fn eval_pred_bool(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<bool> {
         use crate::ast::BinOp;
         match e {
             Expr::Literal(crate::ast::Literal::Bool(v)) => Some(*v),
             Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
-                Some(!Self::eval_pred_bool(operand, b)?)
+                Some(!self.eval_pred_bool(operand, env, depth)?)
             }
-            // `str_eq(_, "lit")` / `str_eq("lit", _)` — equality of the bound
-            // string against a literal (the only string op besides str_len in the
-            // Phase-5 predicate subset).
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
+                    // `str_eq(x, "lit")` — equality of a bound string vs a literal.
                     if fname == "str_eq" && args.len() == 2 {
-                        // One side must be the binder `_` (→ the bound string),
-                        // the other a string literal. Resolve both and compare.
-                        let bound_str = match b {
-                            RefineVal::Str(s) => Some(s.clone()),
-                            RefineVal::Int(_) => None,
-                        };
-                        let is_binder = |e: &Expr| matches!(e, Expr::Ident(n) if n == "_");
-                        let (lhs, rhs) = (&args[0], &args[1]);
-                        let pair = if is_binder(lhs) {
-                            (bound_str.clone(), Self::pred_str_literal(rhs))
-                        } else if is_binder(rhs) {
-                            (bound_str.clone(), Self::pred_str_literal(lhs))
-                        } else {
-                            (None, None)
-                        };
-                        if let (Some(v), Some(l)) = pair {
-                            return Some(v == l);
+                        let l = self.eval_pred_str(&args[0], env);
+                        let r = self.eval_pred_str(&args[1], env);
+                        if let (Some(a), Some(b)) = (l, r) {
+                            return Some(a == b);
                         }
+                        return None;
+                    }
+                    // A call into a @[pure] fn returning bool — inline its body
+                    // (depth ≤ 4), binding params to the evaluated args.
+                    if let Some(v) = self.eval_pure_call_bool(fname, args, env, depth) {
+                        return Some(v);
                     }
                 }
                 None
             }
             Expr::BinOp { op, left, right } => match op {
-                BinOp::And => Some(Self::eval_pred_bool(left, b)? && Self::eval_pred_bool(right, b)?),
-                BinOp::Or => Some(Self::eval_pred_bool(left, b)? || Self::eval_pred_bool(right, b)?),
+                BinOp::And => Some(self.eval_pred_bool(left, env, depth)? && self.eval_pred_bool(right, env, depth)?),
+                BinOp::Or => Some(self.eval_pred_bool(left, env, depth)? || self.eval_pred_bool(right, env, depth)?),
                 BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                    let l = Self::eval_pred_int(left, b)?;
-                    let r = Self::eval_pred_int(right, b)?;
+                    let l = self.eval_pred_int(left, env, depth)?;
+                    let r = self.eval_pred_int(right, env, depth)?;
                     Some(match op {
                         BinOp::Eq => l == r,
                         BinOp::NotEq => l != r,
@@ -1103,39 +1106,102 @@ impl CheckCtx {
                 }
                 _ => None,
             },
+            // A pure-fn body may be a single `if c { a } else { b }` returning bool.
+            Expr::If { cond, then, else_ } => {
+                let c = self.eval_pred_bool(cond, env, depth)?;
+                if c {
+                    self.eval_pred_bool(then, env, depth)
+                } else {
+                    self.eval_pred_bool(else_.as_ref()?, env, depth)
+                }
+            }
+            Expr::Block(stmts) => {
+                // A pure-fn body block: evaluate to its tail expression.
+                self.eval_pred_bool(&stmts.last()?.expr, env, depth)
+            }
+            // A bare bool identifier isn't representable in RefineVal (int/str
+            // only) — defer rather than guess.
             _ => None,
         }
     }
 
-    /// Evaluate an integer-valued sub-expression of a predicate, with `_` bound.
-    fn eval_pred_int(e: &Expr, b: &RefineVal) -> Option<i64> {
+    /// Resolve a predicate sub-expression to a string (a bound str var or a
+    /// string literal).
+    fn eval_pred_str(&self, e: &Expr, env: &HashMap<String, RefineVal>) -> Option<String> {
+        match e {
+            Expr::Ident(n) => match env.get(n)? {
+                RefineVal::Str(s) => Some(s.clone()),
+                RefineVal::Int(_) => None,
+            },
+            Expr::Literal(crate::ast::Literal::Str(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    /// Inline a `@[pure]` function call that returns bool, binding its params to
+    /// the evaluated arguments. Depth-bounded (≤ 4) so a recursive/expensive
+    /// predicate can't blow the checker; returns `None` past the limit (defer).
+    fn eval_pure_call_bool(
+        &self,
+        fname: &str,
+        args: &[Expr],
+        env: &HashMap<String, RefineVal>,
+        depth: u32,
+    ) -> Option<bool> {
+        if depth >= 4 {
+            return None;
+        }
+        let (params, body) = self.pure_fn_defs.get(fname)?;
+        if params.len() != args.len() {
+            return None;
+        }
+        let mut new_env = HashMap::new();
+        for (p, a) in params.iter().zip(args.iter()) {
+            // Each arg must evaluate to an int (the only param kind a constant
+            // predicate can pass through today) — str-param pure fns defer.
+            let v = self.eval_pred_int(a, env, depth)?;
+            new_env.insert(p.clone(), RefineVal::Int(v));
+        }
+        self.eval_pred_bool(body, &new_env, depth + 1)
+    }
+
+    /// Evaluate an integer-valued sub-expression of a predicate.
+    fn eval_pred_int(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<i64> {
         use crate::ast::{BinOp, Literal, UnaryOp};
         match e {
-            // The binder `_` → the bound integer value.
-            Expr::Ident(n) if n == "_" => match b {
+            // A bound variable (`_` or a pure-fn param) → its integer value.
+            Expr::Ident(n) => match env.get(n)? {
                 RefineVal::Int(v) => Some(*v),
                 RefineVal::Str(_) => None,
             },
-            // `str_len(_)` → the bound string's char count (str binder only).
+            // `str_len(x)` → the bound string's char count.
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
                     if fname == "str_len" && args.len() == 1 {
-                        if let Expr::Ident(n) = &args[0] {
-                            if n == "_" {
-                                if let RefineVal::Str(s) = b {
-                                    return Some(s.chars().count() as i64);
-                                }
-                            }
+                        if let Some(s) = self.eval_pred_str(&args[0], env) {
+                            return Some(s.chars().count() as i64);
                         }
+                    }
+                    // A @[pure] fn returning i64, inlined.
+                    if let Some(v) = self.eval_pure_call_int(fname, args, env, depth) {
+                        return Some(v);
                     }
                 }
                 None
             }
             Expr::Literal(Literal::Int(n)) => Some(*n),
-            Expr::UnaryOp { op: UnaryOp::Neg, operand } => Self::eval_pred_int(operand, b)?.checked_neg(),
+            Expr::UnaryOp { op: UnaryOp::Neg, operand } => self.eval_pred_int(operand, env, depth)?.checked_neg(),
+            Expr::If { cond, then, else_ } => {
+                if self.eval_pred_bool(cond, env, depth)? {
+                    self.eval_pred_int(then, env, depth)
+                } else {
+                    self.eval_pred_int(else_.as_ref()?, env, depth)
+                }
+            }
+            Expr::Block(stmts) => self.eval_pred_int(&stmts.last()?.expr, env, depth),
             Expr::BinOp { op, left, right } => {
-                let l = Self::eval_pred_int(left, b)?;
-                let r = Self::eval_pred_int(right, b)?;
+                let l = self.eval_pred_int(left, env, depth)?;
+                let r = self.eval_pred_int(right, env, depth)?;
                 match op {
                     BinOp::Add => l.checked_add(r),
                     BinOp::Sub => l.checked_sub(r),
@@ -1149,13 +1215,30 @@ impl CheckCtx {
         }
     }
 
-    /// A string literal's value (NOT the binder) — the comparand in `str_eq`.
-    fn pred_str_literal(e: &Expr) -> Option<String> {
-        match e {
-            Expr::Literal(crate::ast::Literal::Str(s)) => Some(s.clone()),
-            _ => None,
+    /// Inline a `@[pure]` function call that returns i64, binding params to the
+    /// evaluated int arguments. Depth-bounded (≤ 4).
+    fn eval_pure_call_int(
+        &self,
+        fname: &str,
+        args: &[Expr],
+        env: &HashMap<String, RefineVal>,
+        depth: u32,
+    ) -> Option<i64> {
+        if depth >= 4 {
+            return None;
         }
+        let (params, body) = self.pure_fn_defs.get(fname)?;
+        if params.len() != args.len() {
+            return None;
+        }
+        let mut new_env = HashMap::new();
+        for (p, a) in params.iter().zip(args.iter()) {
+            let v = self.eval_pred_int(a, env, depth)?;
+            new_env.insert(p.clone(), RefineVal::Int(v));
+        }
+        self.eval_pred_int(body, &new_env, depth + 1)
     }
+
 
     /// Phase 5: replace any named-refinement type with its erased base,
     /// recursively (a refinement resolves to `Struct(name)` via
