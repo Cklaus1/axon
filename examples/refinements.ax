@@ -1,0 +1,69 @@
+// Phase 5 — refinement types, @[pure], and @[total].
+//
+// A refinement type `T where <pred>` moves a precondition onto the type. The
+// compiler proves the predicate for compile-time-CONSTANT arguments (a violation
+// is a static error, E1209), and the refinement erases to its base type at
+// runtime — so there is zero runtime cost and `axon run` == `axon build`.
+//
+// Run:   axon run   examples/refinements.ax
+// Build: axon build examples/refinements.ax
+
+// A named refinement: a strictly-positive integer.
+type Positive = i64 where _ > 0
+
+// A string that is not empty (uses the `str_len` projection).
+type NonEmpty = str where str_len(_) > 0
+
+// A percentage: a composite predicate.
+type Percent = i64 where _ >= 0 && _ <= 100
+
+// A `@[pure]` function is free of I/O, AI, time, randomness, and channels — so it
+// is admitted into the predicate language. Here it backs an `Even` refinement.
+@[pure]
+fn is_even(n: i64) -> i64 {
+    if n % 2 == 0 { 1 } else { 0 }
+}
+
+type Even = i64 where is_even(_) == 1
+
+// `@[total]` proves termination: every recursive call must strictly decrease a
+// measure. Here `n - 1` decreases the bounded-below parameter toward the base
+// case. The inline refinement `n: i64 where _ >= 0` documents the precondition.
+@[pure]
+@[total]
+fn factorial(n: i64 where _ >= 0) -> i64 {
+    if n == 0 { 1 } else { n * factorial(n - 1) }
+}
+
+// A function whose parameters carry refinements. A constant caller that violates
+// one (e.g. `scale(0, 5)`) would be rejected at compile time.
+fn scale(factor: Positive, value: i64) -> i64 {
+    factor * value
+}
+
+// The canonical example: a divisor that cannot be zero, enforced at the type.
+fn divide(n: i64, d: i64 where _ != 0) -> i64 {
+    n / d
+}
+
+fn greet(name: NonEmpty) -> i64 {
+    str_len(name)
+}
+
+fn main() {
+    // All arguments below SATISFY their refinements, so this checks and runs.
+    println("factorial(5)   = {to_str(factorial(5))}")
+    println("scale(3, 4)    = {to_str(scale(3, 4))}")
+    println("divide(20, 4)  = {to_str(divide(20, 4))}")
+    println("greet(\"axon\")  = {to_str(greet(\"axon\"))}")
+
+    let pct: Percent = 75
+    println("percent        = {to_str(pct)}")
+
+    let e: Even = 8
+    println("even           = {to_str(e)}")
+
+    // Refinements erase to their base type, so ordinary arithmetic just works.
+    let p: Positive = 10
+    println("positive * 2   = {to_str(p * 2)}")
+}

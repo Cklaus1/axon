@@ -165,6 +165,13 @@ pub struct Codegen<'ctx> {
     /// Used so a sum-type field initializer (`Box { r: Err("x") }`) builds the
     /// field's full canonical layout, not a value-only one.
     struct_field_sem_types: HashMap<String, Vec<Type>>,
+    /// Phase 5: named refinement types → their (erased) base AxonType. A
+    /// refinement is transparent at the value/layout level, so codegen lowers
+    /// `Positive` (and a synthetic inline `__refine_N`) to its base `i64`. Without
+    /// this a refinement-typed param resolves to an unknown Struct and the param
+    /// isn't lowered (E0701). The codegen analog of the infer/checker
+    /// refinement_base maps — the third engine that must learn the type form.
+    refinement_base: HashMap<String, ast::AxonType>,
     /// Maps fn names to their Axon semantic return type (for call-site type inference).
     fn_return_types: HashMap<String, Type>,
     /// Tracks inferred Axon semantic types for named locals (for match/field-access dispatch).
@@ -293,6 +300,7 @@ impl<'ctx> Codegen<'ctx> {
             functions: HashMap::new(),
             struct_fields: HashMap::new(),
             struct_field_sem_types: HashMap::new(),
+            refinement_base: HashMap::new(),
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             current_result_types: None,
@@ -430,6 +438,13 @@ impl<'ctx> Codegen<'ctx> {
     /// Forward-declare every top-level function so mutual recursion resolves.
     pub fn declare_functions(&mut self, program: &ast::Program) {
         self.declare_builtins();
+        // Phase 5: collect named refinements → base BEFORE declare_types, so
+        // refinement-typed struct fields / params resolve transparently.
+        for item in &program.items {
+            if let ast::Item::RefineDef(r) = item {
+                self.refinement_base.insert(r.name.clone(), r.base.clone());
+            }
+        }
         self.declare_types(program);
         self.declare_enum_types(program);
 
@@ -1076,6 +1091,12 @@ impl<'ctx> Codegen<'ctx> {
                 "str" | "String" => Type::Str,
                 "()" | "unit" | "Unit" => Type::Unit,
                 other => {
+                    // Phase 5: a named refinement is transparent — resolve to its
+                    // erased base type (e.g. `Positive`/`__refine_N` → `i64`).
+                    if let Some(base) = self.refinement_base.get(other) {
+                        let base = base.clone();
+                        return self.axon_type_to_semantic(&base);
+                    }
                     // If this name is a known enum, use Type::Enum so llvm_type
                     // can look up the "{name}_enum" struct in the module.
                     if self.enum_variants.contains_key(other) {
