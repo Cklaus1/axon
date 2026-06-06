@@ -96,17 +96,6 @@ fn prove_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
     prove_one_int_conjunction(f, atoms)
 }
 
-/// Prove a single fn's `value OP K` bound (the original entry point, retained
-/// for callers/tests). Delegates to the conjunction path with one atom.
-fn prove_one(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
-    let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
-    let ret_f64 = f.return_type.as_ref().map(is_f64_type).unwrap_or(false);
-    if any_f64 || ret_f64 || bound.fract() != 0.0 {
-        return prove_one_f64(f, op, bound);
-    }
-    prove_one_int_conjunction(f, std::slice::from_ref(&(op.clone(), bound)))
-}
-
 /// Prove a conjunction of `value OP K` atoms over the INTEGER fragment. Every
 /// atom must hold for all inputs; Z3 sat-checks `∃ params. ¬(A₁ ∧ A₂ ∧ …)`.
 /// `unsat` ⇒ all proven; `sat` ⇒ a single counterexample input that breaks the
@@ -440,6 +429,145 @@ fn is_f64_type(ty: &crate::ast::AxonType) -> bool {
     matches!(ty, crate::ast::AxonType::Named(n) if n == "f64")
 }
 
+// ── Call inlining (β-reduction pre-pass) ─────────────────────────────────────
+
+/// Maximum inlining depth: a callee may itself call another in-fragment fn, up
+/// to this many nested expansions. Bounds work and stops runaway recursion (a
+/// self-recursive fn simply hits the limit and stays an un-inlined `Call`, which
+/// the encoder then reports Unsupported — never a false proof).
+const INLINE_DEPTH: u32 = 4;
+
+/// Rewrite an expression by β-reducing calls to straight-line in-program
+/// functions: `f(a, b)` with `fn f(x, y) { BODY }` becomes `BODY[x:=a, y:=b]`.
+/// Only direct calls to a named fn in `fns` are inlined, and only down to
+/// `depth` levels; everything else is copied structurally. Argument expressions
+/// are inlined first, then substituted, so nested calls expand too. This is the
+/// SOUND way to bring helper calls into the straight-line fragment without
+/// teaching the Z3 encoders about function application: substitution preserves
+/// the exact value, and anything left un-inlined is caught as Unsupported.
+fn inline_calls(e: &Expr, fns: &std::collections::HashMap<String, &FnDef>, depth: u32) -> Expr {
+    match e {
+        Expr::Call { callee, args, tier } => {
+            let inlined_args: Vec<Expr> = args.iter().map(|a| inline_calls(a, fns, depth)).collect();
+            if depth > 0 {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if let Some(f) = fns.get(name) {
+                        if f.params.len() == inlined_args.len() {
+                            let subst: std::collections::HashMap<String, Expr> = f
+                                .params
+                                .iter()
+                                .map(|p| p.name.clone())
+                                .zip(inlined_args.iter().cloned())
+                                .collect();
+                            let body = substitute(&f.body, &subst);
+                            // Recurse: the substituted body may contain more calls.
+                            return inline_calls(&body, fns, depth - 1);
+                        }
+                    }
+                }
+            }
+            Expr::Call {
+                callee: Box::new(inline_calls(callee, fns, depth)),
+                args: inlined_args,
+                tier: tier.clone(),
+            }
+        }
+        Expr::BinOp { op, left, right } => Expr::BinOp {
+            op: op.clone(),
+            left: Box::new(inline_calls(left, fns, depth)),
+            right: Box::new(inline_calls(right, fns, depth)),
+        },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp {
+            op: op.clone(),
+            operand: Box::new(inline_calls(operand, fns, depth)),
+        },
+        Expr::If { cond, then, else_ } => Expr::If {
+            cond: Box::new(inline_calls(cond, fns, depth)),
+            then: Box::new(inline_calls(then, fns, depth)),
+            else_: else_.as_ref().map(|e| Box::new(inline_calls(e, fns, depth))),
+        },
+        Expr::Block(stmts) => Expr::Block(
+            stmts
+                .iter()
+                .map(|s| Stmt { expr: inline_calls(&s.expr, fns, depth), span: s.span })
+                .collect(),
+        ),
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(inline_calls(value, fns, depth)),
+        },
+        // Literals, idents, and everything else copy unchanged.
+        other => other.clone(),
+    }
+}
+
+/// Substitute free identifiers per `subst` throughout `e`. The straight-line
+/// fragment has no shadowing constructs we encode (a `let` that rebinds a
+/// param name would shadow — guarded by `skip` below), so a structural walk is
+/// sound. Used only on a callee body whose params are being bound to args.
+fn substitute(e: &Expr, subst: &std::collections::HashMap<String, Expr>) -> Expr {
+    match e {
+        Expr::Ident(name) => subst.get(name).cloned().unwrap_or_else(|| e.clone()),
+        Expr::BinOp { op, left, right } => Expr::BinOp {
+            op: op.clone(),
+            left: Box::new(substitute(left, subst)),
+            right: Box::new(substitute(right, subst)),
+        },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp {
+            op: op.clone(),
+            operand: Box::new(substitute(operand, subst)),
+        },
+        Expr::If { cond, then, else_ } => Expr::If {
+            cond: Box::new(substitute(cond, subst)),
+            then: Box::new(substitute(then, subst)),
+            else_: else_.as_ref().map(|e| Box::new(substitute(e, subst))),
+        },
+        Expr::Call { callee, args, tier } => Expr::Call {
+            callee: Box::new(substitute(callee, subst)),
+            args: args.iter().map(|a| substitute(a, subst)).collect(),
+            tier: tier.clone(),
+        },
+        Expr::Block(stmts) => {
+            // A `let` inside the body introduces a binding that shadows any
+            // same-named param for the rest of the block; drop it from `subst`.
+            let mut local = subst.clone();
+            Expr::Block(
+                stmts
+                    .iter()
+                    .map(|s| {
+                        let out = Stmt { expr: substitute(&s.expr, &local), span: s.span };
+                        if let Expr::Let { name, .. } = &s.expr {
+                            local.remove(name);
+                        }
+                        out
+                    })
+                    .collect(),
+            )
+        }
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(substitute(value, subst)),
+        },
+        other => other.clone(),
+    }
+}
+
+/// Build the inlinable-fn table: every top-level `fn` in the program, by name.
+/// (Recursion is bounded by `INLINE_DEPTH`, so including a fn that calls itself
+/// is safe — it just stops expanding at the limit.)
+fn program_fns(program: &Program) -> std::collections::HashMap<String, &FnDef> {
+    program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::FnDef(f) => Some((f.name.clone(), f)),
+            _ => None,
+        })
+        .collect()
+}
+
 // ── Phase 5 §4: refinement-RETURN proofs ─────────────────────────────────────
 
 /// Statically prove that every function with a named-refinement *return type*
@@ -457,17 +585,20 @@ pub fn prove_refinement_returns(
     refinements: &std::collections::HashMap<String, Expr>,
 ) -> Vec<ProofResult> {
     let mut out = Vec::new();
+    let fns = program_fns(program);
     for item in &program.items {
         let Item::FnDef(f) = item else { continue };
         // The return type must name a known refinement.
         let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else { continue };
         let Some(pred) = refinements.get(rname) else { continue };
+        // β-reduce calls to in-program helpers so the body is straight-line.
+        let body = inline_calls(&f.body, &fns, INLINE_DEPTH);
         // Integer fragment: all params i64.
         if f.params.iter().all(|p| is_i64_type(&p.ty)) {
-            out.push(prove_one_refinement_return(f, pred, rname));
+            out.push(prove_one_refinement_return(f, &body, pred, rname));
         } else if !f.params.is_empty() && f.params.iter().all(|p| is_f64_type(&p.ty)) {
             // Float fragment: all params f64 (e.g. `fn norm(x: f64) -> NonNegF`).
-            out.push(prove_one_refinement_return_f64(f, pred, rname));
+            out.push(prove_one_refinement_return_f64(f, &body, pred, rname));
         }
         // Mixed / other param types fall outside the v1 fragment — skipped
         // (the runtime obligation / constant checker still applies).
@@ -477,7 +608,7 @@ pub fn prove_refinement_returns(
 
 /// Float-fragment analog of `prove_one_refinement_return`: encode the f64 body as
 /// a Z3 Real and prove the predicate (with `_` → body) holds for all inputs.
-fn prove_one_refinement_return_f64(f: &FnDef, pred: &Expr, rname: &str) -> ProofResult {
+fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
     let cfg = Config::new();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Real)> = f
@@ -486,7 +617,7 @@ fn prove_one_refinement_return_f64(f: &FnDef, pred: &Expr, rname: &str) -> Proof
         .map(|p| (p.name.clone(), Real::new_const(&ctx, p.name.as_str())))
         .collect();
 
-    let body = match encode_expr_real(&ctx, &f.body, &params) {
+    let body = match encode_expr_real(&ctx, body_ast, &params) {
         Some(t) => t,
         None => {
             return ProofResult::Unsupported {
@@ -608,7 +739,7 @@ fn encode_pred_real<'c>(
     }
 }
 
-fn prove_one_refinement_return(f: &FnDef, pred: &Expr, rname: &str) -> ProofResult {
+fn prove_one_refinement_return(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
     let cfg = Config::new();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Int)> = f
@@ -618,7 +749,7 @@ fn prove_one_refinement_return(f: &FnDef, pred: &Expr, rname: &str) -> ProofResu
         .collect();
 
     // Encode the body as an Int term R(params).
-    let body = match encode_expr(&ctx, &f.body, &params) {
+    let body = match encode_expr(&ctx, body_ast, &params) {
         Some(t) => t,
         None => {
             return ProofResult::Unsupported {
@@ -1004,6 +1135,45 @@ mod tests {
         assert!(
             matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
             "let-bound identity must still be refuted at n=0, got {r:?}"
+        );
+    }
+
+    #[test]
+    fn smt_proves_refinement_return_through_inlined_calls() {
+        // The body calls a helper `sq`; β-inlining brings `n*n` into the solver,
+        // so `wrap(n) -> NonNeg` is proven for all n — only one of the two fns
+        // returns a refinement, so we expect exactly one Proven result.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn sq(x: i64) -> i64 { x * x }\n\
+             fn wrap(n: i64) -> NonNeg { sq(n) }",
+        );
+        assert!(
+            r.iter().any(|p| matches!(p, ProofResult::Proven { function } if function == "wrap")),
+            "inlined sq(n)=n*n >= 0 must prove wrap, got {r:?}"
+        );
+
+        // Nested inlining (depth > 1): quad(n) = sq(sq(n)) = n^4 >= 0.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn sq(x: i64) -> i64 { x * x }\n\
+             fn quad(n: i64) -> NonNeg { sq(sq(n)) }",
+        );
+        assert!(
+            r.iter().any(|p| matches!(p, ProofResult::Proven { function } if function == "quad")),
+            "nested-inlined n^4 >= 0 must prove quad, got {r:?}"
+        );
+
+        // Inlining a helper that does NOT make the claim true is still refuted:
+        // `idh(n) = n`, so `pos(n) -> Positive` fails at n=0.
+        let r = prove_refines(
+            "type Positive = i64 where _ > 0\n\
+             fn idh(x: i64) -> i64 { x }\n\
+             fn pos(n: i64) -> Positive { idh(n) }",
+        );
+        assert!(
+            r.iter().any(|p| matches!(p, ProofResult::Counterexample { function, .. } if function == "pos")),
+            "inlined identity must still be refuted, got {r:?}"
         );
     }
 }
