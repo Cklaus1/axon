@@ -3449,6 +3449,35 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn annotated_result_local_compiles_and_matches_on_both_engines() {
+    // REGRESSION (native codegen): `let r: Result<i64, str> = Ok(7)` followed by
+    // `match r { Ok(v) => …  Err(e) => … }` failed native codegen with an IR
+    // verification error — the Err arm extracted the str payload as i64 (load
+    // i64 where the err type is str). Root cause: the `let` ignored its type
+    // ANNOTATION and inferred the local's type from the VALUE `Ok(7)`, which
+    // yields `Result<i64, Unknown>` (the value can't reveal the Err type). The
+    // match then typed the Err payload wrong. Fixed by preferring the
+    // annotation. The interpreter always handled this; native now does too.
+    let cases = [
+        ("let r: Result<i64, str> = Ok(7)\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "7"),
+        ("let r: Result<i64, str> = Err(\"boom\")\n  match r { Ok(v) => println(to_str(v))  Err(e) => println(e) }", "boom"),
+    ];
+    for (i, (body, expected)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_resannot_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] annotated Result match"
+        );
+    }
+}
+
+#[test]
 fn f64_to_i64_saturates_on_overflow_and_nan() {
     // f64→i64 conversion is SATURATING (Rust `as i64` since 1.45): out-of-range
     // → i64::MAX/MIN, NaN → 0. The interpreter does this; native codegen used

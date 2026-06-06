@@ -146,10 +146,20 @@ impl<'ctx> super::Codegen<'ctx> {
             }
 
             // ── Let / Own / RefBind ──────────────────────────────────────────
-            ast::Expr::Let { name, value, .. }
-            | ast::Expr::Own { name, value, .. }
-            | ast::Expr::RefBind { name, value, .. } => {
-                let sem_ty = self.infer_expr_sem_type(value);
+            ast::Expr::Let { name, value, ty }
+            | ast::Expr::Own { name, value, ty }
+            | ast::Expr::RefBind { name, value, ty } => {
+                // Prefer the EXPLICIT type annotation when present — the value
+                // alone can't always be fully inferred. Critically for
+                // `let r: Result<i64, str> = Ok(7)`: `infer_expr_sem_type(Ok(7))`
+                // yields `Result<i64, Unknown>` (the value can't reveal the Err
+                // type), so a later `match r { Err(e) => … }` would extract the
+                // Err payload with the wrong type and fail IR verification. The
+                // annotation carries the full `Result<i64, str>`.
+                let sem_ty = ty
+                    .as_ref()
+                    .map(|t| self.axon_type_to_semantic(t))
+                    .or_else(|| self.infer_expr_sem_type(value));
                 let val = self.emit_expr(value, fn_val)?;
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, val.get_type(), name);
                 build_wrappers::w_store(&self.ir.builder, alloca, val);
