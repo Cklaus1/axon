@@ -1,0 +1,167 @@
+// Tier-1 stdlib: Effect / Tool — row-polymorphic effect tracking.
+//
+// ROADMAP §6 Tier-1 types `Effect` ("row-polymorphic effect tag") and `Tool`
+// ("typed callable with effect signature"). The full version is row-polymorphic
+// effects + handlers (Phase 6, `spec/compiler-phase6.md`); this is the
+// value-level core: an EFFECT SET (which of fs:read/fs:write/net/exec a piece of
+// code performs) with the row operations that make effects composable —
+//
+//   • a function that calls two tools performs the UNION of their effects
+//     (effect rows ADD — the "row-polymorphic" part: extend a row with more
+//     effects),
+//   • a `@[contained]` boundary admits a tool iff the tool's effect set is a
+//     SUBSET of the granted ceiling (no effect outside the allowlist),
+//   • PURE code has the empty effect set — the identity for union, and trivially
+//     a subset of any ceiling.
+//
+// The effect set is a 4-bit BITSET over the capability taxonomy (the same
+// fs:read/fs:write/net/exec single-sourced in capabilities.rs). A Tool is a
+// named callable carrying its effect signature.
+//
+//   axon test examples/stdlib/effect.ax
+//   axon run  examples/stdlib/effect.ax
+
+// Single-effect bits (powers of two).
+fn ef_fs_read() -> i64 { 1 }
+fn ef_fs_write() -> i64 { 2 }
+fn ef_net() -> i64 { 4 }
+fn ef_exec() -> i64 { 8 }
+
+// The empty effect set — PURE code. Identity for union.
+fn ef_pure() -> i64 { 0 }
+
+// Add an effect to a set (idempotent — adding a present effect is a no-op).
+fn ef_add(set: i64, e: i64) -> i64 {
+    bit_or(set, e)
+}
+
+// Does the set perform effect `e`?
+fn ef_has(set: i64, e: i64) -> bool {
+    bit_and(set, e) != 0
+}
+
+// UNION — a path that runs both performs every effect of either (effect rows
+// extend). This is the row-combine the "row-polymorphic" name refers to.
+fn ef_union(a: i64, b: i64) -> i64 {
+    bit_or(a, b)
+}
+
+// Is `set` a SUBSET of `ceiling` — i.e. every effect in `set` is granted? This is
+// the `@[contained]` admission rule at the value level: a tool whose effects all
+// fall within the ceiling is admissible; one with any extra effect is rejected.
+fn ef_subset(set: i64, ceiling: i64) -> bool {
+    // set ⊆ ceiling  iff  set has no bit outside ceiling  iff  set & ~ceiling == 0.
+    bit_and(set, bit_not(ceiling)) == 0
+}
+
+// Is this code PURE (no effects)?
+fn ef_is_pure(set: i64) -> bool {
+    set == ef_pure()
+}
+
+// ── Tool: a named callable carrying its effect signature ────────────────────
+
+type Tool = {
+    name: str,
+    effects: i64,   // the effect set this tool performs
+}
+
+fn tool_new(name: str, effects: i64) -> Tool {
+    Tool { name: name, effects: effects }
+}
+
+// May this tool run under a `@[contained]` boundary granting `ceiling`? Yes iff
+// its effect signature is a subset of the granted effects.
+fn tool_admissible(t: Tool, ceiling: i64) -> bool {
+    ef_subset(t.effects, ceiling)
+}
+
+// The combined effect signature of a function that calls BOTH tools — the union
+// (the caller inherits every effect of its callees, the transitive-effect rule).
+fn tool_compose_effects(a: Tool, b: Tool) -> i64 {
+    ef_union(a.effects, b.effects)
+}
+
+@[test]
+fn test_pure_is_identity_and_subset_of_all() {
+    assert(ef_is_pure(ef_pure()))
+    assert_eq(ef_union(ef_pure(), ef_net()), ef_net())
+    // Pure is a subset of any ceiling, even the empty one.
+    assert(ef_subset(ef_pure(), ef_pure()))
+    assert(ef_subset(ef_pure(), ef_union(ef_net(), ef_exec())))
+}
+
+@[test]
+fn test_add_and_has() {
+    let s = ef_add(ef_add(ef_pure(), ef_net()), ef_fs_write())
+    assert(ef_has(s, ef_net()))
+    assert(ef_has(s, ef_fs_write()))
+    assert(!ef_has(s, ef_exec()))
+    // Idempotent: adding net again doesn't change the set.
+    assert_eq(ef_add(s, ef_net()), s)
+}
+
+@[test]
+fn test_union_extends_the_row() {
+    let reads = ef_fs_read()
+    let writes_net = ef_union(ef_fs_write(), ef_net())
+    let combined = ef_union(reads, writes_net)
+    assert(ef_has(combined, ef_fs_read()))
+    assert(ef_has(combined, ef_fs_write()))
+    assert(ef_has(combined, ef_net()))
+    assert(!ef_has(combined, ef_exec()))
+}
+
+@[test]
+fn test_subset_is_the_admission_rule() {
+    let ceiling = ef_union(ef_fs_write(), ef_net())   // grant fs:write + net
+    let within = ef_net()                              // a net-only tool: admissible
+    let escapes = ef_union(ef_net(), ef_exec())        // net + exec: exec is ungranted
+    assert(ef_subset(within, ceiling))
+    assert(!ef_subset(escapes, ceiling))
+}
+
+@[test]
+fn test_tool_admissible() {
+    let ceiling = ef_union(ef_fs_read(), ef_net())
+    let reader = tool_new("fetch", ef_union(ef_fs_read(), ef_net()))
+    let runner = tool_new("shell", ef_exec())
+    assert(tool_admissible(reader, ceiling))     // reads + net ⊆ ceiling
+    assert(!tool_admissible(runner, ceiling))    // exec ⊄ ceiling
+}
+
+@[test]
+fn test_tool_compose_inherits_both_effects() {
+    let fetch = tool_new("fetch", ef_net())
+    let save = tool_new("save", ef_fs_write())
+    let combined = tool_compose_effects(fetch, save)
+    // A function calling both performs net AND fs:write.
+    assert(ef_has(combined, ef_net()))
+    assert(ef_has(combined, ef_fs_write()))
+    // …and is admissible only under a ceiling granting both.
+    assert(ef_subset(combined, ef_union(ef_net(), ef_fs_write())))
+    assert(!ef_subset(combined, ef_net()))   // a net-only ceiling rejects it
+}
+
+fn main() {
+    // A pipeline tool `fetch` (net) and `save` (fs:write); a function calling both
+    // has the union effect signature. Check it against a sandbox ceiling.
+    let fetch = tool_new("fetch", ef_net())
+    let save = tool_new("save", ef_fs_write())
+    let pipeline_effects = tool_compose_effects(fetch, save)
+
+    let sandbox = ef_union(ef_net(), ef_fs_write())   // grant net + fs:write
+    println("pipeline effects: net={to_str_bool(ef_has(pipeline_effects, ef_net()))} fs_write={to_str_bool(ef_has(pipeline_effects, ef_fs_write()))} exec={to_str_bool(ef_has(pipeline_effects, ef_exec()))}")
+    if ef_subset(pipeline_effects, sandbox) {
+        println("pipeline admissible under the sandbox (all effects granted) ✓")
+    } else {
+        println("pipeline REJECTED — performs an effect the sandbox does not grant")
+    }
+
+    // A stricter, net-only sandbox rejects the fs:write.
+    if ef_subset(pipeline_effects, ef_net()) {
+        println("net-only sandbox: admissible")
+    } else {
+        println("net-only sandbox: REJECTED — the fs:write effect escapes it")
+    }
+}

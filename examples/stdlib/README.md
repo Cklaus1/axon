@@ -90,6 +90,17 @@ on a minimum trust floor and `src_needs_validation` flags the AI/Net sources tha
 can be confidently wrong — making "don't act on unvalidated AI output" a
 checkable rule rather than a convention.
 
+## Effects
+
+`effect.ax` — Tier-1 `Effect` (row-polymorphic effect tag) + `Tool` (typed
+callable with an effect signature), the value-level core of row-polymorphic
+effects (full handlers = Phase 6). An effect SET is a bitset over fs/net/exec;
+`ef_union` EXTENDS the row (a function calling two tools performs the union of
+their effects — the transitive-effect rule), and `ef_subset` is the `@[contained]`
+admission rule (a tool runs iff its effect signature ⊆ the granted ceiling). A
+`Tool { name, effects }` carries its signature; `tool_admissible` /
+`tool_compose_effects` apply the row ops to callables.
+
 ## Run them
 
 ```bash

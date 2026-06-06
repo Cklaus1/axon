@@ -2468,6 +2468,22 @@ fn safe_self_improve_demo_composes_full_stack() {
 }
 
 #[test]
+fn effect_stdlib_module_tests_pass() {
+    // Tier-1 Effect + Tool userland module (ROADMAP §6: `Effect` row-polymorphic
+    // tag, `Tool` typed callable with an effect signature). The value-level core
+    // of row-polymorphic effects (full version = Phase 6 handlers): an effect SET
+    // (bitset over fs/net/exec) where `ef_union` EXTENDS the row (a caller
+    // inherits its callees' effects) and `ef_subset` is the `@[contained]`
+    // admission rule (a tool runs iff its effects ⊆ the granted ceiling). 6
+    // @[test]s, headed by test_subset_is_the_admission_rule +
+    // test_tool_compose_inherits_both_effects.
+    let out = axon().args(["test", &ex("stdlib/effect.ax")]).output().unwrap();
+    assert!(out.status.success(), "effect.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn source_stdlib_module_tests_pass() {
     // Tier-1 Source userland module (`Constant|User|AI|Net|System`, ROADMAP §6) —
     // the provenance/trust lattice. The load-bearing op is `src_join`: combining
