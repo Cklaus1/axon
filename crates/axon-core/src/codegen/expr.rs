@@ -171,10 +171,19 @@ impl<'ctx> super::Codegen<'ctx> {
                 // fn expecting the full layout failed IR verification.
                 let saved_rt = self.current_result_types.clone();
                 let saved_oi = self.current_option_inner.clone();
-                if let Some(Type::Result(ok_ty, err_ty)) = &sem_ty {
+                // The annotation may be the sum type directly, OR a slice of it
+                // (`let a: [Result<i64,str>] = [Ok(1), Err("x")]`) — in the slice
+                // case each ELEMENT is the sum type, so unwrap one level so the
+                // array-literal elements get the right layout (a mismatched-size
+                // element array otherwise SIGSEGVs at exit 139, not just IR-fail).
+                let target = match &sem_ty {
+                    Some(Type::Slice(inner)) => Some((**inner).clone()),
+                    other => other.clone(),
+                };
+                if let Some(Type::Result(ok_ty, err_ty)) = &target {
                     self.current_result_types = Some((*ok_ty.clone(), *err_ty.clone()));
                 }
-                if let Some(Type::Option(inner)) = &sem_ty {
+                if let Some(Type::Option(inner)) = &target {
                     self.current_option_inner = Some(*inner.clone());
                 }
                 let val = self.emit_expr(value, fn_val)?;
@@ -4002,10 +4011,27 @@ impl<'ctx> super::Codegen<'ctx> {
             // Regular struct literal.
             let struct_ty = self.ir.module.get_struct_type(name)?;
             let field_names = self.struct_fields.get(name).cloned().unwrap_or_default();
+            let field_sem_types = self.struct_field_sem_types.get(name).cloned().unwrap_or_default();
             let alloca = build_wrappers::w_alloca(&self.ir.builder, struct_ty.into(), name);
             for (fname, fexpr) in fields {
                 let idx = field_names.iter().position(|n| n == fname).unwrap_or(0) as u32;
-                if let Some(fval) = self.emit_expr(fexpr, fn_val) {
+                // Set the Option/Result context from the field's DECLARED type so
+                // a sum-type field initializer (`Box { r: Err("x") }`) builds the
+                // field's full canonical layout, not a value-only `{i1,ptr}` that
+                // mismatches the struct's `{i1,[16 x i8]}` field slot.
+                let saved_oi = self.current_option_inner.clone();
+                let saved_rt = self.current_result_types.clone();
+                match field_sem_types.get(idx as usize) {
+                    Some(Type::Option(inner)) => self.current_option_inner = Some((**inner).clone()),
+                    Some(Type::Result(ok, err)) => {
+                        self.current_result_types = Some(((**ok).clone(), (**err).clone()))
+                    }
+                    _ => {}
+                }
+                let emitted = self.emit_expr(fexpr, fn_val);
+                self.current_option_inner = saved_oi;
+                self.current_result_types = saved_rt;
+                if let Some(fval) = emitted {
                     let fptr = self.ir.builder
                         .build_struct_gep(struct_ty, alloca, idx, fname)
                         .unwrap();

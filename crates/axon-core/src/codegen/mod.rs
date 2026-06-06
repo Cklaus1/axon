@@ -161,6 +161,10 @@ pub struct Codegen<'ctx> {
     pub(super) functions: HashMap<String, FunctionValue<'ctx>>,
     /// Maps struct names to their ordered field names (for FieldAccess GEP).
     struct_fields: HashMap<String, Vec<String>>,
+    /// Maps struct name → declared semantic field types, in declaration order.
+    /// Used so a sum-type field initializer (`Box { r: Err("x") }`) builds the
+    /// field's full canonical layout, not a value-only one.
+    struct_field_sem_types: HashMap<String, Vec<Type>>,
     /// Maps fn names to their Axon semantic return type (for call-site type inference).
     fn_return_types: HashMap<String, Type>,
     /// Tracks inferred Axon semantic types for named locals (for match/field-access dispatch).
@@ -288,6 +292,7 @@ impl<'ctx> Codegen<'ctx> {
             locals: HashMap::new(),
             functions: HashMap::new(),
             struct_fields: HashMap::new(),
+            struct_field_sem_types: HashMap::new(),
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             current_result_types: None,
@@ -530,6 +535,9 @@ impl<'ctx> Codegen<'ctx> {
                 let field_names: Vec<String> =
                     td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
+                let field_sem_types: Vec<Type> =
+                    td.fields.iter().map(|f| self.axon_type_to_semantic(&f.ty)).collect();
+                self.struct_field_sem_types.insert(td.name.clone(), field_sem_types);
             }
         }
     }
@@ -1324,6 +1332,15 @@ impl<'ctx> Codegen<'ctx> {
                     (Some(Type::Uncertain(_)), "source_tag")
                     | (Some(Type::Temporal(_)), "horizon_ms")
                     | (Some(Type::Temporal(_)), "valid_until_ms") => Some(Type::I64),
+                    // Record-struct field: look up the declared field type so a
+                    // `match b.r { … }` on a `Result`/`Option`-typed field knows
+                    // its layout (else the match extracts the payload with the
+                    // wrong type → IR-verify failure).
+                    (Some(Type::Struct(sname)), fname) => {
+                        let names = self.struct_fields.get(&sname)?;
+                        let idx = names.iter().position(|n| n == fname)?;
+                        self.struct_field_sem_types.get(&sname)?.get(idx).cloned()
+                    }
                     _ => None,
                 }
             }

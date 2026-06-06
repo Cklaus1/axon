@@ -3449,6 +3449,32 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn sum_type_in_struct_field_and_array_element_sized_from_declared_type() {
+    // Two more annotation-propagation sites. A `Result`/`Option` value built as a
+    // STRUCT FIELD (`Box { r: Err("x") }`) or an ARRAY ELEMENT
+    // (`[Ok(1), Err("x")]`) must use the field/element's declared canonical
+    // layout. Before: the struct-field case failed native IR verification, and
+    // the array case SIGSEGV'd (exit 139) — a mismatched-size element array. The
+    // interpreter handled both. Fixed via struct_field_sem_types (construction +
+    // match-time FieldAccess inference) and slice-element type propagation.
+    let cases: &[(&str, &str)] = &[
+        ("type B = { r: Result<i64, str> }\nfn main() { let b = B { r: Err(\"bad\") }\n match b.r { Ok(n) => println(to_str(n))  Err(e) => println(e) } }", "bad"),
+        ("type B = { r: Result<i64, str> }\nfn main() { let b = B { r: Ok(7) }\n match b.r { Ok(n) => println(to_str(n))  Err(e) => println(e) } }", "7"),
+        ("type B = { v: Option<str> }\nfn main() { let b = B { v: None }\n match b.v { Some(s) => println(s)  None => println(\"empty\") } }", "empty"),
+        ("fn main() { let a: [Result<i64, str>] = [Ok(1), Err(\"x\")]\n match a[1] { Ok(n) => println(to_str(n))  Err(e) => println(e) } }", "x"),
+        ("fn main() { let a: [Result<i64, str>] = [Ok(1), Err(\"x\")]\n match a[0] { Ok(n) => println(to_str(n))  Err(e) => println(e) } }", "1"),
+    ];
+    for (i, (prog, expected)) in cases.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_sumfield_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, prog).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] sum-type field/element");
+    }
+}
+
+#[test]
 fn bare_sum_type_argument_sized_from_declared_param_type() {
     // The call-site analog of the annotated-local layout fixes: a bare `None` /
     // `Ok(..)` / `Err(..)` passed as a FUNCTION ARGUMENT must be built with the
