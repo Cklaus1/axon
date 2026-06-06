@@ -12,13 +12,24 @@
 # divergence is reproducible and the gate never flakes. Edge values are always
 # included regardless of seed.
 #
-# SLICE 1 SCOPE: the skeleton + 3 descriptors (abs_i64, min_i64, the `+` binop).
-# Inputs are bounded to the NON-overflowing domain on purpose — the i64-overflow
-# boundary (where interp's checked/saturating arithmetic and codegen's wrapping
-# IR are KNOWN to diverge, e.g. the documented arr_sum case) is a slice-2 target
-# with ExitCode/explicit comparison, not a slice-1 surprise. Slice 2 widens the
-# descriptor table to ~30-40 scalar/str/math builtins; slice 3 is automatic —
-# this file matches scripts/*_parity.sh so parity_all.sh already runs it.
+# COVERAGE (~51 builtins/ops searched): i64 scalars + binops + bitwise, pos-domain
+# (pow/shift/mod), f64 math, str scalars + str→str transforms, conversions
+# (round/clamp/i64_to_f64/as casts/radix), array reducers (fixed cases), plus the
+# overflow + div0 + bounds + empty-reducer FAULT boundaries (all assert
+# byte-for-byte equality, exit 101 — these were the I-9 divergences this surface
+# uncovered and fixed).
+#
+# DELIBERATELY NOT FUZZED (differential fuzzing can't or shouldn't apply — these
+# are NOT gaps, they're out of scope for THIS mechanism):
+#   * non-deterministic: random_i64/random_f64, ai_complete, ai_extract_*  —
+#     different output by design; can't byte-compare (roadmap gap F2).
+#   * I/O: read_file/write_file/read_line/exec — need fixtures; covered by the
+#     dedicated exec_parity / wasm_fs_parity harnesses instead.
+#   * test harness: assert*/expect* — they ARE the comparison mechanism.
+#   * struct-returning constructors: uncertain_*/temporal_*/dict_*/goal_* — the
+#     scalar fuzzer can't wrap them in to_str(); covered by fixed equality cases
+#     here + the dedicated dict_parity / provenance_parity / goal_*_parity
+#     harnesses.
 #
 # Skips (exit 0) when the codegen toolchain is absent (same contract as the
 # other harnesses). Exit nonzero on a real divergence.
@@ -66,12 +77,15 @@ fail=0
 #   EXPR is an Axon expression template; the result is printed via to_str so a
 #   single stdout+exit diff covers every input. Build ONCE, diff both engines.
 fuzz() {
-  local name="$1" domain="$2" arity="$3" expr="$4"
+  local name="$1" domain="$2" arity="$3" expr="$4" wrap="${5:-scalar}"
   local src="$WORK/$name.ax"
+  # wrap=scalar → println(to_str(EXPR)) (default, scalar-returning exprs).
+  # wrap=str    → println(EXPR) directly (str-returning exprs — compares the
+  #               full STRING content, not just a length reduction).
 
   {
     echo "fn main() -> i64 {"
-    awk -v seed="$SEED" -v n="$N" -v arity="$arity" -v expr="$expr" -v domain="$domain" 'BEGIN {
+    awk -v seed="$SEED" -v n="$N" -v arity="$arity" -v expr="$expr" -v domain="$domain" -v wrap="$wrap" 'BEGIN {
       srand(seed)
       # Per-domain value table (edges first, then N seeded-random).
       if (domain == "i64") {
@@ -119,7 +133,10 @@ fuzz() {
           b = vals[((i * 7) % cnt) + 1]   # deterministic second operand
           gsub(/B/, b, e)
         }
-        print "    println(to_str(" e "))"
+        if (wrap == "str")
+          print "    println(" e ")"
+        else
+          print "    println(to_str(" e "))"
       }
     }'
     echo "    0"
@@ -301,6 +318,27 @@ fuzz str_join_rt   str 1 'str_len(str_join(str_split(A, "l"), "l"))'
 # str_digits_only → str; reduce to a scalar (digit count) since the fuzzer wraps
 # the expr in to_str(), which only takes scalars. Exercises the str-out ABI.
 fuzz str_digits    str 1 'str_len(str_digits_only(A))'
+# ── str→str transforms (wrap=str → compare the full string content) ───────────
+fuzz str_upper     str 1 'str_to_upper(A)'           str
+fuzz str_lower     str 1 'str_to_lower(A)'           str
+fuzz str_trim      str 1 'str_trim(A)'               str
+fuzz str_trim_s    str 1 'str_trim_start(A)'         str
+fuzz str_trim_e    str 1 'str_trim_end(A)'           str
+fuzz str_reverse   str 1 'str_reverse(A)'            str
+fuzz str_repeat    str 1 'str_repeat(A, 3)'          str
+fuzz str_replace   str 1 'str_replace(A, "l", "L")'  str
+fuzz str_slice_s   str 1 'str_slice(A, 0, str_len(A) / 2)' str
+fuzz char_at_s     str 1 'char_at(A, 0)'             # i64 result
+# ── f64→f64 / f64→i64 conversions + rounding (scalar wrap) ─────────────────────
+fuzz round_f64     f64 1 'round_f64(A)'
+fuzz clamp_f64     f64 1 'clamp_f64(A, 0.0 - 100.0, 100.0)'
+fuzz i64_to_f64    i64 1 'i64_to_f64(A)'
+fuzz as_f64_cast   i64 1 'A as f64'
+fuzz as_i64_cast   f64 1 'A as i64'
+# ── radix string conversions (wrap=str) ───────────────────────────────────────
+fuzz radix_hex     i64 1 'i64_to_str_radix(A, 16)'   str
+fuzz radix_bin     i64 1 'i64_to_str_radix(A, 2)'    str
+fuzz radix_36      i64 1 'i64_to_str_radix(A, 36)'   str
 # ── slice 2b: f64 NaN/inf boundary (compare: Stdout — exact canonical form) ───
 #   sqrt(-1) yields a NEGATIVE NaN; native snprintf would print "-nan" without
 #   the to_str_f64 NaN-normalization (the fix that lands with this slice).
@@ -344,5 +382,5 @@ expect_runtime_panic arr_maxf_empty   '    let a: [f64] = []\n    println(to_str
 expect_runtime_panic arr_argminf_empty '    let a: [f64] = []\n    println(to_str(arr_argmin_f64(a)))'
 
 [ "$fail" -eq 0 ] || { echo "fuzz_parity: FAIL — interp↔codegen divergence found"; exit 1; }
-echo "fuzz_parity: PASS — random + NaN/inf + overflow + runtime-panic descriptors all agree (native==interp) ✓"
+echo "fuzz_parity: PASS — ~51 builtins (scalar/str/array/conversion) searched + NaN/inf + overflow + runtime-panic; all agree native==interp ✓"
 exit 0
