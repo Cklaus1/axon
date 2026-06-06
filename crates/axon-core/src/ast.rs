@@ -87,6 +87,11 @@ pub struct TypeDef {
     /// ordinary type.
     #[cfg_attr(feature = "serde-json", serde(default))]
     pub attrs: Vec<Attr>,
+    /// Phase 5: a whole-struct refinement predicate — `type Range = { lo, hi }
+    /// where _.lo <= _.hi`. The implicit binder `_` is the struct instance and
+    /// `_.field` projects a field. `None` for an ordinary struct.
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub refinement: Option<Box<Expr>>,
     pub span: Span,
 }
 

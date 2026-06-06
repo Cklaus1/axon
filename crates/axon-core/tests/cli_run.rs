@@ -3598,6 +3598,45 @@ fn parenthesized_inline_refinement_on_return_and_param() {
 }
 
 #[test]
+fn whole_struct_refinement_with_field_projection() {
+    // Phase 5 §1: a WHOLE-struct refinement — the spec's canonical
+    // `type Range = { lo: i64, hi: i64 } where _.lo <= _.hi`. The binder `_` is
+    // the struct instance and `_.field` projects a field. At construction, if all
+    // fields are compile-time constants, the predicate is evaluated; a
+    // provably-false one is E1209. A non-constant field defers (sound).
+    let reject = [
+        "type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn main() { let r = Range { lo: 9, hi: 2 }\n println(to_str(r.lo + r.hi)) }",
+        "type Pair = { a: i64, b: i64 } where _.a + _.b == 10\nfn main() { let p = Pair { a: 3, b: 3 }\n println(to_str(p.a)) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_swr_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] struct-refinement violation must catch: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        ("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn main() { let r = Range { lo: 1, hi: 5 }\n println(to_str(r.lo + r.hi)) }", "6"),
+        // Non-constant field — deferred, runs.
+        ("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn id(n: i64) -> i64 { n }\nfn main() { let r = Range { lo: id(1), hi: 5 }\n println(to_str(r.hi)) }", "5"),
+    ];
+    for (i, (src, expected)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_swr_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] struct refinement");
+    }
+}
+
+#[test]
 fn refinements_compose_with_asi_annotations_and_subtyping() {
     // Refinement types are transparent to their base, so they coexist with every
     // ASI annotation and the type system at large. This pins that a refinement

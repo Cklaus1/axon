@@ -201,6 +201,9 @@ const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 enum RefineVal {
     Int(i64),
     Str(String),
+    /// A struct value: field name → its (constant) RefineVal. Backs whole-struct
+    /// refinements where the binder `_` is the instance and `_.field` projects.
+    Struct(HashMap<String, RefineVal>),
 }
 
 fn is_known_type_name(
@@ -312,6 +315,9 @@ pub struct CheckCtx {
     /// declared type is a refinement. Drives the R04 struct-construction
     /// obligation (a constant field value is checked against the predicate).
     struct_field_refinements: HashMap<String, HashMap<String, String>>,
+    /// Phase 5: a WHOLE-struct refinement predicate per struct (`type Range = {…}
+    /// where _.lo <= _.hi`). Checked at construction when all fields are constant.
+    struct_refinements: HashMap<String, Expr>,
     /// `@[sensitive(...)]` struct type names → the category (pii/phi/financial/…).
     /// Such a value may not flow into an external AI call (E1206, PRD §4).
     sensitive_types: HashMap<String, String>,
@@ -366,6 +372,7 @@ impl CheckCtx {
             refinement_pred: HashMap::new(),
             fn_param_refinements: HashMap::new(),
             struct_field_refinements: HashMap::new(),
+            struct_refinements: HashMap::new(),
             sensitive_types: HashMap::new(),
             exfiltrating_params: HashMap::new(),
             taint_returning_params: HashMap::new(),
@@ -460,7 +467,12 @@ impl CheckCtx {
         }
         // Phase 5: record each user fn's per-param refinement name (None if the
         // param isn't a refinement) so a call site can find proof obligations.
-        if !self.refinement_pred.is_empty() {
+        // Enter this pass if there's ANY refinement — named, or a whole-struct
+        // predicate (which needs no named refinement).
+        let has_struct_refine = program.items.iter().any(|i| {
+            matches!(i, Item::TypeDef(td) if td.refinement.is_some())
+        });
+        if !self.refinement_pred.is_empty() || has_struct_refine {
             for item in &program.items {
                 if let Item::FnDef(f) = item {
                     let slots: Vec<Option<String>> = f
@@ -491,6 +503,10 @@ impl CheckCtx {
                         .collect();
                     if !refs.is_empty() {
                         self.struct_field_refinements.insert(td.name.clone(), refs);
+                    }
+                    // Whole-struct refinement predicate (`{…} where _.lo <= _.hi`).
+                    if let Some(pred) = &td.refinement {
+                        self.struct_refinements.insert(td.name.clone(), (**pred).clone());
                     }
                 }
             }
@@ -947,6 +963,7 @@ impl CheckCtx {
                 let shown = match bound {
                     RefineVal::Int(v) => v.to_string(),
                     RefineVal::Str(s) => format!("{s:?}"),
+                    RefineVal::Struct(_) => "the struct value".to_string(),
                 };
                 self.errors.push(
                     CheckError::new(
@@ -988,6 +1005,7 @@ impl CheckCtx {
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
                 RefineVal::Str(s) => format!("{s:?}"),
+                RefineVal::Struct(_) => "the struct value".to_string(),
             };
             self.errors.push(
                 CheckError::new(
@@ -1031,6 +1049,7 @@ impl CheckCtx {
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
                 RefineVal::Str(s) => format!("{s:?}"),
+                RefineVal::Struct(_) => "the struct value".to_string(),
             };
             self.errors.push(
                 CheckError::new(
@@ -1131,7 +1150,7 @@ impl CheckCtx {
         match e {
             Expr::Ident(n) => match env.get(n)? {
                 RefineVal::Str(s) => Some(s.clone()),
-                RefineVal::Int(_) => None,
+                _ => None,
             },
             Expr::Literal(crate::ast::Literal::Str(s)) => Some(s.clone()),
             _ => None,
@@ -1172,8 +1191,20 @@ impl CheckCtx {
             // A bound variable (`_` or a pure-fn param) → its integer value.
             Expr::Ident(n) => match env.get(n)? {
                 RefineVal::Int(v) => Some(*v),
-                RefineVal::Str(_) => None,
+                _ => None,
             },
+            // Field projection `_.field` (or `x.field`) → the struct binder's
+            // integer field. Supports a whole-struct refinement `_.lo <= _.hi`.
+            Expr::FieldAccess { receiver, field } => {
+                if let Expr::Ident(n) = receiver.as_ref() {
+                    if let RefineVal::Struct(fields) = env.get(n)? {
+                        if let RefineVal::Int(v) = fields.get(field)? {
+                            return Some(*v);
+                        }
+                    }
+                }
+                None
+            }
             // `str_len(x)` → the bound string's char count.
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
@@ -2281,6 +2312,43 @@ impl CheckCtx {
                         let Some(rname) = field_refs.get(fname) else { continue };
                         self.check_field_refinement(
                             rname, fname, name, fexpr, &format!("{node_path}.field_{i}"),
+                        );
+                    }
+                }
+                // Phase 5: a WHOLE-struct refinement (`{…} where _.lo <= _.hi`) —
+                // if every field value is a compile-time constant, build the
+                // struct binder and evaluate the predicate; a provably-false one
+                // is E1209.
+                if let Some(pred) = self.struct_refinements.get(name).cloned() {
+                    let mut fmap: HashMap<String, RefineVal> = HashMap::new();
+                    let mut all_const = true;
+                    for (fname, fexpr) in fields {
+                        if let Some(v) = const_eval_int(fexpr) {
+                            fmap.insert(fname.clone(), RefineVal::Int(v));
+                        } else if let Expr::Literal(crate::ast::Literal::Str(s)) = fexpr {
+                            fmap.insert(fname.clone(), RefineVal::Str(s.clone()));
+                        } else {
+                            all_const = false;
+                            break;
+                        }
+                    }
+                    if all_const
+                        && self.eval_refinement_pred(&pred, &RefineVal::Struct(fmap)) == Some(false)
+                    {
+                        let file = self.file.clone();
+                        let span = self.current_span;
+                        self.errors.push(
+                            CheckError::new(
+                                E1209,
+                                format!(
+                                    "this `{name}` literal violates the struct refinement — its \
+                                     constant fields do not satisfy the type's predicate"
+                                ),
+                            )
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .fix(format!("set the fields so `{name}`'s `where` predicate holds")),
                         );
                     }
                 }

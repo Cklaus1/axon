@@ -992,8 +992,14 @@ impl Parser {
             self.eat(&Token::Comma);
         }
         self.expect(&Token::RBrace)?;
+        // Phase 5: an optional whole-struct refinement — `{ … } where <pred>`.
+        let refinement = if self.eat(&Token::Where) {
+            Some(Box::new(self.parse_expr()?))
+        } else {
+            None
+        };
         let end = self.current_span().end;
-        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, attrs, span: Span::new(start, end) }))
+        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, attrs, refinement, span: Span::new(start, end) }))
     }
 
     /// Parse an enum variant's optional `{ field: Type, ... }` payload (shared by
