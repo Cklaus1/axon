@@ -3362,6 +3362,50 @@ fn checked_integer_arithmetic_panics_gracefully_not_silently() {
 }
 
 #[test]
+fn abs_and_pow_overflow_panic_gracefully_with_a_clean_message() {
+    // abs_i64(i64::MIN) and pow_i64(_, negative) are runtime faults. They must
+    // produce a CLEAN `axon: panic: …` (exit 101) — the interpreter used to call
+    // raw Rust `.abs()`, which threw an unhandled "attempt to negate with
+    // overflow" multi-line thread panic instead of a Flow::Panic; the native
+    // runtime used to `abort()` (SIGABRT, exit 134). Both now exit 101 with the
+    // same message. (Native parity is covered by the strict gate; this pins the
+    // interpreter, the reference semantics, in the standard gate.)
+    let cases = [
+        (
+            "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(abs_i64(mm)))",
+            "abs_i64 overflow",
+        ),
+        ("let e = 0 - 1\n  println(to_str(pow_i64(2, e)))", "pow_i64: negative exponent"),
+    ];
+    for (i, (body, needle)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_abspow_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(101),
+            "[case {i}] must exit 101 (graceful panic), got: {out:?}"
+        );
+        assert!(
+            combined.contains("axon: panic:") && combined.contains(needle),
+            "[case {i}] expected a clean panic mentioning `{needle}`, got: {combined}"
+        );
+        // The raw-Rust-overflow leak must be gone.
+        assert!(
+            !combined.contains("attempt to negate with overflow"),
+            "[case {i}] the interpreter leaked a raw Rust overflow panic: {combined}"
+        );
+    }
+}
+
+#[test]
 fn dict_filter_to_pairs_from_pairs() {
     // Three more dict primitives that complete the array↔dict symmetry:
     //   dict_filter(d, pred)    — keep entries where (k, v) → true

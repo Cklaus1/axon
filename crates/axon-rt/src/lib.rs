@@ -840,7 +840,10 @@ pub extern "C" fn __axon_abs_i64(n: i64) -> i64 {
         Some(v) => v,
         None => {
             eprintln!("axon: panic: abs_i64 overflow (i64::MIN has no positive)");
-            std::process::abort();
+            // exit 101 (a runtime panic), NOT abort()'s SIGABRT (exit 134) — so a
+            // native binary reports the SAME code the interpreter does for the
+            // same fault. See RUNTIME_PANIC_EXIT_CODE.
+            std::process::exit(RUNTIME_PANIC_EXIT_CODE);
         }
     }
 }
@@ -1030,7 +1033,7 @@ pub extern "C" fn __axon_abs_i32(n: i32) -> i32 {
         Some(v) => v,
         None => {
             eprintln!("axon: panic: abs_i32 overflow (i32::MIN has no positive)");
-            std::process::abort();
+            std::process::exit(RUNTIME_PANIC_EXIT_CODE);
         }
     }
 }
@@ -1075,7 +1078,7 @@ pub extern "C" fn __axon_abs_f64(x: f64) -> f64 {
 pub extern "C" fn __axon_pow_i64(base: i64, exp: i64) -> i64 {
     if exp < 0 {
         eprintln!("axon: panic: pow_i64: negative exponent");
-        std::process::abort();
+        std::process::exit(RUNTIME_PANIC_EXIT_CODE);
     }
     base.wrapping_pow(exp as u32)
 }

@@ -72,6 +72,15 @@ CASES[factorial_21_overflow]='let f = 1
     println(to_str(f))'
 # Normal arithmetic must be untouched by the guards.
 CASES[normal_mix]='println(to_str(2 + 3 * 4 - 17 / 5 + 17 % 5))'
+# abs/pow runtime faults: must panic 101 with the SAME message on both engines
+# (interp used to leak a raw Rust "negate with overflow" thread panic; native
+# used to abort() / SIGABRT exit 134). Variable operands so nothing folds early.
+CASES[abs_i64_min]='let m = 0 - 9223372036854775807
+    let mm = m - 1
+    println(to_str(abs_i64(mm)))'
+CASES[pow_neg_exp]='let e = 0 - 1
+    println(to_str(pow_i64(2, e)))'
+CASES[abs_ok]='println(to_str(abs_i64(0 - 42)))'
 
 fail=0
 for label in "${!CASES[@]}"; do

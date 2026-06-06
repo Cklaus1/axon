@@ -287,9 +287,30 @@ impl<'p> Interp<'p> {
             }
 
             // ── Math ────────────────────────────────────────────────────────────
-            "abs_i32" | "abs_i64" => {
+            "abs_i64" => {
                 want(1)?;
-                ok!(Value::Int(as_int(&args[0])?.abs()));
+                // checked — abs(i64::MIN) overflows. Match the native runtime's
+                // graceful panic (`__axon_abs_i64`, same message, exit 101)
+                // instead of a raw Rust `.abs()` "attempt to negate with
+                // overflow" thread panic. The interpreter is the reference
+                // semantics; a clean Flow::Panic is what native mirrors.
+                let n = as_int(&args[0])?;
+                match n.checked_abs() {
+                    Some(v) => ok!(Value::Int(v)),
+                    None => panic("abs_i64 overflow (i64::MIN has no positive)"),
+                }
+            }
+            "abs_i32" => {
+                want(1)?;
+                // The value is held as i64 but the i32 builtin's domain is i32 —
+                // mirror `__axon_abs_i32`: overflow exactly at i32::MIN.
+                let n = as_int(&args[0])?;
+                if n == i32::MIN as i64 {
+                    return panic(
+                        "abs_i32 overflow (i32::MIN has no positive)",
+                    );
+                }
+                ok!(Value::Int((n as i32).unsigned_abs() as i64));
             }
 
             // ── Array helpers ─────────────────────────────────────────────────
