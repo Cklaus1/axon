@@ -892,11 +892,33 @@ impl<'p> Interp<'p> {
             goal_met = if s >= spec.target { 1i64 } else { 0i64 };
         }
         env.define("goal_met".into(), Value::Int(goal_met));
-        let result = match self.eval(&f.body, &mut env) {
+        let mut result = match self.eval(&f.body, &mut env) {
             Ok(v) => v,
             Err(Flow::Return(v)) => v,
             Err(other) => return Err(other),
         };
+        // Soft typing at the RETURN boundary: a fn declared `-> T` (a plain
+        // scalar) whose body produces an `Uncertain<T>` unwraps to the inner
+        // value (confidence dropped at the T-typed boundary) — the same rule as
+        // a plain-T parameter. Without this, `fn f() -> i64 { uncertain }` leaked
+        // the struct and `f() + 1` silently produced 0. A fn declared
+        // `-> Uncertain<T>` keeps the Uncertain.
+        {
+            // Only unwrap when the declared return is a plain SCALAR (i64/i32/
+            // f64/bool); a str/struct/tuple/Uncertain return is left untouched.
+            // (`uncertain_parts` already returns None for non-Uncertain values,
+            // so this is belt-and-suspenders, mirroring the codegen scoping.)
+            let ret_is_scalar = matches!(
+                &f.return_type,
+                Some(crate::ast::AxonType::Named(n))
+                    if matches!(n.as_str(), "i64" | "i32" | "f64" | "bool")
+            );
+            if ret_is_scalar {
+                if let Some((inner, _conf)) = value::uncertain_parts(&result) {
+                    result = inner;
+                }
+            }
+        }
 
         // R4 zone provenance injection. Keyed on the fn's annotation, performed
         // by the engine — there is no opt-out (I-13). Two adaptive-family zones

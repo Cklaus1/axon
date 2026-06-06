@@ -4499,6 +4499,29 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(7), "an Uncertain<T> param must preserve the Uncertain (not be unwrapped)");
+
+    // Same rule at the RETURN boundary: a fn declared `-> i64` whose body
+    // produces an Uncertain unwraps to the inner value (else the struct leaks and
+    // `make() + 1` is wrong). A fn declared `-> Uncertain<T>` keeps the struct.
+    let ret = std::env::temp_dir().join(format!("axon_uncret_{}.ax", std::process::id()));
+    std::fs::write(
+        &ret,
+        "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  r + 1 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", ret.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&ret);
+    assert_eq!(out.status.code(), Some(10), "an Uncertain body returned as i64 must unwrap (make()==9, +1==10)");
+
+    let keep = std::env::temp_dir().join(format!("axon_uncretkeep_{}.ax", std::process::id()));
+    std::fs::write(
+        &keep,
+        "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  u.value }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", keep.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&keep);
+    assert_eq!(out.status.code(), Some(5), "an Uncertain<T>-declared return must keep the Uncertain");
 }
 
 #[test]

@@ -983,6 +983,29 @@ impl<'ctx> Codegen<'ctx> {
             } else {
                 match body_val {
                     Some(v) if !matches!(ret_sem, Type::Unit) => {
+                        // Soft typing at the RETURN boundary: a fn declared `-> T`
+                        // where T is a plain SCALAR (i64/i32/f64/bool) whose body
+                        // produced an `Uncertain<T>` (`{T,f64,i64}` struct) unwraps
+                        // to the inner value (field 0), matching the interpreter —
+                        // else the struct is returned where a scalar is declared
+                        // (IR mismatch). Scoped to SCALAR return types only, so a
+                        // str/struct/tuple/Uncertain return is never touched.
+                        let ret_is_scalar = matches!(
+                            ret_sem,
+                            Type::I64 | Type::I32 | Type::F64 | Type::Bool
+                        );
+                        let v = if ret_is_scalar {
+                            if let BasicValueEnum::StructValue(sv) = v {
+                                self.ir
+                                    .builder
+                                    .build_extract_value(sv, 0, "unc_ret")
+                                    .unwrap_or(v)
+                            } else {
+                                v
+                            }
+                        } else {
+                            v
+                        };
                         self.log_return_if_adaptive_val(v);
                         self.emit_verify_check_if_needed(v, llvm_fn);
                         build_wrappers::w_ret(&self.ir.builder, v);
