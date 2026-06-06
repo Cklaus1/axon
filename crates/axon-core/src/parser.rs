@@ -170,6 +170,14 @@ pub struct Parser {
     /// nested input (e.g. `((((…))))`) fails with a clean parse error instead of
     /// overflowing the parser's recursion and aborting the process.
     expr_depth: usize,
+    /// Phase 5: inline anonymous refinements (`d: i64 where _ != 0`) are
+    /// desugared at parse time into fresh synthetic named refinements collected
+    /// here; `parse_program` appends them to the program's items. This reuses the
+    /// entire named-refinement machinery (transparency + obligations) with no new
+    /// `AxonType` variant.
+    synthetic_refinements: Vec<RefineDef>,
+    /// Counter for unique synthetic refinement names.
+    synthetic_refine_count: usize,
 }
 
 /// Max nested-expression depth before a graceful parse error. Far beyond any
@@ -195,16 +203,16 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
+        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
+        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0 }
+        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0 }
     }
 
     fn current_span(&self) -> Span {
@@ -341,6 +349,11 @@ impl Parser {
         let mut items = Vec::new();
         while self.peek().is_some() {
             items.push(self.parse_item()?);
+        }
+        // Phase 5: append the synthetic refinements desugared from inline
+        // `T where P` annotations so they register like top-level RefineDefs.
+        for r in std::mem::take(&mut self.synthetic_refinements) {
+            items.push(Item::RefineDef(r));
         }
         Ok(Program { items })
     }
@@ -711,11 +724,38 @@ impl Parser {
             }
             self.expect(&Token::Colon)?;
             let ty = self.parse_type()?;
+            // Phase 5: inline anonymous refinement `T where <pred>` on a param.
+            let ty = self.maybe_desugar_inline_refinement(ty)?;
             let end = self.current_span().end;
             params.push(Param { name, ty, span: Span::new(pspan.start, end) });
             if !self.eat(&Token::Comma) { break; }
         }
         Ok(params)
+    }
+
+    /// Phase 5: if the next token is `where`, the just-parsed type `base` carries
+    /// an INLINE anonymous refinement (`i64 where _ != 0`). Desugar it into a
+    /// fresh synthetic named refinement (`__refine_N`) collected for the program,
+    /// returning `Named("__refine_N")` so the named-refinement machinery
+    /// (transparency + obligations) applies unchanged. No `where` → type as-is.
+    fn maybe_desugar_inline_refinement(&mut self, base: AxonType) -> Result<AxonType> {
+        if !self.at(&Token::Where) {
+            return Ok(base);
+        }
+        let start = self.current_span().start;
+        self.expect(&Token::Where)?;
+        let predicate = self.parse_expr()?;
+        let end = self.current_span().end;
+        let name = format!("__refine_{}", self.synthetic_refine_count);
+        self.synthetic_refine_count += 1;
+        self.synthetic_refinements.push(RefineDef {
+            name: name.clone(),
+            base,
+            predicate: Box::new(predicate),
+            attrs: Vec::new(),
+            span: Span::new(start, end),
+        });
+        Ok(AxonType::Named(name))
     }
 
     /// Parse optional generic type parameter list: `<A, B: Trait1 + Trait2, C>` after an item name.

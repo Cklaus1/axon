@@ -3449,6 +3449,47 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn inline_anonymous_refinement_on_a_parameter() {
+    // Phase 5 §1 (sub-slice 2): an INLINE anonymous refinement on a parameter —
+    // the spec's canonical `fn divide(n: i64, d: i64 where _ != 0)`. Desugared at
+    // parse time to a fresh synthetic named refinement, so it reuses the whole
+    // named-refinement machinery (transparency + the constant-arg obligation). A
+    // constant violating the inline predicate is E1209; a satisfying / non-const
+    // argument runs. Does not disturb normal params or generic where-clauses.
+    let reject = [
+        "fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\nfn main() { println(to_str(divide(10, 0))) }",
+        "fn pos(n: i64 where _ > 0) -> i64 { n * 2 }\nfn main() { println(to_str(pos(0 - 3))) }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_inline_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] inline-refinement violation must be caught: {combined}");
+        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+    }
+    let accept = [
+        ("fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\nfn main() { println(to_str(divide(10, 2))) }", "5"),
+        ("fn pos(n: i64 where _ > 0) -> i64 { n * 2 }\nfn main() { println(to_str(pos(5))) }", "10"),
+        // Non-constant arg through the inline refinement — deferred, runs.
+        ("fn pos(n: i64 where _ > 0) -> i64 { n * 2 }\nfn main() { let x = 4\n println(to_str(pos(x))) }", "8"),
+    ];
+    for (i, (src, expected)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_inline_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] inline refinement");
+    }
+}
+
+#[test]
 fn refinement_struct_field_proof_obligation_e1209() {
     // Phase 5 §1 R04: a constant value assigned to a refinement-typed struct
     // field must satisfy the predicate at construction (E1209). Completes the
