@@ -829,6 +829,23 @@ impl<'p> Interp<'p> {
         let input_arg: Option<i64> = input_args.first().copied();
         let mut env = Env::new();
         for (p, a) in f.params.iter().zip(args) {
+            // Soft typing: `Uncertain<T>` is compatible with a plain-`T` parameter
+            // (the checker allows it). If the declared param type is NOT itself an
+            // Uncertain but the argument IS one, unwrap to the inner value so the
+            // body sees a plain `T` (else `x * 2` on the Uncertain struct silently
+            // produced 0). Confidence is dropped at this T-typed boundary.
+            let param_is_uncertain = matches!(
+                &p.ty,
+                crate::ast::AxonType::Generic { base, .. } if base == "Uncertain"
+            );
+            let a = if !param_is_uncertain {
+                match value::uncertain_parts(&a) {
+                    Some((inner, _conf)) => inner,
+                    None => a,
+                }
+            } else {
+                a
+            };
             env.define(p.name.clone(), a);
         }
         // R5 `#[goal(...)]` sugar: train the metric, evaluate on the held-out

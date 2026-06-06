@@ -4854,6 +4854,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 (Some(BasicTypeEnum::FloatType(exp_flt)), BasicValueEnum::IntValue(iv)) => {
                     build_wrappers::w_signed_int_to_float(&self.ir.builder, iv, exp_flt, "itof").into()
                 }
+                // Soft typing: an `Uncertain<T>` argument (`{ T, f64, i64 }`
+                // struct) passed to a plain-`T` parameter — unwrap to the inner
+                // value (field 0), matching the interpreter. Confidence is dropped
+                // at the T-typed boundary. Only when the param is a scalar (the
+                // struct passed to an Uncertain param stays a struct).
+                (Some(BasicTypeEnum::IntType(_) | BasicTypeEnum::FloatType(_)), BasicValueEnum::StructValue(sv)) => {
+                    match self.ir.builder.build_extract_value(sv, 0, "unc_arg") {
+                        Ok(inner) => inner,
+                        Err(_) => val,
+                    }
+                }
                 _ => val,
             };
             arg_vals.push(coerced.into());

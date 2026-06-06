@@ -4472,6 +4472,36 @@ fn uncertain_bool_condition_branches_on_inner_value() {
 }
 
 #[test]
+fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
+    // R9 soft typing: `Uncertain<T>` is compatible with a plain-`T` param (the
+    // checker allows it). Passing an Uncertain to such a fn used to bind the
+    // STRUCT to the param, so `x` / `x * 2` silently produced 0. The value is now
+    // unwrapped to its inner `T` at the call boundary (confidence dropped there).
+    for (label, src, want) in [
+        ("identity", "fn id(x: i64) -> i64 { x }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  id(a) }\n", 5),
+        ("arithmetic", "fn double(x: i64) -> i64 { x * 2 }\nfn main() -> i64 { let a = uncertain_new(5, 0.9)\n  double(a) }\n", 10),
+    ] {
+        let f = std::env::temp_dir().join(format!("axon_uncarg_{}_{}.ax", std::process::id(), label));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(want), "{label}: an Uncertain arg to a plain-T param must unwrap to T");
+    }
+
+    // But a fn that DECLARES an `Uncertain<T>` param must still receive the
+    // Uncertain (not unwrapped) — its `.value`/`.confidence` fields must work.
+    let f = std::env::temp_dir().join(format!("axon_uncparam_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn getval(u: Uncertain<i64>) -> i64 { u.value }\nfn main() -> i64 { let a = uncertain_new(7, 0.9)\n  getval(a) }\n",
+    )
+    .unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(7), "an Uncertain<T> param must preserve the Uncertain (not be unwrapped)");
+}
+
+#[test]
 fn uncertain_binops_propagate_minimum_confidence() {
     // R9 / PRD: the interpreter now EXECUTES Uncertain<T> binary ops (the gap
     // the PRD analysis flagged — codegen had emit_binop_uncertain, interp's
