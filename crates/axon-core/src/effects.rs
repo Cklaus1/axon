@@ -144,11 +144,20 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
     let mut inferred: HashMap<String, HashSet<String>> = fns
         .iter()
         .map(|f| {
-            let seed: HashSet<String> = f
+            let mut seed: HashSet<String> = f
                 .effect_row
                 .as_ref()
                 .map(|r| r.effects.iter().cloned().collect())
                 .unwrap_or_default();
+            // §4: a `@[contained]` capability spec also DECLARES effects — the
+            // capabilities it grants imply the rows it may exercise. This lets
+            // the effect checker see through a contained helper just like a
+            // row-annotated one (one unified effect/capability model).
+            if let Some(spec) = &f.contained {
+                for eff in contained_effect_row(spec) {
+                    seed.insert(eff);
+                }
+            }
             (f.name.clone(), seed)
         })
         .collect();
@@ -182,6 +191,23 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
         }
     }
     inferred
+}
+
+/// §4: derive the effect row a `@[contained(...)]` spec declares. The granted
+/// capabilities imply the effects the function may perform: filesystem
+/// read/write and process exec are forms of `IO`; a network allowlist grants
+/// `Net`. A `never:`-only spec grants nothing. This is the bridge that lets the
+/// Phase-4 capability sandbox participate in the Phase-6 effect model — a
+/// contained fn contributes these effects to its callers' inferred sets.
+fn contained_effect_row(spec: &crate::ast::ContainedSpec) -> Vec<String> {
+    let mut effs = Vec::new();
+    if !spec.fs_read.is_empty() || !spec.fs_write.is_empty() || spec.exec_allowed {
+        effs.push("IO".to_string());
+    }
+    if !spec.net_allow.is_empty() {
+        effs.push("Net".to_string());
+    }
+    effs
 }
 
 /// Collect the names of every directly-called function/builtin in `e`.
@@ -440,6 +466,29 @@ mod tests {
              fn io_c(x: i64) -> i64 | {IO} { b(x) }",
         );
         assert!(errs.is_empty(), "declared {{IO}} should admit the transitive IO, got {errs:?}");
+    }
+
+    #[test]
+    fn contained_capability_contributes_effects() {
+        // A `@[contained(net: [...])]` helper declares the Net effect through its
+        // capability spec; a caller declaring `| {}` that calls it must be flagged.
+        let errs = check(
+            "@[contained(net: [\"api.example.com\"])]\n\
+             fn fetch(u: str) -> i64 { 0 }\n\
+             fn caller() -> i64 | {} { fetch(\"x\") }",
+        );
+        assert!(
+            errs.iter().any(|e| e.message.contains("caller") && e.message.contains("Net")),
+            "contained net cap must surface as a Net effect leak, got {errs:?}"
+        );
+
+        // Declaring the matching row admits it.
+        let ok = check(
+            "@[contained(net: [\"api.example.com\"])]\n\
+             fn fetch(u: str) -> i64 { 0 }\n\
+             fn caller() -> i64 | {Net} { fetch(\"x\") }",
+        );
+        assert!(ok.is_empty(), "declared {{Net}} should admit the contained call, got {ok:?}");
     }
 
     #[test]
