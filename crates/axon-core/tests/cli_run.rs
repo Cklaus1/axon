@@ -2756,7 +2756,7 @@ fn adaptive_returning_an_uncertain_or_temporal_is_optimized() {
         // A real optimization reaches the peak (>= 90); the target-fallback bug
         // returned 999. Assert it's near the peak, not the unreachable target.
         assert!(
-            best >= 90.0 && best <= 100.0,
+            (90.0..=100.0).contains(&best),
             "{label}: adaptive wrapper return must be OPTIMIZED to the peak (~100), got {best} (999 = the unoptimized target fallback)"
         );
     }
