@@ -202,7 +202,7 @@ When this works end-to-end, Axon is real.
 |---|---|---|
 | `Goal<M>` | metric M, constraints, budget, principal | 1 | *(userland landed: `examples/stdlib/goal.ax` — a first-class Goal **value** bundling metric+target+Budget+Constraint, met only when target reached AND hard guard holds; kernel `Goal<M>` with SMT-checked constraints is Phase-7)* |
 | `Constraint` | `Invariant(pred)` \| `Forbidden(pred)` | 1 |
-| `Budget<R...>` | extensible cost over resource set R | 1 |
+| `Budget<R...>` | extensible cost over resource set R | 1 | *(userland landed: `examples/stdlib/budget.ax` — single-resource `Budget{used,cap}` PLUS `ResBudget{calls,tokens,cost}` modeling "cost over a resource SET": ANY axis overrun exhausts the whole budget (conjunctive contract), `rb_tightest_pct` reports the binding axis; kernel `Budget<R...>` generic-over-resource-sets + runtime tick on every ai_complete is Phase-7)* |
 | `Principal` | id, parent, capabilities, audit_log, mintable_subset | 1 | *(userland minting landed: `examples/stdlib/principal_mint.ax` — `mint` carves a strict capability+budget subset BY CONSTRUCTION (`want_X && parent.X`, budget clamped+debited), realizing I-12 at the delegation edge; the `capability_minter` TCB component. Kernel `Principal<Caps>` with SMT-proven subset relation is Phase-7. Spec: `governance/specs/R11-capability-minting.md`.)* |
 | `Effect` | row-polymorphic effect tag | 1 |
 | `Refinement` | `T where pred` | 1 (kernel-level via Phase 5) |

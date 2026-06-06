@@ -73,13 +73,138 @@ fn test_budget_used_pct() {
     assert_eq(budget_used_pct(b), 75)
 }
 
+// ── Budget<R...> — extensible cost over a RESOURCE SET ──────────────────────
+//
+// The single-resource `Budget` above caps one consumable. The Tier-1 type
+// `Budget<R...>` (ROADMAP §6 row 7) is "extensible cost over resource set R": an
+// ASI run is bounded on SEVERAL axes at once — model CALLS, TOKENS, and µ$ COST
+// — and the run must abort the moment ANY axis is exhausted, not just the total.
+// Axon has no generics-over-resource-sets yet, so this models the canonical ASI
+// resource quartet concretely. Each axis has its own cap; one overrun on any
+// axis exhausts the WHOLE budget (the conjunctive contract — you can't trade a
+// token surplus for a call deficit). Immutable: `rb_spend` returns a new value.
+
+type ResBudget = {
+    calls_used: i64,   calls_cap: i64,    // model invocations
+    tokens_used: i64,  tokens_cap: i64,   // tokens consumed
+    cost_used: i64,    cost_cap: i64,     // spend in µ$
+}
+
+fn rb_new(calls_cap: i64, tokens_cap: i64, cost_cap: i64) -> ResBudget {
+    ResBudget {
+        calls_used: 0,  calls_cap: calls_cap,
+        tokens_used: 0, tokens_cap: tokens_cap,
+        cost_used: 0,   cost_cap: cost_cap,
+    }
+}
+
+// Charge one call that consumed `tokens` tokens at `rate_micro` µ$/1000 tokens.
+// Returns the updated budget (immutable). Spend is recorded even past a cap —
+// `rb_exhausted` then reports the breach; `rb_ok` is the pre-check that prevents
+// it (the "look before you leap" call site).
+fn rb_spend(b: ResBudget, tokens: i64, cost_micro: i64) -> ResBudget {
+    ResBudget {
+        calls_used: b.calls_used + 1,        calls_cap: b.calls_cap,
+        tokens_used: b.tokens_used + tokens, tokens_cap: b.tokens_cap,
+        cost_used: b.cost_used + cost_micro, cost_cap: b.cost_cap,
+    }
+}
+
+// Exhausted iff ANY axis is at/over its cap (the conjunctive contract).
+// (Operators kept trailing so the multi-line expr parses — a leading `||`/`&&`
+// on a continuation line breaks the lexer, see the continuation gotcha.)
+fn rb_exhausted(b: ResBudget) -> bool {
+    let calls = b.calls_used >= b.calls_cap
+    let tokens = b.tokens_used >= b.tokens_cap
+    let cost = b.cost_used >= b.cost_cap
+    calls || tokens || cost
+}
+
+// Would charging one more call of `tokens`/`cost_micro` stay within EVERY cap?
+fn rb_ok(b: ResBudget, tokens: i64, cost_micro: i64) -> bool {
+    let calls = b.calls_used + 1 <= b.calls_cap
+    let toks = b.tokens_used + tokens <= b.tokens_cap
+    let cost = b.cost_used + cost_micro <= b.cost_cap
+    calls && toks && cost
+}
+
+// The TIGHTEST axis as a used-percent 0..100 — the one closest to exhausting the
+// run, i.e. the binding constraint a scheduler should report.
+fn rb_tightest_pct(b: ResBudget) -> i64 {
+    let cp = if b.calls_cap <= 0 { 100 } else { clamp_i64(b.calls_used * 100 / b.calls_cap, 0, 100) }
+    let tp = if b.tokens_cap <= 0 { 100 } else { clamp_i64(b.tokens_used * 100 / b.tokens_cap, 0, 100) }
+    let xp = if b.cost_cap <= 0 { 100 } else { clamp_i64(b.cost_used * 100 / b.cost_cap, 0, 100) }
+    max_i64(cp, max_i64(tp, xp))
+}
+
+@[test]
+fn test_rb_new_is_empty() {
+    let b = rb_new(10, 5000, 100000)
+    assert_eq(b.calls_used, 0)
+    assert_eq(b.tokens_used, 0)
+    assert_eq(b.cost_used, 0)
+    assert(!rb_exhausted(b))
+}
+
+@[test]
+fn test_rb_spend_accumulates_all_axes() {
+    let b = rb_spend(rb_new(10, 5000, 100000), 800, 1200)
+    assert_eq(b.calls_used, 1)
+    assert_eq(b.tokens_used, 800)
+    assert_eq(b.cost_used, 1200)
+}
+
+@[test]
+fn test_rb_any_axis_overrun_exhausts() {
+    // Tokens cap is the binding axis: 3 calls of 400 tokens = 1200 > 1000, even
+    // though calls (3 < 10) and cost (well under) have headroom.
+    let b0 = rb_new(10, 1000, 1000000)
+    let b1 = rb_spend(b0, 400, 10)
+    let b2 = rb_spend(b1, 400, 10)
+    let b3 = rb_spend(b2, 400, 10)
+    assert(rb_exhausted(b3))          // token axis breached
+    assert(!rb_exhausted(b2))         // 800 < 1000, still ok
+    assert(b3.calls_used < b3.calls_cap)  // calls had headroom — proves it's the TOKEN axis
+}
+
+@[test]
+fn test_rb_ok_is_conjunctive() {
+    // One call from the call cap, with cost headroom but NO token headroom.
+    let b = rb_spend(rb_new(2, 500, 100000), 450, 100)
+    assert(rb_ok(b, 40, 100))   // 450+40=490 ≤ 500, call 2 ≤ 2, cost ok → all pass
+    assert(!rb_ok(b, 60, 100))  // 450+60=510 > 500 → token axis fails → whole check fails
+}
+
+@[test]
+fn test_rb_tightest_pct_is_the_binding_axis() {
+    // calls 50%, tokens 90%, cost 10% → tightest is tokens at 90.
+    let b = ResBudget {
+        calls_used: 5,  calls_cap: 10,
+        tokens_used: 900, tokens_cap: 1000,
+        cost_used: 100, cost_cap: 1000,
+    }
+    assert_eq(rb_tightest_pct(b), 90)
+}
+
 fn main() {
-    // Simulate an LLM run against an 8000-token budget.
+    // Single-resource: simulate an LLM run against an 8000-token budget.
     let b = budget_spend(budget_spend(budget_new(8000), 1200), 900)
     println("budget: used {to_str(b.used)} / {to_str(b.cap)} tokens, {to_str(budget_used_pct(b))}% used, {to_str(budget_remaining(b))} remaining")
     if budget_ok(b, 6000) {
         println("next call (6000 tokens): allowed")
     } else {
         println("next call (6000 tokens): BLOCKED — would exceed budget")
+    }
+
+    // Multi-resource: an agent loop bounded on 5 calls / 4000 tokens / 50000 µ$.
+    // It stops the moment ANY axis would be exceeded — here the token axis binds.
+    let rb0 = rb_new(5, 4000, 50000)
+    let rb1 = rb_spend(rb0, 1500, 9000)
+    let rb = rb_spend(rb1, 1500, 9000)
+    println("multi: {to_str(rb.calls_used)}/{to_str(rb.calls_cap)} calls, {to_str(rb.tokens_used)}/{to_str(rb.tokens_cap)} tokens, tightest axis {to_str(rb_tightest_pct(rb))}%")
+    if rb_ok(rb, 1500, 9000) {
+        println("3rd call (1500 tok): allowed")
+    } else {
+        println("3rd call (1500 tok): BLOCKED — would exceed the token cap (3000+1500 > 4000)")
     }
 }

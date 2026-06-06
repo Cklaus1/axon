@@ -2468,6 +2468,21 @@ fn safe_self_improve_demo_composes_full_stack() {
 }
 
 #[test]
+fn budget_stdlib_module_tests_pass() {
+    // Tier-1 Budget userland module. The single-resource `Budget { used, cap }`
+    // plus `Budget<R...>` — "extensible cost over resource set R" (ROADMAP §6
+    // row 7): `ResBudget` bounds an ASI run on calls AND tokens AND µ$ cost at
+    // once, exhausting the WHOLE budget when ANY axis breaches (the conjunctive
+    // contract — no trading a token surplus for a call deficit). 10 @[test]s
+    // (5 single-resource + 5 multi-resource), headed by the any-axis-overrun and
+    // conjunctive-ok cases that distinguish it from the single-resource budget.
+    let out = axon().args(["test", &ex("stdlib/budget.ax")]).output().unwrap();
+    assert!(out.status.success(), "budget.ax tests should pass: {:?}", out);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("10 passed, 0 failed"), "stdout: {stdout}");
+}
+
+#[test]
 fn agent_stdlib_module_tests_pass() {
     // Tier-1 Agent userland module: closes ROADMAP §9.5 F12 at the
     // userland layer. Bundles Principal + Budget + Supervisor into a

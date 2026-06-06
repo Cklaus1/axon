@@ -10,7 +10,7 @@ all hold at once:
 
 | Module | Axis | Type / key functions |
 |---|---|---|
-| `budget.ax` | **how much** (bounded resources) | `Budget { used, cap }`; `budget_new/spend/remaining/exhausted/ok/used_pct` |
+| `budget.ax` | **how much** (bounded resources) | `Budget { used, cap }` (single-resource); `Budget<R...>` as `ResBudget { calls, tokens, cost }` — multi-axis, ANY-axis-overrun exhausts; `rb_new/spend/ok/exhausted/tightest_pct` |
 | `constraint.ax` | **correctness** (hard must-hold rules) | `Constraint { name, satisfied }`; `within/at_most/enforce/both` |
 | `principal.ax` | **permission** (capabilities) | `Principal { name, net, fs_write, exec }`; `sandboxed/principal/require_cap` |
 | `uncertain.ax` | **confidence** (calibrated belief) | combinators over `Uncertain<i64>`: `u_confident/u_and/u_or/u_max_conf` |
