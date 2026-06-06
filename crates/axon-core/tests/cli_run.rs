@@ -3449,6 +3449,88 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn invariant_i9_no_silent_success_on_degenerate_input() {
+    // ARCHITECTURE INVARIANTS I-9 — "No silent success on degenerate input."
+    // Overflow / inverted / empty / out-of-range arguments must produce EITHER a
+    // graceful error (exit 101 / an Err) OR a DOCUMENTED, intentional sentinel —
+    // never a plausible-looking wrong value that masquerades as success.
+    //
+    // This is a single consolidated guard for the invariant: the individual
+    // codegen fixes this surface drove (overflow, bounds, abs/pow, f64→i64
+    // saturation, arr_sum saturation) each have their own native↔interp parity
+    // test; THIS one pins the *interpreter's* I-9 contract across the categories
+    // I-9 names, so a regression that reintroduces a silent-wrong value is caught
+    // as an invariant violation, not just a parity drift.
+    //
+    // Each row: (program body, expectation). `Panic(substr)` = must exit 101 with
+    // that message; `Out(s)` = must exit 0 printing exactly the documented
+    // sentinel.
+    enum Exp {
+        Panic(&'static str),
+        Out(&'static str),
+    }
+    use Exp::*;
+    let cases: &[(&str, Exp)] = &[
+        // Overflow → graceful panic (not a wrapped value).
+        ("let m = 9223372036854775807\n  println(to_str(m + m))", Panic("integer overflow")),
+        // Division by zero → graceful panic (not SIGFPE / garbage).
+        ("let z = 0\n  println(to_str(7 / z))", Panic("division by zero")),
+        // Out-of-bounds index → graceful panic (not garbage / arbitrary memory).
+        ("let a = [1, 2, 3]\n  let i = 7\n  println(to_str(a[i]))", Panic("out of bounds")),
+        // abs(i64::MIN) → graceful panic (not a raw overflow leak).
+        ("let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(abs_i64(mm)))", Panic("abs_i64 overflow")),
+        // arr_max on empty → graceful panic WITH a message.
+        ("let a: [i64] = []\n  println(to_str(arr_max_i64(a)))", Panic("array is empty")),
+        // ── Documented intentional sentinels (NOT silent-wrong) ──────────────
+        // Inverted str_slice → empty string (documented total function).
+        ("let a = 4\n  let b = 1\n  println(str_slice(\"hello\", a, b))", Out("")),
+        // f64→i64 out of range → saturates to i64::MAX (documented).
+        ("let f = 1.0e30\n  println(to_str(f64_to_i64(f)))", Out("9223372036854775807")),
+        // Bad parse → Err, not a silent 0.
+        ("match parse_int(\"nope\") { Ok(n) => println(to_str(n))  Err(e) => println(e) }", Out("could not parse `nope` as a base-10 integer")),
+        // arr_sum overflow → saturates (documented), not a wrapped negative.
+        ("let a = [9223372036854775807, 1]\n  println(to_str(arr_sum_i64(a)))", Out("9223372036854775807")),
+    ];
+    for (i, (body, exp)) in cases.iter().enumerate() {
+        let src = format!("fn main() {{\n  {body}\n}}\n");
+        let f = std::env::temp_dir().join(format!("axon_i9_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let combined = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        match exp {
+            Panic(needle) => {
+                assert_eq!(
+                    out.status.code(),
+                    Some(101),
+                    "[I-9 case {i}] degenerate input must panic (exit 101), not silently succeed: {out:?}"
+                );
+                assert!(
+                    combined.contains("axon: panic:") && combined.contains(needle),
+                    "[I-9 case {i}] expected a panic mentioning `{needle}`, got: {combined}"
+                );
+            }
+            Out(expected) => {
+                assert_eq!(
+                    out.status.code(),
+                    Some(0),
+                    "[I-9 case {i}] documented-sentinel case must exit 0: {out:?}"
+                );
+                assert_eq!(
+                    String::from_utf8_lossy(&out.stdout).trim(),
+                    *expected,
+                    "[I-9 case {i}] documented sentinel mismatch"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn annotated_result_local_compiles_and_matches_on_both_engines() {
     // REGRESSION (native codegen): `let r: Result<i64, str> = Ok(7)` followed by
     // `match r { Ok(v) => …  Err(e) => … }` failed native codegen with an IR
