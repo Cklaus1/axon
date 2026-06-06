@@ -1446,6 +1446,31 @@ fn cmd_verify(file: PathBuf) {
                 }
             }
         }
+
+        // Phase 5 §1.5: refinement subtyping under argument forwarding — when a
+        // fn forwards its own refinement-typed param as a refinement argument,
+        // prove the caller's predicate implies the callee's (the variable-arg
+        // obligation the constant checker defers).
+        for r in axon_core::smt::prove_refinement_arg_forwarding(&program, &refinements) {
+            match r {
+                ProofResult::Proven { function } => {
+                    println!("  ✓ proven: `{function}` forwards an argument that satisfies the callee's refinement");
+                }
+                ProofResult::Counterexample { function, inputs, predicate } => {
+                    any_violation = true;
+                    let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
+                    emit_error(
+                        &format!(
+                            "[{}] at `{function}` the {predicate}, but the caller's refinement admits {} (SMT counterexample)",
+                            axon_core::error::E1102,
+                            args.join(", ")
+                        ),
+                        !std::io::stderr().is_terminal(),
+                    );
+                }
+                ProofResult::Unsupported { .. } => { /* forwarding outside the fragment: runtime gate applies */ }
+            }
+        }
     }
 
     process::exit(if any_violation { 2 } else { 0 });

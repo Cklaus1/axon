@@ -660,6 +660,164 @@ pub fn prove_refinement_returns(
     out
 }
 
+/// Phase 5 §1.5 (first sound case): refinement subtyping under ARGUMENT
+/// FORWARDING. When a function forwards one of its own refinement-typed
+/// parameters `p` directly as an argument to a callee slot that also carries a
+/// refinement, the call is safe iff the caller's predicate IMPLIES the callee's:
+/// `∀ p. caller_pred(p) ⟹ callee_pred(p)`. Z3 decides this implication directly
+/// (no body encoding needed) — `∃ p. caller_pred(p) ∧ ¬callee_pred(p)` unsat ⇒
+/// proven safe; sat ⇒ a concrete `p` the caller admits but the callee forbids
+/// (E1102). This is the dual of the return prover: it discharges the call-site
+/// argument obligation the constant checker (E1209) defers for variables.
+///
+/// Only DIRECT forwarding (`callee(p)` where `p` is a bare refinement param) is
+/// in scope here — a general expression argument needs the full path-condition
+/// machinery. Anything else is simply not reported (the runtime obligation
+/// still applies); we never emit a false counterexample.
+pub fn prove_refinement_arg_forwarding(
+    program: &Program,
+    refinements: &std::collections::HashMap<String, Expr>,
+) -> Vec<ProofResult> {
+    let mut out = Vec::new();
+    // fn name → per-param-slot refinement name (None if that slot is unrefined).
+    let slot_refs: std::collections::HashMap<String, Vec<Option<String>>> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::FnDef(f) => {
+                let slots = f
+                    .params
+                    .iter()
+                    .map(|p| match &p.ty {
+                        crate::ast::AxonType::Named(n) if refinements.contains_key(n) => {
+                            Some(n.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                Some((f.name.clone(), slots))
+            }
+            _ => None,
+        })
+        .collect();
+
+    for item in &program.items {
+        let Item::FnDef(f) = item else { continue };
+        // This caller's own params → their refinement name (for the forwarded id).
+        let caller_param_ref: std::collections::HashMap<String, String> = f
+            .params
+            .iter()
+            .filter_map(|p| match &p.ty {
+                crate::ast::AxonType::Named(n) if refinements.contains_key(n) => {
+                    Some((p.name.clone(), n.clone()))
+                }
+                _ => None,
+            })
+            .collect();
+        if caller_param_ref.is_empty() {
+            continue;
+        }
+        let mut calls = Vec::new();
+        collect_calls(&f.body, &mut calls);
+        for (callee, args) in calls {
+            let Some(callee_slots) = slot_refs.get(&callee) else { continue };
+            for (i, arg) in args.iter().enumerate() {
+                let Expr::Ident(argname) = arg else { continue };
+                let Some(caller_rname) = caller_param_ref.get(argname) else { continue };
+                let Some(Some(callee_rname)) = callee_slots.get(i) else { continue };
+                if caller_rname == callee_rname {
+                    continue; // identical refinement — trivially safe, skip the query.
+                }
+                let (Some(cpred), Some(epred)) =
+                    (refinements.get(caller_rname), refinements.get(callee_rname))
+                else {
+                    continue;
+                };
+                out.push(prove_implies(
+                    cpred,
+                    epred,
+                    &format!("{}→{callee}", f.name),
+                    callee_rname,
+                ));
+            }
+        }
+    }
+    out
+}
+
+/// Prove `∀ _. antecedent(_) ⟹ consequent(_)` over the integer fragment. Used
+/// for refinement subtyping: the binder `_` ranges over the forwarded value.
+fn prove_implies(antecedent: &Expr, consequent: &Expr, site: &str, callee_rname: &str) -> ProofResult {
+    let cfg = solver_config();
+    let ctx = Context::new(&cfg);
+    let x = Int::new_const(&ctx, "_");
+    let (Some(a), Some(c)) = (
+        encode_pred_binder(&ctx, antecedent, &x),
+        encode_pred_binder(&ctx, consequent, &x),
+    ) else {
+        return ProofResult::Unsupported {
+            function: site.to_string(),
+            reason: "refinement predicate is outside the i64 implication fragment".into(),
+        };
+    };
+    // VC: ∃ _. a ∧ ¬c  (a witness the caller admits but the callee rejects).
+    let solver = Solver::new(&ctx);
+    solver.assert(&Bool::and(&ctx, &[&a, &c.not()]));
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven { function: site.to_string() },
+        SatResult::Sat => {
+            let v = solver
+                .get_model()
+                .and_then(|m| m.eval(&x, true))
+                .and_then(|i| i.as_i64())
+                .unwrap_or(0);
+            ProofResult::Counterexample {
+                function: site.to_string(),
+                inputs: vec![("_".to_string(), v)],
+                predicate: format!("forwarded value must satisfy `{callee_rname}`"),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: site.to_string(),
+            reason: "Z3 returned unknown".into(),
+        },
+    }
+}
+
+/// Collect every `callee_name(args…)` direct call in `e` as (name, args).
+fn collect_calls(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
+    match e {
+        Expr::Call { callee, args, .. } => {
+            if let Expr::Ident(name) = callee.as_ref() {
+                out.push((name.clone(), args.clone()));
+            }
+            for a in args {
+                collect_calls(a, out);
+            }
+            collect_calls(callee, out);
+        }
+        Expr::BinOp { left, right, .. } => {
+            collect_calls(left, out);
+            collect_calls(right, out);
+        }
+        Expr::UnaryOp { operand, .. } => collect_calls(operand, out),
+        Expr::If { cond, then, else_ } => {
+            collect_calls(cond, out);
+            collect_calls(then, out);
+            if let Some(e) = else_ {
+                collect_calls(e, out);
+            }
+        }
+        Expr::Block(stmts) => {
+            for s in stmts {
+                collect_calls(&s.expr, out);
+            }
+        }
+        Expr::Let { value, .. } => collect_calls(value, out),
+        _ => {}
+    }
+}
+
 /// Float-fragment analog of `prove_one_refinement_return`: encode the f64 body as
 /// a Z3 Real and prove the predicate (with `_` → body) holds for all inputs.
 fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
@@ -1229,6 +1387,57 @@ mod tests {
             r.iter().any(|p| matches!(p, ProofResult::Counterexample { function, .. } if function == "pos")),
             "inlined identity must still be refuted, got {r:?}"
         );
+    }
+
+    #[test]
+    fn smt_proves_refinement_arg_forwarding_subtyping() {
+        // A `Positive` (> 0) forwarded where `NonNeg` (>= 0) is required is SAFE:
+        // every positive is non-negative, so the implication holds.
+        let program = parse_source(
+            "type Positive = i64 where _ > 0\n\
+             type NonNeg = i64 where _ >= 0\n\
+             fn sink(x: NonNeg) -> i64 { x }\n\
+             fn forward(p: Positive) -> i64 { sink(p) }",
+        )
+        .expect("parse");
+        let mut refs = std::collections::HashMap::new();
+        for it in &program.items {
+            if let Item::RefineDef(r) = it {
+                refs.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        let r = prove_refinement_arg_forwarding(&program, &refs);
+        assert!(
+            r.iter().any(|p| matches!(p, ProofResult::Proven { .. })),
+            "Positive ⟹ NonNeg forwarding must be proven safe, got {r:?}"
+        );
+        assert!(
+            !r.iter().any(|p| matches!(p, ProofResult::Counterexample { .. })),
+            "no counterexample expected for a sound forward, got {r:?}"
+        );
+
+        // The UNSOUND direction: forwarding a `NonNeg` where `Positive` is
+        // required fails — `_ = 0` is non-negative but not positive.
+        let program = parse_source(
+            "type Positive = i64 where _ > 0\n\
+             type NonNeg = i64 where _ >= 0\n\
+             fn sink(x: Positive) -> i64 { x }\n\
+             fn forward(p: NonNeg) -> i64 { sink(p) }",
+        )
+        .expect("parse");
+        let mut refs = std::collections::HashMap::new();
+        for it in &program.items {
+            if let Item::RefineDef(r) = it {
+                refs.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        let r = prove_refinement_arg_forwarding(&program, &refs);
+        match r.iter().find(|p| matches!(p, ProofResult::Counterexample { .. })) {
+            Some(ProofResult::Counterexample { inputs, .. }) => {
+                assert!(inputs.iter().any(|(_, v)| *v <= 0), "witness must be <= 0: {inputs:?}");
+            }
+            _ => panic!("NonNeg ⟹ Positive must yield a counterexample, got {r:?}"),
+        }
     }
 
     #[test]
