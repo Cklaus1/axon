@@ -5129,6 +5129,21 @@ impl<'ctx> super::Codegen<'ctx> {
             let axon_param_ty = axon_params.get(i);
             let is_dyn_param = matches!(axon_param_ty, Some(ast::AxonType::DynTrait(_)));
 
+            // Set the Option/Result type context from the DECLARED param type so a
+            // bare `None` / `Ok(..)`/`Err(..)` argument builds the param's full
+            // canonical layout — otherwise `g(None)` where `g(o: Option<str>)`
+            // emits `{i1,i64}` and fails IR verification against the `{i1,ptr}`
+            // param. Restored at the end of this iteration.
+            let saved_oi_arg = self.current_option_inner.clone();
+            let saved_rt_arg = self.current_result_types.clone();
+            if let Some(pt) = axon_param_ty {
+                match self.axon_type_to_semantic(pt) {
+                    Type::Option(inner) => self.current_option_inner = Some(*inner),
+                    Type::Result(ok, err) => self.current_result_types = Some((*ok, *err)),
+                    _ => {}
+                }
+            }
+
             if is_dyn_param {
                 let trait_name = match axon_param_ty {
                     Some(ast::AxonType::DynTrait(t)) => t.clone(),
@@ -5225,6 +5240,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 _ => val,
             };
             arg_vals.push(coerced.into());
+            // Restore the Option/Result context after this arg.
+            self.current_option_inner = saved_oi_arg;
+            self.current_result_types = saved_rt_arg;
         }
 
         // R4 §4.3: if this is a capability-bearing builtin called inside an

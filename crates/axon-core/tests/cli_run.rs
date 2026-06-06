@@ -3449,6 +3449,30 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn bare_sum_type_argument_sized_from_declared_param_type() {
+    // The call-site analog of the annotated-local layout fixes: a bare `None` /
+    // `Ok(..)` / `Err(..)` passed as a FUNCTION ARGUMENT must be built with the
+    // declared PARAMETER's canonical layout. `g(None)` where `g(o: Option<str>)`
+    // used to fail native IR verification — the bare None was sized `{i1,i64}`
+    // against the param's `{i1,ptr}`. Fixed by setting the option/result type
+    // context from the callee's declared param type around each arg's emission.
+    let cases: &[(&str, &str)] = &[
+        ("fn main() { println(g(None)) }\nfn g(o: Option<str>) -> str { match o { Some(v) => v  None => \"default\" } }", "default"),
+        ("fn main() { println(g(Some(\"hi\"))) }\nfn g(o: Option<str>) -> str { match o { Some(v) => v  None => \"default\" } }", "hi"),
+        ("fn main() { println(to_str(h(Err(\"x\")))) }\nfn h(r: Result<i64, str>) -> i64 { match r { Ok(v) => v  Err(e) => 0 } }", "0"),
+        ("fn main() { println(to_str(h(Ok(5)))) }\nfn h(r: Result<i64, str>) -> i64 { match r { Ok(v) => v  Err(e) => 0 } }", "5"),
+    ];
+    for (i, (prog, expected)) in cases.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_sumarg_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, prog).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] bare sum-type arg");
+    }
+}
+
+#[test]
 fn annotated_option_local_compiles_and_matches_on_both_engines() {
     // Sibling of the annotated-Result fix. `let o: Option<str> = None` followed
     // by `o = Some("hi")` failed native codegen: a bare `None` defaulted to the
