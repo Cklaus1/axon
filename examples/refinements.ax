@@ -17,6 +17,11 @@ type NonEmpty = str where str_len(_) > 0
 // A percentage: a composite predicate.
 type Percent = i64 where _ >= 0 && _ <= 100
 
+// A WHOLE-STRUCT refinement: the binder `_` is the struct instance and `_.field`
+// projects a field, so the predicate relates two fields. A constant literal that
+// violates it (e.g. `Range { lo: 9, hi: 2 }`) is rejected at compile time.
+type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
+
 // A `@[pure]` function is free of I/O, AI, time, randomness, and channels — so it
 // is admitted into the predicate language. Here it backs an `Even` refinement.
 @[pure]
@@ -62,6 +67,10 @@ fn main() {
 
     let e: Even = 8
     println("even           = {to_str(e)}")
+
+    // A whole-struct refinement: `lo <= hi` is proved for this literal.
+    let r = Range { lo: 3, hi: 9 }
+    println("range lo+hi     = {to_str(r.lo + r.hi)}")
 
     // Refinements erase to their base type, so ordinary arithmetic just works.
     let p: Positive = 10
