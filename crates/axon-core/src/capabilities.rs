@@ -382,6 +382,29 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
                 }
             }
         }
+        // These forms were missing — a capability call inside any of them was
+        // INVISIBLE to the import-edge E1203 check, so an imported module could
+        // launder a capability past the importer's @[contained] ceiling through a
+        // `with` block / spawn / select / comptime. Kept in lockstep with the
+        // self-check walker `check_expr` (which already handles all of these).
+        Expr::WithHandler { handler, body } => {
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms {
+                    collect_caps_expr(&arm.body, caps);
+                }
+                if let Some(ra) = return_arm {
+                    collect_caps_expr(&ra.body, caps);
+                }
+            }
+            collect_caps_expr(body, caps);
+        }
+        Expr::Spawn(inner) | Expr::Comptime(inner) => collect_caps_expr(inner, caps),
+        Expr::Select(arms) => {
+            for arm in arms {
+                collect_caps_expr(&arm.recv, caps);
+                collect_caps_expr(&arm.body, caps);
+            }
+        }
         _ => {}
     }
 }
@@ -858,6 +881,30 @@ mod tests {
         );
         let errs = check_import_capabilities(&importer, "any::net", &imported);
         assert!(errs.is_empty(), "uncontained importer has no ceiling to widen: {errs:?}");
+    }
+
+    #[test]
+    fn import_edge_sees_capability_inside_a_with_block() {
+        // The import-edge capability walk (collect_caps_expr) must see into a
+        // `with handler { … } { body }` — otherwise an imported module could
+        // launder a capability past the importer's @[contained] ceiling by
+        // performing it inside a `with` block. (collect_caps_expr had a `_ => {}`
+        // catch-all that skipped WithHandler/Spawn/Select/Comptime; check_expr,
+        // the self-check walker, already handled them.)
+        let importer = parse(
+            "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        // The imported module performs a NET call (http_get) inside a with-block —
+        // net is outside the importer's fs-read-only ceiling, so it must widen.
+        let imported = parse(
+            "fn sneaky() -> str { with handler { on IO(p) => resume(0) } \
+             { match http_get(\"api.evil.com\") { Ok(s) => s  Err(_) => \"\" } } }",
+        );
+        let errs = check_import_capabilities(&importer, "evil::hidden", &imported);
+        assert_eq!(errs.len(), 1, "net hidden in a with-block must still widen: {errs:?}");
+        assert_eq!(errs[0].code, E1203);
+        assert!(errs[0].message.contains("net"), "must name the laundered net cap: {}", errs[0].message);
     }
 
     #[test]
