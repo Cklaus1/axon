@@ -438,8 +438,10 @@ Phase 6 is done when:
 - [x] ✅ A substrate-marked file using raw `| {Net}` is accepted.
 - [ ] 📋 `@[contained(IO)]` emits the E1316 deprecation notice in `--effects-strict`
       (the `@[contained]`↔effect bridge is landed; the deprecation notice is reserved).
-- [ ] 📋 Refinement predicate (Phase 5) using `now_ms()` is rejected with E1311
-      (reserved; @[pure]/E1207 already rejects impure refinement helpers).
+- [x] ✅ Refinement predicate (Phase 5) using `now_ms()` (or any impure builtin) is
+      rejected — a refinement must be pure/deterministic. Emitted as **E1209**
+      (the refinement-predicate code) rather than the nominally-reserved E1311.
+      Guard: `refinement_predicate_with_impure_builtin_is_rejected_e1209`.
 - [x] ✅ All Phase 1–5 examples compile unchanged (`all_examples_typecheck_clean` +
       `all_examples_parity`).
 - [x] ✅ Effect features are exercised end-to-end by the gated

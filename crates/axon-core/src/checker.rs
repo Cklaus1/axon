@@ -463,6 +463,16 @@ impl CheckCtx {
             if let Item::RefineDef(r) = item {
                 self.refinement_base.insert(r.name.clone(), axon_type_to_type(&r.base));
                 self.refinement_pred.insert(r.name.clone(), (*r.predicate).clone());
+                // A refinement predicate is a STATIC, deterministic contract: it
+                // must be pure. An impure builtin in it (now_ms/random_i64/IO/AI…)
+                // makes the "type" non-deterministic and meaningless. Reject it.
+                self.reject_impure_refinement(&r.predicate, &r.name);
+            }
+            // Whole-struct refinement predicates must be pure for the same reason.
+            if let Item::TypeDef(td) = item {
+                if let Some(pred) = &td.refinement {
+                    self.reject_impure_refinement(pred, &td.name);
+                }
             }
         }
         // Phase 5: record each user fn's per-param refinement name (None if the
@@ -1348,6 +1358,41 @@ impl CheckCtx {
                      equivalent (no I/O, AI, channels, randomness, time, or mutation)"
                 )),
             );
+        }
+    }
+
+    /// Phase 5/6: a refinement predicate must be PURE — it is a static,
+    /// deterministic contract, so an impure builtin in it (now_ms, random_i64,
+    /// I/O, AI, channels, …) makes the refinement non-deterministic and
+    /// meaningless. Reject any impure builtin used in `pred` with E1209, naming
+    /// the offending builtin. (User-fn calls in predicates are handled elsewhere;
+    /// here we flag the impure-BUILTIN case, the one that silently slipped
+    /// through — `now_ms() > 0` was accepted as a refinement.)
+    fn reject_impure_refinement(&mut self, pred: &Expr, refine_name: &str) {
+        let mut violations: Vec<(String, &'static str)> = Vec::new();
+        // `pure_fns` empty here is fine: we only care about the impure-builtin
+        // hits for a refinement (a non-pure user-fn call in a predicate is a
+        // separate concern; the impure builtin is the soundness hole we close).
+        Self::collect_purity_violations(pred, &HashSet::new(), &mut violations);
+        for (callee, kind) in violations {
+            if kind == "impure builtin" {
+                let file = self.file.clone();
+                self.errors.push(
+                    CheckError::new(
+                        E1209,
+                        format!(
+                            "refinement `{refine_name}` uses the impure builtin `{callee}` — a \
+                             refinement predicate must be pure (deterministic), so it may not call \
+                             I/O, AI, time, randomness, or channel builtins"
+                        ),
+                    )
+                    .at(&file, 0, 0)
+                    .fix(format!(
+                        "remove `{callee}` from the predicate; a refinement must depend only on \
+                         the value `_` and pure computation"
+                    )),
+                );
+            }
         }
     }
 

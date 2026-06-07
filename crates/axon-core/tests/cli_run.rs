@@ -3885,6 +3885,36 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
 }
 
 #[test]
+fn refinement_predicate_with_impure_builtin_is_rejected_e1209() {
+    // A refinement predicate is a static, deterministic contract — an impure
+    // builtin in it (now_ms / random_i64 / I/O / AI / channels) makes the
+    // refinement non-deterministic and meaningless. Must be E1209-rejected.
+    // (This is the Phase-6 §10 "refinement using now_ms() is rejected" item; it
+    // had silently slipped through — `type T = i64 where now_ms() > 0` was
+    // accepted.)
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_refimp_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // now_ms() in a named refinement → E1209.
+    let (c, m) = check("type T = i64 where now_ms() > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }");
+    assert_eq!(c, 2, "now_ms() refinement must be rejected: {m}");
+    assert!(m.contains("E1209") && m.contains("now_ms"), "expected E1209 naming now_ms: {m}");
+
+    // random_i64() in a refinement → also rejected.
+    let (c, m) = check("type T = i64 where _ > random_i64(0, 10)\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }");
+    assert_eq!(c, 2, "random_i64 refinement must be rejected: {m}");
+
+    // A PURE refinement (only the value `_` + pure ops/builtins) is accepted.
+    assert_eq!(check("type T = i64 where _ > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }").0, 0, "pure refinement must be accepted");
+    assert_eq!(check("type S = str where str_len(_) > 0\nfn f(x: S) -> i64 { 0 }\nfn main() -> i64 { 0 }").0, 0, "pure-builtin refinement must be accepted");
+}
+
+#[test]
 fn refinement_predicate_calls_a_pure_function() {
     // Phase 5 §1 predicate language: a refinement predicate may CALL a @[pure]
     // function (depth ≤ 4), inlined over the constant binder — composing the
