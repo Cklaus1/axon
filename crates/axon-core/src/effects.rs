@@ -112,6 +112,32 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         } else {
             Allowed::Set(declared.get(&f.name).cloned().unwrap_or_default())
         };
+
+        // Consistency: a `@[contained(...)]` spec GRANTS capabilities that imply
+        // effects (net→Net, fs/exec→IO — the §4 bridge). If the fn ALSO declares
+        // a closed effect row, that row must include those implied effects —
+        // otherwise the two annotations contradict (the cap grants Net while the
+        // row claims the fn performs no Net). Flag the missing effect as E1310
+        // (the declared row is too small for what its capabilities permit). A fn
+        // with no row, or an open row, is unconstrained and not checked here.
+        if let (Some(spec), Allowed::Set(declared_set)) = (&f.contained, &allowed) {
+            for eff in contained_effect_row(spec) {
+                if !declared_set.contains(&eff) {
+                    errors.push(EffectError {
+                        code: E1310,
+                        message: format!(
+                            "`{}` is `@[contained]` with a capability that grants effect `{eff}`, \
+                             but its declared effect row does not include `{eff}` — the row \
+                             contradicts the granted capability (add `{eff}` to the row, or \
+                             remove the capability that grants it)",
+                            f.name
+                        ),
+                        span: Span::dummy(),
+                    });
+                }
+            }
+        }
+
         // Open callers can never leak — skip the walk entirely.
         if matches!(allowed, Allowed::Open) {
             continue;

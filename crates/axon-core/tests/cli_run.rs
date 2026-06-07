@@ -4304,6 +4304,39 @@ fn pure_attribute_contradicting_a_nonempty_effect_row_is_e1207() {
 }
 
 #[test]
+fn contained_capability_contradicting_a_too_small_row_is_e1310() {
+    // The `@[contained]`→effect bridge (§4): a granted capability implies an
+    // effect (net→Net, fs/exec→IO). If the fn ALSO declares a closed effect row
+    // that OMITS that effect, the two annotations contradict — the cap grants
+    // Net while the row claims no Net. Must be flagged (E1310), so the
+    // capability sandbox and the effect row can't silently disagree.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_caprow_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // net capability but `| {}` row → contradiction.
+    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(code, 2, "net cap + empty row must fail: {msg}");
+    assert!(msg.contains("E1310"), "expected E1310 for cap/row contradiction: {msg}");
+
+    // fs-write capability implies IO; `| {}` omits it → contradiction.
+    let (code, msg) = check("@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(code, 2, "fs-write cap + empty row must fail (fs→IO): {msg}");
+
+    // Consistent: net cap WITH `| {Net}` → clean.
+    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {Net} { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(code, 0, "net cap + matching row is consistent: {msg}");
+
+    // `@[contained]` with NO row clause is unconstrained → not checked here.
+    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(code, 0, "contained without a row must still be accepted: {msg}");
+}
+
+#[test]
 fn generic_fn_returning_sum_type_resolves_concrete_layout() {
     // A generic fn whose return mentions a type param — `wrap<T>(x: T) ->
     // Option<T>`, `ok_of<T>(x: T) -> Result<T, str>` — used to fail native
