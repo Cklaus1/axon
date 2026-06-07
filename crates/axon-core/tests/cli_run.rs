@@ -256,6 +256,38 @@ fn contained_capability_sandbox_is_enforced_by_check() {
 }
 
 #[test]
+fn contained_sandbox_rejects_path_traversal_e1001() {
+    // SECURITY: the fs allowlist matched paths by a raw `starts_with`, so
+    // `write_file("./out/../etc/passwd", …)` under `@[contained(fs:[write("./out/")])]`
+    // passed the prefix test and ESCAPED the sandbox via `..` traversal. A path
+    // with a `..` component can't be statically proven to stay within the
+    // allowlist, so it must be rejected (E1001). Legitimate paths (incl.
+    // filenames with literal dots) are unaffected.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_trav_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // `..` traversal out of the allowed prefix → rejected.
+    let (c, m) = check("@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 { let _ = write_file(\"./out/../etc/x\", \"y\")\n 0 }\nfn main() -> i64 { 0 }");
+    assert_eq!(c, 2, "path traversal must be rejected: {m}");
+    assert!(m.contains("E1001"), "expected E1001 for traversal: {m}");
+
+    // Deeper traversal and a broad `write("./")` allow are also caught.
+    assert_eq!(check("@[contained(fs: [write(\"./\")])]\nfn f() -> i64 { let _ = write_file(\"./a/../../etc/x\", \"y\")\n 0 }\nfn main() -> i64 { 0 }").0, 2, "deep traversal under broad allow must be rejected");
+    // Read-side traversal too.
+    assert_eq!(check("@[contained(fs: [read(\"./data/\")])]\nfn f() -> i64 { let _ = read_file(\"./data/../secret\")\n 0 }\nfn main() -> i64 { 0 }").0, 2, "read traversal must be rejected");
+
+    // No false positives: clean paths, nested paths, and filenames with literal
+    // dots (not a `..` component) are allowed.
+    assert_eq!(check("@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 { let _ = write_file(\"./out/sub/log.txt\", \"x\")\n 0 }\nfn main() -> i64 { 0 }").0, 0, "nested clean path must be allowed");
+    assert_eq!(check("@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 { let _ = write_file(\"./out/a..b.txt\", \"x\")\n 0 }\nfn main() -> i64 { 0 }").0, 0, "filename with literal dots must be allowed");
+}
+
+#[test]
 fn contained_sandbox_is_enforced_transitively_through_helpers() {
     // Security: a `@[contained]` sandbox must not be escapable by moving the
     // forbidden I/O one function call away. A contained fn that calls a helper

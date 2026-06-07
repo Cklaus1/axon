@@ -73,8 +73,24 @@ fn classify_call(name: &str) -> Option<IoKind> {
 
 /// Returns true if `path` has `prefix` as a path prefix.
 /// e.g. `path_has_prefix("./data/x.txt", "./data/")` → true
+///
+/// SECURITY: a path containing a `..` component never matches — otherwise
+/// `"./out/../etc/passwd"` would pass the raw `starts_with("./out/")` test and
+/// escape the sandbox via traversal. A `..` path can't be statically proven to
+/// stay within the allowed prefix, so the capability check denies it (the call
+/// is refused, the conservative-safe outcome). Paths without `..` use the plain
+/// prefix test.
 fn path_has_prefix(path: &str, prefix: &str) -> bool {
+    if path_has_dotdot(path) {
+        return false;
+    }
     path.starts_with(prefix)
+}
+
+/// True if `path` contains a `..` path component (`..`, `../`, `/..`, `/../`).
+/// A bare `..` inside a filename (e.g. `a..b`) is not a traversal component.
+fn path_has_dotdot(path: &str) -> bool {
+    path.split('/').any(|seg| seg == "..")
 }
 
 /// Check if `host` matches a glob pattern like `*.myapi.com`.
