@@ -7189,6 +7189,37 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
 }
 
 #[test]
+fn codegen_exit_codes_match_interp() {
+    // I-2 covers observable behavior, and the PROCESS EXIT CODE is observable —
+    // CI and supervisors branch on it. Native `assert(false)` used to exit 1
+    // while the interpreter exited 101 (div0 already matched at 101); the
+    // assert-family panic exits were converged to 101 in codegen. This delegates
+    // to scripts/exit_code_parity.sh, which builds crash/clean/return programs
+    // both ways and asserts interp==native on the exit code. Skips when codegen
+    // can't build (LLVM absent), so it stays green in interpreter-only CI.
+    let script = format!("{}/../../scripts/exit_code_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("exit_code_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run exit_code_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — exit-code parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "interp and native must agree on exit codes (I-2):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("exit_code_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn all_examples_native_match_interp_under_mock() {
     // R1 acceptance (the headline parity claim): EVERY examples/*.ax with a
     // `fn main` runs byte-identically under native codegen and the interpreter

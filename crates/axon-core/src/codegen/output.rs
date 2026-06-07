@@ -146,7 +146,8 @@ impl<'ctx> super::Codegen<'ctx> {
     /// One JIT execution engine is created for the entire module and reused
     /// across all tests. Test functions have Axon signature `fn()` (void);
     /// they pass if they return normally. If `assert(false)` fires it calls
-    /// `exit(1)`, terminating the process — Phase 1 limitation.
+    /// `exit(101)` (the runtime-panic code), terminating the process — Phase 1
+    /// limitation.
     pub fn run_tests(&self, fns: &[String]) -> Vec<TestResult> {
         // Verify the module before running tests.
         if let Err(e) = self.ir.module.verify() {

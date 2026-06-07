@@ -135,7 +135,7 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("print".to_string(), fn_val);
         }
 
-        // axon_assert: takes bool, panics (calls exit(1)) if false
+        // axon_assert: takes bool, panics (exit 101 — the interp's panic code) if false
         {
             let fn_ty = void_ty.fn_type(&[bool_ty.into()], false);
             let fn_val = self.ir.module.add_function("assert", fn_ty, None);
@@ -156,8 +156,10 @@ impl<'ctx> super::Codegen<'ctx> {
             msg_global.set_constant(true);
             let msg_ptr = msg_global.as_pointer_value();
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_ptr.into()], "");
-            let one = i32_ty.const_int(1, false);
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[one.into()], "");
+            // Exit 101 to match the interpreter's panic exit code (I-2 parity:
+            // a failed assert is a runtime crash, not a generic exit-1).
+            let panic_code = i32_ty.const_int(101, false);
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[panic_code.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
 
             self.ir.builder.position_at_end(ok_bb);
@@ -409,7 +411,7 @@ impl<'ctx> super::Codegen<'ctx> {
             msg_g.set_initializer(&msg);
             msg_g.set_constant(true);
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(1, false).into()], "");
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -435,7 +437,7 @@ impl<'ctx> super::Codegen<'ctx> {
             msg_g.set_initializer(&msg);
             msg_g.set_constant(true);
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(1, false).into()], "");
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -1027,7 +1029,7 @@ impl<'ctx> super::Codegen<'ctx> {
             msg_g.set_initializer(&msg);
             msg_g.set_constant(true);
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(1, false).into()], "");
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -1061,7 +1063,7 @@ impl<'ctx> super::Codegen<'ctx> {
             fail_g.set_initializer(&fail_msg);
             fail_g.set_constant(true);
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[fail_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(1, false).into()], "");
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             // same length — compare bytes via memcmp
             self.ir.builder.position_at_end(cmp_bb);
@@ -1082,7 +1084,7 @@ impl<'ctx> super::Codegen<'ctx> {
             bytes_g.set_initializer(&bytes_msg);
             bytes_g.set_constant(true);
             build_wrappers::w_call(&self.ir.builder,printf_fn, &[bytes_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(1, false).into()], "");
+            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -1907,7 +1909,7 @@ impl<'ctx> super::Codegen<'ctx> {
         // ── Phase 7: random_i64(lo: i64, hi: i64) -> i64 ─────────────────────
         // Uses C rand() % (hi - lo) + lo, with the SAME degenerate-bounds guard
         // the interpreter has (BUG_HUNT #27/#36, I-2 parity, I-9 no-silent-wrong):
-        //   • hi <  lo → inverted bounds: print an error + exit(1) (matches the
+        //   • hi <  lo → inverted bounds: print an error + exit(101) (matches the
         //     interpreter's graceful panic; previously yielded garbage).
         //   • hi == lo → empty range [lo, lo): return lo (previously a signed-rem
         //     by 0 → SIGFPE hard crash).
@@ -1935,8 +1937,8 @@ impl<'ctx> super::Codegen<'ctx> {
             );
             build_wrappers::w_cond_br(&self.ir.builder, is_inverted, inverted_bb, chk_eq_bb);
 
-            // Inverted bounds: print an error and exit(1) — loud failure, not a
-            // silent garbage value (I-9). Mirrors the interpreter's panic.
+            // Inverted bounds: print an error and exit(101) — loud failure, not
+            // a silent garbage value (I-9). Mirrors the interpreter's panic.
             self.ir.builder.position_at_end(inverted_bb);
             let msg = b"random_i64: inverted bounds (lo must be <= hi); the range is [lo, hi)\n\0";
             let msg_const = self.ir.context.const_string(msg, false);
@@ -1944,8 +1946,9 @@ impl<'ctx> super::Codegen<'ctx> {
             msg_global.set_initializer(&msg_const);
             msg_global.set_constant(true);
             build_wrappers::w_call(&self.ir.builder, printf_fn, &[msg_global.as_pointer_value().into()], "");
-            let one = i32_ty.const_int(1, false);
-            build_wrappers::w_call(&self.ir.builder, exit_fn, &[one.into()], "");
+            // Exit 101 — runtime panic code, matching the interpreter (I-2 parity).
+            let panic_code = i32_ty.const_int(101, false);
+            build_wrappers::w_call(&self.ir.builder, exit_fn, &[panic_code.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
 
             // hi == lo → empty range branch.

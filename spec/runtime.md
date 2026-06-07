@@ -444,14 +444,14 @@ Functions that trigger a 101 panic:
 
 There is no user-callable `panic()` builtin; idiomatic panic is spelled `assert(false)`.
 
-### Native codegen path (known divergence)
+### Native codegen path
 
 The native AOT path (`axon build`) emits `exit(code)` then `unreachable` in the LLVM IR
-(so the IR verifier is satisfied). Most runtime faults already match the interpreter
-(e.g. divide-by-zero exits **101** on both). **Known gap:** an `assert`-family failure
-currently exits **1** under native codegen but **101** under the interpreter — an exit-code
-parity gap (the I-2 invariant otherwise holds for stdout). Tracked for convergence; prefer
-the interpreter's 101 as the reference.
+(so the IR verifier is satisfied). Runtime faults match the interpreter's exit codes: a
+crash (failed assert, `assert_eq`/`assert_err`, divide-by-zero, out-of-bounds, `random_i64`
+inverted bounds) exits **101** on both engines, a clean program exits **0**, and `main`'s
+`i64` return becomes the exit code on both. The interp↔native exit-code contract is guarded
+by `scripts/exit_code_parity.sh` (run by `parity_all.sh` in the gate).
 
 ---
 
