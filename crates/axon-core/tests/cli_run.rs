@@ -32,6 +32,52 @@ fn phase6_with_handler_parses_and_runs_as_body() {
 }
 
 #[test]
+fn phase6_handler_arm_bodies_are_name_resolved() {
+    // Inline-handler ARM bodies used to be skipped by name resolution entirely,
+    // so an undefined name inside an arm was silently accepted (a resolver hole).
+    // Now arm bodies resolve, each in a scope where the arm's payload binding and
+    // `resume` (the handler continuation form) are defined.
+    let write = |src: &str| -> std::process::Output {
+        let f = std::env::temp_dir().join(format!("axon_arm_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        out
+    };
+
+    // An undefined name in an arm body is now CAUGHT (was silently accepted).
+    let bad = write(
+        "fn fetch() -> i64 | {Net} { 0 }\n\
+         fn f() -> i64 | {} { with handler { on Net(e) => totally_undefined_xyz(0) } { fetch() } }",
+    );
+    assert_eq!(bad.status.code(), Some(2), "undefined name in an arm body must be rejected");
+    let bmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(bmsg.contains("E0001"), "should report the unknown name as E0001: {bmsg}");
+
+    // `resume` resolves inside an arm body (it is bound as the continuation form).
+    let resume_ok = write(
+        "fn fetch() -> i64 | {Net} { 0 }\n\
+         fn f() -> i64 | {} { with handler { on Net(e) => resume(0) } { fetch() } }",
+    );
+    assert_eq!(resume_ok.status.code(), Some(0), "resume must resolve inside an arm: {resume_ok:?}");
+
+    // The arm's payload binding is in scope inside the arm body.
+    let bind_ok = write(
+        "fn fetch() -> i64 | {Net} { 0 }\n\
+         fn f() -> i64 | {} { with handler { on Net(e) => e } { fetch() } }",
+    );
+    assert_eq!(bind_ok.status.code(), Some(0), "arm payload binding must resolve: {bind_ok:?}");
+
+    // `resume` is NOT bound outside a handler arm — it stays an unknown name.
+    let resume_outside = write("fn g() -> i64 { resume(0) }");
+    assert_eq!(resume_outside.status.code(), Some(2), "resume outside an arm must be unknown");
+}
+
+#[test]
 fn phase6_effect_row_subsumption_is_enforced_by_check() {
     // Regression guard for the CLI-pipeline wiring: the Phase-6 effect checker
     // (effects::check_effects, E1310) must run in the SAME cmd_check path the

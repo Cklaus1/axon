@@ -719,14 +719,37 @@ impl<'a> Resolver<'a> {
                 self.table.pop_scope();
             }
 
-            // Phase 6 (surface slice): `with <handler> { body }`. Resolve the
-            // body. Inline-handler ARM bodies are NOT name-resolved yet: they
-            // are inert (never dispatched in this slice) and legitimately use
-            // handler-special forms like `resume` that have no binding until the
-            // discharge/resume semantics land. Resolving them now would wrongly
-            // report `resume` as an unknown name.
-            Expr::WithHandler { body, .. } => {
+            // Phase 6: `with <handler> { body }`. Resolve the body, and now also
+            // the inline-handler ARM bodies — each in its own scope with the
+            // arm's payload binding defined and `resume` bound as the handler
+            // continuation form. Previously arm bodies were skipped entirely,
+            // which silently accepted undefined names inside them (a resolver
+            // hole); the only reason to skip was that `resume` had no binding, so
+            // we bind it here. `resume`'s runtime semantics are still a later
+            // slice (handlers erase to their body today), but it must RESOLVE so
+            // the rest of the arm body is genuinely name-checked.
+            Expr::WithHandler { handler, body } => {
                 self.resolve_expr(body);
+                if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                    for arm in arms {
+                        self.table.push_scope();
+                        // `resume(v)` continues the handled computation — a
+                        // handler-special binding available only inside arm bodies.
+                        self.table.define(
+                            "resume".to_string(),
+                            Symbol::Local { name: "resume".to_string() },
+                        );
+                        self.resolve_pattern(&arm.binding);
+                        self.resolve_expr(&arm.body);
+                        self.table.pop_scope();
+                    }
+                    if let Some(ra) = return_arm {
+                        self.table.push_scope();
+                        self.resolve_pattern(&ra.binding);
+                        self.resolve_expr(&ra.body);
+                        self.table.pop_scope();
+                    }
+                }
             }
 
             // ── Bindings: define then resolve the value ───────────────────
