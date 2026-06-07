@@ -406,30 +406,52 @@ successfully only if the program provides implementations.
 
 ---
 
-## 5. Panic Protocol
+## 5. Panic Protocol & Exit Codes
 
-Axon programs have no structured panic unwinding in Phase 1. The panic protocol is:
+Axon programs have no structured panic unwinding. A panic prints a diagnostic message and
+terminates the process; there is no stack unwinding, no destructors, no `Drop`, and all
+in-flight heap allocations are leaked on panic.
 
-1. Print a diagnostic message to stdout via `printf`.
-2. Call `exit(1)`.
-3. Emit `unreachable` in the LLVM IR following the `exit` call (so the IR verifier is satisfied).
+### Exit-code ABI (interpreter)
 
-The exit code is always **1** for assertion failures and panics. Programs that exit normally
-(reach the end of `main`) return exit code **0** — `main` is lowered to `i32 main()` and the
-compiler appends `ret i32 0` when the function returns `Unit`.
+The tree-walking interpreter (`axon run`/`test`/`goal`) distinguishes the *category* of
+failure by exit code, so CI and supervisors can branch on it. These are defined as named
+constants in `interp.rs` (`VERIFY_FAILED_EXIT_CODE`, `HALTED_EXIT_CODE`,
+`AI_POLICY_EXIT_CODE`):
 
-No stack unwinding, no destructors, no `Drop` trait. All in-flight heap allocations are leaked on
-panic.
+| Exit code | Meaning | Source |
+|-----------|---------|--------|
+| **0** | normal termination (or `main`'s `i64` return value, truncated to `i32`) | reached end of `main` |
+| **2** | static error — malformed program (no `main`, type error, unknown module) | check phase |
+| **3** | `@[verify]` / deploy-gate **policy rejection** (the artifact missed its declared bound) | `Flow::VerifyFailed` |
+| **4** | `@[corrigible]` call **refused** by a tripped corrigibility latch (kill-switch) | `Flow::Halted` |
+| **5** | **AI-policy** stop — offline with no fallback (E1300), AI budget exhausted (E1301), unknown tier (E1302) | `Flow::AiPolicyUnreachable` |
+| **101** | genuine runtime **crash** — failed assert, integer overflow, divide-by-zero, out-of-bounds index, recursion-limit | `Flow::Panic` |
+| `n` | explicit `exit(n)` | `Flow::Exit(n)` |
 
-Functions that trigger panic:
+The non-101 categories (3/4/5) are deliberately carved out of the generic crash code so that
+"a policy gate fired" / "the kill-switch caught this" / "AI policy needs attention" are each
+distinguishable from "the program has a bug."
 
-| Trigger | Message printed | Exit code |
-|---------|----------------|-----------|
-| `assert(false)` | `assertion failed\n` | 1 |
-| `assert_eq(a, b)` when `a != b` | `assertion failed: values not equal\n` | 1 |
-| `assert_err(1)` (got Ok, expected Err) | `assertion failed: expected Err, got Ok\n` | 1 |
+Functions that trigger a 101 panic:
 
-There is no user-callable `panic()` builtin in Phase 1. Idiomatic panic is spelled `assert(false)`.
+| Trigger | Message printed |
+|---------|----------------|
+| `assert(false)` | `assertion failed` |
+| `assert_eq(a, b)` when `a != b` | `assertion failed: values not equal` |
+| `assert_err(x)` (got Ok, expected Err) | `assertion failed: expected Err, got Ok` |
+| integer overflow / divide-by-zero / OOB index | the specific checked-op message |
+
+There is no user-callable `panic()` builtin; idiomatic panic is spelled `assert(false)`.
+
+### Native codegen path (known divergence)
+
+The native AOT path (`axon build`) emits `exit(code)` then `unreachable` in the LLVM IR
+(so the IR verifier is satisfied). Most runtime faults already match the interpreter
+(e.g. divide-by-zero exits **101** on both). **Known gap:** an `assert`-family failure
+currently exits **1** under native codegen but **101** under the interpreter — an exit-code
+parity gap (the I-2 invariant otherwise holds for stdout). Tracked for convergence; prefer
+the interpreter's 101 as the reference.
 
 ---
 
