@@ -3389,6 +3389,17 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     );
     let umsg = format!("{}{}", String::from_utf8_lossy(&unmatched.stdout), String::from_utf8_lossy(&unmatched.stderr));
     assert!(!umsg.contains("E0910"), "a non-matching handler must not refuse an IO-doing helper:\n{umsg}");
+
+    // CLOSURE interception: the handler body calls a LOCAL closure that does IO.
+    // The closure's effects aren't statically tracked, so codegen conservatively
+    // refuses (a closure could perform the handled effect the interpreter would
+    // discharge). Must be E0910, not silently erased.
+    let closure = build(
+        "fn main() -> i64 { let f = || { println(\"LEAK\")  3 }\n\
+         with handler { on IO(p) => resume(0) } { f() } }",
+    );
+    let cmsg = format!("{}{}", String::from_utf8_lossy(&closure.stdout), String::from_utf8_lossy(&closure.stderr));
+    assert!(cmsg.contains("E0910"), "a closure call under a handler must be refused (opaque effects):\n{cmsg}");
 }
 
 #[test]

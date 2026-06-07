@@ -354,26 +354,49 @@ fn handler_intercepts_effect_impl(
         transitive: Option<&HashMap<String, HashSet<String>>>,
     ) -> bool {
         if let Expr::Call { callee, .. } = e {
-            if let Expr::Ident(name) = callee.as_ref() {
-                // Direct builtin carrying a handled effect.
-                if crate::builtins::builtin_effect_row(name)
-                    .iter()
-                    .any(|eff| discharged.contains(*eff))
-                {
-                    return true;
-                }
-                // Transitive: a user fn whose actual builtin effects (directly or
-                // via its own callees) include a handled effect. This closes the
-                // indirect-interception hole — the interpreter discharges these,
-                // so codegen must not silently erase them.
-                if let Some(t) = transitive {
-                    if let Some(set) = t.get(name) {
-                        if set.iter().any(|eff| discharged.contains(eff)) {
+            match callee.as_ref() {
+                Expr::Ident(name) => {
+                    // Direct builtin carrying a handled effect.
+                    if crate::builtins::builtin_effect_row(name)
+                        .iter()
+                        .any(|eff| discharged.contains(*eff))
+                    {
+                        return true;
+                    }
+                    // Transitive: a user fn whose actual builtin effects (directly
+                    // or via its own callees) include a handled effect. Closes the
+                    // indirect-interception hole — the interpreter discharges
+                    // these, so codegen must not silently erase them.
+                    if let Some(t) = transitive {
+                        if let Some(set) = t.get(name) {
+                            if set.iter().any(|eff| discharged.contains(eff)) {
+                                return true;
+                            }
+                        } else if !crate::builtins::is_known_builtin(name) {
+                            // An Ident callee that is NEITHER a known user fn NOR a
+                            // builtin = a call to a LOCAL holding a closure. Its
+                            // body's effects are not statically tracked, so it
+                            // could perform a handled effect that the interpreter
+                            // would discharge. Conservatively refuse (codegen
+                            // can't lower it). Over-refusal is safe — never
+                            // silent-wrong. (Only in the program-aware codegen
+                            // path; the interp-side `transitive: None` callers
+                            // don't gate codegen.)
                             return true;
                         }
                     }
                 }
+                // A non-Ident callee (e.g. `make_fn()()`, an indirect/closure
+                // call) is also statically opaque — same conservative refusal.
+                _ if transitive.is_some() => return true,
+                _ => {}
             }
+        }
+        // A method call under a handler is likewise opaque to this static check
+        // (the receiver's method body isn't followed here); conservatively refuse
+        // in the codegen path so an effectful method can't be silently erased.
+        if transitive.is_some() && matches!(e, Expr::MethodCall { .. }) {
+            return true;
         }
         // A nested `with` that re-handles the same effect shadows it for its own
         // body; conservatively we still recurse (a false positive only makes
