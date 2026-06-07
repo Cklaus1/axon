@@ -412,6 +412,77 @@ fn handler_intercepts_effect_impl(
     body_hits(body, &discharged, transitive)
 }
 
+/// Is this `with handler { … } { body }` in the NARROW subset native codegen can
+/// lower to straight-line IR (no continuation runtime)? Requires all of:
+/// (1) inline handler with NO `return(v)` arm (the value-rewrite case is
+/// deferred); (2) every arm is tail-resumptive — its body is exactly a
+/// `resume(<expr>)` call, so `resume(v)` means "the intercepted op yields v and
+/// the body continues", emittable as the call's result with no control flow; and
+/// (3) the body intercepts ONLY direct builtins (no indirect / closure / method /
+/// user-fn interception — those need the dynamic mechanism and stay E0910-refused
+/// by `handler_intercepts_effect`). Anything outside this returns false, so
+/// codegen keeps refusing it (E0910) and never miscompiles; a false negative just
+/// means the program runs under the interpreter instead of building natively.
+pub fn handler_is_tail_resumptive_lowerable(handler: &crate::ast::HandlerExpr, body: &Expr) -> bool {
+    let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler else {
+        return false;
+    };
+    if return_arm.is_some() || arms.is_empty() {
+        return false;
+    }
+    // Every arm body must be a single tail `resume(<expr>)`.
+    for arm in arms {
+        if !is_tail_resume(&arm.body) {
+            return false;
+        }
+    }
+    // The body must intercept only DIRECT builtins. Reuse the opaque-call
+    // detector: if any interception would be through a user fn / closure /
+    // indirect / method call, it is NOT lowerable. We check this by walking the
+    // body for any call that is NOT a direct builtin carrying a handled effect
+    // but IS opaque — conservatively, refuse lowering if the body contains any
+    // non-builtin call at all (named user fn, closure, method, indirect).
+    let discharged = handler_discharges(handler);
+    !body_has_nonbuiltin_call(body, &discharged)
+}
+
+/// True iff `e` is exactly a `resume(<expr>)` call (or bare `resume()`), i.e. a
+/// tail-resumptive arm body.
+fn is_tail_resume(e: &Expr) -> bool {
+    matches!(e, Expr::Call { callee, .. }
+        if matches!(callee.as_ref(), Expr::Ident(n) if n == "resume"))
+}
+
+/// Walk `body`: return true if it contains any call that is NOT a direct builtin
+/// — a named user fn, a closure/local call, an indirect callee, or a method
+/// call. Such a call could perform a handled effect through a path codegen can't
+/// lower, so its presence disqualifies the whole handler from lowering. (Builtin
+/// calls — handled or not — are fine; the handled ones get intercepted inline,
+/// the rest emit normally.) `resume` calls are arm-internal, not in the body.
+fn body_has_nonbuiltin_call(body: &Expr, _discharged: &HashSet<String>) -> bool {
+    fn walk(e: &Expr) -> bool {
+        let opaque = match e {
+            Expr::Call { callee, .. } => match callee.as_ref() {
+                Expr::Ident(name) => !crate::builtins::is_known_builtin(name),
+                _ => true,
+            },
+            Expr::MethodCall { .. } => true,
+            _ => false,
+        };
+        if opaque {
+            return true;
+        }
+        let mut hit = false;
+        for_each_child(e, &mut |c| {
+            if !hit {
+                hit = walk(c);
+            }
+        });
+        hit
+    }
+    walk(body)
+}
+
 /// Collect the names of every directly-called function/builtin in `e` whose
 /// effects are NOT discharged by an enclosing inline handler. `handled` is the
 /// set of effects discharged by handlers wrapping `e`. When a called name's

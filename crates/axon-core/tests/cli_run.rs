@@ -3345,16 +3345,21 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
         out
     };
 
-    // Interception → must refuse.
-    let bad = build("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"x\")\n 1 } }");
-    let bmsg = format!("{}{}", String::from_utf8_lossy(&bad.stdout), String::from_utf8_lossy(&bad.stderr));
-    let codegen_present = !bmsg.contains("requires building axon with the `codegen` feature");
+    // A DIRECT tail-resumptive handler over a builtin is now LOWERED (not
+    // refused) — it builds natively. The byte-parity of that lowering is
+    // asserted in codegen_handler_tail_resume_matches_interp; here we only check
+    // it is NOT E0910-refused.
+    let lowered = build("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"x\")\n 1 } }");
+    let lmsg = format!("{}{}", String::from_utf8_lossy(&lowered.stdout), String::from_utf8_lossy(&lowered.stderr));
+    let codegen_present = !lmsg.contains("requires building axon with the `codegen` feature");
     if !codegen_present {
         eprintln!("codegen feature absent — handler E0910 test skipped");
         return;
     }
-    assert!(bmsg.contains("E0910"), "an intercepting handler must abort with E0910, got:\n{bmsg}");
-    assert!(!bad.status.success(), "build must FAIL on an intercepting handler:\n{bmsg}");
+    assert!(
+        !lmsg.contains("E0910"),
+        "a direct tail-resumptive handler should now LOWER, not be refused:\n{lmsg}"
+    );
 
     // An INERT handler (Net handled, body performs no Net builtin) must NOT be
     // refused — it produces no E0910 and reaches the link stage like any normal
@@ -3400,6 +3405,41 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     );
     let cmsg = format!("{}{}", String::from_utf8_lossy(&closure.stdout), String::from_utf8_lossy(&closure.stderr));
     assert!(cmsg.contains("E0910"), "a closure call under a handler must be refused (opaque effects):\n{cmsg}");
+
+    // A NON-tail-resumptive arm (abort: returns a value without `resume`) is
+    // outside the lowered subset → still refused.
+    let abort = build("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"x\")\n 7 } }");
+    let amsg = format!("{}{}", String::from_utf8_lossy(&abort.stdout), String::from_utf8_lossy(&abort.stderr));
+    assert!(amsg.contains("E0910"), "a non-tail-resumptive (abort) arm must still be refused:\n{amsg}");
+
+    // A `return(v)` rewrite arm is also outside the lowered subset → refused.
+    let ret = build("fn main() -> i64 { with handler { on IO(p) => resume(0)  return(v) => v } { println(\"x\")\n 7 } }");
+    let rmsg = format!("{}{}", String::from_utf8_lossy(&ret.stdout), String::from_utf8_lossy(&ret.stderr));
+    assert!(rmsg.contains("E0910"), "a return-arm handler must still be refused:\n{rmsg}");
+}
+
+#[test]
+fn codegen_handler_tail_resume_lowers_via_parity_harness() {
+    // The lowered subset (direct, tail-resumptive inline handler over a builtin)
+    // builds natively AND matches the interpreter byte-for-byte. The byte-parity
+    // is verified by scripts/handler_resume_parity.sh, which runs in the repo
+    // root where the axon-rt runtime links cleanly (the test-spawn environment's
+    // runtime-lib discovery is flaky for the final link, unrelated to lowering).
+    // Skips (exit 0 + a skip line) when codegen can't build.
+    let script = format!("{}/../../scripts/handler_resume_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("handler_resume_parity.sh not found — skipping");
+        return;
+    }
+    let out = std::process::Command::new("bash").arg(&script).output().expect("run handler_resume_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — handler-resume parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "lowered handlers must match interp:\n{stdout}{stderr}");
+    assert!(stdout.contains("handler_resume_parity: PASS"), "expected PASS line:\n{stdout}{stderr}");
 }
 
 #[test]

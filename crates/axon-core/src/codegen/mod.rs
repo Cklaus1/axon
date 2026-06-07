@@ -285,6 +285,15 @@ pub struct Codegen<'ctx> {
     /// discharges dynamically) — so codegen refuses (E0910) instead of silently
     /// erasing and miscompiling. Empty until `emit_program` populates it.
     pub(super) transitive_effects: HashMap<String, std::collections::HashSet<String>>,
+    /// Phase 6: compile-time stack of active inline-handler arms, pushed around
+    /// the body of a LOWERABLE `with handler { … } { body }` (see
+    /// `effects::handler_is_tail_resumptive_lowerable`). Handlers are lexically
+    /// scoped, so when `emit_call` emits a builtin carrying a handled effect it
+    /// finds the matching arm here and emits the arm (a tail `resume(v)`) in
+    /// place of the call — straight-line, no runtime continuation. Only the
+    /// direct-builtin tail-resumptive subset is pushed; everything else is still
+    /// E0910-refused, so this can never miscompile.
+    pub(super) handler_ctx: Vec<Vec<ast::HandlerArm>>,
     /// The inkwell IR holder: the one `Context`/`Module`/`Builder` per codegen
     /// run. Codegen emits LLVM through `self.ir.{context, module, builder}`
     /// (paired with the `build_wrappers::w_*` helpers). This is the SINGLE
@@ -336,6 +345,7 @@ impl<'ctx> Codegen<'ctx> {
             target_is_wasm: false,
             codegen_errors: Vec::new(),
             transitive_effects: HashMap::new(),
+            handler_ctx: Vec::new(),
         }
     }
 

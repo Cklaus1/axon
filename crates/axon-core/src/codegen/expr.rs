@@ -112,20 +112,33 @@ impl<'ctx> super::Codegen<'ctx> {
             // synthetic-row user fn) is genuinely equivalent to its body and is
             // erased as before, keeping the example corpus building natively.
             ast::Expr::WithHandler { handler, body } => {
-                if crate::effects::handler_intercepts_effect(&self.transitive_effects, handler, body) {
-                    let msg =
-                        "codegen error [E0910]: native codegen does not yet lower effect-handler \
-                         discharge (`resume`) — this `with handler { … }` intercepts a builtin \
-                         effect, so erasing it would produce output that differs from the \
-                         interpreter. Run it under the interpreter (`axon run`)."
-                            .to_string();
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
-                    // Still emit the body so IR generation can continue to collect
-                    // any further errors; the build aborts on codegen_errors.
+                if !crate::effects::handler_intercepts_effect(&self.transitive_effects, handler, body) {
+                    // Inert handler — nothing in the body performs a handled
+                    // effect. Erasing to the body is exactly equivalent.
                     return self.emit_expr(body, fn_val);
+                }
+                // The handler genuinely intercepts. If it is in the narrow
+                // tail-resumptive direct-builtin subset, LOWER it: push the arms
+                // as a compile-time frame so `emit_call` substitutes a handled
+                // builtin's call with the arm's `resume(v)` value, then emit the
+                // body. Otherwise REFUSE honestly (E0910) — never miscompile.
+                if let ast::HandlerExpr::Inline { arms, .. } = handler.as_ref() {
+                    if crate::effects::handler_is_tail_resumptive_lowerable(handler, body) {
+                        self.handler_ctx.push(arms.clone());
+                        let v = self.emit_expr(body, fn_val);
+                        self.handler_ctx.pop();
+                        return v;
+                    }
+                }
+                let msg =
+                    "codegen error [E0910]: native codegen does not yet lower this effect-handler \
+                     (`resume`) shape — only an inline, tail-resumptive handler over a direct \
+                     builtin is lowered; this one is outside that subset. Run it under the \
+                     interpreter (`axon run`)."
+                        .to_string();
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    eprintln!("{msg}");
+                    self.codegen_errors.push(msg);
                 }
                 self.emit_expr(body, fn_val)
             }
@@ -4278,6 +4291,55 @@ impl<'ctx> super::Codegen<'ctx> {
     pub(super) fn emit_call(&mut self, callee: &ast::Expr, args: &[ast::Expr], fn_val: FunctionValue<'ctx>) -> Option<BasicValueEnum<'ctx>> {
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         let i64_ty = self.ir.context.i64_type();
+
+        // Phase 6 handler lowering. `resume(v)` inside a (lowered) handler arm
+        // emits `v` as the value flowing into where the intercepted builtin's
+        // result would go — straight-line, tail-resumptive. `resume` only ever
+        // appears inside an arm body we are emitting (the resolver binds it only
+        // in arm scope), so it is always this handler form — independent of the
+        // current handler_ctx depth (which is popped while emitting the arm).
+        if let ast::Expr::Ident(name) = callee {
+            if name == "resume" {
+                return match args.first() {
+                    Some(a) => self.emit_expr(a, fn_val),
+                    None => Some(i64_ty.const_zero().into()),
+                };
+            }
+        }
+        // If `callee` is a builtin carrying an effect handled by an active
+        // compile-time handler frame, SUBSTITUTE the matching arm's body in
+        // place of the call (the effect is discharged). Shallow: the arm is
+        // emitted with its own frame popped so a self-effecting arm doesn't
+        // re-intercept. Args are still emitted first (matching the interpreter's
+        // eval-then-intercept order) but their values discarded.
+        if let ast::Expr::Ident(name) = callee {
+            if !self.handler_ctx.is_empty() {
+                let effs: Vec<&str> = crate::builtins::builtin_effect_row(name).to_vec();
+                if !effs.is_empty() {
+                    // Find the innermost frame with an arm matching one of effs.
+                    let found = self.handler_ctx.iter().enumerate().rev().find_map(|(i, frame)| {
+                        frame
+                            .iter()
+                            .find(|arm| effs.contains(&arm.effect.as_str()))
+                            .map(|arm| (i, arm.body.clone()))
+                    });
+                    if let Some((idx, arm_body)) = found {
+                        // Emit args for side effects/order, discard values.
+                        for a in args {
+                            let _ = self.emit_expr(a, fn_val);
+                        }
+                        // Shallow: pop the handling frame (and inner) while
+                        // emitting the arm, restore after.
+                        let suspended: Vec<Vec<ast::HandlerArm>> = self.handler_ctx.split_off(idx);
+                        let r = self.emit_expr(&arm_body, fn_val);
+                        self.handler_ctx.extend(suspended);
+                        // The arm is tail-resumptive (lowerability guaranteed it),
+                        // so its value is the intercepted op's result.
+                        return r;
+                    }
+                }
+            }
+        }
 
         // Try to resolve callee as a global function first.
         let maybe_fn_v = match callee {
