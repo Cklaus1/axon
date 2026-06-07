@@ -3294,6 +3294,33 @@ fn codegen_dict_core_matches_interp() {
 }
 
 #[test]
+fn build_prints_the_actual_check_error_not_just_a_count() {
+    // `axon build` on a program with a check error used to print only
+    // "N error(s); build aborted" — swallowing WHAT was wrong, forcing the user
+    // to re-run `axon check`. It must now print each diagnostic too.
+    let f = std::env::temp_dir().join(format!("axon_builderr_{}.ax", std::process::id()));
+    // `dict_insert` is not a real builtin (it's `dict_set`) → an E0001 check error.
+    std::fs::write(&f, "fn main() -> i64 { let d = dict_new()\n let _ = dict_insert(d, \"k\", 7)\n 0 }\n").unwrap();
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_builderr_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
+    if !codegen_present {
+        eprintln!("codegen absent — build-error-detail test skipped");
+        return;
+    }
+    assert!(!out.status.success(), "build with a check error must fail");
+    assert!(
+        msg.contains("E0001") && msg.contains("dict_insert"),
+        "axon build must print the actual error (E0001 naming dict_insert), not just a count:\n{msg}"
+    );
+}
+
+#[test]
 fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // Honest-error guard: a known builtin with no native codegen lowering
     // (arr_*/dict_* etc.) must ABORT the native build with E0910, not silently

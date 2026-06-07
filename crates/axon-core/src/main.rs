@@ -2864,6 +2864,12 @@ fn run_build_pipeline(
     // Check first, fail fast on errors.
     let (errors, mut infer_ctx) = run_check_pipeline(program, source_path);
     if !errors.is_empty() {
+        // Print each diagnostic, not just the count — otherwise `axon build` on a
+        // program with a type/name error showed only "N error(s); build aborted",
+        // forcing the user to re-run `axon check` to see WHAT was wrong.
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
         return Err(format!("{} error(s); build aborted", errors.len()));
     }
 
