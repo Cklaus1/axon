@@ -25,6 +25,17 @@ pub fn generate_docs(program: &Program, source: &str, filename: &str) -> String 
             Item::FnDef(f)   => (fn_signature(f),   f.span.start),
             Item::TypeDef(t) => (type_signature(t), t.span.start),
             Item::EnumDef(e) => (enum_signature(e), e.span.start),
+            Item::TraitDef(t) => {
+                let params = if t.generic_params.is_empty() {
+                    String::new()
+                } else {
+                    format!("<{}>", t.generic_params.join(", "))
+                };
+                (format!("trait {}{}", t.name, params), t.span.start)
+            }
+            Item::RefineDef(r) => {
+                (format!("type {} = {}", r.name, render_type(&r.base)), r.span.start)
+            }
             _ => continue,
         };
 
@@ -197,8 +208,17 @@ fn doc_comment_before(source: &str, byte_offset: usize) -> String {
         if let Some(rest) = trimmed.strip_prefix("///") {
             collecting = true;
             doc_lines.push(rest.trim_start_matches(' ').to_string());
-        } else if trimmed.is_empty() && !collecting {
-            // Skip leading blank lines between item and potential doc.
+        } else if !collecting
+            && (trimmed.is_empty()
+                || trimmed.starts_with("@[")
+                || trimmed.starts_with("#[")
+                || trimmed == "pub")
+        {
+            // Before reaching the doc block, skip blank lines AND any attribute
+            // lines (`@[pure]`, `@[verify(...)]`, `@[contained(...)]`, …) or a
+            // bare `pub` that sit between the item and its `///` doc — otherwise
+            // an annotated fn (the common case in an AI-first language) silently
+            // loses its documentation.
             continue;
         } else {
             break;
@@ -227,6 +247,36 @@ mod tests {
         let out = generate_docs(&prog, src, "test.ax");
         assert!(out.contains("## fn add(a: i64, b: i64) -> i64"), "sig: {out}");
         assert!(out.contains("Add two numbers."), "doc: {out}");
+    }
+
+    #[test]
+    fn doc_preserves_doc_comment_above_attributes() {
+        // Regression: a `///` doc comment ABOVE an attribute (`@[pure]`,
+        // `@[verify]`, `@[contained]`, …) was silently dropped — the
+        // doc-comment lookup stopped at the attribute line between the `///` and
+        // the `fn`. Every annotated fn (pervasive in an AI-first language) lost
+        // its docs. The backward scan now skips attribute / `pub` lines.
+        for attr in ["@[pure]", "@[verify(value > 0)]", "@[contained(net: [\"x.com\"])]"] {
+            let src = format!("/// Documented thing.\n{attr}\nfn f() -> i64 {{ 0 }}");
+            let prog = parse_source(&src).expect("parse");
+            let out = generate_docs(&prog, &src, "t.ax");
+            assert!(
+                out.contains("Documented thing."),
+                "doc above `{attr}` must be preserved: {out}"
+            );
+            assert!(out.contains("## fn f()"), "signature still rendered: {out}");
+        }
+
+        // Trait and refinement definitions also get doc entries now.
+        let src = "/// A trait.\ntrait Show { fn show(self) -> str }";
+        let prog = parse_source(src).expect("parse");
+        let out = generate_docs(&prog, src, "t.ax");
+        assert!(out.contains("## trait Show") && out.contains("A trait."), "trait doc: {out}");
+
+        let src = "/// Positive.\ntype Pos = i64 where _ > 0";
+        let prog = parse_source(src).expect("parse");
+        let out = generate_docs(&prog, src, "t.ax");
+        assert!(out.contains("## type Pos") && out.contains("Positive."), "refinement doc: {out}");
     }
 
     #[test]
