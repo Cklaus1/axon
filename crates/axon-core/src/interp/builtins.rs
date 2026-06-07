@@ -45,6 +45,36 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // Phase 6: effect-handler interception (tail-resumptive, single-shot).
+        // If this builtin carries an effect that an enclosing `with handler`
+        // frame handles, the arm intercepts the operation: a `resume(v)` in the
+        // arm makes `v` the builtin's result (the real operation is SKIPPED — its
+        // effect is discharged); an arm that returns without resuming replaces
+        // the whole `with` block. Only builtins with a non-empty effect row can
+        // be intercepted, and only when a matching arm is active — so a program
+        // with no handlers (or no matching effect) runs the builtin normally,
+        // exactly as before. The payload bound in the arm is the builtin's args:
+        // the single arg as-is, or a tuple for 0/2+ args.
+        if !self.handlers.borrow().is_empty() {
+            for eff in crate::builtins::builtin_effect_row(name) {
+                let handled = self
+                    .handlers
+                    .borrow()
+                    .iter()
+                    .any(|f| f.arms.iter().any(|a| a.effect == *eff));
+                if !handled {
+                    continue;
+                }
+                let payload = match args.len() {
+                    1 => args[0].clone(),
+                    _ => Value::Tuple(args.to_vec()),
+                };
+                if let Some(v) = self.run_handler_arm(eff, payload)? {
+                    return Ok(Some(v));
+                }
+            }
+        }
+
         match name {
             // ── I/O ───────────────────────────────────────────────────────────
             "print" => {

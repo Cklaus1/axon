@@ -27,10 +27,17 @@ impl<'p> Interp<'p> {
 
             Expr::Block(stmts) => self.eval_block(stmts, env),
 
-            // Phase 6 (surface slice): a `with <handler> { body }` evaluates to
-            // its body. Effect discharge / `resume` are later slices; for now the
-            // handler is inert, so the body runs exactly as if unwrapped.
-            Expr::WithHandler { body, .. } => self.eval(body, env),
+            // Phase 6: `with handler { on E(p) => arm } { body }` installs an
+            // effect-handler frame for the duration of `body`. A builtin in
+            // `body` carrying effect `E` is intercepted (tail-resumptively) by
+            // the `on E` arm — see `call_builtin`. An inline `return(v) => e`
+            // arm rewrites the body's final value. NAMED handlers that did not
+            // resolve to an inline definition (HandlerExpr::Named — an undefined
+            // name) stay inert (run as the body), as before. NOTE (I-2): this
+            // runtime interception is interpreter-only; native codegen still
+            // erases handlers, a documented bounded divergence confined to
+            // resume-using programs (none ship under examples/).
+            Expr::WithHandler { handler, body } => self.eval_with_handler(handler, body, env),
 
             Expr::Let { name, value, .. }
             | Expr::Own { name, value, .. }
@@ -459,6 +466,19 @@ impl<'p> Interp<'p> {
             argv.push(self.eval(a, env)?);
         }
 
+        // Phase 6: `resume(v)` inside a handler arm carries `v` back to the
+        // intercepted operation as a `Flow::Resume`. It is caught at the
+        // builtin-interception site (`run_handler_arm`). `resume` with no arg
+        // resumes with Unit. (The resolver only binds `resume` inside an arm, so
+        // a `resume` here is genuinely a handler resume, not a user fn named
+        // `resume` — and the builtin/user-fn lookups never define one.)
+        if let Expr::Ident(name) = callee {
+            if name == "resume" {
+                let v = argv.into_iter().next().unwrap_or(Value::Unit);
+                return Err(Flow::Resume(v));
+            }
+        }
+
         // R3b: make the per-call `tier:` (if any) visible to the builtin dispatch
         // for the duration of this call (read by `current_ai_tier`).
         *self.current_call_tier.borrow_mut() = tier.map(|t| t.to_string());
@@ -489,6 +509,93 @@ impl<'p> Interp<'p> {
         // (e.g. `make_adder(1)(2)` or an array element).
         let c = self.eval(callee, env)?;
         self.call_closure(c, argv)
+    }
+
+    /// Phase 6: evaluate `with handler { … } { body }`. Installs the inline
+    /// handler's arms as an active frame for the duration of `body`, then (if an
+    /// inline `return(v) => e` arm is present) rewrites the body's value. A
+    /// `HandlerExpr::Named` that did not desugar to an inline definition is an
+    /// unresolved name → the handler is inert (run the body unwrapped).
+    fn eval_with_handler(
+        &self,
+        handler: &crate::ast::HandlerExpr,
+        body: &Expr,
+        env: &mut Env,
+    ) -> R {
+        let (arms, return_arm) = match handler {
+            crate::ast::HandlerExpr::Inline { arms, return_arm } => (arms, return_arm),
+            // Unresolved named handler: inert (matches the pre-Phase-6 behavior).
+            crate::ast::HandlerExpr::Named(_) => return self.eval(body, env),
+        };
+
+        // Capture the defining environment once; every arm closes over it.
+        let captured = env.snapshot();
+        let frame = HandlerFrame {
+            arms: arms
+                .iter()
+                .map(|a| HandlerArmRt {
+                    effect: a.effect.clone(),
+                    binding: a.binding.clone(),
+                    body: a.body.clone(),
+                    captured: captured.clone(),
+                })
+                .collect(),
+        };
+        self.handlers.borrow_mut().push(frame);
+        let result = self.eval(body, env);
+        self.handlers.borrow_mut().pop();
+        let mut value = result?;
+
+        // An inline `return(v) => e` arm rewrites the body's final value.
+        if let Some(ra) = return_arm {
+            let mut ra_env = Env::from_snapshot(captured);
+            ra_env.push();
+            self.match_pattern(&ra.binding, &value, &mut ra_env)?;
+            value = self.eval(&ra.body, &mut ra_env)?;
+        }
+        Ok(value)
+    }
+
+    /// Phase 6: run the nearest active handler arm for effect `eff`, with the
+    /// intercepted operation's `payload` bound (the builtin's args: the single
+    /// value, or a tuple for 0/2+ args). Returns `Ok(Some(v))` when the arm calls
+    /// `resume(v)` — `v` is the operation's result and the handled computation
+    /// continues (tail-resumptive); `Ok(None)` when no active arm handles `eff`
+    /// (the caller performs the real operation); or `Err(Flow::Return(v))` when
+    /// the arm completes WITHOUT resuming — its value `v` replaces the whole
+    /// `with` block (handle-and-abort), unwinding to the enclosing `with` frame.
+    pub(super) fn run_handler_arm(&self, eff: &str, payload: Value) -> Result<Option<Value>, Flow> {
+        // Find the nearest frame with a matching arm. Take its data out (clone)
+        // so we don't hold the RefCell borrow across the arm evaluation (the arm
+        // body may install its own handlers).
+        let found = {
+            let stack = self.handlers.borrow();
+            stack.iter().rev().find_map(|frame| {
+                frame
+                    .arms
+                    .iter()
+                    .find(|a| a.effect == eff)
+                    .map(|a| (a.binding.clone(), a.body.clone(), a.captured.clone()))
+            })
+        };
+        let Some((binding, body, captured)) = found else {
+            return Ok(None);
+        };
+        let mut arm_env = Env::from_snapshot(captured);
+        arm_env.push();
+        self.match_pattern(&binding, &payload, &mut arm_env)?;
+        match self.eval(&body, &mut arm_env) {
+            // The arm called `resume(v)` — v is the operation's result.
+            Err(Flow::Resume(v)) => Ok(Some(v)),
+            // The arm completed WITHOUT resuming — its value replaces the entire
+            // `with` block (handle-and-abort). Unwind to the `with` frame.
+            Ok(v) => Err(Flow::Return(v)),
+            // Any other control flow (panic, a second resume → also Resume, etc.)
+            // propagates. A second `resume` would arrive as another Flow::Resume
+            // from a NESTED operation, which is fine; multi-shot (re-running the
+            // continuation) is not supported and cannot arise here.
+            Err(other) => Err(other),
+        }
     }
 
     pub(super) fn eval_binop(&self, op: &BinOp, left: &Expr, right: &Expr, env: &mut Env) -> R {

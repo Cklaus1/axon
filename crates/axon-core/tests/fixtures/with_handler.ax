@@ -1,5 +1,9 @@
-// Phase 6 handler surface: `with` blocks parse and run as their body (handlers
-// are inert in this slice — no discharge / resume yet), and native == interp.
+// Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
+// INTERCEPTS the IO effect of `println` inside the handled body. So `safe(5)`
+// calls `risky(5)`, whose `println("risky 5")` is intercepted and suppressed
+// (the arm resumes), while `risky(10)` under the unresolved named handler
+// `retry` is inert (prints normally). Demonstrates real tail-resumptive
+// discharge. (Interpreter-only; native codegen still erases handlers.)
 fn risky(x: i64) -> i64 | {IO} {
     println("risky {to_str(x)}")
     x + 1

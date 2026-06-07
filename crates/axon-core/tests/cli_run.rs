@@ -20,15 +20,64 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
-fn phase6_with_handler_parses_and_runs_as_body() {
-    // The handler surface slice: a `with <handler> { body }` parses and runs as
-    // its body (handlers are inert — no discharge yet). Both the named and
-    // inline forms work, and `axon run` succeeds with the expected output.
+fn phase6_with_handler_runs_and_intercepts_io() {
+    // Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
+    // INTERCEPTS the IO effect of a `println` in the handled body. In the
+    // fixture, `safe(5)` runs `risky(5)` whose `println("risky 5")` is
+    // intercepted (suppressed, then resumed) — so "risky 5" must NOT appear —
+    // while `risky(10)` under the unresolved named handler `retry` is inert and
+    // prints normally. Both functions still return their values (risky resumes
+    // with the payload, so safe(5) = risky(5) = 6; r = risky(10) = 11).
     let out = axon().args(["run", &fixture("with_handler.ax")]).output().unwrap();
     assert!(out.status.success(), "with-handler program should run: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("done 11"), "named handler body runs: {stdout}");
-    assert!(stdout.contains("safe 6"), "inline handler body runs: {stdout}");
+    assert!(stdout.contains("risky 10"), "unhandled (named) print still appears: {stdout}");
+    assert!(stdout.contains("done 11"), "values still computed: {stdout}");
+    assert!(stdout.contains("safe 6"), "handled fn still returns its value: {stdout}");
+    assert!(
+        !stdout.contains("risky 5"),
+        "the IO handler must INTERCEPT risky(5)'s print: {stdout}"
+    );
+}
+
+#[test]
+fn phase6_handler_resume_semantics() {
+    // Tail-resumptive, single-shot effect-handler discharge in the interpreter.
+    // `run` returns main's i64; we assert on (exit code, stdout).
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_resume_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // 1. Tail-resume suppresses a print and continues; block value preserved.
+    let (code, out) = run("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"NOPE\")\n 1 } }");
+    assert_eq!(code, 1, "block value preserved after resume");
+    assert!(!out.contains("NOPE"), "the intercepted print must be suppressed: {out:?}");
+
+    // 2. resume(v) replaces a value-returning builtin's result.
+    let (code, _) = run("fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }");
+    assert_eq!(code, 42, "resume value replaces the random_i64 result");
+
+    // 3. A non-resuming arm replaces the whole `with` block (handle-and-abort).
+    let (code, out) = run("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"NOPE\")\n 7 } }");
+    assert_eq!(code, 99, "non-resuming arm replaces the block value");
+    assert!(!out.contains("NOPE"), "abort handler also suppresses the op: {out:?}");
+
+    // 4. Handler erases when no matching effect is raised (pure body).
+    let (code, _) = run("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+    assert_eq!(code, 5, "no matching effect → body runs unchanged");
+
+    // 5. An inline `return(v) => e` arm rewrites the body's final value.
+    let (code, _) = run("fn main() -> i64 { with handler { return(v) => v + 100 } { 5 } }");
+    assert_eq!(code, 105, "return arm rewrites the body value");
+
+    // 6. `resume` outside a handler arm is rejected at check time (resolver),
+    //    so it never reaches runtime — exit 2 (static error), not a silent pass.
+    let (code, _) = run("fn main() -> i64 { resume(0) }");
+    assert_eq!(code, 2, "resume outside a handler is a static (resolve) error");
 }
 
 #[test]

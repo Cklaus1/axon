@@ -123,6 +123,13 @@ pub enum Flow {
     AiPolicyUnreachable(String),
     /// `exit(code)` — terminate the process with `code`.
     Exit(i32),
+    /// Phase 6: `resume(v)` inside an effect-handler arm — carries the value the
+    /// handled operation should yield so the handled computation continues with
+    /// it (tail-resumptive, single-shot). Raised by evaluating a `resume(..)`
+    /// call and caught at the builtin-interception site that invoked the arm. If
+    /// it escapes to a function/loop/top-level boundary, that is a `resume`
+    /// outside a handler arm — treated as a panic (it should have been caught).
+    Resume(Value),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -203,6 +210,11 @@ impl Env {
         }
         out
     }
+    /// Build an env whose single base scope is a captured snapshot — used to
+    /// run a closure/handler-arm body in its defining environment.
+    fn from_snapshot(captured: HashMap<String, Value>) -> Self {
+        Env { scopes: vec![captured] }
+    }
 }
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
@@ -275,6 +287,30 @@ pub struct Interp<'p> {
     /// (replacing the hardcoded 0). Read by the `ai_cost_spent()` builtin. This
     /// is per-TOKEN cost, distinct from R3c's per-CALL-count budget.
     ai_cost_micro: Cell<i64>,
+    /// Phase 6: the stack of active effect-handler frames installed by enclosing
+    /// `with handler { … } { body }` expressions. When a builtin carrying effect
+    /// `E` is dispatched, the nearest frame with an `on E` arm intercepts it
+    /// (tail-resumptive, single-shot). Pushed/popped around the handled body in
+    /// `eval` of `Expr::WithHandler`. Interior-mutable like the other per-run
+    /// state above.
+    handlers: RefCell<Vec<HandlerFrame>>,
+}
+
+/// One active effect-handler frame: the inline-handler arms in scope for the
+/// body it wraps. Each arm intercepts one effect name. Captured at the `with`
+/// site so the arm body closes over its defining environment.
+struct HandlerFrame {
+    /// `on E(binding) => body` arms, keyed by the effect name `E`.
+    arms: Vec<HandlerArmRt>,
+}
+
+/// A runtime handler arm: the payload binding, the arm body, and a snapshot of
+/// the environment where the handler was written (so the arm closes over it).
+struct HandlerArmRt {
+    effect: String,
+    binding: crate::ast::Pattern,
+    body: crate::ast::Expr,
+    captured: HashMap<String, Value>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -529,6 +565,14 @@ fn run_program_inner(program: &Program) -> i32 {
             eprintln!("axon: panic: {msg}");
             101
         }
+        Err(Flow::Resume(_)) => {
+            // `resume(..)` reached the top level — it was used outside a handler
+            // arm (the resolver normally rejects this at check time; this is the
+            // runtime backstop). A crash, not a silent exit.
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: panic: `resume` called outside an effect-handler arm");
+            101
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -562,6 +606,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // An AI-policy stop inside a test is a failure (surfaces like a panic;
         // also lets `@[test(should_fail)]` assert the policy gate fired).
         Err(Flow::AiPolicyUnreachable(m)) => Err(m),
+        Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -641,6 +686,7 @@ impl<'p> Interp<'p> {
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
             ai_cost_micro: Cell::new(0),
+            handlers: RefCell::new(Vec::new()),
         }
     }
 
