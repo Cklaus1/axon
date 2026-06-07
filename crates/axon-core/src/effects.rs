@@ -228,6 +228,63 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
     inferred
 }
 
+/// Per-fn set of builtin effects each function ACTUALLY performs, directly or
+/// transitively — computed by walking bodies for real `builtin_effect_row` hits
+/// and propagating across the call graph to a fixpoint. Unlike [`infer_effects`]
+/// this does NOT seed declared rows or `@[contained]` specs: a `fn fetch() ->
+/// i64 | {Net} { len(url) }` performs NO Net builtin, so it contributes nothing
+/// here even though it DECLARES `{Net}`. This matches exactly what the
+/// interpreter's handler interception fires on at runtime (a builtin carrying
+/// the effect), which is what codegen must agree with — so it is the right basis
+/// for deciding whether a handler genuinely intercepts something.
+pub fn transitive_builtin_effects(program: &Program) -> HashMap<String, HashSet<String>> {
+    let fns: Vec<&crate::ast::FnDef> = program
+        .items
+        .iter()
+        .filter_map(|it| match it {
+            Item::FnDef(f) => Some(f),
+            _ => None,
+        })
+        .collect();
+    // Start empty (NO declared-row / contained seed) — only real operations.
+    let mut eff: HashMap<String, HashSet<String>> =
+        fns.iter().map(|f| (f.name.clone(), HashSet::new())).collect();
+    loop {
+        let mut changed = false;
+        for f in &fns {
+            let mut calls: Vec<(String, HashSet<String>)> = Vec::new();
+            collect_called_names_ctx(&f.body, &HashSet::new(), &mut calls);
+            let mut acc: HashSet<String> = HashSet::new();
+            for (name, handled) in &calls {
+                // Direct builtin operations performed by this call.
+                for e in crate::builtins::builtin_effect_row(name) {
+                    if !handled.contains(*e) {
+                        acc.insert((*e).to_string());
+                    }
+                }
+                // Effects a called USER fn actually performs (transitive).
+                if let Some(set) = eff.get(name) {
+                    for e in set {
+                        if !handled.contains(e) {
+                            acc.insert(e.clone());
+                        }
+                    }
+                }
+            }
+            let cur = eff.get_mut(&f.name).expect("init");
+            let before = cur.len();
+            cur.extend(acc);
+            if cur.len() != before {
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    eff
+}
+
 /// §4: derive the effect row a `@[contained(...)]` spec declares. The granted
 /// capabilities imply the effects the function may perform: filesystem
 /// read/write and process exec are forms of `IO`; a network allowlist grants
@@ -264,28 +321,57 @@ fn handler_discharges(handler: &crate::ast::HandlerExpr) -> HashSet<String> {
     h
 }
 
-/// Does this `with handler { … } { body }` ACTUALLY intercept a builtin effect
-/// performed in `body`? True iff the handler is inline, discharges some effect
-/// `E`, and `body` directly calls a builtin whose catalog row contains `E`
-/// (not inside a NESTED `with` that re-handles it). This is what the interpreter
-/// resumes — and what native codegen does NOT yet lower. Codegen uses it to
-/// REFUSE such a program honestly (E0910) instead of erasing the handler and
-/// silently shipping wrong output. An *inert* handler (no matching builtin in
-/// the body — e.g. one wrapping only pure code or a synthetic-row user fn)
-/// returns false and is safe to erase to its body.
-pub fn handler_intercepts_builtin(handler: &crate::ast::HandlerExpr, body: &Expr) -> bool {
+/// Program-aware: flags whether a `with handler { … } { body }` genuinely
+/// intercepts an effect — including TRANSITIVE interception, a handled effect
+/// performed by a builtin reached through a user-fn call in the body, which the
+/// interpreter intercepts dynamically but codegen cannot lower. Pass the result
+/// of [`transitive_builtin_effects`] so a `with handler { on IO => … } { f() }`
+/// where `f` (or anything it calls) actually performs an IO builtin is detected.
+/// Codegen uses THIS so it refuses (E0910) the indirect case instead of erasing
+/// the handler and silently miscompiling. Uses ACTUAL builtin operations (not
+/// declared rows), so a handler wrapping a synthetic-row fn that performs no
+/// real builtin (e.g. `fetch | {Net}` whose body is `len`) is still inert.
+pub fn handler_intercepts_effect(
+    transitive: &HashMap<String, HashSet<String>>,
+    handler: &crate::ast::HandlerExpr,
+    body: &Expr,
+) -> bool {
+    handler_intercepts_effect_impl(handler, body, Some(transitive))
+}
+
+fn handler_intercepts_effect_impl(
+    handler: &crate::ast::HandlerExpr,
+    body: &Expr,
+    transitive: Option<&HashMap<String, HashSet<String>>>,
+) -> bool {
     let discharged = handler_discharges(handler);
     if discharged.is_empty() {
         return false;
     }
-    fn body_hits(e: &Expr, discharged: &HashSet<String>) -> bool {
+    fn body_hits(
+        e: &Expr,
+        discharged: &HashSet<String>,
+        transitive: Option<&HashMap<String, HashSet<String>>>,
+    ) -> bool {
         if let Expr::Call { callee, .. } = e {
             if let Expr::Ident(name) = callee.as_ref() {
+                // Direct builtin carrying a handled effect.
                 if crate::builtins::builtin_effect_row(name)
                     .iter()
                     .any(|eff| discharged.contains(*eff))
                 {
                     return true;
+                }
+                // Transitive: a user fn whose actual builtin effects (directly or
+                // via its own callees) include a handled effect. This closes the
+                // indirect-interception hole — the interpreter discharges these,
+                // so codegen must not silently erase them.
+                if let Some(t) = transitive {
+                    if let Some(set) = t.get(name) {
+                        if set.iter().any(|eff| discharged.contains(eff)) {
+                            return true;
+                        }
+                    }
                 }
             }
         }
@@ -295,12 +381,12 @@ pub fn handler_intercepts_builtin(handler: &crate::ast::HandlerExpr, body: &Expr
         let mut hit = false;
         for_each_child(e, &mut |c| {
             if !hit {
-                hit = body_hits(c, discharged);
+                hit = body_hits(c, discharged, transitive);
             }
         });
         hit
     }
-    body_hits(body, &discharged)
+    body_hits(body, &discharged, transitive)
 }
 
 /// Collect the names of every directly-called function/builtin in `e` whose

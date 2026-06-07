@@ -3367,6 +3367,28 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
         !omsg.contains("E0910"),
         "an inert handler must NOT be E0910-refused (it is equivalent to its body):\n{omsg}"
     );
+
+    // INDIRECT interception: the handled builtin is performed by a user fn CALLED
+    // from the body, not lexically in it. The interpreter intercepts this
+    // dynamically; codegen cannot lower it, and erasing the handler would
+    // silently miscompile (native would run the suppressed println). Must be
+    // E0910-refused (transitive detection), not silently built.
+    let indirect = build(
+        "fn helper() -> i64 | {IO} { println(\"LEAK\")  5 }\n\
+         fn main() -> i64 { with handler { on IO(p) => resume(0) } { helper() } }",
+    );
+    let imsg = format!("{}{}", String::from_utf8_lossy(&indirect.stdout), String::from_utf8_lossy(&indirect.stderr));
+    assert!(imsg.contains("E0910"), "indirect interception must be refused, not silently erased:\n{imsg}");
+    assert!(!indirect.status.success(), "indirect-interception build must FAIL:\n{imsg}");
+
+    // But a user fn doing IO under a NON-matching handler (Net) is not
+    // intercepted → must still build (no over-refusal).
+    let unmatched = build(
+        "fn helper() -> i64 | {IO} { println(\"ok\")  5 }\n\
+         fn main() -> i64 { with handler { on Net(p) => resume(0) } { helper() } }",
+    );
+    let umsg = format!("{}{}", String::from_utf8_lossy(&unmatched.stdout), String::from_utf8_lossy(&unmatched.stderr));
+    assert!(!umsg.contains("E0910"), "a non-matching handler must not refuse an IO-doing helper:\n{umsg}");
 }
 
 #[test]

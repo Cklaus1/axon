@@ -112,7 +112,7 @@ impl<'ctx> super::Codegen<'ctx> {
             // synthetic-row user fn) is genuinely equivalent to its body and is
             // erased as before, keeping the example corpus building natively.
             ast::Expr::WithHandler { handler, body } => {
-                if crate::effects::handler_intercepts_builtin(handler, body) {
+                if crate::effects::handler_intercepts_effect(&self.transitive_effects, handler, body) {
                     let msg =
                         "codegen error [E0910]: native codegen does not yet lower effect-handler \
                          discharge (`resume`) — this `with handler { … }` intercepts a builtin \

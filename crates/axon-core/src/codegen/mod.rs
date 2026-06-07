@@ -277,6 +277,14 @@ pub struct Codegen<'ctx> {
     /// emission and aborts rather than shipping a binary that silently computes
     /// a wrong value (the arr_*/dict_* "returns 0 natively" class).
     pub(super) codegen_errors: Vec<String>,
+    /// Phase 6: per-fn set of builtin effects each function ACTUALLY performs
+    /// (directly or transitively). Computed once at the start of `emit_program`
+    /// from `effects::transitive_builtin_effects`. The `WithHandler` lowering
+    /// uses it to detect whether a handler genuinely intercepts an effect —
+    /// including through a user-fn call (the indirect case the interpreter
+    /// discharges dynamically) — so codegen refuses (E0910) instead of silently
+    /// erasing and miscompiling. Empty until `emit_program` populates it.
+    pub(super) transitive_effects: HashMap<String, std::collections::HashSet<String>>,
     /// The inkwell IR holder: the one `Context`/`Module`/`Builder` per codegen
     /// run. Codegen emits LLVM through `self.ir.{context, module, builder}`
     /// (paired with the `build_wrappers::w_*` helpers). This is the SINGLE
@@ -327,6 +335,7 @@ impl<'ctx> Codegen<'ctx> {
             current_verify_fn: None,
             target_is_wasm: false,
             codegen_errors: Vec::new(),
+            transitive_effects: HashMap::new(),
         }
     }
 
@@ -685,6 +694,12 @@ impl<'ctx> Codegen<'ctx> {
         for (name, f) in &fn_work {
             self.fndefs.insert(name.clone(), f.clone());
         }
+
+        // Phase 6: precompute per-fn ACTUAL builtin effects (transitive) so the
+        // `with handler` lowering can tell whether a handler genuinely intercepts
+        // an effect — including one reached through a user-fn call — and refuse
+        // (E0910) the cases native codegen can't lower, instead of erasing them.
+        self.transitive_effects = crate::effects::transitive_builtin_effects(program);
 
         // ── ASI Layer-3: collect eligible adaptive fns for registry init. ─────
         // v1 narrowing: only `@[adaptive] fn(i64) -> i64` is eligible for
