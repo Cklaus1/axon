@@ -3987,6 +3987,83 @@ fn refinement_predicate_calls_a_pure_function() {
 }
 
 #[test]
+fn refinement_precondition_enforced_at_runtime_on_nonconstant_args() {
+    // Phase 5: a refinement on a PARAMETER is a precondition. The checker
+    // discharges it statically only for COMPILE-TIME-CONSTANT args (E1209);
+    // a NON-CONSTANT arg used to be silently erased and never checked, in both
+    // the interpreter and native codegen — a soundness hole (e.g. `factorial(x)`
+    // with a runtime `x = -1` violating `_ >= 0` ran and returned a value with
+    // no error). The spec's Z3-free fallback (compiler-phase5.md §4,
+    // `--proof-timeout 0`: "every predicate becomes a runtime check") is now the
+    // default for non-constant args: the predicate is evaluated at fn entry with
+    // `_` bound to the actual value, and a violation exits 6
+    // (REFINE_VIOLATION_EXIT_CODE) — distinct from a @[verify] postcondition (3)
+    // and from a bug-panic (101).
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_refrt_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    // 1. Non-constant arg violating `_ >= 0` (passed through an unrefined helper
+    //    so the checker cannot fold it). Today: returns 1, exit 0 (the hole).
+    let (c, m) = run(
+        "fn factorial(n: i64 where _ >= 0) -> i64 { if n <= 1 { 1 } else { n * factorial(n - 1) } }\n\
+         fn bad(x: i64) -> i64 { factorial(x) }\n\
+         fn main() -> i64 { bad(-1) }\n",
+    );
+    assert_eq!(c, 6, "factorial(-1) must be a refinement violation (exit 6): {m}");
+    assert!(m.contains("refinement"), "message names the violation: {m}");
+    assert!(m.contains("factorial"), "message names the function: {m}");
+
+    // 2. Refinement precondition must fire BEFORE the arithmetic it guards: a
+    //    `d != 0` divisor caught as a refinement breach (exit 6), not a raw
+    //    div-by-zero panic (101).
+    let (c, m) = run(
+        "fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\n\
+         fn main() -> i64 { let z = 0\n divide(10, z) }\n",
+    );
+    assert_eq!(c, 6, "divide(_, 0) must be a refinement violation, not a div0 panic: {m}");
+
+    // 3. A `str` NonEmpty refinement violated by a runtime "".
+    let (c, m) = run(
+        "type NonEmpty = str where str_len(_) > 0\n\
+         fn greet(name: NonEmpty) -> i64 { str_len(name) }\n\
+         fn caller(s: str) -> i64 { greet(s) }\n\
+         fn main() -> i64 { caller(\"\") }\n",
+    );
+    assert_eq!(c, 6, "greet(\"\") must violate NonEmpty (exit 6): {m}");
+
+    // 4. No false positive: a satisfied non-constant arg runs clean. main returns
+    //    factorial(5) = 120, so the exit code is the value, NOT a violation.
+    let (c, m) = run(
+        "fn factorial(n: i64 where _ >= 0) -> i64 { if n <= 1 { 1 } else { n * factorial(n - 1) } }\n\
+         fn ok(x: i64) -> i64 { factorial(x) }\n\
+         fn main() -> i64 { ok(5) }\n",
+    );
+    assert_eq!(c, 120, "satisfied refined arg must run clean (no false positive): {m}");
+}
+
+#[test]
+fn refinements_example_still_runs_clean_under_interp() {
+    // I-2 baseline guard: examples/refinements.ax must keep running exit-0 with
+    // unchanged output after the runtime refinement check lands. Every refined
+    // PARAMETER there receives a satisfying value, so no entry check fires.
+    let out = axon().args(["run", &ex("refinements.ax")]).output().unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "refinements.ax must still run clean: {:?}",
+        out
+    );
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

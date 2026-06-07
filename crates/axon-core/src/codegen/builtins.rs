@@ -2389,6 +2389,28 @@ impl<'ctx> super::Codegen<'ctx> {
             let _ = self.ir.module.add_function("__axon_msg_panic", mp_ty, None);
         }
 
+        // ── Phase 5: refinement-precondition violation panic ─────────────────
+        //   __axon_refine_panic(fn_ptr, fn_len, param_ptr, param_len,
+        //                        refine_ptr, refine_len) -> noreturn (exit 6)
+        // Emitted at function entry on the branch where a refined parameter's
+        // `where` predicate evaluated false. Names the fn/param/refinement (all
+        // build-time strings) and exits 6 — the runtime fallback for non-constant
+        // refinement args; matches the interpreter's Flow::RefineViolation (I-2).
+        {
+            let rp_ty = void_ty.fn_type(
+                &[
+                    i8_ptr.into(),
+                    i64_ty.into(),
+                    i8_ptr.into(),
+                    i64_ty.into(),
+                    i8_ptr.into(),
+                    i64_ty.into(),
+                ],
+                false,
+            );
+            let _ = self.ir.module.add_function("__axon_refine_panic", rp_ty, None);
+        }
+
         // ── ASI Layer-3: adaptive registry registration ───────────────────────
         //   __axon_register_adaptive(name_ptr, name_len, fn_ptr)
         //

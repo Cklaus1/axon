@@ -172,6 +172,12 @@ pub struct Codegen<'ctx> {
     /// isn't lowered (E0701). The codegen analog of the infer/checker
     /// refinement_base maps — the third engine that must learn the type form.
     refinement_base: HashMap<String, ast::AxonType>,
+    /// Phase 5: named refinement → its predicate Expr (binder `_`). Drives the
+    /// runtime precondition check emitted at function entry — when a parameter's
+    /// type is a refinement, the predicate is lowered (with `_` aliased to the
+    /// param) and a violation calls `__axon_refine_panic` (exit 6), the codegen
+    /// analog of the interpreter's `Interp::refine_preds` entry check (I-2).
+    refine_preds: HashMap<String, ast::Expr>,
     /// Maps fn names to their Axon semantic return type (for call-site type inference).
     fn_return_types: HashMap<String, Type>,
     /// Tracks inferred Axon semantic types for named locals (for match/field-access dispatch).
@@ -318,6 +324,7 @@ impl<'ctx> Codegen<'ctx> {
             struct_fields: HashMap::new(),
             struct_field_sem_types: HashMap::new(),
             refinement_base: HashMap::new(),
+            refine_preds: HashMap::new(),
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             current_result_types: None,
@@ -462,6 +469,9 @@ impl<'ctx> Codegen<'ctx> {
         for item in &program.items {
             if let ast::Item::RefineDef(r) = item {
                 self.refinement_base.insert(r.name.clone(), r.base.clone());
+                // Phase 5: also index the predicate for the entry-time runtime
+                // precondition check (mirrors the interpreter's refine_preds).
+                self.refine_preds.insert(r.name.clone(), (*r.predicate).clone());
             }
         }
         self.declare_types(program);
@@ -1012,6 +1022,18 @@ impl<'ctx> Codegen<'ctx> {
                 self.locals.insert(param.name.clone(), (alloca, llvm_ty));
                 self.local_types.insert(param.name.clone(), sem_ty);
             }
+        }
+
+        // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
+        // (named or inline-desugared) carries a runtime contract the checker
+        // discharges statically only for constant args (E1209). Emit the spec's
+        // Z3-free fallback for non-constant args: evaluate P at entry with `_`
+        // aliased to the param and call `__axon_refine_panic` (exit 6) on
+        // violation — the codegen analog of the interpreter's `call_fn` check, so
+        // native and `axon run` agree on the exit code (I-2). Out-of-subset
+        // predicates are E0910-refused inside the helper (never silently skipped).
+        if !self.refine_preds.is_empty() {
+            self.emit_refine_preconditions(f, llvm_fn);
         }
 
         let body_val = self.emit_expr(&f.body, llvm_fn);

@@ -307,6 +307,21 @@ Default solver timeout: **2000 ms** per obligation. Configurable via `AXON_PROOF
 A `--proof-timeout 0` flag disables SMT entirely (every predicate becomes a runtime check, useful
 for bisecting compile regressions).
 
+> **Implemented ahead of the Z3 backend (status):** the runtime-check fallback itself is
+> LANDED and is the *current default* for non-constant refinement preconditions — the SMT
+> backend above is not yet wired in, so today every non-constant precondition takes the
+> runtime path rather than being statically discharged. A parameter `p: T where P` has `P`
+> evaluated at **function entry** with `_` bound to the actual argument; a violation exits **6**
+> (`REFINE_VIOLATION_EXIT_CODE`), distinct from a `@[verify]` postcondition (3) and a bug-panic
+> (101). This is enforced symmetrically in the interpreter (`Interp::call_fn`) and native codegen
+> (`emit_refine_preconditions`), with byte-identical exit codes (`scripts/exit_code_parity.sh`,
+> invariant I-2). Codegen lowers the same predicate subset the constant-folder supports
+> (literals, `_`, arithmetic, comparisons, `&&`/`||`/`!`, `_.field`, `str_len`/`str_eq`, and
+> calls to `@[pure]` fns); a predicate outside that subset is honestly E0910-refused at build
+> time, never silently skipped. When the Z3 backend lands, a *provable* precondition is
+> discharged statically and its runtime check is elided; an *unprovable* one continues to take
+> this runtime path.
+
 ### Counter-Example Reporting
 
 When Z3 returns `sat`, the checker reads the model and formats counter-examples in Axon

@@ -290,6 +290,194 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.builder.position_at_end(cont_bb);
     }
 
+    /// Phase 5: emit the runtime refinement-PRECONDITION check for each refined
+    /// parameter at function entry. For `p: T where P`, evaluate `P` with `_`
+    /// aliased to the parameter's local; on `false`, branch to a panic block that
+    /// calls `__axon_refine_panic(fn, param, refine)` (exit 6). This is the
+    /// codegen analog of the interpreter's `call_fn` entry check — both engines
+    /// enforce the same predicate subset, so the observable exit code agrees
+    /// (I-2). A predicate outside the lowerable subset is E0910-refused (never
+    /// silently skipped — that would let native accept a value the interpreter
+    /// rejects). Call only when `self.refine_preds` is non-empty.
+    pub(super) fn emit_refine_preconditions(
+        &mut self,
+        f: &ast::FnDef,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let panic_fn = match self.ir.module.get_function("__axon_refine_panic") {
+            Some(f) => f,
+            None => return,
+        };
+        for param in &f.params {
+            let ast::AxonType::Named(rname) = &param.ty else { continue };
+            let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() else { continue };
+
+            // Bail out honestly if the predicate is outside the subset BOTH
+            // engines can evaluate — refusing (E0910) rather than skipping the
+            // check keeps native from silently accepting an out-of-contract value.
+            if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen cannot lower the refinement \
+                     predicate of `{rname}` on parameter `{}` of `{}` — it is outside the \
+                     runtime-checkable subset (literals, `_`, arithmetic, comparisons, \
+                     `&&`/`||`/`!`, `str_len`/`str_eq`, `_.field`, and calls to @[pure] \
+                     functions). Run it under the interpreter (`axon run`).",
+                    param.name, f.name
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
+                continue;
+            }
+
+            // Don't insert into a terminated block (defensive).
+            if self
+                .ir
+                .builder
+                .get_insert_block()
+                .and_then(|b| b.get_terminator())
+                .is_some()
+            {
+                return;
+            }
+
+            // Alias `_` to this parameter's local for the predicate emission, then
+            // restore so the binder never leaks into the function body. The param
+            // is already in `self.locals`/`self.local_types` from the binding loop.
+            let saved_local = self.locals.get(&param.name).copied();
+            let saved_type = self.local_types.get(&param.name).cloned();
+            let prev_underscore_local = self.locals.remove("_");
+            let prev_underscore_type = self.local_types.remove("_");
+            if let Some(l) = saved_local {
+                self.locals.insert("_".to_string(), l);
+            }
+            if let Some(t) = saved_type {
+                self.local_types.insert("_".to_string(), t);
+            }
+
+            let pred_val = self.emit_expr(&pred, llvm_fn);
+
+            // Restore `_`.
+            self.locals.remove("_");
+            self.local_types.remove("_");
+            if let Some(l) = prev_underscore_local {
+                self.locals.insert("_".to_string(), l);
+            }
+            if let Some(t) = prev_underscore_type {
+                self.local_types.insert("_".to_string(), t);
+            }
+
+            let cond = match pred_val {
+                Some(BasicValueEnum::IntValue(iv)) if iv.get_type().get_bit_width() == 1 => iv,
+                // A predicate that didn't lower to an i1 — defensive; refuse.
+                _ => {
+                    let msg = format!(
+                        "codegen error [E0910]: refinement predicate of `{rname}` on parameter \
+                         `{}` of `{}` did not lower to a boolean. Run it under the interpreter.",
+                        param.name, f.name
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        self.codegen_errors.push(msg);
+                    }
+                    continue;
+                }
+            };
+
+            // cond ? continue : panic.
+            let panic_bb = self.ir.context.append_basic_block(llvm_fn, "refine_panic");
+            let cont_bb = self.ir.context.append_basic_block(llvm_fn, "refine_ok");
+            build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
+
+            // ── Panic path: name the violation, exit 6. ───────────────────────
+            self.ir.builder.position_at_end(panic_bb);
+            let i64_ty = self.ir.context.i64_type();
+            let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &f.name, "refine_fn");
+            let pn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &param.name, "refine_param");
+            let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, rname, "refine_name");
+            let _ = build_wrappers::w_call(
+                &self.ir.builder,
+                panic_fn,
+                &[
+                    fn_g.into(),
+                    i64_ty.const_int(f.name.len() as u64, false).into(),
+                    pn_g.into(),
+                    i64_ty.const_int(param.name.len() as u64, false).into(),
+                    rn_g.into(),
+                    i64_ty.const_int(rname.len() as u64, false).into(),
+                ],
+                "",
+            );
+            build_wrappers::w_unreachable(&self.ir.builder);
+
+            // ── Continue path: subsequent params / the body fall through here. ─
+            self.ir.builder.position_at_end(cont_bb);
+        }
+    }
+
+    /// Is `pred` within the predicate subset native codegen can faithfully lower
+    /// at function entry — the SAME subset the interpreter evaluates, so the two
+    /// engines agree (I-2)? Accepts: int/bool/str literals; the binder `_`;
+    /// checked arithmetic `+ - * / %`; comparisons; `&& || !`; `_.field`;
+    /// `str_len(_)` / `str_eq(...)`; calls to `@[pure]` user fns; and `if`/block
+    /// forms reducing to those. Anything else (impure builtins are already
+    /// E1209-rejected statically) is out of subset → the caller E0910-refuses.
+    fn refine_predicate_is_lowerable(
+        pred: &ast::Expr,
+        fndefs: &std::collections::HashMap<String, ast::FnDef>,
+    ) -> bool {
+        match pred {
+            ast::Expr::Literal(_) => true,
+            ast::Expr::Ident(_) => true, // `_` (and, inside a @[pure] body, its params)
+            ast::Expr::UnaryOp { operand, .. } => {
+                Self::refine_predicate_is_lowerable(operand, fndefs)
+            }
+            ast::Expr::BinOp { left, right, .. } => {
+                Self::refine_predicate_is_lowerable(left, fndefs)
+                    && Self::refine_predicate_is_lowerable(right, fndefs)
+            }
+            ast::Expr::FieldAccess { receiver, .. } => {
+                Self::refine_predicate_is_lowerable(receiver, fndefs)
+            }
+            ast::Expr::If { cond, then, else_ } => {
+                Self::refine_predicate_is_lowerable(cond, fndefs)
+                    && Self::refine_predicate_is_lowerable(then, fndefs)
+                    && else_
+                        .as_ref()
+                        .map(|e| Self::refine_predicate_is_lowerable(e, fndefs))
+                        .unwrap_or(true)
+            }
+            ast::Expr::Block(stmts) => stmts.iter().all(|s| match &s.expr {
+                ast::Expr::Let { value, .. }
+                | ast::Expr::Own { value, .. }
+                | ast::Expr::RefBind { value, .. } => {
+                    Self::refine_predicate_is_lowerable(value, fndefs)
+                }
+                other => Self::refine_predicate_is_lowerable(other, fndefs),
+            }),
+            ast::Expr::Call { callee, args, .. } => {
+                // Only direct calls to a known builtin in the pure-predicate set,
+                // or to a user `@[pure]` fn, with all args lowerable.
+                let ast::Expr::Ident(name) = callee.as_ref() else { return false };
+                let args_ok = args.iter().all(|a| Self::refine_predicate_is_lowerable(a, fndefs));
+                if !args_ok {
+                    return false;
+                }
+                if matches!(name.as_str(), "str_len" | "str_eq") {
+                    return true;
+                }
+                // A user @[pure] fn (the same forms the E1209 const-folder allows).
+                fndefs
+                    .get(name)
+                    .map(|d| {
+                        d.attrs.iter().any(|a| a.name == "pure")
+                            && Self::refine_predicate_is_lowerable(&d.body, fndefs)
+                    })
+                    .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
     /// ASI Layer-3: emit one `__axon_register_adaptive(name, len, fn_ptr)`
     /// call per eligible adaptive function (`@[adaptive] fn(i64) -> i64`).
     /// Called from main's prologue.  No-op when no eligible functions exist

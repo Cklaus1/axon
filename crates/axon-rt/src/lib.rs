@@ -1771,6 +1771,65 @@ pub extern "C" fn __axon_verify_panic(
     std::process::exit(VERIFY_FAILED_EXIT_CODE);
 }
 
+/// Exit code for a runtime refinement-precondition violation — a non-constant
+/// argument failed a parameter's `where` predicate. Must match the
+/// interpreter's `interp::REFINE_VIOLATION_EXIT_CODE` (axon-rt has no dependency
+/// on axon-core, so the value is duplicated, not imported). Distinct from 101
+/// (bug-panic), 3 (@[verify] postcondition), 4 (corrigible), 5 (ai-policy), 2
+/// (static) so a supervisor can branch on "a caller passed an out-of-contract
+/// value" specifically.
+pub const REFINE_VIOLATION_EXIT_CODE: i32 = 6;
+
+/// Runtime panic for a refinement-type precondition violation in native code.
+///
+/// Codegen injects a guarded call to this symbol at function entry, on the
+/// branch where a refined parameter's `where` predicate evaluated false (with
+/// `_` bound to the actual argument). The static checker discharges the
+/// predicate for compile-time-CONSTANT args (E1209); this runtime hook is the
+/// spec's Z3-free fallback for NON-constant args (compiler-phase5.md §4,
+/// `--proof-timeout 0`: "every predicate becomes a runtime check").
+///
+/// Behaviour: writes a one-line message to stderr and exits with
+/// [`REFINE_VIOLATION_EXIT_CODE`] (6) — a precondition breach is the caller's
+/// contract violation, distinct from a bug-crash (101) and from a `@[verify]`
+/// postcondition (3). The interpreter exits 6 on the same condition, so native
+/// and `axon run` agree on the observable exit code (I-2).
+///
+/// Parameters are the Axon `str` ABI for three build-time-known names:
+/// * `fn_ptr` / `fn_len` — the function whose precondition was violated.
+/// * `param_ptr` / `param_len` — the offending parameter's name.
+/// * `refine_ptr` / `refine_len` — the refinement type's name.
+///
+/// The runtime *value* is not passed — it is not a build-time string — but the
+/// names locate the violation, and the exit code is the machine-observable
+/// signal the parity harness and supervisors branch on.
+#[no_mangle]
+pub extern "C" fn __axon_refine_panic(
+    fn_ptr: *const u8,
+    fn_len: i64,
+    param_ptr: *const u8,
+    param_len: i64,
+    refine_ptr: *const u8,
+    refine_len: i64,
+) -> ! {
+    let s = |ptr: *const u8, len: i64| -> &'static str {
+        if ptr.is_null() || len <= 0 {
+            "?"
+        } else {
+            let bytes = unsafe { std::slice::from_raw_parts(ptr, len as usize) };
+            std::str::from_utf8(bytes).unwrap_or("?")
+        }
+    };
+    eprintln!(
+        "axon: refinement violated: parameter `{}` of `{}` violates the refinement `{}` — \
+         the value does not satisfy the type's predicate",
+        s(param_ptr, param_len),
+        s(fn_ptr, fn_len),
+        s(refine_ptr, refine_len),
+    );
+    std::process::exit(REFINE_VIOLATION_EXIT_CODE);
+}
+
 /// The exit code for a genuine runtime panic (integer overflow, division by
 /// zero, and the other checked-arithmetic traps). Matches the interpreter's
 /// `interp::run` panic path, which exits 101 on `Flow::Panic` — so a native

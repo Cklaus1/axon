@@ -67,6 +67,26 @@ check oob_index      101 'fn main() -> i64 { let a = [1, 2, 3]  a[10] }'
 check clean_zero     0   'fn main() -> i64 { 0 }'
 check return_seven   7   'fn main() -> i64 { 7 }'
 
+# Phase 5: refinement-PRECONDITION violations on non-constant args → exit 6 on
+# BOTH engines (the spec's Z3-free runtime-check fallback). A constant arg is a
+# static E1209; these route a runtime value through an unrefined helper so the
+# checker can't fold it, exercising the entry check in interp + codegen.
+check refine_neg     6   'fn f(n: i64 where _ >= 0) -> i64 { n }
+fn bad(x: i64) -> i64 { f(x) }
+fn main() -> i64 { bad(0 - 1) }'
+check refine_div0    6   'fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }
+fn main() -> i64 { let z = 0
+ divide(10, z) }'
+check refine_strlen  6   'type NonEmpty = str where str_len(_) > 0
+fn greet(s: NonEmpty) -> i64 { str_len(s) }
+fn caller(x: str) -> i64 { greet(x) }
+fn main() -> i64 { caller("") }'
+# A SATISFIED non-constant arg must NOT trip the check (no false positive); main
+# returns factorial(5) = 120 on both engines.
+check refine_ok      120 'fn factorial(n: i64 where _ >= 0) -> i64 { if n <= 1 { 1 } else { n * factorial(n - 1) } }
+fn ok(x: i64) -> i64 { factorial(x) }
+fn main() -> i64 { ok(5) }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1

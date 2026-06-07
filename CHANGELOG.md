@@ -37,7 +37,17 @@
 - `@[pure]` purity checker (E1207); `@[total]` termination checker (E1208)
 - Refinement types `T where <pred>` (named + inline), transparent to the base type,
   with constant-predicate obligations at arg/return/struct-field sites (E1209)
-- Remaining: the §4 Z3/SMT backend for non-constant predicates
+- Refinement PRECONDITIONS on NON-constant args are now enforced at runtime — the
+  spec's Z3-free fallback (§4, `--proof-timeout 0`: "every predicate becomes a
+  runtime check"). At function entry the parameter's `where` predicate is evaluated
+  with `_` bound to the actual value; a violation exits 6 (REFINE_VIOLATION_EXIT_CODE),
+  distinct from a @[verify] postcondition (3) and a bug-panic (101). Enforced in BOTH
+  the interpreter and native codegen (byte-identical exit codes, `exit_code_parity.sh`);
+  out-of-subset predicates are E0910-refused in codegen, never silently skipped. Closes
+  a soundness hole where `factorial(x)` with a runtime `x = -1` violating `_ >= 0` ran
+  with no error.
+- Remaining: the §4 Z3/SMT backend for STATIC discharge of non-constant predicates
+  (proving `g(y)` safe without a runtime check)
 
 ### Phases 3–4 — Generics/traits/closures/channels; LSP/fmt/doc/multi-file
 - Generics, structural traits, closures with captures, channels, borrow checker,

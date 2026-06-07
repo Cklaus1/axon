@@ -130,6 +130,15 @@ pub enum Flow {
     /// it escapes to a function/loop/top-level boundary, that is a `resume`
     /// outside a handler arm — treated as a panic (it should have been caught).
     Resume(Value),
+    /// Phase 5: a refinement-type PRECONDITION was violated at runtime — a value
+    /// passed to a parameter `p: T where P` failed `P` when `_` was bound to it.
+    /// The checker discharges this statically for constant args (E1209); for a
+    /// non-constant arg the predicate becomes a runtime check (the spec's
+    /// Z3-free `--proof-timeout 0` fallback). A distinct flow (exit code 6) so a
+    /// supervisor can tell a caller's precondition breach apart from a @[verify]
+    /// postcondition (3), a kill-switch (4), an ai-policy stop (5), and a generic
+    /// bug-panic (101).
+    RefineViolation(String),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -148,6 +157,13 @@ pub const HALTED_EXIT_CODE: i32 = 4;
 /// (verify), 4 (corrigible halt), and 2 (static) so a supervisor can branch on
 /// "AI policy needs attention" specifically.
 pub const AI_POLICY_EXIT_CODE: i32 = 5;
+
+/// Process exit code for a runtime refinement-precondition violation — a
+/// non-constant argument failed a parameter's `where` predicate. Distinct from
+/// 101 (panic), 3 (verify postcondition), 4 (corrigible), 5 (ai-policy), and 2
+/// (static) so a supervisor can branch on "a caller passed an out-of-contract
+/// value" specifically. The spec's Z3-free runtime-check fallback (Phase-5 §4).
+pub const REFINE_VIOLATION_EXIT_CODE: i32 = 6;
 
 type R = Result<Value, Flow>;
 
@@ -294,6 +310,13 @@ pub struct Interp<'p> {
     /// `eval` of `Expr::WithHandler`. Interior-mutable like the other per-run
     /// state above.
     handlers: RefCell<Vec<HandlerFrame>>,
+    /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
+    /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
+    /// named refinement during parsing). Drives the runtime precondition check in
+    /// `call_fn`: when a parameter's type is one of these, the predicate is
+    /// evaluated with `_` bound to the argument and a violation raises
+    /// [`Flow::RefineViolation`]. Empty when the program has no refinements.
+    refine_preds: HashMap<String, &'p Expr>,
 }
 
 /// One active effect-handler frame: the inline-handler arms in scope for the
@@ -573,6 +596,14 @@ fn run_program_inner(program: &Program) -> i32 {
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
+        Err(Flow::RefineViolation(msg)) => {
+            // A refinement-type precondition was violated by a non-constant arg.
+            // Not a crash — the caller passed an out-of-contract value — so a
+            // distinct exit code (6), like @[verify]→3 / @[corrigible]→4.
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: refinement violated: {msg}");
+            REFINE_VIOLATION_EXIT_CODE
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -606,6 +637,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // An AI-policy stop inside a test is a failure (surfaces like a panic;
         // also lets `@[test(should_fail)]` assert the policy gate fired).
         Err(Flow::AiPolicyUnreachable(m)) => Err(m),
+        // A refinement-precondition violation inside a test is a failure too
+        // (lets `@[test(should_fail)]` assert a bad arg is caught).
+        Err(Flow::RefineViolation(m)) => Err(m),
         Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
@@ -616,7 +650,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -643,11 +677,17 @@ impl<'p> Interp<'p> {
         let mut enums = HashMap::new();
         let mut methods = HashMap::new();
         let mut global_defs = Vec::new();
+        let mut refine_preds = HashMap::new();
 
         for item in &program.items {
             match item {
                 Item::FnDef(f) => {
                     fns.insert(f.name.clone(), f);
+                }
+                Item::RefineDef(r) => {
+                    // Phase 5: index the predicate so `call_fn` can evaluate it as
+                    // a runtime precondition when a param's type is this refinement.
+                    refine_preds.insert(r.name.clone(), r.predicate.as_ref());
                 }
                 Item::TypeDef(t) => {
                     structs.insert(t.name.clone(), t);
@@ -687,6 +727,7 @@ impl<'p> Interp<'p> {
             ai_calls_this_fn: Cell::new(0),
             ai_cost_micro: Cell::new(0),
             handlers: RefCell::new(Vec::new()),
+            refine_preds,
         }
     }
 
@@ -926,6 +967,38 @@ impl<'p> Interp<'p> {
                 a
             };
             env.define(p.name.clone(), a);
+        }
+        // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
+        // desugars to a synthetic named refinement; the checker discharges P
+        // statically only for compile-time-CONSTANT args (E1209). For a
+        // non-constant arg the predicate becomes a runtime check (the spec's
+        // Z3-free `--proof-timeout 0` fallback): evaluate P with `_` bound to the
+        // actual value and refuse with a distinct exit code (6) on violation.
+        // Skipped entirely unless the program declares refinements AND this fn has
+        // a refined param, so unrefined hot recursion pays nothing. The predicate
+        // references only `_` plus pure helpers (impure builtins in a `where` are
+        // E1209-rejected), so it cannot re-enter this fn's body; any pure-helper
+        // recursion is bounded by the same `max_depth` guard above.
+        if !self.refine_preds.is_empty() {
+            for p in &f.params {
+                if let crate::ast::AxonType::Named(rname) = &p.ty {
+                    if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                        let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
+                        let mut pred_env = Env::new();
+                        pred_env.define("_".into(), val.clone());
+                        if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                            return Err(Flow::RefineViolation(format!(
+                                "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \
+                                 the value does not satisfy the type's predicate",
+                                p.name,
+                                f.name,
+                                value::display(&val),
+                                rname
+                            )));
+                        }
+                    }
+                }
+            }
         }
         // R5 `#[goal(...)]` sugar: train the metric, evaluate on the held-out
         // set, gate. With a `test_set: [a, b, c]` (or repeated `holdout:`), the
