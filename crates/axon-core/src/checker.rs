@@ -1303,6 +1303,32 @@ impl CheckCtx {
     fn check_purity(&mut self, f: &FnDef) {
         let span = f.span;
         let fname = f.name.clone();
+        // `@[pure]` IS the empty effect row (Phase 5 §2 / Phase 6 E06). Declaring
+        // both `@[pure]` AND a non-empty `| {…}` row is a direct contradiction —
+        // the attribute promises no effects while the row claims some. Flag it so
+        // the two annotations can't silently disagree.
+        if let Some(row) = &f.effect_row {
+            if !row.effects.is_empty() {
+                let effs = row.effects.join(", ");
+                let file = self.file.clone();
+                self.errors.push(
+                    CheckError::new(
+                        E1207,
+                        format!(
+                            "`@[pure]` function `{fname}` also declares the effect row \
+                             `| {{{effs}}}` — `@[pure]` means the EMPTY effect row, so it \
+                             cannot also claim effects"
+                        ),
+                    )
+                    .at(&file, 0, 0)
+                    .with_span(span)
+                    .fix(format!(
+                        "drop the `@[pure]` attribute (keep `| {{{effs}}}`), or drop the \
+                         `| {{{effs}}}` row (keep `@[pure]`) — not both"
+                    )),
+                );
+            }
+        }
         let mut violations: Vec<(String, &'static str)> = Vec::new();
         Self::collect_purity_violations(&f.body, &self.pure_fns, &mut violations);
         for (callee, kind) in violations {

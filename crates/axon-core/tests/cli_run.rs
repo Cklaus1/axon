@@ -4275,6 +4275,35 @@ fn pure_attribute_enforces_purity_e1207() {
 }
 
 #[test]
+fn pure_attribute_contradicting_a_nonempty_effect_row_is_e1207() {
+    // `@[pure]` IS the empty effect row (Phase 5 §2 / Phase 6 E06). Declaring
+    // both `@[pure]` and a non-empty `| {…}` row is a contradiction — the
+    // attribute promises no effects while the row claims some. Must be E1207, so
+    // the two annotations can't silently disagree.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_purerow_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // Contradiction → E1207.
+    let (code, msg) = check("@[pure]\nfn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }");
+    assert_eq!(code, 2, "pure + nonempty row must fail: {msg}");
+    assert!(msg.contains("E1207"), "expected E1207 for pure/row contradiction: {msg}");
+    assert!(msg.contains("EMPTY effect row"), "message should explain pure == empty row: {msg}");
+
+    // `@[pure]` with an EXPLICIT empty row `| {}` is consistent → clean.
+    let (code, msg) = check("@[pure]\nfn p() -> i64 | {} { 0 }\nfn main() -> i64 { p() }");
+    assert_eq!(code, 0, "pure + explicit empty row is consistent: {msg}");
+
+    // A non-empty row WITHOUT `@[pure]` is fine (not a contradiction).
+    let (code, msg) = check("fn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }");
+    assert_eq!(code, 0, "a plain effect row must still be accepted: {msg}");
+}
+
+#[test]
 fn generic_fn_returning_sum_type_resolves_concrete_layout() {
     // A generic fn whose return mentions a type param — `wrap<T>(x: T) ->
     // Option<T>`, `ok_of<T>(x: T) -> Result<T, str>` — used to fail native
