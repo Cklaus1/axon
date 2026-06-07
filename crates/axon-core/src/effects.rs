@@ -116,7 +116,7 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         if matches!(allowed, Allowed::Open) {
             continue;
         }
-        check_expr(&f.body, &f.name, &allowed, &inferred, &mut errors);
+        check_expr(&f.body, &f.name, &allowed, &HashSet::new(), &inferred, &mut errors);
     }
     errors
 }
@@ -165,17 +165,26 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
     loop {
         let mut changed = false;
         for f in &fns {
-            // Gather the names this fn calls + the builtin effects it performs.
-            let mut calls = Vec::new();
-            collect_called_names(&f.body, &mut calls);
+            // Gather the names this fn calls, each paired with the set of effects
+            // discharged by handlers wrapping that call site (E04). An effect a
+            // call performs that is in its `handled` context is dropped — it does
+            // NOT propagate to this fn's transitive set, so a fn that fully
+            // handles an effect internally is pure to its callers (and a `| {}`
+            // caller of it is not falsely flagged).
+            let mut calls: Vec<(String, HashSet<String>)> = Vec::new();
+            collect_called_names_ctx(&f.body, &HashSet::new(), &mut calls);
             let mut acc: HashSet<String> = HashSet::new();
-            for name in &calls {
+            for (name, handled) in &calls {
                 for eff in crate::builtins::builtin_effect_row(name) {
-                    acc.insert((*eff).to_string());
+                    if !handled.contains(*eff) {
+                        acc.insert((*eff).to_string());
+                    }
                 }
                 if let Some(callee_set) = inferred.get(name) {
                     for eff in callee_set {
-                        acc.insert(eff.clone());
+                        if !handled.contains(eff) {
+                            acc.insert(eff.clone());
+                        }
                     }
                 }
             }
@@ -210,15 +219,68 @@ fn contained_effect_row(spec: &crate::ast::ContainedSpec) -> Vec<String> {
     effs
 }
 
-/// Collect the names of every directly-called function/builtin in `e`.
-fn collect_called_names(e: &Expr, out: &mut Vec<String>) {
-    if let Expr::Call { callee, .. } = e {
-        if let Expr::Ident(name) = callee.as_ref() {
-            out.push(name.clone());
+/// The effects an INLINE handler discharges: the effect name of each `on E(p)`
+/// arm. A `return(...)` arm has an empty effect name and discharges nothing. A
+/// NAMED handler (`with retry { … }`) discharges nothing here — its definition
+/// is not resolved yet (a later slice), and assuming it handles an effect would
+/// be unsound (it would reopen a laundering hole). E04 discharge therefore
+/// applies only to inline handlers, where the handled set is syntactically
+/// present on the arms.
+fn handler_discharges(handler: &crate::ast::HandlerExpr) -> HashSet<String> {
+    let mut h = HashSet::new();
+    if let crate::ast::HandlerExpr::Inline { arms, .. } = handler {
+        for arm in arms {
+            if !arm.effect.is_empty() {
+                h.insert(arm.effect.clone());
+            }
         }
     }
-    for_each_child(e, &mut |child| collect_called_names(child, out));
+    h
 }
+
+/// Collect the names of every directly-called function/builtin in `e` whose
+/// effects are NOT discharged by an enclosing inline handler. `handled` is the
+/// set of effects discharged by handlers wrapping `e`. When a called name's
+/// effects are fully covered by `handled`, the call is dropped from the result
+/// so the transitive `infer_effects` fixpoint does not propagate a handled
+/// effect up to callers (E04). A call performing a mix of handled and
+/// un-handled effects is kept (the un-handled ones still leak); the per-effect
+/// filtering against `handled` happens in `infer_effects` itself, which has the
+/// catalog/inferred sets — here we only manage the `handled` context so handler
+/// bodies vs arms are scoped correctly.
+fn collect_called_names_ctx(
+    e: &Expr,
+    handled: &HashSet<String>,
+    out: &mut Vec<(String, HashSet<String>)>,
+) {
+    if let Expr::Call { callee, .. } = e {
+        if let Expr::Ident(name) = callee.as_ref() {
+            out.push((name.clone(), handled.clone()));
+        }
+    }
+    if let Expr::WithHandler { handler, body } = e {
+        // Body sees the handler's discharged effects added to the context.
+        let mut inner = handled.clone();
+        for eff in handler_discharges(handler) {
+            inner.insert(eff);
+        }
+        collect_called_names_ctx(body, &inner, out);
+        // Handler ARM bodies are checked with the ORIGINAL context — an arm does
+        // not discharge its own effects (an `on Net` arm that logs via IO still
+        // performs IO against the enclosing row).
+        if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+            for arm in arms {
+                collect_called_names_ctx(&arm.body, handled, out);
+            }
+            if let Some(ra) = return_arm {
+                collect_called_names_ctx(&ra.body, handled, out);
+            }
+        }
+        return;
+    }
+    for_each_child(e, &mut |child| collect_called_names_ctx(child, handled, out));
+}
+
 
 /// The effects a call to `callee` performs: the builtin catalog row, or the
 /// callee's INFERRED (transitive) effect set, or nothing for an unknown name.
@@ -240,6 +302,7 @@ fn check_expr(
     e: &Expr,
     caller: &str,
     allowed: &Allowed,
+    handled: &HashSet<String>,
     inferred: &HashMap<String, HashSet<String>>,
     errors: &mut Vec<EffectError>,
 ) {
@@ -250,7 +313,9 @@ fn check_expr(
             // (no laundering through un-annotated intermediaries). Builtins use
             // their catalog row directly.
             for eff in callee_effects(name, inferred) {
-                if !allowed.admits(&eff) {
+                // E04: an effect discharged by an enclosing inline handler is
+                // not a leak — the handler intercepts it here.
+                if !allowed.admits(&eff) && !handled.contains(&eff) {
                     errors.push(EffectError {
                         code: E1310,
                         message: format!(
@@ -268,9 +333,28 @@ fn check_expr(
             }
         }
     }
+    // A `with H { body }` discharges H's inline-handled effects FROM THE BODY
+    // (E04). The handler's own arm bodies are checked WITHOUT that discharge —
+    // an arm does not handle its own effects.
+    if let Expr::WithHandler { handler, body } = e {
+        let mut inner = handled.clone();
+        for eff in handler_discharges(handler) {
+            inner.insert(eff);
+        }
+        check_expr(body, caller, allowed, &inner, inferred, errors);
+        if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+            for arm in arms {
+                check_expr(&arm.body, caller, allowed, handled, inferred, errors);
+            }
+            if let Some(ra) = return_arm {
+                check_expr(&ra.body, caller, allowed, handled, inferred, errors);
+            }
+        }
+        return;
+    }
     // Recurse into children regardless, so nested calls are checked.
     for_each_child(e, &mut |child| {
-        check_expr(child, caller, allowed, inferred, errors)
+        check_expr(child, caller, allowed, handled, inferred, errors)
     });
 }
 
@@ -430,6 +514,66 @@ mod tests {
         assert_eq!(errs.len(), 1, "for-body must not hide IO, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
         assert!(errs[0].message.contains("IO"), "must name IO: {}", errs[0].message);
+    }
+
+    #[test]
+    fn inline_handler_discharges_its_arm_effect() {
+        // E04: `with handler { on Net(e) => … } { fetch() }` HANDLES Net, so a
+        // `| {}` fn wrapping a Net-performing call in that handler is pure — no
+        // leak. This is the discharge that the laundering-hole fix set up.
+        let errs = check(
+            "fn fetch() -> i64 | {Net} { 0 }\n\
+             fn safe() -> i64 | {} { with handler { on Net(e) => 0 } { fetch() } }",
+        );
+        assert!(errs.is_empty(), "inline handler should discharge Net, got {errs:?}");
+    }
+
+    #[test]
+    fn named_handler_does_not_discharge() {
+        // A NAMED handler's definition is not resolved yet, so it discharges
+        // NOTHING — assuming otherwise would reopen a laundering hole. The Net
+        // call inside `with retry { … }` still leaks.
+        let errs = check(
+            "fn fetch() -> i64 | {Net} { 0 }\n\
+             fn f() -> i64 | {} { with retry { fetch() } }",
+        );
+        assert_eq!(errs.len(), 1, "named handler must not discharge, got {errs:?}");
+        assert!(errs[0].message.contains("Net"));
+    }
+
+    #[test]
+    fn handler_arm_body_does_not_self_discharge() {
+        // An `on Net(e) => println(...)` arm performs IO; that IO is NOT handled
+        // by the arm itself, so it leaks against a `| {}` row. (Net IS discharged
+        // for the body; the arm's own IO is not.)
+        let errs = check(
+            "fn fetch() -> i64 | {Net} { 0 }\n\
+             fn f() -> i64 | {} { with handler { on Net(e) => println(\"log\") } { fetch() } }",
+        );
+        assert_eq!(errs.len(), 1, "arm IO must leak, got {errs:?}");
+        assert!(errs[0].message.contains("IO"), "arm leaks IO not Net: {}", errs[0].message);
+    }
+
+    #[test]
+    fn discharge_is_transitive_consistent() {
+        // A fn that fully handles Net internally is PURE to its callers — the
+        // discharge applies in infer_effects too, so a `| {}` caller is not
+        // falsely flagged. (If discharge were only in the subsumption check and
+        // not the transitive set, `caller` would wrongly see Net here.)
+        let clean = check(
+            "fn fetch() -> i64 | {Net} { 0 }\n\
+             fn safe() -> i64 | {} { with handler { on Net(e) => 0 } { fetch() } }\n\
+             fn caller() -> i64 | {} { safe() }",
+        );
+        assert!(clean.is_empty(), "handled-internally fn must be pure to callers, got {clean:?}");
+        // Control: a fn that does NOT handle Net propagates it to its caller.
+        let leaks = check(
+            "fn fetch() -> i64 | {Net} { 0 }\n\
+             fn leaky() -> i64 | {Net} { fetch() }\n\
+             fn caller() -> i64 | {} { leaky() }",
+        );
+        assert_eq!(leaks.len(), 1, "un-handled Net must reach the caller, got {leaks:?}");
+        assert!(leaks[0].message.contains("Net"));
     }
 
     #[test]
