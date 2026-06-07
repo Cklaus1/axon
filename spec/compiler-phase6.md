@@ -24,7 +24,8 @@ confirm zero codegen overhead vs. Phase 5.
 - Built-in effects: `IO`, `Net`, `AI`, `Random`, `Time`, `Spawn`, `Chan`
 - `@[contained]` attribute deprecated → effect row constraint
 - Substrate / surface file markers (`substrate` / `surface` declaration at top of file)
-- E1300–E1308 effect-row diagnostics
+- Effect-row diagnostics (E1306 + the E131x block — see §8; the originally-proposed
+  E1300–E1308 collided with the AI-policy codes E1300–E1302)
 - `@[pure]` from Phase 5 becomes `effect = {}` (the empty row); attribute kept as sugar
 
 ### Explicitly Out of Phase 6
@@ -173,7 +174,7 @@ be `⊆ R`.
 
 **E03 (closing rows)** — A row variable `e` is a fresh metavariable in the type-inference
 phase. At a leaf call (one not inside a handler) it must unify with a concrete row.
-Unbound row variables at the top level of `main` produce E1303 unless the program's
+Unbound row variables at the top level of `main` produce E1312 (📋 reserved) unless the program's
 `main` declared a row of `{IO, ...e}` (escape hatch for top-level effects, see §3).
 
 **E04 (handler discharge)** — A `with H { e }` block's effective row is `effects(e) − discharged_by(H)`.
@@ -260,8 +261,11 @@ fn save_remote(url: str, body: str) { /* ... */ }
 fn save_remote(url: str, body: str) -> () | {IO, Net} { /* ... */ }
 ```
 
-The attribute is kept as sugar for one phase; E1308 deprecates it after Phase 7. Error
-codes E1001–E1004 (the existing `@[contained]` errors) become aliases for E1300–E1303.
+The attribute is kept as sugar for one phase; a future deprecation notice (the reserved
+E1316 — see §8) will flag it after Phase 7. The existing `@[contained]` errors E1001–E1004
+keep their own codes — they are NOT aliased onto the effect-row block (an earlier draft
+proposed aliasing them onto E1300–E1303, but those numbers are taken by the AI-policy
+diagnostics, so the effect rules live in the E131x block instead).
 
 ---
 
@@ -324,7 +328,8 @@ crates/axon-core/src/
   parser.rs       parse `| {…}` clause, `with handler { … }`, `effect`, `handler`, file markers
   types.rs        Type::Function gains an `eff: EffectRow` field
   infer.rs        row unification; substitution into rows; row-variable management
-  checker.rs      E1300–E1308; E01–E09 enforcement; substrate/surface gate
+  checker.rs      E1306 + E131x block; E01–E09 enforcement; substrate/surface gate
+                  (effects.rs holds the E1310 subsumption pass)
   codegen.rs      handler frame + resume lowering; `with` block IR; row stripping at codegen entry
   builtins.rs     +eff field per BuiltinFn; bind rows from §3 catalog
 crates/axon-core/Cargo.toml
@@ -357,20 +362,33 @@ is reported before an effect violation, which is usually more informative).
 
 ## 8. New Error Codes
 
+> **Numbering note.** This section originally proposed `E1300–E1308` for effect-row
+> diagnostics, but `E1300/E1301/E1302` were already taken by the Layer-3 AI-policy
+> conditions (offline-no-fallback / AI-budget / unknown-tier — see `error.rs` and
+> `spec/runtime.md` §5; those exit with the dedicated AI-policy code 5). To avoid a
+> collision the effect-row diagnostics use the **free E1310 block**, plus the already-shipped
+> **E1306** for the substrate/surface gate. The authoritative registry is `error.rs`; the
+> table below reflects what is implemented (✅) versus reserved-but-not-yet-emitted (📋).
+
 ```
-E1300  effect row leak: function declared row R cannot contain effect E from call to f
-E1301  unhandled effect E at top-level (main's row does not include E and no handler in scope)
-E1302  effect E used in @[pure] / refinement predicate context
-E1303  unbound row variable {e} reaches main; declare or handle
-E1304  handler arm references unknown effect '{name}'
-E1305  resume() called twice in shallow handler arm (multi-shot deferred)
-E1306  effect-row syntax `| {…}` not allowed in surface-marked file; use @[uses(...)] or move to substrate
-E1307  substrate-only construct in surface file: {construct}
-E1308  @[contained(...)] is deprecated since Phase 6; use `| {…}` row syntax
+E1306  ✅ effect-row syntax `| {…}` not allowed in a surface-marked file; use @[uses(...)] or move to substrate
+E1310  ✅ effect-row leak: a call performs effect E ∉ the caller's declared row
+                (covers spec rules E02 subsumption + E05 unhandled-at-top-level)
+
+— reserved in the E131x block for the remaining Phase-6 rules (📋 not yet emitted) —
+E1311  📋 effect E used in a @[pure] / refinement-predicate context
+E1312  📋 unbound row variable {e} reaches main; declare or handle
+E1313  📋 handler arm references unknown effect '{name}'
+E1314  📋 resume() called twice in a shallow handler arm (multi-shot deferred)
+E1315  📋 substrate-only construct in a surface file: {construct}
+E1316  📋 @[contained(...)] deprecation notice; prefer `| {…}` row syntax
 ```
 
-E1001–E1004 (Layer-3 `@[contained]` errors) become aliases for E1300/E1303 during the
-deprecation window.
+The Layer-3 `@[contained]` errors (E1001–E1004) remain their own codes; they are **not**
+aliased onto the effect-row block (the original draft proposed aliasing them onto
+E1300–E1303, which the AI-policy collision made impossible). A future deprecation that
+bridges `@[contained]` to row syntax would emit the reserved E1316 notice, leaving the
+E100x codes intact.
 
 ---
 
@@ -378,8 +396,8 @@ deprecation window.
 
 ```
 axon build <file> --no-effects-check       skip effects pass (debug)
-axon build <file> --effects-strict         demote E1308 deprecations to errors
-axon check <file> --explain E1300          long-form doc for an effect-row error
+axon build <file> --effects-strict         demote E1316 deprecation notices to errors
+axon check <file> --explain E1310          long-form doc for an effect-row error
 axon doc <file> --effects                  include effect rows in generated docs
 axon fmt <file>                            preserves effect-row clauses, normalizes order
 ```
@@ -391,7 +409,7 @@ axon fmt <file>                            preserves effect-row clauses, normali
 Phase 6 is done when:
 
 - [ ] `fn fetch() -> Bytes | {Net}` parses and the row appears in `axon doc` output.
-- [ ] `fn pure_caller() { fetch() }` is rejected with E1300.
+- [ ] `fn pure_caller() { fetch() }` is rejected with E1310 (effect-row leak).
 - [ ] `fn impure() -> Bytes | {Net} { fetch() }` is accepted.
 - [ ] `with retry_on_net { fetch() }` returns `Bytes` with row `{}` in the calling
       context.
@@ -402,9 +420,9 @@ Phase 6 is done when:
       Phase-3 hill-climb still works because `goal_run` has the same row.
 - [ ] A surface-marked file using raw `| {Net}` produces E1306.
 - [ ] A substrate-marked file using raw `| {Net}` is accepted.
-- [ ] `@[contained(IO)]` continues to work (alias) but emits E1308 in
+- [ ] `@[contained(IO)]` continues to work but emits the E1316 deprecation notice in
       `--effects-strict`.
-- [ ] Refinement predicate (Phase 5) using `now_ms()` is rejected with E1302.
+- [ ] Refinement predicate (Phase 5) using `now_ms()` is rejected with E1311.
 - [ ] All Phase 1–5 examples compile unchanged.
 - [ ] A new fixture `crates/axon-core/tests/integration_fixtures/effects.ax`
       exercises: row declaration, row variable, handler discharge, `with` block,
