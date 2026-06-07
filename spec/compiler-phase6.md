@@ -295,6 +295,19 @@ size 0 or 1.
 
 ## 6. Codegen
 
+> **Implementation status.** The **interpreter** implements real shallow,
+> single-shot, tail-resumptive handlers: a `with handler { on E(p) => arm } { body }`
+> intercepts a builtin in `body` carrying effect `E`; `resume(v)` makes `v` the
+> operation's result and the body continues; an arm that returns without resuming
+> replaces the `with` block; a `return(v)` arm rewrites the body value. The arm runs
+> *outside* its own handler (shallow), so a self-effecting arm does not loop.
+> **Codegen handler lowering (this section) is NOT yet implemented** — native codegen
+> still *erases* handlers (lowers `with H { body }` to `body`). This is a documented,
+> bounded **interp↔native (I-2) divergence** confined to programs that actually
+> resume a builtin effect; none ship under `examples/`, and `all_examples_parity`
+> would catch any that did, so the gap cannot silently widen. Closing it = building
+> the lowering below.
+
 Effect rows have no runtime representation. The checker discharges them statically;
 codegen emits the same LLVM IR it would have without them. This means:
 
