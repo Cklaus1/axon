@@ -2425,7 +2425,7 @@ impl<'p> Interp<'p> {
                     let used = self.ai_calls_this_fn.get();
                     if used >= budget {
                         let who = if caller.is_empty() { "<main>".to_string() } else { caller.clone() };
-                        return panic(format!(
+                        return ai_policy_err(format!(
                             "[{}] `{who}` exceeded its AI budget of {budget} call(s) — \
                              raise the budget or reduce ai_complete calls",
                             crate::error::E1301,
@@ -2505,7 +2505,7 @@ impl<'p> Interp<'p> {
                         );
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));
                     }
-                    panic(format!(
+                    ai_policy_err(format!(
                         "[{}] `ai_complete` cannot run: no model reachable and no \
                          @[ai(policy(fallback: …))] in scope — declare a fallback to run \
                          offline (or set AXON_AI_MOCK=1 / build --features asi-runtime)",

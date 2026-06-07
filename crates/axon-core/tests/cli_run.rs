@@ -6685,7 +6685,58 @@ fn main() -> i64 { let _ = ask()  0 }
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(msg.contains("E1300"), "offline call with no fallback must emit E1300: {msg}");
-    assert_ne!(out.status.code(), Some(0), "must not exit clean: {msg}");
+    // E1300 is an AI-POLICY stop, not a crash: it gets the dedicated exit code 5
+    // (AI_POLICY_EXIT_CODE), carved out of the generic panic (101) just as
+    // @[verify]->3 and @[corrigible]->4 are. A supervisor must be able to branch
+    // on "AI policy needs attention" vs "the program crashed".
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "offline-no-fallback must exit 5 (AI policy), not 101 (crash): {msg}"
+    );
+}
+
+#[test]
+fn ai_policy_conditions_exit_5_not_101() {
+    // The whole E13xx AI-policy family — offline-no-fallback (E1300), AI budget
+    // exhausted (E1301), unknown tier (E1302) — stops the program with the
+    // dedicated AI_POLICY_EXIT_CODE (5), distinct from a genuine runtime crash
+    // (101: overflow/div0/OOB/assert). This lets CI / a supervisor branch on a
+    // user-actionable policy/environment mismatch instead of a bug.
+    let run = |src: &str, mock: bool| -> i32 {
+        let f = std::env::temp_dir()
+            .join(format!("axon_aipol_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let mut cmd = axon();
+        cmd.args(["run", f.to_str().unwrap()]);
+        if mock {
+            cmd.env("AXON_AI_MOCK", "1");
+        } else {
+            cmd.env_remove("AXON_AI_MOCK");
+        }
+        let out = cmd.output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        out.status.code().unwrap_or(-1)
+    };
+
+    // E1302: unknown tier (offline, so no mock needed to hit tier resolution).
+    let e1302 = "@[ai(policy(tier: \"bogus\"))]\n\
+                 fn ask() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"E\" } }\n\
+                 fn main() -> i64 { let _ = ask()  0 }\n";
+    assert_eq!(run(e1302, false), 5, "E1302 unknown tier must exit 5");
+
+    // E1301: AI budget exhausted (mock on so the FIRST call dispatches; the
+    // SECOND trips the budget before dispatch).
+    let e1301 = "@[ai(policy(tier: \"cheap\", budget: 1))]\n\
+                 fn ask() -> str { let _ = ai_complete(\"a\")  \
+                 match ai_complete(\"b\") { Ok(s) => s  Err(_) => \"E\" } }\n\
+                 fn main() -> i64 { let _ = ask()  0 }\n";
+    assert_eq!(run(e1301, true), 5, "E1301 budget-exhausted must exit 5");
+
+    // A genuine runtime crash must STILL be 101 — the carve-out must not have
+    // swallowed real bugs into the policy code.
+    let div0 = "fn main() -> i64 { let z = 0  10 / z }\n";
+    assert_eq!(run(div0, false), 101, "a real div-by-zero must still exit 101");
 }
 
 #[test]

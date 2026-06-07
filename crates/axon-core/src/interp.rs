@@ -111,6 +111,16 @@ pub enum Flow {
     /// CI / a supervisor can tell "the kill-switch caught this" apart from a
     /// crash (101), a policy reject (3), or a static error (2). (R9)
     Halted(String),
+    /// An AI-policy condition that stops the program but is NOT a crash: an
+    /// `ai_*` call can't run because no model is reachable and no
+    /// `@[ai(policy(fallback: …))]` is declared (E1300), the per-fn AI call
+    /// budget is exhausted (E1301), or an unknown tier name is configured
+    /// (E1302). These are user-actionable *policy/environment* mismatches with
+    /// a clear fix in the message — not bugs like overflow/div0/OOB. A distinct
+    /// flow (and exit code 5) so a supervisor can branch on "AI policy needs
+    /// attention" specifically, exactly as @[verify]→3 and @[corrigible]→4 are
+    /// carved out of the generic panic (101).
+    AiPolicyUnreachable(String),
     /// `exit(code)` — terminate the process with `code`.
     Exit(i32),
 }
@@ -125,10 +135,24 @@ pub const VERIFY_FAILED_EXIT_CODE: i32 = 3;
 /// so a supervisor can branch on "the kill-switch fired" specifically. (R9)
 pub const HALTED_EXIT_CODE: i32 = 4;
 
+/// Process exit code for an AI-policy condition (E1300/E1301/E1302) — offline
+/// with no fallback, AI budget exhausted, or an unknown tier. A user-actionable
+/// policy/environment mismatch, not a crash; distinct from 101 (panic), 3
+/// (verify), 4 (corrigible halt), and 2 (static) so a supervisor can branch on
+/// "AI policy needs attention" specifically.
+pub const AI_POLICY_EXIT_CODE: i32 = 5;
+
 type R = Result<Value, Flow>;
 
 fn panic<T>(msg: impl Into<String>) -> Result<T, Flow> {
     Err(Flow::Panic(msg.into()))
+}
+
+/// Like `panic`, but for AI-policy conditions (E1300/E1301/E1302) that should
+/// stop the program with the distinct [`AI_POLICY_EXIT_CODE`] (5) rather than
+/// the generic crash code (101) — see [`Flow::AiPolicyUnreachable`].
+fn ai_policy_err<T>(msg: impl Into<String>) -> Result<T, Flow> {
+    Err(Flow::AiPolicyUnreachable(msg.into()))
 }
 
 // ── Lexical environment ──────────────────────────────────────────────────────
@@ -491,6 +515,15 @@ fn run_program_inner(program: &Program) -> i32 {
             eprintln!("axon: halted: {msg}");
             HALTED_EXIT_CODE
         }
+        Err(Flow::AiPolicyUnreachable(msg)) => {
+            // AI-policy condition (E1300/E1301/E1302): offline-no-fallback,
+            // budget exhausted, or unknown tier. User-actionable, not a crash —
+            // distinct exit code (5) so a supervisor branches on "AI policy needs
+            // attention" instead of treating it like an overflow/div0 bug.
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: ai policy: {msg}");
+            AI_POLICY_EXIT_CODE
+        }
         Err(Flow::Panic(msg)) => {
             let _ = std::io::stdout().flush();
             eprintln!("axon: panic: {msg}");
@@ -526,6 +559,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // A corrigibility halt inside a test is a failure too (lets
         // `@[test(should_fail)]` assert the kill-switch latched).
         Err(Flow::Halted(m)) => Err(m),
+        // An AI-policy stop inside a test is a failure (surfaces like a panic;
+        // also lets `@[test(should_fail)]` assert the policy gate fired).
+        Err(Flow::AiPolicyUnreachable(m)) => Err(m),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -535,7 +571,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -716,7 +752,7 @@ impl<'p> Interp<'p> {
         if let Some(raw) = self.current_call_tier.borrow_mut().take() {
             return match Tier::parse(&raw) {
                 Some(t) => Ok(t),
-                None => Err(Flow::Panic(format!(
+                None => Err(Flow::AiPolicyUnreachable(format!(
                     "[{}] unknown AI tier `{raw}` — configured tiers: {}",
                     crate::error::E1302,
                     Tier::configured()
@@ -736,7 +772,7 @@ impl<'p> Interp<'p> {
                 let raw = rest.trim();
                 return match Tier::parse(raw) {
                     Some(t) => Ok(t),
-                    None => Err(Flow::Panic(format!(
+                    None => Err(Flow::AiPolicyUnreachable(format!(
                         "[{}] unknown AI tier `{raw}` — configured tiers: {}",
                         crate::error::E1302,
                         Tier::configured()
