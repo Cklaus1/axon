@@ -1,6 +1,55 @@
 # Axon Changelog
 
-## Phase 2 (current)
+## Phase 6 (current) — Row-polymorphic effects + handlers
+
+### Effect system
+- Effect rows on fn signatures: `fn f() -> T | {IO, Net, ...e}` (parse + `axon fmt` + `axon doc`)
+- Builtin effect catalog (`builtin_effect_row`); subsumption checker (E1310) with
+  TRANSITIVE anti-laundering — an effect can't hide behind an un-annotated helper
+- Effect-laundering holes closed across the shared walkers (with-blocks, for-loops,
+  spawn/select/comptime, lambda bodies) in both the effect checker and the
+  capability/import-edge walks
+- Handler discharge (E04): inline AND named handlers (`handler NAME = handler {…}`,
+  resolved via parser desugar) discharge their arms' effects
+- `resume` runtime semantics (interpreter): shallow, single-shot, tail-resumptive —
+  a handled builtin's result is replaced by `resume(v)` and the body continues; an
+  arm runs outside its own handler (no self-interception)
+- Native codegen LOWERS the tail-resumptive direct-builtin handler subset
+  (byte-parity with the interpreter, `handler_resume_parity.sh`); everything outside
+  the subset is honestly E0910-refused (never silently miscompiled)
+- `substrate`/`surface` file markers (E1306); `@[contained]`→effect-row bridge
+- Cross-annotation consistency: `@[pure]` + a non-empty row → E1207; a `@[contained]`
+  capability contradicting a too-small row → E1310
+
+### Soundness & security fixes
+- `@[contained]` path-traversal sandbox escape closed (`./out/../etc` no longer
+  matches a `./out/` allowlist) — E1001
+- Import-edge capability check (E1203) now sees capabilities inside
+  with/spawn/select/comptime (was laundering past the importer's ceiling)
+- Refinement predicates must be pure — an impure builtin (`now_ms`, `random_i64`) in
+  a `where` clause is rejected (E1209)
+- `@[total]` now rejects `while` loops (incl. hidden in a lambda) — termination can't
+  be established for unbounded loops (E1208); requires bounded `for`/recursion
+- Native↔interpreter (I-2) exit-code parity: AI-policy conditions (E1300–E1302) exit 5;
+  native panics exit 101 to match the interpreter; `exit_code_parity.sh`
+
+### Phase 5 — Refinement types + `@[pure]`/`@[total]` (no Z3 yet)
+- `@[pure]` purity checker (E1207); `@[total]` termination checker (E1208)
+- Refinement types `T where <pred>` (named + inline), transparent to the base type,
+  with constant-predicate obligations at arg/return/struct-field sites (E1209)
+- Remaining: the §4 Z3/SMT backend for non-constant predicates
+
+### Phases 3–4 — Generics/traits/closures/channels; LSP/fmt/doc/multi-file
+- Generics, structural traits, closures with captures, channels, borrow checker,
+  comptime, spans (Phase 3)
+- LSP (hover/diagnostics), formatter, doc generator, incremental compile,
+  multi-file, cross-compile (Phase 4)
+
+### ASI layers — `Uncertain<T>`/`Temporal<T>`, `@[verify]`/`@[adaptive]`, goals
+- `goal_run` hill-climb, `ai_complete`/`ai_extract*`, `@[agent]` audit trail (incl.
+  transitive), `@[corrigible]` kill-switch (exit 4), `@[sensitive]` PII taint (E1206)
+
+## Phase 2
 
 ### Compiler features
 - Struct types: `type Point = { x: f64, y: f64 }`, field access, struct literals
