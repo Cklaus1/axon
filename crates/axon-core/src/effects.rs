@@ -353,6 +353,35 @@ fn for_each_child(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             }
         }
         Expr::Return(Some(inner)) => f(inner),
+        Expr::For { start, end, body, .. } => {
+            f(start);
+            f(end);
+            for s in body {
+                f(&s.expr);
+            }
+        }
+        Expr::AssignTo { place, value } => {
+            f(place);
+            f(value);
+        }
+        // A `with H { body }` does NOT hide the body's effects from the checker.
+        // Until handlers actually DISCHARGE effects (E04), the body's effects
+        // still count toward the enclosing fn's row — otherwise a `| {}` fn
+        // could perform IO inside a `with` block and escape E1310 (an effect-
+        // laundering hole, same class as the transitive-helper hole). Recurse
+        // into the body AND the inline handler arm bodies (an arm can itself
+        // perform effects, e.g. an `on Net` arm that logs via IO).
+        Expr::WithHandler { handler, body } => {
+            f(body);
+            if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
+                for arm in arms {
+                    f(&arm.body);
+                }
+                if let Some(ra) = return_arm {
+                    f(&ra.body);
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -374,6 +403,43 @@ mod tests {
         assert_eq!(errs.len(), 1, "expected one E1310, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
         assert!(errs[0].message.contains("IO"), "must name the IO effect: {}", errs[0].message);
+    }
+
+    #[test]
+    fn io_inside_a_with_handler_body_still_leaks() {
+        // An effect performed inside `with H { … }` must NOT escape the effect
+        // checker. Until handlers actually DISCHARGE effects (E04), the body's
+        // effects still count toward the enclosing fn's row — otherwise a `| {}`
+        // fn could launder IO through a `with` block (the for_each_child walker
+        // used to skip WithHandler entirely, so this was a real hole).
+        let errs = check(
+            "fn f() -> i64 | {} { with retry { println(\"hi\") 0 } }",
+        );
+        assert_eq!(errs.len(), 1, "with-block must not hide IO, got {errs:?}");
+        assert_eq!(errs[0].code, E1310);
+        assert!(errs[0].message.contains("IO"), "must name IO: {}", errs[0].message);
+    }
+
+    #[test]
+    fn io_inside_a_for_loop_body_still_leaks() {
+        // Same laundering class for `for` loops — the walker used to skip the
+        // For body, so a `| {}` fn could hide IO inside a loop.
+        let errs = check(
+            "fn f() -> i64 | {} { for i in 0..3 { println(\"hi\") } 0 }",
+        );
+        assert_eq!(errs.len(), 1, "for-body must not hide IO, got {errs:?}");
+        assert_eq!(errs[0].code, E1310);
+        assert!(errs[0].message.contains("IO"), "must name IO: {}", errs[0].message);
+    }
+
+    #[test]
+    fn io_inside_a_for_loop_body_is_fine_when_row_admits_it() {
+        // Guard against over-correction: a fn that DECLARES {IO} may freely do IO
+        // inside a for-loop body — no false positive from the deeper walk.
+        let errs = check(
+            "fn f() -> i64 | {IO} { for i in 0..3 { println(\"hi\") } 0 }",
+        );
+        assert!(errs.is_empty(), "row {{IO}} should admit loop IO, got {errs:?}");
     }
 
     #[test]
