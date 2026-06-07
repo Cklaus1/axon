@@ -34,10 +34,30 @@ fn report(n: i64) -> i64 | {IO} {
     announce("doubled", double(n))
 }
 
+// A function that PERFORMS an effect: `fetch` declares `Net`.
+fn fetch(url: str) -> i64 | {Net} {
+    len(url)
+}
+
+// HANDLING an effect discharges it (E04). `guarded` wraps the `Net`-performing
+// `fetch` in an inline handler that intercepts `Net`, so `guarded` itself is
+// legitimately PURE — its `| {}` row is honoured even though its body calls a
+// network function. An `on <Effect>(payload) => <fallback>` arm handles the
+// effect; if `fetch` actually leaked some OTHER effect the handler didn't name,
+// the compiler would still flag it. (Handlers are erased at runtime — this is a
+// pure static guarantee — so the call still evaluates `fetch` for the demo.)
+fn guarded(url: str) -> i64 | {} {
+    with handler { on Net(e) => 0 } {
+        fetch(url)
+    }
+}
+
 // `main` is the top-level escape hatch: it may perform any effect without an
 // explicit row, so a whole program stays ergonomic while its subordinate
 // functions remain honestly annotated.
 fn main() {
     let r = report(21)
     println("result = {to_str(r)}")
+    // `guarded` is pure: the Net effect of `fetch` is discharged by the handler.
+    println("guarded = {to_str(guarded(\"https://example.com\"))}")
 }
