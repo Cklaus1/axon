@@ -565,35 +565,47 @@ impl<'p> Interp<'p> {
     /// the arm completes WITHOUT resuming — its value `v` replaces the whole
     /// `with` block (handle-and-abort), unwinding to the enclosing `with` frame.
     pub(super) fn run_handler_arm(&self, eff: &str, payload: Value) -> Result<Option<Value>, Flow> {
-        // Find the nearest frame with a matching arm. Take its data out (clone)
-        // so we don't hold the RefCell borrow across the arm evaluation (the arm
-        // body may install its own handlers).
-        let found = {
+        // Find the INDEX of the nearest frame with a matching arm (search from
+        // the top/innermost). Clone the arm data so we don't hold the RefCell
+        // borrow across arm evaluation.
+        let hit = {
             let stack = self.handlers.borrow();
-            stack.iter().rev().find_map(|frame| {
+            stack.iter().enumerate().rev().find_map(|(i, frame)| {
                 frame
                     .arms
                     .iter()
                     .find(|a| a.effect == eff)
-                    .map(|a| (a.binding.clone(), a.body.clone(), a.captured.clone()))
+                    .map(|a| (i, a.binding.clone(), a.body.clone(), a.captured.clone()))
             })
         };
-        let Some((binding, body, captured)) = found else {
+        let Some((idx, binding, body, captured)) = hit else {
             return Ok(None);
         };
+
+        // SHALLOW-handler semantics: the arm body runs OUTSIDE the handler it
+        // belongs to. Temporarily remove the handling frame AND every frame
+        // inner to it (they were installed inside the now-suspended body) so an
+        // effect performed BY THE ARM is not re-intercepted by the same handler —
+        // that self-interception is an infinite loop (a handler whose `on IO`
+        // arm itself does IO). The removed frames are restored after the arm
+        // runs, whether it resumes, aborts, or errors.
+        let suspended: Vec<HandlerFrame> = self.handlers.borrow_mut().split_off(idx);
+
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
-        self.match_pattern(&binding, &payload, &mut arm_env)?;
-        match self.eval(&body, &mut arm_env) {
+        let bound = self.match_pattern(&binding, &payload, &mut arm_env);
+        let outcome = bound.and_then(|_| self.eval(&body, &mut arm_env));
+
+        // Restore the suspended frames (the body continues under them on resume).
+        self.handlers.borrow_mut().extend(suspended);
+
+        match outcome {
             // The arm called `resume(v)` — v is the operation's result.
             Err(Flow::Resume(v)) => Ok(Some(v)),
             // The arm completed WITHOUT resuming — its value replaces the entire
             // `with` block (handle-and-abort). Unwind to the `with` frame.
             Ok(v) => Err(Flow::Return(v)),
-            // Any other control flow (panic, a second resume → also Resume, etc.)
-            // propagates. A second `resume` would arrive as another Flow::Resume
-            // from a NESTED operation, which is fine; multi-shot (re-running the
-            // continuation) is not supported and cannot arise here.
+            // Any other control flow (panic, exit, …) propagates.
             Err(other) => Err(other),
         }
     }

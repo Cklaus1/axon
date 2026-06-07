@@ -78,6 +78,27 @@ fn phase6_handler_resume_semantics() {
     //    so it never reaches runtime — exit 2 (static error), not a silent pass.
     let (code, _) = run("fn main() -> i64 { resume(0) }");
     assert_eq!(code, 2, "resume outside a handler is a static (resolve) error");
+
+    // 7. A handler arm that itself performs the SAME effect it handles must NOT
+    //    self-intercept into an infinite loop — shallow semantics run the arm
+    //    OUTSIDE its own handler. The arm's print appears once; the body's print
+    //    is intercepted. (Regression guard: this used to stack-overflow.)
+    let (code, out) = run(
+        "fn main() -> i64 { with handler { on IO(p) => { println(\"ARM\")\n resume(0) } } \
+         { println(\"BODY\")\n 1 } }",
+    );
+    assert_eq!(code, 1, "self-effecting arm must terminate, not loop: {out:?}");
+    assert!(out.contains("ARM"), "the arm's own IO runs (outside its handler): {out:?}");
+    assert!(!out.contains("BODY"), "the body's IO is still intercepted: {out:?}");
+
+    // 8. Nested handlers for the same effect: the INNER handler intercepts; the
+    //    body's effect is caught once (no double-handling, no leak past inner).
+    let (code, out) = run(
+        "fn main() -> i64 { with handler { on IO(p) => resume(0) } \
+         { with handler { on IO(p) => resume(0) } { println(\"X\")\n 1 } } }",
+    );
+    assert_eq!(code, 1, "nested same-effect handlers terminate: {out:?}");
+    assert!(!out.contains("X"), "nested handler intercepts the body print: {out:?}");
 }
 
 #[test]
