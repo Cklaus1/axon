@@ -183,6 +183,13 @@ pub struct Parser {
     /// declares effects through annotations, not substrate plumbing. Default
     /// `false` (substrate) preserves all Phase 1–5 behavior.
     surface_mode: bool,
+    /// Phase 6: top-level `handler NAME = handler { … }` definitions, collected
+    /// at parse time. A `with NAME { body }` reference is desugared in place to
+    /// the defined inline handler (its arms cloned), so the rest of the compiler
+    /// only ever sees `HandlerExpr::Inline` — named handlers are pure syntactic
+    /// sugar and need no new `Item`/`Program` variant. Maps name → (arms,
+    /// return_arm). Same parser-side-table idiom as `synthetic_refinements`.
+    handler_defs: std::collections::HashMap<String, (Vec<crate::ast::HandlerArm>, Option<Box<crate::ast::HandlerArm>>)>,
 }
 
 /// Max nested-expression depth before a graceful parse error. Far beyond any
@@ -208,16 +215,16 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
+        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
+        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false }
+        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
     }
 
     fn current_span(&self) -> Span {
@@ -368,6 +375,14 @@ impl Parser {
         }
         let mut items = Vec::new();
         while self.peek().is_some() {
+            // Phase 6: a top-level `handler NAME = handler { … }` definition is
+            // collected into a parser side-table and emits NO item — a `with
+            // NAME { body }` reference is desugared to this inline handler later
+            // (see `parse_handler`). `handler` is not a keyword, so detect it by
+            // the `Ident("handler") Ident(name) Eq` shape.
+            if self.try_parse_handler_def()? {
+                continue;
+            }
             items.push(self.parse_item()?);
         }
         // Phase 5: append the synthetic refinements desugared from inline
@@ -790,6 +805,44 @@ impl Parser {
         Ok(Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) })
     }
 
+    /// Phase 6: if the cursor is at a top-level `handler NAME = handler { … }`
+    /// definition, consume it, store its arms in `handler_defs`, and return
+    /// `true` (the def emits no AST item — it desugars at each `with NAME` use).
+    /// Returns `false` (consuming nothing) when the cursor is not a handler def,
+    /// so the caller falls through to `parse_item`. Detected by the
+    /// `Ident("handler") Ident(name) Eq` shape — `handler` is not a keyword, and
+    /// the trailing `=` distinguishes a definition from a `with handler { … }`
+    /// inline use or any other `handler`-named construct.
+    fn try_parse_handler_def(&mut self) -> Result<bool> {
+        let is_def = matches!(self.peek(), Some(Token::Ident(s)) if s == "handler")
+            && matches!(self.tokens.get(self.pos + 1), Some(Token::Ident(_)))
+            && matches!(self.tokens.get(self.pos + 2), Some(Token::Eq));
+        if !is_def {
+            return Ok(false);
+        }
+        let _ = self.advance(); // `handler`
+        let name = self.expect_ident()?;
+        self.expect(&Token::Eq)?;
+        // RHS is the inline-handler grammar `handler { <arms> }`, parsed by the
+        // existing `parse_handler` (it requires the leading `handler` keyword).
+        match self.parse_handler()? {
+            crate::ast::HandlerExpr::Inline { arms, return_arm } => {
+                self.handler_defs.insert(name, (arms, return_arm));
+                Ok(true)
+            }
+            // `handler NAME = <other-name>` (an alias to another named handler)
+            // is not supported in this slice; treat the RHS name as the arms of
+            // the aliased handler if known, else store nothing (the use site
+            // then keeps `Named`, discharging nothing — sound).
+            crate::ast::HandlerExpr::Named(rhs) => {
+                if let Some(def) = self.handler_defs.get(&rhs).cloned() {
+                    self.handler_defs.insert(name, def);
+                }
+                Ok(true)
+            }
+        }
+    }
+
     /// Parse the handler head: `handler { <arms> }` (inline) or `<name>` (named).
     fn parse_handler(&mut self) -> Result<crate::ast::HandlerExpr> {
         if matches!(self.peek(), Some(Token::Ident(s)) if s == "handler") {
@@ -826,9 +879,19 @@ impl Parser {
             self.expect(&Token::RBrace)?;
             Ok(crate::ast::HandlerExpr::Inline { arms, return_arm })
         } else {
-            // Named handler reference.
+            // Named handler reference. If the name resolves to a previously-seen
+            // `handler NAME = …` definition, DESUGAR it to that inline handler
+            // (clone its arms) so the rest of the compiler — effect discharge,
+            // resolver, codegen — sees only `Inline` and a named handler behaves
+            // exactly like writing the handler inline. An UNKNOWN name (forward
+            // reference, or no definition) stays `Named` and discharges nothing,
+            // which is sound (it never falsely handles an effect).
             let name = self.expect_ident()?;
-            Ok(crate::ast::HandlerExpr::Named(name))
+            if let Some((arms, return_arm)) = self.handler_defs.get(&name).cloned() {
+                Ok(crate::ast::HandlerExpr::Inline { arms, return_arm })
+            } else {
+                Ok(crate::ast::HandlerExpr::Named(name))
+            }
         }
     }
 
@@ -3350,6 +3413,42 @@ mod tests {
         // A bare variable named `with` is unaffected (not followed by a handler head).
         let prog = parse("fn f() -> i64 { let with = 3\n with }");
         assert_eq!(prog.items.len(), 1);
+    }
+
+    #[test]
+    fn parse_phase6_named_handler_def_desugars_to_inline() {
+        // A top-level `handler NAME = handler { … }` definition emits NO item
+        // (it goes into the parser side-table) and a later `with NAME { body }`
+        // is desugared in place to the defined inline handler.
+        let prog = parse(
+            "handler retry = handler { on Net(e) => 0 }\n\
+             fn f() -> i64 { with retry { 1 } }",
+        );
+        // Only the fn is an item — the handler def produced none.
+        assert_eq!(prog.items.len(), 1, "handler def must not emit an item");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        match &stmts[0].expr {
+            Expr::WithHandler { handler, .. } => {
+                // `retry` is DEFINED, so it desugared to Inline (not Named).
+                let crate::ast::HandlerExpr::Inline { arms, .. } = handler.as_ref() else {
+                    panic!("defined named handler should desugar to Inline, got {handler:?}");
+                };
+                assert_eq!(arms.len(), 1);
+                assert_eq!(arms[0].effect, "Net");
+            }
+            other => panic!("expected WithHandler, got {other:?}"),
+        }
+
+        // An UNDEFINED named handler stays Named (sound — discharges nothing).
+        let prog = parse("fn f() -> i64 { with undefined_h { 1 } }");
+        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        let Expr::WithHandler { handler, .. } = &stmts[0].expr else { panic!("no with") };
+        assert!(
+            matches!(handler.as_ref(), crate::ast::HandlerExpr::Named(n) if n == "undefined_h"),
+            "undefined named handler must stay Named"
+        );
     }
 
     #[test]

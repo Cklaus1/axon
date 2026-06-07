@@ -529,16 +529,43 @@ mod tests {
     }
 
     #[test]
-    fn named_handler_does_not_discharge() {
-        // A NAMED handler's definition is not resolved yet, so it discharges
+    fn undefined_named_handler_does_not_discharge() {
+        // A named handler with NO `handler NAME = …` definition discharges
         // NOTHING — assuming otherwise would reopen a laundering hole. The Net
         // call inside `with retry { … }` still leaks.
         let errs = check(
             "fn fetch() -> i64 | {Net} { 0 }\n\
              fn f() -> i64 | {} { with retry { fetch() } }",
         );
-        assert_eq!(errs.len(), 1, "named handler must not discharge, got {errs:?}");
+        assert_eq!(errs.len(), 1, "undefined named handler must not discharge, got {errs:?}");
         assert!(errs[0].message.contains("Net"));
+    }
+
+    #[test]
+    fn defined_named_handler_discharges() {
+        // A `handler NAME = handler { on E(p) => … }` definition desugars each
+        // `with NAME { body }` to that inline handler at parse time, so a named
+        // handler discharges exactly like the inline form. Here `retry` handles
+        // Net, so `safe`'s `| {}` row is honoured.
+        let errs = check(
+            "handler retry = handler { on Net(e) => 0 }\n\
+             fn fetch() -> i64 | {Net} { 0 }\n\
+             fn safe() -> i64 | {} { with retry { fetch() } }",
+        );
+        assert!(errs.is_empty(), "defined named handler should discharge Net, got {errs:?}");
+    }
+
+    #[test]
+    fn defined_named_handler_discharge_is_transitive_consistent() {
+        // The named-handler desugar feeds the same discharge as inline, so a fn
+        // that handles Net via a named handler is pure to its callers.
+        let clean = check(
+            "handler h = handler { on Net(e) => 0 }\n\
+             fn fetch() -> i64 | {Net} { 0 }\n\
+             fn safe() -> i64 | {} { with h { fetch() } }\n\
+             fn caller() -> i64 | {} { safe() }",
+        );
+        assert!(clean.is_empty(), "named-handled fn must be pure to callers, got {clean:?}");
     }
 
     #[test]
