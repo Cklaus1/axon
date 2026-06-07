@@ -540,7 +540,19 @@ fn check_call(
         None => return, // not an I/O builtin
     };
 
-    // Extract a literal string argument (first arg for read_file/write_file/http calls).
+    // Extract a literal string argument (first arg for read_file/write_file/http
+    // calls).
+    //
+    // KNOWN LIMITATION (v1, intentional — see `non_literal_arg_is_skipped`): the
+    // capability check only applies to a LITERAL target. A computed target —
+    // `let h = …; ai_complete(h)`, `read_file(some_path_var)` — is `None` here
+    // and the allowlist/never check below is SKIPPED, so it is not statically
+    // flagged. This is a deliberate static-analysis boundary: the checker can't
+    // know a computed value, and denying all dynamic targets would forbid
+    // legitimate code. It is therefore a real residual sandbox gap for
+    // dynamically-constructed targets — closed only at runtime (the Phase-9
+    // `Sandbox<P>` runtime enforcement, ROADMAP). Literal targets ARE precisely
+    // checked, including `..` traversal (see `path_has_prefix`).
     let literal_arg: Option<&str> = args.first().and_then(|a| {
         if let Expr::Literal(crate::ast::Literal::Str(s)) = a {
             Some(s.as_str())
@@ -783,11 +795,16 @@ mod tests {
     #[test]
     fn non_literal_arg_is_skipped() {
         let spec = make_spec(vec!["./data/"], vec![], vec![]);
-        // Dynamic path — no literal string
+        // Dynamic path — no literal string. INTENTIONAL v1 limitation: a computed
+        // I/O target is not statically verifiable, so the capability check is
+        // skipped (rather than denying all dynamic targets). This is a documented
+        // residual sandbox gap closed only by the Phase-9 runtime `Sandbox<P>`;
+        // LITERAL targets are precisely checked (incl. `..` traversal). See the
+        // note on `literal_arg` in check_call.
         let args = vec![Expr::Ident("path".into())];
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
-        assert!(errors.is_empty(), "Non-literal path should not produce static error");
+        assert!(errors.is_empty(), "Non-literal path is not statically checked (v1 limitation)");
     }
 
     // ── R6 §4.4 import-edge capability check (E1203) — paired allow+deny (I-11) ──
