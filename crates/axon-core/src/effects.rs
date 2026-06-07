@@ -792,6 +792,16 @@ fn for_each_child(e: &Expr, f: &mut dyn FnMut(&Expr)) {
                 }
             }
         }
+        // An effect performed inside spawn/select/comptime must still count —
+        // otherwise a `| {}` fn could launder IO through `spawn { println(..) }`
+        // and escape E1310 (same laundering class as with/for bodies).
+        Expr::Spawn(inner) | Expr::Comptime(inner) => f(inner),
+        Expr::Select(arms) => {
+            for arm in arms {
+                f(&arm.recv);
+                f(&arm.body);
+            }
+        }
         _ => {}
     }
 }
@@ -813,6 +823,25 @@ mod tests {
         assert_eq!(errs.len(), 1, "expected one E1310, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
         assert!(errs[0].message.contains("IO"), "must name the IO effect: {}", errs[0].message);
+    }
+
+    #[test]
+    fn io_inside_spawn_select_comptime_still_leaks() {
+        // An effect performed inside spawn/select/comptime must still count
+        // toward the enclosing row — otherwise a `| {}` fn could launder IO via
+        // `spawn { println(..) }` and escape E1310 (the for_each_child walk had a
+        // `_ => {}` that skipped these forms). Same laundering class as
+        // with-blocks / for-loops.
+        let errs = check("fn f() -> i64 | {} { spawn { println(\"x\") }  0 }");
+        assert_eq!(errs.len(), 1, "spawn must not hide IO, got {errs:?}");
+        assert_eq!(errs[0].code, E1310);
+
+        let errs = check("fn f() -> i64 | {} { let _ = comptime { 5 }  spawn { println(\"y\") }  0 }");
+        assert!(!errs.is_empty(), "io in spawn (with comptime present) must leak, got {errs:?}");
+
+        // No false positive: spawn under a {IO} row is fine.
+        let errs = check("fn f() -> i64 | {IO} { spawn { println(\"ok\") }  0 }");
+        assert!(errs.is_empty(), "spawn IO under {{IO}} must be accepted, got {errs:?}");
     }
 
     #[test]
