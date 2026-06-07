@@ -101,11 +101,34 @@ impl<'ctx> super::Codegen<'ctx> {
             // ── Literal ──────────────────────────────────────────────────────
             ast::Expr::Literal(lit) => Some(self.emit_literal(lit)),
 
-            // Phase 6 (surface slice): a `with <handler> { body }` lowers to its
-            // body — handlers are inert (no effect discharge / resume yet), and
-            // effect rows are erased before codegen, so the IR is exactly the
-            // body's. Handler arm bodies are not emitted (never dispatched yet).
-            ast::Expr::WithHandler { body, .. } => self.emit_expr(body, fn_val),
+            // Phase 6: a `with handler { … } { body }`. Native codegen does NOT
+            // yet lower handler discharge/`resume` (the interpreter does). If the
+            // handler would actually INTERCEPT a builtin effect performed in the
+            // body, erasing it to the body would silently ship WRONG output
+            // (e.g. a print the interpreter suppresses would run natively) — an
+            // I-2 violation. So we REFUSE such a program honestly with E0910
+            // instead of miscompiling it. An INERT handler (nothing in the body
+            // performs a handled builtin effect — e.g. it wraps pure code or a
+            // synthetic-row user fn) is genuinely equivalent to its body and is
+            // erased as before, keeping the example corpus building natively.
+            ast::Expr::WithHandler { handler, body } => {
+                if crate::effects::handler_intercepts_builtin(handler, body) {
+                    let msg =
+                        "codegen error [E0910]: native codegen does not yet lower effect-handler \
+                         discharge (`resume`) — this `with handler { … }` intercepts a builtin \
+                         effect, so erasing it would produce output that differs from the \
+                         interpreter. Run it under the interpreter (`axon run`)."
+                            .to_string();
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    // Still emit the body so IR generation can continue to collect
+                    // any further errors; the build aborts on codegen_errors.
+                    return self.emit_expr(body, fn_val);
+                }
+                self.emit_expr(body, fn_val)
+            }
 
             // ── Identifier (load from local) ─────────────────────────────────
             ast::Expr::Ident(name) => {

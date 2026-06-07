@@ -238,6 +238,45 @@ fn handler_discharges(handler: &crate::ast::HandlerExpr) -> HashSet<String> {
     h
 }
 
+/// Does this `with handler { … } { body }` ACTUALLY intercept a builtin effect
+/// performed in `body`? True iff the handler is inline, discharges some effect
+/// `E`, and `body` directly calls a builtin whose catalog row contains `E`
+/// (not inside a NESTED `with` that re-handles it). This is what the interpreter
+/// resumes — and what native codegen does NOT yet lower. Codegen uses it to
+/// REFUSE such a program honestly (E0910) instead of erasing the handler and
+/// silently shipping wrong output. An *inert* handler (no matching builtin in
+/// the body — e.g. one wrapping only pure code or a synthetic-row user fn)
+/// returns false and is safe to erase to its body.
+pub fn handler_intercepts_builtin(handler: &crate::ast::HandlerExpr, body: &Expr) -> bool {
+    let discharged = handler_discharges(handler);
+    if discharged.is_empty() {
+        return false;
+    }
+    fn body_hits(e: &Expr, discharged: &HashSet<String>) -> bool {
+        if let Expr::Call { callee, .. } = e {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if crate::builtins::builtin_effect_row(name)
+                    .iter()
+                    .any(|eff| discharged.contains(*eff))
+                {
+                    return true;
+                }
+            }
+        }
+        // A nested `with` that re-handles the same effect shadows it for its own
+        // body; conservatively we still recurse (a false positive only makes
+        // codegen refuse a program it could erase — safe, never silent-wrong).
+        let mut hit = false;
+        for_each_child(e, &mut |c| {
+            if !hit {
+                hit = body_hits(c, discharged);
+            }
+        });
+        hit
+    }
+    body_hits(body, &discharged)
+}
+
 /// Collect the names of every directly-called function/builtin in `e` whose
 /// effects are NOT discharged by an enclosing inline handler. `handled` is the
 /// set of effects discharged by handlers wrapping `e`. When a called name's

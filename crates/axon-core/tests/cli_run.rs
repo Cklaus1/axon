@@ -3325,6 +3325,51 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
 }
 
 #[test]
+fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
+    // Native codegen does not yet lower effect-handler discharge (`resume`), but
+    // the interpreter does. A `with handler { on IO(p) => resume(0) } { … }` that
+    // intercepts a builtin effect must therefore ABORT the native build with
+    // E0910 — erasing the handler would silently ship output that differs from
+    // `axon run` (the suppressed print would run). An INERT handler (nothing in
+    // the body performs a handled builtin effect) is genuinely equivalent to its
+    // body and must still build cleanly.
+    let build = |src: &str| -> std::process::Output {
+        let f = std::env::temp_dir().join(format!("axon_he0910_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["build", f.to_str().unwrap(), "-o"])
+            .arg(std::env::temp_dir().join(format!("axon_he0910_{}_{}.bin", std::process::id(), src.len())))
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&f);
+        out
+    };
+
+    // Interception → must refuse.
+    let bad = build("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"x\")\n 1 } }");
+    let bmsg = format!("{}{}", String::from_utf8_lossy(&bad.stdout), String::from_utf8_lossy(&bad.stderr));
+    let codegen_present = !bmsg.contains("requires building axon with the `codegen` feature");
+    if !codegen_present {
+        eprintln!("codegen feature absent — handler E0910 test skipped");
+        return;
+    }
+    assert!(bmsg.contains("E0910"), "an intercepting handler must abort with E0910, got:\n{bmsg}");
+    assert!(!bad.status.success(), "build must FAIL on an intercepting handler:\n{bmsg}");
+
+    // An INERT handler (Net handled, body performs no Net builtin) must NOT be
+    // refused — it produces no E0910 and reaches the link stage like any normal
+    // program. We assert it is not E0910-refused rather than that the final link
+    // succeeds (the test-spawn environment's runtime-lib discovery is flaky and
+    // unrelated to handler lowering; the refusal decision is what this guards).
+    let ok = build("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+    let omsg = format!("{}{}", String::from_utf8_lossy(&ok.stdout), String::from_utf8_lossy(&ok.stderr));
+    assert!(
+        !omsg.contains("E0910"),
+        "an inert handler must NOT be E0910-refused (it is equivalent to its body):\n{omsg}"
+    );
+}
+
+#[test]
 fn str_param_lambda_builds_and_runs_native() {
     // A lambda with an explicit `str` parameter (`|s: str| str_len(s)`) now
     // compiles to native code: emit_lambda declares each param with its annotated
