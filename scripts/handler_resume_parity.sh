@@ -86,6 +86,10 @@ refused() {
   fi
 }
 refused payload_ref 'fn main() -> i64 { with handler { on Random(p) => resume(p + 100) } { random_i64(0, 9) } }'
+# A handled builtin whose result is NOT i64/() (here ai_complete -> Result<str,str>)
+# must NOT be lowered — codegen would substitute an i64 where a Result is
+# expected. Stays E0910-refused.
+refused nonscalar_ret 'fn main() -> i64 { with handler { on Net(p) => resume(0) } { match ai_complete("x") { Ok(_) => 1  Err(_) => 2 } } }'
 
 if [ "$fail" -ne 0 ]; then
   echo "handler_resume_parity: FAIL — lowered handler diverges from interp"

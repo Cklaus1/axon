@@ -447,14 +447,46 @@ pub fn handler_is_tail_resumptive_lowerable(handler: &crate::ast::HandlerExpr, b
             return false;
         }
     }
-    // The body must intercept only DIRECT builtins. Reuse the opaque-call
-    // detector: if any interception would be through a user fn / closure /
-    // indirect / method call, it is NOT lowerable. We check this by walking the
-    // body for any call that is NOT a direct builtin carrying a handled effect
-    // but IS opaque — conservatively, refuse lowering if the body contains any
-    // non-builtin call at all (named user fn, closure, method, indirect).
+    // The body must intercept only DIRECT builtins (no opaque user-fn / closure
+    // / method / indirect calls — those stay E0910-refused).
     let discharged = handler_discharges(handler);
-    !body_has_nonbuiltin_call(body, &discharged)
+    if body_has_nonbuiltin_call(body, &discharged) {
+        return false;
+    }
+    // Every HANDLED builtin in the body must return i64 or Unit. Codegen
+    // substitutes the call with an i64 `resume` value, so a builtin returning a
+    // richer type (e.g. `ai_complete -> Result<str,str>`) would get an i64 where
+    // its real result is expected — a type/parity divergence. Refuse those.
+    !body_has_handled_builtin_with_nonscalar_ret(body, &discharged)
+}
+
+/// True if `body` calls a builtin whose effect row intersects `discharged` and
+/// whose declared return type is NOT `i64`/`()` — i.e. a handled builtin codegen
+/// can't substitute with an i64 resume value byte-exactly.
+fn body_has_handled_builtin_with_nonscalar_ret(body: &Expr, discharged: &HashSet<String>) -> bool {
+    fn walk(e: &Expr, discharged: &HashSet<String>) -> bool {
+        if let Expr::Call { callee, .. } = e {
+            if let Expr::Ident(name) = callee.as_ref() {
+                let handled = crate::builtins::builtin_effect_row(name)
+                    .iter()
+                    .any(|eff| discharged.contains(*eff));
+                if handled {
+                    match crate::builtins::builtin_ret(name) {
+                        Some("i64") | Some("()") => {}
+                        _ => return true,
+                    }
+                }
+            }
+        }
+        let mut hit = false;
+        for_each_child(e, &mut |c| {
+            if !hit {
+                hit = walk(c, discharged);
+            }
+        });
+        hit
+    }
+    walk(body, discharged)
 }
 
 /// True iff `e` is exactly a `resume(<expr>)` call (or bare `resume()`), i.e. a

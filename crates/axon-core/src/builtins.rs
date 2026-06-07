@@ -1224,6 +1224,15 @@ pub fn is_known_builtin(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.name == name)
 }
 
+/// The declared return type of a builtin (`ret` field), or `None` if unknown.
+/// Used by the Phase-6 handler-lowering check: codegen substitutes a handled
+/// builtin's call with an i64 resume value, so it may only lower builtins whose
+/// result is consumed as i64 or discarded (`()`); anything else (e.g.
+/// `ai_complete -> Result<str,str>`) must stay E0910-refused.
+pub fn builtin_ret(name: &str) -> Option<&'static str> {
+    BUILTINS.iter().find(|b| b.name == name).map(|b| b.ret)
+}
+
 /// Phase 5 §2 P04 — builtins that are IMPURE: they do I/O, AI calls, touch the
 /// clock/RNG, spawn, mutate external state, or terminate the process. A
 /// `@[pure]` function may not call any of these (E1207). Every OTHER builtin is
