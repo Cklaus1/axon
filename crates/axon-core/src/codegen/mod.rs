@@ -270,6 +270,14 @@ pub struct Codegen<'ctx> {
     /// is the source operator (`">="`, …) and `bound` is the literal K. `None`
     /// whenever the surrounding function has no decodable verify spec.
     pub(super) current_verify_fn: Option<(String, String, &'static str, f64)>,
+    /// Phase 5: when emitting a fn whose declared return type is a refinement
+    /// (`-> T where P`) with a lowerable predicate, this holds `(refine_name,
+    /// predicate)` so every return site injects a runtime POSTCONDITION check via
+    /// `__axon_refine_panic` (exit 6) — the dual of the entry-time precondition
+    /// check (`emit_refine_preconditions`). `None` when the return is not a
+    /// refinement; a refinement whose predicate is out of the lowerable subset is
+    /// E0910-refused in `emit_fn` instead of being set here.
+    pub(super) current_ret_refine: Option<(String, ast::Expr)>,
     /// R7 (AOT-wasm): true when emitting for a wasm32 target. wasm32 is an
     /// ILP32 target — `size_t`/pointers are 32-bit — so the C runtime's
     /// `malloc`/`free`/`realloc` take an **i32** size, not the i64 the native
@@ -349,6 +357,7 @@ impl<'ctx> Codegen<'ctx> {
             source_path: String::new(),
             current_agent_fn: None,
             current_verify_fn: None,
+            current_ret_refine: None,
             target_is_wasm: false,
             codegen_errors: Vec::new(),
             transitive_effects: HashMap::new(),
@@ -928,6 +937,7 @@ impl<'ctx> Codegen<'ctx> {
         let saved_adaptive_input = self.current_adaptive_input.take();
         let saved_agent = self.current_agent_fn.take();
         let saved_verify = self.current_verify_fn.take();
+        let saved_ret_refine = self.current_ret_refine.take();
         // R4 §4.3: arm the mandatory agent action log for an `@[agent]` fn.
         if f.attrs.iter().any(|a| a.name == "agent") {
             self.current_agent_fn = Some(f.name.clone());
@@ -980,6 +990,34 @@ impl<'ctx> Codegen<'ctx> {
                 if armable {
                     let op_str = crate::verify::binop_to_verify_str(&op);
                     self.current_verify_fn = Some((f.name.clone(), ident, op_str, bound));
+                }
+            }
+        }
+
+        // ── Phase 5 refinement RETURN postcondition: arm the return-site check. ─
+        // If the declared return type is a refinement (`-> T where P`) with a
+        // lowerable predicate, every return site emits a guarded
+        // `__axon_refine_panic` (exit 6) when the value fails P — the dual of the
+        // entry-time `emit_refine_preconditions`. A refinement whose predicate is
+        // OUTSIDE the lowerable subset is E0910-refused here (never silently
+        // emitted without the check — that would let native return a value the
+        // interpreter rejects).
+        if !self.refine_preds.is_empty() {
+            if let Some(ast::AxonType::Named(rname)) = &f.return_type {
+                if let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() {
+                    if Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+                        self.current_ret_refine = Some((rname.clone(), pred));
+                    } else {
+                        let msg = format!(
+                            "codegen error [E0910]: native codegen cannot lower the refinement \
+                             predicate of return type `{rname}` of `{}` — it is outside the \
+                             runtime-checkable subset. Run it under the interpreter (`axon run`).",
+                            f.name
+                        );
+                        if !self.codegen_errors.iter().any(|e| e == &msg) {
+                            self.codegen_errors.push(msg);
+                        }
+                    }
                 }
             }
         }
@@ -1085,6 +1123,7 @@ impl<'ctx> Codegen<'ctx> {
                         };
                         self.log_return_if_adaptive_val(v);
                         self.emit_verify_check_if_needed(v, llvm_fn);
+                        self.emit_refine_return_check_if_needed(v, llvm_fn);
                         build_wrappers::w_ret(&self.ir.builder, v);
                     }
                     None if !matches!(ret_sem, Type::Unit) => {
@@ -1094,6 +1133,7 @@ impl<'ctx> Codegen<'ctx> {
                             let zero_val = ret_llvm_ty.const_zero();
                             self.log_return_if_adaptive_val(zero_val);
                             self.emit_verify_check_if_needed(zero_val, llvm_fn);
+                            self.emit_refine_return_check_if_needed(zero_val, llvm_fn);
                             build_wrappers::w_ret(&self.ir.builder, zero_val);
                         } else {
                             self.log_return_if_adaptive();
@@ -1116,6 +1156,7 @@ impl<'ctx> Codegen<'ctx> {
         self.current_adaptive_input = saved_adaptive_input;
         self.current_agent_fn = saved_agent;
         self.current_verify_fn = saved_verify;
+        self.current_ret_refine = saved_ret_refine;
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────────

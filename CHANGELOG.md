@@ -37,17 +37,23 @@
 - `@[pure]` purity checker (E1207); `@[total]` termination checker (E1208)
 - Refinement types `T where <pred>` (named + inline), transparent to the base type,
   with constant-predicate obligations at arg/return/struct-field sites (E1209)
-- Refinement PRECONDITIONS on NON-constant args are now enforced at runtime — the
-  spec's Z3-free fallback (§4, `--proof-timeout 0`: "every predicate becomes a
-  runtime check"). At function entry the parameter's `where` predicate is evaluated
-  with `_` bound to the actual value; a violation exits 6 (REFINE_VIOLATION_EXIT_CODE),
-  distinct from a @[verify] postcondition (3) and a bug-panic (101). Enforced in BOTH
-  the interpreter and native codegen (byte-identical exit codes, `exit_code_parity.sh`);
-  out-of-subset predicates are E0910-refused in codegen, never silently skipped. Closes
-  a soundness hole where `factorial(x)` with a runtime `x = -1` violating `_ >= 0` ran
-  with no error.
-- Remaining: the §4 Z3/SMT backend for STATIC discharge of non-constant predicates
-  (proving `g(y)` safe without a runtime check)
+- Refinement contracts on NON-constant values are now enforced at runtime on BOTH
+  sides — the spec's Z3-free fallback (§4, `--proof-timeout 0`: "every predicate
+  becomes a runtime check"):
+  - PRECONDITIONS: at function entry a parameter `p: T where P` has `P` evaluated
+    with `_` bound to the actual argument.
+  - POSTCONDITIONS: at every return site a fn `-> T where P` has `P` evaluated with
+    `_` bound to the returned value (the dual hole — `f(x:i64) -> Positive { x - 100 }`
+    used to return a negative value with no error).
+  A violation (either side) exits 6 (REFINE_VIOLATION_EXIT_CODE), distinct from a
+  @[verify] bound (3) and a bug-panic (101). Enforced in BOTH the interpreter and
+  native codegen (byte-identical exit codes, `exit_code_parity.sh`); predicates
+  outside the lowerable subset are E0910-refused in codegen, never silently skipped.
+- The SMT backend (`smt.rs`, `axon verify`, opt-in `smt` feature) statically discharges
+  what it can prove — `@[verify]` bounds, refinement returns, and refinement
+  arg-forwarding subtyping; the runtime checks above cover the rest in the default build.
+- Remaining: WIDEN SMT static discharge so a provable obligation elides its runtime check
+  in the default pipeline (today the runtime check always fires for non-constant cases)
 
 ### Phases 3–4 — Generics/traits/closures/channels; LSP/fmt/doc/multi-file
 - Generics, structural traits, closures with captures, channels, borrow checker,

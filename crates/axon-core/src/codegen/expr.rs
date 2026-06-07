@@ -4185,6 +4185,7 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let Some(v) = self.emit_expr(e, fn_val) {
                     self.log_return_if_adaptive_val(v);
                     self.emit_verify_check_if_needed(v, fn_val);
+                    self.emit_refine_return_check_if_needed(v, fn_val);
                     build_wrappers::w_ret(&self.ir.builder, v);
                 } else {
                     self.log_return_if_adaptive();

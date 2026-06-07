@@ -1069,6 +1069,33 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // Phase 5: refinement-type POSTCONDITION — the dual of the entry-time
+        // precondition check above. A fn declared `-> T where P` must produce a
+        // value satisfying `P`. The checker discharges a CONSTANT return (E1209)
+        // and the SMT backend proves some non-constant cases (`axon verify`); for
+        // a non-constant return in the default build the predicate becomes a
+        // runtime check (the spec's Z3-free fallback). Evaluate P with `_` bound
+        // to the finalized return value; a violation is the same runtime
+        // refinement-contract breach as a bad argument → exit 6. Skipped unless
+        // the program declares refinements AND this fn returns one.
+        if !self.refine_preds.is_empty() {
+            if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
+                if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
+                    let mut pred_env = Env::new();
+                    pred_env.define("_".into(), result.clone());
+                    if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                        return Err(Flow::RefineViolation(format!(
+                            "the return value of `{}` (= {}) violates the refinement return \
+                             type `{}` — the value does not satisfy the type's predicate",
+                            f.name,
+                            value::display(&result),
+                            rname
+                        )));
+                    }
+                }
+            }
+        }
+
         // R4 zone provenance injection. Keyed on the fn's annotation, performed
         // by the engine — there is no opt-out (I-13). Two adaptive-family zones
         // record a numeric return:

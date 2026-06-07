@@ -87,6 +87,16 @@ check refine_ok      120 'fn factorial(n: i64 where _ >= 0) -> i64 { if n <= 1 {
 fn ok(x: i64) -> i64 { factorial(x) }
 fn main() -> i64 { ok(5) }'
 
+# Phase 5: refinement RETURN postconditions (the dual). A fn `-> T where P`
+# whose non-constant return fails P exits 6 on BOTH engines; a satisfied one
+# returns its value. (Constant bad returns are a static E1209, never reached.)
+check refine_ret_bad 6   'type Positive = i64 where _ > 0
+fn f(x: i64) -> Positive { x - 100 }
+fn main() -> i64 { f(5) }'
+check refine_ret_ok  105 'type Positive = i64 where _ > 0
+fn f(x: i64) -> Positive { x + 100 }
+fn main() -> i64 { f(5) }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1

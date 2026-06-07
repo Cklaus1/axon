@@ -4064,6 +4064,57 @@ fn refinements_example_still_runs_clean_under_interp() {
 }
 
 #[test]
+fn refinement_return_postcondition_enforced_at_runtime() {
+    // The dual of the precondition check: a function `-> T where P` whose body
+    // produces a value failing `P` is a POSTCONDITION violation. The checker
+    // catches a CONSTANT bad return (E1209); the SMT backend proves some
+    // non-constant cases (`axon verify`, opt-in `smt` feature) — but a
+    // non-constant bad return in the DEFAULT build used to be erased and
+    // unchecked (e.g. `f(x:i64) -> Positive { x - 100 }` returning -95 ran and
+    // exited 161 = -95 unsigned, with no error). The value's predicate is now
+    // evaluated at the return site and a violation exits 6 (same
+    // REFINE_VIOLATION_EXIT_CODE as a precondition breach — both are runtime
+    // refinement-contract violations), enforced in interp AND codegen (I-2).
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_refret_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    // 1. Non-constant return violating `_ > 0`. f(5) = -95. Today: exit 161.
+    let (c, m) = run(
+        "type Positive = i64 where _ > 0\n\
+         fn f(x: i64) -> Positive { x - 100 }\n\
+         fn main() -> i64 { f(5) }\n",
+    );
+    assert_eq!(c, 6, "a refinement RETURN violation must exit 6: {m}");
+    assert!(m.contains("refinement"), "message names the violation: {m}");
+    assert!(m.contains('f'), "message names the function: {m}");
+
+    // 2. No false positive: a satisfied non-constant return runs clean. f(5) =
+    //    105, so main returns 105.
+    let (c, m) = run(
+        "type Positive = i64 where _ > 0\n\
+         fn f(x: i64) -> Positive { x + 100 }\n\
+         fn main() -> i64 { f(5) }\n",
+    );
+    assert_eq!(c, 105, "a satisfied refined return must run clean: {m}");
+
+    // 3. A `str` NonEmpty return violated by a runtime-derived "".
+    let (c, m) = run(
+        "type NonEmpty = str where str_len(_) > 0\n\
+         fn pick(b: bool) -> NonEmpty { if b { \"ok\" } else { \"\" } }\n\
+         fn main() -> i64 { let s = pick(false)\n str_len(s) }\n",
+    );
+    assert_eq!(c, 6, "an empty NonEmpty return must violate (exit 6): {m}");
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

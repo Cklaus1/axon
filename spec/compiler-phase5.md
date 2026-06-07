@@ -307,20 +307,32 @@ Default solver timeout: **2000 ms** per obligation. Configurable via `AXON_PROOF
 A `--proof-timeout 0` flag disables SMT entirely (every predicate becomes a runtime check, useful
 for bisecting compile regressions).
 
-> **Implemented ahead of the Z3 backend (status):** the runtime-check fallback itself is
-> LANDED and is the *current default* for non-constant refinement preconditions — the SMT
-> backend above is not yet wired in, so today every non-constant precondition takes the
-> runtime path rather than being statically discharged. A parameter `p: T where P` has `P`
-> evaluated at **function entry** with `_` bound to the actual argument; a violation exits **6**
-> (`REFINE_VIOLATION_EXIT_CODE`), distinct from a `@[verify]` postcondition (3) and a bug-panic
-> (101). This is enforced symmetrically in the interpreter (`Interp::call_fn`) and native codegen
-> (`emit_refine_preconditions`), with byte-identical exit codes (`scripts/exit_code_parity.sh`,
-> invariant I-2). Codegen lowers the same predicate subset the constant-folder supports
-> (literals, `_`, arithmetic, comparisons, `&&`/`||`/`!`, `_.field`, `str_len`/`str_eq`, and
-> calls to `@[pure]` fns); a predicate outside that subset is honestly E0910-refused at build
-> time, never silently skipped. When the Z3 backend lands, a *provable* precondition is
-> discharged statically and its runtime check is elided; an *unprovable* one continues to take
-> this runtime path.
+> **Implementation status — two complementary paths:**
+>
+> 1. **Static discharge (SMT, opt-in).** The Z3 backend (`smt.rs`, the `smt` cargo feature,
+>    surfaced via `axon verify`) proves what it can: `@[verify]` bounds, refinement RETURN
+>    obligations (`prove_refinement_returns`), and refinement subtyping under argument
+>    forwarding (`prove_refinement_arg_forwarding`). `unsat` ⇒ discharged; `sat` ⇒ E1102 with a
+>    concrete counter-example; out-of-fragment ⇒ falls through to the runtime check.
+>
+> 2. **Runtime check (default build).** For non-constant obligations not statically discharged,
+>    BOTH SIDES of a refinement contract are checked at runtime — the spec's `--proof-timeout 0`
+>    fallback. A parameter `p: T where P` has `P` evaluated at **function entry** with `_` bound
+>    to the actual argument (PRECONDITION, `Interp::call_fn` / codegen
+>    `emit_refine_preconditions`); a function `-> T where P` has `P` evaluated at **every return
+>    site** with `_` bound to the returned value (POSTCONDITION, the dual,
+>    `emit_refine_return_check_if_needed`). A violation on either side exits **6**
+>    (`REFINE_VIOLATION_EXIT_CODE`), distinct from a `@[verify]` bound (3) and a bug-panic (101),
+>    with byte-identical interp↔native exit codes (`scripts/exit_code_parity.sh`, invariant I-2).
+>    Codegen lowers the same predicate subset the constant-folder supports (literals, `_`,
+>    arithmetic, comparisons, `&&`/`||`/`!`, `_.field`, `str_len`/`str_eq`, and calls to
+>    `@[pure]` fns); a predicate outside that subset is honestly E0910-refused at build time,
+>    never silently skipped.
+>
+> **Remaining:** wire the SMT discharge (path 1) into the DEFAULT pipeline so a *provable*
+> obligation elides its runtime check (path 2) automatically — today static discharge is only
+> reached via the explicit `axon verify`, so the default `run`/`build` always takes the runtime
+> path for non-constant cases.
 
 ### Counter-Example Reporting
 

@@ -414,6 +414,115 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// Phase 5: emit the runtime refinement-POSTCONDITION check at a return site.
+    /// The dual of `emit_refine_preconditions`: when the current fn's declared
+    /// return type is a refinement (`current_ret_refine` set in `emit_fn`),
+    /// evaluate the predicate with `_` bound to the about-to-be-returned value;
+    /// on `false`, call `__axon_refine_panic` (exit 6). Call immediately BEFORE
+    /// each `w_ret(value)` (alongside `emit_verify_check_if_needed`). No-op when
+    /// the return is not a refinement. The value is an SSA result, so it is
+    /// spilled to a short-lived alloca that `_` aliases for the predicate emit.
+    pub(super) fn emit_refine_return_check_if_needed(
+        &mut self,
+        ret_val: BasicValueEnum<'ctx>,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let Some((rname, pred)) = self.current_ret_refine.clone() else { return };
+        let panic_fn = match self.ir.module.get_function("__axon_refine_panic") {
+            Some(f) => f,
+            None => return,
+        };
+        // Don't insert into an already-terminated block.
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
+            return;
+        }
+
+        // Spill the SSA return value to a temp alloca and alias `_` to it for the
+        // predicate emission; restore `_` afterwards so nothing leaks.
+        let val_ty = ret_val.get_type();
+        let slot = build_wrappers::w_alloca(&self.ir.builder, val_ty, "refine_ret_tmp");
+        build_wrappers::w_store(&self.ir.builder, slot, ret_val);
+        // Map the SSA value's LLVM type to the semantic type the binder needs.
+        // The return value is a scalar/str in the lowerable subset; reuse the
+        // declared return semantic type if available, else fall back to the LLVM
+        // type's natural sem mapping via local_types of `_` being absent.
+        let sem = self
+            .fn_return_types
+            .get(llvm_fn.get_name().to_str().unwrap_or(""))
+            .cloned();
+
+        let prev_underscore_local = self.locals.remove("_");
+        let prev_underscore_type = self.local_types.remove("_");
+        self.locals.insert("_".to_string(), (slot, val_ty));
+        if let Some(s) = sem {
+            self.local_types.insert("_".to_string(), s);
+        }
+
+        let pred_val = self.emit_expr(&pred, llvm_fn);
+
+        // Restore `_`.
+        self.locals.remove("_");
+        self.local_types.remove("_");
+        if let Some(l) = prev_underscore_local {
+            self.locals.insert("_".to_string(), l);
+        }
+        if let Some(t) = prev_underscore_type {
+            self.local_types.insert("_".to_string(), t);
+        }
+
+        let cond = match pred_val {
+            Some(BasicValueEnum::IntValue(iv)) if iv.get_type().get_bit_width() == 1 => iv,
+            _ => {
+                // Defensive: predicate didn't lower to i1. Arming already proved
+                // lowerability, so this is unexpected; refuse rather than miscompile.
+                let msg = format!(
+                    "codegen error [E0910]: refinement return predicate of `{rname}` did not \
+                     lower to a boolean. Run it under the interpreter."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
+                return;
+            }
+        };
+
+        let fn_name = llvm_fn.get_name().to_str().unwrap_or("?").to_string();
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "refine_ret_panic");
+        let cont_bb = self.ir.context.append_basic_block(llvm_fn, "refine_ret_ok");
+        build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
+
+        // ── Panic path: name the violation, exit 6. ───────────────────────────
+        self.ir.builder.position_at_end(panic_bb);
+        let i64_ty = self.ir.context.i64_type();
+        let param_label = "<return>";
+        let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "refine_ret_fn");
+        let pn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, param_label, "refine_ret_slot");
+        let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &rname, "refine_ret_name");
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            panic_fn,
+            &[
+                fn_g.into(),
+                i64_ty.const_int(fn_name.len() as u64, false).into(),
+                pn_g.into(),
+                i64_ty.const_int(param_label.len() as u64, false).into(),
+                rn_g.into(),
+                i64_ty.const_int(rname.len() as u64, false).into(),
+            ],
+            "",
+        );
+        build_wrappers::w_unreachable(&self.ir.builder);
+
+        // ── Continue path: the original w_ret falls through here. ─────────────
+        self.ir.builder.position_at_end(cont_bb);
+    }
+
     /// Is `pred` within the predicate subset native codegen can faithfully lower
     /// at function entry — the SAME subset the interpreter evaluates, so the two
     /// engines agree (I-2)? Accepts: int/bool/str literals; the binder `_`;
@@ -421,7 +530,7 @@ impl<'ctx> super::Codegen<'ctx> {
     /// `str_len(_)` / `str_eq(...)`; calls to `@[pure]` user fns; and `if`/block
     /// forms reducing to those. Anything else (impure builtins are already
     /// E1209-rejected statically) is out of subset → the caller E0910-refuses.
-    fn refine_predicate_is_lowerable(
+    pub(super) fn refine_predicate_is_lowerable(
         pred: &ast::Expr,
         fndefs: &std::collections::HashMap<String, ast::FnDef>,
     ) -> bool {
