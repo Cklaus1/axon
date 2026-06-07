@@ -690,6 +690,79 @@ fn goal_optimize_deploys() {
 }
 
 #[test]
+fn every_goal_example_compiles_and_runs() {
+    // `axon goal` (prose→AST surface compiler) is the AI-first headline feature,
+    // and examples/goals/*-goal.md are its public face. Only optimize-goal and
+    // learn-goal had individual tests; the rest (compose/flagship/hello/redteam/
+    // verified) were UNGATED — a parse break or a section-validation regression
+    // would silently break the flagship demos while CI stayed green. This sweeps
+    // every real goal example and asserts each reaches a HEALTHY terminal state.
+    //
+    // A goal run legitimately ends in several ways, so we don't pin exit 0:
+    //   0  = ran + (if it has a deploy gate) passed
+    //   3  = @[verify]/deploy-gate REJECTION (redteam/verified demos do this BY
+    //        DESIGN — exit 3 is policy-reject, working as intended)
+    //   5  = AI-policy stop (not expected here under mock, but not a crash)
+    // The real failure signals are a CRASH (101) or a surface-compile failure
+    // (missing-section / parse / type error on a file that should compile).
+    let dir = format!("{}/../../examples/goals", env!("CARGO_MANIFEST_DIR"));
+    let mut files: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        // Real goals are the *-goal.md files; README.md is docs, hello-goal.ax
+        // is the lifted output, not an input.
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.ends_with("-goal.md"))
+                .unwrap_or(false)
+        })
+        .collect();
+    files.sort();
+    // Non-vacuity floor: if the glob matched nothing (renamed dir, changed
+    // suffix), the loop below would pass having checked zero goals. The repo
+    // ships several flagship goals; require a floor so a coverage collapse
+    // turns red instead of green.
+    assert!(
+        files.len() >= 5,
+        "expected the flagship goal examples, found only {} at {dir}",
+        files.len()
+    );
+
+    let mut broken = Vec::new();
+    for f in &files {
+        let name = f.file_name().unwrap().to_string_lossy().to_string();
+        let out = axon()
+            .args(["goal", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("AXON_SEED", "42")
+            .output()
+            .unwrap();
+        let code = out.status.code();
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let crashed = code == Some(101);
+        let compile_failed = msg.contains("missing required section")
+            || msg.contains("parse:")
+            || msg.contains("cannot find")
+            || msg.contains("type mismatch");
+        // Accept the by-design terminal states (0 = ok/deploy-pass, 3 = policy
+        // reject, 5 = ai-policy); reject crashes and surface-compile failures.
+        let healthy = matches!(code, Some(0) | Some(3) | Some(5)) && !crashed && !compile_failed;
+        if !healthy {
+            broken.push(format!("{name}: exit {code:?} — {}", msg.lines().next().unwrap_or("")));
+        }
+    }
+    assert!(
+        broken.is_empty(),
+        "these flagship goal examples no longer compile/run cleanly: {broken:#?}"
+    );
+}
+
+#[test]
 fn goal_with_missing_sections_lists_them_all() {
     // Bug #3: an incomplete goal file must report ALL missing required
     // sections in one error (exit 2), not just the first — so the author
