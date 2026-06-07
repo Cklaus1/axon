@@ -148,6 +148,74 @@ fn phase6_handler_arm_bodies_are_name_resolved() {
 }
 
 #[test]
+fn phase6_verification_checklist() {
+    // Drives the Phase-6 spec §10 verification checklist as one gated unit, so
+    // the headline acceptance criteria can't silently regress. Each case is the
+    // checklist item it names. (Items needing the codegen feature — native build,
+    // overhead — are covered by the parity harnesses; this is the interp/check
+    // surface.)
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_p6ck_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let run = |src: &str| -> i32 {
+        let f = std::env::temp_dir().join(format!("axon_p6rn_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").env("AXON_SEED", "42").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        out.status.code().unwrap_or(-1)
+    };
+
+    // 1. A fn declaring a row parses + checks clean; `impure` calling it is fine.
+    let (c, m) = check("fn fetch() -> i64 | {Net} { 0 }\nfn impure() -> i64 | {Net} { fetch() }\nfn main() -> i64 { impure() }");
+    assert_eq!(c, 0, "row decl + matching-row caller must check clean: {m}");
+
+    // 2. A pure `| {}` caller of an effectful fn is rejected (E1310 leak).
+    let (c, m) = check("fn fetch() -> i64 | {Net} { 0 }\nfn pure_caller() -> i64 | {} { fetch() }\nfn main() -> i64 { pure_caller() }");
+    assert_eq!(c, 2, "pure caller of effectful fn must be rejected: {m}");
+    assert!(m.contains("E1310"), "leak must be E1310: {m}");
+
+    // 3. A `@[adaptive] fn -> i64 | {AI, Net}` is accepted and the hill-climb runs.
+    assert_eq!(
+        run("@[adaptive]\nfn score(i: i64) -> i64 | {AI, Net} { 0 - (i - 7) * (i - 7) + 100 }\nfn main() { let _ = goal_run(\"score\", 100.0, 30) }"),
+        0,
+        "adaptive fn with an effect row must check + run"
+    );
+
+    // 4. A `surface`-marked file rejects a raw `| {…}` row (E1306).
+    let (c, m) = check("surface\nfn f() -> i64 | {Net} { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(c, 2, "surface file must reject raw row: {m}");
+    assert!(m.contains("E1306"), "surface raw-row must be E1306: {m}");
+
+    // 5. A `substrate`-marked file accepts a raw row.
+    assert_eq!(
+        check("substrate\nfn f() -> i64 | {Net} { 0 }\nfn main() -> i64 { f() }").0,
+        0,
+        "substrate file must accept raw row"
+    );
+
+    // 6. The effect row appears in `axon doc` output (covered by
+    //    doc_fn_signature_includes_effect_row); here we re-assert the contract
+    //    end-to-end via the doc CLI.
+    let f = std::env::temp_dir().join(format!("axon_p6doc_{}.ax", std::process::id()));
+    std::fs::write(&f, "/// f\nfn fetch() -> i64 | {Net} { 0 }\n").unwrap();
+    let doc = axon().args(["doc", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert!(
+        String::from_utf8_lossy(&doc.stdout).contains("| {Net}"),
+        "axon doc must show the effect row"
+    );
+
+    // 7. @[pure] + a non-empty row, and @[contained]-cap + a too-small row, are
+    //    both contradictions (consistency between purity/capability and rows).
+    assert_eq!(check("@[pure]\nfn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }").0, 2, "@[pure]+row contradiction");
+    assert_eq!(check("@[contained(net: [\"x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }").0, 2, "@[contained]+empty-row contradiction");
+}
+
+#[test]
 fn phase6_effect_row_subsumption_is_enforced_by_check() {
     // Regression guard for the CLI-pipeline wiring: the Phase-6 effect checker
     // (effects::check_effects, E1310) must run in the SAME cmd_check path the
