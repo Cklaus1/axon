@@ -555,11 +555,33 @@ fn format_fn_hover_with_params(fndef: &ast::FnDef, sig: &infer::FnSig) -> String
         .map(|(p, ty)| format!("{}: {}", p.name, format_type(ty)))
         .collect();
     let ret = format_type(&sig.ret);
+    // Phase 6: include the declared effect row — it is part of the function's
+    // contract, so an LSP hover should show it (same as `axon doc` and `axon
+    // fmt`). e.g. `fn fetch(url: str) -> i64 | {Net}`.
+    let mut eff = String::new();
+    if let Some(row) = &fndef.effect_row {
+        eff.push_str(" | {");
+        for (i, e) in row.effects.iter().enumerate() {
+            if i > 0 {
+                eff.push_str(", ");
+            }
+            eff.push_str(e);
+        }
+        if let Some(v) = &row.row_var {
+            if !row.effects.is_empty() {
+                eff.push_str(", ");
+            }
+            eff.push_str("...");
+            eff.push_str(v);
+        }
+        eff.push('}');
+    }
     format!(
-        "```axon\nfn {}({}) -> {}\n```",
+        "```axon\nfn {}({}) -> {}{}\n```",
         fndef.name,
         params.join(", "),
-        ret
+        ret,
+        eff
     )
 }
 

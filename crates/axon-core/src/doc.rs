@@ -88,6 +88,26 @@ fn fn_signature(f: &FnDef) -> String {
         s.push_str(" -> ");
         s.push_str(&render_type(ret));
     }
+    // Phase 6: a declared effect row is part of the function's contract, so it
+    // belongs in the generated signature (e.g. `fn fetch() -> i64 | {Net}`).
+    // Rendered in the same `| {…, ...e}` form `axon fmt` emits.
+    if let Some(row) = &f.effect_row {
+        s.push_str(" | {");
+        for (i, eff) in row.effects.iter().enumerate() {
+            if i > 0 {
+                s.push_str(", ");
+            }
+            s.push_str(eff);
+        }
+        if let Some(v) = &row.row_var {
+            if !row.effects.is_empty() {
+                s.push_str(", ");
+            }
+            s.push_str("...");
+            s.push_str(v);
+        }
+        s.push('}');
+    }
     s
 }
 
@@ -207,6 +227,35 @@ mod tests {
         let out = generate_docs(&prog, src, "test.ax");
         assert!(out.contains("## fn add(a: i64, b: i64) -> i64"), "sig: {out}");
         assert!(out.contains("Add two numbers."), "doc: {out}");
+    }
+
+    #[test]
+    fn doc_fn_signature_includes_effect_row() {
+        // Phase 6: a declared effect row is part of the contract and must appear
+        // in generated docs (spec §10 checklist: "the row appears in axon doc").
+        let src = "/// Fetch bytes.\nfn fetch(url: str) -> i64 | {Net} { len(url) }";
+        let prog = parse_source(src).expect("parse");
+        let out = generate_docs(&prog, src, "test.ax");
+        assert!(
+            out.contains("fn fetch(url: str) -> i64 | {Net}"),
+            "the effect row must be in the doc signature: {out}"
+        );
+
+        // An open row renders the row variable too.
+        let src2 = "/// Map.\nfn run() -> i64 | {IO, ...e} { 0 }";
+        let prog2 = parse_source(src2).expect("parse");
+        let out2 = generate_docs(&prog2, src2, "test.ax");
+        assert!(
+            out2.contains("-> i64 | {IO, ...e}"),
+            "open-row signature must render effects + row var: {out2}"
+        );
+
+        // A fn with NO row clause is unchanged (no spurious `| {}`).
+        let src3 = "/// Pure.\nfn p() -> i64 { 0 }";
+        let prog3 = parse_source(src3).expect("parse");
+        let out3 = generate_docs(&prog3, src3, "test.ax");
+        assert!(out3.contains("fn p() -> i64"), "sig present: {out3}");
+        assert!(!out3.contains("p() -> i64 |"), "no spurious row for an unannotated fn: {out3}");
     }
 
     #[test]
