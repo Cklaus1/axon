@@ -1543,6 +1543,30 @@ impl CheckCtx {
     /// Mutual recursion is out of scope (only self-recursion is analysed). E1208
     /// when no single index decreases across all sites.
     fn check_totality(&mut self, f: &FnDef) {
+        // A `while` loop is unbounded — its termination is not decidable in
+        // general, and the totality analysis only reasons about recursion and
+        // bounded `for` ranges. So a `@[total]` fn may not use `while`: it
+        // claims termination the checker cannot establish (verified: a `@[total]`
+        // fn with `while n < 10 { }` was accepted yet hangs forever). Require
+        // bounded `for` loops or structural recursion instead.
+        if Self::body_has_while(&f.body) {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1208,
+                    format!(
+                        "`@[total]` function `{}` uses a `while` loop, whose termination cannot \
+                         be established — a total function must use a bounded `for` range or \
+                         structural recursion instead",
+                        f.name
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(f.span)
+                .fix("replace the `while` loop with a bounded `for i in a..b { … }` loop, or \
+                      drop the `@[total]` attribute".to_string()),
+            );
+        }
         let mut sites: Vec<Vec<Expr>> = Vec::new();
         Self::collect_self_calls(&f.body, &f.name, &mut sites);
         if sites.is_empty() {
@@ -1590,6 +1614,22 @@ impl CheckCtx {
             }
         }
         Self::for_each_child(expr, &mut |c| Self::collect_self_calls(c, name, out));
+    }
+
+    /// True if `expr` contains a `while`/`while let` loop anywhere — used to
+    /// reject `@[total]` functions, whose termination analysis cannot reason
+    /// about unbounded loops (only recursion + bounded `for` ranges).
+    fn body_has_while(expr: &Expr) -> bool {
+        if matches!(expr, Expr::While { .. } | Expr::WhileLet { .. }) {
+            return true;
+        }
+        let mut found = false;
+        Self::for_each_child(expr, &mut |c| {
+            if !found {
+                found = Self::body_has_while(c);
+            }
+        });
+        found
     }
 
     /// True if `arg` is a strictly-smaller derivation of the parameter `pname`:

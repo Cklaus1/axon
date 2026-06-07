@@ -4421,6 +4421,41 @@ fn total_attribute_requires_a_decreasing_measure_e1208() {
 }
 
 #[test]
+fn total_attribute_rejects_while_loops_e1208() {
+    // A `@[total]` fn must terminate. The totality analysis reasons about
+    // recursion + bounded `for` ranges, but a `while` loop is unbounded and its
+    // termination is undecidable — so `@[total]` + `while` must be rejected
+    // (E1208), not silently accepted. (Verified gap: `@[total] fn f() { let n=0
+    //  while n < 10 { } n }` was accepted yet hangs forever.) Bounded `for`
+    // loops and structural recursion remain accepted.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_totwhile_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // while under @[total] → E1208 (even one that would progress — undecidable).
+    let (c, m) = check("@[total]\nfn f() -> i64 { let n = 0\n while n < 10 { n = n + 1 }\n n }\nfn main() -> i64 { 0 }");
+    assert_eq!(c, 2, "@[total] + while must be rejected: {m}");
+    assert!(m.contains("E1208"), "expected E1208 for @[total]+while: {m}");
+
+    // bounded for loop under @[total] → accepted (always terminates).
+    assert_eq!(
+        check("@[total]\nfn f() -> i64 { let s = 0\n for i in 0..10 { s = s + i }\n s }\nfn main() -> i64 { 0 }").0,
+        0,
+        "@[total] + bounded for must be accepted"
+    );
+    // structural recursion under @[total] → accepted.
+    assert_eq!(
+        check("@[total]\nfn fac(n: i64) -> i64 { if n <= 1 { 1 } else { n * fac(n - 1) } }\nfn main() -> i64 { 0 }").0,
+        0,
+        "@[total] + structural recursion must be accepted"
+    );
+}
+
+#[test]
 fn pure_attribute_enforces_purity_e1207() {
     // Phase 5 §2 (P01/P02/P04/P05): a `@[pure]` function may only call other
     // `@[pure]` functions and pure builtins. An impure call (I/O, AI, time,
