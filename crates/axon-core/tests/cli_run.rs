@@ -4473,6 +4473,13 @@ fn total_attribute_rejects_while_loops_e1208() {
     assert_eq!(c, 2, "@[total] + while must be rejected: {m}");
     assert!(m.contains("E1208"), "expected E1208 for @[total]+while: {m}");
 
+    // A `while` HIDDEN inside a lambda body must also be caught — the totality
+    // walk must descend into closures (the shared for_each_child used to skip
+    // lambda bodies, letting this escape).
+    let (c, m) = check("@[total]\nfn f() -> i64 { let g = || { let n = 0\n while n < 10 { }\n n }\n g() }\nfn main() -> i64 { 0 }");
+    assert_eq!(c, 2, "@[total] + while-in-lambda must be rejected: {m}");
+    assert!(m.contains("E1208"), "expected E1208 for while-in-lambda: {m}");
+
     // bounded for loop under @[total] → accepted (always terminates).
     assert_eq!(
         check("@[total]\nfn f() -> i64 { let s = 0\n for i in 0..10 { s = s + i }\n s }\nfn main() -> i64 { 0 }").0,

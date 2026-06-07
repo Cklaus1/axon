@@ -1739,7 +1739,12 @@ impl CheckCtx {
                 g(place);
                 g(value);
             }
-            Expr::Select(_) => {}
+            Expr::Select(arms) => {
+                for arm in arms {
+                    g(&arm.recv);
+                    g(&arm.body);
+                }
+            }
             Expr::FmtStr { parts } => parts.iter().for_each(|p| {
                 if let crate::ast::FmtPart::Expr(e) = p {
                     g(e);
@@ -1753,8 +1758,13 @@ impl CheckCtx {
                 }
                 g(body);
             }
+            // A lambda's body is a child too — walking it lets analyses (e.g. the
+            // @[total] while-check, recursion collection) see constructs hidden
+            // inside a closure. Previously skipped, which let a `while` in a
+            // lambda escape the @[total] termination check.
+            Expr::Lambda { body, .. } => g(body),
             Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
-            | Expr::Return(None) | Expr::Lambda { .. } => {}
+            | Expr::Return(None) => {}
         }
     }
 
