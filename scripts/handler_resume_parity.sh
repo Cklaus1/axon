@@ -71,6 +71,22 @@ check resume_midexpr 'fn main() -> i64 { with handler { on Random(p) => resume(1
 # IO suppressed; the block tail is the value.
 check io_suppress 'fn main() -> i64 { with handler { on IO(p) => resume(0) } { println("NO")\n 5 } }'
 
+# An arm that REFERENCES the payload binding `p` must NOT be lowered (codegen
+# does not bind the payload) — it stays E0910-refused. Verify it is refused
+# rather than silently built (a built one would diverge from the interpreter).
+refused() {
+  local name="$1" src="$2"
+  local prog="$WORK/$name.ax"
+  printf '%b\n' "$src" > "$prog"
+  if AXON_AI_MOCK=1 "$AXON" build "$prog" -o "$WORK/${name}_bin" --no-cache 2>&1 | grep -q "E0910"; then
+    echo "  OK $name: correctly E0910-refused (not lowered)"
+  else
+    echo "FAIL [$name]: a payload-referencing arm must be refused, not lowered"
+    fail=1
+  fi
+}
+refused payload_ref 'fn main() -> i64 { with handler { on Random(p) => resume(p + 100) } { random_i64(0, 9) } }'
+
 if [ "$fail" -ne 0 ]; then
   echo "handler_resume_parity: FAIL — lowered handler diverges from interp"
   exit 1

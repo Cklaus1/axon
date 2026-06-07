@@ -430,9 +430,20 @@ pub fn handler_is_tail_resumptive_lowerable(handler: &crate::ast::HandlerExpr, b
     if return_arm.is_some() || arms.is_empty() {
         return false;
     }
-    // Every arm body must be a single tail `resume(<expr>)`.
+    // Every arm body must be a single tail `resume(<expr>)`, AND must NOT
+    // reference the arm's payload binding. Codegen does not bind the intercepted
+    // operation's payload (the builtin's args), so an arm that uses `p` would
+    // read garbage natively while the interpreter binds it (e.g. `resume(p+100)`
+    // panics in interp on the args tuple but computed a wrong value natively).
+    // Excluding payload-referencing arms keeps the lowering byte-exact; they stay
+    // E0910-refused.
     for arm in arms {
         if !is_tail_resume(&arm.body) {
+            return false;
+        }
+        let mut bound = Vec::new();
+        collect_pattern_names(&arm.binding, &mut bound);
+        if expr_references_any(&arm.body, &bound) {
             return false;
         }
     }
@@ -451,6 +462,44 @@ pub fn handler_is_tail_resumptive_lowerable(handler: &crate::ast::HandlerExpr, b
 fn is_tail_resume(e: &Expr) -> bool {
     matches!(e, Expr::Call { callee, .. }
         if matches!(callee.as_ref(), Expr::Ident(n) if n == "resume"))
+}
+
+/// Collect the identifier names a pattern binds (for the payload-reference check).
+fn collect_pattern_names(p: &crate::ast::Pattern, out: &mut Vec<String>) {
+    use crate::ast::Pattern;
+    match p {
+        Pattern::Ident(n) => out.push(n.clone()),
+        Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
+            collect_pattern_names(inner, out)
+        }
+        Pattern::Struct { fields, .. } => {
+            for (_, fp) in fields {
+                collect_pattern_names(fp, out);
+            }
+        }
+        Pattern::Tuple(ps) => {
+            for fp in ps {
+                collect_pattern_names(fp, out);
+            }
+        }
+        Pattern::Wildcard | Pattern::Literal(_) | Pattern::None => {}
+    }
+}
+
+/// True if `e` references any identifier in `names` (an `Expr::Ident` match).
+fn expr_references_any(e: &Expr, names: &[String]) -> bool {
+    if let Expr::Ident(n) = e {
+        if names.iter().any(|b| b == n) {
+            return true;
+        }
+    }
+    let mut hit = false;
+    for_each_child(e, &mut |c| {
+        if !hit {
+            hit = expr_references_any(c, names);
+        }
+    });
+    hit
 }
 
 /// Walk `body`: return true if it contains any call that is NOT a direct builtin
