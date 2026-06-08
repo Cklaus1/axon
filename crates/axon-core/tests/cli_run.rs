@@ -458,6 +458,63 @@ fn phase7_kernel_llm_gateway() {
 }
 
 #[test]
+fn phase8_surface_search_keywords() {
+    // Phase 8 surface: `for!<Strategy> maximize|minimize "metric" to <target> in
+    // <budget>` and `goal { metric:, target:, budget: }` — "search as control
+    // flow" (ROADMAP §1.3 / §8). Both DESUGAR to the shipped goal_run optimizer,
+    // so they type-check and run; this asserts they parse + optimize a real
+    // @[adaptive] metric to its peak.
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_p8_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // `for!<HillClimb> maximize` optimizes the metric to its peak (100 at x=7).
+    let (code, out) = run(
+        "@[adaptive]\n\
+         fn score(x: i64) -> i64 { 0 - (x - 7) * (x - 7) + 100 }\n\
+         fn main() -> i64 { \
+           let best = for!<HillClimb> maximize \"score\" to 100.0 in 50\n\
+           println(\"{to_str_f64(best)}\")\n\
+           goal_best_input(\"score\", 100.0) }",
+    );
+    assert_eq!(code, 7, "for! optimized to the peak input x=7");
+    assert!(out.contains("100"), "for! reached the peak score: {out:?}");
+
+    // The default strategy (no `<...>`) also works.
+    let (code, _) = run(
+        "@[adaptive]\n\
+         fn s(x: i64) -> i64 { 0 - x + 100 }\n\
+         fn main() -> i64 { let _ = for! maximize \"s\" to 100.0 in 10\n 0 }",
+    );
+    assert_eq!(code, 0, "for! with the default strategy parses + runs");
+
+    // `goal { … }` block desugars to the same optimizer.
+    let (code, out) = run(
+        "@[adaptive]\n\
+         fn score(x: i64) -> i64 { 0 - (x - 5) * (x - 5) + 80 }\n\
+         fn main() -> i64 { \
+           let best = goal { metric: \"score\", target: 80.0, budget: 40 }\n\
+           println(\"{to_str_f64(best)}\")\n\
+           0 }",
+    );
+    assert_eq!(code, 0);
+    assert!(out.contains("80"), "goal block reached the peak score: {out:?}");
+
+    // Regression: a plain `for` loop and a `goal_run(...)` call are unaffected by
+    // the new surface forms (the `!` / `goal {` triggers are narrow).
+    let (code, _) = run(
+        "@[adaptive]\n\
+         fn m(x: i64) -> i64 { x }\n\
+         fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i }\n let _ = goal_run(\"m\", 10.0, 5)\n s }",
+    );
+    assert_eq!(code, 10, "plain for-loops + goal_run still parse and run");
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).

@@ -1423,6 +1423,16 @@ impl Parser {
             Some(Token::Ident(s)) if s == "with" && self.peek_is_with_handler() => {
                 self.parse_with_handler()
             }
+            // Phase 8 surface: `goal { metric: "m", target: <f64>, budget: <i64> }`
+            // — the declarative optimization bundle (ROADMAP §8 exit criterion).
+            // `goal` is a bare identifier, so only treat it as the block form when
+            // it is immediately followed by `{`; a plain variable named `goal` in
+            // expr position is never followed by `{`, so it is unaffected.
+            Some(Token::Ident(s))
+                if s == "goal" && matches!(self.tokens.get(self.pos + 1), Some(Token::LBrace)) =>
+            {
+                self.parse_goal_block()
+            }
             // Assignment: Ident = expr (but NOT == which is a comparison)
             // ASI: if `=` is on a new line it starts a new statement, not an assignment.
             Some(Token::Ident(_))
@@ -1489,6 +1499,14 @@ impl Parser {
     fn parse_for(&mut self) -> Result<Expr> {
         let uid = self.pos; // unique per for-loop in this parse (for desugar names)
         self.expect(&Token::For)?;
+        // Phase 8 surface: `for!<Strategy> maximize|minimize "metric" to <target>
+        // in <budget>` — "search as control flow", the irreducible Axon move
+        // (ROADMAP §1.3). A `!` immediately after `for` selects the search form;
+        // it DESUGARS (no new AST node) to a `goal_run*` call on the existing
+        // optimizer, so it type-checks/runs through the shipped machinery.
+        if self.eat(&Token::Bang) {
+            return self.parse_for_search();
+        }
         let var = self.expect_ident()?;
         self.expect(&Token::In)?;
         let first = self.parse_logical()?;
@@ -1557,6 +1575,142 @@ impl Parser {
             Stmt { expr: Expr::RefBind { name: arr_name, ty: None, value: Box::new(first) }, span },
             Stmt { expr: inner_for, span },
         ]))
+    }
+
+    /// Phase 8 surface: parse the `for!` search form (the `for` + `!` already
+    /// consumed) and DESUGAR it to a call on the existing `goal_run*` optimizer —
+    /// "search as control flow" without a new AST node, so it type-checks and runs
+    /// through the shipped machinery (ROADMAP §1.3 / the Phase-8 exit criterion).
+    ///
+    /// Surface:
+    ///   for!<Strategy> maximize|minimize "metric" to <target> in <budget>
+    ///
+    /// `<Strategy>` is OPTIONAL (default `HillClimb`); `random`/`Random` selects
+    /// the random-search baseline (`goal_run_random`), anything else maps to the
+    /// default hill climb (`goal_run`). `maximize`/`minimize` is required and
+    /// recorded for readability — the @[adaptive] metric defines the direction, so
+    /// both lower to the same target-directed `goal_run` (a future slice can negate
+    /// for a true minimize). `"metric"` is the @[adaptive] fn name; `<target>` is
+    /// the f64 goal; `<budget>` is the i64 eval budget.
+    ///
+    ///   for!<HillClimb> maximize "score" to 100.0 in 50
+    ///     ⇒  goal_run("score", 100.0, 50)
+    fn parse_for_search(&mut self) -> Result<Expr> {
+        // Optional `<Strategy>`.
+        let mut strategy = "HillClimb".to_string();
+        if self.eat(&Token::Lt) {
+            strategy = self.expect_ident()?;
+            self.expect_gt()?;
+        }
+        // `maximize` | `minimize` (required direction keyword, as a bare ident).
+        let dir = self.expect_ident()?;
+        if dir != "maximize" && dir != "minimize" {
+            return Err(ParseError::Unexpected(
+                Token::Ident(dir),
+                "`maximize` or `minimize` after `for!`".into(),
+            ));
+        }
+        // The metric: a string literal naming the @[adaptive] fn.
+        let metric = self.parse_primary()?;
+        // `to <target>` — the f64 goal (the `to` connector is a bare ident).
+        let to_kw = self.expect_ident()?;
+        if to_kw != "to" {
+            return Err(ParseError::Unexpected(
+                Token::Ident(to_kw),
+                "`to <target>` in a `for!` search".into(),
+            ));
+        }
+        let target = self.parse_logical()?;
+        // `in <budget>` — the i64 eval budget (`in` is already a keyword token).
+        self.expect(&Token::In)?;
+        let budget = self.parse_logical()?;
+
+        // Select the optimizer builtin by strategy.
+        let callee = if strategy.eq_ignore_ascii_case("random") {
+            // Random search needs lo/hi bounds; the surface form doesn't carry
+            // them, so default to a wide symmetric search window. (A later slice
+            // can add `over [lo, hi]`.) Falls back to goal_run if unavailable.
+            "goal_run_random"
+        } else {
+            "goal_run"
+        };
+
+        if callee == "goal_run_random" {
+            // goal_run_random(name, target, n_samples, lo, hi)
+            Ok(Expr::Call {
+                callee: Box::new(Expr::Ident("goal_run_random".to_string())),
+                args: vec![
+                    metric,
+                    target,
+                    budget,
+                    Expr::Literal(Literal::Int(-1000)),
+                    Expr::Literal(Literal::Int(1000)),
+                ],
+                tier: None,
+            })
+        } else {
+            // goal_run(name, target, max_evals)
+            Ok(Expr::Call {
+                callee: Box::new(Expr::Ident("goal_run".to_string())),
+                args: vec![metric, target, budget],
+                tier: None,
+            })
+        }
+    }
+
+    /// Phase 8 surface: parse `goal { metric: "m", target: <f64>, budget: <i64>
+    /// [, principal: <handle>] }` — the declarative optimization bundle (ROADMAP
+    /// §8 exit criterion). DESUGARS (no new AST node) to a `goal_run` call on the
+    /// shipped optimizer, so it type-checks and runs through existing machinery.
+    /// `metric`/`target`/`budget` are required; `principal` is accepted (the
+    /// budget-scoping hook from Phase-7 Slice 5) and currently informational —
+    /// it parses and is discarded, reserved for wiring `goal_run` spend to a
+    /// principal in a later slice.
+    ///
+    ///   goal { metric: "score", target: 100.0, budget: 50 }
+    ///     ⇒  goal_run("score", 100.0, 50)
+    fn parse_goal_block(&mut self) -> Result<Expr> {
+        // `goal` ident + `{`.
+        let _ = self.advance()?; // consume `goal`
+        self.expect(&Token::LBrace)?;
+        let mut metric: Option<Expr> = None;
+        let mut target: Option<Expr> = None;
+        let mut budget: Option<Expr> = None;
+        let mut principal: Option<Expr> = None;
+        while !self.at(&Token::RBrace) {
+            let field = self.expect_ident()?;
+            self.expect(&Token::Colon)?;
+            let value = self.parse_logical()?;
+            match field.as_str() {
+                "metric" => metric = Some(value),
+                "target" => target = Some(value),
+                "budget" => budget = Some(value),
+                "principal" => principal = Some(value),
+                other => {
+                    return Err(ParseError::Unexpected(
+                        Token::Ident(other.to_string()),
+                        "a `goal` field: metric / target / budget / principal".into(),
+                    ))
+                }
+            }
+            self.eat(&Token::Comma);
+        }
+        self.expect(&Token::RBrace)?;
+        let (Some(metric), Some(target), Some(budget)) = (metric, target, budget) else {
+            return Err(ParseError::Unexpected(
+                Token::Ident("goal".to_string()),
+                "`goal { metric:, target:, budget: }` (all three are required)".into(),
+            ));
+        };
+        // `principal` is reserved (budget-scoping hook); discard for now so the
+        // field is accepted without yet binding goal_run spend to a principal.
+        let _ = principal;
+        // Desugar to goal_run(metric, target, budget).
+        Ok(Expr::Call {
+            callee: Box::new(Expr::Ident("goal_run".to_string())),
+            args: vec![metric, target, budget],
+            tier: None,
+        })
     }
 
     /// Parse a `{ … }` loop body into a statement list.
