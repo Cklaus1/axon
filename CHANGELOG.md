@@ -12,6 +12,12 @@
   model that discovers it doesn't need the offset. Built entirely on shipped primitives
   (`@[adaptive]`/`goal_run`/refinements/the `axon complexity` MDL idea); the kernel `World<T>`
   + `observe`/`condition` keywords + probabilistic fit are the named Phase-13 follow-on.
+- Self-improving compiler (R10): a **third** oracle-verified optimization pass — `bool-simplify`
+  (`!true`→`false`, `!false`→`true`, `!(!x)`→`x`) — added to the closed template registry and
+  proven through the four-gate harness (G1/G2/G3 over the real corpus). All three rewrites are
+  provably total and behavior-preserving (`!` on a bool never panics; double-negation preserves
+  the operand's single evaluation, so it's sound regardless of operand purity). The registry now
+  carries three passes — widening what the bounded proposer (`discover`) can select.
 - Self-improving compiler (R10): a **second** oracle-verified optimization pass —
   `constant-fold` (integer-literal arithmetic, `2 + 3` → `5`) — added to the closed template
   registry and proven through the four-gate harness (`axon improve verify --pass

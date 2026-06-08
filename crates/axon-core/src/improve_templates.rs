@@ -24,8 +24,8 @@
 
 use crate::ast::Program;
 use crate::improve::{
-    constant_fold_pass, count_arith_identity_sites, count_constant_fold_sites,
-    fold_arith_identities_pass, Pass,
+    bool_simplify_pass, constant_fold_pass, count_arith_identity_sites, count_bool_simplify_sites,
+    count_constant_fold_sites, fold_arith_identities_pass, Pass,
 };
 
 /// One entry in the closed optimization-template menu: a stable name, a
@@ -64,6 +64,12 @@ pub const TEMPLATES: &[Template] = &[
         pass: &(constant_fold_pass as fn(&Program) -> Program),
         detector: program_constant_fold_sites,
     },
+    Template {
+        name: "bool-simplify",
+        description: "simplify boolean negation (!true → false, !false → true, !(!x) → x)",
+        pass: &(bool_simplify_pass as fn(&Program) -> Program),
+        detector: program_bool_simplify_sites,
+    },
 ];
 
 /// Count `fold-arith-identities` sites across one program (sum over its fns).
@@ -89,6 +95,20 @@ fn program_constant_fold_sites(program: &Program) -> usize {
         .map(|it| match it {
             Item::FnDef(f) => count_constant_fold_sites(&f.body),
             Item::ImplBlock(b) => b.methods.iter().map(|m| count_constant_fold_sites(&m.body)).sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// Count `bool-simplify` sites across one program (sum over its fns).
+fn program_bool_simplify_sites(program: &Program) -> usize {
+    use crate::ast::Item;
+    program
+        .items
+        .iter()
+        .map(|it| match it {
+            Item::FnDef(f) => count_bool_simplify_sites(&f.body),
+            Item::ImplBlock(b) => b.methods.iter().map(|m| count_bool_simplify_sites(&m.body)).sum(),
             _ => 0,
         })
         .sum()
@@ -131,6 +151,7 @@ mod tests {
         assert_eq!(a, b);
         assert!(a.contains(&"fold-arith-identities"));
         assert!(a.contains(&"constant-fold"));
+        assert!(a.contains(&"bool-simplify"));
     }
 
     #[test]

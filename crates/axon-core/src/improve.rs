@@ -355,7 +355,7 @@ fn min_run_nanos(program: &Program, trials: u32) -> u128 {
 // detector is READ-ONLY (no rewrite here): discovery observes, it does not mutate
 // the compiler.
 
-use crate::ast::{BinOp, Expr, Item, Literal, Stmt};
+use crate::ast::{BinOp, Expr, Item, Literal, Stmt, UnaryOp};
 
 /// A discovered candidate pass: pure data describing what discovery found. It is
 /// *not* executable — `verify` builds the actual transform; `graduate` (multi-
@@ -913,6 +913,85 @@ pub fn count_constant_fold_sites(e: &Expr) -> usize {
     here + child_exprs(e).into_iter().map(count_constant_fold_sites).sum::<usize>()
 }
 
+// ── The bool-simplify REWRITE PASS (R10, third template) ──────────────────────
+//
+// A third oracle-verified optimization, on the boolean side: simplify a unary
+// `!` whose operand is a bool LITERAL (`!true` → `false`, `!false` → `true`) and
+// collapse a DOUBLE negation (`!(!x)` → `x`). All three are provably
+// behavior-preserving and TOTAL:
+//   * `!true`/`!false` fold a literal — no operand is dropped, and `!` on a bool
+//     never panics (interp `eval_unary`: `(Not, Bool(b)) => !b`).
+//   * `!(!x)` PRESERVES `x` — `x` is still evaluated exactly once, so any side
+//     effect or panic in `x` happens identically. (We never drop the operand, so
+//     this is sound regardless of `x`'s purity — the same reasoning that makes
+//     `fold-arith-identities`'s `x*1 → x` safe.)
+// Like constant-fold this REDUCES DESCRIPTION LENGTH (fewer `axon complexity`
+// bits) for identical behavior — the "simpler, not just faster" axis.
+
+/// Recursively bool-simplify `e`: fold children first, then collapse a top-level
+/// `!literal` or `!(!x)`.
+fn bool_simplify_expr(e: &Expr) -> Expr {
+    let folded = map_child_exprs(e, bool_simplify_expr);
+    if let Expr::UnaryOp { op: UnaryOp::Not, operand } = &folded {
+        match operand.as_ref() {
+            // !true → false, !false → true
+            Expr::Literal(Literal::Bool(b)) => return Expr::Literal(Literal::Bool(!b)),
+            // !(!x) → x  (operand preserved; evaluated once either way)
+            Expr::UnaryOp { op: UnaryOp::Not, operand: inner } => return (**inner).clone(),
+            _ => {}
+        }
+    }
+    folded
+}
+
+/// The discovered optimization as a runnable [`Pass`]: simplify boolean `!`
+/// throughout the program. Passes G1 by construction-then-proof (every rewrite is
+/// behavior-preserving and total) and G2 (adds no capability).
+pub fn bool_simplify_pass(program: &Program) -> Program {
+    Program {
+        items: program
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::FnDef(f) => {
+                    let mut nf = f.clone();
+                    nf.body = bool_simplify_expr(&f.body);
+                    Item::FnDef(nf)
+                }
+                Item::ImplBlock(b) => {
+                    let mut nb = b.clone();
+                    nb.methods = b
+                        .methods
+                        .iter()
+                        .map(|m| {
+                            let mut nm = m.clone();
+                            nm.body = bool_simplify_expr(&m.body);
+                            nm
+                        })
+                        .collect();
+                    Item::ImplBlock(nb)
+                }
+                other => other.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Count bool-simplify sites (read-only) — a `!literal` or `!(!x)`. Uses the
+/// SAME shape test as the pass, so detector and rewrite agree exactly.
+pub fn count_bool_simplify_sites(e: &Expr) -> usize {
+    let here = if let Expr::UnaryOp { op: UnaryOp::Not, operand } = e {
+        match operand.as_ref() {
+            Expr::Literal(Literal::Bool(_)) => 1,
+            Expr::UnaryOp { op: UnaryOp::Not, .. } => 1,
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_bool_simplify_sites).sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1386,5 +1465,62 @@ mod tests {
             Item::FnDef(f) => f.body.clone(),
             _ => panic!("expected fn"),
         }
+    }
+
+    // ── bool-simplify pass (third template) ───────────────────────────────────
+
+    #[test]
+    fn bool_simplify_folds_literals_and_double_negation() {
+        // !true → false, !false → true.
+        let a = bool_simplify_expr(&Expr::UnaryOp {
+            op: UnaryOp::Not,
+            operand: Box::new(Expr::Literal(Literal::Bool(true))),
+        });
+        assert!(matches!(a, Expr::Literal(Literal::Bool(false))));
+        // !(!x) → x (the bare ident survives).
+        let dn = Expr::UnaryOp {
+            op: UnaryOp::Not,
+            operand: Box::new(Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand: Box::new(Expr::Ident("x".into())),
+            }),
+        };
+        assert!(matches!(bool_simplify_expr(&dn), Expr::Ident(n) if n == "x"));
+    }
+
+    #[test]
+    fn bool_simplify_pass_clears_the_gates_and_preserves_behavior() {
+        // A corpus exercising both rewrites, returning a value so G1 can compare
+        // observable output. `!(!b)` must preserve the side-effecting operand's
+        // single evaluation — here a plain bool, so behavior is identical.
+        let c = vec![
+            prog("fn main() -> i64 { if !false { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { let b = true\n if !(!b) { 1 } else { 0 } }"),
+            prog("fn main() { println(\"hi\") }"),
+        ];
+        let pass: &Pass = &bool_simplify_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "bool-simplify must clear G1/G2: {rec:?}");
+    }
+
+    #[test]
+    fn count_bool_simplify_sites_matches_the_pass() {
+        // !true (1) + !(!x) (1) = 2 visible sites; a plain `!cond` over a non-
+        // literal, non-`!` operand is NOT a site.
+        assert_eq!(
+            count_bool_simplify_sites(&prog_body("fn main() -> i64 { if !true { 1 } else { 0 } }")),
+            1
+        );
+        assert_eq!(
+            count_bool_simplify_sites(&prog_body(
+                "fn main() -> i64 { let b = true\n if !(!b) { 1 } else { 0 } }"
+            )),
+            1
+        );
+        // A negation of a comparison is not simplifiable by this pass → 0 sites.
+        assert_eq!(
+            count_bool_simplify_sites(&prog_body("fn f(x: i64) -> i64 { if !(x > 0) { 1 } else { 0 } }")),
+            0
+        );
     }
 }

@@ -4321,6 +4321,29 @@ fn self_improving_compiler_verifies_a_new_constant_fold_pass() {
 }
 
 #[test]
+fn self_improving_compiler_verifies_a_third_bool_simplify_pass() {
+    // A THIRD registry pass — `bool-simplify` (!true→false, !false→true, !(!x)→x)
+    // — clears the same four-gate harness over the real corpus. Widening the
+    // closed registry (Layer-2 of the self-improving compiler): the proposer now
+    // has three verified options, each admitted only after the gates prove it
+    // behavior-preserving + capability-safe.
+    let out = axon()
+        .args(["improve", "verify", &ex(""), "--pass", "bool-simplify"])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "bool-simplify must pass the gates: {combined}");
+    assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
+    assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
+    assert!(combined.contains("PASSED"), "overall: {combined}");
+}
+
+#[test]
 fn constant_fold_reduces_complexity_with_identical_behavior() {
     // The "simpler, not just faster" improvement axis: constant-folding strictly
     // REDUCES the MDL description length (`axon complexity` bits) while preserving
