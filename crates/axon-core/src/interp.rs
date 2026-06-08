@@ -317,6 +317,12 @@ pub struct Interp<'p> {
     /// evaluated with `_` bound to the argument and a violation raises
     /// [`Flow::RefineViolation`]. Empty when the program has no refinements.
     refine_preds: HashMap<String, &'p Expr>,
+    /// Phase 5 §4: obligations an SMT prover discharged for ALL inputs, so the
+    /// matching runtime check is provably dead and may be elided. Empty by
+    /// default (and always, unless `Interp::with_discharged` is used by a
+    /// pipeline built with the `smt` feature), keeping the default run path
+    /// byte-identical to pre-discharge behaviour.
+    discharged: crate::verify::Discharged,
 }
 
 /// One active effect-handler frame: the inline-handler arms in scope for the
@@ -532,7 +538,7 @@ pub fn run_program_capturing(program: &Program) -> (i32, String) {
     on_deep_stack(|| {
         // Install a fresh capture buffer, restoring any prior one on exit.
         let prev = OUTPUT_SINK.with(|s| s.replace(Some(String::new())));
-        let code = run_program_inner(program);
+        let code = run_program_inner(program, crate::verify::Discharged::default());
         let captured = OUTPUT_SINK.with(|s| s.replace(prev)).unwrap_or_default();
         (code, captured)
     })
@@ -540,11 +546,18 @@ pub fn run_program_capturing(program: &Program) -> (i32, String) {
 
 /// Parse-and-run convenience: returns the process exit code.
 pub fn run_program(program: &Program) -> i32 {
-    on_deep_stack(|| run_program_inner(program))
+    on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()))
 }
 
-fn run_program_inner(program: &Program) -> i32 {
-    let mut interp = Interp::build(program);
+/// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
+/// interpreter elides the runtime checks Z3 proved ∀-inputs. Identical to
+/// [`run_program`] with an empty set.
+pub fn run_program_with_discharged(program: &Program, discharged: crate::verify::Discharged) -> i32 {
+    on_deep_stack(|| run_program_inner(program, discharged))
+}
+
+fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
+    let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
     // is malformed), not a runtime panic. Report it cleanly with exit 2 (the
     // compile-error code) instead of `panic: no main` + exit 101 — and never
@@ -728,7 +741,18 @@ impl<'p> Interp<'p> {
             ai_cost_micro: Cell::new(0),
             handlers: RefCell::new(Vec::new()),
             refine_preds,
+            discharged: crate::verify::Discharged::default(),
         }
+    }
+
+    /// Install the set of statically-discharged obligations (Phase 5 §4). A
+    /// pipeline that ran the SMT prover passes its `Discharged` here so the
+    /// interpreter elides the runtime checks Z3 already proved ∀-inputs. A no-op
+    /// for any obligation not in the set, so this only ever *removes* a check
+    /// that could not have fired.
+    pub fn with_discharged(mut self, discharged: crate::verify::Discharged) -> Self {
+        self.discharged = discharged;
+        self
     }
 
     /// Evaluate module-level constants in source order, so each may reference
@@ -1078,7 +1102,11 @@ impl<'p> Interp<'p> {
         // to the finalized return value; a violation is the same runtime
         // refinement-contract breach as a bad argument → exit 6. Skipped unless
         // the program declares refinements AND this fn returns one.
-        if !self.refine_preds.is_empty() {
+        // Phase 5 §4: if the SMT prover discharged this fn's refinement-return
+        // postcondition for ALL inputs, the check below is provably dead — skip
+        // it. `refine_return_proven` is false for every fn unless a `Discharged`
+        // set was installed, so the default build still runs the check.
+        if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
                     let mut pred_env = Env::new();
@@ -1228,7 +1256,13 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
-            } else if let Some(observed) = scalar_as_f64(&result) {
+            } else if let Some(observed) =
+                // Phase 5 §4: skip the scalar `@[verify]` gate when the SMT prover
+                // discharged this fn's `value OP K` bound for ALL inputs — the
+                // check is provably dead. `verify_proven` is false unless a
+                // `Discharged` set was installed, so the default build is unchanged.
+                scalar_as_f64(&result).filter(|_| !self.discharged.verify_proven(&f.name))
+            {
                 // SCALAR return (`i64`/`f64`/`bool`): `value` binds to the
                 // returned scalar itself. A `@[verify(value OP K)]` safety bound on
                 // a plain-typed fn used to be SILENTLY UNENFORCED (the gate only

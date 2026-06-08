@@ -27,10 +27,18 @@
 //! still checks. Concretely, a `main` with NO row clause is treated as allowing
 //! every effect; a `main` WITH an explicit clause is held to it like any fn.
 //!
-//! Row VARIABLES (`...e`) make a row open: such a function is treated as
-//! allowing any effect (a forwarded callback can carry anything). Closing the
-//! row (rule E03) and handler discharge (E04) are later slices; until then an
-//! open row conservatively admits, never falsely rejects.
+//! Row VARIABLES (`...e`) make a function's own declared row open: such a fn is
+//! treated as allowing any effect in its body. That openness is sound for the
+//! BODY (a forwarded callback can carry anything), but the row variable must be
+//! CLOSED at each call site where the callback is a concrete value — otherwise
+//! an effect launders through the open row. Rule E03 (higher-order case) is now
+//! enforced: when a forwarder invokes one of its parameters (`fn apply(f) { f()
+//! }`), at a call `apply(g)` the concrete callback `g`'s effects flow into the
+//! caller's required row (see [`invoked_param_indices`] / [`callback_arg_effects`]).
+//! A closed-row caller can no longer hide an effect behind a higher-order helper.
+//! Handler discharge (E04) is enforced for inline + named handlers. The residual
+//! E1312 (an unbound row variable reaching `main`) is moot under the migration
+//! escape hatch — `main` admits everything by default — so it is not emitted.
 //!
 //! Enforcement is intentionally erase-only at runtime: this pass produces
 //! diagnostics; codegen and the interpreter ignore rows entirely.
@@ -96,6 +104,11 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     // against what it declared). Computed to a fixpoint over the call graph.
     let inferred = infer_effects(program);
 
+    // E03 (higher-order): which params each fn invokes as a callback, so a call
+    // site forwarding a concrete effectful fn into that slot flows its effects to
+    // the caller's required row (closing the row variable at the call).
+    let invoked = invoked_param_indices(program);
+
     let mut errors = Vec::new();
     for item in &program.items {
         let Item::FnDef(f) = item else { continue };
@@ -142,7 +155,7 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         if matches!(allowed, Allowed::Open) {
             continue;
         }
-        check_expr(&f.body, &f.name, &allowed, &HashSet::new(), &inferred, &mut errors);
+        check_expr(&f.body, &f.name, &allowed, &HashSet::new(), &inferred, &invoked, &mut errors);
     }
     errors
 }
@@ -608,6 +621,80 @@ fn collect_called_names_ctx(
 }
 
 
+/// Phase 6 §2 E03 (row-variable closing, higher-order case): map each function
+/// to the indices of the parameters it *invokes* as a callback — a param `f`
+/// that appears as the callee of a `Call` in the body (`f(...)`). Such a fn is a
+/// *forwarder*: it performs whatever effects the function passed for `f` performs
+/// (its row is row-polymorphic over the callback, the `...e` in `map<A,B,e>`).
+///
+/// This is what makes the conservative "open row admits anything" precise at the
+/// only place it can be: the CALL SITE, where the callback is a concrete value.
+/// At `forwarder(g)`, `g`'s effects flow into the caller's required row (see
+/// [`callback_arg_effects`]). Closed-world at the call, exactly per §5.2.
+fn invoked_param_indices(program: &Program) -> HashMap<String, Vec<usize>> {
+    let mut out = HashMap::new();
+    for item in &program.items {
+        let Item::FnDef(f) = item else { continue };
+        // Map this fn's param names → positional index.
+        let idx_of: HashMap<&str, usize> = f
+            .params
+            .iter()
+            .enumerate()
+            .map(|(i, p)| (p.name.as_str(), i))
+            .collect();
+        let mut invoked = Vec::new();
+        collect_invoked_params(&f.body, &idx_of, &mut invoked);
+        invoked.sort_unstable();
+        invoked.dedup();
+        if !invoked.is_empty() {
+            out.insert(f.name.clone(), invoked);
+        }
+    }
+    out
+}
+
+/// Walk `e` collecting the positional indices of any parameter invoked as a
+/// callback (`param(...)` where `param` is one of `idx_of`'s names). Only a bare
+/// `Expr::Ident` callee that resolves to a param counts — a call to a same-named
+/// global is not a callback (params shadow, and resolver already separated them
+/// for binding; here a param name calling itself is the higher-order case we want).
+fn collect_invoked_params(e: &Expr, idx_of: &HashMap<&str, usize>, out: &mut Vec<usize>) {
+    if let Expr::Call { callee, .. } = e {
+        if let Expr::Ident(name) = callee.as_ref() {
+            if let Some(&i) = idx_of.get(name.as_str()) {
+                out.push(i);
+            }
+        }
+    }
+    for_each_child(e, &mut |c| collect_invoked_params(c, idx_of, out));
+}
+
+/// The effects that flow into the CALLER at a call site `callee(args…)` because
+/// `callee` is a forwarder that invokes one or more of its parameters: for each
+/// invoked slot, the effects of the concrete function passed there. A callback
+/// arg that is a bare `Ident` naming a known builtin or user fn contributes that
+/// function's effects; a non-Ident arg (a lambda literal, a complex expr) is not
+/// resolved here (conservative — its effects, if any, surface where the lambda
+/// body is checked, or stay open). This is additive: it only ever ADDS effects,
+/// so it can never suppress an existing diagnostic — only surface a laundered one.
+fn callback_arg_effects(
+    callee: &str,
+    args: &[Expr],
+    invoked: &HashMap<String, Vec<usize>>,
+    inferred: &HashMap<String, HashSet<String>>,
+) -> HashSet<String> {
+    let mut extra = HashSet::new();
+    let Some(idxs) = invoked.get(callee) else { return extra };
+    for &i in idxs {
+        if let Some(Expr::Ident(g)) = args.get(i) {
+            for eff in callee_effects(g, inferred) {
+                extra.insert(eff);
+            }
+        }
+    }
+    extra
+}
+
 /// The effects a call to `callee` performs: the builtin catalog row, or the
 /// callee's INFERRED (transitive) effect set, or nothing for an unknown name.
 fn callee_effects(
@@ -624,15 +711,17 @@ fn callee_effects(
     Vec::new()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn check_expr(
     e: &Expr,
     caller: &str,
     allowed: &Allowed,
     handled: &HashSet<String>,
     inferred: &HashMap<String, HashSet<String>>,
+    invoked: &HashMap<String, Vec<usize>>,
     errors: &mut Vec<EffectError>,
 ) {
-    if let Expr::Call { callee, .. } = e {
+    if let Expr::Call { callee, args, .. } = e {
         if let Expr::Ident(name) = callee.as_ref() {
             // The callee's INFERRED (transitive) effects — so an effect a helper
             // performs is attributed to it even if its declared row is empty/open
@@ -657,6 +746,25 @@ fn check_expr(
                     });
                 }
             }
+            // E03 (higher-order): if `name` is a forwarder that invokes one of
+            // its params, the concrete callback passed here carries its own
+            // effects INTO this caller — the row variable `...e` closed at the
+            // call. Flag any such effect the caller's closed row doesn't admit,
+            // so an effect can't be laundered through `map`/`apply`-style helpers.
+            for eff in callback_arg_effects(name, args, invoked, inferred) {
+                if !allowed.admits(&eff) && !handled.contains(&eff) {
+                    errors.push(EffectError {
+                        code: E1310,
+                        message: format!(
+                            "`{caller}` calls `{name}` with a callback that performs effect \
+                             `{eff}`, but `{caller}`'s declared effect row does not include \
+                             `{eff}` — the effect is forwarded through `{name}`'s row variable \
+                             (add `{eff}` to the row, or handle the effect)"
+                        ),
+                        span: Span::dummy(),
+                    });
+                }
+            }
         }
     }
     // A `with H { body }` discharges H's inline-handled effects FROM THE BODY
@@ -667,20 +775,20 @@ fn check_expr(
         for eff in handler_discharges(handler) {
             inner.insert(eff);
         }
-        check_expr(body, caller, allowed, &inner, inferred, errors);
+        check_expr(body, caller, allowed, &inner, inferred, invoked, errors);
         if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
             for arm in arms {
-                check_expr(&arm.body, caller, allowed, handled, inferred, errors);
+                check_expr(&arm.body, caller, allowed, handled, inferred, invoked, errors);
             }
             if let Some(ra) = return_arm {
-                check_expr(&ra.body, caller, allowed, handled, inferred, errors);
+                check_expr(&ra.body, caller, allowed, handled, inferred, invoked, errors);
             }
         }
         return;
     }
     // Recurse into children regardless, so nested calls are checked.
     for_each_child(e, &mut |child| {
-        check_expr(child, caller, allowed, handled, inferred, errors)
+        check_expr(child, caller, allowed, handled, inferred, invoked, errors)
     });
 }
 
@@ -1098,5 +1206,51 @@ mod tests {
             "fn f() -> i64 | {} { if true { println(\"x\") 1 } else { 2 } }",
         );
         assert_eq!(errs.len(), 1, "nested IO call should still leak, got {errs:?}");
+    }
+
+    // ── E03: higher-order row closing (forwarded callback effects) ───────────
+
+    #[test]
+    fn callback_effect_is_not_launderable_through_a_forwarder() {
+        // `apply` is a forwarder: it invokes its callback param `f`. Its row is
+        // row-polymorphic (`...e`) — open. A `| {}` caller that passes an
+        // IO-performing function as the callback used to launder that IO through
+        // `apply`'s open row (the conservative "open admits anything"). E03 closes
+        // the row at the call site: the callback's IO flows into the caller and is
+        // flagged against its empty row.
+        let errs = check(
+            "fn does_io(x: i64) -> i64 { println(\"io\") x }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
+             fn pure_caller() -> i64 | {} { apply(does_io, 5) }",
+        );
+        assert!(
+            errs.iter().any(|e| e.code == E1310 && e.message.contains("IO")),
+            "forwarded callback IO must leak against the empty row, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn callback_effect_is_admitted_when_the_row_includes_it() {
+        // No false positive: a caller that DECLARES {IO} may forward an
+        // IO-performing callback through the same forwarder.
+        let errs = check(
+            "fn does_io(x: i64) -> i64 { println(\"io\") x }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
+             fn io_caller() -> i64 | {IO} { apply(does_io, 5) }",
+        );
+        assert!(errs.is_empty(), "{{IO}} row should admit the forwarded callback, got {errs:?}");
+    }
+
+    #[test]
+    fn pure_callback_through_a_forwarder_is_clean() {
+        // A forwarder receiving a PURE callback contributes nothing — the common
+        // higher-order case (map over a pure fn) must stay silent even for a
+        // closed-row caller.
+        let errs = check(
+            "fn dbl(x: i64) -> i64 { x * 2 }\n\
+             fn apply(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
+             fn pure_caller() -> i64 | {} { apply(dbl, 5) }",
+        );
+        assert!(errs.is_empty(), "a pure callback must not leak, got {errs:?}");
     }
 }

@@ -784,6 +784,40 @@ fn prove_implies(antecedent: &Expr, consequent: &Expr, site: &str, callee_rname:
     }
 }
 
+/// Phase 5 §4: run the two ∀-inputs provers and collect every obligation Z3
+/// proves holds for ALL inputs into a [`crate::verify::Discharged`] set, so the
+/// default `run`/`build` pipeline can ELIDE the corresponding runtime check.
+///
+/// This is the bridge that wires the static prover (today reachable only via the
+/// explicit `axon verify`) into the normal compile path. Only `Proven` outcomes
+/// are collected — a `Counterexample` is left for the runtime gate to catch (and
+/// is independently surfaced as E1102 by `axon verify`), and `Unsupported`
+/// obligations stay runtime-checked. The two prover kinds correspond exactly to
+/// the two fields of `Discharged`; see its doc-comment for why only these two
+/// obligation kinds are sound to elide.
+///
+/// `refinements` maps a refinement type name → its predicate (binder `_`),
+/// assembled by the caller from the program's `RefineDef`s (same as `cmd_verify`).
+pub fn discharge(
+    program: &Program,
+    refinements: &std::collections::HashMap<String, Expr>,
+) -> crate::verify::Discharged {
+    let mut d = crate::verify::Discharged::default();
+    for r in prove_verify_bounds(program) {
+        if let ProofResult::Proven { function } = r {
+            d.verify_fns.insert(function);
+        }
+    }
+    if !refinements.is_empty() {
+        for r in prove_refinement_returns(program, refinements) {
+            if let ProofResult::Proven { function } = r {
+                d.refine_return_fns.insert(function);
+            }
+        }
+    }
+    d
+}
+
 /// Collect every `callee_name(args…)` direct call in `e` as (name, args).
 fn collect_calls(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
     match e {
@@ -1484,5 +1518,51 @@ mod tests {
         // depth >= 1: the call is gone (expanded to arithmetic).
         let inlined = inline_calls(&wrap.body, &fns, 4);
         assert!(!format!("{inlined:?}").contains("Call"), "call must be inlined: {inlined:?}");
+    }
+
+    // ── Phase 5 §4: discharge() — the bridge into the default pipeline ────────
+
+    fn discharge_of(src: &str) -> crate::verify::Discharged {
+        let program = parse_source(src).expect("parse");
+        let mut refs = std::collections::HashMap::new();
+        for item in &program.items {
+            if let Item::RefineDef(r) = item {
+                refs.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        discharge(&program, &refs)
+    }
+
+    #[test]
+    fn discharge_collects_proven_verify_and_refine_returns() {
+        // A provable scalar @[verify] bound lands in verify_fns; a provable
+        // refinement return lands in refine_return_fns — both eligible for
+        // runtime-check elision.
+        let d = discharge_of(
+            "@[verify(value >= 0)]\n\
+             fn absish(x: i64) -> i64 { if x >= 0 { x } else { 0 - x } }\n\
+             type NonNeg = i64 where _ >= 0\n\
+             fn sq(n: i64) -> NonNeg { n * n }",
+        );
+        assert!(d.verify_proven("absish"), "absish's bound is ∀-proven");
+        assert!(d.refine_return_proven("sq"), "sq's NonNeg return is ∀-proven");
+        assert_eq!(d.total(), 2);
+    }
+
+    #[test]
+    fn discharge_excludes_violating_and_unsupported() {
+        // SOUNDNESS: a fn whose bound has a counterexample (dec(0) = -1) must NOT
+        // be discharged — its runtime check must stay armed. Likewise an
+        // out-of-fragment obligation (a call) is left runtime-checked.
+        let d = discharge_of(
+            "@[verify(value >= 0)]\n\
+             fn dec(x: i64) -> i64 { x - 1 }\n\
+             fn helper(x: i64) -> i64 { x }\n\
+             @[verify(value >= 0)]\n\
+             fn uses_call(x: i64) -> i64 { helper(x) }",
+        );
+        assert!(!d.verify_proven("dec"), "a violable bound must NOT be discharged");
+        assert!(!d.verify_proven("uses_call"), "an unsupported bound stays runtime-checked");
+        assert_eq!(d.total(), 0, "nothing provable here");
     }
 }

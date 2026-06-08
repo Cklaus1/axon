@@ -41,6 +41,54 @@ use crate::span::Span;
 
 pub const E1101: &str = "E1101";
 
+// ── Phase 5 §4: statically-discharged obligations ────────────────────────────
+
+/// The set of runtime obligations an SMT prover has discharged for ALL inputs,
+/// so both execution engines may safely ELIDE their runtime check.
+///
+/// Soundness rule (why only these two obligation kinds qualify): a runtime check
+/// may be skipped only if it has been proven it could never fire. The SMT
+/// backend's two `∀ inputs. P` provers — `prove_verify_bounds` (a scalar
+/// `@[verify(value OP K)]` postcondition) and `prove_refinement_returns`
+/// (a `-> T where P` postcondition) — establish exactly that: the predicate
+/// holds at *every* return for *every* input, so the guarded panic is dead code.
+/// Eliding it is therefore observably a no-op and the two-engine invariant (I-2)
+/// is preserved *by construction* (the interpreter and native binary still
+/// agree, they just both stop emitting a check that can't trigger).
+///
+/// PRECONDITIONS, let-bindings, and struct-field obligations are deliberately
+/// NOT represented here: their safety depends on the *caller* / binding site,
+/// not on a callee-side ∀-inputs proof, so they remain runtime-enforced. The
+/// arg-forwarding prover discharges a *call-site* subtyping obligation (E1209,
+/// already a static diagnostic), not a runtime entry check, so it likewise has
+/// no entry here.
+///
+/// Default is empty — when the `smt` feature is off (or no obligation proved),
+/// every runtime check is emitted exactly as before, so the default build is
+/// byte-identical to pre-discharge behaviour.
+#[derive(Debug, Clone, Default)]
+pub struct Discharged {
+    /// Function names whose scalar `@[verify]` postcondition is proven ∀-inputs.
+    pub verify_fns: std::collections::HashSet<String>,
+    /// Function names whose refinement-RETURN postcondition is proven ∀-inputs.
+    pub refine_return_fns: std::collections::HashSet<String>,
+}
+
+impl Discharged {
+    /// True iff `fn_name`'s scalar `@[verify]` postcondition was statically proven.
+    pub fn verify_proven(&self, fn_name: &str) -> bool {
+        self.verify_fns.contains(fn_name)
+    }
+    /// True iff `fn_name`'s refinement-return postcondition was statically proven.
+    pub fn refine_return_proven(&self, fn_name: &str) -> bool {
+        self.refine_return_fns.contains(fn_name)
+    }
+    /// Total count of discharged obligations (for the user-facing summary line).
+    pub fn total(&self) -> usize {
+        self.verify_fns.len() + self.refine_return_fns.len()
+    }
+}
+
 // ── Diagnostic ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]

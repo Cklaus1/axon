@@ -2257,9 +2257,40 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
         eprintln!("warning: `axon run` does not yet forward arguments to the program");
     }
 
-    // Execute via the tree-walking interpreter (no LLVM codegen needed).
-    let code = axon_core::interp::run_program(&program);
+    // Phase 5 §4: when built with the `smt` feature, statically discharge the
+    // refinement-return / scalar-`@[verify]` obligations Z3 can prove ∀-inputs,
+    // and run with those checks elided. Without the feature this is an empty set
+    // (no behaviour change) — the runtime gate enforces everything as before.
+    let discharged = compute_discharged(&program);
+    let code = axon_core::interp::run_program_with_discharged(&program, discharged);
     process::exit(code);
+}
+
+/// Phase 5 §4: assemble the refinement predicate map and ask the SMT backend to
+/// discharge every obligation it can prove for all inputs. Behind `#[cfg(smt)]`;
+/// the non-smt build returns an empty set so the default pipeline is unchanged.
+#[cfg(feature = "smt")]
+fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::Discharged {
+    let mut refinements: std::collections::HashMap<String, axon_core::ast::Expr> =
+        std::collections::HashMap::new();
+    for item in &program.items {
+        if let axon_core::ast::Item::RefineDef(r) = item {
+            refinements.insert(r.name.clone(), (*r.predicate).clone());
+        }
+    }
+    let d = axon_core::smt::discharge(program, &refinements);
+    if d.total() > 0 {
+        eprintln!(
+            "axon: SMT discharged {} runtime obligation(s) statically (checks elided)",
+            d.total()
+        );
+    }
+    d
+}
+
+#[cfg(not(feature = "smt"))]
+fn compute_discharged(_program: &axon_core::ast::Program) -> axon_core::verify::Discharged {
+    axon_core::verify::Discharged::default()
 }
 
 // ── fmt ───────────────────────────────────────────────────────────────────────
@@ -3068,6 +3099,18 @@ fn build_ir_and_link(
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
     // R4: stamp the source path into native @[adaptive] provenance (`"src"`).
     cg.set_source_path(source_path.display().to_string());
+    // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
+    // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so
+    // native output is unchanged). Run on the monomorphized program so the proven
+    // fn names match the names codegen emits.
+    let discharged = compute_discharged(&concrete_program);
+    if discharged.total() > 0 {
+        eprintln!(
+            "axon: SMT discharged {} runtime obligation(s) statically (native checks elided)",
+            discharged.total()
+        );
+    }
+    cg.set_discharged(discharged);
     cg.declare_functions(&concrete_program);
     cg.emit_program(&concrete_program);
 

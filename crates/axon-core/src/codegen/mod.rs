@@ -178,6 +178,11 @@ pub struct Codegen<'ctx> {
     /// param) and a violation calls `__axon_refine_panic` (exit 6), the codegen
     /// analog of the interpreter's `Interp::refine_preds` entry check (I-2).
     refine_preds: HashMap<String, ast::Expr>,
+    /// Phase 5 §4: obligations an SMT prover discharged for ALL inputs, so the
+    /// matching runtime check is provably dead and is NOT armed at all. Empty by
+    /// default (and unless `set_discharged` is called by an `smt`-feature
+    /// pipeline), so the default native build emits every check as before.
+    discharged: crate::verify::Discharged,
     /// Phase 5: per-struct, the list of `(field_name, refinement_name)` for fields
     /// whose declared type is a refinement. Drives the runtime field-precondition
     /// check emitted at struct construction (`emit_refine_struct_checks`).
@@ -341,6 +346,7 @@ impl<'ctx> Codegen<'ctx> {
             struct_field_sem_types: HashMap::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
+            discharged: crate::verify::Discharged::default(),
             struct_field_refines: HashMap::new(),
             struct_whole_refines: HashMap::new(),
             fn_return_types: HashMap::new(),
@@ -379,6 +385,15 @@ impl<'ctx> Codegen<'ctx> {
     /// build pipeline calls this after `emit_program` and aborts if non-empty.
     pub fn codegen_errors(&self) -> &[String] {
         &self.codegen_errors
+    }
+
+    /// Phase 5 §4: install the SMT-discharged obligation set. Call BEFORE
+    /// `emit_program`. For every fn whose scalar `@[verify]` or refinement-return
+    /// postcondition was proven ∀-inputs, the corresponding runtime check is not
+    /// armed (it is provably dead). A no-op for unproven obligations, so native
+    /// output is unchanged unless an `smt`-feature pipeline supplies a set.
+    pub fn set_discharged(&mut self, discharged: crate::verify::Discharged) {
+        self.discharged = discharged;
     }
 
     /// R7: declare the target as wasm32 (ILP32) so the malloc-family runtime
@@ -1021,7 +1036,10 @@ impl<'ctx> Codegen<'ctx> {
                 // must be enforced natively too, matching the interpreter).
                 let armable = (ret_is_wrapper && (ident == "confidence" || ident == "value"))
                     || (ret_is_scalar && ident == "value");
-                if armable {
+                // Phase 5 §4: don't arm the gate if the SMT prover discharged this
+                // fn's `value OP K` bound for all inputs — the SCALAR case is
+                // exactly what `prove_verify_bounds` proves, so the check is dead.
+                if armable && !self.discharged.verify_proven(&f.name) {
                     let op_str = crate::verify::binop_to_verify_str(&op);
                     self.current_verify_fn = Some((f.name.clone(), ident, op_str, bound));
                 }
@@ -1036,7 +1054,12 @@ impl<'ctx> Codegen<'ctx> {
         // OUTSIDE the lowerable subset is E0910-refused here (never silently
         // emitted without the check — that would let native return a value the
         // interpreter rejects).
-        if !self.refine_preds.is_empty() {
+        // Phase 5 §4: skip the whole arm — including the E0910 out-of-subset
+        // refusal — when the SMT prover discharged this fn's refinement-return
+        // postcondition for all inputs. A proven obligation needs no lowering at
+        // all, so SMT can even discharge a predicate native codegen could not
+        // itself lower (the runtime check is dead either way).
+        if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() {
                     if Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
