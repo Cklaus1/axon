@@ -504,6 +504,16 @@ fn body_has_handled_builtin_with_nonscalar_ret(body: &Expr, discharged: &HashSet
 
 /// True iff `e` is exactly a `resume(<expr>)` call (or bare `resume()`), i.e. a
 /// tail-resumptive arm body.
+/// Phase 6 (multi-shot): is this handler arm body the bare tail-resume shape
+/// `resume(<expr>)` — the single-shot fast path the interpreter and native
+/// codegen both lower in place (no continuation reification)? A body that does
+/// anything else (binds the resume result, resumes more than once, or aborts) is
+/// the general/multi-shot path. Shared so the interpreter's `run_handler_arm`
+/// and the codegen lowerability check agree on the boundary.
+pub fn arm_is_bare_tail_resume(arm_body: &Expr) -> bool {
+    is_tail_resume(arm_body)
+}
+
 fn is_tail_resume(e: &Expr) -> bool {
     matches!(e, Expr::Call { callee, .. }
         if matches!(callee.as_ref(), Expr::Ident(n) if n == "resume"))

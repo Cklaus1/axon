@@ -45,6 +45,43 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // Phase 6 (multi-shot resume): if we are REPLAYING a continuation to
+        // service a `resume(v)`, the handled effect's op is FED the resume value
+        // instead of really running — this is what makes the continuation
+        // resumable without a CPS rewrite. The handler frame was split off during
+        // the arm (shallow semantics), so this check must run BEFORE the
+        // frame-based interception below and independently of any active frame.
+        // The first hit of the replay's effect consumes the feed; a second effect
+        // during the same replay is unsound to re-fire → E1314. Only effect-
+        // bearing builtins can be fed (a pure builtin during replay runs
+        // normally — re-running pure code is exact).
+        {
+            let mut replay = self.resume_replay.borrow_mut();
+            if let Some(r) = replay.as_mut() {
+                for eff in crate::builtins::builtin_effect_row(name) {
+                    if r.effect == *eff {
+                        if !r.consumed {
+                            r.consumed = true;
+                            return Ok(Some(r.feed.clone()));
+                        }
+                        return Err(crate::interp::Flow::MultiShotUnsound(format!(
+                            "effect `{eff}` (via `{name}`) is performed a second time during a \
+                             handler-continuation replay; multi-shot `resume` is supported only \
+                             when the handled body performs exactly one effect and is otherwise \
+                             pure (a side effect cannot be re-executed on replay) [E1314]"
+                        )));
+                    }
+                    // A DIFFERENT effect during the replay also can't be re-fired.
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
+                        "effect `{eff}` (via `{name}`) is performed during a handler-continuation \
+                         replay for a different effect; multi-shot `resume` requires the handled \
+                         body to be pure after its single intercepted op [E1314]"
+                    )));
+                }
+                // Pure builtin during replay: fall through and run it normally.
+            }
+        }
+
         // Phase 6: effect-handler interception (tail-resumptive, single-shot).
         // If this builtin carries an effect that an enclosing `with handler`
         // frame handles, the arm intercepts the operation: a `resume(v)` in the

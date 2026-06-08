@@ -102,6 +102,66 @@ fn phase6_handler_resume_semantics() {
 }
 
 #[test]
+fn phase6_multishot_resume() {
+    // Phase 6 multi-shot resume (interpreter, replay-based continuation): an arm
+    // may bind `resume`'s result and resume MORE THAN ONCE over a body that
+    // performs exactly one effect and is otherwise pure. Each `resume(v)` reifies
+    // the continuation by replaying the body with `v` fed at the intercepted op.
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_ms_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // 1. Single non-tail resume: bind the result, then return it. The body
+    //    `random_i64() + 100` with resume(2) → continuation value 2+100 = 102.
+    let (code, _) = run(
+        "fn main() -> i64 { with handler { on Random(p) => { let a = resume(2)\n a } } \
+         { random_i64(0, 9) + 100 } }",
+    );
+    assert_eq!(code, 102, "non-tail resume returns the continuation value");
+
+    // 2. TWO resumes summed — the multi-shot case that used to SILENTLY DROP the
+    //    second resume (yielding 102 instead of 207). resume(2)→102, resume(5)→105,
+    //    arm returns 102+105 = 207. This is the soundness fix.
+    let (code, _) = run(
+        "fn main() -> i64 { with handler { on Random(p) => { let a = resume(2)\n let b = resume(5)\n a + b } } \
+         { random_i64(0, 9) + 100 } }",
+    );
+    assert_eq!(code, 207, "both resumes contribute (multi-shot), not just the first");
+
+    // 3. Backtracking: try two continuations, keep the max — a real multi-shot
+    //    use. body = c*10+3; resume(0)→3, resume(1)→13; max = 13.
+    let (code, _) = run(
+        "fn main() -> i64 { with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
+         { let c = random_i64(0, 1)\n c * 10 + 3 } }",
+    );
+    assert_eq!(code, 13, "multi-shot backtracking picks the better continuation");
+
+    // 4. UNSOUND case rejected (E1314): a body that performs another effect AFTER
+    //    the intercepted op cannot be replayed (the side effect would re-fire).
+    //    Refused with a panic-class exit, not a silent wrong answer.
+    let (code, err) = {
+        let src = "fn main() -> i64 { with handler { on Random(p) => { let a = resume(2)\n let b = resume(5)\n a + b } } \
+                   { let r = random_i64(0, 9)\n println(\"side\")\n r + 100 } }";
+        let f = std::env::temp_dir().join(format!("axon_ms_unsound_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).to_string())
+    };
+    assert_eq!(code, 101, "effect-after-resume multi-shot is refused (E1314), not silently wrong");
+    assert!(err.contains("E1314"), "the refusal names E1314: {err:?}");
+
+    // 5. The bare tail-resume FAST PATH is unchanged (single-shot, byte-identical):
+    //    resume(42) replaces the random result directly.
+    let (code, _) = run("fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }");
+    assert_eq!(code, 42, "bare tail-resume fast path still single-shot");
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).

@@ -130,6 +130,20 @@ pub enum Flow {
     /// it escapes to a function/loop/top-level boundary, that is a `resume`
     /// outside a handler arm — treated as a panic (it should have been caught).
     Resume(Value),
+    /// Phase 6 (multi-shot): a non-tail / multi-resume handler arm finished with
+    /// `value` as the result of the whole `with` block. Unlike single-shot tail
+    /// resume (which continues the suspended body via `Ok(Some(v))`), the replay
+    /// path reifies the continuation by re-running the body, so the original
+    /// suspended body is abandoned and its block value is `value`. Caught only by
+    /// `eval_with_handler`; if it escapes, that is an interpreter bug.
+    HandlerDone(Value),
+    /// Phase 6 (multi-shot): a handler arm tried to resume more than once (or
+    /// resume non-tail) over a body that performs effects beyond the single
+    /// intercepted operation — the replay-based continuation cannot soundly
+    /// re-fire those effects. Surfaced as E1314 and mapped to a panic-class exit
+    /// (the program is asking for true delimited continuations, which are
+    /// deferred). Carries an explanatory message.
+    MultiShotUnsound(String),
     /// Phase 5: a refinement-type PRECONDITION was violated at runtime — a value
     /// passed to a parameter `p: T where P` failed `P` when `_` was bound to it.
     /// The checker discharges this statically for constant args (E1209); for a
@@ -310,6 +324,21 @@ pub struct Interp<'p> {
     /// `eval` of `Expr::WithHandler`. Interior-mutable like the other per-run
     /// state above.
     handlers: RefCell<Vec<HandlerFrame>>,
+    /// Phase 6 (multi-shot resume): the active replay continuation, if the
+    /// interpreter is currently re-running a handler's body to service a
+    /// `resume(v)` call. `None` in the common case (no replay in flight). When
+    /// `Some`, the builtin-interception site consumes one feed value for the
+    /// handled effect instead of re-entering the arm (so the body runs straight
+    /// through to its value), and flags any OTHER effect as E1314-unsound (a
+    /// replay cannot re-fire side effects). See [`ResumeReplay`].
+    resume_replay: RefCell<Option<ResumeReplay>>,
+    /// Phase 6 (multi-shot resume): the stack of body+env contexts a handler arm
+    /// is currently handling, so a `resume(v)` evaluated inside the arm knows
+    /// WHICH suspended computation to replay. Pushed in `run_handler_arm` before
+    /// the arm body runs, popped after. The top entry is the innermost handled
+    /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
+    /// `v` fed at the intercepted op and returns the continuation's value.
+    resume_ctx: RefCell<Vec<ResumeCtx>>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -331,6 +360,12 @@ pub struct Interp<'p> {
 struct HandlerFrame {
     /// `on E(binding) => body` arms, keyed by the effect name `E`.
     arms: Vec<HandlerArmRt>,
+    /// Phase 6 (multi-shot resume): the `with`-block body this frame wraps, and
+    /// the environment snapshot it ran in — so a non-tail / multi-shot arm can
+    /// REPLAY the continuation (re-run the body, feeding the resume value at the
+    /// intercepted op). Unused by the bare-tail-resume fast path.
+    body: crate::ast::Expr,
+    env_snapshot: HashMap<String, Value>,
 }
 
 /// A runtime handler arm: the payload binding, the arm body, and a snapshot of
@@ -340,6 +375,46 @@ struct HandlerArmRt {
     binding: crate::ast::Pattern,
     body: crate::ast::Expr,
     captured: HashMap<String, Value>,
+}
+
+/// Phase 6 (multi-shot resume): state for one in-flight continuation replay. A
+/// `resume(v)` in a handler arm reifies "the rest of the body after the
+/// intercepted op" by RE-RUNNING the body from the top, with `v` fed at the
+/// effect site instead of re-entering the handler. This makes the continuation a
+/// first-class, repeatedly-callable thing in a tree-walking interpreter without
+/// a CPS rewrite — the arm may `resume` as many times as it likes (multi-shot).
+///
+/// Soundness boundary: a replay that re-encounters ANY effect (the handled one a
+/// second time, or a different effect) cannot soundly re-execute it — the side
+/// effect already happened on the original pass. The first feed is the resume
+/// value; a second effect hit during the same replay is E1314
+/// ([`Flow::MultiShotUnsound`]). So the supported multi-shot subset is "a body
+/// that performs exactly one effect, then is pure" — retries, backtracking
+/// search, and `a + b` over two resumes all fit; an effect-after-resume does not.
+struct ResumeReplay {
+    /// The handled effect name this replay feeds (only this effect is fed).
+    effect: String,
+    /// The value to yield at the (single) intercepted op during this replay.
+    feed: Value,
+    /// Whether the feed has been consumed yet (the first hit consumes it; a
+    /// second effect hit in the same replay is the unsound case → E1314).
+    consumed: bool,
+}
+
+/// Phase 6 (multi-shot resume): the suspended computation a handler arm is
+/// servicing — the `with`-block body and the environment it ran in. A
+/// `resume(v)` evaluated in the arm replays this body (feeding `v` at the
+/// intercepted op) and returns the continuation's value to the arm, so the arm
+/// can resume again (multi-shot). Cloned cheaply (the body is an `Expr` already
+/// owned by the AST clone in `HandlerArmRt`).
+#[derive(Clone)]
+struct ResumeCtx {
+    /// The handled effect name (the op the body performs once, fed by resume).
+    effect: String,
+    /// The `with`-block body to replay on each resume.
+    body: crate::ast::Expr,
+    /// The environment snapshot the body originally evaluated in.
+    env_snapshot: HashMap<String, Value>,
 }
 
 /// Default max interpreter call depth before a graceful "recursion limit"
@@ -609,6 +684,23 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
             eprintln!("axon: panic: `resume` called outside an effect-handler arm");
             101
         }
+        Err(Flow::HandlerDone(_)) => {
+            // A multi-shot handler's `HandlerDone` escaped its `with` block — an
+            // interpreter bug (it is always caught by `eval_with_handler`). Treat
+            // as a panic rather than a silent exit.
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: panic: handler continuation escaped its `with` block");
+            101
+        }
+        Err(Flow::MultiShotUnsound(msg)) => {
+            // E1314: a multi-shot `resume` over a body that re-fires effects. The
+            // replay-based continuation can't soundly re-execute a side effect, so
+            // we refuse rather than silently double-fire or drop work. A panic-class
+            // stop (the program wants true delimited continuations — deferred).
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: multi-shot resume not supported here: {msg}");
+            101
+        }
         Err(Flow::RefineViolation(msg)) => {
             // A refinement-type precondition was violated by a non-constant arg.
             // Not a crash — the caller passed an out-of-contract value — so a
@@ -654,6 +746,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // (lets `@[test(should_fail)]` assert a bad arg is caught).
         Err(Flow::RefineViolation(m)) => Err(m),
         Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
+        // E1314 multi-shot-unsound inside a test is a failure (lets
+        // `@[test(should_fail)]` assert the unsound-replay case is refused).
+        Err(Flow::MultiShotUnsound(m)) => Err(m),
         Err(Flow::Exit(0)) => Ok(()),
         Err(Flow::Exit(n)) => Err(format!("exited with code {n}")),
         // A stray return/break/continue escaping the fn — treat as clean.
@@ -740,6 +835,8 @@ impl<'p> Interp<'p> {
             ai_calls_this_fn: Cell::new(0),
             ai_cost_micro: Cell::new(0),
             handlers: RefCell::new(Vec::new()),
+            resume_replay: RefCell::new(None),
+            resume_ctx: RefCell::new(Vec::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

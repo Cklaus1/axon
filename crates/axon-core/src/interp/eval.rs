@@ -547,6 +547,21 @@ impl<'p> Interp<'p> {
         if let Expr::Ident(name) = callee {
             if name == "resume" {
                 let v = argv.into_iter().next().unwrap_or(Value::Unit);
+                // Phase 6 multi-shot: if a handler arm is currently servicing a
+                // suspended computation (`resume_ctx` non-empty) AND we are not
+                // already inside a replay (no nested-replay re-entrancy), reify
+                // the continuation by REPLAYING the body with `v` fed at the
+                // intercepted op, and return its value to the arm. This lets the
+                // arm use `resume`'s result (`let a = resume(2)`) and resume again
+                // (multi-shot) — without a CPS rewrite. When there is no ctx (or
+                // we're mid-replay), fall back to the single-shot `Flow::Resume`
+                // unwind, which the interception site catches tail-resumptively
+                // (byte-identical to the pre-multishot fast path).
+                let in_replay = self.resume_replay.borrow().is_some();
+                let has_ctx = !self.resume_ctx.borrow().is_empty();
+                if has_ctx && !in_replay {
+                    return self.replay_continuation(v);
+                }
                 return Err(Flow::Resume(v));
             }
         }
@@ -612,11 +627,24 @@ impl<'p> Interp<'p> {
                     captured: captured.clone(),
                 })
                 .collect(),
+            // Phase 6 multi-shot: remember the body + its env so a non-tail arm
+            // can replay the continuation.
+            body: body.clone(),
+            env_snapshot: env.snapshot(),
         };
         self.handlers.borrow_mut().push(frame);
         let result = self.eval(body, env);
         self.handlers.borrow_mut().pop();
-        let mut value = result?;
+        // Phase 6 multi-shot: a non-tail / multi-resume arm reifies the
+        // continuation by replay and finishes the WHOLE block with
+        // `Flow::HandlerDone(v)` — the original suspended body is abandoned, so
+        // catch it here and use `v` as the block value (the single-shot tail path
+        // never raises this, so its behavior is unchanged).
+        let mut value = match result {
+            Ok(v) => v,
+            Err(Flow::HandlerDone(v)) => v,
+            Err(e) => return Err(e),
+        };
 
         // An inline `return(v) => e` arm rewrites the body's final value.
         if let Some(ra) = return_arm {
@@ -636,21 +664,63 @@ impl<'p> Interp<'p> {
     /// (the caller performs the real operation); or `Err(Flow::Return(v))` when
     /// the arm completes WITHOUT resuming — its value `v` replaces the whole
     /// `with` block (handle-and-abort), unwinding to the enclosing `with` frame.
+    /// Phase 6 (multi-shot resume): compute the continuation value for a
+    /// `resume(v)` by REPLAYING the handled body with `v` fed at the intercepted
+    /// op. Re-runs `body` (from the active `resume_ctx`) in its captured env with
+    /// `resume_replay` armed so the FIRST hit of the handled effect yields `v`
+    /// directly (no re-interception) and the body runs straight through to its
+    /// value. Any SECOND effect during the replay is unsound to re-fire (the side
+    /// effect already happened on the original pass) → E1314. The arm may call
+    /// this many times with different `v` (multi-shot): each call is an
+    /// independent replay over the same suspended body, so backtracking search,
+    /// retry loops, and `a + b` over two resumes all work.
+    fn replay_continuation(&self, v: Value) -> R {
+        let ctx = self
+            .resume_ctx
+            .borrow()
+            .last()
+            .cloned()
+            .expect("replay_continuation called with no active resume_ctx");
+        // Arm the feed: the first handled-effect hit during the replay returns
+        // `v`; a second effect hit trips E1314.
+        *self.resume_replay.borrow_mut() = Some(crate::interp::ResumeReplay {
+            effect: ctx.effect.clone(),
+            feed: v,
+            consumed: false,
+        });
+        let mut body_env = Env::from_snapshot(ctx.env_snapshot.clone());
+        let result = self.eval(&ctx.body, &mut body_env);
+        // Disarm regardless of outcome so a later resume (or the arm's own code)
+        // is not mistaken for a replay.
+        *self.resume_replay.borrow_mut() = None;
+        result
+    }
+
     pub(super) fn run_handler_arm(&self, eff: &str, payload: Value) -> Result<Option<Value>, Flow> {
+        // (The replay-feed interception lives in the builtin dispatch — it must
+        // fire even though the handler frame is split off during the arm, so it
+        // cannot be gated on an active frame here.)
+
         // Find the INDEX of the nearest frame with a matching arm (search from
         // the top/innermost). Clone the arm data so we don't hold the RefCell
-        // borrow across arm evaluation.
+        // borrow across arm evaluation. Also grab that frame's body + env snapshot
+        // so a non-tail arm can replay the continuation (multi-shot).
         let hit = {
             let stack = self.handlers.borrow();
             stack.iter().enumerate().rev().find_map(|(i, frame)| {
-                frame
-                    .arms
-                    .iter()
-                    .find(|a| a.effect == eff)
-                    .map(|a| (i, a.binding.clone(), a.body.clone(), a.captured.clone()))
+                frame.arms.iter().find(|a| a.effect == eff).map(|a| {
+                    (
+                        i,
+                        a.binding.clone(),
+                        a.body.clone(),
+                        a.captured.clone(),
+                        frame.body.clone(),
+                        frame.env_snapshot.clone(),
+                    )
+                })
             })
         };
-        let Some((idx, binding, body, captured)) = hit else {
+        let Some((idx, binding, arm_body, captured, with_body, with_env)) = hit else {
             return Ok(None);
         };
 
@@ -663,21 +733,53 @@ impl<'p> Interp<'p> {
         // runs, whether it resumes, aborts, or errors.
         let suspended: Vec<HandlerFrame> = self.handlers.borrow_mut().split_off(idx);
 
+        // BARE TAIL-RESUME FAST PATH (single-shot): when the arm body is exactly
+        // `resume(<expr>)`, the operation yields that value and the suspended body
+        // continues in place — no continuation reification needed. This is the
+        // ONLY shape native codegen lowers, and the path the parity harness pins,
+        // so it must stay byte-identical: evaluate the arm and propagate the
+        // `Flow::Resume(v)` it raises directly (no resume_ctx, no replay).
+        if crate::effects::arm_is_bare_tail_resume(&arm_body) {
+            let mut arm_env = Env::from_snapshot(captured);
+            arm_env.push();
+            let bound = self.match_pattern(&binding, &payload, &mut arm_env);
+            let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+            self.handlers.borrow_mut().extend(suspended);
+            return match outcome {
+                Err(Flow::Resume(v)) => Ok(Some(v)),
+                Ok(v) => Err(Flow::Return(v)),
+                Err(other) => Err(other),
+            };
+        }
+
+        // GENERAL PATH (non-tail / multi-shot / abort): push a resume context so a
+        // `resume(v)` inside the arm reifies the continuation by replaying
+        // `with_body` (feeding `v` at the intercepted op) and RETURNS its value to
+        // the arm — letting the arm use the result and resume again (multi-shot).
+        self.resume_ctx.borrow_mut().push(crate::interp::ResumeCtx {
+            effect: eff.to_string(),
+            body: with_body,
+            env_snapshot: with_env,
+        });
         let mut arm_env = Env::from_snapshot(captured);
         arm_env.push();
         let bound = self.match_pattern(&binding, &payload, &mut arm_env);
-        let outcome = bound.and_then(|_| self.eval(&body, &mut arm_env));
-
-        // Restore the suspended frames (the body continues under them on resume).
+        let outcome = bound.and_then(|_| self.eval(&arm_body, &mut arm_env));
+        self.resume_ctx.borrow_mut().pop();
         self.handlers.borrow_mut().extend(suspended);
 
         match outcome {
-            // The arm called `resume(v)` — v is the operation's result.
+            // The arm ran to completion. Whether it resumed zero times (abort) or
+            // one-or-more times (each `resume` was a replay returning a value),
+            // the arm's final value `v` is the value of the WHOLE `with` block.
+            // The original suspended body is abandoned (the continuation was
+            // reified via replay), so finish the block with HandlerDone — caught
+            // by `eval_with_handler`.
+            Ok(v) => Err(Flow::HandlerDone(v)),
+            // A stray tail `resume` that escaped without a ctx (shouldn't happen
+            // on this path, but be safe): treat as a single-shot resume.
             Err(Flow::Resume(v)) => Ok(Some(v)),
-            // The arm completed WITHOUT resuming — its value replaces the entire
-            // `with` block (handle-and-abort). Unwind to the `with` frame.
-            Ok(v) => Err(Flow::Return(v)),
-            // Any other control flow (panic, exit, …) propagates.
+            // E1314 and any other control flow (panic, exit, …) propagate.
             Err(other) => Err(other),
         }
     }
