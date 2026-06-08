@@ -33,7 +33,11 @@ path = "src/lib.rs"
 # `axon parse`/`lsp` (JSON) opt in with `--features serde-json` and degrade
 # gracefully without it.
 default = ["codegen"]
-codegen = ["dep:inkwell"]
+# `which` (native-linker discovery) is only used by codegen's link step, so it
+# rides with the codegen feature. This keeps the no-default-features interpreter
+# build free of `which` — which fails to compile for wasm32-unknown-unknown (the
+# browser target), the precondition for the in-browser interpreter (R7c).
+codegen = ["dep:inkwell", "dep:which"]
 serde-json = ["dep:serde", "dep:serde_json"]
 # Live LLM calls for the interpreter's ASI builtins (ai_complete / ai_extract_*).
 # Pulls in axon-ai (reqwest). Opt-in so the base interpreter stays dependency-light:
@@ -53,7 +57,7 @@ serde_json = { workspace = true, optional = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
-which = "6"
+which = { version = "6", optional = true }
 sha2  = "0.10"
 # SMT solver bindings (R9, `smt` feature only). Links the system libz3.
 z3 = { version = "0.12", optional = true }
