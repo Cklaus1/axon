@@ -39,10 +39,33 @@ impl<'p> Interp<'p> {
             // resume-using programs (none ship under examples/).
             Expr::WithHandler { handler, body } => self.eval_with_handler(handler, body, env),
 
-            Expr::Let { name, value, .. }
-            | Expr::Own { name, value, .. }
-            | Expr::RefBind { name, value, .. } => {
+            Expr::Let { name, value, ty }
+            | Expr::Own { name, value, ty }
+            | Expr::RefBind { name, value, ty } => {
                 let v = self.eval(value, env)?;
+                // Phase 5: a `let/own/ref p: T where P = …` annotation is a
+                // refinement obligation — check the bound value against the
+                // predicate (the non-constant case the checker defers; constant is
+                // E1209). All three binding forms enforce it identically so native
+                // codegen (which shares one Let/Own/RefBind arm) stays in lock-step
+                // (I-2).
+                if !self.refine_preds.is_empty() {
+                    if let Some(crate::ast::AxonType::Named(rn)) = ty {
+                        if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                            let mut pe = Env::new();
+                            pe.define("_".into(), v.clone());
+                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                return Err(Flow::RefineViolation(format!(
+                                    "the value bound to `{}` (= {}) violates the refinement `{}` \
+                                     — the value does not satisfy the type's predicate",
+                                    name,
+                                    display(&v),
+                                    rn
+                                )));
+                            }
+                        }
+                    }
+                }
                 env.define(name.clone(), v);
                 Ok(Value::Unit)
             }
@@ -355,6 +378,55 @@ impl<'p> Interp<'p> {
                         fields: fmap,
                     })
                 } else {
+                    // Phase 5: refinement obligations at struct CONSTRUCTION (the
+                    // dual of the param/return checks), for non-constant values the
+                    // checker (E1209) only discharges for constants. Two checks,
+                    // both reusing the refinement-predicate evaluator with `_`
+                    // bound to the relevant value. A whole-struct `where` lives on
+                    // the TypeDef (not a RefineDef), so gate on the TypeDef having
+                    // a refinement OR the program having named refinements (for
+                    // refined fields), not on `refine_preds` alone.
+                    if let Some(td) = self.structs.get(name.as_str()).copied() {
+                        if td.refinement.is_some() || !self.refine_preds.is_empty() {
+                            // (1) per-FIELD refinement: each field whose declared
+                            // type is a refinement must satisfy that predicate.
+                            for tf in &td.fields {
+                                if let crate::ast::AxonType::Named(rn) = &tf.ty {
+                                    if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                                        if let Some(fv) = fmap.get(&tf.name) {
+                                            let mut pe = Env::new();
+                                            pe.define("_".into(), fv.clone());
+                                            if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                                return Err(Flow::RefineViolation(format!(
+                                                    "field `{}` of `{}` (= {}) violates the refinement \
+                                                     `{}` — the value does not satisfy the type's predicate",
+                                                    tf.name,
+                                                    name,
+                                                    display(fv),
+                                                    rn
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // (2) WHOLE-STRUCT refinement: `_` binds to the whole
+                            // instance and `_.field` projects, so build it first.
+                            if let Some(pred) = &td.refinement {
+                                let sv = Value::Struct { name: name.clone(), fields: fmap };
+                                let mut pe = Env::new();
+                                pe.define("_".into(), sv.clone());
+                                if let Value::Bool(false) = self.eval(pred, &mut pe)? {
+                                    return Err(Flow::RefineViolation(format!(
+                                        "the constructed `{name}` violates its struct refinement \
+                                         — the value does not satisfy the type's predicate"
+                                    )));
+                                }
+                                return Ok(sv);
+                            }
+                            return Ok(Value::Struct { name: name.clone(), fields: fmap });
+                        }
+                    }
                     Ok(Value::Struct { name: name.clone(), fields: fmap })
                 }
             }

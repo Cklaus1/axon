@@ -234,8 +234,17 @@ impl<'ctx> super::Codegen<'ctx> {
                 let alloca = build_wrappers::w_alloca(&self.ir.builder, val.get_type(), name);
                 build_wrappers::w_store(&self.ir.builder, alloca, val);
                 self.locals.insert(name.clone(), (alloca, val.get_type()));
-                if let Some(ty) = sem_ty {
+                if let Some(ty) = sem_ty.clone() {
                     self.local_types.insert(name.clone(), ty);
+                }
+                // Phase 5: a `let p: T where P = …` annotation carries a refinement
+                // obligation — check the bound value at runtime (the codegen dual
+                // of the interp Let check; exit 6 on violation, I-2).
+                if let Some(ast::AxonType::Named(rn)) = ty {
+                    if self.refine_preds.contains_key(rn) {
+                        let rn = rn.clone();
+                        self.emit_refine_let_check(name, &rn, alloca, val.get_type(), sem_ty, fn_val);
+                    }
                 }
                 None
             }
@@ -4080,6 +4089,11 @@ impl<'ctx> super::Codegen<'ctx> {
                     build_wrappers::w_store(&self.ir.builder, fptr, fval);
                 }
             }
+            // Phase 5: refinement obligations at construction — per-field
+            // refinements and the whole-struct `where` predicate — checked on the
+            // assembled struct before it's loaded out. The codegen dual of the
+            // interp StructLit checks; exits 6 on violation (I-2).
+            self.emit_refine_struct_checks(name, alloca, struct_ty, &field_names, &field_sem_types, fn_val);
             let val = build_wrappers::w_load(&self.ir.builder, struct_ty.into(), alloca, name);
             Some(val)
         }

@@ -316,12 +316,16 @@ for bisecting compile regressions).
 >    concrete counter-example; out-of-fragment ⇒ falls through to the runtime check.
 >
 > 2. **Runtime check (default build).** For non-constant obligations not statically discharged,
->    BOTH SIDES of a refinement contract are checked at runtime — the spec's `--proof-timeout 0`
->    fallback. A parameter `p: T where P` has `P` evaluated at **function entry** with `_` bound
->    to the actual argument (PRECONDITION, `Interp::call_fn` / codegen
->    `emit_refine_preconditions`); a function `-> T where P` has `P` evaluated at **every return
->    site** with `_` bound to the returned value (POSTCONDITION, the dual,
->    `emit_refine_return_check_if_needed`). A violation on either side exits **6**
+>    ALL FOUR obligation sites of a refinement contract are checked at runtime — the spec's
+>    `--proof-timeout 0` fallback:
+>    - a parameter `p: T where P` at **function entry** (PRECONDITION, `Interp::call_fn` /
+>      codegen `emit_refine_preconditions`);
+>    - a function `-> T where P` at **every return site** (POSTCONDITION,
+>      `emit_refine_return_check_if_needed`);
+>    - **struct construction** — each refined field and any whole-struct predicate
+>      (`_` = the instance, `_.field` projects), `emit_refine_struct_checks`;
+>    - a **`let`/`own`/`ref p: T where P`** binding, `emit_refine_let_check`.
+>    A violation at any site exits **6**
 >    (`REFINE_VIOLATION_EXIT_CODE`), distinct from a `@[verify]` bound (3) and a bug-panic (101),
 >    with byte-identical interp↔native exit codes (`scripts/exit_code_parity.sh`, invariant I-2).
 >    Codegen lowers the same predicate subset the constant-folder supports (literals, `_`,

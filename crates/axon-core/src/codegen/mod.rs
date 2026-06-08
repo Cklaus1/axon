@@ -178,6 +178,14 @@ pub struct Codegen<'ctx> {
     /// param) and a violation calls `__axon_refine_panic` (exit 6), the codegen
     /// analog of the interpreter's `Interp::refine_preds` entry check (I-2).
     refine_preds: HashMap<String, ast::Expr>,
+    /// Phase 5: per-struct, the list of `(field_name, refinement_name)` for fields
+    /// whose declared type is a refinement. Drives the runtime field-precondition
+    /// check emitted at struct construction (`emit_refine_struct_checks`).
+    struct_field_refines: HashMap<String, Vec<(String, String)>>,
+    /// Phase 5: per-struct, the WHOLE-STRUCT refinement predicate (`type Range =
+    /// {…} where _.lo <= _.hi`), binder `_` = the instance. Evaluated against the
+    /// just-constructed struct at construction time.
+    struct_whole_refines: HashMap<String, ast::Expr>,
     /// Maps fn names to their Axon semantic return type (for call-site type inference).
     fn_return_types: HashMap<String, Type>,
     /// Tracks inferred Axon semantic types for named locals (for match/field-access dispatch).
@@ -333,6 +341,8 @@ impl<'ctx> Codegen<'ctx> {
             struct_field_sem_types: HashMap::new(),
             refinement_base: HashMap::new(),
             refine_preds: HashMap::new(),
+            struct_field_refines: HashMap::new(),
+            struct_whole_refines: HashMap::new(),
             fn_return_types: HashMap::new(),
             local_types: HashMap::new(),
             current_result_types: None,
@@ -481,6 +491,30 @@ impl<'ctx> Codegen<'ctx> {
                 // Phase 5: also index the predicate for the entry-time runtime
                 // precondition check (mirrors the interpreter's refine_preds).
                 self.refine_preds.insert(r.name.clone(), (*r.predicate).clone());
+            }
+        }
+        // Phase 5: index struct-construction refinement obligations — per-field
+        // refinements and the whole-struct `where` predicate — so the StructLit
+        // emitter can check them at runtime (the codegen dual of the interp
+        // StructLit checks). Done after refine_preds is filled above.
+        for item in &program.items {
+            if let ast::Item::TypeDef(td) = item {
+                let refs: Vec<(String, String)> = td
+                    .fields
+                    .iter()
+                    .filter_map(|f| match &f.ty {
+                        ast::AxonType::Named(rn) if self.refine_preds.contains_key(rn) => {
+                            Some((f.name.clone(), rn.clone()))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if !refs.is_empty() {
+                    self.struct_field_refines.insert(td.name.clone(), refs);
+                }
+                if let Some(pred) = &td.refinement {
+                    self.struct_whole_refines.insert(td.name.clone(), (**pred).clone());
+                }
             }
         }
         self.declare_types(program);

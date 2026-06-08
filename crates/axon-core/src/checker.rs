@@ -1035,6 +1035,47 @@ impl CheckCtx {
         }
     }
 
+    /// Phase 5 — the let-binding refinement obligation. A `let p: T = <value>`
+    /// whose annotation `T` is a refinement, with a CONSTANT value, must satisfy
+    /// the predicate (else E1209). Mirrors `check_return_refinement`; a
+    /// non-constant value defers to the runtime check. Only a provably-false
+    /// constant errors (sound). No-op when the annotation isn't a refinement.
+    fn check_let_refinement(&mut self, annot: &Option<AxonType>, name: &str, value: &Expr, node_path: &str) {
+        let Some(AxonType::Named(rname)) = annot else { return };
+        let Some(pred) = self.refinement_pred.get(rname).cloned() else { return };
+        let bound = if let Some(v) = const_eval_int(value) {
+            RefineVal::Int(v)
+        } else if let Expr::Literal(crate::ast::Literal::Str(s)) = value {
+            RefineVal::Str(s.clone())
+        } else {
+            return;
+        };
+        if self.eval_refinement_pred(&pred, &bound) == Some(false) {
+            let file = self.file.clone();
+            let span = self.current_span;
+            let shown = match bound {
+                RefineVal::Int(v) => v.to_string(),
+                RefineVal::Str(s) => format!("{s:?}"),
+                RefineVal::Struct(_) => "the struct value".to_string(),
+            };
+            self.errors.push(
+                CheckError::new(
+                    E1209,
+                    format!(
+                        "the value bound to `{name}` ({shown}) violates the refinement `{rname}` \
+                         — it does not satisfy the type's predicate"
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "bind a value that satisfies `{rname}`'s predicate, or change the annotation"
+                )),
+            );
+        }
+    }
+
     /// Phase 5 R04 — the struct-construction obligation. A constant value
     /// assigned to a refinement-typed field must satisfy the predicate (E1209).
     fn check_field_refinement(
@@ -1976,11 +2017,16 @@ impl CheckCtx {
 
             // ── Binding forms ────────────────────────────────────────────────
             // The RHS is "used" (stored), so R02 does not apply.
-            Expr::Let { name, value, .. }
-            | Expr::Own { name, value, .. }
-            | Expr::RefBind { name, value, .. } => {
+            Expr::Let { name, value, ty: annot }
+            | Expr::Own { name, value, ty: annot }
+            | Expr::RefBind { name, value, ty: annot } => {
                 let val_path = format!("{node_path}.value");
                 self.check_expr(value, &val_path, scope);
+                // Phase 5: a `let p: T where P = <const>` annotation carries a
+                // refinement obligation — discharge it for a constant value
+                // (E1209), mirroring the param/return/field constant checks. A
+                // non-constant value defers to the runtime check (interp/codegen).
+                self.check_let_refinement(annot, name, value, &val_path);
                 let ty = self.resolve_expr_type(value, &val_path, scope);
                 scope.insert(name.clone(), ty);
                 // R6 local taint: if this binds a sensitive value (a sensitive

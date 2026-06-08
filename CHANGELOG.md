@@ -45,7 +45,12 @@
   - POSTCONDITIONS: at every return site a fn `-> T where P` has `P` evaluated with
     `_` bound to the returned value (the dual hole — `f(x:i64) -> Positive { x - 100 }`
     used to return a negative value with no error).
-  A violation (either side) exits 6 (REFINE_VIOLATION_EXIT_CODE), distinct from a
+  - STRUCT CONSTRUCTION: each refined field, and any whole-struct `where` predicate
+    (`type Range = {lo,hi} where _.lo <= _.hi`, binder `_` = the instance), checked
+    when the struct is built.
+  - LET BINDINGS: a `let/own/ref p: T where P = …` annotation checked against the
+    bound value (and the previously-missing CONSTANT case is now a static E1209 too).
+  A violation (any site) exits 6 (REFINE_VIOLATION_EXIT_CODE), distinct from a
   @[verify] bound (3) and a bug-panic (101). Enforced in BOTH the interpreter and
   native codegen (byte-identical exit codes, `exit_code_parity.sh`); predicates
   outside the lowerable subset are E0910-refused in codegen, never silently skipped.

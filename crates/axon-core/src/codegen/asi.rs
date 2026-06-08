@@ -523,6 +523,229 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.builder.position_at_end(cont_bb);
     }
 
+    /// Phase 5: emit the runtime refinement checks at STRUCT construction — the
+    /// codegen dual of the interp StructLit checks. For each refined field, load
+    /// it and check its predicate with `_` aliased to the field value; then, if
+    /// the struct has a whole-struct `where` predicate, check it with `_` aliased
+    /// to the assembled struct alloca (so `_.field` projects via GEP). A violation
+    /// calls `__axon_refine_panic` (exit 6). Predicates outside the lowerable
+    /// subset are E0910-refused (never silently skipped — that breaks I-2). `name`
+    /// is the struct type; `alloca`/`struct_ty` hold the just-built instance.
+    pub(super) fn emit_refine_struct_checks(
+        &mut self,
+        name: &str,
+        alloca: inkwell::values::PointerValue<'ctx>,
+        struct_ty: inkwell::types::StructType<'ctx>,
+        field_names: &[String],
+        field_sem_types: &[Type],
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let has_fields = self.struct_field_refines.contains_key(name);
+        let has_whole = self.struct_whole_refines.contains_key(name);
+        if !has_fields && !has_whole {
+            return;
+        }
+        if self.ir.module.get_function("__axon_refine_panic").is_none() {
+            return;
+        }
+
+        // ── Per-field refinements ─────────────────────────────────────────────
+        if let Some(refs) = self.struct_field_refines.get(name).cloned() {
+            for (fname, rn) in refs {
+                let Some(pred) = self.refine_preds.get(&rn).cloned() else { continue };
+                if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+                    self.refuse_struct_refine(name, &fname, &rn);
+                    continue;
+                }
+                let Some(idx) = field_names.iter().position(|n| n == &fname) else { continue };
+                if self.block_terminated() {
+                    return;
+                }
+                // Load the field value into a temp slot, alias `_` to it.
+                let fptr = self
+                    .ir
+                    .builder
+                    .build_struct_gep(struct_ty, alloca, idx as u32, "refine_fld")
+                    .unwrap();
+                let fty = struct_ty.get_field_type_at_index(idx as u32).unwrap();
+                let fval = build_wrappers::w_load(&self.ir.builder, fty, fptr, "refine_fldv");
+                let slot = build_wrappers::w_alloca(&self.ir.builder, fty, "refine_fld_tmp");
+                build_wrappers::w_store(&self.ir.builder, slot, fval);
+                let sem = field_sem_types.get(idx).cloned();
+
+                let label = format!("field `{fname}` of `{name}` (refinement `{rn}`)");
+                let cond = self.emit_refine_pred_with_underscore(&pred, (slot, fty), sem, &label, llvm_fn);
+                if let Some(cond) = cond {
+                    self.emit_refine_branch(cond, name, &fname, &rn, llvm_fn, "refine_fld");
+                }
+            }
+        }
+
+        // ── Whole-struct refinement (`_` = the instance, `_.field` projects) ──
+        if let Some(pred) = self.struct_whole_refines.get(name).cloned() {
+            if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+                self.refuse_struct_refine(name, "<struct>", name);
+                return;
+            }
+            if self.block_terminated() {
+                return;
+            }
+            // Alias `_` to the struct alloca with semantic type Struct(name) so
+            // `emit_field_access` lowers `_.lo`/`_.hi` via its GEP path.
+            let cond = self.emit_refine_pred_with_underscore(
+                &pred,
+                (alloca, struct_ty.into()),
+                Some(Type::Struct(name.to_string())),
+                &format!("whole-struct `{name}`"),
+                llvm_fn,
+            );
+            if let Some(cond) = cond {
+                self.emit_refine_branch(cond, name, "<struct>", name, llvm_fn, "refine_struct");
+            }
+        }
+    }
+
+    /// Phase 5: emit the runtime check for a `let p: T where P = …` binding — the
+    /// codegen dual of the interp Let check. `slot`/`val_ty` hold the bound value
+    /// (its alloca). A violation calls `__axon_refine_panic` (exit 6). Out-of-
+    /// subset predicates are E0910-refused.
+    pub(super) fn emit_refine_let_check(
+        &mut self,
+        binding: &str,
+        rname: &str,
+        slot: inkwell::values::PointerValue<'ctx>,
+        val_ty: inkwell::types::BasicTypeEnum<'ctx>,
+        sem: Option<Type>,
+        llvm_fn: FunctionValue<'ctx>,
+    ) {
+        let Some(pred) = self.refine_preds.get(rname).cloned() else { return };
+        if self.ir.module.get_function("__axon_refine_panic").is_none() {
+            return;
+        }
+        if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
+            let msg = format!(
+                "codegen error [E0910]: native codegen cannot lower the refinement predicate of \
+                 `{rname}` on the let-binding `{binding}` — it is outside the runtime-checkable \
+                 subset. Run it under the interpreter (`axon run`)."
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                self.codegen_errors.push(msg);
+            }
+            return;
+        }
+        if self.block_terminated() {
+            return;
+        }
+        let fn_name = llvm_fn.get_name().to_str().unwrap_or("?").to_string();
+        let cond = self.emit_refine_pred_with_underscore(&pred, (slot, val_ty), sem, &format!("let `{binding}`"), llvm_fn);
+        if let Some(cond) = cond {
+            self.emit_refine_branch(cond, &fn_name, binding, rname, llvm_fn, "refine_let");
+        }
+    }
+
+    /// Shared: alias `_` to `(slot, ty)` with semantic type `sem`, emit `pred`,
+    /// restore `_`, and return the i1 condition (or push E0910 and return None if
+    /// it didn't lower to a boolean). `label` is only for the E0910 message.
+    fn emit_refine_pred_with_underscore(
+        &mut self,
+        pred: &ast::Expr,
+        binder: (inkwell::values::PointerValue<'ctx>, inkwell::types::BasicTypeEnum<'ctx>),
+        sem: Option<Type>,
+        label: &str,
+        llvm_fn: FunctionValue<'ctx>,
+    ) -> Option<inkwell::values::IntValue<'ctx>> {
+        let prev_local = self.locals.remove("_");
+        let prev_type = self.local_types.remove("_");
+        self.locals.insert("_".to_string(), binder);
+        if let Some(s) = sem {
+            self.local_types.insert("_".to_string(), s);
+        }
+
+        let pred_val = self.emit_expr(pred, llvm_fn);
+
+        self.locals.remove("_");
+        self.local_types.remove("_");
+        if let Some(l) = prev_local {
+            self.locals.insert("_".to_string(), l);
+        }
+        if let Some(t) = prev_type {
+            self.local_types.insert("_".to_string(), t);
+        }
+
+        match pred_val {
+            Some(BasicValueEnum::IntValue(iv)) if iv.get_type().get_bit_width() == 1 => Some(iv),
+            _ => {
+                let msg = format!(
+                    "codegen error [E0910]: refinement predicate for {label} did not lower to a \
+                     boolean. Run it under the interpreter."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
+                }
+                None
+            }
+        }
+    }
+
+    /// Shared: branch on `cond` — continue if true, else call `__axon_refine_panic`
+    /// (exit 6) naming `fn_name`/`slot`/`rname` and `unreachable`.
+    fn emit_refine_branch(
+        &mut self,
+        cond: inkwell::values::IntValue<'ctx>,
+        fn_name: &str,
+        slot: &str,
+        rname: &str,
+        llvm_fn: FunctionValue<'ctx>,
+        tag: &str,
+    ) {
+        let panic_fn = self.ir.module.get_function("__axon_refine_panic").unwrap();
+        let panic_bb = self.ir.context.append_basic_block(llvm_fn, &format!("{tag}_panic"));
+        let cont_bb = self.ir.context.append_basic_block(llvm_fn, &format!("{tag}_ok"));
+        build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
+
+        self.ir.builder.position_at_end(panic_bb);
+        let i64_ty = self.ir.context.i64_type();
+        let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, fn_name, "refine_fn");
+        let pn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, slot, "refine_slot");
+        let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, rname, "refine_name");
+        let _ = build_wrappers::w_call(
+            &self.ir.builder,
+            panic_fn,
+            &[
+                fn_g.into(),
+                i64_ty.const_int(fn_name.len() as u64, false).into(),
+                pn_g.into(),
+                i64_ty.const_int(slot.len() as u64, false).into(),
+                rn_g.into(),
+                i64_ty.const_int(rname.len() as u64, false).into(),
+            ],
+            "",
+        );
+        build_wrappers::w_unreachable(&self.ir.builder);
+        self.ir.builder.position_at_end(cont_bb);
+    }
+
+    /// Push an E0910 for a struct refinement codegen can't lower.
+    fn refuse_struct_refine(&mut self, sname: &str, slot: &str, rname: &str) {
+        let msg = format!(
+            "codegen error [E0910]: native codegen cannot lower the refinement predicate of \
+             `{rname}` on `{slot}` of struct `{sname}` — it is outside the runtime-checkable \
+             subset. Run it under the interpreter (`axon run`)."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            self.codegen_errors.push(msg);
+        }
+    }
+
+    /// True if the current insert block already has a terminator.
+    fn block_terminated(&self) -> bool {
+        self.ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+    }
+
     /// Is `pred` within the predicate subset native codegen can faithfully lower
     /// at function entry — the SAME subset the interpreter evaluates, so the two
     /// engines agree (I-2)? Accepts: int/bool/str literals; the binder `_`;

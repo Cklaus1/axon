@@ -4115,6 +4115,116 @@ fn refinement_return_postcondition_enforced_at_runtime() {
 }
 
 #[test]
+fn refinement_struct_field_and_whole_struct_enforced_at_runtime() {
+    // The struct obligation sites (the duals of param/return), at runtime for
+    // NON-constant values. A constant bad field/struct is a static E1209; a
+    // value flowing in through a helper used to be erased and unchecked. Now the
+    // field's refinement (and any whole-struct `where` predicate) is evaluated at
+    // construction, exiting 6 on violation — interp AND codegen.
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_refstruct_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    // 1. Struct FIELD refinement violated by a non-constant value. (today: 251)
+    let (c, m) = run(
+        "type Pos = i64 where _ > 0\n\
+         type Box = { v: Pos }\n\
+         fn mk(x: i64) -> Box { Box { v: x } }\n\
+         fn main() -> i64 { let b = mk(0 - 5)\n b.v }\n",
+    );
+    assert_eq!(c, 6, "a struct-field refinement violation must exit 6: {m}");
+    assert!(m.contains("refinement"), "message names the violation: {m}");
+
+    // 2. WHOLE-STRUCT refinement (`_.lo <= _.hi`) violated by non-constant. (today: 2)
+    let (c, m) = run(
+        "type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
+         fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
+         fn main() -> i64 { let r = mk(10, 2)\n r.hi }\n",
+    );
+    assert_eq!(c, 6, "a whole-struct refinement violation must exit 6: {m}");
+
+    // 3 + 4. No false positives: satisfying field + whole-struct values run clean.
+    let (c, m) = run(
+        "type Pos = i64 where _ > 0\n\
+         type Box = { v: Pos }\n\
+         fn mk(x: i64) -> Box { Box { v: x } }\n\
+         fn main() -> i64 { let b = mk(5)\n b.v }\n",
+    );
+    assert_eq!(c, 5, "a satisfying struct field must run clean: {m}");
+    let (c, m) = run(
+        "type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
+         fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
+         fn main() -> i64 { let r = mk(2, 10)\n r.hi }\n",
+    );
+    assert_eq!(c, 10, "a satisfying whole-struct must run clean: {m}");
+}
+
+#[test]
+fn refinement_let_binding_enforced_at_runtime_and_statically() {
+    // A `let p: T where P = …` annotation is a refinement obligation too. Unlike
+    // fields/returns, the CONSTANT case was ALSO missing its static check; both
+    // are closed here: a provably-bad constant is E1209 at check time, a
+    // non-constant violation exits 6 at run time (interp AND codegen).
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_reflet_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_refletc_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+        )
+    };
+
+    // Runtime: a non-constant value violating the let annotation. (today: 251)
+    let (c, m) = run(
+        "type Pos = i64 where _ > 0\n\
+         fn neg(x: i64) -> i64 { 0 - x }\n\
+         fn main() -> i64 { let p: Pos = neg(5)\n p }\n",
+    );
+    assert_eq!(c, 6, "a let-binding refinement violation must exit 6: {m}");
+    assert!(m.contains("refinement"), "message names the violation: {m}");
+
+    // Static: a provably-bad CONSTANT let must be caught at check time. (today: 0)
+    let (c, m) = check(
+        "type Pos = i64 where _ > 0\n\
+         fn main() -> i64 { let p: Pos = 0 - 5\n p }\n",
+    );
+    assert_eq!(c, 2, "a constant let-refinement violation must be a static error: {m}");
+    assert!(m.contains("E1209"), "expected E1209 for the bad constant let: {m}");
+
+    // No false positives: satisfying constant + non-constant.
+    let (c, m) = run(
+        "type Pos = i64 where _ > 0\n\
+         fn neg(x: i64) -> i64 { 0 - x }\n\
+         fn main() -> i64 { let p: Pos = neg(0 - 3)\n p }\n",
+    );
+    assert_eq!(c, 3, "a satisfying non-constant let must run clean: {m}");
+    assert_eq!(
+        check("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = 7\n p }\n").0,
+        0,
+        "a satisfying constant let must pass check"
+    );
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

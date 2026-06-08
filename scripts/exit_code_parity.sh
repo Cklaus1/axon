@@ -97,6 +97,32 @@ check refine_ret_ok  105 'type Positive = i64 where _ > 0
 fn f(x: i64) -> Positive { x + 100 }
 fn main() -> i64 { f(5) }'
 
+# Phase 5: refinement obligations at the remaining sites — struct FIELD,
+# WHOLE-STRUCT (`_.lo <= _.hi`), and a `let p: T = …` annotation — all checked at
+# runtime for non-constant values, exit 6 on BOTH engines; satisfied cases return
+# their value. The whole-struct case exercises native `_.field` lowering.
+check refine_field_bad  6  'type Pos = i64 where _ > 0
+type Box = { v: Pos }
+fn mk(x: i64) -> Box { Box { v: x } }
+fn main() -> i64 { let b = mk(0 - 5)
+ b.v }'
+check refine_struct_bad 6  'type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
+fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }
+fn main() -> i64 { let r = mk(10, 2)
+ r.hi }'
+check refine_struct_ok  10 'type Range = { lo: i64, hi: i64 } where _.lo <= _.hi
+fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }
+fn main() -> i64 { let r = mk(2, 10)
+ r.hi }'
+check refine_let_bad    6  'type Pos = i64 where _ > 0
+fn neg(x: i64) -> i64 { 0 - x }
+fn main() -> i64 { let p: Pos = neg(5)
+ p }'
+check refine_let_ok     3  'type Pos = i64 where _ > 0
+fn neg(x: i64) -> i64 { 0 - x }
+fn main() -> i64 { let p: Pos = neg(0 - 3)
+ p }'
+
 if [ "$fail" -ne 0 ]; then
   echo "exit_code_parity: FAIL — interp↔native exit-code divergence"
   exit 1
