@@ -668,12 +668,18 @@ rides on — a second s-curve on the bitter lesson.
   faster" axis**: folding strictly reduces `axon complexity` bits with identical behavior, so
   the same gate harness that admits a *faster* pass (G4) admits a *simpler* one. This is
   prototype #2 (self-improving optimizer end-to-end) validated.
-- **Next**: (1) `goal { minimize complexity, subject_to: fits_observations }` wiring — let the
-  optimizer target the metric directly; (2) a first-class **executable-world-model example**
-  in `examples/asi/` (predict → observe → refine), the demo that proves this identity
-  (§2.7); (3) **agent-authored model execution sandboxed-by-default** (effect-row + budget)
-  before predictions are trusted — answers the "the attack surface moves with the design"
-  concern; (4) refine the v1 MDL weights toward a true two-part code-length once real
+- **Landed (prototype #1)**: the executable-world-model + compress-to-fit loop —
+  `examples/stdlib/world.ax`, `examples/asi/world_model.ax`, `spec/worldmodel-loop.md`.
+  predict → observe (`fit_error`) → compress (`goal_run` maximizing `fit − λ·MDL`), with fit a
+  HARD gate (`Fitted = World where fit_error(_) <= 0`, exit 6 on a non-fitting model — so the
+  loop can't compress into something simple-and-wrong). The userland realization on shipped
+  primitives; kernel `World<T>` + `observe`/`condition` + probabilistic fit are Phase-13.
+- **Next**: (1) `goal { minimize complexity, subject_to: fits_observations }` SURFACE wiring —
+  the demo encodes it as a fitness scalar today; the keyword form is Phase-8; (2)
+  **agent-authored model execution sandboxed-by-default** (effect-row + budget) before
+  predictions are trusted — answers the "the attack surface moves with the design" concern;
+  (3) AST-level `complexity_bits` (spec §4 F3) when candidates become whole programs, not just
+  parameters; (4) refine the v1 MDL weights toward a true two-part code-length once real
   compression runs exist to calibrate against.
 
 ## 11. One-line Summary

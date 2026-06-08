@@ -4359,6 +4359,36 @@ fn constant_fold_reduces_complexity_with_identical_behavior() {
 }
 
 #[test]
+fn world_model_loop_learns_a_fitting_model_and_compresses() {
+    // Prototype #1: an executable world model that PREDICTS, is CHECKED against
+    // observations, and is COMPRESSED toward the simplest parameters that fit
+    // (spec/worldmodel-loop.md). goal_run hill-climbs the slope to maximize a
+    // fit−λ·complexity fitness; the result is verified to fit via a refinement
+    // type. Deterministic under a seed.
+    let out = axon()
+        .args(["run", &ex("asi/world_model.ax")])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "world model must find a perfect fit (exit 0): {out:?}");
+    assert!(stdout.contains("learned: a=3 b=0"), "learns the ground-truth slope: {stdout}");
+    assert!(stdout.contains("fit error:   0"), "achieves a perfect fit: {stdout}");
+    assert!(stdout.contains("verified fit"), "the result fits as a refinement type: {stdout}");
+
+    // The stdlib World module's @[test]s all pass (fit math, MDL ordering, the
+    // FittedWorld refinement). Covered by the glob acceptance gate too; asserted
+    // here explicitly as the prototype's unit layer.
+    let t = axon().args(["test", &ex("stdlib/world.ax")]).output().unwrap();
+    assert!(t.status.success(), "world.ax @[test]s must pass: {t:?}");
+    assert!(
+        String::from_utf8_lossy(&t.stdout).contains("5 passed, 0 failed"),
+        "world.ax: {}",
+        String::from_utf8_lossy(&t.stdout)
+    );
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

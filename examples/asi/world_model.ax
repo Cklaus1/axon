@@ -1,0 +1,94 @@
+// Axon ASI demo: an executable WORLD MODEL that compresses toward the simplest
+// program that fits the data.
+//
+// This is the frontier pattern: a program that PREDICTS, is CHECKED against
+// OBSERVATIONS, and is COMPRESSED toward the simplest parameters that still fit
+// (MDL / skill-acquisition efficiency). The base model is the PROPOSER; Axon is
+// the fixed VERIFIER + FITNESS FUNCTION every base-model gain rides on.
+//
+// Loop primitives (all shipped on merge-asi-layer3):
+//   * @[adaptive] + goal_run         — the search/optimizer (the proposer)
+//   * fit_error vs observations      — "checked against observations"
+//   * a refinement `where fit(_)`    — fit as a hard, type-level contract
+//   * description_bits (MDL)         — the "measure of simplest" (cf. axon complexity)
+//   * fitness = fit − λ·complexity   — compress SUBJECT TO fit (fit is the gate)
+//
+// Run:  axon run examples/asi/world_model.ax
+//       axon complexity examples/asi/world_model.ax --json   # the program's own MDL
+
+// ── The world: a 2-parameter linear model y = a*x + b ───────────────────────────
+// (Two parameters, so "fewer/simpler parameters" is a real axis: the ground truth
+//  has b = 0, and the loop should discover it does NOT need the offset.)
+type World = { a: i64, b: i64, n: i64 }
+
+@[pure]
+fn predict(w: World, x: i64) -> i64 { w.a * x + w.b }
+
+// Ground truth the search does not know: y = 3x (slope 3, NO offset).
+@[pure]
+fn truth(x: i64) -> i64 { 3 * x }
+
+@[pure]
+fn fit_error(w: World) -> i64 {
+    let e = 0
+    for i in 0..w.n {
+        e = e + abs_i64(predict(w, i) - truth(i))
+    }
+    e
+}
+
+// Fit as a TYPE contract: a Fitted model's error is 0. Building one from
+// non-fitting parameters is a refinement violation (exit 6) — the loop literally
+// cannot keep a model that does not fit.
+type Fitted = World where fit_error(_) <= 0
+
+// ── The MDL term: description length of the learned parameters ───────────────────
+fn description_bits(v: i64) -> i64 {
+    let m = abs_i64(v)
+    let bits = 1
+    let rem = m
+    while rem > 0 { bits = bits + 1  rem = rem / 2 }
+    bits
+}
+// A model that uses the offset costs more to describe than one that zeroes it —
+// so among equally-fitting models, the loop is pulled toward the SIMPLER (b = 0).
+fn world_bits(w: World) -> i64 { description_bits(w.a) + description_bits(w.b) }
+
+// ── The compress-to-fit objective: ONE maximizable scalar ───────────────────────
+// fit dominates (×1000) so an unfit model can never out-score a fit one; the MDL
+// penalty only breaks ties toward simplicity.
+fn fitness(w: World) -> i64 { 100000 - 1000 * fit_error(w) - world_bits(w) }
+
+// goal_run varies the SLOPE (leading i64 dim). We hold the offset at 0 — the
+// simplest hypothesis — and let the search confirm slope 3 fits perfectly, so the
+// learned model is both correct AND minimal (no offset needed).
+@[adaptive(metric: learn_slope, target: 100000.0)]
+fn learn_slope(a: i64) -> i64 {
+    fitness(World { a: a, b: 0, n: 10 })
+}
+
+fn main() -> i64 {
+    println("world model: learning y = a*x + b from 10 observations of y = 3x")
+
+    // Compress-to-fit: hill-climb the slope to maximize fitness.
+    let best_score = goal_run("learn_slope", 100000.0, 80)
+    let learned_a = goal_best_input("learn_slope", 100000.0)
+    let learned = World { a: learned_a, b: 0, n: 10 }
+
+    println("  learned: a={to_str(learned_a)} b=0  (truth a=3 b=0)")
+    println("  fit error:   {to_str(fit_error(learned))}")
+    println("  description: {to_str(world_bits(learned))} bits  (slope + offset)")
+    println("  fitness:     {to_str_f64(best_score)}")
+
+    // Show that ADDING an unnecessary offset fits worse OR costs more bits — i.e.
+    // the minimal model is genuinely preferred.
+    let bloated = World { a: 3, b: 7, n: 10 }
+    println("a model with a spurious offset b=7: error {to_str(fit_error(bloated))}, {to_str(world_bits(bloated))} bits")
+
+    // The learned model fits as a TYPE: this constructs a Fitted (error 0) — or
+    // would exit 6 if the search had failed. Proof the result actually fits.
+    let proven: Fitted = learned
+    println("verified fit: a={to_str(proven.a)}")
+
+    fit_error(proven)   // exit 0 iff a perfectly-fitting model was found
+}

@@ -1,0 +1,128 @@
+// Tier-1 stdlib: World — an executable world model for the compress-to-fit loop.
+//
+// A World is a parametric model you PREDICT with, CHECK against observations, and
+// COMPRESS toward the simplest parameters that still fit (MDL). It is the userland
+// realization of the world-model / skill-acquisition pattern (spec/worldmodel-loop.md):
+// the proposer (goal_run, or eventually an agent) varies the parameters; Axon is the
+// fixed verifier + fitness function. Built entirely on shipped primitives —
+// @[pure] / refinement types / goal_run / the description-length idea behind
+// `axon complexity`.
+//
+//   axon test examples/stdlib/world.ax     # run the @[test]s
+//   axon run  examples/stdlib/world.ax     # demo: learn the slope from data
+
+// The model: a 1-parameter linear family y = slope * x, fit over `n` samples.
+// `slope` is the learned content; `n` is how many observations we score against.
+type World = { slope: i64, n: i64 }
+
+// predict(w, x) — the executable model (the "program"). Pure, so it can appear in
+// a refinement predicate.
+@[pure]
+fn predict(w: World, x: i64) -> i64 { w.slope * x }
+
+// The observations to fit. In a real demo these are loaded / ai_extracted; here a
+// synthetic ground truth (slope = 3) the search does not know.
+@[pure]
+fn obs_x(i: i64) -> i64 { i }
+@[pure]
+fn obs_y(i: i64) -> i64 { 3 * i }
+
+// fit_error(w) — total absolute prediction error over the observations. LOWER is
+// better; 0 = perfect fit. This is "checked against observations". @[pure] so it
+// can gate a refinement type.
+@[pure]
+fn fit_error(w: World) -> i64 {
+    let e = 0
+    for i in 0..w.n {
+        e = e + abs_i64(predict(w, obs_x(i)) - obs_y(i))
+    }
+    e
+}
+
+// A FittedWorld is one whose error is within tolerance — fit as a TYPE contract.
+// Constructing one from parameters that do not fit is a refinement violation
+// (exit 6): the loop cannot keep a model that does not fit, by construction.
+type FittedWorld = World where fit_error(_) <= 0
+
+// description_bits(v) — the minimum-description-length cost of an integer
+// parameter: the bits to encode its magnitude (+1 sign). Mirrors
+// `complexity::int_bits` — bigger / more parameters cost more to describe, so a
+// model with slope 3 is "simpler" than slope 1000. This is the MDL term the
+// compress objective minimizes (the userland form of `axon complexity`'s int cost).
+fn description_bits(v: i64) -> i64 {
+    let m = abs_i64(v)
+    let bits = 1            // the sign bit
+    let rem = m
+    while rem > 0 {
+        bits = bits + 1
+        rem = rem / 2
+    }
+    bits
+}
+
+// The model's total description length: the cost of its parameter(s). A
+// multi-parameter model sums each — fewer/smaller parameters ⇒ fewer bits ⇒
+// simpler. (When candidates become whole programs, this becomes the full
+// `axon complexity` over the candidate AST — spec §4, F3.)
+fn world_bits(w: World) -> i64 { description_bits(w.slope) }
+
+// fitness(w) — the compress-to-fit objective as ONE maximizable scalar:
+// a big constant for fitting, minus the error, minus a small MDL penalty so that
+// among equally-fitting models the SIMPLER one wins. Fit dominates (×100), so an
+// unfit model can never out-score a fit one — simplicity only breaks ties.
+fn fitness(w: World) -> i64 { 1000 - 100 * fit_error(w) - world_bits(w) }
+
+// ── @[adaptive] search target: goal_run hill-climbs `slope` to maximize fitness ──
+@[adaptive(metric: world_fitness, target: 1000.0)]
+fn world_fitness(slope: i64) -> i64 {
+    fitness(World { slope: slope, n: 8 })
+}
+
+// ── tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_perfect_fit_has_zero_error() {
+    assert_eq(fit_error(World { slope: 3, n: 8 }), 0)
+}
+
+@[test]
+fn test_wrong_slope_has_positive_error() {
+    // slope 5 over x=0..8 with truth 3: per-x error 2*x, summed = 2*(0+..+7) = 56.
+    assert_eq(fit_error(World { slope: 5, n: 8 }), 56)
+}
+
+@[test]
+fn test_description_bits_orders_by_magnitude() {
+    // A smaller parameter is cheaper to describe than a larger one.
+    assert(description_bits(3) < description_bits(1000))
+}
+
+@[test]
+fn test_fitness_prefers_fit_then_simplicity() {
+    // A perfectly-fitting model out-scores any non-fitting one…
+    assert(fitness(World { slope: 3, n: 8 }) > fitness(World { slope: 4, n: 8 }))
+    // …and a fit model's score is near the max (1000 minus only its tiny MDL cost).
+    assert(fitness(World { slope: 3, n: 8 }) > 990)
+}
+
+@[test]
+fn test_fitted_world_accepts_a_fitting_model() {
+    let w: FittedWorld = World { slope: 3, n: 8 }
+    assert_eq(w.slope, 3)
+}
+
+// ── demo ────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    // The compress-to-fit loop: hill-climb `slope` to maximize fitness, then
+    // recover the learned parameter and report the fit + its description length.
+    let best_score = goal_run("world_fitness", 1000.0, 64)
+    let best_slope = goal_best_input("world_fitness", 1000.0)
+    let learned = World { slope: best_slope, n: 8 }
+    println("learned slope {to_str(best_slope)} (truth 3)")
+    println("  fit error    {to_str(fit_error(learned))}")
+    println("  description  {to_str(world_bits(learned))} bits")
+    println("  best fitness {to_str_f64(best_score)}")
+    // exit 0 iff a perfectly-fitting model was found.
+    fit_error(learned)
+}

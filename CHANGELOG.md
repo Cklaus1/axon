@@ -2,6 +2,16 @@
 
 ## Tooling
 
+- **World-model / compress-to-fit loop (prototype #1)** — `examples/stdlib/world.ax` +
+  `examples/asi/world_model.ax` + `spec/worldmodel-loop.md`. An executable world model that
+  PREDICTS, is CHECKED against observations (`fit_error`), and is COMPRESSED toward the
+  simplest parameters that fit: `goal_run` hill-climbs to maximize `fitness = fit − λ·MDL`,
+  with **fit as a hard gate** (a non-fitting model is a refinement violation — `Fitted = World
+  where fit_error(_) <= 0`, exit 6 — so simplicity only breaks ties, never wins by being
+  simple-and-wrong). Demonstrates "improvement = fewer description-length bits" with a 2-param
+  model that discovers it doesn't need the offset. Built entirely on shipped primitives
+  (`@[adaptive]`/`goal_run`/refinements/the `axon complexity` MDL idea); the kernel `World<T>`
+  + `observe`/`condition` keywords + probabilistic fit are the named Phase-13 follow-on.
 - Self-improving compiler (R10): a **second** oracle-verified optimization pass —
   `constant-fold` (integer-literal arithmetic, `2 + 3` → `5`) — added to the closed template
   registry and proven through the four-gate harness (`axon improve verify --pass

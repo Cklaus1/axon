@@ -235,6 +235,7 @@ forcing function for upcoming phase work — friction encountered while building
 | `classify.ax` | ai_extract_uncertain_i64; confidence in score |
 | `summarize.ax` | composite metric (length × LLM-judged coverage) |
 | `code_review.ax` | two cooperating @[adaptive] fns (proposer + critic) |
+| `world_model.ax` | executable world model: predict → fit-check → compress-to-simplest (fit a refinement gate + MDL objective; `spec/worldmodel-loop.md`) |
 
 CLI surface simulated as `examples/asi/run.sh` (the eventual Phase-10 `axon goal …` shape).
 
