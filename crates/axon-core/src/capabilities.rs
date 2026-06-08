@@ -1030,17 +1030,13 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "parser gap, not a checker gap: parse_fn hardcodes contained: None and the \
-                @[contained] spec-extraction only runs in the top-level item parser, so an impl \
-                method never carries a spec. check_capabilities now WALKS impl methods (the fix here), \
-                so this passes the moment parse_impl_block extracts contained specs. The G2 + \
-                import-edge surfaces (which key on call NAME, not a declared spec) ARE fixed and \
-                proven by the two tests above. Un-ignore when the parser is extended."]
     fn impl_method_with_own_contained_is_enforced() {
-        // The self-check (E1001) surface must enforce a @[contained] declared ON
-        // an impl method — check_capabilities now walks Item::ImplBlock methods,
-        // but the PARSER does not yet populate `m.contained` for them (documented
-        // gap above), so this is currently unreachable end-to-end.
+        // The self-check (E1001) surface enforces a @[contained] declared ON an
+        // impl method. Two fixes make this work end-to-end: (1) the PARSER now
+        // extracts @[contained]/@[verify] specs for impl methods via the shared
+        // `parse_attrs_with_specs` (parse_impl_block), and (2) check_capabilities
+        // WALKS Item::ImplBlock methods. `ai_complete` is a net call
+        // (classify_call), checked independent of return-type inference.
         let p = parse(
             "type T = { x: i64 }\n\
              trait N { fn go(self) -> str }\n\

@@ -407,7 +407,16 @@ impl Parser {
         }
     }
 
-    fn parse_item(&mut self) -> Result<Item> {
+    /// Parse a leading run of attributes, pulling `@[contained(...)]` and
+    /// `@[verify(...)]` out into their structured specs (the rest stay generic
+    /// `Attr`s). Shared by `parse_item` (free fns) and `parse_impl_block` (impl
+    /// methods) so an impl method can declare `@[contained]`/`@[verify]` exactly
+    /// like a free fn — without this, `@[contained]` on an impl method was parsed
+    /// as a generic attr and dropped (the capability checker then saw no spec, so
+    /// the method silently escaped its declared sandbox).
+    fn parse_attrs_with_specs(
+        &mut self,
+    ) -> Result<(Vec<Attr>, Option<ContainedSpec>, Option<VerifySpec>)> {
         let mut attrs = Vec::new();
         let mut contained_spec: Option<ContainedSpec> = None;
         let mut verify_spec: Option<VerifySpec> = None;
@@ -440,6 +449,11 @@ impl Parser {
                 attrs.push(self.parse_attr()?);
             }
         }
+        Ok((attrs, contained_spec, verify_spec))
+    }
+
+    fn parse_item(&mut self) -> Result<Item> {
+        let (attrs, contained_spec, verify_spec) = self.parse_attrs_with_specs()?;
         let public = self.eat(&Token::Pub);
         match self.peek() {
             Some(Token::Fn)    => {
@@ -1322,10 +1336,15 @@ impl Parser {
         self.expect(&Token::LBrace)?;
         let mut methods = Vec::new();
         while !self.at(&Token::RBrace) {
-            let mut attrs = Vec::new();
-            while self.at(&Token::At) || self.at(&Token::Hash) { attrs.push(self.parse_attr()?); }
+            // Use the same attr parser as free fns so an impl method can carry
+            // structured `@[contained]`/`@[verify]` specs (not just generic
+            // attrs) — otherwise its declared sandbox would be silently dropped.
+            let (attrs, contained_spec, verify_spec) = self.parse_attrs_with_specs()?;
             let public = self.eat(&Token::Pub);
-            methods.push(self.parse_fn(public, attrs)?);
+            let mut m = self.parse_fn(public, attrs)?;
+            m.contained = contained_spec;
+            m.verify = verify_spec;
+            methods.push(m);
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
