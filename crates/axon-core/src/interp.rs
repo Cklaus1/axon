@@ -350,6 +350,10 @@ pub struct Interp<'p> {
     /// failed, not a process abort). The interpreter owns the run loop (it has
     /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
     scheduler: RefCell<crate::kernel::Scheduler>,
+    /// Phase 7 (R12 Slice 3): live supervisors, indexed by handle. Each oversees
+    /// an ordered set of scheduler fibers and, when one fails, restarts the set
+    /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
+    supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -852,6 +856,7 @@ impl<'p> Interp<'p> {
             // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
             // determinism): derive the round-robin start offset from the seed.
             scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
+            supervisors: RefCell::new(Vec::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

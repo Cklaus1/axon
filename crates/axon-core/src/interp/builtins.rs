@@ -15,6 +15,42 @@ use super::*;
 impl<'p> Interp<'p> {
     // ── Builtins ───────────────────────────────────────────────────────────────
 
+    /// Phase 7 (R12 Slice 2/3): run every currently-READY scheduler fiber to
+    /// completion in the seed-deterministic order, catching per-fiber panics
+    /// (recorded as failed, not fatal). Returns the count that completed
+    /// successfully. Shared by the `scheduler_run` builtin and the live
+    /// `supervisor_run` loop. A whole-program `exit`/`Halt` from a fiber still
+    /// propagates (only per-fiber Panic/RefineViolation/VerifyFailed are caught).
+    pub(super) fn builtin_scheduler_run_once(&self) -> Result<i64, Flow> {
+        let order = self.scheduler.borrow().ready_order();
+        let mut completed: i64 = 0;
+        for id in order {
+            let Some((fn_name, arg)) = self.scheduler.borrow().fiber_call(id) else {
+                continue;
+            };
+            let outcome = match self.fns.get(fn_name.as_str()).copied() {
+                Some(f) => {
+                    let fiber_args = if f.params.is_empty() { vec![] } else { vec![Value::Int(arg)] };
+                    self.call_fn(f, fiber_args)
+                }
+                None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
+            };
+            match outcome {
+                Ok(v) => {
+                    let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
+                    self.scheduler.borrow_mut().complete(id, r);
+                    completed += 1;
+                }
+                Err(Flow::Panic(m)) | Err(Flow::RefineViolation(m)) | Err(Flow::VerifyFailed(m)) => {
+                    self.scheduler.borrow_mut().fail(id, m);
+                }
+                Err(other) => return Err(other),
+            }
+        }
+        self.scheduler.borrow_mut().passes += 1;
+        Ok(completed)
+    }
+
     /// Dispatch a builtin call. Returns `Ok(Some(v))` if `name` is a builtin,
     /// `Ok(None)` if it is not (caller should try user functions).
     pub(super) fn call_builtin(&self, name: &str, args: &[Value]) -> Result<Option<Value>, Flow> {
@@ -1915,38 +1951,7 @@ impl<'p> Interp<'p> {
             // restarted by the supervisor becomes Ready and runs on the next call.
             "scheduler_run" => {
                 want(0)?;
-                let order = self.scheduler.borrow().ready_order();
-                let mut completed: i64 = 0;
-                for id in order {
-                    let Some((fn_name, arg)) = self.scheduler.borrow().fiber_call(id) else {
-                        continue;
-                    };
-                    // Run the fiber body. Look up the fn and call it with the i64
-                    // arg (0-arg fns ignore it). A panic/halt is caught here.
-                    let outcome = match self.fns.get(fn_name.as_str()).copied() {
-                        Some(f) => {
-                            let fiber_args =
-                                if f.params.is_empty() { vec![] } else { vec![Value::Int(arg)] };
-                            self.call_fn(f, fiber_args)
-                        }
-                        None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
-                    };
-                    match outcome {
-                        Ok(v) => {
-                            let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
-                            self.scheduler.borrow_mut().complete(id, r);
-                            completed += 1;
-                        }
-                        // A fiber failure is OBSERVABLE, not fatal: record it and
-                        // keep scheduling the rest. (exit/Halt of the WHOLE program
-                        // still propagates — only per-fiber panics are caught.)
-                        Err(Flow::Panic(m)) | Err(Flow::RefineViolation(m)) | Err(Flow::VerifyFailed(m)) => {
-                            self.scheduler.borrow_mut().fail(id, m);
-                        }
-                        Err(other) => return Err(other),
-                    }
-                }
-                self.scheduler.borrow_mut().passes += 1;
+                let completed = self.builtin_scheduler_run_once()?;
                 ok!(Value::Int(completed));
             }
 
@@ -1987,6 +1992,144 @@ impl<'p> Interp<'p> {
             "scheduler_failed_count" => {
                 want(0)?;
                 ok!(Value::Int(self.scheduler.borrow().tally().1 as i64));
+            }
+
+            // ── Phase 7 (R12 Slice 3): live supervisor_root ─────────────────────
+            // The pure OTP restart logic of supervisor_tree.ax, made LIVE over the
+            // Slice-2 scheduler: a supervised fiber that fails is ACTUALLY
+            // restarted per its strategy, with the max-restart-intensity latch
+            // tripping a real halt (Flow::Halted, exit 4) on a crash loop.
+
+            // `supervisor_new(strategy, max_restarts) -> i64` — create a live
+            // supervisor (strategy 0=one_for_one, 1=one_for_all, 2=rest_for_one);
+            // returns its handle.
+            "supervisor_new" => {
+                want(2)?;
+                let strategy = as_int(&args[0])?;
+                let max_restarts = as_int(&args[1])?;
+                let mut sups = self.supervisors.borrow_mut();
+                sups.push(crate::kernel::Supervisor::new(strategy, max_restarts));
+                ok!(Value::Int((sups.len() - 1) as i64));
+            }
+
+            // `supervisor_supervise(sup, fiber_id) -> i64` — register a scheduler
+            // fiber as a supervised child (in start order); returns its child index.
+            "supervisor_supervise" => {
+                want(2)?;
+                let sup = as_int(&args[0])?;
+                let fiber = as_int(&args[1])?;
+                if sup < 0 || fiber < 0 {
+                    return panic("[E1602] supervisor_supervise: negative handle".to_string());
+                }
+                let mut sups = self.supervisors.borrow_mut();
+                let Some(s) = sups.get_mut(sup as usize) else {
+                    return panic(format!("[E1602] supervisor_supervise: unknown supervisor {sup}"));
+                };
+                let idx = s.supervise(fiber as usize);
+                ok!(Value::Int(idx as i64));
+            }
+
+            // `supervisor_run(sup) -> i64` — run the supervised fibers via the
+            // scheduler; on each failure apply the OTP restart set (re-queue those
+            // fibers) and re-run, until all children succeed OR the
+            // max-restart-intensity latch trips → HALT this subtree (Flow::Halted,
+            // exit 4). Returns the number of restart rounds performed. A bounded
+            // loop (the latch guarantees termination) so a crash loop can't spin
+            // forever.
+            "supervisor_run" => {
+                want(1)?;
+                let sup = as_int(&args[0])?;
+                if sup < 0 {
+                    return panic("[E1602] supervisor_run: negative supervisor handle".to_string());
+                }
+                // Hard bound on rounds: max_restarts + 2 (the latch trips at
+                // max_restarts+1; +1 slack). Defends against any logic slip.
+                let max_rounds = {
+                    let sups = self.supervisors.borrow();
+                    match sups.get(sup as usize) {
+                        Some(s) => s.max_restarts.max(0) + 2,
+                        None => return panic(format!("[E1602] supervisor_run: unknown supervisor {sup}")),
+                    }
+                };
+                let mut rounds: i64 = 0;
+                loop {
+                    // Run all currently-ready fibers (Slice-2 catches per-fiber
+                    // panics). Propagate a whole-program exit/Halt.
+                    self.builtin_scheduler_run_once()?;
+                    // Find the first supervised child that FAILED, in child order.
+                    let failed_child: Option<i64> = {
+                        let sups = self.supervisors.borrow();
+                        let sched = self.scheduler.borrow();
+                        sups.get(sup as usize).and_then(|s| {
+                            s.children.iter().enumerate().find_map(|(ci, &fid)| {
+                                if sched.failed(fid) { Some(ci as i64) } else { None }
+                            })
+                        })
+                    };
+                    let Some(child_idx) = failed_child else {
+                        // No supervised child is in a failed state → done.
+                        break;
+                    };
+                    // Apply the OTP restart set; latch-halt on crash loop.
+                    let to_restart = {
+                        let mut sups = self.supervisors.borrow_mut();
+                        sups[sup as usize].on_failure(child_idx)
+                    };
+                    let halted = {
+                        let sups = self.supervisors.borrow();
+                        sups[sup as usize].halted
+                    };
+                    if halted {
+                        let restarts = self.supervisors.borrow()[sup as usize].restarts;
+                        return Err(Flow::Halted(format!(
+                            "[E1602] supervisor halted its subtree after {restarts} restarts \
+                             (max-restart intensity exceeded — crash loop abandoned)"
+                        )));
+                    }
+                    // Re-queue the strategy's restart set for the next round.
+                    {
+                        let mut sched = self.scheduler.borrow_mut();
+                        for fid in to_restart {
+                            sched.restart(fid);
+                        }
+                    }
+                    rounds += 1;
+                    if rounds > max_rounds {
+                        // Defense-in-depth: the latch should have tripped already.
+                        return Err(Flow::Halted(format!(
+                            "[E1602] supervisor exceeded {max_rounds} restart rounds without \
+                             latching — abandoned (defensive)"
+                        )));
+                    }
+                }
+                ok!(Value::Int(rounds));
+            }
+
+            // `supervisor_alive(sup) -> bool` — is the supervisor still running
+            // (not halted by a crash loop)?
+            "supervisor_alive" => {
+                want(1)?;
+                let sup = as_int(&args[0])?;
+                let alive = sup >= 0
+                    && self
+                        .supervisors
+                        .borrow()
+                        .get(sup as usize)
+                        .map(|s| s.alive())
+                        .unwrap_or(false);
+                ok!(Value::Bool(alive));
+            }
+
+            // `supervisor_restarts(sup) -> i64` — cumulative restart events observed.
+            "supervisor_restarts" => {
+                want(1)?;
+                let sup = as_int(&args[0])?;
+                let n = if sup >= 0 {
+                    self.supervisors.borrow().get(sup as usize).map(|s| s.restarts).unwrap_or(0)
+                } else {
+                    0
+                };
+                ok!(Value::Int(n));
             }
 
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).

@@ -1085,6 +1085,40 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Phase-7 (R12 Slice 2): how many fibers have failed.",
     },
+    // ── Phase 7 (R12 Slice 3): live supervisor_root ──────────────────────────
+    // The pure OTP restart logic of supervisor_tree.ax, made live over the
+    // scheduler: a supervised fiber that fails is actually restarted per strategy,
+    // with the max-restart-intensity latch halting the subtree (exit 4) on a loop.
+    BuiltinFn {
+        name: "supervisor_new",
+        params: &[("strategy", "i64"), ("max_restarts", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 3): create a live supervisor (strategy 0=one_for_one, 1=one_for_all, 2=rest_for_one) with a max-restart intensity. Returns its handle.",
+    },
+    BuiltinFn {
+        name: "supervisor_supervise",
+        params: &[("sup", "i64"), ("fiber_id", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 3): register a scheduler fiber as a supervised child (in start order). Returns its child index — the position restart strategies reason about.",
+    },
+    BuiltinFn {
+        name: "supervisor_run",
+        params: &[("sup", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 3): run the supervised fibers via the scheduler; on each failure restart the OTP strategy's set and re-run, until all children succeed OR the max-restart-intensity latch trips → HALT this subtree (exit 4). Returns the number of restart rounds performed.",
+    },
+    BuiltinFn {
+        name: "supervisor_alive",
+        params: &[("sup", "i64")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 3): is the supervisor still running (not halted by a crash loop)?",
+    },
+    BuiltinFn {
+        name: "supervisor_restarts",
+        params: &[("sup", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 3): cumulative restart events the supervisor has observed.",
+    },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {
         name: "corrigible_halt",

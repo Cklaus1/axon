@@ -342,6 +342,89 @@ impl Scheduler {
     }
 }
 
+// ── Phase 7 (R12) Slice 3: live supervisor_root ──────────────────────────────
+//
+// Wires `supervisor_tree.ax`'s pure OTP restart logic to the Slice-2 scheduler:
+// a supervised fiber that fails is ACTUALLY restarted per its strategy
+// (one_for_one/all/rest_for_one), with the max-restart-intensity latch tripping
+// a real halt on a crash loop. The pure `restart_set` core is byte-identical to
+// the oracle (I-2); the live half is the `Supervisor` struct that tracks the
+// ordered children + restart count + halt latch, applied against the Scheduler.
+
+/// OTP restart strategy tags (match the oracle's 0/1/2 encoding).
+pub const ONE_FOR_ONE: i64 = 0;
+pub const ONE_FOR_ALL: i64 = 1;
+pub const REST_FOR_ONE: i64 = 2;
+
+/// The pure OTP core: which child INDICES (into the supervised set, 0..n) restart
+/// when `failed` crashes, given the strategy. Byte-identical to the oracle's
+/// `restart_set`. An out-of-range `failed` restarts nothing.
+pub fn restart_set(strategy: i64, failed: i64, n_children: i64) -> Vec<i64> {
+    if failed < 0 || failed >= n_children {
+        Vec::new()
+    } else if strategy == ONE_FOR_ALL {
+        (0..n_children).collect()
+    } else if strategy == REST_FOR_ONE {
+        (failed..n_children).collect()
+    } else {
+        vec![failed]
+    }
+}
+
+/// A live supervisor: an OTP strategy + a max-restart-intensity latch, overseeing
+/// an ORDERED set of supervised fibers (by their scheduler fiber id). When a
+/// child fails, `restart_set` decides which siblings re-queue; exceeding
+/// `max_restarts` latches `halted` (the crash-loop backoff → exit 4).
+#[derive(Debug, Clone)]
+pub struct Supervisor {
+    pub strategy: i64,
+    pub restarts: i64,
+    pub max_restarts: i64,
+    pub halted: bool,
+    /// Scheduler fiber ids of the supervised children, in start order. The index
+    /// into THIS vec is the "child index" `restart_set` reasons about.
+    pub children: Vec<usize>,
+}
+
+impl Supervisor {
+    pub fn new(strategy: i64, max_restarts: i64) -> Self {
+        Supervisor { strategy, restarts: 0, max_restarts, halted: false, children: Vec::new() }
+    }
+
+    /// Register a supervised child fiber (by scheduler id), in start order.
+    /// Returns its child index.
+    pub fn supervise(&mut self, fiber_id: usize) -> usize {
+        self.children.push(fiber_id);
+        self.children.len() - 1
+    }
+
+    pub fn alive(&self) -> bool {
+        !self.halted
+    }
+
+    /// Observe one child failure (the child at `child_idx` in `children`). Mirrors
+    /// the oracle's `on_failure`: a halted supervisor restarts nothing; otherwise
+    /// the restart count increments (one failure = one restart EVENT regardless of
+    /// how many siblings it takes down), and if that exceeds `max_restarts` the
+    /// supervisor latches halted and restarts nothing this round. Returns the
+    /// scheduler fiber ids to restart (already mapped from child indices).
+    pub fn on_failure(&mut self, child_idx: i64) -> Vec<usize> {
+        if self.halted {
+            return Vec::new();
+        }
+        self.restarts += 1;
+        if self.restarts > self.max_restarts {
+            self.halted = true;
+            return Vec::new();
+        }
+        let n = self.children.len() as i64;
+        restart_set(self.strategy, child_idx, n)
+            .into_iter()
+            .filter_map(|ci| self.children.get(ci as usize).copied())
+            .collect()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -500,5 +583,54 @@ mod tests {
         // Only the failed fiber is Ready again after a restart (Slice-3 hook).
         s.restart(b);
         assert_eq!(s.ready_order(), vec![b], "restart re-queues only the failed fiber");
+    }
+
+    // ── Slice 3: live supervisor ─────────────────────────────────────────────
+
+    #[test]
+    fn restart_set_matches_oracle() {
+        // Byte-identical to supervisor_tree.ax's @[test]s.
+        assert_eq!(restart_set(ONE_FOR_ONE, 1, 4), vec![1]);
+        assert_eq!(restart_set(ONE_FOR_ALL, 2, 4), vec![0, 1, 2, 3]);
+        assert_eq!(restart_set(REST_FOR_ONE, 2, 5), vec![2, 3, 4]);
+        assert_eq!(restart_set(REST_FOR_ONE, 0, 3), vec![0, 1, 2], "first under rest = all");
+        assert_eq!(restart_set(REST_FOR_ONE, 3, 4), vec![3], "last = just last");
+        assert!(restart_set(ONE_FOR_ONE, 9, 4).is_empty(), "out-of-range = nothing");
+        assert!(restart_set(ONE_FOR_ALL, -1, 4).is_empty());
+    }
+
+    #[test]
+    fn supervisor_on_failure_counts_and_maps_to_fiber_ids() {
+        // children at scheduler ids [10, 11, 12]; child 1 (fiber 11) fails under
+        // one_for_one → restart {11}; the count bumps; supervisor stays alive.
+        let mut sup = Supervisor::new(ONE_FOR_ONE, 3);
+        sup.supervise(10);
+        sup.supervise(11);
+        sup.supervise(12);
+        let to_restart = sup.on_failure(1);
+        assert_eq!(to_restart, vec![11], "maps child index → scheduler fiber id");
+        assert_eq!(sup.restarts, 1);
+        assert!(sup.alive());
+    }
+
+    #[test]
+    fn supervisor_max_intensity_halts_and_latches() {
+        // max_restarts=2: the 3rd failure trips the latch and restarts nothing.
+        // Oracle test_max_intensity_halts_and_latches.
+        let mut sup = Supervisor::new(ONE_FOR_ALL, 2);
+        sup.supervise(0);
+        sup.supervise(1);
+        sup.supervise(2);
+        assert!(!sup.on_failure(0).is_empty(), "restart 1");
+        assert!(!sup.on_failure(0).is_empty(), "restart 2");
+        assert!(sup.alive());
+        let r3 = sup.on_failure(0); // restart 3 > 2 → halt
+        assert!(!sup.alive(), "the tripping failure halts");
+        assert!(r3.is_empty(), "nothing restarted on the trip");
+        // Latched: a later failure still restarts nothing, count frozen.
+        let r4 = sup.on_failure(1);
+        assert!(!sup.alive());
+        assert!(r4.is_empty());
+        assert_eq!(sup.restarts, 3, "count frozen at the trip");
     }
 }

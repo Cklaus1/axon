@@ -287,6 +287,56 @@ fn phase7_kernel_scheduler() {
 }
 
 #[test]
+fn phase7_kernel_supervisor() {
+    // Phase 7 (R12 Slice 3): the live supervisor wires supervisor_tree.ax's pure
+    // OTP restart logic to the scheduler. A supervised crash loop HALTS the
+    // subtree (Flow::Halted, exit 4) after the max-restart intensity is exceeded
+    // — not a process crash, not an infinite loop. A healthy set never restarts.
+    let run = |src: &str| -> (i32, String, String) {
+        let f = std::env::temp_dir().join(format!("axon_sup_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+
+    // Crash loop: a worker that always fails, max_restarts=2 → the 3rd failure
+    // trips the latch and HALTS the subtree (exit 4), naming E1602.
+    let halt = "fn crasher(n: i64) -> i64 { assert(false)\n 0 }\n\
+                fn main() -> i64 { \
+                  let sup = supervisor_new(0, 2)\n\
+                  let f = scheduler_spawn(\"crasher\", 0)\n\
+                  let _ = supervisor_supervise(sup, f)\n\
+                  let _ = supervisor_run(sup)\n\
+                  0 }";
+    let (code, _, err) = run(halt);
+    assert_eq!(code, 4, "a supervised crash loop halts the subtree (exit 4), not the process");
+    assert!(err.contains("E1602"), "the halt names E1602: {err:?}");
+
+    // Healthy set: workers that succeed → 0 restart rounds, supervisor alive,
+    // results collected. No false halting.
+    let ok = "fn worker(n: i64) -> i64 { n * 10 }\n\
+              fn main() -> i64 { \
+                let sup = supervisor_new(1, 3)\n\
+                let a = scheduler_spawn(\"worker\", 1)\n\
+                let b = scheduler_spawn(\"worker\", 2)\n\
+                let _ = supervisor_supervise(sup, a)\n\
+                let _ = supervisor_supervise(sup, b)\n\
+                let rounds = supervisor_run(sup)\n\
+                assert_eq(rounds, 0)\n\
+                assert(supervisor_alive(sup))\n\
+                assert_eq(scheduler_result(a), 10)\n\
+                assert_eq(scheduler_result(b), 20)\n\
+                0 }";
+    let (code, _, _) = run(ok);
+    assert_eq!(code, 0, "a healthy supervised set never restarts and stays alive");
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).
