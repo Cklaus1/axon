@@ -25,24 +25,173 @@
 
 use std::alloc::Layout;
 
-// -- Endpoint resolution -------------------------------------------------------
+// -- Provider selection --------------------------------------------------------
 //
-// Reads the optional ANTHROPIC_BASE_URL environment variable and returns the
-// full Messages API URL.  Defaults to api.anthropic.com when unset or empty.
+// Axon speaks two LLM wire formats:
 //
-// Use cases:
-//   * Cost / latency observability via Helicone (point at oai.helicone.ai)
-//   * Local mock / replay during demo development
-//   * Region-specific deployments
+//   * Anthropic Messages API  (`/v1/messages`, `x-api-key`, `content[0].text`)
+//     — the default. An Anthropic-COMPATIBLE gateway/proxy (Helicone passthrough,
+//     a trainloop proxy, LiteLLM in /v1/messages mode, Cloudflare AI Gateway in
+//     Anthropic mode) works with ZERO code change: just set ANTHROPIC_BASE_URL.
 //
-// Trailing slashes on the base URL are tolerated.
-fn messages_url() -> String {
-    let base = std::env::var("ANTHROPIC_BASE_URL")
+//   * OpenAI Chat Completions  (`/v1/chat/completions`, `Authorization: Bearer`,
+//     `choices[0].message.content`) — opt in with AXON_AI_PROVIDER=openai. This
+//     unlocks NVIDIA NIM, OpenRouter, vLLM, LiteLLM (OpenAI mode), Together,
+//     Groq, and most OpenAI-compatible gateways from one codec.
+//
+// Env knobs (provider-neutral names take precedence over the legacy
+// ANTHROPIC_* ones, so a single config drives either provider):
+//   AXON_AI_PROVIDER   "anthropic" (default) | "openai"
+//   AXON_AI_BASE_URL   base URL override (falls back to ANTHROPIC_BASE_URL,
+//                      then the provider default)
+//   AXON_AI_API_KEY    API key (falls back to ANTHROPIC_API_KEY)
+// Model strings are already env-overridable per tier (AXON_AI_MODEL_{CHEAP,
+// BALANCED,STRONG}) — set those to the backend's model ids (e.g.
+// "meta/llama-3.1-70b-instruct" for NIM) when using a non-Anthropic provider.
+
+// -- .env loading --------------------------------------------------------------
+//
+// Load API keys / provider config from a `.env` file so users don't have to
+// export secrets into their shell. Searched once (lazily, before the first key
+// lookup): `$AXON_DOTENV` if set, else `.env` in the current dir, then walking
+// up parent dirs to the filesystem root (so it works from a subdirectory of a
+// project). Lines are `KEY=VALUE`; `#` comments and blank lines are skipped;
+// surrounding quotes on the value are stripped. An EXISTING process env var is
+// never overwritten — the real environment always wins over the file.
+
+use std::sync::Once;
+static DOTENV_ONCE: Once = Once::new();
+
+fn load_dotenv_once() {
+    DOTENV_ONCE.call_once(|| {
+        let path = match std::env::var("AXON_DOTENV").ok().filter(|s| !s.is_empty()) {
+            Some(p) => Some(std::path::PathBuf::from(p)),
+            None => find_dotenv_upwards(),
+        };
+        if let Some(p) = path {
+            if let Ok(contents) = std::fs::read_to_string(&p) {
+                apply_dotenv(&contents);
+            }
+        }
+    });
+}
+
+/// Walk from the current directory up to the root looking for a `.env` file.
+fn find_dotenv_upwards() -> Option<std::path::PathBuf> {
+    let mut dir = std::env::current_dir().ok()?;
+    loop {
+        let candidate = dir.join(".env");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
+/// Parse `KEY=VALUE` lines and set them in the process env, without overwriting
+/// any var that is already set. Pulled out for unit testing.
+fn apply_dotenv(contents: &str) {
+    for (k, v) in parse_dotenv(contents) {
+        if std::env::var_os(&k).is_none() {
+            std::env::set_var(&k, &v);
+        }
+    }
+}
+
+/// Pure parser: `KEY=VALUE` pairs, skipping `#` comments / blanks, trimming an
+/// optional `export ` prefix and surrounding single/double quotes on the value.
+fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for raw in contents.lines() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line);
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let key = k.trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut val = v.trim();
+        // Strip a matching pair of surrounding quotes.
+        if (val.starts_with('"') && val.ends_with('"') && val.len() >= 2)
+            || (val.starts_with('\'') && val.ends_with('\'') && val.len() >= 2)
+        {
+            val = &val[1..val.len() - 1];
+        }
+        out.push((key.to_string(), val.to_string()));
+    }
+    out
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Provider {
+    Anthropic,
+    OpenAi,
+}
+
+/// Resolve the active provider from `AXON_AI_PROVIDER` (default Anthropic).
+/// Unknown values fall back to Anthropic (the safe default) rather than erroring.
+pub fn provider() -> Provider {
+    load_dotenv_once();
+    match std::env::var("AXON_AI_PROVIDER").ok().as_deref() {
+        Some("openai") | Some("OpenAI") | Some("openai-compatible") => Provider::OpenAi,
+        _ => Provider::Anthropic,
+    }
+}
+
+/// The base URL for the active provider. Neutral `AXON_AI_BASE_URL` wins; then
+/// the legacy `ANTHROPIC_BASE_URL` (back-compat); then the provider default.
+fn base_url(p: Provider) -> String {
+    load_dotenv_once();
+    let neutral = std::env::var("AXON_AI_BASE_URL").ok().filter(|s| !s.is_empty());
+    let legacy = std::env::var("ANTHROPIC_BASE_URL").ok().filter(|s| !s.is_empty());
+    let default = match p {
+        Provider::Anthropic => "https://api.anthropic.com",
+        Provider::OpenAi => "https://api.openai.com",
+    };
+    let base = neutral.or(legacy).unwrap_or_else(|| default.to_string());
+    base.trim_end_matches('/').to_string()
+}
+
+/// The full chat/completions endpoint URL for the active provider.
+fn endpoint_url(p: Provider) -> String {
+    match p {
+        Provider::Anthropic => format!("{}/v1/messages", base_url(p)),
+        Provider::OpenAi => format!("{}/v1/chat/completions", base_url(p)),
+    }
+}
+
+/// The API key for the active provider. Neutral `AXON_AI_API_KEY` wins, then the
+/// legacy `ANTHROPIC_API_KEY`. Returns a provider-named error when neither is set.
+fn api_key(p: Provider) -> Result<String, String> {
+    load_dotenv_once();
+    std::env::var("AXON_AI_API_KEY")
         .ok()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "https://api.anthropic.com".to_string());
-    let trimmed = base.trim_end_matches('/');
-    format!("{}/v1/messages", trimmed)
+        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty()))
+        .ok_or_else(|| match p {
+            Provider::Anthropic => "ANTHROPIC_API_KEY (or AXON_AI_API_KEY) is not set".to_string(),
+            Provider::OpenAi => "AXON_AI_API_KEY (or ANTHROPIC_API_KEY) is not set".to_string(),
+        })
+}
+
+/// Apply the provider's auth + content headers to a request builder.
+fn auth_headers(p: Provider, req: reqwest::blocking::RequestBuilder, key: &str)
+    -> reqwest::blocking::RequestBuilder
+{
+    match p {
+        Provider::Anthropic => req
+            .header("x-api-key", key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json"),
+        Provider::OpenAi => req
+            .header("authorization", format!("Bearer {key}"))
+            .header("content-type", "application/json"),
+    }
 }
 
 // -- malloc helper (mirrors axon-rt's libc_malloc) ----------------------------
@@ -147,26 +296,26 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
         let est = (prompt.len() as i64) / 4 + 1;
         return Ok((MOCK_AI_COMPLETE.to_string(), est));
     }
-    // Read API key from environment.
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
+    let p = provider();
+    let key = api_key(p)?;
 
-    // Build request body.
-    let body = serde_json::json!({
-        "model": model,
-        "max_tokens": 1024,
-        "messages": [
-            { "role": "user", "content": prompt }
-        ]
-    });
+    // Build the provider-specific request body. Both carry the same logical
+    // request (model + single user message + token cap); only the schema differs.
+    let body = match p {
+        Provider::Anthropic => serde_json::json!({
+            "model": model,
+            "max_tokens": 1024,
+            "messages": [ { "role": "user", "content": prompt } ]
+        }),
+        Provider::OpenAi => serde_json::json!({
+            "model": model,
+            "max_tokens": 1024,
+            "messages": [ { "role": "user", "content": prompt } ]
+        }),
+    };
 
-    // POST to Anthropic Messages API.
     let client = reqwest::blocking::Client::new();
-    let response = client
-        .post(messages_url())
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
+    let response = auth_headers(p, client.post(endpoint_url(p)), &key)
         .json(&body)
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -177,28 +326,51 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("Anthropic API error {}: {}", status.as_u16(), text));
+        let label = match p { Provider::Anthropic => "Anthropic", Provider::OpenAi => "OpenAI" };
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
     }
 
-    // Parse the response JSON and extract content[0].text.
     let json: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
 
-    let reply = json["content"]
-        .as_array()
-        .and_then(|arr| arr.first())
-        .and_then(|item| item["text"].as_str())
-        .ok_or_else(|| format!("Unexpected API response shape: {}", text))?
-        .to_string();
+    // Extract the reply text — different response shapes per provider.
+    let reply = match p {
+        // Anthropic: content[0].text
+        Provider::Anthropic => json["content"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|item| item["text"].as_str())
+            .ok_or_else(|| format!("Unexpected Anthropic response shape: {}", text))?
+            .to_string(),
+        // OpenAI: choices[0].message.content
+        Provider::OpenAi => json["choices"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|item| item["message"]["content"].as_str())
+            .ok_or_else(|| format!("Unexpected OpenAI response shape: {}", text))?
+            .to_string(),
+    };
 
-    // The REAL token usage (input + output). Anthropic returns these in
-    // `usage.{input_tokens,output_tokens}`. Fall back to a prompt-length
-    // estimate if the field is missing (older API shapes / proxies).
-    let in_tok = json["usage"]["input_tokens"].as_i64();
-    let out_tok = json["usage"]["output_tokens"].as_i64();
-    let total = match (in_tok, out_tok) {
-        (Some(i), Some(o)) => i + o,
-        _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
+    // Real token usage (input + output). Anthropic: usage.{input,output}_tokens;
+    // OpenAI: usage.{prompt,completion}_tokens (or usage.total_tokens). Fall back
+    // to a prompt/reply-length estimate if the field is missing (some proxies).
+    let total = match p {
+        Provider::Anthropic => match (
+            json["usage"]["input_tokens"].as_i64(),
+            json["usage"]["output_tokens"].as_i64(),
+        ) {
+            (Some(i), Some(o)) => i + o,
+            _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
+        },
+        Provider::OpenAi => json["usage"]["total_tokens"].as_i64().unwrap_or_else(|| {
+            match (
+                json["usage"]["prompt_tokens"].as_i64(),
+                json["usage"]["completion_tokens"].as_i64(),
+            ) {
+                (Some(i), Some(o)) => i + o,
+                _ => (prompt.len() as i64) / 4 + 1 + (reply.len() as i64) / 4,
+            }
+        }),
     };
 
     Ok((reply, total))
@@ -280,25 +452,126 @@ fn parse_tool_use_input(json: &serde_json::Value) -> Result<&serde_json::Value, 
     Err(format!("No `answer` tool_use block in response: {}", json))
 }
 
+/// The JSON-Schema `properties`/`required` for the structured `answer` tool,
+/// shared by both providers. With confidence → `{value, confidence}`; without →
+/// `{value}`. This is the single source of the schema so the two provider body
+/// shapes can't drift on the field set.
+fn answer_schema(value_type: &str, with_confidence: bool) -> (serde_json::Value, serde_json::Value) {
+    if with_confidence {
+        (
+            serde_json::json!({
+                "value":      { "type": value_type },
+                "confidence": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+            }),
+            serde_json::json!(["value", "confidence"]),
+        )
+    } else {
+        (
+            serde_json::json!({ "value": { "type": value_type } }),
+            serde_json::json!(["value"]),
+        )
+    }
+}
+
+/// Build the OpenAI Chat Completions structured-output request: a single
+/// `answer` function tool whose parameters are the answer schema, forced via
+/// `tool_choice`. OpenAI nests the schema under `function.parameters` (vs
+/// Anthropic's top-level `input_schema`) and wraps each tool in `{type,function}`.
+fn build_openai_tool_body(
+    model: &str,
+    prompt: &str,
+    value_type: &str,
+    with_confidence: bool,
+) -> serde_json::Value {
+    let (properties, required) = answer_schema(value_type, with_confidence);
+    let desc = if with_confidence {
+        "Return your answer with a confidence score in [0.0, 1.0]."
+    } else {
+        "Return your answer as the single `value` field."
+    };
+    serde_json::json!({
+        "model": model,
+        "max_tokens": 1024,
+        "tools": [{
+            "type": "function",
+            "function": {
+                "name": "answer",
+                "description": desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        }],
+        "tool_choice": { "type": "function", "function": { "name": "answer" } },
+        "messages": [ { "role": "user", "content": prompt } ]
+    })
+}
+
+/// Extract the `answer` tool call's arguments from an OpenAI Chat Completions
+/// response. OpenAI returns `choices[0].message.tool_calls[0].function.arguments`
+/// as a JSON *string*, so we parse it into an object (vs Anthropic's already-
+/// structured `input`). Returns the parsed arguments object.
+fn parse_openai_tool_args(json: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let calls = json["choices"]
+        .as_array()
+        .and_then(|a| a.first())
+        .and_then(|c| c["message"]["tool_calls"].as_array())
+        .ok_or_else(|| format!("Unexpected OpenAI response shape (no tool_calls): {}", json))?;
+    for call in calls {
+        if call["function"]["name"].as_str() == Some("answer") {
+            let args = call["function"]["arguments"]
+                .as_str()
+                .ok_or_else(|| format!("tool call `arguments` is not a string: {}", call))?;
+            return serde_json::from_str(args)
+                .map_err(|e| format!("tool call arguments are not valid JSON ({e}): {args}"));
+        }
+    }
+    Err(format!("No `answer` tool call in OpenAI response: {}", json))
+}
+
 /// POST a typed-uncertain request to Anthropic and parse the result.
 ///
 /// Returns `(value_json, confidence)` on success.  The caller projects
 /// `value_json` to the expected concrete type.
-fn complete_typed_uncertain_inner(
+/// POST a structured-output request (the `answer` tool) for the active provider
+/// and return the parsed arguments object (`{value, ...}`). Shared by the
+/// uncertain (with confidence) and flat (value-only) paths via `with_confidence`.
+/// Anthropic and OpenAI differ in body schema, auth, and where the tool result
+/// lives in the response — all handled here so callers see one object.
+fn complete_structured_inner(
     prompt: &str,
     value_type: &str,
-) -> Result<(serde_json::Value, f64), String> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
+    with_confidence: bool,
+) -> Result<serde_json::Value, String> {
+    let p = provider();
+    let key = api_key(p)?;
+    // The interpreter passes the tier-resolved model via the plain path; the
+    // structured path historically pinned sonnet. Honor the balanced-tier model
+    // override so a non-Anthropic provider can name its own model.
+    let model = std::env::var("AXON_AI_MODEL_BALANCED")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
 
-    let body = build_typed_uncertain_body(prompt, value_type);
+    let body = match p {
+        Provider::Anthropic => {
+            // Keep the existing Anthropic body builders so their pinned-shape
+            // unit tests stay authoritative; swap the model in.
+            let mut b = if with_confidence {
+                build_typed_uncertain_body(prompt, value_type)
+            } else {
+                build_typed_flat_body(prompt, value_type)
+            };
+            b["model"] = serde_json::json!(model);
+            b
+        }
+        Provider::OpenAi => build_openai_tool_body(&model, prompt, value_type, with_confidence),
+    };
 
     let client = reqwest::blocking::Client::new();
-    let response = client
-        .post(messages_url())
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
+    let response = auth_headers(p, client.post(endpoint_url(p)), &key)
         .json(&body)
         .send()
         .map_err(|e| format!("HTTP request failed: {}", e))?;
@@ -309,20 +582,31 @@ fn complete_typed_uncertain_inner(
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     if !status.is_success() {
-        return Err(format!("Anthropic API error {}: {}", status.as_u16(), text));
+        let label = match p { Provider::Anthropic => "Anthropic", Provider::OpenAi => "OpenAI" };
+        return Err(format!("{label} API error {}: {}", status.as_u16(), text));
     }
 
     let json: serde_json::Value = serde_json::from_str(&text)
         .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
 
-    let input = parse_tool_use_input(&json)?;
+    match p {
+        Provider::Anthropic => parse_tool_use_input(&json).cloned(),
+        Provider::OpenAi => parse_openai_tool_args(&json),
+    }
+}
+
+fn complete_typed_uncertain_inner(
+    prompt: &str,
+    value_type: &str,
+) -> Result<(serde_json::Value, f64), String> {
+    let input = complete_structured_inner(prompt, value_type, true)?;
 
     let value = input.get("value")
-        .ok_or_else(|| format!("tool_use input missing `value`: {}", input))?
+        .ok_or_else(|| format!("structured output missing `value`: {}", input))?
         .clone();
 
     let confidence = input["confidence"].as_f64()
-        .ok_or_else(|| format!("tool_use input `confidence` is not a number: {}", input))?;
+        .ok_or_else(|| format!("structured output `confidence` is not a number: {}", input))?;
 
     if !(0.0..=1.0).contains(&confidence) {
         return Err(format!("confidence {} out of range [0.0, 1.0]", confidence));
@@ -391,38 +675,10 @@ fn complete_typed_flat_inner(
     prompt: &str,
     value_type: &str,
 ) -> Result<serde_json::Value, String> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY")
-        .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
-
-    let body = build_typed_flat_body(prompt, value_type);
-
-    let client = reqwest::blocking::Client::new();
-    let response = client
-        .post(messages_url())
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&body)
-        .send()
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
-
-    let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| format!("Failed to read response body: {}", e))?;
-
-    if !status.is_success() {
-        return Err(format!("Anthropic API error {}: {}", status.as_u16(), text));
-    }
-
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse API response as JSON: {}", e))?;
-
-    let input = parse_tool_use_input(&json)?;
-    let value = input.get("value")
-        .ok_or_else(|| format!("tool_use input missing `value`: {}", input))?
-        .clone();
-    Ok(value)
+    let input = complete_structured_inner(prompt, value_type, false)?;
+    input.get("value")
+        .ok_or_else(|| format!("structured output missing `value`: {}", input))
+        .cloned()
 }
 
 /// Send `prompt` and return a single `i64`.  Tool schema constrains
@@ -1081,5 +1337,144 @@ mod tests {
 
         match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
         if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
+    }
+
+    // ── Provider codec (OpenAI-compatible: NIM / OpenRouter / vLLM / …) ──────
+
+    #[test]
+    fn openai_plain_body_has_chat_completions_shape() {
+        // The OpenAI plain-completion body: model + max_tokens + a single user
+        // message. (Same logical shape as Anthropic, but it POSTs to
+        // /v1/chat/completions with a Bearer token — wiring covered below.)
+        let body = build_openai_tool_body("meta/llama-3.1-70b-instruct", "Hi", "integer", false);
+        assert_eq!(body["model"], "meta/llama-3.1-70b-instruct");
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert_eq!(body["messages"][0]["content"], "Hi");
+    }
+
+    #[test]
+    fn openai_tool_body_nests_schema_under_function() {
+        // OpenAI tool-calling differs from Anthropic: each tool is
+        // {type:"function", function:{name, parameters}}, the schema lives under
+        // `function.parameters` (not top-level `input_schema`), and tool_choice
+        // is {type:"function", function:{name}}. Pin that shape.
+        let body = build_openai_tool_body("gpt-4o", "How many?", "integer", true);
+        let tool = &body["tools"][0];
+        assert_eq!(tool["type"], "function");
+        assert_eq!(tool["function"]["name"], "answer");
+        let params = &tool["function"]["parameters"];
+        assert_eq!(params["type"], "object");
+        assert_eq!(params["properties"]["value"]["type"], "integer");
+        assert_eq!(params["properties"]["confidence"]["type"], "number");
+        let required: Vec<&str> = params["required"].as_array().unwrap()
+            .iter().filter_map(|v| v.as_str()).collect();
+        assert!(required.contains(&"value") && required.contains(&"confidence"));
+        assert_eq!(body["tool_choice"]["type"], "function");
+        assert_eq!(body["tool_choice"]["function"]["name"], "answer");
+    }
+
+    #[test]
+    fn openai_flat_tool_body_omits_confidence() {
+        let body = build_openai_tool_body("gpt-4o", "x", "number", false);
+        let props = &body["tools"][0]["function"]["parameters"]["properties"];
+        assert_eq!(props["value"]["type"], "number");
+        assert!(props.get("confidence").is_none(), "flat schema must not carry confidence");
+    }
+
+    #[test]
+    fn parse_openai_tool_args_decodes_arguments_string() {
+        // OpenAI returns the tool arguments as a JSON *string* under
+        // choices[0].message.tool_calls[0].function.arguments — parse it.
+        let resp = json!({
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "function": { "name": "answer", "arguments": "{\"value\": 8, \"confidence\": 0.9}" }
+                    }]
+                }
+            }]
+        });
+        let args = parse_openai_tool_args(&resp).expect("parsed args");
+        assert_eq!(args["value"], 8);
+        assert_eq!(args["confidence"], 0.9);
+    }
+
+    #[test]
+    fn parse_openai_tool_args_errors_without_answer_call() {
+        let resp = json!({
+            "choices": [{ "message": { "tool_calls": [{
+                "function": { "name": "other", "arguments": "{}" }
+            }]}}]
+        });
+        assert!(parse_openai_tool_args(&resp).is_err());
+    }
+
+    #[test]
+    fn provider_defaults_to_anthropic_and_reads_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev = std::env::var("AXON_AI_PROVIDER").ok();
+        std::env::remove_var("AXON_AI_PROVIDER");
+        assert_eq!(provider(), Provider::Anthropic, "default is Anthropic");
+        std::env::set_var("AXON_AI_PROVIDER", "openai");
+        assert_eq!(provider(), Provider::OpenAi);
+        std::env::set_var("AXON_AI_PROVIDER", "nonsense");
+        assert_eq!(provider(), Provider::Anthropic, "unknown falls back to Anthropic");
+        match prev { Some(v) => std::env::set_var("AXON_AI_PROVIDER", v), None => std::env::remove_var("AXON_AI_PROVIDER") }
+    }
+
+    #[test]
+    fn endpoint_and_base_url_per_provider() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let prev_base = std::env::var("AXON_AI_BASE_URL").ok();
+        let prev_abase = std::env::var("ANTHROPIC_BASE_URL").ok();
+        std::env::remove_var("AXON_AI_BASE_URL");
+        std::env::remove_var("ANTHROPIC_BASE_URL");
+        // Defaults.
+        assert_eq!(endpoint_url(Provider::Anthropic), "https://api.anthropic.com/v1/messages");
+        assert_eq!(endpoint_url(Provider::OpenAi), "https://api.openai.com/v1/chat/completions");
+        // Neutral override wins, trailing slash tolerated, path appended per provider.
+        std::env::set_var("AXON_AI_BASE_URL", "https://integrate.api.nvidia.com/");
+        assert_eq!(endpoint_url(Provider::OpenAi), "https://integrate.api.nvidia.com/v1/chat/completions");
+        // Legacy ANTHROPIC_BASE_URL still works (a trainloop gateway uses this).
+        std::env::remove_var("AXON_AI_BASE_URL");
+        std::env::set_var("ANTHROPIC_BASE_URL", "https://gateway.internal");
+        assert_eq!(endpoint_url(Provider::Anthropic), "https://gateway.internal/v1/messages");
+        match prev_base { Some(v) => std::env::set_var("AXON_AI_BASE_URL", v), None => std::env::remove_var("AXON_AI_BASE_URL") }
+        match prev_abase { Some(v) => std::env::set_var("ANTHROPIC_BASE_URL", v), None => std::env::remove_var("ANTHROPIC_BASE_URL") }
+    }
+
+    // ── .env loading ────────────────────────────────────────────────────────
+
+    #[test]
+    fn dotenv_parser_handles_comments_quotes_and_export() {
+        let src = "\
+# a comment\n\
+\n\
+ANTHROPIC_API_KEY=sk-plain\n\
+export AXON_AI_PROVIDER=\"openai\"\n\
+AXON_AI_BASE_URL='https://x.example/'\n\
+  SPACED = value \n\
+NOEQUALS\n\
+=novalue\n";
+        let pairs = parse_dotenv(src);
+        let get = |k: &str| pairs.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.as_str());
+        assert_eq!(get("ANTHROPIC_API_KEY"), Some("sk-plain"));
+        assert_eq!(get("AXON_AI_PROVIDER"), Some("openai"), "double quotes stripped");
+        assert_eq!(get("AXON_AI_BASE_URL"), Some("https://x.example/"), "single quotes stripped");
+        assert_eq!(get("SPACED"), Some("value"), "key/value trimmed");
+        assert!(get("NOEQUALS").is_none(), "no `=` line skipped");
+        assert!(pairs.iter().all(|(k, _)| !k.is_empty()), "empty key skipped");
+    }
+
+    #[test]
+    fn dotenv_does_not_override_existing_env() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("AXON_TEST_DOTENV_VAR", "from-shell");
+        apply_dotenv("AXON_TEST_DOTENV_VAR=from-file\nAXON_TEST_DOTENV_NEW=from-file");
+        // The real environment wins; a new key is set.
+        assert_eq!(std::env::var("AXON_TEST_DOTENV_VAR").as_deref(), Ok("from-shell"));
+        assert_eq!(std::env::var("AXON_TEST_DOTENV_NEW").as_deref(), Ok("from-file"));
+        std::env::remove_var("AXON_TEST_DOTENV_VAR");
+        std::env::remove_var("AXON_TEST_DOTENV_NEW");
     }
 }

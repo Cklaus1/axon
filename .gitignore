@@ -22,3 +22,8 @@ Thumbs.db
 
 # Claude Code per-session state (worktrees, locks)
 .claude/
+
+# Local LLM credentials / provider config (axon-ai reads .env for API keys)
+.env
+.env.*
+!.env.example
