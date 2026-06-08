@@ -337,6 +337,74 @@ fn phase7_kernel_supervisor() {
 }
 
 #[test]
+fn phase7_kernel_durable_store() {
+    // Phase 7 (R12 Slice 4): the durable Store persists across a PROCESS via an
+    // NDJSON append log replayed on open. The headline (R12 gate): a value
+    // written under linearizable survives a fresh process AND a retried op_id
+    // dedups cross-process; at_least_once double-counts. Hermetic: a private
+    // XDG_CACHE_HOME temp dir so runs don't collide or touch the real cache.
+    let cache = std::env::temp_dir().join(format!("axon_store_test_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let run = |src: &str| -> (i32, String) {
+        let f = cache.join("prog.ax");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(&f, src).unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("XDG_CACHE_HOME", &cache)
+            .output()
+            .unwrap();
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // Process 1: linearizable; ops 1,2 + a deduped retry of 2 → value 150, ver 2.
+    let (code, out1) = run(
+        "fn main() -> i64 { \
+           let s = store_open(\"k\", 1)\n\
+           let _ = store_apply(s, 1, 100)\n\
+           let _ = store_apply(s, 2, 50)\n\
+           let _ = store_apply(s, 2, 50)\n\
+           println(\"{to_str(store_value(s))},{to_str(store_version(s))}\")\n\
+           0 }",
+    );
+    assert_eq!(code, 0);
+    assert!(out1.contains("150,2"), "linearizable dedups the retry in-process: {out1:?}");
+
+    // Process 2 (FRESH process, same cache): replay → 150,2; retrying op 2 still
+    // dedups (cross-process `seen` reconstructed); a new op applies.
+    let (code, out2) = run(
+        "fn main() -> i64 { \
+           let s = store_open(\"k\", 1)\n\
+           let _ = store_apply(s, 2, 50)\n\
+           let _ = store_apply(s, 3, 7)\n\
+           println(\"{to_str(store_value(s))},{to_str(store_version(s))}\")\n\
+           0 }",
+    );
+    assert_eq!(code, 0);
+    assert!(
+        out2.contains("157,3"),
+        "value survived the process; cross-process dedup held; new op applied: {out2:?}"
+    );
+
+    // at_least_once double-counts a retry, and that double-count persists.
+    let (_, out3) = run(
+        "fn main() -> i64 { \
+           let s = store_open(\"alo\", 0)\n\
+           let _ = store_apply(s, 1, 100)\n\
+           let _ = store_apply(s, 1, 100)\n\
+           println(\"{to_str(store_value(s))}\")\n\
+           0 }",
+    );
+    assert!(out3.contains("200"), "at_least_once re-applies a retry: {out3:?}");
+    let (_, out4) = run(
+        "fn main() -> i64 { let s = store_open(\"alo\", 0)\n println(\"{to_str(store_value(s))}\")\n 0 }",
+    );
+    assert!(out4.contains("200"), "the at_least_once double-count persists: {out4:?}");
+
+    let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).

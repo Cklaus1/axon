@@ -1119,6 +1119,40 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Phase-7 (R12 Slice 3): cumulative restart events the supervisor has observed.",
     },
+    // ── Phase 7 (R12 Slice 4): durable Store<T,C> ────────────────────────────
+    // A persistent store keyed by name; applied ops are appended to an NDJSON log
+    // and replayed on open, so the value survives a process and a retried op_id
+    // dedups cross-process under linearizable.
+    BuiltinFn {
+        name: "store_open",
+        params: &[("key", "str"), ("consistency", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 4): open (and replay the durable log of) the store `key` with a consistency model (0=at_least_once, 1=linearizable). Returns its handle. The replayed state survives a fresh process.",
+    },
+    BuiltinFn {
+        name: "store_apply",
+        params: &[("handle", "i64"), ("op_id", "i64"), ("delta", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 4): apply op `op_id` with effect `delta`; returns the new value. Under linearizable a retried op_id is deduped (exactly-once, even across a process restart); under at_least_once it re-applies. An applied op is appended to the durable log.",
+    },
+    BuiltinFn {
+        name: "store_value",
+        params: &[("handle", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 4): the store's current accumulated value.",
+    },
+    BuiltinFn {
+        name: "store_version",
+        params: &[("handle", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 4): the monotonic total-order stamp (counts distinct applied ops under linearizable; stays 0 under at_least_once).",
+    },
+    BuiltinFn {
+        name: "store_clear",
+        params: &[("key", "str")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 4): delete a durable store's log (reset persistence). Returns 1 if a log existed and was removed, else 0.",
+    },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {
         name: "corrigible_halt",

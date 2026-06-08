@@ -354,6 +354,11 @@ pub struct Interp<'p> {
     /// an ordered set of scheduler fibers and, when one fails, restarts the set
     /// its OTP strategy dictates — latching a halt (exit 4) on a crash loop.
     supervisors: RefCell<Vec<crate::kernel::Supervisor>>,
+    /// Phase 7 (R12 Slice 4): durable stores, indexed by handle. Each is an
+    /// in-memory `kernel::Store` (rebuilt by replaying its NDJSON log on open)
+    /// plus the log path it appends applied ops to, so its value survives a fresh
+    /// process and a retried op_id dedups cross-process under linearizable.
+    stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -857,6 +862,7 @@ impl<'p> Interp<'p> {
             // determinism): derive the round-robin start offset from the seed.
             scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
             supervisors: RefCell::new(Vec::new()),
+            stores: RefCell::new(Vec::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

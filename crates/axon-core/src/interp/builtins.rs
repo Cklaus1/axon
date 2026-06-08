@@ -12,6 +12,25 @@
 
 use super::*;
 
+/// Phase 7 (R12 Slice 4): the durable-store NDJSON log path for store `key`:
+/// `$XDG_CACHE_HOME/axon/stores/<key>.ndjson` (or under `$HOME/.cache`). Sibling
+/// of the provenance log dir, so it reuses the same cache-root discovery. The key
+/// is sanitized to a safe filename (non-alnum → `_`) so a store name can't escape
+/// the stores dir. Returns None if no cache root is discoverable.
+fn store_log_path(key: &str) -> Option<std::path::PathBuf> {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+    let safe: String = key
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let safe = if safe.is_empty() { "_".to_string() } else { safe };
+    Some(base.join("axon").join("stores").join(format!("{safe}.ndjson")))
+}
+
 impl<'p> Interp<'p> {
     // ── Builtins ───────────────────────────────────────────────────────────────
 
@@ -2130,6 +2149,118 @@ impl<'p> Interp<'p> {
                     0
                 };
                 ok!(Value::Int(n));
+            }
+
+            // ── Phase 7 (R12 Slice 4): durable Store<T,C> ───────────────────────
+            // A persistent store keyed by name: its applied ops are appended to an
+            // NDJSON log, replayed on open, so the value survives a fresh process
+            // and a retried op_id dedups cross-process under linearizable.
+
+            // `store_open(key, consistency) -> i64` — open (and replay) the durable
+            // store `key` (0=at_least_once, 1=linearizable); returns its handle.
+            "store_open" => {
+                want(2)?;
+                let key = as_str(&args[0])?.to_string();
+                let consistency = as_int(&args[1])?;
+                let path = store_log_path(&key);
+                let mut store = crate::kernel::Store::new(consistency);
+                // Replay the log to rebuild state (cross-process durability). Each
+                // line is `op_id delta`; apply through the same consistency logic,
+                // so a linearizable store reconstructs its `seen` set and dedups.
+                if let Some(p) = &path {
+                    if let Ok(contents) = std::fs::read_to_string(p) {
+                        for line in contents.lines() {
+                            let mut it = line.split_whitespace();
+                            if let (Some(o), Some(d)) = (it.next(), it.next()) {
+                                if let (Ok(op_id), Ok(delta)) = (o.parse::<i64>(), d.parse::<i64>()) {
+                                    store.apply(op_id, delta);
+                                }
+                            }
+                        }
+                    }
+                }
+                let path = match path {
+                    Some(p) => p,
+                    None => return panic("[E1603] store_open: no cache dir for the durable store log".to_string()),
+                };
+                let mut stores = self.stores.borrow_mut();
+                stores.push((store, path));
+                ok!(Value::Int((stores.len() - 1) as i64));
+            }
+
+            // `store_apply(handle, op_id, delta) -> i64` — apply an op; returns the
+            // new value. Under linearizable a retried op_id is deduped (no-op) and
+            // NOT re-logged; under at_least_once it re-applies. An actually-applied
+            // op is appended to the durable log so it survives a process restart.
+            "store_apply" => {
+                want(3)?;
+                let h = as_int(&args[0])?;
+                let op_id = as_int(&args[1])?;
+                let delta = as_int(&args[2])?;
+                if h < 0 {
+                    return panic("[E1603] store_apply: negative store handle".to_string());
+                }
+                let (applied, new_value, path) = {
+                    let mut stores = self.stores.borrow_mut();
+                    let Some((store, path)) = stores.get_mut(h as usize) else {
+                        return panic(format!("[E1603] store_apply: unknown store handle {h}"));
+                    };
+                    let applied = store.apply(op_id, delta);
+                    (applied, store.value, path.clone())
+                };
+                // Persist only an op that actually took effect (a deduped retry is
+                // not re-logged — replay would dedup it again, but not re-logging
+                // keeps the log = the applied total order).
+                if applied {
+                    if let Some(dir) = path.parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                    }
+                    use std::io::Write as _;
+                    if let Ok(mut f) =
+                        std::fs::OpenOptions::new().create(true).append(true).open(&path)
+                    {
+                        let _ = writeln!(f, "{op_id} {delta}");
+                    }
+                }
+                ok!(Value::Int(new_value));
+            }
+
+            // `store_value(handle) -> i64` — the store's current accumulated value.
+            "store_value" => {
+                want(1)?;
+                let h = as_int(&args[0])?;
+                let v = if h >= 0 {
+                    self.stores.borrow().get(h as usize).map(|(s, _)| s.value).unwrap_or(0)
+                } else {
+                    0
+                };
+                ok!(Value::Int(v));
+            }
+
+            // `store_version(handle) -> i64` — the monotonic total-order stamp
+            // (linearizable only; at_least_once stays 0).
+            "store_version" => {
+                want(1)?;
+                let h = as_int(&args[0])?;
+                let v = if h >= 0 {
+                    self.stores.borrow().get(h as usize).map(|(s, _)| s.version).unwrap_or(0)
+                } else {
+                    0
+                };
+                ok!(Value::Int(v));
+            }
+
+            // `store_clear(key) -> i64` — delete a durable store's log (reset
+            // persistence). Returns 1 if a log existed and was removed, else 0.
+            // Lets a test start from a clean slate; not part of the consistency
+            // model itself.
+            "store_clear" => {
+                want(1)?;
+                let key = as_str(&args[0])?.to_string();
+                let removed = store_log_path(&key)
+                    .map(|p| std::fs::remove_file(p).is_ok())
+                    .unwrap_or(false);
+                ok!(Value::Int(if removed { 1 } else { 0 }));
             }
 
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).

@@ -425,6 +425,63 @@ impl Supervisor {
     }
 }
 
+// ── Phase 7 (R12) Slice 4: durable Store<T,C> ────────────────────────────────
+//
+// Promotes store.ax's consistency variants to a runtime store that PERSISTS
+// across a process (the Lifetime axis the oracle left orthogonal). Persistence
+// is an NDJSON append log of `(op_id, delta)` rows per store key — replayable and
+// deterministic (R12 §4 Q2: reuse the provenance NDJSON machinery). On open, the
+// log is replayed to rebuild state; under `linearizable` a retried op_id is
+// deduped EVEN ACROSS the process boundary (the `seen` set is reconstructed from
+// the log), under `at_least_once` every logged op re-applies. The value-logic is
+// byte-identical to the oracle's `apply` (I-2); only the durability is new.
+
+/// Consistency tags (match the oracle's 0/1 encoding).
+pub const AT_LEAST_ONCE: i64 = 0;
+pub const LINEARIZABLE: i64 = 1;
+
+/// In-memory state of one store, rebuilt by replaying its log. Pure value-logic
+/// (the oracle's `apply`), with file I/O kept in the interpreter.
+#[derive(Debug, Clone)]
+pub struct Store {
+    pub value: i64,
+    pub consistency: i64,
+    pub seen: Vec<i64>,
+    pub version: i64,
+}
+
+impl Store {
+    pub fn new(consistency: i64) -> Self {
+        Store { value: 0, consistency, seen: Vec::new(), version: 0 }
+    }
+
+    pub fn has_applied(&self, id: i64) -> bool {
+        self.seen.contains(&id)
+    }
+
+    /// Apply op `op_id` with effect `delta` — the consistency-defining op,
+    /// byte-identical to the oracle's `apply`. Returns whether the op was
+    /// actually applied (false = deduped under linearizable), so the caller knows
+    /// whether to APPEND it to the durable log (a deduped retry must NOT be
+    /// logged twice, or replay would re-dedup correctly but the log would grow).
+    pub fn apply(&mut self, op_id: i64, delta: i64) -> bool {
+        if self.consistency == LINEARIZABLE {
+            if self.has_applied(op_id) {
+                false // dedup: exactly-once (cross-process, since `seen` is replayed)
+            } else {
+                self.value += delta;
+                self.seen.push(op_id);
+                self.version += 1;
+                true
+            }
+        } else {
+            // at_least_once: apply unconditionally; no dedup, no version.
+            self.value += delta;
+            true
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -632,5 +689,44 @@ mod tests {
         assert!(!sup.alive());
         assert!(r4.is_empty());
         assert_eq!(sup.restarts, 3, "count frozen at the trip");
+    }
+
+    // ── Slice 4: durable Store consistency (value-logic == oracle) ───────────
+
+    #[test]
+    fn store_retry_diverges_by_consistency() {
+        // THE headline (oracle test_retry_diverges_by_consistency): the same
+        // retried op produces DIFFERENT state under the two variants.
+        let mut a = Store::new(AT_LEAST_ONCE);
+        assert!(a.apply(7, 100));
+        assert!(a.apply(7, 100), "at_least_once re-applies a retry");
+        assert_eq!(a.value, 200);
+
+        let mut l = Store::new(LINEARIZABLE);
+        assert!(l.apply(7, 100));
+        assert!(!l.apply(7, 100), "linearizable dedups a retry (apply returns false)");
+        assert_eq!(l.value, 100);
+        assert_ne!(a.value, l.value, "the divergence is the whole point of the axis");
+    }
+
+    #[test]
+    fn store_linearizable_version_is_total_order() {
+        // Each DISTINCT applied op bumps version by 1; a deduped retry does not.
+        let mut s = Store::new(LINEARIZABLE);
+        s.apply(1, 5);
+        s.apply(2, 5);
+        let applied = s.apply(2, 5); // retry → deduped
+        assert_eq!(s.version, 2, "version counts applied ops, not retries");
+        assert!(!applied);
+        assert!(s.has_applied(1) && s.has_applied(2));
+    }
+
+    #[test]
+    fn store_at_least_once_keeps_no_version() {
+        let mut s = Store::new(AT_LEAST_ONCE);
+        s.apply(1, 5);
+        s.apply(2, 5);
+        assert_eq!(s.version, 0, "at_least_once maintains no total order");
+        assert!(!s.has_applied(1), "at_least_once does not track seen ids");
     }
 }
