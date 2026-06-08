@@ -482,6 +482,45 @@ impl Store {
     }
 }
 
+// ── Phase 7 (R12) Slice 5: kernel Goal<M> + LLM<Caps> ────────────────────────
+//
+// The consumers that assemble the lower slices. The kernel `LlmGateway` mediates
+// every AI call with PER-TOKEN cost metering (llm_gateway.ax's semantics), but
+// scoped to a Slice-1 PRINCIPAL: the cost is debited from the principal's carved
+// budget, so authority (Slice 1) and spend (the cost meter) are one model. On
+// overrun the gateway returns its fallback and latches (graceful degrade, not a
+// crash) — byte-identical to the oracle (I-2). A kernel `Goal` runs an objective
+// under the same principal budget and refuses to exceed it (E1604).
+
+/// A principal-scoped LLM gateway: per-token cost metering against a principal's
+/// budget, with a graceful fallback + latch on overrun. `rate_micro` is µ$ per
+/// 1000 tokens (integer µ$ keeps the arithmetic exact + tests deterministic).
+#[derive(Debug, Clone)]
+pub struct LlmGateway {
+    pub model: String,
+    pub rate_micro: i64,
+    /// The principal whose budget bounds this gateway's spend (Slice 1 handle).
+    pub principal: usize,
+    pub fallback: String,
+    pub halted: bool,
+    /// µ$ spent through THIS gateway (for observability; the authoritative cap is
+    /// the principal's budget).
+    pub spent_micro: i64,
+}
+
+impl LlmGateway {
+    pub fn new(model: String, rate_micro: i64, principal: usize, fallback: String) -> Self {
+        LlmGateway { model, rate_micro, principal, fallback, halted: false, spent_micro: 0 }
+    }
+
+    /// µ$ cost of a call of `tokens` tokens (rate is per 1000 tokens). Negative
+    /// token counts clamp to 0.
+    pub fn call_cost(&self, tokens: i64) -> i64 {
+        let t = tokens.max(0);
+        self.rate_micro * t / 1000
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -728,5 +767,36 @@ mod tests {
         s.apply(2, 5);
         assert_eq!(s.version, 0, "at_least_once maintains no total order");
         assert!(!s.has_applied(1), "at_least_once does not track seen ids");
+    }
+
+    // ── Slice 5: LLM gateway cost metering (== oracle call_cost) ─────────────
+
+    #[test]
+    fn llm_cost_scales_with_tokens() {
+        // Per-token cost (the F4 property vs R3c's per-call meter): a 10000-token
+        // call costs 10× a 1000-token call. Oracle test_cost_scales_with_tokens.
+        let g = LlmGateway::new("haiku".into(), 1000, 0, "[fb]".into());
+        assert_eq!(g.call_cost(1000), 1000);
+        assert_eq!(g.call_cost(10000), 10000);
+        assert_eq!(g.call_cost(10000), g.call_cost(1000) * 10);
+        assert_eq!(g.call_cost(-5), 0, "negative tokens clamp to 0");
+    }
+
+    #[test]
+    fn llm_gateway_spend_against_principal_budget() {
+        // The kernel gateway debits a PRINCIPAL's budget — authority (Slice 1) and
+        // spend are one model. An affordable call debits; an overrun does not and
+        // leaves budget intact (the interpreter latches the gateway).
+        let mut reg = PrincipalRegistry::new();
+        let p = reg.root("agent".into(), true, false, false, 50_000);
+        let g = LlmGateway::new("haiku".into(), 5000, p, "[fb]".into());
+        // 2000-token call = 10000 µ$ ≤ 50000 → affordable; debit the principal.
+        let cost = g.call_cost(2000);
+        assert_eq!(cost, 10_000);
+        assert!(reg.budget_remaining(p) >= cost, "principal can afford it");
+        reg.spend(p, cost);
+        assert_eq!(reg.budget_remaining(p), 40_000, "spend debited from the principal");
+        // An overrun call (60000 > 40000 left) is not afforded.
+        assert!(g.call_cost(12000) > reg.budget_remaining(p), "overrun exceeds the budget");
     }
 }

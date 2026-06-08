@@ -1124,34 +1124,62 @@ pub const BUILTINS: &[BuiltinFn] = &[
     // and replayed on open, so the value survives a process and a retried op_id
     // dedups cross-process under linearizable.
     BuiltinFn {
-        name: "store_open",
+        name: "dstore_open",
         params: &[("key", "str"), ("consistency", "i64")],
         ret: "i64",
         doc: "Phase-7 (R12 Slice 4): open (and replay the durable log of) the store `key` with a consistency model (0=at_least_once, 1=linearizable). Returns its handle. The replayed state survives a fresh process.",
     },
     BuiltinFn {
-        name: "store_apply",
+        name: "dstore_apply",
         params: &[("handle", "i64"), ("op_id", "i64"), ("delta", "i64")],
         ret: "i64",
         doc: "Phase-7 (R12 Slice 4): apply op `op_id` with effect `delta`; returns the new value. Under linearizable a retried op_id is deduped (exactly-once, even across a process restart); under at_least_once it re-applies. An applied op is appended to the durable log.",
     },
     BuiltinFn {
-        name: "store_value",
+        name: "dstore_value",
         params: &[("handle", "i64")],
         ret: "i64",
         doc: "Phase-7 (R12 Slice 4): the store's current accumulated value.",
     },
     BuiltinFn {
-        name: "store_version",
+        name: "dstore_version",
         params: &[("handle", "i64")],
         ret: "i64",
         doc: "Phase-7 (R12 Slice 4): the monotonic total-order stamp (counts distinct applied ops under linearizable; stays 0 under at_least_once).",
     },
     BuiltinFn {
-        name: "store_clear",
+        name: "dstore_clear",
         params: &[("key", "str")],
         ret: "i64",
         doc: "Phase-7 (R12 Slice 4): delete a durable store's log (reset persistence). Returns 1 if a log existed and was removed, else 0.",
+    },
+    // ── Phase 7 (R12 Slice 5): kernel LLM<Caps> + Goal<M> ────────────────────
+    // A principal-scoped LLM gateway: per-token cost metered against a Slice-1
+    // principal's budget — authority and spend are one model. Overrun degrades to
+    // a fallback + latch (graceful, not a crash). Mirrors llm_gateway.ax (I-2).
+    BuiltinFn {
+        name: "llm_open",
+        params: &[("model", "str"), ("rate_micro", "i64"), ("principal", "i64"), ("fallback", "str")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 5): open an LLM gateway scoped to a principal; rate_micro is µ$ per 1000 tokens. Every call's per-token cost is debited from the principal's budget. Returns the gateway handle; panics E1604 on an unknown principal.",
+    },
+    BuiltinFn {
+        name: "llm_complete",
+        params: &[("gw", "i64"), ("prompt", "str"), ("tokens", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 5): mediate one AI call — charge the real token cost against the principal's budget when it fits (returns the µ$ charged); on overrun spend nothing, return -1, and LATCH the gateway (later calls also fall back). There is no un-metered path.",
+    },
+    BuiltinFn {
+        name: "llm_alive",
+        params: &[("gw", "i64")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 5): has the gateway NOT yet latched on a budget overrun?",
+    },
+    BuiltinFn {
+        name: "llm_spent",
+        params: &[("gw", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 5): µ$ spent through this gateway so far.",
     },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {

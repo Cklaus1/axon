@@ -2156,9 +2156,9 @@ impl<'p> Interp<'p> {
             // NDJSON log, replayed on open, so the value survives a fresh process
             // and a retried op_id dedups cross-process under linearizable.
 
-            // `store_open(key, consistency) -> i64` — open (and replay) the durable
+            // `dstore_open(key, consistency) -> i64` — open (and replay) the durable
             // store `key` (0=at_least_once, 1=linearizable); returns its handle.
-            "store_open" => {
+            "dstore_open" => {
                 want(2)?;
                 let key = as_str(&args[0])?.to_string();
                 let consistency = as_int(&args[1])?;
@@ -2181,29 +2181,29 @@ impl<'p> Interp<'p> {
                 }
                 let path = match path {
                     Some(p) => p,
-                    None => return panic("[E1603] store_open: no cache dir for the durable store log".to_string()),
+                    None => return panic("[E1603] dstore_open: no cache dir for the durable store log".to_string()),
                 };
                 let mut stores = self.stores.borrow_mut();
                 stores.push((store, path));
                 ok!(Value::Int((stores.len() - 1) as i64));
             }
 
-            // `store_apply(handle, op_id, delta) -> i64` — apply an op; returns the
+            // `dstore_apply(handle, op_id, delta) -> i64` — apply an op; returns the
             // new value. Under linearizable a retried op_id is deduped (no-op) and
             // NOT re-logged; under at_least_once it re-applies. An actually-applied
             // op is appended to the durable log so it survives a process restart.
-            "store_apply" => {
+            "dstore_apply" => {
                 want(3)?;
                 let h = as_int(&args[0])?;
                 let op_id = as_int(&args[1])?;
                 let delta = as_int(&args[2])?;
                 if h < 0 {
-                    return panic("[E1603] store_apply: negative store handle".to_string());
+                    return panic("[E1603] dstore_apply: negative store handle".to_string());
                 }
                 let (applied, new_value, path) = {
                     let mut stores = self.stores.borrow_mut();
                     let Some((store, path)) = stores.get_mut(h as usize) else {
-                        return panic(format!("[E1603] store_apply: unknown store handle {h}"));
+                        return panic(format!("[E1603] dstore_apply: unknown store handle {h}"));
                     };
                     let applied = store.apply(op_id, delta);
                     (applied, store.value, path.clone())
@@ -2225,8 +2225,8 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(new_value));
             }
 
-            // `store_value(handle) -> i64` — the store's current accumulated value.
-            "store_value" => {
+            // `dstore_value(handle) -> i64` — the store's current accumulated value.
+            "dstore_value" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
@@ -2237,9 +2237,9 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(v));
             }
 
-            // `store_version(handle) -> i64` — the monotonic total-order stamp
+            // `dstore_version(handle) -> i64` — the monotonic total-order stamp
             // (linearizable only; at_least_once stays 0).
-            "store_version" => {
+            "dstore_version" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
@@ -2250,17 +2250,103 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(v));
             }
 
-            // `store_clear(key) -> i64` — delete a durable store's log (reset
+            // `dstore_clear(key) -> i64` — delete a durable store's log (reset
             // persistence). Returns 1 if a log existed and was removed, else 0.
             // Lets a test start from a clean slate; not part of the consistency
             // model itself.
-            "store_clear" => {
+            "dstore_clear" => {
                 want(1)?;
                 let key = as_str(&args[0])?.to_string();
                 let removed = store_log_path(&key)
                     .map(|p| std::fs::remove_file(p).is_ok())
                     .unwrap_or(false);
                 ok!(Value::Int(if removed { 1 } else { 0 }));
+            }
+
+            // ── Phase 7 (R12 Slice 5): kernel LLM<Caps> + Goal<M> ───────────────
+            // A principal-scoped LLM gateway: per-token cost metering debited from
+            // a Slice-1 principal's budget — authority and spend are ONE model.
+            // Overrun → graceful fallback + latch (degrade, not crash). Mirrors
+            // llm_gateway.ax (I-2), but the budget IS the principal's.
+
+            // `llm_open(model, rate_micro, principal, fallback) -> i64` — open a
+            // gateway bound to a principal; rate_micro is µ$ per 1000 tokens.
+            "llm_open" => {
+                want(4)?;
+                let model = as_str(&args[0])?.to_string();
+                let rate = as_int(&args[1])?;
+                let principal = as_int(&args[2])?;
+                let fallback = as_str(&args[3])?.to_string();
+                if principal < 0 || self.principals.borrow().get(principal as usize).is_none() {
+                    return panic(format!(
+                        "[E1604] llm_open: unknown principal handle {principal} \
+                         (an LLM gateway must be scoped to a minted principal)"
+                    ));
+                }
+                let mut gws = self.llm_gateways.borrow_mut();
+                gws.push(crate::kernel::LlmGateway::new(model, rate, principal as usize, fallback));
+                ok!(Value::Int((gws.len() - 1) as i64));
+            }
+
+            // `llm_complete(gw, prompt, tokens) -> i64` — mediate one AI call.
+            // Charges the REAL token cost against the principal's budget when it
+            // fits (returns the µ$ cost charged); on overrun spends nothing,
+            // returns -1, and LATCHES the gateway (every later call also falls
+            // back). The "mediates every call" contract: there is no un-metered
+            // path. (`prompt` shapes the mock response in a live binding; here the
+            // metering is the observable contract.)
+            "llm_complete" => {
+                want(3)?;
+                let gw = as_int(&args[0])?;
+                let _prompt = as_str(&args[1])?;
+                let tokens = as_int(&args[2])?;
+                if gw < 0 {
+                    return panic("[E1604] llm_complete: negative gateway handle".to_string());
+                }
+                // Read gateway state (cost, principal, halted).
+                let (cost, principal, halted) = {
+                    let gws = self.llm_gateways.borrow();
+                    let Some(g) = gws.get(gw as usize) else {
+                        return panic(format!("[E1604] llm_complete: unknown gateway {gw}"));
+                    };
+                    (g.call_cost(tokens), g.principal, g.halted)
+                };
+                let remaining = self.principals.borrow().budget_remaining(principal);
+                if halted || cost > remaining {
+                    // Overrun / already-latched: latch, no spend, signal fallback.
+                    if let Some(g) = self.llm_gateways.borrow_mut().get_mut(gw as usize) {
+                        g.halted = true;
+                    }
+                    ok!(Value::Int(-1));
+                } else {
+                    // Affordable: debit the PRINCIPAL's budget by the real cost.
+                    self.principals.borrow_mut().spend(principal, cost);
+                    if let Some(g) = self.llm_gateways.borrow_mut().get_mut(gw as usize) {
+                        g.spent_micro += cost;
+                    }
+                    ok!(Value::Int(cost));
+                }
+            }
+
+            // `llm_alive(gw) -> bool` — has the gateway NOT yet latched on an overrun?
+            "llm_alive" => {
+                want(1)?;
+                let gw = as_int(&args[0])?;
+                let alive = gw >= 0
+                    && self.llm_gateways.borrow().get(gw as usize).map(|g| !g.halted).unwrap_or(false);
+                ok!(Value::Bool(alive));
+            }
+
+            // `llm_spent(gw) -> i64` — µ$ spent through this gateway so far.
+            "llm_spent" => {
+                want(1)?;
+                let gw = as_int(&args[0])?;
+                let spent = if gw >= 0 {
+                    self.llm_gateways.borrow().get(gw as usize).map(|g| g.spent_micro).unwrap_or(0)
+                } else {
+                    0
+                };
+                ok!(Value::Int(spent));
             }
 
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).

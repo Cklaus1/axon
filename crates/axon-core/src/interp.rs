@@ -359,6 +359,10 @@ pub struct Interp<'p> {
     /// plus the log path it appends applied ops to, so its value survives a fresh
     /// process and a retried op_id dedups cross-process under linearizable.
     stores: RefCell<Vec<(crate::kernel::Store, std::path::PathBuf)>>,
+    /// Phase 7 (R12 Slice 5): principal-scoped LLM gateways, indexed by handle.
+    /// Each mediates AI calls with per-token cost metering debited from its
+    /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
+    llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -863,6 +867,7 @@ impl<'p> Interp<'p> {
             scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
             supervisors: RefCell::new(Vec::new()),
             stores: RefCell::new(Vec::new()),
+            llm_gateways: RefCell::new(Vec::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

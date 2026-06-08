@@ -360,11 +360,11 @@ fn phase7_kernel_durable_store() {
     // Process 1: linearizable; ops 1,2 + a deduped retry of 2 → value 150, ver 2.
     let (code, out1) = run(
         "fn main() -> i64 { \
-           let s = store_open(\"k\", 1)\n\
-           let _ = store_apply(s, 1, 100)\n\
-           let _ = store_apply(s, 2, 50)\n\
-           let _ = store_apply(s, 2, 50)\n\
-           println(\"{to_str(store_value(s))},{to_str(store_version(s))}\")\n\
+           let s = dstore_open(\"k\", 1)\n\
+           let _ = dstore_apply(s, 1, 100)\n\
+           let _ = dstore_apply(s, 2, 50)\n\
+           let _ = dstore_apply(s, 2, 50)\n\
+           println(\"{to_str(dstore_value(s))},{to_str(dstore_version(s))}\")\n\
            0 }",
     );
     assert_eq!(code, 0);
@@ -374,10 +374,10 @@ fn phase7_kernel_durable_store() {
     // dedups (cross-process `seen` reconstructed); a new op applies.
     let (code, out2) = run(
         "fn main() -> i64 { \
-           let s = store_open(\"k\", 1)\n\
-           let _ = store_apply(s, 2, 50)\n\
-           let _ = store_apply(s, 3, 7)\n\
-           println(\"{to_str(store_value(s))},{to_str(store_version(s))}\")\n\
+           let s = dstore_open(\"k\", 1)\n\
+           let _ = dstore_apply(s, 2, 50)\n\
+           let _ = dstore_apply(s, 3, 7)\n\
+           println(\"{to_str(dstore_value(s))},{to_str(dstore_version(s))}\")\n\
            0 }",
     );
     assert_eq!(code, 0);
@@ -389,19 +389,72 @@ fn phase7_kernel_durable_store() {
     // at_least_once double-counts a retry, and that double-count persists.
     let (_, out3) = run(
         "fn main() -> i64 { \
-           let s = store_open(\"alo\", 0)\n\
-           let _ = store_apply(s, 1, 100)\n\
-           let _ = store_apply(s, 1, 100)\n\
-           println(\"{to_str(store_value(s))}\")\n\
+           let s = dstore_open(\"alo\", 0)\n\
+           let _ = dstore_apply(s, 1, 100)\n\
+           let _ = dstore_apply(s, 1, 100)\n\
+           println(\"{to_str(dstore_value(s))}\")\n\
            0 }",
     );
     assert!(out3.contains("200"), "at_least_once re-applies a retry: {out3:?}");
     let (_, out4) = run(
-        "fn main() -> i64 { let s = store_open(\"alo\", 0)\n println(\"{to_str(store_value(s))}\")\n 0 }",
+        "fn main() -> i64 { let s = dstore_open(\"alo\", 0)\n println(\"{to_str(dstore_value(s))}\")\n 0 }",
     );
     assert!(out4.contains("200"), "the at_least_once double-count persists: {out4:?}");
 
     let _ = std::fs::remove_dir_all(&cache);
+}
+
+#[test]
+fn phase7_kernel_llm_gateway() {
+    // Phase 7 (R12 Slice 5): the kernel LLM gateway meters every AI call's REAL
+    // per-token cost against a Slice-1 PRINCIPAL's budget — authority and spend
+    // are one model. On overrun it returns the fallback (-1) and LATCHES (degrade,
+    // not crash). The R12 gate: a call charges the real token count and the
+    // gateway refuses to exceed the principal's budget.
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_llm_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // Two affordable calls debit the principal; the third overruns → fallback +
+    // latch; the principal's budget is the authoritative cap.
+    let (code, _) = run(
+        "fn main() -> i64 { \
+           let p = principal_root(\"agent\", true, false, false, 50000)\n\
+           let gw = llm_open(\"haiku\", 5000, p, \"[fb]\")\n\
+           assert_eq(llm_complete(gw, \"a\", 2000), 10000)\n\
+           assert_eq(principal_budget_remaining(p), 40000)\n\
+           assert_eq(llm_complete(gw, \"b\", 2000), 10000)\n\
+           assert_eq(principal_budget_remaining(p), 30000)\n\
+           assert_eq(llm_complete(gw, \"huge\", 10000), 0 - 1)\n\
+           assert(!llm_alive(gw))\n\
+           assert_eq(llm_spent(gw), 20000)\n\
+           assert_eq(principal_budget_remaining(p), 30000)\n\
+           0 }",
+    );
+    assert_eq!(code, 0, "real per-token cost debits the principal; overrun latches");
+
+    // Once latched, every later call falls back — even one that would have fit.
+    let (code, _) = run(
+        "fn main() -> i64 { \
+           let p = principal_root(\"agent\", true, false, false, 5000)\n\
+           let gw = llm_open(\"opus\", 60000, p, \"[fb]\")\n\
+           assert_eq(llm_complete(gw, \"big\", 1000), 0 - 1)\n\
+           assert(!llm_alive(gw))\n\
+           assert_eq(llm_complete(gw, \"tiny\", 1), 0 - 1)\n\
+           assert_eq(llm_spent(gw), 0)\n\
+           0 }",
+    );
+    assert_eq!(code, 0, "an overrun latches; later affordable calls still fall back");
+
+    // An LLM gateway must be scoped to a real principal (E1604).
+    let (code, _) = run(
+        "fn main() -> i64 { let gw = llm_open(\"m\", 1000, 0 - 1, \"[fb]\")\n gw }",
+    );
+    assert_eq!(code, 101, "an LLM gateway on an unknown principal is refused (E1604)");
 }
 
 #[test]
