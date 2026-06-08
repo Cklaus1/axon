@@ -1523,4 +1523,114 @@ mod tests {
             0
         );
     }
+
+    // ── Red-team: the firewall must REJECT adversarial passes ─────────────────
+    //
+    // Layer-1 hardening (the prerequisite for trusting free-form pass authorship,
+    // Layer-3): prove the four gates catch the failure modes a malicious or buggy
+    // pass would exhibit. These passes live ONLY here — never in the registry.
+
+    /// G1 catches a STDOUT-only change (same exit code). The existing G1 test
+    /// covers an exit-code flip; this covers the other half of the observable
+    /// tuple — a pass that adds a `println` must be rejected even though `main`'s
+    /// return value is unchanged.
+    #[test]
+    fn redteam_stdout_only_change_is_rejected_g1() {
+        let c = vec![prog("fn main() -> i64 { 0 }")];
+        // Inject a println before the body — exit code stays 0, stdout differs.
+        let chatter: &Pass = &|p: &Program| {
+            use crate::ast::{Expr, Item, Literal, Stmt};
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "main" {
+                        let noise = Expr::Call {
+                            callee: Box::new(Expr::Ident("println".into())),
+                            args: vec![Expr::Literal(Literal::Str("leaked".into()))],
+                            tier: None,
+                        };
+                        let orig = f.body.clone();
+                        f.body = Expr::Block(vec![
+                            Stmt { expr: noise, span: crate::span::Span::dummy() },
+                            Stmt { expr: orig, span: crate::span::Span::dummy() },
+                        ]);
+                    }
+                }
+            }
+            np
+        };
+        let rec = verify_pass(chatter, &c);
+        assert!(!rec.passed(), "a stdout-changing pass must be rejected");
+        let err = rec.rejection().expect("a rejection");
+        assert_eq!(err.code, E1401, "stdout change is a G1 failure: {}", err.message);
+        assert!(err.message.contains("stdout"), "names the stdout change: {}", err.message);
+    }
+
+    /// G2 catches an `exec` injection — the most dangerous capability, distinct
+    /// from the existing fs:read test. Process spawning must never be added.
+    #[test]
+    fn redteam_exec_injection_is_rejected_g2() {
+        let c = vec![prog("fn main() -> i64 { 2 * 2 }")];
+        let spawner: &Pass = &|p: &Program| {
+            use crate::ast::{Expr, Item, Literal, Stmt};
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "main" {
+                        // exec("sh") — adds the exec capability the original lacked.
+                        let ex = Expr::Call {
+                            callee: Box::new(Expr::Ident("exec".into())),
+                            args: vec![Expr::Literal(Literal::Str("sh".into()))],
+                            tier: None,
+                        };
+                        let orig = f.body.clone();
+                        f.body = Expr::Block(vec![
+                            Stmt { expr: ex, span: crate::span::Span::dummy() },
+                            Stmt { expr: orig, span: crate::span::Span::dummy() },
+                        ]);
+                    }
+                }
+            }
+            np
+        };
+        let rec = verify_pass(spawner, &c);
+        assert!(!rec.passed(), "an exec-adding pass must be rejected");
+        // Injecting a real `exec` both widens the capability set (G2) AND changes
+        // observable behavior (G1: it runs, flipping the exit code) — the gate
+        // catches it on BOTH axes. Assert the G2 safety gate specifically fired
+        // (the I-12 property), not merely that *some* gate did. (rejection()
+        // reports G1 first by priority, but g2_safety is independently Err here.)
+        let g2 = rec.g2_safety.as_ref().expect_err("G2 must flag the added exec capability");
+        assert_eq!(g2.code, E1402, "exec injection is a G2 safety failure: {}", g2.message);
+        assert!(g2.message.contains("exec"), "names the exec capability: {}", g2.message);
+    }
+
+    /// G1 catches PANIC ERASURE — the exact soundness failure the real
+    /// constant-fold / bool-simplify passes must avoid. A pass that folds a
+    /// `10 / 0` (which panics, exit 101) to a literal (exit 0) changes observable
+    /// behavior and MUST be rejected. This proves the property the registry passes
+    /// rely on for safety is actually enforced by the gate (not just respected by
+    /// the passes themselves).
+    #[test]
+    fn redteam_panic_erasure_is_rejected_g1() {
+        // main divides by zero → exit 101. A "fold" that replaces it with 0 erases
+        // the panic.
+        let c = vec![prog("fn main() -> i64 { let z = 0\n 10 / z }")];
+        let erase: &Pass = &|p: &Program| {
+            use crate::ast::{Expr, Item, Literal};
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    if f.name == "main" {
+                        f.body = Expr::Literal(Literal::Int(0)); // "1000/0 = 0" — wrong!
+                    }
+                }
+            }
+            np
+        };
+        let rec = verify_pass(erase, &c);
+        assert!(!rec.passed(), "erasing a runtime panic must be rejected");
+        let err = rec.rejection().expect("a rejection");
+        assert_eq!(err.code, E1401, "panic erasure is a G1 failure (exit 101 → 0): {}", err.message);
+    }
 }

@@ -12,6 +12,13 @@
   model that discovers it doesn't need the offset. Built entirely on shipped primitives
   (`@[adaptive]`/`goal_run`/refinements/the `axon complexity` MDL idea); the kernel `World<T>`
   + `observe`/`condition` keywords + probabilistic fit are the named Phase-13 follow-on.
+- Self-improving compiler (R10): **firewall red-team hardening** — adversarial passes proving
+  the four gates REJECT bad candidates (the prerequisite for trusting free-form pass authorship):
+  a stdout-only change (G1/E1401, the half of the observable tuple the prior test didn't cover),
+  an `exec` capability injection (caught on BOTH G2/E1402-I-12 and G1), and **panic erasure** —
+  a "fold" of `10/0` (exit 101) to a literal (exit 0) is rejected by G1, proving the exact
+  soundness property the real constant-fold/bool-simplify passes rely on is enforced by the gate,
+  not merely respected by the passes.
 - Self-improving compiler (R10): a **third** oracle-verified optimization pass — `bool-simplify`
   (`!true`→`false`, `!false`→`true`, `!(!x)`→`x`) — added to the closed template registry and
   proven through the four-gate harness (G1/G2/G3 over the real corpus). All three rewrites are
