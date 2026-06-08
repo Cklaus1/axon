@@ -127,6 +127,11 @@ pub const E1405: &str = "E1405"; // pass manifest hash mismatch at boot (TCB att
 pub const E1406: &str = "E1406"; // correctness judged by AI — forbidden; the oracle is the interpreter
 pub const E1407: &str = "E1407"; // AI proposed a template name not in the closed registry (rejected before verify)
 pub const E1408: &str = "E1408"; // a graduated/verified pass name is absent from the template registry (tamper / version skew)
+// R10 Layer 3 — AI-authored RewriteSpec proposal-stage validation (fail-closed, before the firewall)
+pub const E1409: &str = "E1409"; // RewriteSpec empty / not provably total (proposes no transform)
+pub const E1411: &str = "E1411"; // RewriteSpec rule name outside the closed reviewed vocabulary
+pub const E1412: &str = "E1412"; // RewriteSpec could express a capability (grammar violation — defense in design)
+pub const E1413: &str = "E1413"; // RewriteSpec over the rule-count budget (runaway proposal rejected, never run)
 
 // R5 goal sugar: #[goal(...)] attribute diagnostics
 pub const E1500: &str = "E1500"; // metric must name an @[adaptive] fn
@@ -318,7 +323,7 @@ mod tests {
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
             E1300, E1301, E1302,
             E1306, E1310,
-            E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408,
+            E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413,
             E1500, E1503, E1504, E1505,
             W0001, W0002, W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410,
             I0001,

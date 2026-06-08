@@ -26,6 +26,16 @@
   a "fold" of `10/0` (exit 101) to a literal (exit 0) is rejected by G1, proving the exact
   soundness property the real constant-fold/bool-simplify passes rely on is enforced by the gate,
   not merely respected by the passes.
+- Self-improving compiler — **Layer 3 prototype: AI-authored passes as DATA** (`rewrite_dsl.rs`,
+  `spec/self-improving-layer3.md`). A candidate pass is a declarative, total, capability-free
+  `RewriteSpec` (text the proposer emits — one rule name per line from a closed reviewed
+  vocabulary), NOT Rust compiled into the TCB. The flow: parse → validate (fail-closed, E15xx:
+  unknown-rule/E1504, empty-or-nontotal/E1502, over-budget/E1506; capabilities are
+  unrepresentable by grammar) → compile-to-pass (a reviewed evaluator — the AI never executes)
+  → the UNCHANGED four-gate firewall (`verify_pass`) → unchanged multi-sig graduate. A test
+  proves a compiled RewriteSpec composing all four rule kinds clears G1/G2/G3 over the diverse
+  corpus, and that the data path preserves a would-panic division (no soundness loss vs the Rust
+  passes). The AI is never in the trust path; the firewall it cannot weaken decides admission.
 - Self-improving compiler (R10): a **fourth** oracle-verified optimization pass —
   `redundant-branch-fold` (`if true {a} else {b}` → `a`, `if false {…} else {b}` → `b`) — added
   to the closed template registry and proven through the four gates over the real corpus. Sound:

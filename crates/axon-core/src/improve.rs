@@ -1847,4 +1847,45 @@ mod tests {
             "non-literal condition is not a site"
         );
     }
+
+    // ── Layer 3: an AI-authored RewriteSpec (DATA) clears the SAME firewall ────
+    //
+    // The L3 thesis end-to-end: a candidate pass authored as a validated
+    // RewriteSpec (not Rust) compiles to a Pass that must clear the UNCHANGED
+    // four gates. This proves the "authored-as-data → verified" path — the AI is
+    // never in the trust path; the same `verify_pass` decides admission.
+
+    #[test]
+    fn a_compiled_rewrite_spec_clears_the_four_gates() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        // A proposer emits this spec as TEXT (one rule per line).
+        let spec = RewriteSpec::parse(
+            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch",
+        )
+        .expect("spec parses");
+        spec.validate().expect("spec validates (E15xx clean)");
+        // Compile the data spec to a runnable Pass and run it through the EXISTING
+        // firewall over the diverse corpus — no L1 change.
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &diverse_corpus());
+        assert!(
+            rec.passed(),
+            "a validated, compiled RewriteSpec must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
+    }
+
+    #[test]
+    fn rewrite_spec_validation_is_fail_closed() {
+        use crate::rewrite_dsl::RewriteSpec;
+        // An unknown rule name (a proposer trying to invent a rule kind) is
+        // rejected at parse — never compiled, never run.
+        assert!(RewriteSpec::parse("fold-int-literal\nspawn-shell").is_err());
+        // An empty spec is rejected by validate (proposes no transform).
+        assert!(RewriteSpec::parse("# just a comment\n")
+            .unwrap()
+            .validate()
+            .is_err());
+    }
 }
