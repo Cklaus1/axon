@@ -26,6 +26,15 @@
   a "fold" of `10/0` (exit 101) to a literal (exit 0) is rejected by G1, proving the exact
   soundness property the real constant-fold/bool-simplify passes rely on is enforced by the gate,
   not merely respected by the passes.
+- Self-improving compiler — **Layer 3: a NEW rewrite rule kind, `fold-logical`**, the first
+  optimization that is *not* a re-expression of a shipped pass — added under the "widen the DSL
+  only as red-teamed" discipline. It folds the short-circuit-SOUND logical cases
+  (`false && R → false`, `true && R → R`, `L && true → L`, `true || R → true`, `false || R → R`,
+  `L || false → L`) and DELIBERATELY refuses the drop-left unsound cases (`L && false`,
+  `L || true`) — where the left operand is always evaluated, so dropping it would erase its side
+  effects/panic. Earns its place by clearing the four-gate firewall over a corpus (incl. a
+  `false && (10/0 > 0)` short-circuit-avoids-panic case); a red-team proves the unsound drop-left
+  variant is caught by G1/E1401. Now five rule kinds.
 - Self-improving compiler — **Layer 3 prototype: AI-authored passes as DATA** (`rewrite_dsl.rs`,
   `spec/self-improving-layer3.md`). A candidate pass is a declarative, total, capability-free
   `RewriteSpec` (text the proposer emits — one rule name per line from a closed reviewed

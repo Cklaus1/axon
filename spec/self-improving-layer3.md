@@ -115,7 +115,10 @@ steps 1–2 (validate + compile-to-pass), both reviewed Rust, both fail-closed.
 - **F2 — how rich is the DSL?** → **Start minimal** (literal-fold + identity-collapse +
   branch-fold shapes — i.e. exactly the four shipped passes, re-expressed as data), then widen
   only as each new shape is red-teamed. A richer DSL = more expressivity = more attack surface;
-  grow it under the same discipline that grew the registry.
+  grow it under the same discipline that grew the registry. **First widening LANDED**:
+  `fold-logical` (short-circuit-sound logical folding — a genuinely NEW optimization, not a
+  re-expression of a shipped pass), with its soundness boundary unit-tested (folds `false && R`,
+  refuses `L && false`) and a red-team proving the unsound drop-left variant is caught by G1.
 - **F3 — does a malformed/over-budget spec hang the verifier?** → **No.** Validation (§3 step
   1) rejects non-total specs *before* execution; the compile-to-pass evaluator runs under a
   fixed fuel budget and a wall-clock cap, and a runaway is a rejection (E15xx), never a hang.

@@ -1858,9 +1858,10 @@ mod tests {
     #[test]
     fn a_compiled_rewrite_spec_clears_the_four_gates() {
         use crate::rewrite_dsl::{compile, RewriteSpec};
-        // A proposer emits this spec as TEXT (one rule per line).
+        // A proposer emits this spec as TEXT (one rule per line) — ALL five rule
+        // kinds, including the new fold-logical.
         let spec = RewriteSpec::parse(
-            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch",
+            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical",
         )
         .expect("spec parses");
         spec.validate().expect("spec validates (E15xx clean)");
@@ -1874,6 +1875,89 @@ mod tests {
             "a validated, compiled RewriteSpec must clear G1/G2/G3: {:?}",
             rec.rejection()
         );
+    }
+
+    /// The NEW rule kind through the firewall on its own, over a corpus that
+    /// exercises logical short-circuit with side-effecting / value operands — the
+    /// concrete proof `fold-logical` is behavior-preserving (the "widen the DSL
+    /// only as red-teamed" discipline: a new rule earns its place by clearing the
+    /// same gates).
+    #[test]
+    fn fold_logical_rule_clears_the_firewall() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![
+            prog("fn main() -> i64 { if false && (1 > 0) { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if true || (1 > 0) { 7 } else { 9 } }"),
+            // `L && true`/`L || false` where L is a real comparison (kept, evaluated).
+            prog("fn f(x: i64) -> i64 { if (x > 0) && true { 1 } else { 0 } }\nfn main() -> i64 { f(5) }"),
+            // A program that relies on short-circuit to AVOID a panic: `false && (1/0 > 0)`
+            // must stay correct — the rhs is never evaluated, and folding to `false`
+            // preserves that.
+            prog("fn main() -> i64 { if false && (10 / 0 > 0) { 1 } else { 2 } }"),
+        ];
+        let spec = RewriteSpec::parse("fold-logical").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "fold-logical must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    /// RED-TEAM for the new rule: the UNSOUND drop-left variant (`L && false →
+    /// false`, dropping the evaluated L) — which `fold-logical` correctly REFUSES
+    /// to do — would be caught by G1 if a buggy rule did it. Proven by an
+    /// unsound test-only pass that drops the left operand: against a corpus member
+    /// whose left operand PANICS (`(10/0 > 0) && false`), erasing it changes the
+    /// exit code, so G1/E1401 rejects it.
+    #[test]
+    fn redteam_drop_left_logical_fold_is_rejected_by_g1() {
+        use crate::ast::{Expr, Item, Literal};
+        // `(10/0 > 0) && false` — the LEFT operand panics (div by zero, exit 101);
+        // the whole `&&` therefore panics. An unsound "fold to false" erases it.
+        let c = vec![prog("fn main() -> i64 { if (10 / 0 > 0) && false { 1 } else { 2 } }")];
+        let drop_left: &Pass = &|p: &Program| {
+            fn fold(e: &Expr) -> Expr {
+                // UNSOUND: `_ && false → false`, dropping the (possibly panicking)
+                // left operand. (Mirrors what a buggy fold-logical would do.)
+                if let Expr::BinOp { op: crate::ast::BinOp::And, right, .. } = e {
+                    if matches!(right.as_ref(), Expr::Literal(Literal::Bool(false))) {
+                        return Expr::Literal(Literal::Bool(false));
+                    }
+                }
+                e.clone()
+            }
+            fn walk(e: &Expr) -> Expr {
+                // shallow: only need to hit main's `if` condition for this test
+                match e {
+                    Expr::Block(stmts) => Expr::Block(
+                        stmts
+                            .iter()
+                            .map(|s| {
+                                let mut ns = s.clone();
+                                ns.expr = walk(&s.expr);
+                                ns
+                            })
+                            .collect(),
+                    ),
+                    Expr::If { cond, then, else_ } => Expr::If {
+                        cond: Box::new(fold(cond)),
+                        then: then.clone(),
+                        else_: else_.clone(),
+                    },
+                    other => other.clone(),
+                }
+            }
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    f.body = walk(&f.body);
+                }
+            }
+            np
+        };
+        let rec = verify_pass(drop_left, &c);
+        assert!(!rec.passed(), "dropping an evaluated (panicking) operand must be rejected");
+        assert_eq!(rec.rejection().unwrap().code, E1401, "G1 catches the erased panic");
     }
 
     #[test]

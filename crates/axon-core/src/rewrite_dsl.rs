@@ -57,6 +57,18 @@ pub enum RewriteRule {
     /// Fold a constant-condition `if`/`else` to the taken branch
     /// (`redundant-branch-fold`).
     FoldConstBranch,
+    /// Fold a logical `&&`/`||` with a constant operand — but ONLY the
+    /// short-circuit-sound cases, where no EVALUATED operand is dropped:
+    ///   `false && R → false`   (R is never evaluated in the original)
+    ///   `true  && R → R`  ;  `L && true → L`
+    ///   `true  || R → true`    (R is never evaluated)
+    ///   `false || R → R`  ;  `L || false → L`
+    /// CRITICALLY it does NOT fold `L && false → false` or `L || true → true`:
+    /// the LEFT operand is always evaluated, so dropping it would erase L's side
+    /// effects / panic (an unsoundness G1 would catch — proven by a red-team
+    /// test). A genuinely NEW optimization (not a re-expression of a shipped
+    /// pass), added under the "widen only as red-teamed" discipline.
+    FoldLogicalShortCircuit,
 }
 
 impl RewriteRule {
@@ -67,6 +79,7 @@ impl RewriteRule {
             RewriteRule::FoldArithIdentity => "fold-arith-identity",
             RewriteRule::SimplifyBoolNot => "simplify-bool-not",
             RewriteRule::FoldConstBranch => "fold-const-branch",
+            RewriteRule::FoldLogicalShortCircuit => "fold-logical",
         }
     }
 
@@ -76,6 +89,7 @@ impl RewriteRule {
             "fold-arith-identity" => Some(RewriteRule::FoldArithIdentity),
             "simplify-bool-not" => Some(RewriteRule::SimplifyBoolNot),
             "fold-const-branch" => Some(RewriteRule::FoldConstBranch),
+            "fold-logical" => Some(RewriteRule::FoldLogicalShortCircuit),
             _ => None,
         }
     }
@@ -136,12 +150,45 @@ impl RewriteRule {
                 }
                 None
             }
+            RewriteRule::FoldLogicalShortCircuit => {
+                if let Expr::BinOp { op, left, right } = e {
+                    let l = left.as_ref();
+                    let r = right.as_ref();
+                    match op {
+                        // `false && R → false` — R is never evaluated in the
+                        // original (short-circuit), so dropping it is sound.
+                        BinOp::And if is_bool(l, false) => {
+                            return Some(Expr::Literal(Literal::Bool(false)))
+                        }
+                        // `true && R → R` ; `L && true → L` — the dropped operand
+                        // is a literal (no side effect), the kept one is evaluated.
+                        BinOp::And if is_bool(l, true) => return Some(r.clone()),
+                        BinOp::And if is_bool(r, true) => return Some(l.clone()),
+                        // `true || R → true` — R never evaluated (short-circuit).
+                        BinOp::Or if is_bool(l, true) => {
+                            return Some(Expr::Literal(Literal::Bool(true)))
+                        }
+                        // `false || R → R` ; `L || false → L`.
+                        BinOp::Or if is_bool(l, false) => return Some(r.clone()),
+                        BinOp::Or if is_bool(r, false) => return Some(l.clone()),
+                        // NOTE: `L && false` and `L || true` are deliberately NOT
+                        // folded — the LEFT operand is always evaluated, so dropping
+                        // it would erase L's side effects (unsound; G1 would reject).
+                        _ => {}
+                    }
+                }
+                None
+            }
         }
     }
 }
 
 fn is_int(e: &Expr, n: i64) -> bool {
     matches!(e, Expr::Literal(Literal::Int(v)) if *v == n)
+}
+
+fn is_bool(e: &Expr, b: bool) -> bool {
+    matches!(e, Expr::Literal(Literal::Bool(v)) if *v == b)
 }
 
 /// Checked integer fold — mirrors `interp::value::eval_binop_vals`; `None` when
@@ -234,6 +281,7 @@ impl RewriteSpec {
                     | RewriteRule::FoldArithIdentity
                     | RewriteRule::SimplifyBoolNot
                     | RewriteRule::FoldConstBranch
+                    | RewriteRule::FoldLogicalShortCircuit
             )
         })
     }
@@ -513,5 +561,83 @@ mod tests {
             matches!(tail, Expr::Literal(Literal::Int(1))),
             "composed rules should reduce to 1: {tail:?}"
         );
+    }
+
+    // ── fold-logical (a NEW rule kind, added under the red-team discipline) ────
+
+    /// Build the bare `BinOp` for a logical operator over two raw expr operands.
+    fn logical(op: BinOp, l: Expr, r: Expr) -> Expr {
+        Expr::BinOp { op, left: Box::new(l), right: Box::new(r) }
+    }
+    fn b(v: bool) -> Expr {
+        Expr::Literal(Literal::Bool(v))
+    }
+    fn id(n: &str) -> Expr {
+        Expr::Ident(n.to_string())
+    }
+
+    #[test]
+    fn fold_logical_folds_only_short_circuit_sound_cases() {
+        let rule = RewriteRule::FoldLogicalShortCircuit;
+        // SOUND folds (no evaluated operand dropped):
+        // false && R → false  (R never evaluated)
+        assert!(matches!(
+            rule.apply_here(&logical(BinOp::And, b(false), id("r"))),
+            Some(Expr::Literal(Literal::Bool(false)))
+        ));
+        // true && R → R ; L && true → L
+        assert!(matches!(rule.apply_here(&logical(BinOp::And, b(true), id("r"))), Some(Expr::Ident(n)) if n == "r"));
+        assert!(matches!(rule.apply_here(&logical(BinOp::And, id("l"), b(true))), Some(Expr::Ident(n)) if n == "l"));
+        // true || R → true ; false || R → R ; L || false → L
+        assert!(matches!(
+            rule.apply_here(&logical(BinOp::Or, b(true), id("r"))),
+            Some(Expr::Literal(Literal::Bool(true)))
+        ));
+        assert!(matches!(rule.apply_here(&logical(BinOp::Or, b(false), id("r"))), Some(Expr::Ident(n)) if n == "r"));
+        assert!(matches!(rule.apply_here(&logical(BinOp::Or, id("l"), b(false))), Some(Expr::Ident(n)) if n == "l"));
+    }
+
+    #[test]
+    fn fold_logical_refuses_the_drop_left_unsound_cases() {
+        // THE SOUNDNESS BOUNDARY: `L && false` and `L || true` must NOT fold —
+        // the LEFT operand is always evaluated, so dropping it would erase L's
+        // side effects/panic. The rule returns None (no fold) for these.
+        let rule = RewriteRule::FoldLogicalShortCircuit;
+        assert!(
+            rule.apply_here(&logical(BinOp::And, id("l"), b(false))).is_none(),
+            "L && false must NOT fold to false — would drop the evaluated L"
+        );
+        assert!(
+            rule.apply_here(&logical(BinOp::Or, id("l"), b(true))).is_none(),
+            "L || true must NOT fold to true — would drop the evaluated L"
+        );
+        // A non-constant `a && b` is untouched.
+        assert!(rule.apply_here(&logical(BinOp::And, id("a"), id("b"))).is_none());
+    }
+
+    #[test]
+    fn compiled_fold_logical_spec_preserves_behavior_on_a_real_program() {
+        // The data path: a spec naming the new rule folds `false && (1 > 0)` to
+        // `false` (the rhs is never evaluated, so this is sound).
+        let spec = RewriteSpec::parse("fold-logical").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let out = pass(&prog("fn main() -> i64 { if false && (1 > 0) { 1 } else { 0 } }"));
+        // The condition folds to `false`; the if is left for fold-const-branch.
+        // We only assert the && collapsed — find the If's condition.
+        if let Item::FnDef(f) = &out.items[0] {
+            let body = match &f.body {
+                Expr::Block(s) => s.last().unwrap().expr.clone(),
+                o => o.clone(),
+            };
+            if let Expr::If { cond, .. } = &body {
+                assert!(
+                    matches!(cond.as_ref(), Expr::Literal(Literal::Bool(false))),
+                    "false && _ should fold to false: {cond:?}"
+                );
+            } else {
+                panic!("expected an if, got {body:?}");
+            }
+        }
     }
 }
