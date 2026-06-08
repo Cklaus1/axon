@@ -4289,6 +4289,76 @@ fn complexity_command_reports_mdl_metric() {
 }
 
 #[test]
+fn self_improving_compiler_verifies_a_new_constant_fold_pass() {
+    // Prototype #2 end-to-end: the self-improving compiler (R10 `axon improve`)
+    // PROVES a second optimization pass — `constant-fold` — that it didn't ship
+    // with, over the real examples corpus. The pass clears G1 (the interpreter
+    // correctness oracle: byte-identical output on every program), G2 (capability
+    // safety / I-12), and G3 (regression). This is the loop's value: a new
+    // transform is admitted only after the gates prove it behavior-preserving.
+    let out = axon()
+        .args(["improve", "verify", &ex(""), "--pass", "constant-fold"])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "constant-fold must pass the gates: {combined}");
+    assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
+    assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
+    assert!(combined.contains("PASSED"), "overall: {combined}");
+
+    // An unknown pass is fail-closed (E1407) — the registry is the only source of
+    // runnable passes (no dynamic/file-based pass injection).
+    let bad = axon()
+        .args(["improve", "verify", &ex(""), "--pass", "evil-pass"])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success(), "an unregistered pass must be rejected");
+}
+
+#[test]
+fn constant_fold_reduces_complexity_with_identical_behavior() {
+    // The "simpler, not just faster" improvement axis: constant-folding strictly
+    // REDUCES the MDL description length (`axon complexity` bits) while preserving
+    // observable behavior. `2 + 3 * 4 + 100 - 50` and its folded form `64` both
+    // evaluate to 64, but the folded program scores far fewer bits.
+    let run_val = |src: &str| -> i32 {
+        let f = std::env::temp_dir().join(format!("axon_cfb_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        out.status.code().unwrap_or(-1)
+    };
+    let bits = |src: &str| -> i64 {
+        let f = std::env::temp_dir().join(format!("axon_cfx_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["complexity", f.to_str().unwrap(), "--json"]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let o = String::from_utf8_lossy(&out.stdout);
+        let after = o.split("\"total\":").nth(1).unwrap_or("");
+        after
+            .split("\"bits\":")
+            .nth(1)
+            .and_then(|s| s.split([',', '}']).next())
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .unwrap_or(-1)
+    };
+
+    let unfolded = "fn main() -> i64 { 2 + 3 * 4 + 100 - 50 }";
+    let folded = "fn main() -> i64 { 64 }";
+    // Identical behavior.
+    assert_eq!(run_val(unfolded), 64);
+    assert_eq!(run_val(folded), 64);
+    // Strictly simpler after folding.
+    let (bu, bf) = (bits(unfolded), bits(folded));
+    assert!(bf > 0 && bf < bu, "folded must be simpler: unfolded={bu} folded={bf}");
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without

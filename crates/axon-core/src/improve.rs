@@ -801,6 +801,118 @@ fn map_child_exprs(e: &Expr, f: fn(&Expr) -> Expr) -> Expr {
     }
 }
 
+// ── The constant-fold REWRITE PASS (R10, second template) ─────────────────────
+//
+// A second oracle-verified optimization: fold a `BinOp` of two integer literals
+// to the result literal (`2 + 3` → `5`, `(1+2)*3` → `9`). The soundness crux is
+// that it must match the INTERPRETER's CHECKED arithmetic (interp/value.rs
+// `eval_binop_vals`) exactly — so it NEVER folds a computation that would panic
+// at runtime: an overflow (`+`/`-`/`*`), a division/remainder by zero, or
+// `i64::MIN / -1`. In those cases the BinOp is left intact so the runtime panic
+// still happens identically (folding it away would erase a panic = an observable
+// behavior change = a G1-oracle failure). Ints only in v1 (float formatting
+// parity is a separate risk). Unlike `fold-arith-identities` (which removes a
+// no-op operand), this REDUCES DESCRIPTION LENGTH — fewer `axon complexity` bits
+// for identical behavior: the "simpler, not just faster" improvement axis.
+
+/// The checked integer-fold table — the soundness core. Returns `Some(result)`
+/// only when folding is provably behavior-preserving; `None` means "leave the
+/// BinOp" (overflow / div-or-rem by zero / `MIN/-1` / a non-arithmetic op).
+/// Mirrors `interp::value::eval_binop_vals` for the `Int OP Int` cases.
+fn try_fold_int(op: &BinOp, a: i64, b: i64) -> Option<i64> {
+    match op {
+        BinOp::Add => a.checked_add(b),
+        BinOp::Sub => a.checked_sub(b),
+        BinOp::Mul => a.checked_mul(b),
+        // The interpreter uses wrapping_div/rem but panics on a zero divisor; it
+        // does NOT guard MIN/-1, but that case overflows, so we conservatively
+        // refuse to fold it (leaving runtime behavior unchanged either way).
+        BinOp::Div => {
+            if b == 0 || (a == i64::MIN && b == -1) {
+                None
+            } else {
+                Some(a.wrapping_div(b))
+            }
+        }
+        BinOp::Rem => {
+            if b == 0 || (a == i64::MIN && b == -1) {
+                None
+            } else {
+                Some(a.wrapping_rem(b))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// The discovered optimization as a runnable [`Pass`]: constant-fold integer
+/// arithmetic throughout the program. Passes G1 by construction-then-proof
+/// (`try_fold_int` only folds behavior-preserving cases) and G2 (adds no
+/// capability).
+pub fn constant_fold_pass(program: &Program) -> Program {
+    Program {
+        items: program.items.iter().map(cfold_item).collect(),
+    }
+}
+
+fn cfold_item(item: &Item) -> Item {
+    match item {
+        Item::FnDef(f) => {
+            let mut nf = f.clone();
+            nf.body = cfold_expr(&f.body);
+            Item::FnDef(nf)
+        }
+        Item::ImplBlock(b) => {
+            let mut nb = b.clone();
+            nb.methods = b
+                .methods
+                .iter()
+                .map(|m| {
+                    let mut nm = m.clone();
+                    nm.body = cfold_expr(&m.body);
+                    nm
+                })
+                .collect();
+            Item::ImplBlock(nb)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Recursively constant-fold `e`: fold children first (so `(1+2)+3` → `3+3` →
+/// `6`), then collapse a top-level `Int OP Int` BinOp via the checked table.
+fn cfold_expr(e: &Expr) -> Expr {
+    let folded = map_child_exprs(e, cfold_expr);
+    if let Expr::BinOp { op, left, right } = &folded {
+        if let (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) =
+            (left.as_ref(), right.as_ref())
+        {
+            if let Some(v) = try_fold_int(op, *a, *b) {
+                return Expr::Literal(Literal::Int(v));
+            }
+        }
+    }
+    folded
+}
+
+/// Count constant-fold sites (read-only) — a foldable `Int OP Int` BinOp. Uses
+/// the SAME `try_fold_int` acceptance test as the pass, so the detector and the
+/// rewrite agree exactly (no site is counted that the pass wouldn't fold, and
+/// vice-versa).
+pub fn count_constant_fold_sites(e: &Expr) -> usize {
+    let here = if let Expr::BinOp { op, left, right } = e {
+        match (left.as_ref(), right.as_ref()) {
+            (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) => {
+                usize::from(try_fold_int(op, *a, *b).is_some())
+            }
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_constant_fold_sites).sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1193,5 +1305,86 @@ mod tests {
             .expect("selected name resolves in the registry");
         let rec = verify_pass(pass, &c);
         assert!(rec.passed(), "AI-selected template must clear G1/G2: {rec:?}");
+    }
+
+    // ── constant-fold pass (second template) ──────────────────────────────────
+
+    #[test]
+    fn try_fold_int_matches_checked_arithmetic() {
+        // Folds the safe cases…
+        assert_eq!(try_fold_int(&BinOp::Add, 2, 3), Some(5));
+        assert_eq!(try_fold_int(&BinOp::Mul, 10, 4), Some(40));
+        assert_eq!(try_fold_int(&BinOp::Sub, 7, 9), Some(-2));
+        assert_eq!(try_fold_int(&BinOp::Div, 9, 2), Some(4));
+        assert_eq!(try_fold_int(&BinOp::Rem, 9, 2), Some(1));
+        // …and REFUSES the cases the interpreter would panic on, so folding can
+        // never erase a runtime panic (a G1 behavior change).
+        assert_eq!(try_fold_int(&BinOp::Add, i64::MAX, 1), None, "overflow");
+        assert_eq!(try_fold_int(&BinOp::Mul, i64::MAX, 2), None, "overflow");
+        assert_eq!(try_fold_int(&BinOp::Sub, i64::MIN, 1), None, "overflow");
+        assert_eq!(try_fold_int(&BinOp::Div, 10, 0), None, "div by zero");
+        assert_eq!(try_fold_int(&BinOp::Rem, 10, 0), None, "rem by zero");
+        assert_eq!(try_fold_int(&BinOp::Div, i64::MIN, -1), None, "MIN/-1 overflow");
+    }
+
+    #[test]
+    fn constant_fold_pass_folds_nested_and_preserves_behavior() {
+        // Nested fold: (1 + 2) * 3 → 9. Verify via the pass on a real program.
+        let p = prog("fn main() -> i64 { (1 + 2) * 3 }");
+        let folded = constant_fold_pass(&p);
+        // The body folds to the literal 9 (a fn body is a Block whose tail is the
+        // value expr).
+        if let Item::FnDef(f) = &folded.items[0] {
+            let tail = match &f.body {
+                Expr::Block(stmts) => &stmts.last().expect("non-empty body").expr,
+                other => other,
+            };
+            assert!(
+                matches!(tail, Expr::Literal(Literal::Int(9))),
+                "nested fold should yield literal 9, got {tail:?}"
+            );
+        } else {
+            panic!("expected a fn");
+        }
+    }
+
+    #[test]
+    fn constant_fold_pass_clears_the_gates_and_does_not_fold_panics() {
+        // G1/G2 over a corpus that includes a foldable expr AND a would-panic
+        // expr (div by zero) — the pass must fold the former and LEAVE the
+        // latter, so observable behavior (including the panic) is identical.
+        let c = vec![
+            prog("fn main() -> i64 { 2 + 3 * 4 }"),
+            prog("fn main() -> i64 { let z = 0\n 10 / z }"),
+            prog("fn main() { println(\"hi\") }"),
+        ];
+        let pass: &Pass = &constant_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "constant-fold must clear G1/G2: {rec:?}");
+    }
+
+    #[test]
+    fn count_constant_fold_sites_agrees_with_the_pass() {
+        // The static count reflects PRE-fold structure: `1 + 2 + 3` parses as
+        // `(1+2)+3`, so only the inner `1+2` is an Int-OP-Int site (the outer is
+        // `BinOp + Int` until a fold collapses the inner one). One site — and the
+        // pass agrees (a single pass folds the inner, and `cfold_expr` folding
+        // children-first then re-checks the parent collapses the whole thing).
+        let n = count_constant_fold_sites(&prog_body("fn main() -> i64 { 1 + 2 + 3 }"));
+        assert_eq!(n, 1, "one statically-visible Int-OP-Int site in (1+2)+3");
+        // Two INDEPENDENT foldable sites are both counted.
+        let two = count_constant_fold_sites(&prog_body("fn main() -> i64 { (1 + 2) * (3 + 4) }"));
+        assert_eq!(two, 2, "two independent foldable sites");
+        // A div-by-zero is NOT counted (the pass won't fold it), matching the pass.
+        let z = count_constant_fold_sites(&prog_body("fn main() -> i64 { 10 / 0 }"));
+        assert_eq!(z, 0, "div-by-zero is not a foldable site");
+    }
+
+    /// Helper: the body expr of a single-fn program.
+    fn prog_body(src: &str) -> Expr {
+        match &prog(src).items[0] {
+            Item::FnDef(f) => f.body.clone(),
+            _ => panic!("expected fn"),
+        }
     }
 }

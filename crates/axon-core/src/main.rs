@@ -335,8 +335,9 @@ enum ImproveAction {
         perf: bool,
 
         /// The candidate pass to verify. `identity` (default) is the baseline;
-        /// `fold-arith-identities` is the discovered real optimization.
-        #[arg(long, value_name = "PASS", help = "Pass to verify: identity | fold-arith-identities")]
+        /// any name in the closed template registry (`fold-arith-identities`,
+        /// `constant-fold`, …) is a discovered optimization.
+        #[arg(long, value_name = "PASS", help = "Pass to verify: identity | <registry template, e.g. constant-fold>")]
         pass: Option<String>,
     },
 

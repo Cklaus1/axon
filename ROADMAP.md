@@ -661,6 +661,13 @@ rides on — a second s-curve on the bitter lesson.
   "measure of simplest"). Deterministic, format-invariant, monotone; `--json` =
   `axon-complexity/1`. This is the missing fitness primitive (without it, "compress toward
   the simplest program" had no objective; a naive text measure rewards goto-soup).
+- **Landed**: the self-improving compiler (R10) now verifies a SECOND pass it didn't ship
+  with — `constant-fold` — through the four-gate harness (G1 correctness oracle + G2
+  capability-safety + G3 regression over the real corpus), proving the closed template
+  registry is extensible. It is the concrete demonstration of the **"simpler, not just
+  faster" axis**: folding strictly reduces `axon complexity` bits with identical behavior, so
+  the same gate harness that admits a *faster* pass (G4) admits a *simpler* one. This is
+  prototype #2 (self-improving optimizer end-to-end) validated.
 - **Next**: (1) `goal { minimize complexity, subject_to: fits_observations }` wiring — let the
   optimizer target the metric directly; (2) a first-class **executable-world-model example**
   in `examples/asi/` (predict → observe → refine), the demo that proves this identity

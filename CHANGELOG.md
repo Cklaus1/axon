@@ -2,6 +2,15 @@
 
 ## Tooling
 
+- Self-improving compiler (R10): a **second** oracle-verified optimization pass —
+  `constant-fold` (integer-literal arithmetic, `2 + 3` → `5`) — added to the closed template
+  registry and proven through the four-gate harness (`axon improve verify --pass
+  constant-fold` clears G1 correctness + G2 capability-safety + G3 regression over the real
+  examples corpus). Matches the interpreter's CHECKED arithmetic exactly: it never folds an
+  overflow or division-by-zero, so a runtime panic is preserved (folding it would be a G1
+  failure). Demonstrates the **"simpler, not just faster" improvement axis** — folding
+  strictly reduces `axon complexity` MDL bits with identical behavior. The registry is now
+  proven extensible; `--pass` resolves any registered template.
 - `axon complexity <file> [--json]` — a minimum-description-length (MDL) metric over the
   typed AST: the *bits* to describe the program, per function and whole-program, with a
   per-kind cost breakdown. Deterministic, format-invariant (AST-based, not text), and
