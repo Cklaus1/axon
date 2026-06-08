@@ -566,16 +566,18 @@ fn check_call(
     // Extract a literal string argument (first arg for read_file/write_file/http
     // calls).
     //
-    // KNOWN LIMITATION (v1, intentional — see `non_literal_arg_is_skipped`): the
-    // capability check only applies to a LITERAL target. A computed target —
-    // `let h = …; ai_complete(h)`, `read_file(some_path_var)` — is `None` here
-    // and the allowlist/never check below is SKIPPED, so it is not statically
-    // flagged. This is a deliberate static-analysis boundary: the checker can't
-    // know a computed value, and denying all dynamic targets would forbid
-    // legitimate code. It is therefore a real residual sandbox gap for
-    // dynamically-constructed targets — closed only at runtime (the Phase-9
-    // `Sandbox<P>` runtime enforcement, ROADMAP). Literal targets ARE precisely
-    // checked, including `..` traversal (see `path_has_prefix`).
+    // STATIC-ANALYSIS BOUNDARY (refined): the *precise* target check (which
+    // path/host, `..` traversal, allowlist match) only applies to a LITERAL
+    // target — a computed or string-interpolated target is `None` here and the
+    // checker can't know its value. BUT an EMPTY allowlist grants ZERO
+    // capability of that kind, so the target is irrelevant: the per-kind
+    // branches below DENY a dynamic target when the relevant allowlist is empty
+    // (`fs_read`/`fs_write`/`net_allow`). This closes the laundering hole where
+    // `read_file("/etc/{p}")` / `ai_complete("leak {x}")` (interpolated args,
+    // not `Literal::Str`) slipped past `fs: []` / `net: []` — the capability
+    // boundary now fails CLOSED. A dynamic target against a NON-empty allowlist
+    // stays runtime-deferred (Phase-9 `Sandbox<P>`): the fn already holds the
+    // capability; only the specific target awaits runtime enforcement.
     let literal_arg: Option<&str> = args.first().and_then(|a| {
         if let Expr::Literal(crate::ast::Literal::Str(s)) = a {
             Some(s.as_str())
@@ -627,9 +629,21 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
-            } else {
-                // Non-literal path — emit info (runtime enforcement needed).
-                // We do not emit an error for dynamic paths; the spec says skip.
+            } else if spec.fs_read.is_empty() {
+                // Non-literal (dynamic / string-interpolated) path AND an empty
+                // read allowlist. We can't match the target against a prefix,
+                // but an empty allowlist grants ZERO read capability, so the
+                // call is denied regardless of how the path is built. This
+                // closes the laundering hole where `read_file("/etc/{p}")` would
+                // otherwise slip past `fs: []` (an interpolated arg is not a
+                // `Literal::Str`). A NON-empty allowlist with a dynamic path
+                // stays runtime-deferred (Phase-9 `Sandbox<P>`), as documented.
+                errors.push(CapabilityError::new(
+                    E1001,
+                    "`read_file(<dynamic path>)` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
+                     help: a dynamically-built path cannot be checked statically; add an `fs: [read(\"...\")]` clause to grant read capability (the target is then enforced at runtime)".to_string(),
+                    Span::dummy(),
+                ));
             }
         }
 
@@ -674,6 +688,15 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
+            } else if spec.fs_write.is_empty() {
+                // Dynamic/interpolated path + empty write allowlist → deny.
+                // (Same laundering-hole closure as FsRead above.)
+                errors.push(CapabilityError::new(
+                    E1001,
+                    "`write_file(<dynamic path>, ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
+                     help: a dynamically-built path cannot be checked statically; add an `fs: [write(\"...\")]` clause to grant write capability (the target is then enforced at runtime)".to_string(),
+                    Span::dummy(),
+                ));
             }
         }
 
@@ -717,6 +740,20 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
+            } else if spec.net_allow.is_empty() {
+                // Dynamic/interpolated argument + empty net allowlist → deny.
+                // Closes the laundering hole where `ai_complete("leak {x}")`
+                // (an interpolated arg, not a `Literal::Str`) would otherwise
+                // slip past `net: []`. This is the boundary the whole sandbox
+                // story rests on, so it fails CLOSED, not open.
+                errors.push(CapabilityError::new(
+                    E1001,
+                    format!(
+                        "`{name}(<dynamic argument>)` is not permitted: no `net: [...]` in @[contained]\n  \
+                         help: a dynamically-built argument cannot be checked statically; add a `net: [\"...\"]` clause to grant network capability"
+                    ),
+                    Span::dummy(),
+                ));
             }
         }
 
@@ -816,18 +853,40 @@ mod tests {
     }
 
     #[test]
-    fn non_literal_arg_is_skipped() {
+    fn non_literal_arg_with_nonempty_allowlist_is_runtime_deferred() {
         let spec = make_spec(vec!["./data/"], vec![], vec![]);
-        // Dynamic path — no literal string. INTENTIONAL v1 limitation: a computed
-        // I/O target is not statically verifiable, so the capability check is
-        // skipped (rather than denying all dynamic targets). This is a documented
-        // residual sandbox gap closed only by the Phase-9 runtime `Sandbox<P>`;
-        // LITERAL targets are precisely checked (incl. `..` traversal). See the
-        // note on `literal_arg` in check_call.
+        // Dynamic path + NON-EMPTY allowlist: the fn already holds read
+        // capability, only the specific target is unverifiable statically, so it
+        // is deferred to runtime (Phase-9 `Sandbox<P>`) — no static error. This
+        // is the legitimate boundary; the hole was the EMPTY-allowlist case
+        // below, which now fails closed.
         let args = vec![Expr::Ident("path".into())];
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
-        assert!(errors.is_empty(), "Non-literal path is not statically checked (v1 limitation)");
+        assert!(errors.is_empty(), "Dynamic path with a granted capability is runtime-deferred");
+    }
+
+    #[test]
+    fn dynamic_arg_with_empty_allowlist_fails_closed() {
+        // The laundering-hole regression guard: a dynamic/interpolated target
+        // against an EMPTY allowlist must be DENIED (zero capability → target
+        // irrelevant). Covers read/write/net; exec is name-classified already.
+        let empty = make_spec(vec![], vec![], vec![]);
+        let dyn_arg = vec![Expr::Ident("p".into())];
+
+        let mut e = Vec::new();
+        check_call("read_file", &dyn_arg, &empty, &mut e);
+        assert_eq!(e.len(), 1, "dynamic read_file under fs:[] must be denied");
+        assert_eq!(e[0].code, E1001);
+
+        let mut e = Vec::new();
+        check_call("write_file", &dyn_arg, &empty, &mut e);
+        assert_eq!(e.len(), 1, "dynamic write_file under fs:[] must be denied");
+
+        let mut e = Vec::new();
+        check_call("ai_complete", &dyn_arg, &empty, &mut e);
+        assert_eq!(e.len(), 1, "dynamic ai_complete under net:[] must be denied");
+        assert_eq!(e[0].code, E1001);
     }
 
     // ── R6 §4.4 import-edge capability check (E1203) — paired allow+deny (I-11) ──

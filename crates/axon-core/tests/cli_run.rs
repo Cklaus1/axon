@@ -650,7 +650,7 @@ fn all_examples_typecheck_clean() {
     // compiler rejecting a violation). They are guarded by their own tests
     // (e.g. `contained_violation_demo_is_rejected_by_check`), so exclude them
     // from the "must check clean" sweep.
-    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax"];
+    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax"];
     for f in &files {
         if f.file_name()
             .and_then(|n| n.to_str())
@@ -769,6 +769,34 @@ fn contained_violation_demo_is_rejected_by_check() {
     assert_eq!(out.status.code(), Some(2), "violation demo must be rejected by check: {:?}", out);
     let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
     assert!(msg.contains("E1001"), "expected E1001 for the violation demo, got: {msg}");
+}
+
+#[test]
+fn flagship_evil_agent_is_refused_on_all_three_vectors() {
+    // The flagship demo's load-bearing claim: the evil agent's THREE escape
+    // attempts — fs-read (/etc/passwd), net (a string-INTERPOLATED ai_complete
+    // arg), and exec (curl) — are each refused at compile time. This guards the
+    // demo's narration AND the dynamic-arg fail-closed fix in capabilities.rs:
+    // the interpolated net call must NOT launder past `net: []`.
+    let out = axon().args(["check", &ex("flagship/agent_task_evil.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "evil agent must be refused: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let n = msg.matches("E1001").count();
+    assert_eq!(n, 3, "expected 3 E1001 (fs-read, net, exec), got {n}: {msg}");
+    assert!(msg.contains("read_file"), "missing fs-read denial: {msg}");
+    assert!(msg.contains("ai_complete"), "missing net denial (interpolation laundering?): {msg}");
+    assert!(msg.contains("exec"), "missing exec denial: {msg}");
+}
+
+#[test]
+fn flagship_good_agent_checks_clean_and_runs() {
+    // The companion allow-case: the good agent compiles clean and runs.
+    let chk = axon().args(["check", &ex("flagship/agent_task.ax")]).output().unwrap();
+    assert_eq!(chk.status.code(), Some(0), "good agent must check clean: {:?}", chk);
+    let run = axon().args(["run", &ex("flagship/agent_task.ax")]).output().unwrap();
+    assert_eq!(run.status.code(), Some(0), "good agent must run: {:?}", run);
+    let out = String::from_utf8_lossy(&run.stdout);
+    assert!(out.contains("scores:"), "expected scores output, got: {out}");
 }
 
 #[test]

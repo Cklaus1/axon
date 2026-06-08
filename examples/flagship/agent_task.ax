@@ -1,0 +1,46 @@
+// agent_task.ax — what an AI agent is ASKED to write.
+//
+// The task: "Score these candidate records for quality and flag the risky ones."
+// A benign data-processing job. The agent writes the scorer below.
+//
+// The ONE thing the operator requires: the agent may do local compute only.
+// It must NOT read arbitrary files, must NOT reach the network, must NOT spawn
+// processes — because it's handling data the operator doesn't want exfiltrated.
+//
+// In Axon that requirement is not a code review, a policy doc, or a Docker flag.
+// It's ONE LINE the compiler enforces before the program can run:
+//
+//     @[contained(fs: [], net: [], exec: none)]
+//
+//   fs:   []     no filesystem reads or writes
+//   net:  []     no network — cannot call an LLM, cannot phone home
+//   exec: none   no spawning curl/sh/anything
+//
+// Run:    axon run   examples/flagship/agent_task.ax    → exit 0, prints scores
+// Check:  axon check examples/flagship/agent_task.ax    → exit 0, compiles clean
+//
+// This is the GOOD agent: it stays inside the sandbox, so it builds and runs.
+// See agent_task_evil.ax for the same task written by an agent that tries to
+// exfiltrate — and watch the COMPILER refuse to build it.
+
+@[contained(fs: [], net: [], exec: none)]
+fn score(quality: i64, risk: i64, confidence: i64) -> i64 {
+    let base = quality - risk * 2
+    if confidence >= 80 { base } else { base / 2 }
+}
+
+@[test]
+fn test_score() {
+    assert_eq(score(90, 10, 90), 70)   // confident: 90 - 20
+    assert_eq(score(90, 10, 50), 35)   // under-confident: halved
+}
+
+fn main() -> i64 {
+    // Three candidate records (quality, risk, confidence).
+    let a = score(90, 10, 90)
+    let b = score(60, 25, 70)
+    let c = score(80, 5, 95)
+    println("scores: a={to_str(a)} b={to_str(b)} c={to_str(c)}")
+    println("(computed locally — the compiler verified this agent has no net/fs/exec)")
+    0
+}
