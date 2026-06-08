@@ -26,6 +26,36 @@
   a "fold" of `10/0` (exit 101) to a literal (exit 0) is rejected by G1, proving the exact
   soundness property the real constant-fold/bool-simplify passes rely on is enforced by the gate,
   not merely respected by the passes.
+- Self-improving compiler — **Layer 3: a NEW rewrite rule kind, `fold-logical`**, the first
+  optimization that is *not* a re-expression of a shipped pass — added under the "widen the DSL
+  only as red-teamed" discipline. It folds the short-circuit-SOUND logical cases
+  (`false && R → false`, `true && R → R`, `L && true → L`, `true || R → true`, `false || R → R`,
+  `L || false → L`) and DELIBERATELY refuses the drop-left unsound cases (`L && false`,
+  `L || true`) — where the left operand is always evaluated, so dropping it would erase its side
+  effects/panic. Earns its place by clearing the four-gate firewall over a corpus (incl. a
+  `false && (10/0 > 0)` short-circuit-avoids-panic case); a red-team proves the unsound drop-left
+  variant is caught by G1/E1401. Now five rule kinds.
+- Self-improving compiler — **Layer 3 prototype: AI-authored passes as DATA** (`rewrite_dsl.rs`,
+  `spec/self-improving-layer3.md`). A candidate pass is a declarative, total, capability-free
+  `RewriteSpec` (text the proposer emits — one rule name per line from a closed reviewed
+  vocabulary), NOT Rust compiled into the TCB. The flow: parse → validate (fail-closed, in the
+  R10 E14xx band: unknown-rule/E1411, empty-or-nontotal/E1409, over-budget/E1413; capabilities
+  are unrepresentable by grammar, E1412 backstop) → compile-to-pass (a reviewed evaluator — the
+  AI never executes) → the UNCHANGED four-gate firewall (`verify_pass`) → unchanged multi-sig
+  graduate. A test proves a compiled RewriteSpec composing all four rule kinds clears G1/G2/G3
+  over the diverse corpus, and that the data path preserves a would-panic division. The AI is
+  never in the trust path; the firewall it cannot weaken decides admission.
+  - **DSL red-team** (the prereq before widening the DSL): an *unsound* pass routed through the
+    DATA path (folds `10/0` → `0`, erasing the panic) is REJECTED by G1/E1401 exactly as the
+    equivalent Rust red-team pass is — proving Layer 3's safety rests on the same interpreter
+    oracle, not on the DSL's curated soundness. The sound compiled spec leaves the same division
+    alone and clears the gates (the contrast).
+- Self-improving compiler (R10): a **fourth** oracle-verified optimization pass —
+  `redundant-branch-fold` (`if true {a} else {b}` → `a`, `if false {…} else {b}` → `b`) — added
+  to the closed template registry and proven through the four gates over the real corpus. Sound:
+  the literal condition has no side effect to drop, the dead branch is provably never taken, and
+  the taken branch is preserved verbatim (its panics/side effects identical). Composes with
+  `bool-simplify` (which exposes more constant conditions). The registry now holds FOUR passes.
 - Self-improving compiler (R10): a **third** oracle-verified optimization pass — `bool-simplify`
   (`!true`→`false`, `!false`→`true`, `!(!x)`→`x`) — added to the closed template registry and
   proven through the four-gate harness (G1/G2/G3 over the real corpus). All three rewrites are

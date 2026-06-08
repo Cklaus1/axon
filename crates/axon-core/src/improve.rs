@@ -992,6 +992,81 @@ pub fn count_bool_simplify_sites(e: &Expr) -> usize {
     here + child_exprs(e).into_iter().map(count_bool_simplify_sites).sum::<usize>()
 }
 
+// ── The redundant-branch-fold REWRITE PASS (R10, fourth template) ─────────────
+//
+// A fourth oracle-verified optimization: collapse an `if` whose condition is a
+// bool LITERAL to the taken branch — `if true { a } else { b }` → `a`,
+// `if false { a } else { b }` → `b`. Soundness:
+//   * the condition is a literal, so it has NO side effect to drop;
+//   * the TAKEN branch is preserved verbatim (evaluated exactly as before), so
+//     its behavior — including any panic or side effect — is identical;
+//   * the dead branch is provably never executed (the interpreter would never
+//     take it given a constant condition), so removing it changes nothing.
+// Restricted to the `if/else` form (both arms present) so the result type/value
+// is unambiguous; an `if <lit> { a }` with no else is left alone (conservative —
+// folding it would have to synthesize a Unit for the false case). Composes with
+// `bool-simplify` (which first turns `!true`→`false`, exposing more literals
+// here) and REDUCES DESCRIPTION LENGTH for identical behavior.
+
+/// Recursively fold redundant `if <bool-literal>` branches in `e`. Children
+/// first (so a nested constant condition is exposed), then collapse a top-level
+/// literal-condition `if/else` to the taken branch.
+fn redundant_branch_fold_expr(e: &Expr) -> Expr {
+    let folded = map_child_exprs(e, redundant_branch_fold_expr);
+    if let Expr::If { cond, then, else_ } = &folded {
+        if let (Expr::Literal(Literal::Bool(b)), Some(else_branch)) = (cond.as_ref(), else_) {
+            return if *b { (**then).clone() } else { (**else_branch).clone() };
+        }
+    }
+    folded
+}
+
+/// The discovered optimization as a runnable [`Pass`]: fold constant-condition
+/// `if/else` throughout the program. Passes G1 by construction-then-proof (the
+/// taken branch is preserved; the literal condition and dead branch are
+/// behavior-free to remove) and G2 (adds no capability).
+pub fn redundant_branch_fold_pass(program: &Program) -> Program {
+    Program {
+        items: program
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::FnDef(f) => {
+                    let mut nf = f.clone();
+                    nf.body = redundant_branch_fold_expr(&f.body);
+                    Item::FnDef(nf)
+                }
+                Item::ImplBlock(b) => {
+                    let mut nb = b.clone();
+                    nb.methods = b
+                        .methods
+                        .iter()
+                        .map(|m| {
+                            let mut nm = m.clone();
+                            nm.body = redundant_branch_fold_expr(&m.body);
+                            nm
+                        })
+                        .collect();
+                    Item::ImplBlock(nb)
+                }
+                other => other.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Count redundant-branch sites (read-only) — an `if <bool-literal> { _ } else
+/// { _ }`. Uses the SAME shape test as the pass (literal condition AND an else),
+/// so detector and rewrite agree exactly.
+pub fn count_redundant_branch_sites(e: &Expr) -> usize {
+    let here = if let Expr::If { cond, else_, .. } = e {
+        usize::from(matches!(cond.as_ref(), Expr::Literal(Literal::Bool(_))) && else_.is_some())
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_redundant_branch_sites).sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1700,5 +1775,239 @@ mod tests {
         // itself runs clean under verify, so a real failure above is the pass).
         let identity: &Pass = &|p: &Program| p.clone();
         assert!(verify_pass(identity, &c).passed(), "identity must hold over the diverse corpus");
+    }
+
+    // ── redundant-branch-fold pass (fourth template) ──────────────────────────
+
+    #[test]
+    fn redundant_branch_fold_collapses_constant_conditions() {
+        // if true { a } else { b } → a   ;   if false { a } else { b } → b
+        let t = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(true))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(t, Expr::Literal(Literal::Int(1))), "true branch taken: {t:?}");
+        let f = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(false))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(f, Expr::Literal(Literal::Int(2))), "false branch taken: {f:?}");
+        // A non-literal condition is left ALONE (not foldable).
+        let keep = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Ident("c".into())),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(keep, Expr::If { .. }), "non-literal condition must be kept: {keep:?}");
+        // An if WITHOUT else is conservatively left alone.
+        let no_else = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(true))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: None,
+        });
+        assert!(matches!(no_else, Expr::If { .. }), "no-else if is kept: {no_else:?}");
+    }
+
+    #[test]
+    fn redundant_branch_fold_clears_the_gates_and_preserves_behavior() {
+        // The taken branch's behavior (including a side-effecting println, and a
+        // value) must be preserved; the dead branch dropped. G1/G2/G3.
+        let c = vec![
+            prog("fn main() -> i64 { if true { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if false { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if true { println(\"taken\")\n 1 } else { println(\"dead\")\n 0 } }"),
+        ];
+        let pass: &Pass = &redundant_branch_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "redundant-branch-fold must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    #[test]
+    fn redundant_branch_fold_does_not_erase_a_panic_in_the_taken_branch() {
+        // The TAKEN branch panics (div by zero, exit 101). Folding keeps the taken
+        // branch, so the panic is preserved — G1 holds (identity behavior).
+        let c = vec![prog("fn main() -> i64 { if true { let z = 0\n 10 / z } else { 0 } }")];
+        let pass: &Pass = &redundant_branch_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "folding must preserve a panic in the taken branch: {:?}", rec.rejection());
+    }
+
+    #[test]
+    fn count_redundant_branch_sites_matches_the_pass() {
+        // A constant-condition if/else is a site; a non-literal or no-else is not.
+        assert_eq!(
+            count_redundant_branch_sites(&prog_body("fn main() -> i64 { if true { 1 } else { 2 } }")),
+            1
+        );
+        assert_eq!(
+            count_redundant_branch_sites(&prog_body("fn f(c: bool) -> i64 { if c { 1 } else { 2 } }")),
+            0,
+            "non-literal condition is not a site"
+        );
+    }
+
+    // ── Layer 3: an AI-authored RewriteSpec (DATA) clears the SAME firewall ────
+    //
+    // The L3 thesis end-to-end: a candidate pass authored as a validated
+    // RewriteSpec (not Rust) compiles to a Pass that must clear the UNCHANGED
+    // four gates. This proves the "authored-as-data → verified" path — the AI is
+    // never in the trust path; the same `verify_pass` decides admission.
+
+    #[test]
+    fn a_compiled_rewrite_spec_clears_the_four_gates() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        // A proposer emits this spec as TEXT (one rule per line) — ALL five rule
+        // kinds, including the new fold-logical.
+        let spec = RewriteSpec::parse(
+            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical",
+        )
+        .expect("spec parses");
+        spec.validate().expect("spec validates (E15xx clean)");
+        // Compile the data spec to a runnable Pass and run it through the EXISTING
+        // firewall over the diverse corpus — no L1 change.
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &diverse_corpus());
+        assert!(
+            rec.passed(),
+            "a validated, compiled RewriteSpec must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
+    }
+
+    /// The NEW rule kind through the firewall on its own, over a corpus that
+    /// exercises logical short-circuit with side-effecting / value operands — the
+    /// concrete proof `fold-logical` is behavior-preserving (the "widen the DSL
+    /// only as red-teamed" discipline: a new rule earns its place by clearing the
+    /// same gates).
+    #[test]
+    fn fold_logical_rule_clears_the_firewall() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![
+            prog("fn main() -> i64 { if false && (1 > 0) { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if true || (1 > 0) { 7 } else { 9 } }"),
+            // `L && true`/`L || false` where L is a real comparison (kept, evaluated).
+            prog("fn f(x: i64) -> i64 { if (x > 0) && true { 1 } else { 0 } }\nfn main() -> i64 { f(5) }"),
+            // A program that relies on short-circuit to AVOID a panic: `false && (1/0 > 0)`
+            // must stay correct — the rhs is never evaluated, and folding to `false`
+            // preserves that.
+            prog("fn main() -> i64 { if false && (10 / 0 > 0) { 1 } else { 2 } }"),
+        ];
+        let spec = RewriteSpec::parse("fold-logical").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "fold-logical must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    /// RED-TEAM for the new rule: the UNSOUND drop-left variant (`L && false →
+    /// false`, dropping the evaluated L) — which `fold-logical` correctly REFUSES
+    /// to do — would be caught by G1 if a buggy rule did it. Proven by an
+    /// unsound test-only pass that drops the left operand: against a corpus member
+    /// whose left operand PANICS (`(10/0 > 0) && false`), erasing it changes the
+    /// exit code, so G1/E1401 rejects it.
+    #[test]
+    fn redteam_drop_left_logical_fold_is_rejected_by_g1() {
+        use crate::ast::{Expr, Item, Literal};
+        // `(10/0 > 0) && false` — the LEFT operand panics (div by zero, exit 101);
+        // the whole `&&` therefore panics. An unsound "fold to false" erases it.
+        let c = vec![prog("fn main() -> i64 { if (10 / 0 > 0) && false { 1 } else { 2 } }")];
+        let drop_left: &Pass = &|p: &Program| {
+            fn fold(e: &Expr) -> Expr {
+                // UNSOUND: `_ && false → false`, dropping the (possibly panicking)
+                // left operand. (Mirrors what a buggy fold-logical would do.)
+                if let Expr::BinOp { op: crate::ast::BinOp::And, right, .. } = e {
+                    if matches!(right.as_ref(), Expr::Literal(Literal::Bool(false))) {
+                        return Expr::Literal(Literal::Bool(false));
+                    }
+                }
+                e.clone()
+            }
+            fn walk(e: &Expr) -> Expr {
+                // shallow: only need to hit main's `if` condition for this test
+                match e {
+                    Expr::Block(stmts) => Expr::Block(
+                        stmts
+                            .iter()
+                            .map(|s| {
+                                let mut ns = s.clone();
+                                ns.expr = walk(&s.expr);
+                                ns
+                            })
+                            .collect(),
+                    ),
+                    Expr::If { cond, then, else_ } => Expr::If {
+                        cond: Box::new(fold(cond)),
+                        then: then.clone(),
+                        else_: else_.clone(),
+                    },
+                    other => other.clone(),
+                }
+            }
+            let mut np = p.clone();
+            for item in &mut np.items {
+                if let Item::FnDef(f) = item {
+                    f.body = walk(&f.body);
+                }
+            }
+            np
+        };
+        let rec = verify_pass(drop_left, &c);
+        assert!(!rec.passed(), "dropping an evaluated (panicking) operand must be rejected");
+        assert_eq!(rec.rejection().unwrap().code, E1401, "G1 catches the erased panic");
+    }
+
+    #[test]
+    fn rewrite_spec_validation_is_fail_closed() {
+        use crate::rewrite_dsl::RewriteSpec;
+        // An unknown rule name (a proposer trying to invent a rule kind) is
+        // rejected at parse — never compiled, never run.
+        assert!(RewriteSpec::parse("fold-int-literal\nspawn-shell").is_err());
+        // An empty spec is rejected by validate (proposes no transform).
+        assert!(RewriteSpec::parse("# just a comment\n")
+            .unwrap()
+            .validate()
+            .is_err());
+    }
+
+    /// DSL RED-TEAM (the §6/§8 prerequisite): the four-gate firewall must REJECT a
+    /// pass coming through the DATA path that is unsound — proving Layer 3's
+    /// safety rests on the SAME interpreter oracle, not on the DSL's curated
+    /// soundness. An unsound transform (folds `10/0` → `0`, erasing the panic)
+    /// must fail G1/E1401 exactly as the equivalent Rust red-team pass does.
+    #[test]
+    fn redteam_unsound_dsl_path_pass_is_rejected_by_g1() {
+        use crate::rewrite_dsl::compile_unsound_div_fold_for_redteam;
+        // A corpus member whose behavior is a div-by-zero panic (exit 101).
+        let c = vec![prog("fn main() -> i64 { 10 / 0 }")];
+        let unsound = compile_unsound_div_fold_for_redteam();
+        let boxed: &Pass = &unsound;
+        let rec = verify_pass(boxed, &c);
+        assert!(!rec.passed(), "an unsound DSL-path pass must be rejected");
+        let err = rec.rejection().expect("a rejection");
+        assert_eq!(
+            err.code, E1401,
+            "the firewall (G1 oracle) catches the erased panic regardless of the data path: {}",
+            err.message
+        );
+    }
+
+    /// Positive companion: the SOUND compiled RewriteSpec leaves the same
+    /// div-by-zero ALONE (does not fold it), so it preserves the panic and clears
+    /// G1 — the contrast that shows the firewall isn't rejecting the data path
+    /// itself, only an unsound transform on it.
+    #[test]
+    fn sound_dsl_constant_fold_preserves_the_panic_and_clears_g1() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![prog("fn main() -> i64 { 10 / 0 }")];
+        let spec = RewriteSpec::parse("fold-int-literal").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "the sound DSL pass preserves the panic and clears the gates: {:?}", rec.rejection());
     }
 }

@@ -15,6 +15,9 @@ pub mod host;
 /// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.
 pub mod improve;
 pub mod improve_templates;
+/// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
+/// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
+pub mod rewrite_dsl;
 pub mod lexer;
 /// `axon.lock` content-addressed import lockfile (R6): hash + format.
 pub mod lockfile;

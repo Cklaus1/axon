@@ -25,7 +25,8 @@
 use crate::ast::Program;
 use crate::improve::{
     bool_simplify_pass, constant_fold_pass, count_arith_identity_sites, count_bool_simplify_sites,
-    count_constant_fold_sites, fold_arith_identities_pass, Pass,
+    count_constant_fold_sites, count_redundant_branch_sites, fold_arith_identities_pass,
+    redundant_branch_fold_pass, Pass,
 };
 
 /// One entry in the closed optimization-template menu: a stable name, a
@@ -69,6 +70,12 @@ pub const TEMPLATES: &[Template] = &[
         description: "simplify boolean negation (!true → false, !false → true, !(!x) → x)",
         pass: &(bool_simplify_pass as fn(&Program) -> Program),
         detector: program_bool_simplify_sites,
+    },
+    Template {
+        name: "redundant-branch-fold",
+        description: "fold constant-condition if/else (if true {a} else {b} → a)",
+        pass: &(redundant_branch_fold_pass as fn(&Program) -> Program),
+        detector: program_redundant_branch_sites,
     },
 ];
 
@@ -114,6 +121,20 @@ fn program_bool_simplify_sites(program: &Program) -> usize {
         .sum()
 }
 
+/// Count `redundant-branch-fold` sites across one program (sum over its fns).
+fn program_redundant_branch_sites(program: &Program) -> usize {
+    use crate::ast::Item;
+    program
+        .items
+        .iter()
+        .map(|it| match it {
+            Item::FnDef(f) => count_redundant_branch_sites(&f.body),
+            Item::ImplBlock(b) => b.methods.iter().map(|m| count_redundant_branch_sites(&m.body)).sum(),
+            _ => 0,
+        })
+        .sum()
+}
+
 /// Look up a template by name in the closed registry. `None` for any name not
 /// in [`TEMPLATES`] — the single validation point every caller routes through
 /// (discover, verify, graduate). This is the fail-closed gate: an unknown name
@@ -152,6 +173,7 @@ mod tests {
         assert!(a.contains(&"fold-arith-identities"));
         assert!(a.contains(&"constant-fold"));
         assert!(a.contains(&"bool-simplify"));
+        assert!(a.contains(&"redundant-branch-fold"));
     }
 
     #[test]
