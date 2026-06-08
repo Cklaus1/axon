@@ -49,6 +49,12 @@ fi
 
 fail() { echo ""; echo "❌ gate FAILED at: $1"; exit 1; }
 
+# Fast doc-focus check first (pure text over VISION.md, no build) — keeps the
+# north-star doc short/legible the same way the *_parity.sh harnesses keep the
+# compiler honest. Cheap enough to run on every gate, codegen or not.
+echo "── gate: VISION.md focus ──────────────────────────────────────────"
+./scripts/vision_focus.sh || fail "VISION.md focus"
+
 echo "── gate: tests (--no-default-features) ─────────────────────────────"
 if [ "$USE_NEXTEST" = 1 ] && command -v cargo-nextest >/dev/null 2>&1; then
   cargo nextest run -p axon-core --no-default-features || fail "tests (nextest)"
