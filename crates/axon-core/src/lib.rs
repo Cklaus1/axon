@@ -38,6 +38,7 @@ pub mod mono;
 pub mod audit;
 pub mod cache;
 pub mod capabilities;
+pub mod complexity;
 pub mod effects;
 pub mod doc;
 pub mod fmt;

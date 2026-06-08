@@ -27,6 +27,7 @@ axon goal  examples/goals/hello-goal.md   # compile prose goal → .ax → check
 axon check examples/hello.ax              # type-check only
 axon test  examples/tests.ax              # run @[test] functions (in-process interpreter)
 axon parse examples/hello.ax              # print AST as JSON   (needs --features serde-json)
+axon complexity examples/hello.ax         # MDL description-length metric over the AST (per-fn + total; --json → axon-complexity/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
 ```

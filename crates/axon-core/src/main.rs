@@ -265,6 +265,22 @@ enum Command {
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
     },
+
+    /// Report the description-length (MDL) complexity of a .ax file.
+    ///
+    /// A deterministic, format-invariant measure over the typed AST — the bits
+    /// it takes to describe the program — per function and whole-program, with a
+    /// per-kind cost breakdown. The "measure of simplest program" a compression
+    /// loop minimizes (the world-model / `goal { minimize complexity }` pattern).
+    /// Exit 0 on success, 2 on a parse error.
+    Complexity {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+
+        /// Emit the report as stable JSON (`axon-complexity/1`) for tools/agents.
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
 }
 
 // ── Cache subcommand actions ──────────────────────────────────────────────────
@@ -435,6 +451,7 @@ fn dispatch(command: Command) {
         Command::Target { action } => cmd_target(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
         Command::Trace { func, path, json } => cmd_trace(func, path, json),
+        Command::Complexity { file, json } => cmd_complexity(file, json),
     }
 }
 
@@ -469,6 +486,87 @@ fn cmd_parse(file: PathBuf) {
             // Exit 2 = compile error (parse error).
             process::exit(2);
         }
+    }
+}
+
+// ── complexity ──────────────────────────────────────────────────────────────
+
+/// `axon complexity <file> [--json]` — report the AST description-length (MDL)
+/// metric per function and for the whole program. Syntactic only (no type-check),
+/// so it works on in-progress code. Exit 2 on a parse error.
+fn cmd_complexity(file: PathBuf, json: bool) {
+    use axon_core::complexity::program_complexity;
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    let pc = program_complexity(&program);
+    let path = file.display().to_string();
+
+    if json {
+        // Hand-built stable JSON (`axon-complexity/1`) — no serde (never link
+        // serde+codegen). A future goal/agent loop parses this.
+        let esc = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+        let mut out = String::new();
+        out.push_str("{\"schema\":\"axon-complexity/1\",\"file\":\"");
+        out.push_str(&esc(&path));
+        out.push_str("\",\"total\":");
+        out.push_str(&format!(
+            "{{\"bits\":{},\"nodes\":{},\"depth\":{}}}",
+            pc.total.bits, pc.total.nodes, pc.total.depth
+        ));
+        out.push_str(",\"functions\":[");
+        for (i, (name, c)) in pc.functions.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"name\":\"{}\",\"bits\":{},\"nodes\":{},\"depth\":{}}}",
+                esc(name), c.bits, c.nodes, c.depth
+            ));
+        }
+        out.push_str("],\"by_kind\":{");
+        for (i, (kind, bits)) in pc.by_kind.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!("\"{}\":{}", esc(kind), bits));
+        }
+        out.push_str("}}");
+        println!("{out}");
+        return;
+    }
+
+    // Human table.
+    println!("{path}");
+    println!("  {:<28} {:>10} {:>8} {:>6}", "function", "bits", "nodes", "depth");
+    println!("  {:-<28} {:->10} {:->8} {:->6}", "", "", "", "");
+    for (name, c) in &pc.functions {
+        let shown = if name.chars().count() > 28 {
+            format!("{}…", &name.chars().take(27).collect::<String>())
+        } else {
+            name.clone()
+        };
+        println!("  {:<28} {:>10} {:>8} {:>6}", shown, c.bits, c.nodes, c.depth);
+    }
+    println!("  {:-<28} {:->10} {:->8} {:->6}", "", "", "", "");
+    println!(
+        "  {:<28} {:>10} {:>8} {:>6}",
+        "TOTAL", pc.total.bits, pc.total.nodes, pc.total.depth
+    );
+    if !pc.by_kind.is_empty() {
+        let top: Vec<String> = pc
+            .by_kind
+            .iter()
+            .take(3)
+            .map(|(k, b)| format!("{k} {b}"))
+            .collect();
+        println!("  top cost by kind: {}", top.join(", "));
     }
 }
 

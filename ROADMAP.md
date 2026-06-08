@@ -648,6 +648,27 @@ Until all three pass, Axon is a demo, not a product.
 
 ---
 
+## 10.5 Compression / world-model loop (MDL fitness)
+
+A coding-agent pattern worth designing toward: write an executable **world model**
+(`World<T>`/`Belief<T>`), check it against observations (`observe`/`condition` + the
+refinement runtime checks, now at all four obligation sites), and **compress it toward the
+simplest program that fits** (MDL / ARC-AGI skill-acquisition efficiency). The base model is
+the *proposer*; Axon is the fixed *verifier + fitness function* that every base-model gain
+rides on — a second s-curve on the bitter lesson.
+
+- **Landed**: `axon complexity` — the MDL description-length metric over the AST (the
+  "measure of simplest"). Deterministic, format-invariant, monotone; `--json` =
+  `axon-complexity/1`. This is the missing fitness primitive (without it, "compress toward
+  the simplest program" had no objective; a naive text measure rewards goto-soup).
+- **Next**: (1) `goal { minimize complexity, subject_to: fits_observations }` wiring — let the
+  optimizer target the metric directly; (2) a first-class **executable-world-model example**
+  in `examples/asi/` (predict → observe → refine), the demo that proves this identity
+  (§2.7); (3) **agent-authored model execution sandboxed-by-default** (effect-row + budget)
+  before predictions are trusted — answers the "the attack surface moves with the design"
+  concern; (4) refine the v1 MDL weights toward a true two-part code-length once real
+  compression runs exist to calibrate against.
+
 ## 11. One-line Summary
 
 Axon ships in this order: **refinement (5) → effects (6) → runtime primitives (7) → goal/agent surface (8) → replay+audit+sandbox (9) → CLI surface (10) → risk-typed pipeline (11) → web UI (12) → probabilistic refinement (13) → distributed types (14+)**, with the typed Axon language serving as an IR rather than a human-authored surface, the userland OS replacing the kernel ambition, and the structured-prose surface compiling to user-approved typed AST as the legal artifact.

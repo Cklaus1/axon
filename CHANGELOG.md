@@ -1,5 +1,14 @@
 # Axon Changelog
 
+## Tooling
+
+- `axon complexity <file> [--json]` — a minimum-description-length (MDL) metric over the
+  typed AST: the *bits* to describe the program, per function and whole-program, with a
+  per-kind cost breakdown. Deterministic, format-invariant (AST-based, not text), and
+  monotone. The "measure of simplest program" a compression loop minimizes — the reusable
+  fitness primitive for the world-model / `goal { minimize complexity, subject_to: fits_obs }`
+  pattern. `--json` emits a stable `axon-complexity/1` object for tools/agents.
+
 ## Phase 6 (current) — Row-polymorphic effects + handlers
 
 ### Effect system

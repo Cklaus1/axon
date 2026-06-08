@@ -4225,6 +4225,70 @@ fn refinement_let_binding_enforced_at_runtime_and_statically() {
 }
 
 #[test]
+fn complexity_command_reports_mdl_metric() {
+    // `axon complexity` is the MDL description-length metric over the AST — the
+    // "measure of simplest program" a compression loop minimizes. It must be:
+    // deterministic, format-invariant (AST-based, not text), monotone (more code
+    // ⇒ more bits), and emit stable JSON for tools. (No type-check needed.)
+    let complexity = |args: &[&str], src: &str| -> (i32, String) {
+        let f = std::env::temp_dir()
+            .join(format!("axon_cx_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let mut full = vec!["complexity"];
+        full.extend_from_slice(args);
+        let fp = f.to_str().unwrap().to_string();
+        full.push(&fp);
+        let out = axon().args(&full).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
+    };
+
+    // Human table: names the function, has a TOTAL row and a bits column.
+    let (c, o) = complexity(&[], "fn f() -> i64 { 1 + 2 }");
+    assert_eq!(c, 0, "complexity must succeed: {o}");
+    assert!(o.contains('f') && o.contains("TOTAL") && o.contains("bits"), "table shape: {o}");
+
+    // JSON: stable schema + a positive total bit count.
+    let (c, o) = complexity(&["--json"], "fn f() -> i64 { 1 + 2 }");
+    assert_eq!(c, 0);
+    assert!(o.contains("\"schema\":\"axon-complexity/1\""), "schema: {o}");
+    assert!(o.contains("\"bits\":"), "has bits: {o}");
+
+    // Helper: extract total bits from --json.
+    let total_bits = |src: &str| -> i64 {
+        let (_, o) = complexity(&["--json"], src);
+        // total bits is the first "bits": after "total":
+        let after = o.split("\"total\":").nth(1).unwrap_or("");
+        after
+            .split("\"bits\":")
+            .nth(1)
+            .and_then(|s| s.split([',', '}']).next())
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .unwrap_or(-1)
+    };
+
+    // Monotone: a strictly larger program scores more bits.
+    let small = total_bits("fn f() -> i64 { 0 }");
+    let big = total_bits("fn f() -> i64 { 0 + 1 + 2 + 3 }");
+    assert!(big > small && small > 0, "monotone: small={small} big={big}");
+
+    // Deterministic: same source → same score.
+    assert_eq!(total_bits("fn f() -> i64 { 1 }"), total_bits("fn f() -> i64 { 1 }"));
+
+    // Format-invariant: same AST, different whitespace/comments → same score.
+    let a = total_bits("fn f() -> i64 { 1 + 2 }");
+    let b = total_bits("fn f() -> i64 {\n    // comment\n    1 + 2\n}");
+    assert_eq!(a, b, "formatting must not change the score: a={a} b={b}");
+
+    // A parse error exits 2 (mirrors `axon parse`).
+    let (c, _) = complexity(&[], "fn broken( {");
+    assert_eq!(c, 2, "a parse error must exit 2");
+}
+
+#[test]
 fn phase5_features_compose_pure_total_refinement_verify() {
     // Phase 5 integration: the new features (@[pure], @[total], refinement types)
     // and the shipped Layer-2 @[verify] compose on the same function without
