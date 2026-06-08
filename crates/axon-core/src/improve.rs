@@ -1888,4 +1888,42 @@ mod tests {
             .validate()
             .is_err());
     }
+
+    /// DSL RED-TEAM (the §6/§8 prerequisite): the four-gate firewall must REJECT a
+    /// pass coming through the DATA path that is unsound — proving Layer 3's
+    /// safety rests on the SAME interpreter oracle, not on the DSL's curated
+    /// soundness. An unsound transform (folds `10/0` → `0`, erasing the panic)
+    /// must fail G1/E1401 exactly as the equivalent Rust red-team pass does.
+    #[test]
+    fn redteam_unsound_dsl_path_pass_is_rejected_by_g1() {
+        use crate::rewrite_dsl::compile_unsound_div_fold_for_redteam;
+        // A corpus member whose behavior is a div-by-zero panic (exit 101).
+        let c = vec![prog("fn main() -> i64 { 10 / 0 }")];
+        let unsound = compile_unsound_div_fold_for_redteam();
+        let boxed: &Pass = &unsound;
+        let rec = verify_pass(boxed, &c);
+        assert!(!rec.passed(), "an unsound DSL-path pass must be rejected");
+        let err = rec.rejection().expect("a rejection");
+        assert_eq!(
+            err.code, E1401,
+            "the firewall (G1 oracle) catches the erased panic regardless of the data path: {}",
+            err.message
+        );
+    }
+
+    /// Positive companion: the SOUND compiled RewriteSpec leaves the same
+    /// div-by-zero ALONE (does not fold it), so it preserves the panic and clears
+    /// G1 — the contrast that shows the firewall isn't rejecting the data path
+    /// itself, only an unsound transform on it.
+    #[test]
+    fn sound_dsl_constant_fold_preserves_the_panic_and_clears_g1() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![prog("fn main() -> i64 { 10 / 0 }")];
+        let spec = RewriteSpec::parse("fold-int-literal").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "the sound DSL pass preserves the panic and clears the gates: {:?}", rec.rejection());
+    }
 }

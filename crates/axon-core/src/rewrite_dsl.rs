@@ -274,6 +274,49 @@ pub fn compile(spec: &RewriteSpec) -> impl Fn(&Program) -> Program {
     }
 }
 
+/// RED-TEAM ONLY (test builds): compile a deliberately UNSOUND transform that
+/// folds `<int> / <int>` to a literal WITHOUT the zero/overflow guard — i.e. it
+/// would fold `10 / 0` to `0`, erasing a runtime panic. This mimics what a buggy
+/// or malicious *future* DSL rule kind could emit, so a test can prove the
+/// firewall (`verify_pass` G1) REJECTS it. The point of Layer 3: the data path is
+/// gated by the same interpreter oracle as everything else — the DSL's curated
+/// soundness is defense-in-depth, NOT the guarantee. This is `#[cfg(test)]` so it
+/// can never reach a shipping binary or the closed `RewriteRule` vocabulary.
+#[cfg(test)]
+pub fn compile_unsound_div_fold_for_redteam() -> impl Fn(&Program) -> Program {
+    fn fold(e: &Expr) -> Expr {
+        let folded = map_children(e, fold);
+        if let Expr::BinOp { op: BinOp::Div, left, right } = &folded {
+            if let (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) =
+                (left.as_ref(), right.as_ref())
+            {
+                // UNSOUND: emit a literal for ANY int/int division, with NO zero
+                // guard — so `10 / 0` (which must panic, exit 101) becomes the
+                // literal `0`, erasing the panic. (We don't actually divide in
+                // Rust — we emit a bogus literal — so the builder itself can't
+                // panic; the unsoundness is in the WRONG AST it produces.)
+                let bogus = if *b == 0 { 0 } else { a.wrapping_div(*b) };
+                return Expr::Literal(Literal::Int(bogus));
+            }
+        }
+        folded
+    }
+    |program: &Program| Program {
+        items: program
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::FnDef(f) => {
+                    let mut nf = f.clone();
+                    nf.body = fold(&f.body);
+                    Item::FnDef(nf)
+                }
+                other => other.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// One bounded bottom-up rewrite: fold children, then apply every rule at this
 /// node (in spec order) until a fixed point or the per-node fuel runs out.
 /// Totality: children recursion is bounded by AST depth; the per-node loop is
