@@ -1,0 +1,15 @@
+Axon capability security — field notes.
+
+@[contained(...)] is a compile-time capability boundary enforced by `axon check`
+(error E1001). A function declares exactly which filesystem paths, network hosts,
+and process-spawning rights it may use; the compiler refuses to build any call
+that reaches outside the declared set, before the program runs even once.
+
+The boundary is total and transitive: it follows helper calls, sees through
+string interpolation, descends into impl-method bodies, and follows method
+dispatch — so a forbidden call cannot be laundered one hop away. An agent that
+declares net:["api.anthropic.com"] and fs:[read("./data/")] can call the LLM and
+read its granted notes, but reaching /etc/passwd or spawning curl is rejected.
+
+This is the difference between a sandbox that is a policy you hope holds and one
+that is a proof the compiler checked.

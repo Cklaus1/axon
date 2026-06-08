@@ -1371,6 +1371,12 @@ fn every_goal_example_compiles_and_runs() {
         .filter(|p| {
             p.file_name()
                 .and_then(|n| n.to_str())
+                // Real allow-case goals are `*-goal.md`. Deny-case goals are
+                // `*-goal-evil.md` (DESIGNED to fail `axon check` with E1001 to
+                // demo the compiler refusing an over-reaching agent); they end in
+                // `-evil.md`, not `-goal.md`, so this suffix filter already
+                // excludes them. They have their own assertion
+                // (`agent_evil_goal_is_refused`). README.md / *.ax also excluded.
                 .map(|n| n.ends_with("-goal.md"))
                 .unwrap_or(false)
         })
@@ -1417,6 +1423,38 @@ fn every_goal_example_compiles_and_runs() {
         broken.is_empty(),
         "these flagship goal examples no longer compile/run cleanly: {broken:#?}"
     );
+}
+
+#[test]
+fn agent_goal_runs_within_its_grant() {
+    // The flagship agent goal: a @[contained] research agent that reads its
+    // GRANTED notes and calls the Anthropic LLM. Both are inside the declared
+    // grant, so it compiles and the goal loop runs to a deploy. Guards the
+    // ai_complete-host fix (the agent's net call must NOT be denied by the prompt
+    // being checked against the host allowlist).
+    let f = format!("{}/../../examples/goals/agent-goal.md", env!("CARGO_MANIFEST_DIR"));
+    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").env("AXON_SEED", "42").output().unwrap();
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "agent goal must run within its grant and deploy: {msg}");
+    assert!(msg.contains("deploy gate: passed"), "expected a passed deploy gate: {msg}");
+    // The granted ai_complete + read_file must NOT be flagged.
+    assert!(!msg.contains("E1001"), "granted tools must not be refused: {msg}");
+}
+
+#[test]
+fn agent_evil_goal_is_refused() {
+    // The deny-twin: the SAME agent reaching outside its grant (reads /etc/passwd,
+    // spawns curl) must FAIL to compile — `axon goal` runs `axon check`, which
+    // rejects both escapes with E1001 before the agent runs. This is the wedge
+    // payoff: a narrow grant the compiler proves can't be widened.
+    let f = format!("{}/../../examples/goals/agent-goal-evil.md", env!("CARGO_MANIFEST_DIR"));
+    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2), "evil agent goal must be refused at check time: {msg}");
+    assert!(msg.contains("E1001"), "expected E1001 capability refusals: {msg}");
+    // Specifically: the ungranted fs-read and the exec are the two violations.
+    assert!(msg.contains("passwd") || msg.contains("read_file"), "fs-escape must be named: {msg}");
+    assert!(msg.contains("exec"), "exec violation must be named: {msg}");
 }
 
 #[test]

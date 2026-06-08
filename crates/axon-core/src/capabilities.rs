@@ -69,6 +69,26 @@ fn classify_call(name: &str) -> Option<IoKind> {
     }
 }
 
+/// The Anthropic API endpoint every AI builtin implicitly contacts.
+/// `@[contained(net: ["api.anthropic.com"])]` grants exactly this.
+const ANTHROPIC_HOST: &str = "api.anthropic.com";
+
+/// For an AI builtin (`ai_complete`, `ai_extract_*`), the network host is FIXED
+/// (the Anthropic endpoint) and the first call argument is the PROMPT, not a
+/// host. Returns the implicit host for those builtins, or `None` for a net
+/// builtin whose first arg genuinely IS the host (`http_get`/`http_post`).
+fn ai_builtin_host(name: &str) -> Option<&'static str> {
+    if name == "ai_complete"
+        || name == "ai_extract_uncertain_i64"
+        || name == "ai_extract_uncertain_f64"
+        || name.starts_with("ai_extract::<")
+    {
+        Some(ANTHROPIC_HOST)
+    } else {
+        None
+    }
+}
+
 // ── Path / host matching ──────────────────────────────────────────────────────
 
 /// Returns true if `path` has `prefix` as a path prefix.
@@ -785,7 +805,29 @@ fn check_call(
         }
 
         IoKind::Net => {
-            if let Some(host) = literal_arg {
+            // CRITICAL: the network HOST is not always the first argument. For
+            // `http_get(url)`/`http_post(url, …)` the first arg IS the host/URL,
+            // so the allowlist is checked against `literal_arg`. But for the AI
+            // builtins (`ai_complete`, `ai_extract_*`) the first arg is the
+            // PROMPT — the host is implicitly the Anthropic API endpoint. Checking
+            // the prompt against a host allowlist is just wrong (it denied every
+            // `ai_complete` under a host-pinned `net: ["api.anthropic.com"]`, and
+            // would "allow" a prompt that happened to match a glob). So the
+            // effective host for an AI builtin is the fixed endpoint, regardless
+            // of the prompt's content or whether it's a literal.
+            let ai_host = ai_builtin_host(name);
+            let effective_host: Option<&str> = ai_host.or(literal_arg);
+            // How to render the call in diagnostics: an AI builtin's host is
+            // implicit, so show `ai_complete(...) [host api.anthropic.com]`
+            // rather than misleadingly printing the prompt as the first-arg host.
+            let call_display = |host: &str| -> String {
+                if ai_host.is_some() {
+                    format!("{name}(...) [host {host}]")
+                } else {
+                    format!("{name}(\"{host}\", ...)")
+                }
+            };
+            if let Some(host) = effective_host {
                 // 1. never: net check.
                 for clause in &spec.never {
                     if let NeverClause::Net(glob) = clause {
@@ -793,8 +835,9 @@ fn check_call(
                             errors.push(CapabilityError::new(
                                 E1004,
                                 format!(
-                                    "`{name}(\"{host}\", ...)` is forbidden by `never: [net(\"{glob}\")]`\n  \
-                                     help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override"
+                                    "`{}` is forbidden by `never: [net(\"{glob}\")]`\n  \
+                                     help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override",
+                                    call_display(host)
                                 ),
                                 Span::dummy(),
                             ));
@@ -807,8 +850,9 @@ fn check_call(
                     errors.push(CapabilityError::new(
                         E1001,
                         format!(
-                            "`{name}(\"{host}\", ...)` is not permitted: no `net: [...]` in @[contained]\n  \
-                             help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)"
+                            "`{}` is not permitted: no `net: [...]` in @[contained]\n  \
+                             help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)",
+                            call_display(host)
                         ),
                         Span::dummy(),
                     ));
@@ -816,9 +860,10 @@ fn check_call(
                     errors.push(CapabilityError::new(
                         E1001,
                         format!(
-                            "`{name}(\"{host}\", ...)` is not permitted by @[contained] \
+                            "`{}` is not permitted by @[contained] \
                              (allowed: {})\n  \
                              help: Add `\"{host}\"` to the existing `net: [...]` clause",
+                            call_display(host),
                             spec.net_allow.iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", ")
                         ),
                         Span::dummy(),
@@ -883,6 +928,69 @@ mod tests {
             never,
             span: Span::dummy(),
         }
+    }
+
+    /// Build a spec granting a net allowlist (make_spec hardcodes empty net).
+    fn make_net_spec(net_allow: Vec<&str>) -> ContainedSpec {
+        ContainedSpec {
+            fs_read: Vec::new(),
+            fs_write: Vec::new(),
+            net_allow: net_allow.into_iter().map(String::from).collect(),
+            exec_allowed: false,
+            never: Vec::new(),
+            span: Span::dummy(),
+        }
+    }
+
+    #[test]
+    fn ai_complete_checks_implicit_host_not_prompt() {
+        // REGRESSION: ai_complete's first arg is the PROMPT, not a host. The net
+        // check must validate the implicit Anthropic endpoint against the
+        // allowlist — NOT the prompt string. Before the fix, ai_complete under
+        // `net: ["api.anthropic.com"]` was wrongly DENIED (the prompt didn't match
+        // the host glob), which broke every realistic LLM-agent use case.
+        let spec = make_net_spec(vec!["api.anthropic.com"]);
+        // A long prose prompt that would never match a host glob.
+        let args = vec![Expr::Literal(crate::ast::Literal::Str(
+            "Summarize these notes concisely for a tweet.".into(),
+        ))];
+        let mut errors = Vec::new();
+        check_call("ai_complete", &args, &spec, &mut errors);
+        assert!(errors.is_empty(),
+            "ai_complete under the anthropic grant must be allowed regardless of prompt: {errors:?}");
+    }
+
+    #[test]
+    fn ai_complete_denied_without_anthropic_grant() {
+        // The deny side: ai_complete under a net allowlist that does NOT include
+        // the Anthropic host is refused (E1001), and the message names the host,
+        // not the prompt.
+        let spec = make_net_spec(vec!["api.other.com"]);
+        let args = vec![Expr::Literal(crate::ast::Literal::Str("any prompt".into()))];
+        let mut errors = Vec::new();
+        check_call("ai_complete", &args, &spec, &mut errors);
+        assert_eq!(errors.len(), 1, "ai_complete without anthropic grant must be denied: {errors:?}");
+        assert_eq!(errors[0].code, E1001);
+        assert!(errors[0].message.contains("api.anthropic.com"),
+            "message should name the implicit host: {}", errors[0].message);
+        assert!(!errors[0].message.contains("any prompt"),
+            "message must NOT print the prompt as the host: {}", errors[0].message);
+    }
+
+    #[test]
+    fn http_get_still_checks_first_arg_as_host() {
+        // The non-AI net builtins are unchanged: http_get's first arg IS the host.
+        let spec = make_net_spec(vec!["api.allowed.com"]);
+        let mut errors = Vec::new();
+        check_call("http_get",
+            &[Expr::Literal(crate::ast::Literal::Str("api.allowed.com".into()))],
+            &spec, &mut errors);
+        assert!(errors.is_empty(), "http_get to an allowed host: {errors:?}");
+        let mut errors = Vec::new();
+        check_call("http_get",
+            &[Expr::Literal(crate::ast::Literal::Str("api.evil.com".into()))],
+            &spec, &mut errors);
+        assert_eq!(errors.len(), 1, "http_get to a non-allowed host must be denied: {errors:?}");
     }
 
     #[test]
