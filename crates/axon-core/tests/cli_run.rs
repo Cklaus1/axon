@@ -4372,6 +4372,30 @@ fn self_improving_compiler_verifies_a_third_bool_simplify_pass() {
 }
 
 #[test]
+fn self_improving_compiler_verifies_a_fourth_redundant_branch_pass() {
+    // A FOURTH registry pass — `redundant-branch-fold` (if true {a} else {b} → a)
+    // — clears the four-gate harness over the real corpus. The registry now holds
+    // four verified passes, each admitted only after the gates prove it
+    // behavior-preserving + capability-safe. Folds a constant-condition if/else to
+    // the taken branch (the literal condition + dead branch are behavior-free to
+    // remove; the taken branch is preserved verbatim).
+    let out = axon()
+        .args(["improve", "verify", &ex(""), "--pass", "redundant-branch-fold"])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(out.status.success(), "redundant-branch-fold must pass the gates: {combined}");
+    assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
+    assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
+    assert!(combined.contains("PASSED"), "overall: {combined}");
+}
+
+#[test]
 fn constant_fold_reduces_complexity_with_identical_behavior() {
     // The "simpler, not just faster" improvement axis: constant-folding strictly
     // REDUCES the MDL description length (`axon complexity` bits) while preserving

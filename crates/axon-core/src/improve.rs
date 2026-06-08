@@ -992,6 +992,81 @@ pub fn count_bool_simplify_sites(e: &Expr) -> usize {
     here + child_exprs(e).into_iter().map(count_bool_simplify_sites).sum::<usize>()
 }
 
+// ── The redundant-branch-fold REWRITE PASS (R10, fourth template) ─────────────
+//
+// A fourth oracle-verified optimization: collapse an `if` whose condition is a
+// bool LITERAL to the taken branch — `if true { a } else { b }` → `a`,
+// `if false { a } else { b }` → `b`. Soundness:
+//   * the condition is a literal, so it has NO side effect to drop;
+//   * the TAKEN branch is preserved verbatim (evaluated exactly as before), so
+//     its behavior — including any panic or side effect — is identical;
+//   * the dead branch is provably never executed (the interpreter would never
+//     take it given a constant condition), so removing it changes nothing.
+// Restricted to the `if/else` form (both arms present) so the result type/value
+// is unambiguous; an `if <lit> { a }` with no else is left alone (conservative —
+// folding it would have to synthesize a Unit for the false case). Composes with
+// `bool-simplify` (which first turns `!true`→`false`, exposing more literals
+// here) and REDUCES DESCRIPTION LENGTH for identical behavior.
+
+/// Recursively fold redundant `if <bool-literal>` branches in `e`. Children
+/// first (so a nested constant condition is exposed), then collapse a top-level
+/// literal-condition `if/else` to the taken branch.
+fn redundant_branch_fold_expr(e: &Expr) -> Expr {
+    let folded = map_child_exprs(e, redundant_branch_fold_expr);
+    if let Expr::If { cond, then, else_ } = &folded {
+        if let (Expr::Literal(Literal::Bool(b)), Some(else_branch)) = (cond.as_ref(), else_) {
+            return if *b { (**then).clone() } else { (**else_branch).clone() };
+        }
+    }
+    folded
+}
+
+/// The discovered optimization as a runnable [`Pass`]: fold constant-condition
+/// `if/else` throughout the program. Passes G1 by construction-then-proof (the
+/// taken branch is preserved; the literal condition and dead branch are
+/// behavior-free to remove) and G2 (adds no capability).
+pub fn redundant_branch_fold_pass(program: &Program) -> Program {
+    Program {
+        items: program
+            .items
+            .iter()
+            .map(|item| match item {
+                Item::FnDef(f) => {
+                    let mut nf = f.clone();
+                    nf.body = redundant_branch_fold_expr(&f.body);
+                    Item::FnDef(nf)
+                }
+                Item::ImplBlock(b) => {
+                    let mut nb = b.clone();
+                    nb.methods = b
+                        .methods
+                        .iter()
+                        .map(|m| {
+                            let mut nm = m.clone();
+                            nm.body = redundant_branch_fold_expr(&m.body);
+                            nm
+                        })
+                        .collect();
+                    Item::ImplBlock(nb)
+                }
+                other => other.clone(),
+            })
+            .collect(),
+    }
+}
+
+/// Count redundant-branch sites (read-only) — an `if <bool-literal> { _ } else
+/// { _ }`. Uses the SAME shape test as the pass (literal condition AND an else),
+/// so detector and rewrite agree exactly.
+pub fn count_redundant_branch_sites(e: &Expr) -> usize {
+    let here = if let Expr::If { cond, else_, .. } = e {
+        usize::from(matches!(cond.as_ref(), Expr::Literal(Literal::Bool(_))) && else_.is_some())
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_redundant_branch_sites).sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1700,5 +1775,76 @@ mod tests {
         // itself runs clean under verify, so a real failure above is the pass).
         let identity: &Pass = &|p: &Program| p.clone();
         assert!(verify_pass(identity, &c).passed(), "identity must hold over the diverse corpus");
+    }
+
+    // ── redundant-branch-fold pass (fourth template) ──────────────────────────
+
+    #[test]
+    fn redundant_branch_fold_collapses_constant_conditions() {
+        // if true { a } else { b } → a   ;   if false { a } else { b } → b
+        let t = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(true))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(t, Expr::Literal(Literal::Int(1))), "true branch taken: {t:?}");
+        let f = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(false))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(f, Expr::Literal(Literal::Int(2))), "false branch taken: {f:?}");
+        // A non-literal condition is left ALONE (not foldable).
+        let keep = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Ident("c".into())),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
+        });
+        assert!(matches!(keep, Expr::If { .. }), "non-literal condition must be kept: {keep:?}");
+        // An if WITHOUT else is conservatively left alone.
+        let no_else = redundant_branch_fold_expr(&Expr::If {
+            cond: Box::new(Expr::Literal(Literal::Bool(true))),
+            then: Box::new(Expr::Literal(Literal::Int(1))),
+            else_: None,
+        });
+        assert!(matches!(no_else, Expr::If { .. }), "no-else if is kept: {no_else:?}");
+    }
+
+    #[test]
+    fn redundant_branch_fold_clears_the_gates_and_preserves_behavior() {
+        // The taken branch's behavior (including a side-effecting println, and a
+        // value) must be preserved; the dead branch dropped. G1/G2/G3.
+        let c = vec![
+            prog("fn main() -> i64 { if true { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if false { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if true { println(\"taken\")\n 1 } else { println(\"dead\")\n 0 } }"),
+        ];
+        let pass: &Pass = &redundant_branch_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "redundant-branch-fold must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    #[test]
+    fn redundant_branch_fold_does_not_erase_a_panic_in_the_taken_branch() {
+        // The TAKEN branch panics (div by zero, exit 101). Folding keeps the taken
+        // branch, so the panic is preserved — G1 holds (identity behavior).
+        let c = vec![prog("fn main() -> i64 { if true { let z = 0\n 10 / z } else { 0 } }")];
+        let pass: &Pass = &redundant_branch_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "folding must preserve a panic in the taken branch: {:?}", rec.rejection());
+    }
+
+    #[test]
+    fn count_redundant_branch_sites_matches_the_pass() {
+        // A constant-condition if/else is a site; a non-literal or no-else is not.
+        assert_eq!(
+            count_redundant_branch_sites(&prog_body("fn main() -> i64 { if true { 1 } else { 2 } }")),
+            1
+        );
+        assert_eq!(
+            count_redundant_branch_sites(&prog_body("fn f(c: bool) -> i64 { if c { 1 } else { 2 } }")),
+            0,
+            "non-literal condition is not a site"
+        );
     }
 }

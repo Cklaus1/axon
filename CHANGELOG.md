@@ -26,6 +26,12 @@
   a "fold" of `10/0` (exit 101) to a literal (exit 0) is rejected by G1, proving the exact
   soundness property the real constant-fold/bool-simplify passes rely on is enforced by the gate,
   not merely respected by the passes.
+- Self-improving compiler (R10): a **fourth** oracle-verified optimization pass —
+  `redundant-branch-fold` (`if true {a} else {b}` → `a`, `if false {…} else {b}` → `b`) — added
+  to the closed template registry and proven through the four gates over the real corpus. Sound:
+  the literal condition has no side effect to drop, the dead branch is provably never taken, and
+  the taken branch is preserved verbatim (its panics/side effects identical). Composes with
+  `bool-simplify` (which exposes more constant conditions). The registry now holds FOUR passes.
 - Self-improving compiler (R10): a **third** oracle-verified optimization pass — `bool-simplify`
   (`!true`→`false`, `!false`→`true`, `!(!x)`→`x`) — added to the closed template registry and
   proven through the four-gate harness (G1/G2/G3 over the real corpus). All three rewrites are
