@@ -339,6 +339,11 @@ pub struct Interp<'p> {
     /// operation. `resume(v)` replays `body` (the handled `with`-block body) with
     /// `v` fed at the intercepted op and returns the continuation's value.
     resume_ctx: RefCell<Vec<ResumeCtx>>,
+    /// Phase 7 (R12 Slice 1): the live principal-authority registry. The
+    /// `principal_*` builtins mint/spend/authorize against it, so attenuation is
+    /// enforced by the KERNEL (the registry), not just as userland values. A
+    /// handle is a plain `i64` index. Empty until a program mints a root.
+    principals: RefCell<crate::kernel::PrincipalRegistry>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -837,6 +842,7 @@ impl<'p> Interp<'p> {
             handlers: RefCell::new(Vec::new()),
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
+            principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

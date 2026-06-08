@@ -994,6 +994,52 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "f64",
         doc: "HELD-OUT evaluation (R5): run the @[adaptive] metric `name` on a specific `input` and return its score WITHOUT recording it as a training probe (provenance is snapshotted+restored). The eval-hierarchy primitive — optimize with `goal_run` on a training budget, then `goal_eval` the best input on a held-out test set to check the target honestly (no overfitting to probes, no bias to the next goal_run).",
     },
+    // ── Phase 7 (R12 Slice 1): principal_authority kernel registry ───────────
+    // Live principals with KERNEL-enforced attenuation (R11): a child can never
+    // hold a cap the parent lacks; budget is carved from the parent, not
+    // conjured. Handles are i64. Semantics mirror `stdlib/principal_mint.ax` (I-2).
+    BuiltinFn {
+        name: "principal_root",
+        params: &[("name", "str"), ("net", "bool"), ("fs_write", "bool"), ("exec", "bool"), ("budget", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 1): register a ROOT principal — the originating authority — in the live kernel registry, holding exactly the given caps and full budget. Returns its handle (i64). Everything minted below it can only attenuate.",
+    },
+    BuiltinFn {
+        name: "principal_mint",
+        params: &[("parent", "i64"), ("name", "str"), ("net", "bool"), ("fs_write", "bool"), ("exec", "bool"), ("grant", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 1): mint an attenuated child of `parent` in the kernel registry. ATTENUATION BY CONSTRUCTION — child cap_X = want_X ∧ parent.X (escalation unrepresentable), grant clamped to the parent's remaining budget and carved from it. Returns the child handle; panics E1601 on an unknown parent handle.",
+    },
+    BuiltinFn {
+        name: "principal_holds",
+        params: &[("handle", "i64"), ("cap", "str")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 1): does the principal hold the named capability (\"net\"/\"fs_write\"/\"exec\")? Unknown name or handle → false (deny by default).",
+    },
+    BuiltinFn {
+        name: "principal_budget_remaining",
+        params: &[("handle", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 1): the principal's remaining budget (cap − used, clamped at 0). 0 for an unknown handle.",
+    },
+    BuiltinFn {
+        name: "principal_spend",
+        params: &[("handle", "i64"), ("amount", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 1): debit `amount` from the principal's own carved budget; returns the new remaining. Capabilities are untouched.",
+    },
+    BuiltinFn {
+        name: "principal_authorize",
+        params: &[("handle", "i64"), ("needs_net", "bool"), ("needs_fs_write", "bool"), ("needs_exec", "bool")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 1): action gate — authorized iff the principal holds every needed capability AND is not budget-exhausted.",
+    },
+    BuiltinFn {
+        name: "principal_can_mint",
+        params: &[("handle", "i64"), ("want_net", "bool"), ("want_fs_write", "bool"), ("want_exec", "bool"), ("grant", "i64")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 1): would a mint grant anything — does the parent hold every requested cap and have budget to carve? The explicit gate (mint is total and safe without it).",
+    },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {
         name: "corrigible_halt",

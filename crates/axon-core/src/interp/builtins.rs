@@ -58,27 +58,32 @@ impl<'p> Interp<'p> {
         {
             let mut replay = self.resume_replay.borrow_mut();
             if let Some(r) = replay.as_mut() {
-                for eff in crate::builtins::builtin_effect_row(name) {
-                    if r.effect == *eff {
-                        if !r.consumed {
-                            r.consumed = true;
-                            return Ok(Some(r.feed.clone()));
-                        }
-                        return Err(crate::interp::Flow::MultiShotUnsound(format!(
-                            "effect `{eff}` (via `{name}`) is performed a second time during a \
-                             handler-continuation replay; multi-shot `resume` is supported only \
-                             when the handled body performs exactly one effect and is otherwise \
-                             pure (a side effect cannot be re-executed on replay) [E1314]"
-                        )));
+                let row = crate::builtins::builtin_effect_row(name);
+                if row.iter().any(|e| r.effect == **e) {
+                    // The handled effect's op. The first hit consumes the feed
+                    // (the resume value); a second hit can't be soundly re-fired.
+                    if !r.consumed {
+                        r.consumed = true;
+                        return Ok(Some(r.feed.clone()));
                     }
+                    return Err(crate::interp::Flow::MultiShotUnsound(format!(
+                        "effect `{}` (via `{name}`) is performed a second time during a \
+                         handler-continuation replay; multi-shot `resume` is supported only \
+                         when the handled body performs exactly one effect and is otherwise \
+                         pure (a side effect cannot be re-executed on replay) [E1314]",
+                        r.effect
+                    )));
+                } else if !row.is_empty() {
                     // A DIFFERENT effect during the replay also can't be re-fired.
                     return Err(crate::interp::Flow::MultiShotUnsound(format!(
-                        "effect `{eff}` (via `{name}`) is performed during a handler-continuation \
+                        "effect `{}` (via `{name}`) is performed during a handler-continuation \
                          replay for a different effect; multi-shot `resume` requires the handled \
-                         body to be pure after its single intercepted op [E1314]"
+                         body to be pure after its single intercepted op [E1314]",
+                        row[0]
                     )));
                 }
-                // Pure builtin during replay: fall through and run it normally.
+                // Pure builtin (empty row) during replay: fall through and run it
+                // normally — re-running pure code is exact.
             }
         }
 
@@ -1769,6 +1774,117 @@ impl<'p> Interp<'p> {
             "ai_cost_spent" => {
                 want(0)?;
                 ok!(Value::Int(self.ai_cost_micro.get()));
+            }
+
+            // ── Phase 7 (R12 Slice 1): principal_authority kernel registry ──────
+            // The KERNEL enforces R11 attenuation: a child can never hold a cap
+            // the parent lacks, and budget is carved from the parent, not
+            // conjured. Handles are plain i64 indices into the live registry.
+            // Observable semantics are byte-identical to the userland oracle
+            // (`examples/stdlib/principal_mint.ax`) — I-2.
+
+            // `principal_root(name, net, fs_write, exec, budget) -> i64` —
+            // register a ROOT authority; returns its handle.
+            "principal_root" => {
+                want(5)?;
+                let name = as_str(&args[0])?.to_string();
+                let net = as_bool(&args[1])?;
+                let fs_write = as_bool(&args[2])?;
+                let exec = as_bool(&args[3])?;
+                let budget = as_int(&args[4])?;
+                let h = self.principals.borrow_mut().root(name, net, fs_write, exec, budget);
+                ok!(Value::Int(h as i64));
+            }
+
+            // `principal_mint(parent, name, net, fs_write, exec, grant) -> i64` —
+            // mint an attenuated child; returns its handle, or panics E1601 if the
+            // parent handle is unknown (a defense-in-depth guard — the registry
+            // makes escalation structurally impossible, so a valid parent always
+            // yields a clamped child).
+            "principal_mint" => {
+                want(6)?;
+                let parent = as_int(&args[0])?;
+                let name = as_str(&args[1])?.to_string();
+                let net = as_bool(&args[2])?;
+                let fs_write = as_bool(&args[3])?;
+                let exec = as_bool(&args[4])?;
+                let grant = as_int(&args[5])?;
+                if parent < 0 {
+                    return panic(format!(
+                        "[E1601] principal_mint: invalid parent handle {parent} \
+                         (a principal handle comes from principal_root/principal_mint)"
+                    ));
+                }
+                match self.principals.borrow_mut().mint(
+                    parent as usize, name, net, fs_write, exec, grant,
+                ) {
+                    Some(h) => ok!(Value::Int(h as i64)),
+                    None => panic(format!(
+                        "[E1601] principal_mint: unknown parent handle {parent} \
+                         (no such principal in the kernel registry)"
+                    )),
+                }
+            }
+
+            // `principal_holds(handle, cap) -> bool` — does the principal hold the
+            // named capability ("net"/"fs_write"/"exec")? Unknown name/handle → false.
+            "principal_holds" => {
+                want(2)?;
+                let h = as_int(&args[0])?;
+                let cap = as_str(&args[1])?.to_string();
+                let held = h >= 0
+                    && self
+                        .principals
+                        .borrow()
+                        .get(h as usize)
+                        .map(|p| p.holds(&cap))
+                        .unwrap_or(false);
+                ok!(Value::Bool(held));
+            }
+
+            // `principal_budget_remaining(handle) -> i64` — the principal's
+            // remaining budget (0 if unknown / exhausted).
+            "principal_budget_remaining" => {
+                want(1)?;
+                let h = as_int(&args[0])?;
+                let rem = if h >= 0 { self.principals.borrow().budget_remaining(h as usize) } else { 0 };
+                ok!(Value::Int(rem));
+            }
+
+            // `principal_spend(handle, amount) -> i64` — debit the principal's own
+            // budget; returns the new remaining. Caps untouched.
+            "principal_spend" => {
+                want(2)?;
+                let h = as_int(&args[0])?;
+                let amount = as_int(&args[1])?;
+                let rem = if h >= 0 { self.principals.borrow_mut().spend(h as usize, amount) } else { 0 };
+                ok!(Value::Int(rem));
+            }
+
+            // `principal_authorize(handle, needs_net, needs_fs_write, needs_exec)
+            // -> bool` — action gate: holds every needed cap AND not exhausted.
+            "principal_authorize" => {
+                want(4)?;
+                let h = as_int(&args[0])?;
+                let n = as_bool(&args[1])?;
+                let f = as_bool(&args[2])?;
+                let e = as_bool(&args[3])?;
+                let ok = h >= 0 && self.principals.borrow().authorize(h as usize, n, f, e);
+                ok!(Value::Bool(ok));
+            }
+
+            // `principal_can_mint(handle, want_net, want_fs_write, want_exec,
+            // grant) -> bool` — would a mint grant anything (holds the caps + has
+            // budget)? The explicit gate; mint is total + safe without it.
+            "principal_can_mint" => {
+                want(5)?;
+                let h = as_int(&args[0])?;
+                let n = as_bool(&args[1])?;
+                let f = as_bool(&args[2])?;
+                let e = as_bool(&args[3])?;
+                let g = as_int(&args[4])?;
+                let ok = h >= 0 && self.principals.borrow().can_mint(h as usize, n, f, e, g);
+                ok!(Value::Bool(ok));
             }
 
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).

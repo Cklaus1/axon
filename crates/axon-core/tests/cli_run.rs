@@ -162,6 +162,72 @@ fn phase6_multishot_resume() {
 }
 
 #[test]
+fn phase7_kernel_principal_authority() {
+    // Phase 7 (R12 Slice 1): the kernel principal_authority registry enforces R11
+    // attenuation FOR a program — a minted child can never hold a cap the parent
+    // lacks, and budget is carved from the parent, not conjured. Observable
+    // semantics are byte-identical to the userland oracle
+    // (examples/stdlib/principal_mint.ax) — I-2. main returns 0 on all-pass.
+    let run = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_kp_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // Subset mint + carved budget (oracle test_mint_subset_works + carve).
+    let (code, _) = run(
+        "fn main() -> i64 { \
+           let r = principal_root(\"root\", true, true, true, 100)\n\
+           let c = principal_mint(r, \"child\", true, false, true, 40)\n\
+           assert(principal_holds(c, \"net\"))\n\
+           assert(!principal_holds(c, \"fs_write\"))\n\
+           assert(principal_holds(c, \"exec\"))\n\
+           assert_eq(principal_budget_remaining(c), 40)\n\
+           assert_eq(principal_budget_remaining(r), 60)\n\
+           0 }",
+    );
+    assert_eq!(code, 0, "kernel mint attenuates caps + carves budget");
+
+    // Escalation is structurally impossible (oracle test_mint_cannot_escalate).
+    let (code, _) = run(
+        "fn main() -> i64 { \
+           let s = principal_root(\"sandbox\", false, true, false, 50)\n\
+           let c = principal_mint(s, \"c\", true, true, true, 20)\n\
+           assert(!principal_holds(c, \"net\"))\n\
+           assert(!principal_holds(c, \"exec\"))\n\
+           assert(principal_holds(c, \"fs_write\"))\n\
+           0 }",
+    );
+    assert_eq!(code, 0, "a child cannot gain a cap the parent lacks");
+
+    // Over-grant clamps to the parent's remaining (oracle test_overgrant).
+    let (code, _) = run(
+        "fn main() -> i64 { \
+           let r = principal_root(\"root\", true, true, true, 50)\n\
+           let c = principal_mint(r, \"greedy\", true, true, true, 200)\n\
+           assert_eq(principal_budget_remaining(c), 50)\n\
+           assert_eq(principal_budget_remaining(r), 0)\n\
+           0 }",
+    );
+    assert_eq!(code, 0, "an over-grant is clamped — authority can't be conjured");
+
+    // An invalid parent handle is refused (E1601 defense-in-depth), not a silent
+    // grant. -1 is never a valid handle.
+    let (code, err) = {
+        let src = "fn main() -> i64 { let c = principal_mint(0 - 1, \"x\", true, true, true, 10)\n c }";
+        let f = std::env::temp_dir().join(format!("axon_kp_bad_{}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).to_string())
+    };
+    assert_eq!(code, 101, "an invalid parent handle is refused, not granted");
+    assert!(err.contains("E1601"), "the refusal names E1601: {err:?}");
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).

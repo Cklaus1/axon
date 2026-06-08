@@ -33,6 +33,10 @@ pub mod borrow;
 pub mod comptime;
 /// Codegen-free tree-walking interpreter (`axon run` without LLVM).
 pub mod interp;
+/// Phase 7 (R12) kernel runtime services — Slice 1: `principal_authority`
+/// (live principal registry with kernel-enforced attenuation). Interp-driven so
+/// the codegen build is untouched (R12 §9 Q3).
+pub mod kernel;
 pub mod mono;
 // Phase 4
 pub mod audit;
