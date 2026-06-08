@@ -12,6 +12,13 @@
   model that discovers it doesn't need the offset. Built entirely on shipped primitives
   (`@[adaptive]`/`goal_run`/refinements/the `axon complexity` MDL idea); the kernel `World<T>`
   + `observe`/`condition` keywords + probabilistic fit are the named Phase-13 follow-on.
+- Self-improving compiler (R10): **corpus breadth hardening** — every registry pass
+  (fold-arith-identities, constant-fold, bool-simplify) + identity is now driven through the
+  four gates over a diverse 11-program corpus spanning the language surface (recursion,
+  for/while loops, structs, enums+match, closures, strings+interpolation, Option/Result+`?`,
+  nested arithmetic, and a deliberate div-by-zero panic). The G1 oracle is only as strong as
+  its corpus; this proves the passes are behavior-preserving across constructs, not just toy
+  programs — corpus hardening toward trusting free-form (Layer-3) authorship.
 - Self-improving compiler (R10): **firewall red-team hardening** — adversarial passes proving
   the four gates REJECT bad candidates (the prerequisite for trusting free-form pass authorship):
   a stdout-only change (G1/E1401, the half of the observable tuple the prior test didn't cover),

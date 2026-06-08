@@ -1633,4 +1633,72 @@ mod tests {
         let err = rec.rejection().expect("a rejection");
         assert_eq!(err.code, E1401, "panic erasure is a G1 failure (exit 101 → 0): {}", err.message);
     }
+
+    // ── Corpus breadth: every registry pass must hold across the language ──────
+    //
+    // The G1 oracle is only as strong as the corpus it compares on (a behavior
+    // difference on a construct NOT in the corpus slips through). This exercises
+    // each of the three SHIPPED registry passes over a diverse corpus spanning
+    // the language surface — recursion, loops, structs, enums+match, closures,
+    // strings, Option/Result, nested arithmetic, and a deliberate runtime panic.
+    // A pass that miscompiled any construct it doesn't explicitly handle would
+    // change observable output here and fail G1. (This is the corpus-hardening
+    // step toward trusting Layer-3 free-form authorship.)
+    fn diverse_corpus() -> Vec<Program> {
+        vec![
+            // recursion + arithmetic identities + constants (folder targets)
+            prog("fn fib(n: i64) -> i64 { if n < 2 { n } else { fib(n-1) + fib(n-2) } }\n\
+                  fn main() -> i64 { fib(10) + 0 }"),
+            // for-loop accumulation + multiply-by-1 identity
+            prog("fn main() -> i64 { let s = 0\n for i in 0..5 { s = s + i * 1 }\n s }"),
+            // while-loop
+            prog("fn main() -> i64 { let n = 0\n let acc = 0\n while n < 4 { acc = acc + n  n = n + 1 }\n acc }"),
+            // struct construct + field access
+            prog("type P = { x: i64, y: i64 }\n\
+                  fn main() -> i64 { let p = P { x: 3 + 4, y: 2 }\n p.x + p.y }"),
+            // enum + match (variant patterns are fully qualified `Sh::Variant`)
+            prog("type Sh = Circle { r: i64 } | Sq { s: i64 }\n\
+                  fn area(sh: Sh) -> i64 { match sh { Sh::Circle { r } => r * r * 3  Sh::Sq { s } => s * s } }\n\
+                  fn main() -> i64 { area(Sh::Circle { r: 2 }) }"),
+            // bool logic (bool-simplify targets) + double negation
+            prog("fn main() -> i64 { let b = true\n if !(!b) && !false { 1 } else { 0 } }"),
+            // strings + interpolation + println (stdout in the observable tuple)
+            prog("fn main() -> i64 { let name = \"axon\"\n println(\"hi {name}\")\n len(name) }"),
+            // Option/Result + ? propagation
+            prog("fn parse2x(s: str) -> Result<i64, str> { let n = parse_int(s)?\n Ok(n * 2) }\n\
+                  fn main() -> i64 { match parse2x(\"21\") { Ok(v) => v  Err(_) => 0 } }"),
+            // closures + nested constant arithmetic
+            prog("fn main() -> i64 { let add = |a, b| a + b\n add(2 + 3, 4 * 1) }"),
+            // a deliberate runtime panic (div by zero) — exit 101; no pass may
+            // erase it (the panic-erasure red-team case at the corpus level).
+            prog("fn main() -> i64 { let z = 0\n 100 / z }"),
+            // @[test]-bearing member so G3 has something to regress-check
+            prog("fn dbl(x: i64) -> i64 { x * 2 }\n\
+                  @[test] fn t() { assert_eq(dbl(3 + 0), 6) }\n\
+                  fn main() -> i64 { dbl(7) }"),
+        ]
+    }
+
+    #[test]
+    fn every_registry_pass_holds_across_a_diverse_corpus() {
+        let c = diverse_corpus();
+        // Drive every SHIPPED registry pass through the gates over the broad
+        // corpus. Each must clear G1 (correctness) + G2 (safety) + G3 (regression)
+        // — proof the pass is behavior-preserving across the language surface, not
+        // just on the toy 3-member base corpus.
+        for name in crate::improve_templates::template_names() {
+            let pass = crate::improve_templates::get_pass_for_template(name)
+                .expect("registry name resolves to a pass");
+            let rec = verify_pass(pass, &c);
+            assert!(
+                rec.passed(),
+                "registry pass `{name}` must hold across the diverse corpus: {:?}",
+                rec.rejection()
+            );
+        }
+        // The identity pass is the baseline and must also hold (sanity: the corpus
+        // itself runs clean under verify, so a real failure above is the pass).
+        let identity: &Pass = &|p: &Program| p.clone();
+        assert!(verify_pass(identity, &c).passed(), "identity must hold over the diverse corpus");
+    }
 }
