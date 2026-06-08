@@ -130,9 +130,25 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             _ => None,
         })
         .collect();
+    // method-name → every impl method with that name. The MethodCall walk uses
+    // this to follow `x.go()` into the method body transitively. Dispatch is
+    // OVER-APPROXIMATED by name: the static checker has no receiver type, so a
+    // contained fn calling `x.go()` is checked against EVERY `go` impl. This
+    // cannot be laundered (no false negative — the soundness property a security
+    // boundary needs); at worst it over-reports when two types share a method
+    // name and the caller uses the pure one (documented limitation).
+    let mut method_map: std::collections::HashMap<&str, Vec<&FnDef>> =
+        std::collections::HashMap::new();
+    for item in &program.items {
+        if let Item::ImplBlock(b) = item {
+            for m in &b.methods {
+                method_map.entry(m.name.as_str()).or_default().push(m);
+            }
+        }
+    }
     for item in &program.items {
         match item {
-            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &mut errors),
+            Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &mut errors),
             // An impl method with its OWN @[contained] must be enforced too —
             // otherwise `impl T for X { @[contained(net:[])] fn m(self){ http_get(..) } }`
             // would silently escape its declared sandbox (the method's body was
@@ -140,7 +156,7 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             // no-ops in check_fn, matching free-fn behavior.
             Item::ImplBlock(b) => {
                 for m in &b.methods {
-                    check_fn(m, &fn_map, &mut errors);
+                    check_fn(m, &fn_map, &method_map, &mut errors);
                 }
             }
             _ => {}
@@ -151,7 +167,8 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
 
 fn check_fn<'a>(
     fndef: &'a FnDef,
-    fn_map: &std::collections::HashMap<&'a str, &'a FnDef>,
+    fn_map: &'a std::collections::HashMap<&'a str, &'a FnDef>,
+    method_map: &'a std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
     errors: &mut Vec<CapabilityError>,
 ) {
     let spec = match &fndef.contained {
@@ -163,17 +180,29 @@ fn check_fn<'a>(
     // fn itself so a self/mutual recursion can't loop.
     let mut visited: std::collections::HashSet<&str> = std::collections::HashSet::new();
     visited.insert(fndef.name.as_str());
-    let mut ctx = CapCtx { spec, fn_map, visited, errors };
+    let mut ctx = CapCtx {
+        spec,
+        fn_map,
+        method_map,
+        visited,
+        visited_methods: std::collections::HashSet::new(),
+        errors,
+    };
     check_expr(&fndef.body, &mut ctx);
 }
 
 /// Threaded state for the transitive `@[contained]` walk: the spec being
-/// enforced, the program's fn map (to follow helper calls), the visited set (to
-/// stop recursion), and the error sink.
+/// enforced, the program's fn map (to follow helper calls) and method map (to
+/// follow `x.go()` into impl bodies), the visited sets (to stop recursion), and
+/// the error sink.
 struct CapCtx<'a, 'e> {
     spec: &'a ContainedSpec,
     fn_map: &'a std::collections::HashMap<&'a str, &'a FnDef>,
+    method_map: &'a std::collections::HashMap<&'a str, Vec<&'a FnDef>>,
     visited: std::collections::HashSet<&'a str>,
+    /// Method names already descended into on this path (cycle guard, separate
+    /// namespace from free-fn `visited` since a method and a fn can share a name).
+    visited_methods: std::collections::HashSet<&'a str>,
     errors: &'e mut Vec<CapabilityError>,
 }
 
@@ -514,10 +543,26 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
         }
         Expr::UnaryOp { operand, .. } => check_expr(operand, ctx),
         Expr::Question(inner) => check_expr(inner, ctx),
-        Expr::MethodCall { receiver, args, .. } => {
+        Expr::MethodCall { receiver, method, args } => {
             check_expr(receiver, ctx);
             for arg in args {
                 check_expr(arg, ctx);
+            }
+            // Follow the dispatch into the impl method body so a contained fn
+            // cannot launder a forbidden call through `x.go()`. Dispatch is
+            // over-approximated by NAME (no receiver type statically): every impl
+            // method named `method` is checked under the caller's spec. Sound
+            // (no false negative); may over-report when a name is shared. A
+            // method with its OWN @[contained] is also checked under its own spec
+            // elsewhere; descending here additionally constrains it by the
+            // (possibly stricter) CALLER spec — defense in depth, same as helpers.
+            if let Some(impls) = ctx.method_map.get(method.as_str()) {
+                if ctx.visited_methods.insert(method.as_str()) {
+                    for m in impls {
+                        check_expr(&m.body, ctx);
+                    }
+                    ctx.visited_methods.remove(method.as_str());
+                }
             }
         }
         Expr::If { cond, then, else_ } => {
@@ -1048,6 +1093,73 @@ mod tests {
         let errs = check_capabilities(&p);
         assert!(errs.iter().any(|e| e.code == E1001),
             "contained impl method must be enforced (E1001): {errs:?}");
+    }
+
+    #[test]
+    fn contained_fn_cannot_launder_via_method_dispatch() {
+        // THE method-dispatch gap (the last in this class): a @[contained] free
+        // fn calls `t.go()`, and `go`'s impl exfiltrates. Previously the
+        // MethodCall walk checked receiver+args but NEVER followed into the impl
+        // body, so this laundered the exfil past the caller's sandbox. The walk
+        // now follows dispatch (over-approximated by method name) into the body.
+        let p = parse(
+            "type T = { x: i64 }\n\
+             trait Net { fn go(self) -> str }\n\
+             impl Net for T {\n\
+               fn go(self: T) -> str { ai_complete(\"exfil\") }\n\
+             }\n\
+             @[contained(net: [], exec: none)]\n\
+             fn caller() -> i64 {\n\
+               let t = T { x: 1 }\n\
+               let _ = t.go()\n\
+               0\n\
+             }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001),
+            "exfil via method dispatch must be caught under the caller's spec: {errs:?}");
+    }
+
+    #[test]
+    fn method_dispatch_within_grant_is_allowed() {
+        // The ALLOW companion: a contained fn that grants net and calls a method
+        // hitting an allowed host must NOT error — the dispatch-following must not
+        // over-deny a call that's within the declared capability.
+        let p = parse(
+            "type T = { x: i64 }\n\
+             trait Net { fn go(self) -> str }\n\
+             impl Net for T {\n\
+               fn go(self: T) -> str { match http_get(\"api.ok.com\") { Ok(s) => s  Err(_) => \"\" } }\n\
+             }\n\
+             @[contained(net: [\"api.ok.com\"], exec: none)]\n\
+             fn caller() -> i64 {\n\
+               let t = T { x: 1 }\n\
+               let _ = t.go()\n\
+               0\n\
+             }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.is_empty(),
+            "method call within the granted net allowlist must be allowed: {errs:?}");
+    }
+
+    #[test]
+    fn method_dispatch_recursion_terminates() {
+        // Cycle guard: a method that calls itself (or mutually-recursive methods)
+        // via dispatch must not loop the walker. visited_methods stops it.
+        let p = parse(
+            "type T = { x: i64 }\n\
+             trait R { fn rec(self) -> i64 }\n\
+             impl R for T {\n\
+               fn rec(self: T) -> i64 { let t = T { x: 0 }  t.rec() }\n\
+             }\n\
+             @[contained(net: [], exec: none)]\n\
+             fn caller() -> i64 { let t = T { x: 1 }  t.rec() }",
+        );
+        // Must terminate (the assertion is that this returns at all); no I/O so
+        // no errors expected.
+        let errs = check_capabilities(&p);
+        assert!(errs.is_empty(), "pure recursive method dispatch: no errors: {errs:?}");
     }
 
     #[test]
