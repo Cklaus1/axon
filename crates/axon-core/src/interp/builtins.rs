@@ -1887,6 +1887,108 @@ impl<'p> Interp<'p> {
                 ok!(Value::Bool(ok));
             }
 
+            // ── Phase 7 (R12 Slice 2): cooperative scheduler ────────────────────
+            // A fiber run-queue over the eager-spawn model. Fibers are (named fn,
+            // i64 arg); `scheduler_run` runs the ready ones in a seed-deterministic
+            // round-robin, catching a panicking fiber (recorded failed, not a
+            // process abort). Interp-only (codegen E0910-refuses), like goal_run.
+
+            // `scheduler_spawn(fn_name, arg) -> i64` — queue a fiber; returns its id.
+            "scheduler_spawn" => {
+                want(2)?;
+                let fn_name = as_str(&args[0])?.to_string();
+                let arg = as_int(&args[1])?;
+                if !self.fns.contains_key(&fn_name) {
+                    return panic(format!(
+                        "[E1602] scheduler_spawn: no function `{fn_name}` to run as a fiber"
+                    ));
+                }
+                let id = self.scheduler.borrow_mut().spawn(fn_name, arg);
+                ok!(Value::Int(id as i64));
+            }
+
+            // `scheduler_run() -> i64` — run all READY fibers to completion in the
+            // seed-deterministic order; returns the count that completed
+            // successfully. A fiber that panics/halts is caught and marked failed
+            // (observable via `scheduler_failed`), NOT a process abort — this is
+            // what lets the Slice-3 supervisor restart it. Re-runnable: a fiber
+            // restarted by the supervisor becomes Ready and runs on the next call.
+            "scheduler_run" => {
+                want(0)?;
+                let order = self.scheduler.borrow().ready_order();
+                let mut completed: i64 = 0;
+                for id in order {
+                    let Some((fn_name, arg)) = self.scheduler.borrow().fiber_call(id) else {
+                        continue;
+                    };
+                    // Run the fiber body. Look up the fn and call it with the i64
+                    // arg (0-arg fns ignore it). A panic/halt is caught here.
+                    let outcome = match self.fns.get(fn_name.as_str()).copied() {
+                        Some(f) => {
+                            let fiber_args =
+                                if f.params.is_empty() { vec![] } else { vec![Value::Int(arg)] };
+                            self.call_fn(f, fiber_args)
+                        }
+                        None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
+                    };
+                    match outcome {
+                        Ok(v) => {
+                            let r = numeric_score(&v).map(|s| s as i64).unwrap_or(0);
+                            self.scheduler.borrow_mut().complete(id, r);
+                            completed += 1;
+                        }
+                        // A fiber failure is OBSERVABLE, not fatal: record it and
+                        // keep scheduling the rest. (exit/Halt of the WHOLE program
+                        // still propagates — only per-fiber panics are caught.)
+                        Err(Flow::Panic(m)) | Err(Flow::RefineViolation(m)) | Err(Flow::VerifyFailed(m)) => {
+                            self.scheduler.borrow_mut().fail(id, m);
+                        }
+                        Err(other) => return Err(other),
+                    }
+                }
+                self.scheduler.borrow_mut().passes += 1;
+                ok!(Value::Int(completed));
+            }
+
+            // `scheduler_result(id) -> i64` — a completed fiber's result (0 if not
+            // done / unknown id).
+            "scheduler_result" => {
+                want(1)?;
+                let id = as_int(&args[0])?;
+                let r = if id >= 0 { self.scheduler.borrow().result(id as usize) } else { 0 };
+                ok!(Value::Int(r));
+            }
+
+            // `scheduler_failed(id) -> bool` — did the fiber fail (panic/halt)?
+            "scheduler_failed" => {
+                want(1)?;
+                let id = as_int(&args[0])?;
+                let f = id >= 0 && self.scheduler.borrow().failed(id as usize);
+                ok!(Value::Bool(f));
+            }
+
+            // `scheduler_restart(id) -> i64` — re-queue a fiber as Ready (the
+            // Slice-3 supervisor hook); returns the id. No-op on unknown id.
+            "scheduler_restart" => {
+                want(1)?;
+                let id = as_int(&args[0])?;
+                if id >= 0 {
+                    self.scheduler.borrow_mut().restart(id as usize);
+                }
+                ok!(Value::Int(id));
+            }
+
+            // `scheduler_done_count() -> i64` / `scheduler_failed_count() -> i64`
+            // — the run tally (completed, failed) for a fan-out/collect summary.
+            "scheduler_done_count" => {
+                want(0)?;
+                ok!(Value::Int(self.scheduler.borrow().tally().0 as i64));
+            }
+            "scheduler_failed_count" => {
+                want(0)?;
+                ok!(Value::Int(self.scheduler.borrow().tally().1 as i64));
+            }
+
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).
             "goal_eval" => {
                 want(2)?;

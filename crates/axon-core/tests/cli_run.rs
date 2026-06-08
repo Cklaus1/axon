@@ -228,6 +228,65 @@ fn phase7_kernel_principal_authority() {
 }
 
 #[test]
+fn phase7_kernel_scheduler() {
+    // Phase 7 (R12 Slice 2): the cooperative fiber scheduler fans out N fibers,
+    // runs them in a seed-deterministic round-robin, and CATCHES a panicking
+    // fiber (recorded failed, not a process abort) — the gate for Slice 2.
+    let run_seed = |src: &str, seed: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_sched_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", seed).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+    };
+
+    // Fan out 4 workers; worker(2) panics. The run completes 3, catches 1, and
+    // the process exits 0 (the failure is observable, not fatal).
+    let src = "fn worker(n: i64) -> i64 { if n == 2 { assert(false) }\n n * 100 }\n\
+               fn main() -> i64 { \
+                 let a = scheduler_spawn(\"worker\", 1)\n\
+                 let b = scheduler_spawn(\"worker\", 2)\n\
+                 let c = scheduler_spawn(\"worker\", 3)\n\
+                 let done = scheduler_run()\n\
+                 assert_eq(done, 2)\n\
+                 assert_eq(scheduler_result(a), 100)\n\
+                 assert(scheduler_failed(b))\n\
+                 assert_eq(scheduler_result(c), 300)\n\
+                 assert_eq(scheduler_failed_count(), 1)\n\
+                 0 }";
+    let (code, _) = run_seed(src, "1");
+    assert_eq!(code, 0, "a panicking fiber is caught, not fatal; others complete");
+
+    // Determinism: the same program + same AXON_SEED yields identical stdout.
+    let demo = "fn w(n: i64) -> i64 { n }\n\
+                fn main() -> i64 { \
+                  let a = scheduler_spawn(\"w\", 10)\n\
+                  let b = scheduler_spawn(\"w\", 20)\n\
+                  let _ = scheduler_run()\n\
+                  println(\"{to_str(scheduler_result(a))},{to_str(scheduler_result(b))}\")\n\
+                  0 }";
+    let (_, out1) = run_seed(demo, "42");
+    let (_, out2) = run_seed(demo, "42");
+    assert_eq!(out1, out2, "same seed ⇒ identical scheduler output (determinism)");
+    assert!(out1.contains("10,20"), "fibers collected their results: {out1:?}");
+
+    // Supervisor hook: a failed fiber re-queued by scheduler_restart runs again on
+    // the next scheduler_run (the Slice-3 substrate).
+    let restart = "fn flaky(n: i64) -> i64 { if n == 0 { assert(false) }\n 99 }\n\
+                   fn main() -> i64 { \
+                     let id = scheduler_spawn(\"flaky\", 0)\n\
+                     let _ = scheduler_run()\n\
+                     assert(scheduler_failed(id))\n\
+                     let id2 = scheduler_spawn(\"flaky\", 1)\n\
+                     let _ = scheduler_restart(id2)\n\
+                     let done = scheduler_run()\n\
+                     assert_eq(done, 1)\n\
+                     0 }";
+    let (code, _) = run_seed(restart, "1");
+    assert_eq!(code, 0, "a restarted fiber runs on the next scheduler_run");
+}
+
+#[test]
 fn phase6_handler_arm_bodies_are_name_resolved() {
     // Inline-handler ARM bodies used to be skipped by name resolution entirely,
     // so an undefined name inside an arm was silently accepted (a resolver hole).

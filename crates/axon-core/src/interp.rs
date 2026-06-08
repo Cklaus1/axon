@@ -344,6 +344,12 @@ pub struct Interp<'p> {
     /// enforced by the KERNEL (the registry), not just as userland values. A
     /// handle is a plain `i64` index. Empty until a program mints a root.
     principals: RefCell<crate::kernel::PrincipalRegistry>,
+    /// Phase 7 (R12 Slice 2): the cooperative fiber scheduler. `scheduler_spawn`
+    /// queues a (named fn, arg) fiber; `scheduler_run` runs the ready fibers in a
+    /// seed-deterministic round-robin, catching a panicking fiber (recorded as
+    /// failed, not a process abort). The interpreter owns the run loop (it has
+    /// `call_fn`); the queue + ordering live in `kernel::Scheduler`.
+    scheduler: RefCell<crate::kernel::Scheduler>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -843,6 +849,9 @@ impl<'p> Interp<'p> {
             resume_replay: RefCell::new(None),
             resume_ctx: RefCell::new(Vec::new()),
             principals: RefCell::new(crate::kernel::PrincipalRegistry::new()),
+            // Scheduler order is a function of spawn order + AXON_SEED (R12 §5
+            // determinism): derive the round-robin start offset from the seed.
+            scheduler: RefCell::new(crate::kernel::Scheduler::new(rng_seed() as usize)),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }

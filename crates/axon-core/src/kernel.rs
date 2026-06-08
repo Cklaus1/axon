@@ -193,6 +193,155 @@ impl PrincipalRegistry {
     }
 }
 
+// ── Phase 7 (R12) Slice 2: cooperative scheduler (fiber run-queue) ───────────
+//
+// A run-queue of fibers the interpreter runs cooperatively. Per R12 §3 the model
+// is COOPERATIVE over the interpreter's existing eager-spawn machinery — NOT a
+// preemptive OS-thread scheduler (which would be a second execution model and an
+// I-2 drift risk). Each fiber is a (named user fn, i64 arg); the scheduler runs
+// ready fibers in a deterministic round-robin order (a function of spawn order +
+// AXON_SEED), collecting each result. A fiber that PANICS is caught and recorded
+// as failed — it does not abort the process — which is what makes the Slice-3
+// supervisor able to observe and restart it.
+//
+// The fiber BODIES are run by the interpreter (it owns `call_fn`); this module
+// owns the queue + the scheduling order + result/failure bookkeeping, so the
+// codegen build stays untouched (Q3) and the scheduling policy is unit-testable
+// without the interpreter.
+
+/// The lifecycle state of one fiber.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FiberState {
+    /// Queued, not yet run.
+    Ready,
+    /// Ran to completion with this i64 result.
+    Done(i64),
+    /// Panicked/halted during its run; carries the failure message. Observable
+    /// (Slice 3 restarts on it), not a process abort.
+    Failed(String),
+}
+
+/// One fiber: a named user function to call with an i64 argument, plus its state.
+#[derive(Debug, Clone)]
+pub struct Fiber {
+    pub fn_name: String,
+    pub arg: i64,
+    pub state: FiberState,
+}
+
+/// The cooperative fiber scheduler. Holds the run-queue; the interpreter drives
+/// `next_ready()` / records outcomes via `complete`/`fail`. Deterministic: fibers
+/// run in spawn order rotated by the seed (round-robin start offset), so a given
+/// AXON_SEED always yields the same interleaving.
+#[derive(Debug, Default)]
+pub struct Scheduler {
+    fibers: Vec<Fiber>,
+    /// Round-robin start offset, derived from AXON_SEED — makes the schedule
+    /// order seed-reproducible without being trivially spawn-order.
+    seed_offset: usize,
+    /// How many full run passes have executed (for observability/tests).
+    pub passes: u64,
+}
+
+impl Scheduler {
+    pub fn new(seed_offset: usize) -> Self {
+        Scheduler { fibers: Vec::new(), seed_offset, passes: 0 }
+    }
+
+    /// Spawn a fiber (named fn + arg); returns its fiber id (a stable index).
+    pub fn spawn(&mut self, fn_name: String, arg: i64) -> usize {
+        self.fibers.push(Fiber { fn_name, arg, state: FiberState::Ready });
+        self.fibers.len() - 1
+    }
+
+    /// The deterministic order in which to run the currently-Ready fibers: spawn
+    /// order rotated by `seed_offset` (round-robin), so the schedule is a pure
+    /// function of spawn order + AXON_SEED. Returns fiber ids.
+    pub fn ready_order(&self) -> Vec<usize> {
+        let ready: Vec<usize> = self
+            .fibers
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.state == FiberState::Ready)
+            .map(|(i, _)| i)
+            .collect();
+        if ready.is_empty() {
+            return ready;
+        }
+        let n = ready.len();
+        let off = self.seed_offset % n;
+        let mut out = Vec::with_capacity(n);
+        for k in 0..n {
+            out.push(ready[(off + k) % n]);
+        }
+        out
+    }
+
+    /// A fiber's fn name + arg (for the interpreter to run it). None if id unknown.
+    pub fn fiber_call(&self, id: usize) -> Option<(String, i64)> {
+        self.fibers.get(id).map(|f| (f.fn_name.clone(), f.arg))
+    }
+
+    /// Record a fiber's successful completion with its result.
+    pub fn complete(&mut self, id: usize, result: i64) {
+        if let Some(f) = self.fibers.get_mut(id) {
+            f.state = FiberState::Done(result);
+        }
+    }
+
+    /// Record a fiber's failure (panic/halt during its run) — observable, not fatal.
+    pub fn fail(&mut self, id: usize, msg: String) {
+        if let Some(f) = self.fibers.get_mut(id) {
+            f.state = FiberState::Failed(msg);
+        }
+    }
+
+    /// Reset a fiber to Ready (Slice 3 supervisor restart). No-op if id unknown.
+    pub fn restart(&mut self, id: usize) {
+        if let Some(f) = self.fibers.get_mut(id) {
+            f.state = FiberState::Ready;
+        }
+    }
+
+    pub fn state(&self, id: usize) -> Option<&FiberState> {
+        self.fibers.get(id).map(|f| &f.state)
+    }
+
+    /// A completed fiber's result (0 if not Done / unknown).
+    pub fn result(&self, id: usize) -> i64 {
+        match self.fibers.get(id).map(|f| &f.state) {
+            Some(FiberState::Done(v)) => *v,
+            _ => 0,
+        }
+    }
+
+    /// Whether a fiber failed.
+    pub fn failed(&self, id: usize) -> bool {
+        matches!(self.fibers.get(id).map(|f| &f.state), Some(FiberState::Failed(_)))
+    }
+
+    /// Count of fibers in each terminal state (done, failed) — for the run summary.
+    pub fn tally(&self) -> (usize, usize) {
+        let mut done = 0;
+        let mut failed = 0;
+        for f in &self.fibers {
+            match f.state {
+                FiberState::Done(_) => done += 1,
+                FiberState::Failed(_) => failed += 1,
+                FiberState::Ready => {}
+            }
+        }
+        (done, failed)
+    }
+
+    pub fn len(&self) -> usize {
+        self.fibers.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.fibers.is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +447,58 @@ mod tests {
         assert!(!reg.authorize(999, true, false, false));
         assert_eq!(reg.budget_remaining(999), 0);
         assert!(reg.get(999).is_none());
+    }
+
+    // ── Slice 2: cooperative scheduler ───────────────────────────────────────
+
+    #[test]
+    fn scheduler_round_robin_is_seed_deterministic() {
+        // Same spawn order + same seed offset ⇒ same schedule order (reproducible
+        // under AXON_SEED, the gate's determinism requirement).
+        let mut s = Scheduler::new(0);
+        for i in 0..4 {
+            s.spawn("w".into(), i);
+        }
+        assert_eq!(s.ready_order(), vec![0, 1, 2, 3], "offset 0 = spawn order");
+
+        let mut s2 = Scheduler::new(2);
+        for i in 0..4 {
+            s2.spawn("w".into(), i);
+        }
+        // offset 2 rotates the start: [2,3,0,1].
+        assert_eq!(s2.ready_order(), vec![2, 3, 0, 1], "offset rotates deterministically");
+        // Identical re-run is identical (no Date/random in the order).
+        let mut s3 = Scheduler::new(2);
+        for i in 0..4 {
+            s3.spawn("w".into(), i);
+        }
+        assert_eq!(s2.ready_order(), s3.ready_order(), "same seed ⇒ same order");
+    }
+
+    #[test]
+    fn scheduler_fanout_collect_and_failure_is_observable() {
+        // N fibers fan out; each completes with a result; one fails. The failure
+        // is OBSERVABLE (recorded), not a process abort — the Slice-3 supervisor
+        // restarts on it.
+        let mut s = Scheduler::new(0);
+        let a = s.spawn("w".into(), 1);
+        let b = s.spawn("w".into(), 2);
+        let c = s.spawn("w".into(), 3);
+        // Drive them (the interpreter would call the fns; here we record outcomes).
+        for id in s.ready_order() {
+            let (_name, arg) = s.fiber_call(id).unwrap();
+            if arg == 2 {
+                s.fail(id, "boom".into());
+            } else {
+                s.complete(id, arg * 10);
+            }
+        }
+        assert_eq!(s.result(a), 10);
+        assert!(s.failed(b), "the failing fiber is recorded, not fatal");
+        assert_eq!(s.result(c), 30);
+        assert_eq!(s.tally(), (2, 1), "2 done, 1 failed");
+        // Only the failed fiber is Ready again after a restart (Slice-3 hook).
+        s.restart(b);
+        assert_eq!(s.ready_order(), vec![b], "restart re-queues only the failed fiber");
     }
 }

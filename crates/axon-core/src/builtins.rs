@@ -1040,6 +1040,51 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "bool",
         doc: "Phase-7 (R12 Slice 1): would a mint grant anything — does the parent hold every requested cap and have budget to carve? The explicit gate (mint is total and safe without it).",
     },
+    // ── Phase 7 (R12 Slice 2): cooperative scheduler (fiber run-queue) ───────
+    // Fibers are (named fn, i64 arg) run cooperatively in a seed-deterministic
+    // round-robin; a panicking fiber is caught (observable, not a process abort).
+    BuiltinFn {
+        name: "scheduler_spawn",
+        params: &[("fn_name", "str"), ("arg", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): queue a fiber — a call to the named user function with the given i64 arg (0-arg fns ignore it). Returns the fiber id. Panics E1602 if no such function exists.",
+    },
+    BuiltinFn {
+        name: "scheduler_run",
+        params: &[],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): run all READY fibers to completion in the AXON_SEED-deterministic round-robin order; returns the count that completed successfully. A fiber that panics/halts is caught and marked failed (observable via scheduler_failed), NOT a process abort. Re-runnable — a restarted fiber runs on the next call.",
+    },
+    BuiltinFn {
+        name: "scheduler_result",
+        params: &[("id", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): a completed fiber's i64 result (0 if it has not completed or the id is unknown).",
+    },
+    BuiltinFn {
+        name: "scheduler_failed",
+        params: &[("id", "i64")],
+        ret: "bool",
+        doc: "Phase-7 (R12 Slice 2): did the fiber fail (panic/halt during its run)? The signal the Slice-3 supervisor restarts on.",
+    },
+    BuiltinFn {
+        name: "scheduler_restart",
+        params: &[("id", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): re-queue a fiber as Ready so the next scheduler_run executes it again (the supervisor restart hook). Returns the id; no-op on an unknown id.",
+    },
+    BuiltinFn {
+        name: "scheduler_done_count",
+        params: &[],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): how many fibers have completed successfully (the fan-out/collect summary).",
+    },
+    BuiltinFn {
+        name: "scheduler_failed_count",
+        params: &[],
+        ret: "i64",
+        doc: "Phase-7 (R12 Slice 2): how many fibers have failed.",
+    },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {
         name: "corrigible_halt",
