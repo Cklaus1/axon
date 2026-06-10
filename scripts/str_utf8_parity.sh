@@ -26,6 +26,9 @@ fn main() -> i64 {
     println(str_replace("abc", "", "X"))
     println(str_replace("aaa", "a", ""))
     println(str_replace("hello world", "o", "0"))
+    println(str_to_upper("héllo wörld"))
+    println(str_to_lower("HÉLLO WÖRLD"))
+    println(str_to_upper("straße"))
     0
 }
 AX
@@ -62,8 +65,18 @@ if ! echo "$native_out" | grep -q "XaXbXcX"; then
   echo "str_utf8_parity: FAIL — str_replace(\"abc\",\"\",\"X\") skipped empty from (#39): $native_out"
   exit 1
 fi
+# str_to_upper/lower must do full Unicode case mapping, not ASCII-only bytes.
+if ! echo "$native_out" | grep -q "HÉLLO WÖRLD"; then
+  echo "str_utf8_parity: FAIL — str_to_upper was ASCII-only (é/ö unchanged): $native_out"
+  exit 1
+fi
+# The case map that GROWS the string (ß→SS) — impossible for the old 1:1 byte loop.
+if ! echo "$native_out" | grep -q "STRASSE"; then
+  echo "str_utf8_parity: FAIL — str_to_upper(\"straße\") did not grow ß→SS: $native_out"
+  exit 1
+fi
 
-echo "str_utf8_parity: OK — native str_reverse/str_replace match the interpreter:"
+echo "str_utf8_parity: OK — native str_reverse/str_replace/str_to_upper/str_to_lower match the interpreter:"
 echo "$native_out" | sed 's/^/  /'
-echo "str_reverse and str_replace match the interpreter"
+echo "str_reverse, str_replace, and str_to_upper/lower match the interpreter"
 exit 0

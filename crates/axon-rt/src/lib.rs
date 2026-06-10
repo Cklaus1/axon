@@ -1604,6 +1604,43 @@ pub extern "C" fn __axon_str_reverse(
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
 
+/// `str_to_upper(s)` / `str_to_lower(s)` — full Unicode case mapping, matching
+/// the interpreter (`str::to_uppercase` / `to_lowercase`). The old inline
+/// codegen converted only ASCII `a-z`/`A-Z` byte-wise, so it DIVERGED on any
+/// non-ASCII letter (`str_to_upper("héllo")` → "HéLLO" native vs "HÉLLO"
+/// interp) and could not represent case maps that GROW the string (`ß`→`SS`).
+/// Same str→str out-param ABI as str_reverse; `write_str_out` uses the result
+/// String's own byte length, so growth is handled correctly. I-2-canonical.
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_to_upper(s: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let result = unsafe { s.as_str() }.to_uppercase();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_to_upper(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let result = unsafe { s.as_str() }.to_uppercase();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_to_lower(s: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let result = unsafe { s.as_str() }.to_lowercase();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_to_lower(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let result = unsafe { s.as_str() }.to_lowercase();
+    unsafe { write_str_out(&result, out_len, out_ptr) }
+}
+
 /// `str_digits_only(s)` — keep only the ASCII digit chars, matching the
 /// interpreter (`chars().filter(is_ascii_digit)`). Same str→str out-param ABI as
 /// str_reverse; native takes AxonStr by value, wasm32 takes the expanded scalar
