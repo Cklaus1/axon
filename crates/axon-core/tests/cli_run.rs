@@ -789,6 +789,28 @@ fn phase8_surface_search_keywords() {
     );
     assert_eq!(code, 0, "goal-block subject_to must desugar to constrained search (held at the cap): {out:?}");
 
+    // `goal { … choices: N }` desugars to the CATEGORICAL optimizer
+    // (goal_run_categorical): exhaustive over the 6 unordered choices finds the
+    // isolated best (#3, score 100) a hill-climb would miss.
+    let (code, out) = run(
+        "@[adaptive]\n\
+         fn pick(choice: i64) -> i64 { if choice == 3 { 100 } else { 10 } }\n\
+         fn main() -> i64 { \
+           let best = goal { metric: \"pick\", choices: 6, target: 100.0, budget: 0 }\n\
+           if best == 100.0 { 0 } else { 1 } }",
+    );
+    assert_eq!(code, 0, "goal-block choices must desugar to categorical search (finds #3): {out:?}");
+
+    // `choices:` and `subject_to:` are mutually exclusive — a parse error, not a
+    // silent precedence.
+    let (code, _) = run(
+        "@[adaptive]\n\
+         fn p(c: i64) -> i64 { c }\n\
+         fn ok(c: i64) -> bool { true }\n\
+         fn main() -> i64 { let _ = goal { metric: \"p\", choices: 4, subject_to: \"ok\", target: 1.0, budget: 4 }\n 0 }",
+    );
+    assert_ne!(code, 0, "combining choices and subject_to must be a parse error");
+
     // Regression: a plain `for` loop and a `goal_run(...)` call are unaffected by
     // the new surface forms (the `!` / `goal {` triggers are narrow).
     let (code, _) = run(
