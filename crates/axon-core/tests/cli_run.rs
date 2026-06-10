@@ -5602,6 +5602,38 @@ fn total_attribute_requires_a_decreasing_measure_e1208() {
 }
 
 #[test]
+fn total_callee_must_be_total_no_termination_launder_e1208() {
+    // SECURITY/soundness (was a hole): @[total] only analysed a fn's OWN
+    // self-recursion, so non-termination laundered through an un-annotated helper
+    // — `@[total] f(){ loops() }` with `fn loops(){loops()}` PASSED yet never
+    // returns. Now a @[total] fn may only call other @[total] fns + builtins; and
+    // a mutual-recursion cycle (no per-fn measure) is refused. Both are E1208.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_totcallee_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // REJECT: launder non-termination through a non-total helper.
+    let (c, m) = check("fn loops(x: i64) -> i64 { loops(x) }\n@[total]\nfn f(x: i64) -> i64 { loops(x) }\nfn main() -> i64 { f(5) }");
+    assert_eq!(c, 2, "calling a non-total helper must fail: {m}");
+    assert!(m.contains("E1208"), "expected E1208 for non-total callee: {m}");
+
+    // REJECT: mutual recursion (a→b→a) — no per-fn decreasing measure.
+    assert_eq!(check("@[total]\nfn a(n: i64) -> i64 { b(n) }\n@[total]\nfn b(n: i64) -> i64 { a(n) }\nfn main() -> i64 { a(1) }").0, 2, "mutual recursion must be rejected");
+    // REJECT: 3-cycle a→b→c→a.
+    assert_eq!(check("@[total]\nfn a(n: i64) -> i64 { b(n) }\n@[total]\nfn b(n: i64) -> i64 { c(n) }\n@[total]\nfn c(n: i64) -> i64 { a(n) }\nfn main() -> i64 { a(1) }").0, 2, "3-cycle must be rejected");
+
+    // ACCEPT (no false positives): a @[total] fn calling a TOTAL helper, calling
+    // a total BUILTIN, and a DAG where a→b with b self-recursing (terminates).
+    assert_eq!(check("@[total]\nfn fact(n: i64) -> i64 { if n == 0 { 1 } else { n * fact(n - 1) } }\n@[total]\nfn g(n: i64) -> i64 { fact(n) + 1 }\nfn main() -> i64 { g(5) }").0, 0, "total fn calling a total helper must pass");
+    assert_eq!(check("@[total]\nfn f(n: i64) -> str { to_str(n) }\nfn main() -> i64 { let _ = f(5)\n 0 }").0, 0, "total fn calling a total builtin must pass");
+    assert_eq!(check("@[total]\nfn b(n: i64) -> i64 { if n == 0 { 0 } else { b(n - 1) } }\n@[total]\nfn a(n: i64) -> i64 { b(n) + 1 }\nfn main() -> i64 { a(5) }").0, 0, "DAG composition (a→self-recursive-b) must pass");
+}
+
+#[test]
 fn total_attribute_rejects_while_loops_e1208() {
     // A `@[total]` fn must terminate. The totality analysis reasons about
     // recursion + bounded `for` ranges, but a `while` loop is unbounded and its

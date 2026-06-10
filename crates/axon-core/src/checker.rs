@@ -292,6 +292,15 @@ pub struct CheckCtx {
     /// `@[pure]` fn names (Phase 5 §2). A `@[pure]` fn may only call other
     /// `@[pure]` fns and the pure-builtin allowlist; `check_purity` enforces it.
     pure_fns: HashSet<String>,
+    /// `@[total]` fn names (Phase 5 §3). A `@[total]` fn may only call other
+    /// `@[total]` fns and (always-terminating) builtins — otherwise it could
+    /// launder non-termination through an un-annotated helper; `check_totality`
+    /// enforces it (E1208).
+    total_fns: HashSet<String>,
+    /// `@[total]` fn → body, for mutual-recursion cycle detection (a 2+-fn cycle
+    /// among total fns has no per-fn decreasing measure, so it can't be proven to
+    /// terminate → E1208, sound by refusal).
+    total_fn_defs: HashMap<String, Expr>,
     /// Phase 5: `@[pure]` fn → (param names, body expr). Lets a refinement
     /// predicate CALL a pure function over the bound constant (depth ≤ 4),
     /// inlining its body in the constant evaluator. Pure fns are I/O-free
@@ -367,6 +376,8 @@ impl CheckCtx {
             confidence_observed: HashSet::new(),
             adaptive_fns: HashSet::new(),
             pure_fns: HashSet::new(),
+            total_fns: HashSet::new(),
+            total_fn_defs: HashMap::new(),
             pure_fn_defs: HashMap::new(),
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
@@ -457,6 +468,13 @@ impl CheckCtx {
                     // Record (params, body) for inlining into a predicate.
                     let pnames: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
                     self.pure_fn_defs.insert(f.name.clone(), (pnames, f.body.clone()));
+                }
+                // Phase 5 §3: collect @[total] fn names + bodies (pre-pass, so a
+                // total fn calling a forward-declared total fn is accepted, and
+                // the body map supports mutual-recursion cycle detection).
+                if f.attrs.iter().any(|a| a.name == "total") {
+                    self.total_fns.insert(f.name.clone());
+                    self.total_fn_defs.insert(f.name.clone(), f.body.clone());
                 }
             }
             // Phase 5: register named refinements → erased base + predicate.
@@ -1608,6 +1626,64 @@ impl CheckCtx {
                       drop the `@[total]` attribute".to_string()),
             );
         }
+        // A `@[total]` fn may only call other `@[total]` fns (and always-
+        // terminating builtins). Otherwise non-termination launders through an
+        // un-annotated helper: `@[total] f(){ loops() }` where `fn loops(){loops()}`
+        // would pass (f has no self-recursion) yet never returns. A call to a
+        // non-total USER fn is E1208. Self-calls are exempt (the measure check
+        // below handles them); builtins are total. (Mutual recursion among total
+        // fns is still out of scope — the measure check only sees self-calls — a
+        // documented limit, but now the partners must at least be annotated.)
+        let mut bad_callees: Vec<String> = Vec::new();
+        Self::collect_nontotal_callees(&f.body, &f.name, &self.total_fns, &mut bad_callees);
+        if let Some(callee) = bad_callees.first() {
+            let file = self.file.clone();
+            let fname = f.name.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1208,
+                    format!(
+                        "`@[total]` function `{fname}` calls `{callee}`, which is not `@[total]` — \
+                         its termination is not established, so `{fname}` cannot be proven total"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(f.span)
+                .fix(format!(
+                    "mark `{callee}` `@[total]` (the checker will verify it), or remove `@[total]` from `{fname}`"
+                )),
+            );
+        }
+
+        // Mutual recursion among `@[total]` fns: `a → b → a`. Each fn has NO
+        // self-recursion, so the measure check below passes vacuously, yet the
+        // pair loops forever. The per-fn decreasing-measure analysis can't span
+        // two fns, so a cycle of length ≥2 is unprovable → refuse (E1208), the
+        // same sound-by-refusal stance as `@[total]` + `while`. (A direct
+        // self-cycle `a → a` is NOT flagged here — it's handled by the measure.)
+        if self.total_reaches_through_other(&f.name) {
+            let file = self.file.clone();
+            let fname = f.name.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1208,
+                    format!(
+                        "`@[total]` function `{fname}` is part of a mutual-recursion cycle — \
+                         the checker proves termination per-function, so it cannot establish that \
+                         a cycle spanning multiple functions terminates"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(f.span)
+                .fix(
+                    "restructure the mutual recursion into a single self-recursive `@[total]` \
+                     function with a decreasing measure, or remove `@[total]`"
+                        .to_string(),
+                ),
+            );
+            return;
+        }
+
         let mut sites: Vec<Vec<Expr>> = Vec::new();
         Self::collect_self_calls(&f.body, &f.name, &mut sites);
         if sites.is_empty() {
@@ -1644,6 +1720,87 @@ impl CheckCtx {
                 ),
             );
         }
+    }
+
+    /// Does `start` (a `@[total]` fn) reach ITSELF via a call path that passes
+    /// through at least one OTHER total fn? (i.e. is it in a mutual-recursion
+    /// cycle of length ≥2.) A direct self-cycle is excluded — that's the measure
+    /// check's job.
+    fn total_reaches_through_other(&self, start: &str) -> bool {
+        let body = match self.total_fn_defs.get(start) {
+            Some(b) => b,
+            None => return false,
+        };
+        let mut first_hops = Vec::new();
+        Self::collect_total_callees(body, &self.total_fns, &mut first_hops);
+        for g in first_hops.iter().filter(|g| g.as_str() != start) {
+            let mut visited = HashSet::new();
+            if self.total_can_reach(g, start, &mut visited) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Can `from` reach `target` by following total-fn call edges?
+    fn total_can_reach(&self, from: &str, target: &str, visited: &mut HashSet<String>) -> bool {
+        if from == target {
+            return true;
+        }
+        if !visited.insert(from.to_string()) {
+            return false;
+        }
+        if let Some(body) = self.total_fn_defs.get(from) {
+            let mut callees = Vec::new();
+            Self::collect_total_callees(body, &self.total_fns, &mut callees);
+            for c in &callees {
+                if self.total_can_reach(c, target, visited) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Collect the names of called fns that ARE `@[total]` (the call-graph edges
+    /// used for cycle detection). Includes self-edges (harmless — the visited set
+    /// bounds traversal).
+    fn collect_total_callees(expr: &Expr, total_fns: &HashSet<String>, out: &mut Vec<String>) {
+        if let Expr::Call { callee, .. } = expr {
+            if let Expr::Ident(n) = callee.as_ref() {
+                if total_fns.contains(n) && !out.contains(n) {
+                    out.push(n.clone());
+                }
+            }
+        }
+        Self::for_each_child(expr, &mut |c| Self::collect_total_callees(c, total_fns, out));
+    }
+
+    /// Collect the names of called USER functions that are NOT `@[total]` (and
+    /// are not the enclosing fn `self_name`, whose recursion the measure check
+    /// handles). A callee that is a builtin or a known total fn is fine; anything
+    /// else is a termination-laundering risk. `known_builtin` callees are skipped
+    /// (builtins always terminate).
+    fn collect_nontotal_callees(
+        expr: &Expr,
+        self_name: &str,
+        total_fns: &HashSet<String>,
+        out: &mut Vec<String>,
+    ) {
+        if let Expr::Call { callee, .. } = expr {
+            if let Expr::Ident(n) = callee.as_ref() {
+                if n != self_name
+                    && !total_fns.contains(n)
+                    && !crate::builtins::is_known_builtin(n)
+                    && !out.contains(n)
+                {
+                    out.push(n.clone());
+                }
+            }
+        }
+        Self::for_each_child(expr, &mut |c| {
+            Self::collect_nontotal_callees(c, self_name, total_fns, out)
+        });
     }
 
     /// Collect the argument lists of every self-recursive call to `name` in
