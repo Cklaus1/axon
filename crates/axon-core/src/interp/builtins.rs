@@ -3202,6 +3202,23 @@ impl<'p> Interp<'p> {
                         crate::error::W1310
                     );
                 }
+                // F2 (ROADMAP §9.5): deterministic REPLAY. With AXON_AI_REPLAY set,
+                // a previously-recorded (prompt, model) response is replayed
+                // verbatim — no mock, no live call, no API key — so an AI run is
+                // exactly reproducible (the auditability backbone). Checked BEFORE
+                // mock/live; the recorded token-count drives the (deterministic)
+                // cost so the metered cost reproduces too. A miss falls through and
+                // the mock/live branches RECORD their response below.
+                let replay_model = tier.api_model();
+                if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
+                    let micro = tier.cost_micro(cached_tokens);
+                    self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
+                    append_ai_call_jsonl(
+                        &caller, &prompt, tier_name, model_id, model_ver, params,
+                        "replay", "", micro as f64 / 1_000_000.0,
+                    );
+                    ok!(Value::Ok(Box::new(Value::Str(cached))));
+                }
                 if ai_mock_enabled() {
                     // Deterministic stub — but a fully-stamped provenance record
                     // (mode:"mock") with the REAL per-token cost charged to the
@@ -3209,14 +3226,16 @@ impl<'p> Interp<'p> {
                     // about what a call costs even under mock. The tier/model are
                     // the RESOLVED routing (the routing is real; only the
                     // response is stubbed), so the cost is the routing's cost.
+                    let stub = "Mock summary: the single most important fact, stated concisely.".to_string();
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
                         "mock", "", cost_usd,
                     );
-                    ok!(Value::Ok(Box::new(Value::Str(
-                        "Mock summary: the single most important fact, stated concisely.".to_string()
-                    ))));
+                    // Record so a re-run replays this exact response (under mock the
+                    // recorded tokens are the deterministic estimate).
+                    ai_replay_store(&prompt, &replay_model, &stub, est_tokens);
+                    ok!(Value::Ok(Box::new(Value::Str(stub))));
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
@@ -3231,7 +3250,7 @@ impl<'p> Interp<'p> {
                     // metered cost matches what the provider actually billed. (The
                     // BUDGET gate above still uses the estimate, correctly: it must
                     // decide before the call whether to dispatch at all.)
-                    ok!(match axon_ai::complete_with_model_usage(&prompt, &tier.api_model()) {
+                    ok!(match axon_ai::complete_with_model_usage(&prompt, &replay_model) {
                         Ok((s, real_tokens)) => {
                             let real_micro = tier.cost_micro(real_tokens);
                             let real_usd = real_micro as f64 / 1_000_000.0;
@@ -3240,6 +3259,10 @@ impl<'p> Interp<'p> {
                                 &caller, &prompt, tier_name, model_id, model_ver,
                                 params, "live", "", real_usd,
                             );
+                            // Record the live (response, real token-count) so a
+                            // re-run with the same AXON_AI_REPLAY file reproduces
+                            // this exact response AND cost — the F2 replay engine.
+                            ai_replay_store(&prompt, &replay_model, &s, real_tokens);
                             Value::Ok(Box::new(Value::Str(s)))
                         }
                         Err(e) => Value::Err(Box::new(Value::Str(e))),

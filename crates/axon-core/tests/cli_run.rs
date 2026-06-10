@@ -273,6 +273,46 @@ fn phase6_with_handler_runs_and_intercepts_io() {
 }
 
 #[test]
+fn ai_replay_reproduces_a_recorded_run_without_the_live_model_f2() {
+    // ROADMAP §9.5 F2 (the auditability backbone): an AI run is exactly
+    // reproducible. RECORD under mock to an AXON_AI_REPLAY file, then re-run with
+    // ONLY that file (no mock, no API key, no asi-runtime). The cache HIT replays
+    // the recorded response byte-for-byte — so the run is auditable/replayable
+    // without the live model. A CONTROL run (neither replay nor mock) proves the
+    // cache was load-bearing: ai_complete can't reach a model → it fails (E1300).
+    let prog = "@[ai(policy(tier: balanced, budget: 2))]\n\
+                fn summ() -> str { match ai_complete(\"q3 report\") { Ok(s) => s  Err(e) => e } }\n\
+                fn main() -> i64 { println(summ())  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_f2_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_f2_cache_{}.txt", std::process::id()));
+    let _ = std::fs::remove_file(&cache);
+
+    // 1. RECORD under mock (populates the cache).
+    let rec = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").env("AXON_AI_REPLAY", &cache).output().unwrap();
+    assert_eq!(rec.status.code(), Some(0), "record run must succeed: {rec:?}");
+    let rec_out = String::from_utf8_lossy(&rec.stdout).to_string();
+    assert!(rec_out.contains("Mock summary"), "record output: {rec_out:?}");
+
+    // 2. REPLAY: the cache file ONLY (no mock) must reproduce the run byte-for-byte.
+    let rep = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_REPLAY", &cache).env_remove("AXON_AI_MOCK").output().unwrap();
+    assert_eq!(rep.status.code(), Some(0), "replay must reproduce WITHOUT mock/live: {rep:?}");
+    assert_eq!(String::from_utf8_lossy(&rep.stdout), rec_out,
+        "replay output must match the recorded run byte-for-byte");
+
+    // 3. CONTROL: neither replay nor mock → ai_complete has no model → must fail.
+    let ctl = axon().args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_AI_MOCK").env_remove("AXON_AI_REPLAY").output().unwrap();
+    assert_ne!(ctl.status.code(), Some(0),
+        "control run (no cache, no mock) must NOT run — proves the cache was load-bearing: {ctl:?}");
+
+    let _ = std::fs::remove_file(&f);
+    let _ = std::fs::remove_file(&cache);
+}
+
+#[test]
 fn phase6_handler_resume_semantics() {
     // Tail-resumptive, single-shot effect-handler discharge in the interpreter.
     // `run` returns main's i64; we assert on (exit code, stdout).

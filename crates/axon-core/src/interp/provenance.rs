@@ -314,3 +314,89 @@ pub(super) fn extract_json_num(line: &str, key: &str) -> Option<f64> {
     let end = rest.find([',', '}']).unwrap_or(rest.len());
     rest[..end].trim().parse::<f64>().ok()
 }
+
+// ── F2 (ROADMAP §9.5): deterministic LLM-call replay ─────────────────────────
+//
+// With AXON_AI_REPLAY=<file>, every `ai_complete(prompt)` is MEMOIZED by
+// (prompt, model): a first run RECORDS (response, token-count) to the file; a
+// re-run with the same file REPLAYS the recorded response verbatim — no live
+// call, no mock, no API key — so an AI-driven run is exactly reproducible (the
+// auditability backbone the demo's "auditable" claim depends on, R3 §4.3). The
+// key is sha256(model\0prompt); the line is `<key> <tokens> <response-hex>`, so a
+// response containing newlines/quotes needs no escaping.
+
+/// The replay-cache file path from `AXON_AI_REPLAY` (None when unset/empty).
+pub(super) fn ai_replay_path() -> Option<std::path::PathBuf> {
+    std::env::var("AXON_AI_REPLAY")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .map(std::path::PathBuf::from)
+}
+
+fn ai_replay_key(prompt: &str, model: &str) -> String {
+    sha256_hex(&format!("{model}\u{0}{prompt}"))
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(s.len() / 2);
+    let mut i = 0;
+    while i < bytes.len() {
+        let hi = (bytes[i] as char).to_digit(16)?;
+        let lo = (bytes[i + 1] as char).to_digit(16)?;
+        out.push((hi * 16 + lo) as u8);
+        i += 2;
+    }
+    Some(out)
+}
+
+/// Look up a memoized `(prompt, model)` response. Returns `(response, tokens)` on
+/// a hit, or `None` (no replay file / miss / unreadable). Malformed lines are
+/// skipped, never panic.
+pub(super) fn ai_replay_lookup(prompt: &str, model: &str) -> Option<(String, i64)> {
+    let path = ai_replay_path()?;
+    let key = ai_replay_key(prompt, model);
+    let contents = std::fs::read_to_string(&path).ok()?;
+    for line in contents.lines() {
+        let mut it = line.split_whitespace();
+        let (Some(k), Some(tok), Some(resp_hex)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        if k != key {
+            continue;
+        }
+        if let (Ok(tokens), Some(resp)) =
+            (tok.parse::<i64>(), hex_decode(resp_hex).and_then(|b| String::from_utf8(b).ok()))
+        {
+            return Some((resp, tokens));
+        }
+    }
+    None
+}
+
+/// Record a `(prompt, model) → (response, tokens)` entry for later replay. No-op
+/// when `AXON_AI_REPLAY` is unset. The dispatch only calls this on a cache MISS,
+/// so no duplicate keys accumulate.
+pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens: i64) {
+    let Some(path) = ai_replay_path() else { return };
+    if let Some(dir) = path.parent() {
+        if !dir.as_os_str().is_empty() && std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let line = format!("{} {tokens} {}\n", ai_replay_key(prompt, model), hex_encode(response.as_bytes()));
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}

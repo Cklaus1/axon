@@ -53,6 +53,7 @@ asi-runtime` to enable live `ai_complete`/`ai_extract_*` (used by
 | `AXON_SEED` | Seed the RNG (`u64`) for reproducible `random_*` runs |
 | `AXON_MAX_DEPTH` | Raise the recursion-depth ceiling (default 6000, clamped to 1,000,000). The interpreter thread stack scales with it, so the graceful "recursion limit" panic always fires before a real stack overflow |
 | `AXON_AI_MOCK` | Use deterministic stub AI responses instead of live calls |
+| `AXON_AI_REPLAY` | Path to an LLM-call replay cache: every `ai_complete` is memoized by `(prompt, model)` — a first run records `(response, tokens)`, a re-run replays it verbatim (no live call / mock / API key) so an AI run is exactly reproducible (ROADMAP §9.5 F2) |
 | `AXON_PATH` | Colon-separated module search path for `mod` imports |
 
 ## Compiler Pipeline
