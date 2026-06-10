@@ -8589,6 +8589,30 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
 }
 
 #[test]
+fn wasm_browser_target_is_wasi_free_and_matches_interp() {
+    // R7c (browser target): `axon target build --target wasm32-unknown-unknown`
+    // must produce a genuinely WASI-FREE module (a browser has no wasi) that runs
+    // the value identically to the interpreter. try_link_wasm links the
+    // unknown-unknown axon-rt + NO wasi libc for this triple. Compute/str/dict
+    // programs (no I/O) link wasi-free and run; printing ones honestly fall back
+    // to object-only (browser stdout needs JS glue). scripts/wasm_browser_parity.sh.
+    let script = format!("{}/../../scripts/wasm_browser_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_browser_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — browser-target parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "browser-target wasm must be wasi-free and match interp:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_browser_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_examples_run_identically_on_aot_wasm() {
     // R7 (AOT-wasm BREADTH): once every __axon_* extern has a wasm variant
     // (str/dict/array/f64/closures all ported), real `examples/*.ax` — not just

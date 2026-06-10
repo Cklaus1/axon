@@ -1727,7 +1727,7 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
             // Programs that use str/array still pull i64-ABI helpers that clash
             // with wasm32's i32 libc — those report the link error honestly (the
             // i64→i32 ABI retarget is the remaining gap).
-            match try_link_wasm(&out) {
+            match try_link_wasm(&out, llvm_triple) {
                 Some(linked) => eprintln!(
                     "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked, RUNNABLE.\n  \
                      run:  wasmtime --invoke main {}",
@@ -1759,19 +1759,25 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 /// explicit override), then the conventional cargo target layout. Returns None
 /// if the wasm runtime hasn't been built — callers degrade to libc-only linking.
 #[cfg(feature = "codegen")]
-fn find_wasm_axon_rt() -> Option<PathBuf> {
-    if let Ok(p) = std::env::var("AXON_WASM_RT") {
-        let pb = PathBuf::from(p);
-        if pb.exists() {
-            return Some(pb);
+fn find_wasm_axon_rt(target_subdir: &str) -> Option<PathBuf> {
+    // AXON_WASM_RT overrides only for the (default) wasip1 path — a browser link
+    // needs the unknown-unknown build specifically, so don't let a wasip1 override
+    // leak into it.
+    if target_subdir == "wasm32-wasip1" {
+        if let Ok(p) = std::env::var("AXON_WASM_RT") {
+            let pb = PathBuf::from(p);
+            if pb.exists() {
+                return Some(pb);
+            }
         }
     }
-    // Walk up from CWD looking for target/wasm32-wasip1/{debug,release}/libaxon_rt.a.
+    // Walk up from CWD looking for target/<subdir>/{debug,release}/libaxon_rt.a.
     let mut dir = std::env::current_dir().ok()?;
     loop {
         for profile in ["debug", "release"] {
             let cand = dir
-                .join("target/wasm32-wasip1")
+                .join("target")
+                .join(target_subdir)
                 .join(profile)
                 .join("libaxon_rt.a");
             if cand.exists() {
@@ -1785,8 +1791,13 @@ fn find_wasm_axon_rt() -> Option<PathBuf> {
 }
 
 #[cfg(feature = "codegen")]
-fn try_link_wasm(obj: &Path) -> Option<PathBuf> {
+fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     use std::process::Command;
+    // wasm32-unknown-unknown is the BROWSER target (R7c): the result must be
+    // wasi-FREE (a browser has no wasi). We link the unknown-unknown axon-rt and
+    // NO wasi libc. wasm32-wasip1 is the headless/server target: wasi libc +
+    // wasip1 axon-rt, runnable under wasmtime.
+    let is_browser = triple.contains("unknown-unknown");
     // Locate rust-lld + the wasi libc under the active rustup toolchain.
     let home = std::env::var("HOME").ok()?;
     let toolchains = PathBuf::from(&home).join(".rustup/toolchains");
@@ -1815,21 +1826,27 @@ fn try_link_wasm(obj: &Path) -> Option<PathBuf> {
         None
     };
     let rust_lld = find("", true)?;
-    let libc = find("libc.a", false)?;
 
-    // Locate the wasm build of axon-rt (the `__axon_*` runtime). A pure-int
-    // program needs none (pruning removes every `__axon_*`); a str/array program
-    // references the runtime, whose wasm build carries the scalar-ABI bridge
-    // (`#[cfg(target_arch="wasm32")]`) that matches codegen's struct expansion.
-    // If it isn't built (`cargo build -p axon-rt --target wasm32-wasip1`), we
-    // still link libc-only — pure-int programs succeed; str programs surface an
-    // unresolved-symbol failure and fall back to object-only (None), honestly.
-    let rt_lib = find_wasm_axon_rt();
+    // Locate the wasm build of axon-rt (the `__axon_*` runtime, carrying the
+    // scalar-ABI bridge under `#[cfg(target_arch="wasm32")]`). The BROWSER target
+    // uses the unknown-unknown build (no wasi); the headless target uses wasip1.
+    // A program referencing a runtime symbol whose rt isn't built surfaces an
+    // unresolved-symbol failure and falls back to object-only (None), honestly.
+    let (rt_subdir, link_wasi_libc) = if is_browser {
+        ("wasm32-unknown-unknown", false)
+    } else {
+        ("wasm32-wasip1", true)
+    };
+    let rt_lib = find_wasm_axon_rt(rt_subdir);
 
     let linked = obj.with_extension("linked.wasm");
     let mut cmd = Command::new(&rust_lld);
-    cmd.args(["-flavor", "wasm", "--no-entry", "--export=main"])
-        .arg(&libc);
+    cmd.args(["-flavor", "wasm", "--no-entry", "--export=main"]);
+    if link_wasi_libc {
+        // Headless wasip1: the wasi libc provides malloc/memcpy + fd_write etc.
+        let libc = find("libc.a", false)?;
+        cmd.arg(libc);
+    }
     if let Some(rt) = &rt_lib {
         cmd.arg(rt);
     }
