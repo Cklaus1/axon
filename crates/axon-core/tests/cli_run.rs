@@ -3931,6 +3931,37 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
 }
 
 #[test]
+fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
+    // Interpolating a Result/Option in a string (e.g. `println("r={r}")` where
+    // r = parse_int(...)) used to pass the `{i1,…}` tag-struct straight to
+    // axon_concat (which wants a str `{i64,ptr}`), producing a raw "IR
+    // verification failed" dump with no source context. Native can't format the
+    // erased inner value (the interpreter prints `Ok(…)`); it must now refuse
+    // with a clean, actionable E0910 — NOT crash. Scalars/str still interpolate.
+    let f = std::env::temp_dir().join(format!("axon_rinterp_{}.ax", std::process::id()));
+    std::fs::write(&f, "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n").unwrap();
+    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_rinterp_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if msg.contains("requires building axon with the `codegen` feature") {
+        eprintln!("codegen feature absent — Result-interpolation E0910 test skipped");
+        return;
+    }
+    assert!(!out.status.success(), "interpolating a Result must FAIL the build:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("interpolate"),
+        "must abort with a clear E0910 about interpolating a Result/Option, got:\n{msg}"
+    );
+    assert!(
+        !msg.contains("IR verification") && !msg.contains("axon_concat"),
+        "must be a clean E0910, NOT a raw LLVM IR-verification crash:\n{msg}"
+    );
+}
+
+#[test]
 fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     // Native codegen does not yet lower effect-handler discharge (`resume`), but
     // the interpreter does. A `with handler { on IO(p) => resume(0) } { … }` that

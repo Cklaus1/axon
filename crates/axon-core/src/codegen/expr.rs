@@ -1243,7 +1243,41 @@ impl<'ctx> super::Codegen<'ctx> {
                     let v = self.emit_expr(e, fn_val)?;
                     // Auto-coerce non-str values to str.
                     match v {
-                        BasicValueEnum::StructValue(_) => v, // already str
+                        BasicValueEnum::StructValue(sv) => {
+                            // A str is EXACTLY `{i64, i8*}`. A Result/Option (or
+                            // Uncertain/user struct) is a different shape — e.g.
+                            // `{i1, [N x i8]}` (tag-first). The old code assumed
+                            // ANY struct was already a str and passed it straight
+                            // to axon_concat, which wants `{i64,ptr}` → a raw
+                            // "IR verification failed" crash (e.g. interpolating a
+                            // parse_int Result). Native can't format a Result/
+                            // Option in an interpolation (the inner value's type is
+                            // erased; the interpreter prints `Ok(…)`/`Some(…)`), so
+                            // refuse HONESTLY (E0910) instead of crashing.
+                            let ft = sv.get_type();
+                            let is_str = ft.count_fields() == 2
+                                && ft.get_field_type_at_index(0)
+                                    .map(|t| t.is_int_type() && t.into_int_type().get_bit_width() == 64)
+                                    .unwrap_or(false)
+                                && ft.get_field_type_at_index(1)
+                                    .map(|t| t.is_pointer_type())
+                                    .unwrap_or(false);
+                            if is_str {
+                                v
+                            } else {
+                                let msg = "codegen error [E0910]: native codegen cannot interpolate a \
+                                    Result/Option (or non-str struct) value in a string — its inner \
+                                    type is erased here. Match it and interpolate the inner value, or \
+                                    use `axon run` (the interpreter prints `Ok(…)`/`Some(…)`).".to_string();
+                                if !self.codegen_errors.iter().any(|m| m == &msg) {
+                                    eprintln!("{msg}");
+                                    self.codegen_errors.push(msg);
+                                }
+                                // Placeholder str so emission continues; the build
+                                // aborts afterward on codegen_errors (never runs).
+                                str_ty.const_zero().into()
+                            }
+                        }
                         BasicValueEnum::IntValue(iv) => {
                             if iv.get_type().get_bit_width() == 1 {
                                 // bool → to_str_bool
