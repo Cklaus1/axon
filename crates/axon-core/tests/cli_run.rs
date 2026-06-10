@@ -108,6 +108,29 @@ fn r15_stateful_guessing_game_keeps_state_across_suspends() {
 }
 
 #[test]
+fn r15_guessing_game_terminates_on_eof_not_spins() {
+    // Regression: an interactive read loop must STOP at end-of-input, not spin
+    // forever on an endless empty reply. host_await_opt → None on EOF. One wrong
+    // guess then the pipe closes ⇒ "Bye." and a clean exit (not a timeout/hang).
+    use std::io::Write;
+    use std::process::Stdio;
+    let demo = ex("interactive/guess.ax");
+    let mut child = axon()
+        .arg("run")
+        .arg(&demo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"5\n").unwrap(); // one guess, then EOF
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Bye."), "EOF ⇒ graceful quit: {stdout}");
+    assert_eq!(out.status.code(), Some(1), "1 guess before EOF, got {:?}", out.status.code());
+}
+
+#[test]
 fn phase6_with_handler_runs_and_intercepts_io() {
     // Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
     // INTERCEPTS the IO effect of a `println` in the handled body. In the

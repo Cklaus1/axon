@@ -12,18 +12,24 @@ fn main() -> i64 {
     let found = 0
     println("Guess my number (1-10).")
     while found == 0 {
-        let g = host_await("> ")
-        tries = tries + 1
-        match parse_int(g) {
-            Ok(n) => {
-                if n == secret {
-                    println("Correct — {tries} tries!")
-                    found = 1
-                } else {
-                    if n < secret { println("Higher.") } else { println("Lower.") }
+        // host_await_opt → None at end-of-input (Ctrl-D / closed pipe), so the loop
+        // terminates instead of spinning on an endless empty reply.
+        match host_await_opt("> ") {
+            None => { println("Bye.")  found = 1 }
+            Some(g) => {
+                tries = tries + 1
+                match parse_int(g) {
+                    Ok(n) => {
+                        if n == secret {
+                            println("Correct — {tries} tries!")
+                            found = 1
+                        } else {
+                            if n < secret { println("Higher.") } else { println("Lower.") }
+                        }
+                    }
+                    Err(_) => { println("Not a number — try again.") }
                 }
             }
-            Err(_) => { println("Not a number — try again.") }
         }
     }
     tries

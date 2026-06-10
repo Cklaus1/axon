@@ -668,15 +668,19 @@ pub fn run_program_with_discharged(program: &Program, discharged: crate::verify:
 // stackful coroutine instead (governance/specs/R15-resume-runtime.md §4).
 struct HostChannels {
     req_tx: std::sync::mpsc::Sender<String>,
-    rep_rx: std::sync::mpsc::Receiver<String>,
+    // `None` reply = end-of-input (host has no more to give) — distinct from an
+    // empty-string reply (a blank line). `host_await` collapses both to ""; the
+    // EOF-aware `host_await_opt` surfaces the distinction as `None`.
+    rep_rx: std::sync::mpsc::Receiver<Option<String>>,
 }
 thread_local! {
     static HOST_AWAIT: RefCell<Option<HostChannels>> = const { RefCell::new(None) };
 }
 
 /// Reach the active host channels from inside `host_await` (interp/builtins.rs).
-/// Returns the host's reply, or `Err(())` if there is no host (a bare `axon run`).
-pub(crate) fn host_await_yield(req: String) -> Result<String, ()> {
+/// Returns `Ok(Some(reply))`, `Ok(None)` at end-of-input, or `Err(())` if there is
+/// no host at all (a bare `axon run`).
+pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     HOST_AWAIT.with(|h| {
         let guard = h.borrow();
         match &*guard {
@@ -692,12 +696,13 @@ pub(crate) fn host_await_yield(req: String) -> Result<String, ()> {
 }
 
 /// Run `program` with a HOST driving its `host_await` suspensions. `host(req)`
-/// is called once per `host_await`, on THIS thread, and its return is fed back as
-/// the resume value. Returns the program's exit code. (R15 v0 — str payloads.)
-pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> String) -> i32 {
+/// is called once per `host_await`, on THIS thread; its return — `Some(reply)` or
+/// `None` at end-of-input — is fed back as the resume value. Returns the program's
+/// exit code. (R15 v0 — str payloads.)
+pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
     use std::sync::mpsc::channel;
     let (req_tx, req_rx) = channel::<String>(); // worker → host (await requests)
-    let (rep_tx, rep_rx) = channel::<String>(); // host → worker (replies)
+    let (rep_tx, rep_rx) = channel::<Option<String>>(); // host → worker (replies; None = EOF)
     std::thread::scope(|scope| {
         let worker = scope.spawn(move || {
             HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
@@ -715,10 +720,11 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> String) 
 }
 
 /// The default CLI host for `host_await`: write the request (a prompt) to stdout,
-/// then read a line from stdin as the reply (trailing newline stripped; EOF → "").
-/// This makes an interactive Axon program — a prompt loop, a REPL, a quiz — work
-/// under a plain `axon run`. (R15 v0; the program's own `println`s and the prompt
-/// both go to the shared process stdout, ordered by the suspension protocol.)
+/// then read a line from stdin as the reply (trailing newline stripped). EOF →
+/// `None` (end-of-input), which `host_await_opt` surfaces so a read loop can stop;
+/// plain `host_await` collapses it to "". This makes an interactive Axon program —
+/// a prompt loop, a REPL, a quiz — work under a plain `axon run`. (R15 v0; the
+/// program's own `println`s and the prompt share stdout, ordered by the protocol.)
 pub fn run_suspendable_stdio(program: &Program) -> i32 {
     use std::io::{BufRead, Write};
     let stdin = std::io::stdin();
@@ -727,8 +733,8 @@ pub fn run_suspendable_stdio(program: &Program) -> i32 {
         let _ = std::io::stdout().flush();
         let mut line = String::new();
         match stdin.lock().read_line(&mut line) {
-            Ok(0) | Err(_) => String::new(), // EOF or error → empty reply
-            Ok(_) => line.trim_end_matches(['\n', '\r']).to_string(),
+            Ok(0) | Err(_) => None, // EOF or error → end-of-input
+            Ok(_) => Some(line.trim_end_matches(['\n', '\r']).to_string()),
         }
     })
 }
@@ -2001,7 +2007,7 @@ mod tests {
         // B1: the request reaches the host, and the host's reply flows back into
         // the program. host("ab") → "abab"; str_len("abab") = 4.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
-        let code = super::run_suspendable(&prog, |req| format!("{req}{req}"));
+        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
         assert_eq!(code, 4);
     }
 
@@ -2017,7 +2023,7 @@ mod tests {
         let mut calls = 0;
         let code = super::run_suspendable(&prog, |_req| {
             calls += 1;
-            "ok".to_string() // len 2
+            Some("ok".to_string()) // len 2
         });
         assert_eq!(calls, 3, "host must be called exactly once per host_await (no replay)");
         assert_eq!(code, 6); // 2 + 2 + 2
@@ -2036,7 +2042,7 @@ mod tests {
         let code = super::run_suspendable(&prog, |_req| {
             let r = replies[n].to_string();
             n += 1;
-            r
+            Some(r)
         });
         assert_eq!(n, 3, "host called once per loop iteration");
         assert_eq!(code, 6, "2 + 3 + 1");
@@ -2050,7 +2056,7 @@ mod tests {
         let mut calls = 0;
         let code = super::run_suspendable(&prog, |_| {
             calls += 1;
-            String::new()
+            Some(String::new())
         });
         assert_eq!(code, 5);
         assert_eq!(calls, 0, "no host_await ⇒ no suspension");
@@ -2062,8 +2068,34 @@ mod tests {
         // (the host loop ends when the worker drops its channels), never hang. Here
         // `10 / str_len("")` is a runtime div-by-zero (exit 101) after one await.
         let prog = parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
-        let code = super::run_suspendable(&prog, |_| "ok".to_string());
+        let code = super::run_suspendable(&prog, |_| Some("ok".to_string()));
         assert_eq!(code, 101, "interp panic mid-suspend → exit 101, no hang");
+    }
+
+    #[test]
+    fn r15_host_await_opt_none_at_eof_terminates_loop() {
+        // EOF semantics: `host_await_opt` returns None once the host signals
+        // end-of-input (the closure returns None), so a read loop terminates
+        // instead of spinning. The host feeds 2 lines then EOF; the program counts
+        // the Some replies and stops on None. 2 inputs ⇒ exit 2.
+        let prog = parse(
+            "fn main() -> i64 { let n = 0  let go = 1  while go == 1 { match host_await_opt(\"?\") { None => { go = 0 } Some(s) => { n = n + 1 } } }  n }",
+        );
+        let mut fed = 0;
+        let code = super::run_suspendable(&prog, |_| {
+            fed += 1;
+            if fed <= 2 { Some("x".to_string()) } else { None } // 2 lines, then EOF
+        });
+        assert_eq!(code, 2, "two Some replies then None ⇒ loop stops at 2");
+    }
+
+    #[test]
+    fn r15_host_await_collapses_eof_to_empty_string() {
+        // The simple str form maps EOF (host None) to "" — back-compat for
+        // fixed-exchange programs that don't distinguish end-of-input.
+        let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);
+        let code = super::run_suspendable(&prog, |_| None); // immediate EOF
+        assert_eq!(code, 0, "EOF ⇒ host_await returns \"\" ⇒ len 0");
     }
 
     #[test]

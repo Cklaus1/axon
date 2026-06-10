@@ -591,6 +591,17 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Suspend, yield `req` to the host, resume with its reply (str). Needs a suspendable host (R15).",
     },
     BuiltinFn {
+        // R15: the EOF-aware form of `host_await`. Returns `None` when the host has
+        // no more input (e.g. stdin closed / Ctrl-D), `Some(reply)` otherwise — so a
+        // read loop can terminate instead of spinning on an endless empty reply. This
+        // is the Option-typed contract for interactive loops; plain `host_await` (str)
+        // is for fixed-exchange programs that know how many prompts they issue.
+        name: "host_await_opt",
+        params: &[("req", "str")],
+        ret: "Option<str>",
+        doc: "Suspend, yield `req`, resume with `Some(reply)` or `None` at end-of-input (R15).",
+    },
+    BuiltinFn {
         name: "str_trim_start",
         params: &[("s", "str")],
         ret: "str",

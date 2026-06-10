@@ -1502,9 +1502,23 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let req = as_str(&args[0])?.to_string();
                 match crate::interp::host_await_yield(req) {
-                    Ok(reply) => ok!(Value::Str(reply)),
+                    // EOF (`Ok(None)`) collapses to "" for the simple str form.
+                    Ok(reply) => ok!(Value::Str(reply.unwrap_or_default())),
                     Err(()) => Err(Flow::Panic(
                         "host_await: called outside a suspendable run (no host driver)".into(),
+                    )),
+                }
+            }
+            // R15: EOF-aware form — `None` at end-of-input lets a read loop stop
+            // instead of spinning on an endless empty reply.
+            "host_await_opt" => {
+                want(1)?;
+                let req = as_str(&args[0])?.to_string();
+                match crate::interp::host_await_yield(req) {
+                    Ok(Some(reply)) => ok!(Value::Some(Box::new(Value::Str(reply)))),
+                    Ok(None) => ok!(Value::None),
+                    Err(()) => Err(Flow::Panic(
+                        "host_await_opt: called outside a suspendable run (no host driver)".into(),
                     )),
                 }
             }
