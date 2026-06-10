@@ -9,6 +9,11 @@ Cargo.lock
 axon_out_*
 /tmp/axon_*
 
+# Scratch / archived probe files (created during dev; rm was sandbox-denied so
+# they were moved here instead)
+/.archive/
+tmp_*
+
 # Editor
 .vscode/
 .idea/
