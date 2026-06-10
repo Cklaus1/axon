@@ -8589,6 +8589,31 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
 }
 
 #[test]
+fn wasm_browser_println_matches_interp_via_js_host() {
+    // R7c (browser I/O): a browser has no wasi, so println can't use stdout.
+    // codegen lowers println to C `puts`; the unknown-unknown axon-rt shims puts
+    // to an imported `axon_host_write` the JS/wasm-bindgen glue supplies (the link
+    // allows exactly that one undefined symbol → a wasi-free module with one host
+    // import). Driven by a minimal Node host, println programs must produce
+    // byte-identical stdout to the interpreter. scripts/wasm_browser_io_parity.sh;
+    // skips cleanly without node / the wasm toolchain.
+    let script = format!("{}/../../scripts/wasm_browser_io_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_browser_io_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_io_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("node/codegen/wasm unavailable — browser I/O parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "browser println must match interp via the JS host:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_browser_io_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_browser_target_is_wasi_free_and_matches_interp() {
     // R7c (browser target): `axon target build --target wasm32-unknown-unknown`
     // must produce a genuinely WASI-FREE module (a browser has no wasi) that runs

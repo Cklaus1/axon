@@ -1842,6 +1842,16 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     let linked = obj.with_extension("linked.wasm");
     let mut cmd = Command::new(&rust_lld);
     cmd.args(["-flavor", "wasm", "--no-entry", "--export=main"]);
+    if is_browser {
+        // The JS/wasm-bindgen glue supplies host imports (`axon_host_write` for
+        // println). Allow EXACTLY those to stay undefined → wasm imports. Anything
+        // else undefined (e.g. snprintf/malloc for number formatting, not yet
+        // shimmed for the browser) stays a hard error → honest object-only.
+        let allow = obj.with_extension("allow-undef.txt");
+        if std::fs::write(&allow, "axon_host_write\n").is_ok() {
+            cmd.arg(format!("--allow-undefined-file={}", allow.display()));
+        }
+    }
     if link_wasi_libc {
         // Headless wasip1: the wasi libc provides malloc/memcpy + fd_write etc.
         let libc = find("libc.a", false)?;

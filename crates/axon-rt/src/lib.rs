@@ -928,7 +928,55 @@ pub extern "C" fn __axon_spawn(fn_ptr: *const c_void, env: *mut c_void) {
 
 // ── Builtins ──────────────────────────────────────────────────────────────────
 
+// R7c (browser target): wasm32-unknown-unknown has NO stdout (no wasi). Output
+// goes through a host function the JS/wasm-bindgen glue provides, declared here as
+// an import (`env.axon_host_write`). The newline is written as a second call so
+// the host needs only one primitive. (native + wasm32-wasip1 keep std stdout.)
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+extern "C" {
+    fn axon_host_write(ptr: *const u8, len: i64);
+}
+
+/// C `puts` shim for the browser target (wasm32-unknown-unknown has no libc).
+/// codegen lowers `println` to `puts(data_ptr)` (Axon strs are NUL-terminated),
+/// which is undefined without a libc; route it to the host write import + a
+/// newline so the JS/wasm-bindgen glue provides stdout. (native + wasm32-wasip1
+/// use the real libc `puts`.)
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[no_mangle]
+pub extern "C" fn puts(s: *const u8) -> i32 {
+    if s.is_null() {
+        return 0;
+    }
+    let mut len = 0isize;
+    unsafe {
+        while *s.offset(len) != 0 {
+            len += 1;
+        }
+        if len > 0 {
+            axon_host_write(s, len as i64);
+        }
+        let nl: u8 = b'\n';
+        axon_host_write(&nl as *const u8, 1);
+    }
+    0
+}
+
 /// Print a string to stdout followed by a newline.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[no_mangle]
+pub extern "C" fn __axon_print(ptr: *const u8, len: i64) {
+    unsafe {
+        if !ptr.is_null() && len > 0 {
+            axon_host_write(ptr, len);
+        }
+        let nl: u8 = b'\n';
+        axon_host_write(&nl as *const u8, 1);
+    }
+}
+
+/// Print a string to stdout followed by a newline.
+#[cfg(not(all(target_arch = "wasm32", not(target_os = "wasi"))))]
 #[no_mangle]
 pub extern "C" fn __axon_print(ptr: *const u8, len: i64) {
     if ptr.is_null() || len <= 0 {
