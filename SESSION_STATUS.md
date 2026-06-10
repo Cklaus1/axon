@@ -46,6 +46,17 @@ prior session snapshot:
 - **Layer-3 self-improving RewriteSpec DSL** — AI-authored compiler passes as
   DATA; firewall rejects unsound paths; `fold-logical` rule kind added and
   red-teamed (`983395f` / `3da3509` / `044b73e`).
+- **R7 cross-platform — AOT-wasm now broad (2026-06-10).** Beyond native, the
+  LLVM codegen now AOT-compiles to **wasm32-wasip1** (headless, runs 30/30
+  deterministic examples under `wasmtime`, byte-identical to interp) AND
+  **wasm32-unknown-unknown** (the **WASI-FREE browser target**, runs 29/29
+  deterministic examples via a JS host, with a real openable demo in
+  `examples/browser/`). The "i64→i32 ABI retarget" the docs called blocking was
+  a misdiagnosis — the gap was missing `#[cfg(wasm32)]` extern variants (str/
+  array/dict all ported) + browser libc shims (malloc/puts/write/number-format
+  externs). Codegen now emits no libc `snprintf`/`strtoll`. Gated by
+  `scripts/wasm_*_parity.sh`. Remaining R7: real wasm-bindgen DOM/canvas +
+  interactive/async (gated on the Phase-6 `resume` runtime); js/mobile.
 
 ## Shipped after the first refresh (since `5926377`)
 
