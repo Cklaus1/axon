@@ -1450,6 +1450,44 @@ pub extern "C" fn __axon_str_slice(
     unsafe { write_str_out(slice, out_len, out_ptr) }
 }
 
+/// `str_pad_start(s, width, fill)` / `str_pad_end` — pad with the first CHAR of
+/// `fill` repeated `width - s.len()` times, matching the interpreter exactly
+/// (`fill.chars().next().unwrap_or(' ')`, byte-length threshold `s.len() >=
+/// width`). The old inline codegen `memset`'d the first BYTE of fill, so a
+/// multibyte fill char (`★`, `é`) produced INVALID UTF-8 (`0xE2 0xE2 …`) and
+/// padded to exactly `width` bytes rather than `width - s.len()` whole chars.
+/// I-2-canonical. Same multi-arg str→str out-param ABI as str_repeat.
+fn axon_str_pad(s: &str, width: i64, fill: &str, start: bool) -> String {
+    let width = width.max(0) as usize;
+    let fill_char = fill.chars().next().unwrap_or(' ');
+    if s.len() >= width {
+        s.to_string()
+    } else {
+        let pad = fill_char.to_string().repeat(width - s.len());
+        if start { format!("{}{}", pad, s) } else { format!("{}{}", s, pad) }
+    }
+}
+macro_rules! axon_str_pad_fn {
+    ($name:ident, $start:expr) => {
+        #[no_mangle]
+        #[cfg(not(target_arch = "wasm32"))]
+        pub extern "C" fn $name(s: AxonStr, width: i64, fill: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
+            let result = axon_str_pad(unsafe { s.as_str() }, width, unsafe { fill.as_str() }, $start);
+            unsafe { write_str_out(&result, out_len, out_ptr) }
+        }
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        pub extern "C" fn $name(s_len: i64, s_ptr: *const u8, width: i64, fill_len: i64, fill_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
+            let s = AxonStr { len: s_len, ptr: s_ptr };
+            let fill = AxonStr { len: fill_len, ptr: fill_ptr };
+            let result = axon_str_pad(unsafe { s.as_str() }, width, unsafe { fill.as_str() }, $start);
+            unsafe { write_str_out(&result, out_len, out_ptr) }
+        }
+    };
+}
+axon_str_pad_fn!(__axon_str_pad_start, true);
+axon_str_pad_fn!(__axon_str_pad_end, false);
+
 // ── BUG_HUNT #37: parse_int Err message (echoes the input, like the interp) ──
 /// Build the `parse_int` error message for a failed input, matching the
 /// interpreter's I-2-canonical form `` could not parse `<input>` as a base-10

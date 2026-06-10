@@ -39,6 +39,13 @@ fn main() -> i64 {
     println(str_to_upper("straße"))
     match read_file("$WORK/trim1.txt") { Ok(s) => println("[{str_trim(s)}]")  Err(e) => println("e1 {e}") }
     match read_file("$WORK/trim2.txt") { Ok(s) => println("[{str_trim(s)}]")  Err(e) => println("e2 {e}") }
+    let padx = "x"
+    let star = "★"
+    let acute = "é"
+    let p1 = str_pad_start(padx, 5, star)
+    let p2 = str_pad_end(padx, 5, acute)
+    println("[{p1}]")
+    println("[{p2}]")
     0
 }
 AX
@@ -95,8 +102,13 @@ if ! printf '%s' "$native_out" | grep -q "$(printf '\[\x01yo\x01\]')"; then
   echo "str_utf8_parity: FAIL — str_trim wrongly stripped ASCII control \\x01: $native_out"
   exit 1
 fi
+# str_pad must repeat the first CHAR of fill (valid UTF-8), not the first byte.
+if ! echo "$native_out" | grep -q "\[★★★★x\]"; then
+  echo "str_utf8_parity: FAIL — str_pad_start repeated the fill's first BYTE not the char (invalid UTF-8): $native_out"
+  exit 1
+fi
 
-echo "str_utf8_parity: OK — native str_reverse/str_replace/str_to_upper/str_to_lower/str_trim match the interpreter:"
+echo "str_utf8_parity: OK — native str_reverse/str_replace/str_to_upper/str_to_lower/str_trim/str_pad match the interpreter:"
 echo "$native_out" | sed 's/^/  /'
-echo "str_reverse, str_replace, str_to_upper/lower, and str_trim match the interpreter"
+echo "str_reverse, str_replace, str_to_upper/lower, str_trim, and str_pad match the interpreter"
 exit 0
