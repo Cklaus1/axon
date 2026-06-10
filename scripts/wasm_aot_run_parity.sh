@@ -29,11 +29,20 @@ AXON="target/debug/axon"
 INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
-# Pure-integer programs (no str/array runtime → link cleanly after pruning).
+# The AOT-wasm-linkable subset: programs that, after dead-function pruning, have
+# no SURVIVING i64-ABI `__axon_*` import that clashes with wasm32's i32 libc — so
+# they link in reactor mode and run under `wasmtime --invoke main`. This is wider
+# than "pure-int": recursion, while/reassignment loops, f64 math (LLVM intrinsics,
+# no extern), and arrays-of-i64 + closures (inline-IR reductions) all link+run.
+# Still OBJECT-ONLY pending the i64→i32 ABI retarget (R7 §12): array-of-str
+# (str_split/str_join) and dict (their externs read an array of AxonStr whose
+# i64 field layout mismatches wasm32 i32 pointers).
 declare -A PROGS
 PROGS[fib]='fn f(n: i64) -> i64 { if n < 2 { n } else { f(n-1) + f(n-2) } }
 fn main() -> i64 { f(10) }'
 PROGS[arith]='fn main() -> i64 { (21 + 21) * 2 - 4 }'
+PROGS[float]='fn main() -> i64 { f64_to_i64(sqrt(16.0)) }'
+PROGS[array]='fn main() -> i64 { let xs = [1, 2, 3]  let ys = arr_map(xs, |x| x * 10)  arr_sum_i64(&ys) }'
 # NB: Axon has no `let mut` — declare with `let`, reassign with bare `x = …`.
 # The old `let mut` form parse-errored, so this case SILENTLY SKIPPED forever
 # (build-failed → SKIP), never actually testing a loop on wasm (a vacuous skip).
@@ -72,5 +81,5 @@ if [ "$ran" -lt "$total" ]; then
   echo "wasm_aot_run_parity: FAIL — only $ran/$total pure-int programs linked+ran; the rest silently skipped (a build/link failure on a pure-int program is a regression, not a skip)"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
-echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter on pure-int programs ✓"
+echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter across the linkable subset (recursion/loop/f64/array+closure) ✓"
 exit 0
