@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<!--
+  Axon playground — "AI code, sandboxed by the compiler", in the browser.
+
+  Drives the axon-wasm interpreter cdylib (wasm32-unknown-unknown, ZERO JS-glue
+  imports beyond an EOF host_await stub) via its raw C-ABI exports
+  axon_alloc / axon_eval / axon_output_{ptr,len}. Paste Axon source, hit Run:
+  the interpreter runs the STATIC CHECK first (exactly like the `axon run` CLI),
+  so capability (@[contained] → E1001), type, and effect diagnostics surface
+  live — an over-reaching agent is REFUSED before it runs, right here in the page.
+
+  Build + serve (no toolchain beyond rustup + a static server):
+    cargo build -p axon-wasm --target wasm32-unknown-unknown --release
+    cp target/wasm32-unknown-unknown/release/axon_wasm.wasm examples/browser/axon_interp.wasm
+    python3 -m http.server -d examples/browser   # then open /playground.html
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Axon playground — sandboxed by the compiler</title>
+<style>
+  body { max-width: 56rem; margin: 2rem auto; padding: 0 1rem;
+         font: 15px/1.5 system-ui, sans-serif; color: #1c1c1c; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.2rem; }
+  .sub { color: #555; margin-top: 0; }
+  textarea { width: 100%; height: 17rem; font: 13px/1.45 ui-monospace, monospace;
+             box-sizing: border-box; padding: 0.6rem; border: 1px solid #bbb; border-radius: 6px; }
+  button { font: inherit; padding: 0.35rem 0.9rem; margin: 0.4rem 0.4rem 0.4rem 0;
+           border: 1px solid #999; border-radius: 6px; background: #f4f4f4; cursor: pointer; }
+  button.run { background: #1c6fe0; color: #fff; border-color: #1559b8; font-weight: 600; }
+  .examples { margin: 0.3rem 0; }
+  .examples span { color: #555; margin-right: 0.4rem; }
+  pre { background: #0f1117; color: #e6e6e6; padding: 0.8rem; border-radius: 6px;
+        white-space: pre-wrap; word-break: break-word; min-height: 3rem; }
+  .verdict { font-weight: 600; padding: 0.2rem 0.5rem; border-radius: 4px; }
+  .ok { background: #1f8b4c; color: #fff; }
+  .refused { background: #c0392b; color: #fff; }
+</style>
+</head>
+<body>
+  <h1>Axon playground</h1>
+  <p class="sub">AI-written code, <strong>provably sandboxed by the compiler</strong>. The interpreter
+     runs the static check first, so a capability violation is refused before it runs — live, in your browser.</p>
+
+  <div class="examples">
+    <span>Examples:</span>
+    <button data-ex="sandbox">Sandboxed agent (refused)</button>
+    <button data-ex="honest">Honest agent (runs)</button>
+    <button data-ex="hello">Hello</button>
+  </div>
+
+  <textarea id="src" spellcheck="false"></textarea>
+  <p><button id="run" class="run">▶ Run</button> <span id="verdict"></span></p>
+  <pre id="out">(load the wasm, then Run)</pre>
+
+<script type="module">
+const EXAMPLES = {
+  sandbox: `// An AI-written agent, confined to a single capability: an LLM call.
+// Its scorer secretly tries to exfiltrate data to disk. The declared effect
+// surface grants no fs capability, so the compiler REFUSES it before it runs.
+// (Change write_file to remove the escape, or grant fs:, to see it run.)
+@[contained(net: ["api.anthropic.com"], exec: none)]
+fn agent(secret: str) -> i64 {
+    let _ = write_file("/tmp/stolen.txt", secret)   // exfiltration attempt
+    0
+}
+fn main() -> i64 { agent("topsecret") }
+`,
+  honest: `// The same narrow grant, but the agent stays inside it: it only computes.
+// The compiler proves it can't widen its grant, so it runs.
+@[contained(net: ["api.anthropic.com"], exec: none)]
+fn agent(input: str) -> i64 {
+    len(input) * 2
+}
+fn main() -> i64 {
+    let score = agent("hello world")
+    println("agent score: {to_str(score)}")
+    0
+}
+`,
+  hello: `fn main() -> i64 {
+    println("Hello, Axon!")
+    0
+}
+`,
+};
+
+const srcEl = document.getElementById('src');
+const outEl = document.getElementById('out');
+const verdictEl = document.getElementById('verdict');
+srcEl.value = EXAMPLES.sandbox;
+for (const b of document.querySelectorAll('[data-ex]')) {
+  b.addEventListener('click', () => { srcEl.value = EXAMPLES[b.dataset.ex]; verdictEl.textContent = ''; outEl.textContent = '(Run)'; });
+}
+
+// The cdylib imports axon_host_await (browser host_await binding). The plain
+// playground never suspends, so an EOF stub (returns -1n) lets it instantiate.
+const imports = { env: { axon_host_await: () => -1n } };
+
+let exportsPromise = WebAssembly.instantiateStreaming(fetch('./axon_interp.wasm'), imports)
+  .then(({ instance }) => instance.exports)
+  .catch(async () => {
+    // Fallback for servers without application/wasm MIME.
+    const bytes = await fetch('./axon_interp.wasm').then(r => r.arrayBuffer());
+    return WebAssembly.instantiate(bytes, imports).then(({ instance }) => instance.exports);
+  });
+
+document.getElementById('run').addEventListener('click', async () => {
+  verdictEl.textContent = '';
+  let e;
+  try { e = await exportsPromise; }
+  catch (err) { outEl.textContent = 'failed to load axon_interp.wasm — build it (see the comment at the top of this file): ' + err; return; }
+  const bytes = new TextEncoder().encode(srcEl.value);
+  const ptr = e.axon_alloc(bytes.length);
+  new Uint8Array(e.memory.buffer, ptr, bytes.length).set(bytes);
+  const code = e.axon_eval(ptr, bytes.length);
+  const out = new TextDecoder().decode(
+    new Uint8Array(e.memory.buffer, e.axon_output_ptr(), e.axon_output_len()));
+  outEl.textContent = out || '(no output)';
+  // Exit 2 = refused at check time (incl. a capability/sandbox violation).
+  if (code === 2) { verdictEl.innerHTML = '<span class="verdict refused">refused (exit 2) — the compiler blocked it</span>'; }
+  else if (code === 0) { verdictEl.innerHTML = '<span class="verdict ok">ran (exit 0)</span>'; }
+  else { verdictEl.innerHTML = '<span class="verdict refused">exit ' + code + '</span>'; }
+});
+</script>
+</body>
+</html>

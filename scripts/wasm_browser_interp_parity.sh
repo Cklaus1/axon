@@ -31,6 +31,7 @@ cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
 WASM="target/wasm32-unknown-unknown/release/axon_wasm.wasm"
 NATIVE="target/debug/axon"
 DRIVER="scripts/wasm_interp_driver.js"
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
 # Compute-only programs (no host: fs/ai/random/time/host_await) — the cases the
 # wasm interpreter can run identically without a host binding.
@@ -63,5 +64,33 @@ done
 if [ "$pass" -eq 0 ]; then
   echo "wasm_browser_interp_parity: FAIL — no programs ran (corpus missing?)"; exit 1
 fi
-echo "wasm_browser_interp_parity: PASS — $pass programs eval identically on the wasm interpreter + native"
+
+# The value wedge in the browser: the wasm interpreter runs the static CHECK
+# first (like `axon run`), so a capability-violating @[contained] program is
+# REFUSED in-browser with its E1001 diagnostic — never run — exactly as at the
+# CLI. (Before this, the playground eval'd without checking, hiding the wedge.)
+echo "wasm_browser_interp_parity: checking capability diagnostics surface in-browser…"
+EVIL="$WORK/evil.ax"
+cat > "$EVIL" <<'AX'
+@[contained(fs: [], net: [], exec: none)]
+fn agent() -> i64 { let _ = write_file("/tmp/x", "leak")  0 }
+fn main() -> i64 { agent() }
+AX
+n_out="$("$NATIVE" run "$EVIL" 2>&1)"; n_code=$?
+w_out="$(node "$DRIVER" "$WASM" "$EVIL" 2>/dev/null)"; w_code=$?
+if [ "$w_code" != "2" ]; then
+  echo "wasm_browser_interp_parity: FAIL — over-reaching agent not refused in-browser (exit $w_code):"
+  echo "$w_out" | sed 's/^/  /'; exit 1
+fi
+if ! echo "$w_out" | grep -q "E1001"; then
+  echo "wasm_browser_interp_parity: FAIL — E1001 capability diagnostic missing in-browser:"
+  echo "$w_out" | sed 's/^/  /'; exit 1
+fi
+# Native refuses it too (both run the check) — same verdict, browser == CLI.
+if [ "$n_code" != "2" ]; then
+  echo "wasm_browser_interp_parity: FAIL — native did not refuse the over-reaching agent (exit $n_code)"; exit 1
+fi
+echo "  OK  capability violation refused in-browser (E1001, exit 2) — wedge visible, browser==CLI"
+
+echo "wasm_browser_interp_parity: PASS — $pass programs eval identically on the wasm interpreter + native; capability diagnostics surface in-browser"
 exit 0

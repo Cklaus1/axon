@@ -45,11 +45,39 @@ pub extern "C" fn axon_alloc(len: usize) -> *mut u8 {
     ptr
 }
 
-/// Parse and run the `.ax` source at `(ptr, len)` via the interpreter, capturing
-/// its stdout for read-back. Returns the program's exit code (0 ok; 1 a parse
-/// error; the interpreter's runtime-flow codes — 3 verify / 4 corrigible / 5
-/// ai-policy / 6 refine / 7 goal-budget / 101 panic — otherwise). Reclaims the
-/// source buffer that `axon_alloc` handed out.
+/// Format one check-pipeline diagnostic for the playground console, in the
+/// human-readable shape the CLI uses (`severity[CODE] file:line:col: message`,
+/// the source caret, and a `help:` line when present).
+fn render_diag(d: &axon_core::PipelineDiagnostic) -> String {
+    let mut s = format!(
+        "{}[{}] {}:{}:{}: {}\n",
+        d.severity, d.code, d.file, d.line, d.col, d.message
+    );
+    if !d.caret.is_empty() {
+        s.push_str(&d.caret);
+        if !d.caret.ends_with('\n') {
+            s.push('\n');
+        }
+    }
+    if let Some(h) = &d.help {
+        s.push_str(&format!("  help: {h}\n"));
+    }
+    s
+}
+
+/// Parse, **check**, and run the `.ax` source at `(ptr, len)` via the interpreter,
+/// capturing output for read-back. Like the `axon run` CLI flow (and unlike the
+/// old eval-without-check), it runs the full static check pipeline FIRST — so
+/// capability (`@[contained]`, E1001), type, and effect diagnostics surface in the
+/// browser playground exactly as they do at the CLI. If the check finds any
+/// `error`-severity diagnostic the program is REFUSED (the diagnostics are the
+/// captured output, exit 2) and never runs; warnings don't block. A clean program
+/// runs as before.
+///
+/// Returns the exit code: 0 ok; 1 a parse error; 2 a refused check (incl. a
+/// sandbox/capability violation); the interpreter's runtime-flow codes — 3 verify
+/// / 4 corrigible / 5 ai-policy / 6 refine / 7 goal-budget / 101 panic — otherwise.
+/// Reclaims the source buffer that `axon_alloc` handed out.
 ///
 /// # Safety
 /// `ptr`/`len` must be a buffer previously returned by `axon_alloc(len)` that JS
@@ -63,6 +91,24 @@ pub unsafe extern "C" fn axon_eval(ptr: *mut u8, len: usize) -> i32 {
         unsafe { Vec::from_raw_parts(ptr, len, len) }
     };
     let src = String::from_utf8_lossy(&src_bytes).into_owned();
+
+    // Static check FIRST — the wedge's capability diagnostics must be visible in
+    // the playground, and the browser must refuse what the CLI refuses.
+    let diags = axon_core::check_pipeline(&src, "playground.ax");
+    let errors: Vec<&axon_core::PipelineDiagnostic> =
+        diags.iter().filter(|d| d.severity == "error").collect();
+    if !errors.is_empty() {
+        let mut out = String::new();
+        for d in &errors {
+            out.push_str(&render_diag(d));
+        }
+        out.push_str(&format!(
+            "\naxon: {} error(s); refused before running.\n",
+            errors.len()
+        ));
+        LAST_OUTPUT.with(|o| *o.borrow_mut() = out.into_bytes());
+        return 2;
+    }
 
     let (code, output) = match axon_core::parse_source(&src) {
         Ok(program) => axon_core::interp::run_program_capturing(&program),

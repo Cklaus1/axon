@@ -80,3 +80,28 @@ guessing game all round-trip across real async (`setTimeout`/Promise) replies.
 full-`Value` payloads are a later R15 slice. A deep suspend point needs more JS
 stack than node's ~984 KB default (`node --stack-size=…`); browsers configure
 stack per worker, so this is a host knob, not an Asyncify limit.
+
+## The playground — `playground.html` (the wedge, in the browser)
+
+`playground.html` is a paste-and-run REPL that makes Axon's differentiator
+visible in the browser: **AI code, sandboxed by the compiler**. It loads the
+plain interpreter (`axon-wasm`, no Asyncify) and — crucially — runs the **static
+check before running**, exactly like the `axon run` CLI. So a capability
+violation surfaces *live*: paste an `@[contained]` agent that tries to escape its
+grant, hit Run, and the compiler **refuses it (E1001, exit 2) before it runs** —
+right in the page. The default example is exactly that; a one-click "Honest agent"
+preset shows the same grant running when the code stays inside it.
+
+```bash
+# 1. Build the plain interpreter (emits axon_interp.wasm):
+bash examples/browser/build-playground.sh
+# 2. Serve and open:
+python3 -m http.server -d examples/browser
+#    → http://localhost:8000/playground.html — edit, click Run, watch the verdict.
+```
+
+The check-first behavior is the same `axon_eval` entry the headless harness
+exercises: `scripts/wasm_browser_interp_parity.sh` (gated in `cli_run` as
+`wasm_interpreter_evals_identically_to_native_r7c`) runs a compute corpus
+through the wasm interpreter *and* asserts an over-reaching `@[contained]` program
+is refused in-browser with its E1001 diagnostic — the exact path this page runs.
