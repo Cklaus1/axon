@@ -248,16 +248,15 @@ substrate — two bindings, one surface.
   the call. `scripts/wasm_asyncify_driver.js` runs the Asyncify state machine (state 1=unwind →
   await Promise → start_rewind → re-enter `axon_eval`). Gated `wasm_asyncify_host_await.sh` +
   cli `wasm_asyncify_host_await_suspends_across_async_r7c`: a 2-turn program, a multi-turn
-  while-loop, and `host_await_opt` all round-trip across real async (`setTimeout`) replies.
-  **This closes the browser-async binding — interactive Axon now suspends/resumes in the browser.**
-  Binaryen-108 feature flags required for modern-rustc wasm (`--enable-bulk-memory --enable-sign-ext
-  --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types
-  --enable-multivalue`).
+  while-loop, `host_await_opt`, AND a deeply-nested suspend point (`examples/interactive/guess.ax`:
+  `host_await_opt` inside `while→match→match→if`) all round-trip across real async (`setTimeout`)
+  replies. **This closes the browser-async binding — interactive Axon now suspends/resumes in the
+  browser.** Binaryen-108 feature flags required for modern-rustc wasm (`--enable-bulk-memory
+  --enable-sign-ext --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd
+  --enable-reference-types --enable-multivalue`).
 
-  **Known edge:** a DEEPLY-nested suspend point (`host_await` inside `while→match→match→if`, e.g.
-  `examples/interactive/guess.ax`) overflows the JS engine call stack during Asyncify *rewind*
-  under binaryen 108 — the rewind re-enters every saved wasm frame; the limit is the engine stack,
-  not the (ample) data buffer. Shallow-to-moderate suspend points (loops, Option, multi-turn) work.
-  Mitigations if needed later: a newer binaryen, `--asyncify` with `asyncify-addlist` tuning, or the
-  JS step-loop fallback. The deep-nest program DOES run on the synchronous browser host and on
-  native/wasip1, so it is a browser-async-only limitation, not a semantic regression.
+  **Host stack-size note (resolved):** Asyncify *rewind* re-enters every saved wasm frame, so a deep
+  suspend point needs more JS stack than node's ~984 KB default — `guess.ax` overflowed at the
+  default but round-trips at `node --stack-size=2000`+ (the harness uses 4000). This is a HOST
+  stack-size knob, not an Asyncify/binaryen limitation; browsers configure stack per worker
+  (`new Worker`, or the main-thread default which is larger). No semantic difference from native/wasip1.

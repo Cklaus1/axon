@@ -32,6 +32,11 @@ FEATURES="--enable-bulk-memory --enable-sign-ext --enable-mutable-globals --enab
 if ! wasm-opt $FEATURES --asyncify --pass-arg=asyncify-imports@env.axon_host_await "$RAW" -o "$ASYNC" 2>/dev/null; then
   echo "wasm_asyncify_host_await: wasm-opt --asyncify failed — skipping"; exit 0
 fi
+# Asyncify REWIND re-enters every saved wasm frame, so a deep suspend point needs
+# more JS stack than node's ~984KB default. Browsers configure stack per worker; for
+# the node driver we raise it. (Discovered: guess.ax overflowed at the default but
+# works at --stack-size=2000+; this is a host stack-size knob, not an Asyncify limit.)
+NODE="node --stack-size=4000"
 DRIVER="scripts/wasm_asyncify_driver.js"
 
 # (1) Two-turn program: each host_await suspends across an async (Promise) reply.
@@ -43,7 +48,7 @@ fn main() -> i64 {
     0
 }
 AX
-out="$(node "$DRIVER" "$ASYNC" "$WORK/greet.ax" $'World\nHi' 2>"$WORK/err")"; code=$?
+out="$($NODE "$DRIVER" "$ASYNC" "$WORK/greet.ax" $'World\nHi' 2>"$WORK/err")"; code=$?
 reqs="$(grep '^REQ:' "$WORK/err" | sed 's/^REQ://' | tr '\n' '|')"
 if [ "$out" != "Hi, World!" ] || [ "$code" != "0" ] || [ "$reqs" != "name?|greet?|" ]; then
   echo "wasm_asyncify_host_await: FAIL (greet): out='$out' code=$code reqs='$reqs'; err: $(cat "$WORK/err")"; exit 1
@@ -64,7 +69,7 @@ fn main() -> i64 {
     0
 }
 AX
-lout="$(node "$DRIVER" "$ASYNC" "$WORK/loop.ax" $'a\nb\nc' 2>/dev/null)"; lcode=$?
+lout="$($NODE "$DRIVER" "$ASYNC" "$WORK/loop.ax" $'a\nb\nc' 2>/dev/null)"; lcode=$?
 if [ "$lout" != $'r=a\nr=b\nr=c' ] || [ "$lcode" != "0" ]; then
   echo "wasm_asyncify_host_await: FAIL (loop): code=$lcode out:"; echo "$lout" | sed 's/^/    /'; exit 1
 fi
@@ -78,19 +83,23 @@ fn main() -> i64 {
     0
 }
 AX
-oout="$(node "$DRIVER" "$ASYNC" "$WORK/opt.ax" $'P\nQ' 2>/dev/null)"; ocode=$?
+oout="$($NODE "$DRIVER" "$ASYNC" "$WORK/opt.ax" $'P\nQ' 2>/dev/null)"; ocode=$?
 if [ "$oout" != $'got P\ngot Q' ] || [ "$ocode" != "0" ]; then
   echo "wasm_asyncify_host_await: FAIL (opt): code=$ocode out:"; echo "$oout" | sed 's/^/    /'; exit 1
 fi
 echo "  OK  opt: host_await_opt async → Some(P)/Some(Q)"
 
-# NOTE: a deeply-NESTED suspend point (host_await inside while→match→match→if, as in
-# examples/interactive/guess.ax) overflows the JS stack during Asyncify *rewind* under
-# binaryen 108 — the rewind re-enters every saved wasm frame and the engine's call
-# stack, not the (ample) data buffer, is the limit. Shallow-to-moderate suspend points
-# (the cases above — loops, Option, multi-turn) work; the deep-nest case is a known
-# binaryen-108 Asyncify edge, tracked in R15 §13. guess.ax DOES run on the synchronous
-# browser host (wasm_browser_host_await.sh) and on native/wasip1.
+# (4) DEEPLY-NESTED suspend point: the guessing game (host_await_opt inside
+# while→match→match→if). The rewind re-enters every saved wasm frame, so this needs
+# the raised JS stack ($NODE) — with it, the deep-nest case round-trips just like the
+# rest. guesses 5/9/7 → Higher/Lower/Correct, exit 3.
+if [ -f examples/interactive/guess.ax ]; then
+  gout="$($NODE "$DRIVER" "$ASYNC" examples/interactive/guess.ax $'5\n9\n7' 2>/dev/null)"; gcode=$?
+  if ! echo "$gout" | grep -q 'Correct — 3 tries!' || [ "$gcode" != "3" ]; then
+    echo "wasm_asyncify_host_await: FAIL (guess loop): code=$gcode out:"; echo "$gout" | sed 's/^/    /'; exit 1
+  fi
+  echo "  OK  guess: deep-nested multi-turn async loop → 3 tries, exit 3"
+fi
 
 echo "wasm_asyncify_host_await: PASS — host_await suspends across async JS work in the browser (Asyncify)"
 exit 0
