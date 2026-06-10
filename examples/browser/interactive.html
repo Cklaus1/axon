@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<!--
+  INTERACTIVE Axon in the browser (R15 §13 B3). This page loads the axon-wasm
+  INTERPRETER, instrumented with `wasm-opt --asyncify`, and runs whatever .ax you
+  type. When the program calls `host_await(req)`, the wasm module SUSPENDS, this
+  page shows the request and waits for you to type a reply, then RESUMES the module
+  exactly where it left off — a real coroutine across a browser event. That suspend/
+  resume is the capability that makes interactive Axon (REPLs, agents that pause for
+  human approval, frame loops) possible in the browser.
+
+  The Asyncify state machine lives in axon_asyncify.mjs — the SAME module the node
+  test driver (scripts/wasm_asyncify_driver.js) uses, so this page runs verified code.
+
+  First build the interpreter module:
+    bash examples/browser/build-interactive.sh    (emits axon_interp.async.wasm)
+  then serve this directory (browsers won't fetch wasm from file://):
+    python3 -m http.server -d examples/browser
+  and open http://localhost:8000/interactive.html .
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Axon — interactive in the browser</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 52rem; margin: 2.5rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.3rem; }
+    textarea { width: 100%; height: 14rem; font: 13px/1.45 ui-monospace, monospace; box-sizing: border-box; }
+    button { font: inherit; padding: .4rem .9rem; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: default; }
+    pre { background: #0b1021; color: #d6e2ff; padding: 1rem; border-radius: 8px; white-space: pre-wrap; min-height: 5rem; }
+    .muted { color: #667; }
+    #prompt { display: none; margin: .8rem 0; padding: .8rem; background: #fff7e6; border: 1px solid #e0c890; border-radius: 8px; }
+    #prompt.on { display: block; }
+    #reqLabel { font-weight: 600; }
+    #reply { font: inherit; padding: .35rem .5rem; width: 18rem; }
+  </style>
+</head>
+<body>
+  <h1>Axon, interactive in the browser</h1>
+  <p class="muted">
+    The <code>axon-wasm</code> interpreter (wasi-free, Asyncify-instrumented) runs
+    your program below. <code>host_await(req)</code> <strong>suspends</strong> the
+    wasm and waits for your input, then <strong>resumes</strong> — a coroutine across
+    a browser event. <code>println</code> output appears when the program finishes.
+  </p>
+
+  <textarea id="src">
+fn main() -> i64 {
+    let secret = 7
+    let tries = 0
+    let found = 0
+    println("Guess my number (1-10).")
+    while found == 0 {
+        match host_await_opt("your guess> ") {
+            None => { found = 1 }
+            Some(g) => {
+                match parse_int(g) {
+                    Ok(n) => {
+                        tries = tries + 1
+                        if n == secret {
+                            println("Correct — {tries} tries!")
+                            found = 1
+                        } else {
+                            if n < secret { println("Higher.") } else { println("Lower.") }
+                        }
+                    }
+                    Err(e) => { println("not a number: {e}") }
+                }
+            }
+        }
+    }
+    0
+}
+  </textarea>
+  <p><button id="run">Run</button> <span id="status" class="muted"></span></p>
+
+  <div id="prompt">
+    <span id="reqLabel"></span>
+    <input id="reply" autocomplete="off" />
+    <button id="send">Send</button>
+    <button id="eof">End input</button>
+  </div>
+
+  <pre id="out"></pre>
+
+  <script type="module">
+    import { runAxon } from './axon_asyncify.mjs';
+
+    const $ = (id) => document.getElementById(id);
+    const promptEl = $('prompt'), reqLabel = $('reqLabel'), replyEl = $('reply');
+    let resolveReply = null;
+
+    // The async host: reveal the request, await the user's Send (string) or End (null).
+    function hostAwait(req) {
+      reqLabel.textContent = req;
+      promptEl.classList.add('on');
+      replyEl.value = '';
+      replyEl.focus();
+      return new Promise((res) => { resolveReply = res; });
+    }
+    function answer(value) {
+      if (!resolveReply) return;
+      const r = resolveReply; resolveReply = null;
+      promptEl.classList.remove('on');
+      r(value);
+    }
+    $('send').addEventListener('click', () => answer(replyEl.value));
+    replyEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') answer(replyEl.value); });
+    $('eof').addEventListener('click', () => answer(null));
+
+    $('run').addEventListener('click', async () => {
+      $('run').disabled = true;
+      $('out').textContent = '';
+      $('status').textContent = 'running…';
+      try {
+        const wasm = await (await fetch('./axon_interp.async.wasm')).arrayBuffer();
+        const { exitCode, output } = await runAxon(wasm, $('src').value, hostAwait);
+        $('out').textContent = output;
+        $('status').textContent = 'exit ' + exitCode;
+      } catch (e) {
+        $('out').textContent = 'error: ' + (e && e.stack ? e.stack : e);
+        $('status').textContent = '';
+      } finally {
+        promptEl.classList.remove('on');
+        resolveReply = null;
+        $('run').disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
