@@ -1,5 +1,12 @@
 # Axon Compiler — Phase 4 Status
 
+> **NOTE (stale below).** This file is a Phase-4 snapshot. For the CURRENT phase
+> status (Phases 5–10: refinement + SMT discharge, effect rows + the browser-async
+> resume runtime, kernel services, the Layer-3 self-improving compiler, the
+> interpreter-first execution path, and the AI-call audit/replay tooling) see the
+> **Phase Status** table in `CLAUDE.md` and the forward plan in `ROADMAP.md`. The
+> Phase-3/4 detail below remains accurate for those phases.
+
 **Last updated**: 2026-05-04
 **Phase**: 4 complete; ASI Layers 1–3.6 merged on `merge-asi-layer3`
 **Forward roadmap**: `ROADMAP.md` (Phases 5–14+, strategic reframe, TCB, acid tests, friction-derived gap list)
