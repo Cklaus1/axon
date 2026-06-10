@@ -61,6 +61,26 @@ for name in "${!PROGS[@]}"; do
   fi
 done
 
+# Gate the committed end-to-end browser demo (examples/browser/demo.ax) too, so
+# the user-facing artifact can't rot.
+DEMO="examples/browser/demo.ax"
+if [ -f "$DEMO" ]; then
+  D_I="$("$AXON" run "$DEMO" 2>/dev/null)"
+  rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
+  if "$AXON" target build "$DEMO" --target wasm32-unknown-unknown >/dev/null 2>&1 && [ -f examples/browser/demo.linked.wasm ]; then
+    ran=$((ran+1))
+    D_W="$(node "$HOSTJS" examples/browser/demo.linked.wasm 2>/dev/null)"
+    if [ "$D_I" = "$D_W" ]; then
+      echo "  OK   demo (examples/browser/demo.ax): stdout matches via JS host"; pass=$((pass+1))
+    else
+      echo "  DIFF demo: interp=[$D_I] browser=[$D_W]"; fail=$((fail+1))
+    fi
+    rm -f examples/browser/demo.linked.wasm examples/browser/demo.wasm
+  else
+    echo "  SKIP demo (object-only)"
+  fi
+fi
+
 echo "wasm_browser_io_parity: $pass/$ran stdout-matched (wasi-free), $fail bad"
 if [ "$ran" -eq 0 ]; then echo "wasm_browser_io_parity: nothing linked — skipping"; exit 0; fi
 [ "$fail" -eq 0 ] || exit 1

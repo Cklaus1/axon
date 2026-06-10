@@ -1,0 +1,23 @@
+// A self-contained Axon program that runs in the browser via WebAssembly.
+// Compute + string ops + interpolation only — no host I/O beyond println, which
+// the browser glue routes to the page (see index.html). Build it with:
+//   axon target build examples/browser/demo.ax --target wasm32-unknown-unknown
+// then open index.html (which loads the emitted demo.linked.wasm).
+
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() {
+    println("Axon, running in your browser via WebAssembly.")
+    println("Compiled to wasm32-unknown-unknown — no wasi, no server.")
+    println("fib(10) = {fib(10)}")
+    let shout = str_to_upper("hello, wasm")
+    println(shout)
+    let d = dict_new()
+    dict_set(d, "answer", 41)
+    dict_inc(d, "answer")
+    let answer = dict_get_or(d, "answer", 0)
+    println("dict answer = {answer}")
+    println("pi = {3.14159}")
+}

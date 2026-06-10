@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<!--
+  Run a compiled Axon program in the browser. No server, no wasi, no
+  wasm-bindgen — just plain WebAssembly.instantiate with ONE host import,
+  `axon_host_write(ptr, len)`, which Axon's `println` calls. We read the
+  module's linear memory and append the bytes to the page.
+
+  First build the module (from the repo root):
+    axon target build examples/browser/demo.ax --target wasm32-unknown-unknown
+  which emits examples/browser/demo.linked.wasm next to this file. Then serve
+  this directory over http (browsers won't fetch wasm from file://):
+    python3 -m http.server -d examples/browser
+  and open http://localhost:8000/ .
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Axon → WebAssembly</title>
+  <style>
+    body { font: 15px/1.5 system-ui, sans-serif; max-width: 46rem; margin: 3rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.3rem; }
+    button { font: inherit; padding: .4rem .9rem; cursor: pointer; }
+    pre { background: #0b1021; color: #d6e2ff; padding: 1rem; border-radius: 8px; white-space: pre-wrap; min-height: 6rem; }
+    .muted { color: #667; }
+  </style>
+</head>
+<body>
+  <h1>Axon, compiled to WebAssembly</h1>
+  <p class="muted">
+    <code>demo.ax</code> → <code>wasm32-unknown-unknown</code> (wasi-free) →
+    running in this page. <code>println</code> is routed to the box below via a
+    single host import.
+  </p>
+  <p><button id="run">Run</button></p>
+  <pre id="out"></pre>
+
+  <script>
+    const outEl = document.getElementById('out');
+    const dec = new TextDecoder();
+
+    async function runAxon(url) {
+      outEl.textContent = '';
+      let mem = null;
+      // The one import Axon's browser runtime needs: stdout.
+      const imports = {
+        env: {
+          axon_host_write: (ptr, len) => {
+            const bytes = new Uint8Array(mem.buffer, ptr, Number(len));
+            outEl.textContent += dec.decode(bytes);
+          },
+        },
+      };
+      const resp = await fetch(url);
+      const { instance } = await WebAssembly.instantiate(await resp.arrayBuffer(), imports);
+      mem = instance.exports.memory;
+      instance.exports.main();
+    }
+
+    document.getElementById('run').addEventListener('click', () => {
+      runAxon('./demo.linked.wasm').catch((e) => { outEl.textContent = 'error: ' + e; });
+    });
+  </script>
+</body>
+</html>

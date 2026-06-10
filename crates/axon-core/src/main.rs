@@ -1847,7 +1847,10 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
         // println). Allow EXACTLY those to stay undefined → wasm imports. Anything
         // else undefined (e.g. snprintf/malloc for number formatting, not yet
         // shimmed for the browser) stays a hard error → honest object-only.
-        let allow = obj.with_extension("allow-undef.txt");
+        // Write the allow-list to a temp path (not next to the object) so the
+        // source tree isn't littered. Content is constant, so concurrent builds
+        // writing it are harmless.
+        let allow = std::env::temp_dir().join("axon-browser-allow-undef.txt");
         if std::fs::write(&allow, "axon_host_write\n").is_ok() {
             cmd.arg(format!("--allow-undefined-file={}", allow.display()));
         }
