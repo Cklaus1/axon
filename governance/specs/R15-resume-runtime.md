@@ -199,3 +199,34 @@ Slices:
   there. The browser slice needs Asyncify or a JS-driven interp step-loop — deferred to an
   R7c follow-on, but the `host_await` *surface* and *interp semantics* defined here are the
   target both bindings implement.
+
+### 13. Browser binding — chosen path: Asyncify (tooling now in place, 2026-06-10)
+
+**Decision: Asyncify, not a JS step-loop.** A step-loop would require re-architecting the
+recursive `eval` into a resumable state machine (CPS-scale — rejected in §4). Asyncify
+post-processes the COMPILED wasm to add stack unwind/rewind around one designated import, so
+the unchanged recursive `eval` keeps working — same I-2-by-construction argument as the
+native thread substrate. **Prerequisite resolved:** `wasm-opt 108` (binaryen) is installed and
+exposes `--asyncify`; `wasm-tools` + `node` are available for inspection/driving.
+
+**The motivating cases are all ASYNC** (frame loop, `fetch`, human input) — a synchronous JS
+import does NOT cover them; Asyncify (suspend the wasm, await a JS Promise, resume) is the
+real mechanism.
+
+Concrete slices (each independently testable under `node`):
+- **B1 (interp):** a `#[cfg(all(target_arch="wasm32", not(target_os="wasi")))]`
+  `host_await_yield` that, instead of the worker-thread channel, calls an IMPORTED host fn
+  `axon_host_await(req_ptr, req_len) -> (reply_ptr,len)` (the AxonStr-scalar ABI the browser
+  shims already use). The thread substrate stays `#[cfg(not(wasm32))]`. No suspension yet —
+  proves the import plumbing + a synchronous reply round-trips.
+- **B2 (build):** emit the wasm32-unknown-unknown interp with the program embedded (or fed via
+  a JS-provided string export), importing `axon_host_await`. Reuse the existing WASI-free
+  browser-target link path (the 29/29 examples already link there).
+- **B3 (asyncify + glue):** `wasm-opt --asyncify` the module; a small JS driver implements the
+  Asyncify unwind/rewind state machine around `axon_host_await` (await a Promise for the
+  reply), with a `node` test doing a suspend→async-reply→resume round-trip + the B2-equivalent
+  of the interp lib's B1/B2 tests (effect-fires-once across a real suspend).
+
+This keeps the §4 semantics (`host_await(req)->reply`, effects fire once, EOF via
+`host_await_opt`) identical between the native thread substrate and the browser Asyncify
+substrate — two bindings, one surface.
