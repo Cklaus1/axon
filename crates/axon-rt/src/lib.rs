@@ -735,12 +735,24 @@ pub extern "C" fn __axon_dict_to_pairs(
     }
 }
 
+/// Indirect-call a dict closure that receives `(env, key: AxonStr, val: i64)`.
+/// On wasm32 codegen expands the by-value AxonStr param into (i64 len, i32 ptr)
+/// scalars (same ABI as a direct extern call), so the transmute'd fn type differs
+/// by target. Used by dict_filter/dict_each. (map_values' closure takes only
+/// (env, i64) — no AxonStr — so it needs no target split.)
+#[inline]
+unsafe fn call_dict_key_val_closure(fn_ptr: *const c_void, env: *mut c_void, key: AxonStr, val: i64) -> i64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    { let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = std::mem::transmute(fn_ptr); f(env, key, val) }
+    #[cfg(target_arch = "wasm32")]
+    { let f: extern "C" fn(*mut c_void, i64, *const u8, i64) -> i64 = std::mem::transmute(fn_ptr); f(env, key.len, key.ptr, val) }
+}
+
 /// Apply a closure to each value, returning a FRESH dict with the same keys and
 /// mapped values (v1 int-valued), matching the interpreter. The closure arrives
 /// as (fn_ptr, env) — the axon lambda ABI `i64 fn(i8* env, i64 val)` — and the
 /// runtime indirect-calls it per value (the same transmute-and-call pattern as
 /// __axon_spawn). Keys are unchanged; a null dict → {}.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_map_values(
     d: *mut c_void,
@@ -830,7 +842,6 @@ pub extern "C" fn __axon_dict_to_str(
 /// the bool result is i1 widened to i64) — and the runtime indirect-calls it per
 /// entry, passing the key as an AxonStr over the live String bytes. Keys/values
 /// unchanged for kept entries; a null dict → {}.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_filter(
     d: *mut c_void,
@@ -840,7 +851,6 @@ pub extern "C" fn __axon_dict_filter(
     let mut out: StdMap<String, DictVal> = StdMap::new();
     if !d.is_null() {
         let dict = unsafe { dict_borrow(d) };
-        let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
         // Snapshot first (don't hold the lock across the callback; the predicate
         // can't observe a partial result).
         let pairs: Vec<(String, DictVal)> = {
@@ -851,8 +861,8 @@ pub extern "C" fn __axon_dict_filter(
             let iv = match &v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
             let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
             // i1 result is zero-extended to i64 by the lambda's return site;
-            // truthy = non-zero.
-            if f(env, key, iv) != 0 {
+            // truthy = non-zero. (Closure call is target-ABI-aware.)
+            if unsafe { call_dict_key_val_closure(fn_ptr, env, key, iv) } != 0 {
                 out.insert(k, v);
             }
         }
@@ -867,7 +877,6 @@ pub extern "C" fn __axon_dict_filter(
 /// result is ignored); the key is passed as an AxonStr over the live String
 /// bytes. Snapshot-first so a callback that mutates the SAME dict can't perturb
 /// the iteration / deadlock on the lock. Null dict → no-op.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_each(
     d: *mut c_void,
@@ -878,7 +887,6 @@ pub extern "C" fn __axon_dict_each(
         return;
     }
     let dict = unsafe { dict_borrow(d) };
-    let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
     let pairs: Vec<(String, i64)> = {
         let guard = dict.map.lock().unwrap();
         guard.iter().map(|(k, v)| {
@@ -888,7 +896,7 @@ pub extern "C" fn __axon_dict_each(
     };
     for (k, v) in pairs {
         let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
-        let _ = f(env, key, v);
+        let _ = unsafe { call_dict_key_val_closure(fn_ptr, env, key, v) };
     }
 }
 
