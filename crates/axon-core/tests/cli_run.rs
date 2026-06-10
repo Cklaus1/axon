@@ -10206,6 +10206,46 @@ fn improve_verify_passes_over_a_pure_compute_corpus() {
 }
 
 #[test]
+fn improve_verify_spec_runs_a_rewrite_spec_dsl_pass_through_the_firewall() {
+    // The "AI-authored passes as DATA" CLI surface (Layer-3): `axon improve verify
+    // --spec` reads a RewriteSpec (a composition of the closed, reviewed rule
+    // vocabulary — one rule name per line), VALIDATES it, COMPILES it with the
+    // reviewed evaluator, and runs the same four gates. The AI never authors Rust;
+    // it composes data. A valid spec clears the gates; an unknown rule is
+    // fail-closed (E1411) — the firewall is sound (only deterministic corpus
+    // members), so this verification is reliable.
+    let dir = std::env::temp_dir().join(format!("axon_specv_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("p.ax"), "fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }\n").unwrap();
+
+    // VALID: the constant-fold chain (arith → comparison → branch) — behavior-
+    // preserving, so it clears G1/G2/G3.
+    let spec = std::env::temp_dir().join(format!("axon_spec_{}.txt", std::process::id()));
+    std::fs::write(&spec, "fold-int-literal\nfold-comparison-literal\nfold-const-branch\n").unwrap();
+    let out = axon()
+        .args(["improve", "verify", dir.to_str().unwrap(), "--spec", spec.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").output().unwrap();
+    let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(0), "a valid DSL spec must clear the gates: {m}");
+    assert!(m.contains("spec (DSL)") && m.contains("PASSED"), "DSL spec output: {m}");
+
+    // FAIL-CLOSED: an unknown rule can't be authored — E1411, exit 2.
+    let bad = std::env::temp_dir().join(format!("axon_badspec_{}.txt", std::process::id()));
+    std::fs::write(&bad, "fold-int-literal\nexec-shell\n").unwrap();
+    let out2 = axon()
+        .args(["improve", "verify", dir.to_str().unwrap(), "--spec", bad.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").output().unwrap();
+    let m2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
+    assert_eq!(out2.status.code(), Some(2), "an unknown rule must be fail-closed: {m2}");
+    assert!(m2.contains("E1411") && m2.contains("exec-shell"), "fail-closed error: {m2}");
+
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_file(&spec);
+    let _ = std::fs::remove_file(&bad);
+}
+
+#[test]
 fn improve_verify_runs_the_real_fold_pass_through_the_gates() {
     // R10: `axon improve verify --pass fold-arith-identities` runs the REAL
     // discovered optimization (the rewrite, not the identity baseline) through

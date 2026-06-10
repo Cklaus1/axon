@@ -86,6 +86,26 @@ pub enum RewriteRule {
 }
 
 impl RewriteRule {
+    /// Every rule in the closed, reviewed vocabulary — the SINGLE source for the
+    /// list shown in errors / discovery prompts (so it can't drift like a
+    /// hardcoded string). MUST list every variant; the `vocabulary_lists_every_rule`
+    /// test guards completeness. Adding a rule means: this list + `name` +
+    /// `from_name` + `apply_here` + `cannot_express_capability`.
+    pub const ALL: &'static [RewriteRule] = &[
+        RewriteRule::FoldIntLiteral,
+        RewriteRule::FoldArithIdentity,
+        RewriteRule::SimplifyBoolNot,
+        RewriteRule::FoldConstBranch,
+        RewriteRule::FoldLogicalShortCircuit,
+        RewriteRule::FoldBoundBuiltin,
+        RewriteRule::FoldComparisonLiteral,
+    ];
+
+    /// The comma-separated vocabulary, for error messages.
+    pub fn vocabulary() -> String {
+        Self::ALL.iter().map(|r| r.name()).collect::<Vec<_>>().join(", ")
+    }
+
     /// A stable name (for spec text / manifest / errors).
     pub fn name(&self) -> &'static str {
         match self {
@@ -298,8 +318,8 @@ impl RewriteSpec {
                         code: E_BAD_RULE,
                         message: format!(
                             "unknown rewrite rule `{line}` — not in the closed reviewed \
-                             vocabulary {{fold-int-literal, fold-arith-identity, \
-                             simplify-bool-not, fold-const-branch}}"
+                             vocabulary {{{}}}",
+                            RewriteRule::vocabulary()
                         ),
                     });
                 }
@@ -796,5 +816,24 @@ mod tests {
     #[test]
     fn fold_comparison_literal_is_capability_free() {
         assert!(RewriteSpec::parse("fold-comparison-literal").unwrap().cannot_express_capability());
+    }
+
+    #[test]
+    fn vocabulary_lists_every_rule_and_round_trips() {
+        // ALL is the single source for the unknown-rule error / discovery prompt.
+        // Every entry round-trips through name()/from_name() (no typos) and is
+        // unique. Guards the stale-hardcoded-list bug (the message must include the
+        // newest rules), and that `axon improve verify --spec` accepts each one.
+        let names: Vec<&str> = RewriteRule::ALL.iter().map(|r| r.name()).collect();
+        for (r, n) in RewriteRule::ALL.iter().zip(&names) {
+            assert_eq!(RewriteRule::from_name(n), Some(r.clone()), "round-trip {n}");
+        }
+        let mut uniq = names.clone();
+        uniq.sort();
+        uniq.dedup();
+        assert_eq!(uniq.len(), names.len(), "ALL has duplicate rule names");
+        let vocab = RewriteRule::vocabulary();
+        assert!(vocab.contains("fold-comparison-literal") && vocab.contains("fold-bound-builtin"),
+            "vocabulary must include the newest rules: {vocab}");
     }
 }

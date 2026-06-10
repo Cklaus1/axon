@@ -344,6 +344,14 @@ enum ImproveAction {
         /// `constant-fold`, …) is a discovered optimization.
         #[arg(long, value_name = "PASS", help = "Pass to verify: identity | <registry template, e.g. constant-fold>")]
         pass: Option<String>,
+
+        /// Verify a RewriteSpec DSL pass instead of a registry template: a path to
+        /// a text file with one rule name per line (the "AI-authored passes as
+        /// DATA" path — the AI emits the spec, never code). The spec is validated
+        /// (E15xx, fail-closed) and compiled by the REVIEWED evaluator, then runs
+        /// the same four gates. Mutually exclusive with `--pass`.
+        #[arg(long, value_name = "FILE", conflicts_with = "pass", help = "Verify a RewriteSpec DSL pass from a file (one rule name per line)")]
+        spec: Option<PathBuf>,
     },
 
     /// Graduate a verified pass into the manifest (requires multi-sig).
@@ -1185,7 +1193,40 @@ fn cmd_improve(action: ImproveAction) {
             }
         }
 
-        ImproveAction::Verify { corpus, perf, pass } => {
+        ImproveAction::Verify { corpus, perf, pass, spec } => {
+            // The RewriteSpec DSL path ("passes as DATA"): the proposer emits a
+            // spec (one rule name per line); we VALIDATE it (E15xx, fail-closed:
+            // unknown rule / empty / over-budget), COMPILE it with the reviewed
+            // evaluator, and run the SAME four gates. The AI never authors Rust —
+            // it composes the closed, reviewed rule vocabulary as data. Compiled
+            // into an owned closure (so it outlives the match) when `--spec` is set.
+            let dsl_pass: Option<Box<dyn Fn(&axon_core::ast::Program) -> axon_core::ast::Program>> =
+                if let Some(spec_path) = &spec {
+                    let text = match std::fs::read_to_string(spec_path) {
+                        Ok(t) => t,
+                        Err(e) => {
+                            eprintln!("axon improve verify: cannot read spec {}: {e}", spec_path.display());
+                            process::exit(2);
+                        }
+                    };
+                    let rs = match axon_core::rewrite_dsl::RewriteSpec::parse(&text) {
+                        Ok(rs) => rs,
+                        Err(e) => {
+                            eprintln!("axon improve verify: [{}] invalid RewriteSpec: {}", e.code, e.message);
+                            process::exit(2);
+                        }
+                    };
+                    if let Err(e) = rs.validate() {
+                        eprintln!("axon improve verify: [{}] RewriteSpec rejected: {}", e.code, e.message);
+                        process::exit(2);
+                    }
+                    let names: Vec<&str> = rs.rules.iter().map(|r| r.name()).collect();
+                    println!("axon improve verify — spec (DSL): [{}]", names.join(", "));
+                    Some(Box::new(axon_core::rewrite_dsl::compile(&rs)))
+                } else {
+                    None
+                };
+
             // Validate the pass name against the closed registry FIRST — before
             // any corpus I/O. `identity` (default) is the G1/G3 baseline; every
             // other name MUST resolve in `improve_templates::TEMPLATES` (the
@@ -1195,7 +1236,7 @@ fn cmd_improve(action: ImproveAction) {
             // undefined pass (and the error is the same regardless of corpus).
             let pass_name = pass.unwrap_or_else(|| "identity".to_string());
             let identity: &axon_core::improve::Pass = &|p: &axon_core::ast::Program| p.clone();
-            let the_pass: &axon_core::improve::Pass = if pass_name == "identity" {
+            let template_pass: &axon_core::improve::Pass = if pass_name == "identity" {
                 identity
             } else {
                 match axon_core::improve_templates::get_pass_for_template(&pass_name) {
@@ -1211,6 +1252,9 @@ fn cmd_improve(action: ImproveAction) {
                     }
                 }
             };
+            // The DSL spec (if any) takes precedence over the template pass.
+            let the_pass: &axon_core::improve::Pass =
+                if let Some(p) = &dsl_pass { p.as_ref() } else { template_pass };
 
             let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
             let members = load_corpus(&dir);
@@ -1220,7 +1264,9 @@ fn cmd_improve(action: ImproveAction) {
             }
             let programs: Vec<axon_core::ast::Program> =
                 members.iter().map(|(_, _, p)| p.clone()).collect();
-            println!("axon improve verify — pass: {pass_name}");
+            if dsl_pass.is_none() {
+                println!("axon improve verify — pass: {pass_name}");
+            }
             let opts = VerifyOptions { measure_perf: perf, perf_trials: 5 };
             let rec = verify_pass_with(the_pass, &programs, &opts);
 

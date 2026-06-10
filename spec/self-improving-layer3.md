@@ -111,7 +111,12 @@ steps 1–2 (validate + compile-to-pass), both reviewed Rust, both fail-closed.
 
 - **F1 — code or data?** → **Data (a RewriteSpec DSL).** Resolved above (§1): AI-authored
   Rust in the TCB is unsafe and defeats the firewall. The AI emits a transform *description*;
-  a reviewed evaluator runs it.
+  a reviewed evaluator runs it. **CLI-reachable**: `axon improve verify <corpus> --spec <file>`
+  reads a RewriteSpec (one rule name per line), VALIDATES it (E15xx, fail-closed — unknown rule
+  E1411 / empty E1409 / over-budget), COMPILES it with the reviewed `rewrite_dsl::compile`
+  evaluator, and runs the same four gates as a registry template. The unknown-rule error lists the
+  closed vocabulary from `RewriteRule::ALL` (single source, drift-guarded by a test). Previously the
+  DSL was test-only; this makes the "passes as data" surface usable end-to-end.
 - **F2 — how rich is the DSL?** → **Start minimal** (literal-fold + identity-collapse +
   branch-fold shapes — i.e. exactly the four shipped passes, re-expressed as data), then widen
   only as each new shape is red-teamed. A richer DSL = more expressivity = more attack surface;
