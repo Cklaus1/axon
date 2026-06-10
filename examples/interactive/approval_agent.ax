@@ -1,0 +1,32 @@
+// Human-in-the-loop agent — the resume runtime (R15) serving Axon's core thesis:
+// AI actions gated by a human. The agent proposes an action, then SUSPENDS via
+// host_await for approval; the human (or any host) approves or rejects; the agent
+// resumes and acts only on "y". No busy-wait, no polling — a genuine suspend.
+//
+//   axon run examples/interactive/approval_agent.ax
+//   (answer y / n at each prompt)
+//
+// This is the corrigibility pattern (cf. @[corrigible], examples/asi/) made
+// INTERACTIVE: the boundary is enforced at the point of action, not after.
+
+fn propose(action: str) -> i64 {
+    println("Agent proposes: {action}")
+    let answer = host_await("  approve? (y/n) ")
+    if str_eq(answer, "y") {
+        println("  -> executed: {action}")
+        1
+    } else {
+        println("  -> declined.")
+        0
+    }
+}
+
+fn main() -> i64 {
+    println("=== human-in-the-loop agent (R15 host_await) ===")
+    let a = propose("summarize the inbox")
+    let b = propose("delete 1,284 files")
+    let c = propose("send the weekly report")
+    let approved = a + b + c
+    println("approved {approved} of 3 proposed actions.")
+    approved
+}

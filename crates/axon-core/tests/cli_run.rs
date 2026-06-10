@@ -55,6 +55,33 @@ fn r15_host_await_interactive_via_axon_run_reads_stdin() {
 }
 
 #[test]
+fn r15_human_in_the_loop_agent_gates_actions_on_approval() {
+    // R15 serving Axon's thesis: an agent SUSPENDS for human approval (host_await)
+    // before each action, acting only on "y". Feeding y/n/y approves actions 1 & 3
+    // and declines #2 ("delete 1,284 files") → 2 of 3 executed, exit 2. The
+    // boundary is enforced at the point of action, interactively.
+    use std::io::Write;
+    use std::process::Stdio;
+    let demo = ex("interactive/approval_agent.ax");
+    let mut child = axon()
+        .arg("run")
+        .arg(&demo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"y\nn\ny\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("executed: summarize the inbox"), "action 1 approved: {stdout}");
+    assert!(stdout.contains("declined."), "action 2 declined: {stdout}");
+    assert!(stdout.contains("executed: send the weekly report"), "action 3 approved: {stdout}");
+    assert!(stdout.contains("approved 2 of 3"), "tally: {stdout}");
+    assert_eq!(out.status.code(), Some(2), "2 actions approved, got {:?}", out.status.code());
+}
+
+#[test]
 fn phase6_with_handler_runs_and_intercepts_io() {
     // Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
     // INTERCEPTS the IO effect of a `println` in the handled body. In the
