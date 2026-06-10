@@ -983,6 +983,20 @@ pub extern "C" fn puts(s: *const u8) -> i32 {
     0
 }
 
+/// POSIX `write` shim for the browser target. codegen lowers `eprintln`/`eprint`
+/// to `write(2, …)` (stderr). A browser has no fds: route fd 1 (stdout) to the
+/// page via the host import, and DROP fd 2 (stderr) — a `console.error` host
+/// import is the follow-on. Returns `count` so callers proceed. On wasm32,
+/// `size_t`/`ssize_t` are i32, matching Rust `usize`/`isize`.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[no_mangle]
+pub extern "C" fn write(fd: i32, buf: *const u8, count: usize) -> isize {
+    if fd == 1 && !buf.is_null() && count > 0 {
+        unsafe { axon_host_write(buf, count as i64) };
+    }
+    count as isize
+}
+
 /// Print a string to stdout followed by a newline.
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 #[no_mangle]

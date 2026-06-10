@@ -14,7 +14,7 @@
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
 
-FLOOR=20   # at least this many examples must link+run+match on the browser target
+FLOOR=28   # actual is 29/29; headroom for minor churn, catches mass regression
 
 command -v node >/dev/null 2>&1 || { echo "wasm_browser_examples_parity: no node — skipping"; exit 0; }
 HOSTJS="scripts/wasm_browser_host.js"

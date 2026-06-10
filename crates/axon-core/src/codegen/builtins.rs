@@ -388,170 +388,84 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("len".to_string(), fn_val);
         }
 
-        // parse_int(s: str) -> Result<i64, str>
+        // parse_int(s: str) -> Result<i64, str>  ==  parse_int_radix(s, 10).
         //
-        // Layout: Result<i64, str> = { i1 tag, [8 x i8] payload }
-        //   Ok(n)    → tag=1, payload contains i64 n as 8 bytes
-        //   Err(msg) → tag=0, payload contains i64(0)
-        //
-        // Implemented in pure LLVM IR (no external C dependency) using strtoll.
-        // strtoll is available from libc, which the JIT resolves from the host process.
-        //
-        // C stdlib: long long strtoll(const char *nptr, char **endptr, int base)
+        // Delegate to axon-rt's __axon_parse_int_radix (Rust `str::parse`, whole-
+        // string, with the #37 byte-identical Err message), exactly like the
+        // parse_int_radix block below — base is just the constant 10. This drops
+        // the old libc `strtoll` (+ the endptr "whole string consumed" dance), so
+        // parse_int emits NO libc dep and links on the browser target
+        // (wasm32-unknown-unknown) too; native matches the interpreter by
+        // construction. (Verified in the interpreter: parse_int(s) and
+        // parse_int_radix(s, 10) return the identical Ok/Err, message included.)
         {
-            // strtoll declaration (variadic=false; endptr is i8**)
-            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
-            let strtoll_ty = i64_ty.fn_type(
-                &[i8_ptr.into(), i8_ptr_ptr.into(), i32_ty.into()],
-                false,
-            );
-            let strtoll_fn = self.ir.module.add_function("strtoll", strtoll_ty, None);
-
-            // Result<i64, str> LLVM type: { i1, [16 x i8] }
-            // The Err case holds a str struct { i64, ptr } which is 16 bytes.
             let i8_arr16_ty = self.ir.context.i8_type().array_type(16);
-            let result_ty = self.ir.context.struct_type(
-                &[bool_ty.into(), i8_arr16_ty.into()],
-                false,
-            );
-
-            // parse_int takes a str struct { i64 len, ptr data }.
-            //
-            // PARITY GAP (BUG_HUNT #22 / #37): two divergences from the
-            // interpreter, both needing the (pathologically slow, see
-            // BUILD_DIAGNOSIS.md) codegen build to fix + verify:
-            //   1. The Err payload here is an EMPTY string (see err_bb below),
-            //      while the interpreter returns a specific
-            //      "could not parse `<input>` as a base-10 integer" message.
-            //   2. strtoll(base 10) below stops at the first non-digit and
-            //      reports success if it consumed ANY leading digit. So
-            //      "0x1F" consumes the leading "0" → endptr advances → this
-            //      returns Ok(0); the interpreter (Rust `str::parse`) requires
-            //      the WHOLE trimmed string to be a valid integer and Errs.
-            //      Codegen should reject trailing garbage (endptr must reach
-            //      end-of-string, modulo trailing whitespace) to match.
-            // The interpreter is the reference semantics.
+            let result_ty = self.ir.context.struct_type(&[bool_ty.into(), i8_arr16_ty.into()], false);
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
             let fn_val = self.ir.module.add_function("parse_int", fn_ty, None);
 
-            // Basic blocks: entry, ok_bb, err_bb
             let entry_bb = self.ir.context.append_basic_block(fn_val, "pi_entry");
             let ok_bb   = self.ir.context.append_basic_block(fn_val, "pi_ok");
             let err_bb  = self.ir.context.append_basic_block(fn_val, "pi_err");
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry_bb);
 
-            // Unpack the str struct.
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let data_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "pi_data")
-                .into_pointer_value();
-            // #37: also read the length so we can require strtoll to consume the
-            // WHOLE string (no trailing garbage) — matching the interpreter's
-            // `str::parse`, which rejects "0x1F"/"12abc" rather than returning
-            // Ok of the leading digits.
-            let len_val = build_wrappers::w_extract_value(&self.ir.builder, s, 0, "pi_len")
-                .into_int_value();
-
-            // Allocate an endptr on the stack so strtoll can write to it.
-            let endptr_slot = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "pi_endptr");
-            // Null-initialise so strtoll doesn't read garbage.
-            let null_ptr = i8_ptr.const_null();
-            build_wrappers::w_store(&self.ir.builder,endptr_slot, null_ptr.into());
-
-            // Cast endptr slot to i8** (same type on all targets).
-            let endptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder,endptr_slot, i8_ptr_ptr, "pi_endptr_cast");
-
-            // Call strtoll(data, &endptr, 10).
-            let base10 = i32_ty.const_int(10, false);
-            let strtoll_ret = build_wrappers::w_call(&self.ir.builder,
-                    strtoll_fn,
-                    &[data_ptr.into(), endptr_slot_cast.into(), base10.into()],
-                    "pi_strtoll");
-            let parsed_i64 = strtoll_ret
-                .try_as_basic_value()
-                .left()
-                .unwrap()
-                .into_int_value();
-
-            // Read back endptr to detect parse errors.
-            // If endptr == data_ptr, no digits were consumed → Err.
-            let endptr_val = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), endptr_slot, "pi_endptr_val")
-                .into_pointer_value();
-            let endptr_int = build_wrappers::w_ptr_to_int(&self.ir.builder,endptr_val, i64_ty, "pi_endptr_int");
-            let data_int = build_wrappers::w_ptr_to_int(&self.ir.builder,data_ptr, i64_ty, "pi_data_int");
-            // (a) at least one digit consumed: endptr != data.
-            let consumed = build_wrappers::w_int_compare(&self.ir.builder,
-                    IntPredicate::NE,
-                    endptr_int,
-                    data_int,
-                    "pi_consumed");
-            // (b) #37: the WHOLE string was consumed: endptr == data + len.
-            // strtoll skips leading whitespace and stops at the first non-digit;
-            // requiring it to reach data+len rejects trailing garbage ("12abc",
-            // "0x1F") the way the interpreter's str::parse does. (Trailing
-            // whitespace is a documented minor divergence: the interp trims, this
-            // requires an exact end — inputs with trailing spaces are rare and
-            // the interp remains the reference.)
-            let end_int = build_wrappers::w_int_add(&self.ir.builder, data_int, len_val, "pi_end_int");
-            let reached_end = build_wrappers::w_int_compare(&self.ir.builder,
-                    IntPredicate::EQ,
-                    endptr_int,
-                    end_int,
-                    "pi_reached_end");
-            // Success iff (a) AND (b).
-            let ok_cond = build_wrappers::w_and(&self.ir.builder, consumed, reached_end, "pi_ok_cond");
-            build_wrappers::w_cond_br(&self.ir.builder, ok_cond, ok_bb, err_bb);
-
-            // ok_bb: return { tag=1, payload=parsed_i64 as [8 x i8] }
-            self.ir.builder.position_at_end(ok_bb);
-            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pi_ok_slot");
-            // Store tag = 1 (i1 true)
-            let tag1 = bool_ty.const_int(1, false);
-            let tag_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 0, "pi_tagptr_ok");
-            build_wrappers::w_store(&self.ir.builder,tag_ptr_ok, tag1.into());
-            // Store the i64 value into the [8 x i8] payload via a pointer cast.
-            let payload_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 1, "pi_payptr_ok");
-            let payload_i64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ptr_ok, i64_ty.ptr_type(inkwell::AddressSpace::default()), "pi_payload_i64");
-            build_wrappers::w_store(&self.ir.builder,payload_i64_ptr, parsed_i64.into());
-            let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pi_ok_val");
-            build_wrappers::w_ret(&self.ir.builder, ok_val);
-
-            // err_bb: return { tag=0, payload = str { len, ptr } } with the same
-            // message the interpreter produces (#37 parity): delegate to axon-rt's
-            // __axon_parse_int_err, which formats `could not parse `<input>` as a
-            // base-10 integer` (+ radix hint) from the INPUT str — so native==interp
-            // on the message, not just both-are-Err.
-            self.ir.builder.position_at_end(err_bb);
-            let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
-            // Runtime: void __axon_parse_int_err(AxonStr input, i64* out_len, i8** out_ptr)
+            let base = i64_ty.const_int(10, false);
             let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
             let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
-            let pie_ty = void_ty.fn_type(&[err_str_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
-            let pie_fn = self.ir.module.get_function("__axon_parse_int_err")
-                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_int_err", pie_ty, None));
-            // The input str `s` is the param; reassemble it as the AxonStr arg.
-            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pi_eolen");
-            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pi_eoptr");
-            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pi_eoptrptr");
-            build_wrappers::w_call(&self.ir.builder, pie_fn, &[s.into(), out_len_slot.into(), out_ptr_slot_cast.into()], "pi_err_call");
+            let rt_ty = void_ty.fn_type(
+                &[str_ty.into(), i64_ty.into(), i64_ptr.into(), i64_ptr.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false);
+            let rt_fn = self.ir.module.get_function("__axon_parse_int_radix")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_int_radix", rt_ty, None));
+            let out_ok_slot  = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pi_ok_slot");
+            let out_val_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pi_val_slot");
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pi_len_slot");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pi_ptr_slot");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pi_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn,
+                &[s.into(), base.into(), out_ok_slot.into(), out_val_slot.into(), out_len_slot.into(), out_ptr_slot_cast.into()],
+                "");
+
+            let ok_flag = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_ok_slot, "pi_okflag").into_int_value();
+            let zero = i64_ty.const_int(0, false);
+            let is_ok = build_wrappers::w_int_compare(&self.ir.builder, IntPredicate::NE, ok_flag, zero, "pi_isok");
+            build_wrappers::w_cond_br(&self.ir.builder, is_ok, ok_bb, err_bb);
+
+            // ok_bb: { tag=1, payload = out_val as i64 }
+            self.ir.builder.position_at_end(ok_bb);
+            let parsed = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_val_slot, "pi_parsed").into_int_value();
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pi_ok_alloca");
+            let tag1 = bool_ty.const_int(1, false);
+            let tag_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 0, "pi_tagok");
+            build_wrappers::w_store(&self.ir.builder, tag_ptr_ok, tag1.into());
+            let payload_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 1, "pi_payok");
+            let payload_i64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ptr_ok, i64_ptr, "pi_payi64");
+            build_wrappers::w_store(&self.ir.builder, payload_i64_ptr, parsed.into());
+            let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "pi_okval");
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
+
+            // err_bb: { tag=0, payload = str { out_len, out_ptr } }
+            self.ir.builder.position_at_end(err_bb);
+            let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pi_emlen").into_int_value();
             let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pi_emptr").into_pointer_value();
-
-            let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pi_err_slot");
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pi_err_alloca");
             let tag0 = bool_ty.const_int(0, false);
-            let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 0, "pi_tagptr_err");
-            build_wrappers::w_store(&self.ir.builder,tag_ptr_err, tag0.into());
-            let payload_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 1, "pi_payptr_err");
-            let payload_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ptr_err, err_str_ty.ptr_type(inkwell::AddressSpace::default()), "pi_payload_str_err");
-            let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder,err_str_ty.into(), "pi_err_str");
-            let err_str_len_ptr = build_wrappers::w_struct_gep(&self.ir.builder,err_str_ty.into(), err_str_alloca, 0, "pi_esl");
-            let err_str_dat_ptr = build_wrappers::w_struct_gep(&self.ir.builder,err_str_ty.into(), err_str_alloca, 1, "pi_esd");
-            build_wrappers::w_store(&self.ir.builder,err_str_len_ptr, msg_len.into());
-            build_wrappers::w_store(&self.ir.builder,err_str_dat_ptr, msg_ptr.into());
-            let err_str_val = build_wrappers::w_load(&self.ir.builder,err_str_ty.into(), err_str_alloca, "pi_err_str_val");
-            build_wrappers::w_store(&self.ir.builder,payload_str_ptr, err_str_val);
-            let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pi_err_val");
+            let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 0, "pi_tagerr");
+            build_wrappers::w_store(&self.ir.builder, tag_ptr_err, tag0.into());
+            let payload_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 1, "pi_payerr");
+            let payload_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ptr_err, err_str_ty.ptr_type(inkwell::AddressSpace::default()), "pi_paystr");
+            let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder, err_str_ty.into(), "pi_errstr");
+            let esl = build_wrappers::w_struct_gep(&self.ir.builder, err_str_ty.into(), err_str_alloca, 0, "pi_esl");
+            let esd = build_wrappers::w_struct_gep(&self.ir.builder, err_str_ty.into(), err_str_alloca, 1, "pi_esd");
+            build_wrappers::w_store(&self.ir.builder, esl, msg_len.into());
+            build_wrappers::w_store(&self.ir.builder, esd, msg_ptr.into());
+            let err_str_val = build_wrappers::w_load(&self.ir.builder, err_str_ty.into(), err_str_alloca, "pi_errstrval");
+            build_wrappers::w_store(&self.ir.builder, payload_str_ptr, err_str_val);
+            let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "pi_errval");
             build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
