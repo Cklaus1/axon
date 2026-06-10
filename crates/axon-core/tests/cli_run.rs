@@ -82,6 +82,32 @@ fn r15_human_in_the_loop_agent_gates_actions_on_approval() {
 }
 
 #[test]
+fn r15_stateful_guessing_game_keeps_state_across_suspends() {
+    // R15: a stateful interactive program — the secret + try count persist ACROSS
+    // host_await suspensions, and the program computes a hint per guess. This is
+    // impossible without a real suspend/resume runtime. Guesses 5/9/7 against
+    // secret 7 → Higher, Lower, Correct in 3 tries → exit 3.
+    use std::io::Write;
+    use std::process::Stdio;
+    let demo = ex("interactive/guess.ax");
+    let mut child = axon()
+        .arg("run")
+        .arg(&demo)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"5\n9\n7\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Higher."), "5 < 7 ⇒ Higher: {stdout}");
+    assert!(stdout.contains("Lower."), "9 > 7 ⇒ Lower: {stdout}");
+    assert!(stdout.contains("Correct — 3 tries!"), "7 found in 3: {stdout}");
+    assert_eq!(out.status.code(), Some(3), "3 tries, got {:?}", out.status.code());
+}
+
+#[test]
 fn phase6_with_handler_runs_and_intercepts_io() {
     // Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
     // INTERCEPTS the IO effect of a `println` in the handled body. In the

@@ -2057,6 +2057,16 @@ mod tests {
     }
 
     #[test]
+    fn r15_panic_mid_suspend_does_not_hang() {
+        // Robustness: a program that ERRORS after a host_await must return cleanly
+        // (the host loop ends when the worker drops its channels), never hang. Here
+        // `10 / str_len("")` is a runtime div-by-zero (exit 101) after one await.
+        let prog = parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
+        let code = super::run_suspendable(&prog, |_| "ok".to_string());
+        assert_eq!(code, 101, "interp panic mid-suspend → exit 101, no hang");
+    }
+
+    #[test]
     fn r15_host_await_without_host_errors_cleanly() {
         // A bare `run` (no driver) must error gracefully (exit 101), not hang.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);

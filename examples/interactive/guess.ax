@@ -1,0 +1,30 @@
+// A stateful interactive program — only possible WITH the resume runtime (R15).
+// The program keeps state (the secret, the try count) ACROSS suspensions, reacts
+// to each guess, and loops until correct. `host_await(prompt)` suspends for input;
+// the program resumes and computes a hint. Run it:
+//
+//   axon run examples/interactive/guess.ax
+//   (guess a number 1-10 at each prompt)
+
+fn main() -> i64 {
+    let secret = 7
+    let tries = 0
+    let found = 0
+    println("Guess my number (1-10).")
+    while found == 0 {
+        let g = host_await("> ")
+        tries = tries + 1
+        match parse_int(g) {
+            Ok(n) => {
+                if n == secret {
+                    println("Correct — {tries} tries!")
+                    found = 1
+                } else {
+                    if n < secret { println("Higher.") } else { println("Lower.") }
+                }
+            }
+            Err(_) => { println("Not a number — try again.") }
+        }
+    }
+    tries
+}
