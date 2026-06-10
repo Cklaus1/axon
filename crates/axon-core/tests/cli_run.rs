@@ -5058,6 +5058,41 @@ fn refinement_predicate_calls_a_pure_function() {
 }
 
 #[test]
+fn refinement_constant_via_bound_builtin_caught_statically() {
+    // The checker's constant folder now evaluates the bound builtins
+    // (min_i64/max_i64/abs_i64), so a CONSTANT refinement obligation built from
+    // them is discharged at compile time (E1209) instead of deferring to the
+    // runtime gate (exit 6). Keeps the SMT / comptime / checker folders consistent.
+    // REJECT (violating constant → E1209 at check, exit 2):
+    let reject = [
+        "type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 0)\n p }",
+        "type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = min_i64(3, 0)\n p }",
+        "type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = 0 - abs_i64(3)\n p }",
+    ];
+    for (i, src) in reject.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_cbb_bad_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.status.code(), Some(2), "[reject {i}] constant bound-builtin violation must be static: {m}");
+        assert!(m.contains("E1209"), "[reject {i}] expected E1209: {m}");
+    }
+    // ACCEPT (valid constant → builds + runs clean, no false positive):
+    let accept = [
+        ("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = max_i64(0 - 5, 3)\n p }", 3),
+        ("type NonNeg = i64 where _ >= 0\nfn main() -> i64 { let p: NonNeg = abs_i64(0 - 7)\n p }", 7),
+    ];
+    for (i, (src, code)) in accept.iter().enumerate() {
+        let f = std::env::temp_dir().join(format!("axon_cbb_ok_{}_{i}.ax", std::process::id()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        assert_eq!(out.status.code(), Some(*code), "[accept {i}] valid constant must run clean: {out:?}");
+    }
+}
+
+#[test]
 fn refinement_precondition_enforced_at_runtime_on_nonconstant_args() {
     // Phase 5: a refinement on a PARAMETER is a precondition. The checker
     // discharges it statically only for COMPILE-TIME-CONSTANT args (E1209);

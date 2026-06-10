@@ -1455,6 +1455,31 @@ mod tests {
     }
 
     #[test]
+    fn smt_refinement_return_uses_bound_builtins_and_connectives() {
+        // The encoder widening (min/max/abs + &&/||/!) is SHARED by both provers,
+        // so a refinement RETURN built from a bound builtin is proven too.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\nfn clamp(x: i64) -> NonNeg { max_i64(x, 0) }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "max_i64(x,0) -> NonNeg must be proven, got {r:?}");
+
+        // A `&&` guard in the body, returning a refined value, is also in-fragment.
+        let r = prove_refines(
+            "type NonNeg = i64 where _ >= 0\n\
+             fn g(x: i64) -> NonNeg { if x > 0 && x < 10 { x } else { 0 } }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+
+        // SOUNDNESS: min_i64(x, 5) is NOT always > 0 (x<=0 → result <= 0) → counterexample.
+        let r = prove_refines(
+            "type Positive = i64 where _ > 0\nfn h(x: i64) -> Positive { min_i64(x, 5) }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "min_i64(x,5) -> Positive must be disproven (x<=0), got {r:?}");
+    }
+
+    #[test]
     fn smt_proves_f64_refinement_return_and_finds_counterexample() {
         // PROVEN: |x| is non-negative for every f64 input — over the reals, not just integers.
         let r = prove_refines(

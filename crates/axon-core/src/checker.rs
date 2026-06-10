@@ -4670,6 +4670,25 @@ fn const_eval_int(e: &Expr) -> Option<i64> {
                 _ => None,
             }
         }
+        // Pure, total integer bound builtins, so a CONSTANT refinement obligation
+        // built from them (e.g. `let p: Pos = max_i64(a, 0)`) is discharged at
+        // compile time (E1209/E1201) instead of deferring to the runtime gate.
+        // Semantics match the interpreter EXACTLY: i64::min/max, and a CHECKED abs
+        // (so `abs_i64(i64::MIN)` overflows → None → stays deferred to the runtime
+        // panic, never a wrong fold). Keeps the SMT / comptime / checker constant
+        // folders consistent on these builtins.
+        Expr::Call { callee, args, .. } => {
+            let Expr::Ident(name) = callee.as_ref() else { return None };
+            match (name.as_str(), args.as_slice()) {
+                ("min_i64", [a, b]) => Some(const_eval_int(a)?.min(const_eval_int(b)?)),
+                ("max_i64", [a, b]) => Some(const_eval_int(a)?.max(const_eval_int(b)?)),
+                ("abs_i64", [x]) => {
+                    let v = const_eval_int(x)?;
+                    if v < 0 { v.checked_neg() } else { Some(v) }
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
