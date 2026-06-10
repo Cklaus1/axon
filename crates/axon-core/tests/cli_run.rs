@@ -3120,6 +3120,37 @@ fn trace_ai_summarizes_the_ai_call_audit_trail() {
 }
 
 #[test]
+fn trace_ai_attributes_calls_to_the_triggering_goal_f3() {
+    // F3 causal link: an ai_complete fired INSIDE a goal_run metric evaluation is
+    // attributed to the goal that triggered it, so `axon trace --ai` reports
+    // cost-per-goal (the Goal-directedness × Containment intersection). The metric
+    // `quality` calls ai_complete each eval; goal_run optimizes it.
+    let prog = "@[ai(policy(tier: balanced, budget: 50))]\n\
+                @[adaptive]\n\
+                fn quality(x: i64) -> i64 {\n\
+                  let _h = match ai_complete(\"rate\") { Ok(s) => len(s)  Err(_) => 0 }\n\
+                  0 - (x - 7) * (x - 7)\n\
+                }\n\
+                fn main() -> i64 { let _ = goal_run(\"quality\", 0.0, 4)  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_goalai_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_goalai_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+
+    let run = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
+
+    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+    let j = String::from_utf8_lossy(&jout.stdout);
+    assert!(j.contains("\"fn\":\"quality\""), "the metric fn must appear: {j:?}");
+    assert!(j.contains("\"goal\":\"quality\""),
+        "AI calls inside goal_run must be attributed to the goal `quality`: {j:?}");
+}
+
+#[test]
 fn trace_missing_log_exits_nonzero() {
     let out = axon()
         .args(["trace"])

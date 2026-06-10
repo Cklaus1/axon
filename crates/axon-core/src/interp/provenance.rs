@@ -148,6 +148,9 @@ pub(super) fn append_ai_call_jsonl(
     mode: &str,
     reason: &str,
     cost_usd: f64,
+    // F3: the goal/metric being optimized when this AI call fired ("" if none) —
+    // the causal goal→call link for `axon trace --ai` cost-attribution.
+    goal: &str,
 ) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
@@ -162,11 +165,16 @@ pub(super) fn append_ai_call_jsonl(
     } else {
         format!(",\"src\":{}", json_quote(src))
     };
+    let goal_field = if goal.is_empty() {
+        String::new()
+    } else {
+        format!(",\"goal\":{}", json_quote(goal))
+    };
     let cost = if cost_usd.is_finite() { format!("{cost_usd}") } else { "0".to_string() };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"ai_call\",\"tier\":{t},\"model\":{m},\
          \"model_version\":{mv},\"params_hash\":{ph},\"prompt_hash\":{prh},\"mode\":{md},\
-         \"reason\":{rs},\"cost_usd\":{cost}{src_field}}}\n",
+         \"reason\":{rs},\"cost_usd\":{cost}{goal_field}{src_field}}}\n",
         f = json_quote(fn_name),
         t = json_quote(tier),
         m = json_quote(model),
@@ -307,6 +315,8 @@ pub struct AiCallRecord {
     /// "live" | "mock" | "replay" | "fallback".
     pub mode: String,
     pub cost_usd: f64,
+    /// The goal/metric being optimized when the call fired ("" if none) — F3.
+    pub goal: String,
     pub src: String,
 }
 
@@ -335,6 +345,7 @@ pub fn read_ai_calls(path: Option<&std::path::Path>) -> Option<Vec<AiCallRecord>
             model: extract_json_str(line, "\"model\":").unwrap_or_default(),
             mode: extract_json_str(line, "\"mode\":").unwrap_or_default(),
             cost_usd: extract_json_num(line, "\"cost_usd\":").unwrap_or(0.0),
+            goal: extract_json_str(line, "\"goal\":").unwrap_or_default(),
             src: extract_json_str(line, "\"src\":").unwrap_or_default(),
         });
     }

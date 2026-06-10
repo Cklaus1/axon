@@ -2273,6 +2273,7 @@ struct AiTraceStat {
     cost_usd: f64,
     tier: String,
     model: String,
+    goal: String,
     live: usize,
     mock: usize,
     replay: usize,
@@ -2310,6 +2311,7 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
                     cost_usd: 0.0,
                     tier: r.tier.clone(),
                     model: r.model.clone(),
+                    goal: r.goal.clone(),
                     live: 0,
                     mock: 0,
                     replay: 0,
@@ -2325,6 +2327,9 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         }
         if !r.model.is_empty() {
             g.model = r.model.clone();
+        }
+        if !r.goal.is_empty() {
+            g.goal = r.goal.clone();
         }
         match r.mode.as_str() {
             "live" => { g.live += 1; t_live += 1; }
@@ -2343,8 +2348,8 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
             .map(|k| {
                 let s = &groups[k];
                 format!(
-                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
-                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
+                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"goal\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
+                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.goal, s.live, s.mock, s.replay, s.fallback,
                 )
             })
             .collect();
@@ -2365,8 +2370,9 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
     for k in &order {
         let s = &groups[k];
         let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
+        let goal = if s.goal.is_empty() { String::new() } else { format!("  → goal `{}`", s.goal) };
         println!(
-            "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}",
+            "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}{goal}",
             s.func, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
         );
     }

@@ -3210,12 +3210,14 @@ impl<'p> Interp<'p> {
                 // cost so the metered cost reproduces too. A miss falls through and
                 // the mock/live branches RECORD their response below.
                 let replay_model = tier.api_model();
+                // F3: the goal being optimized when this call fired (causal link).
+                let goal = self.current_goal_name().unwrap_or_default();
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
                     let micro = tier.cost_micro(cached_tokens);
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "replay", "", micro as f64 / 1_000_000.0,
+                        "replay", "", micro as f64 / 1_000_000.0, &goal,
                     );
                     ok!(Value::Ok(Box::new(Value::Str(cached))));
                 }
@@ -3230,7 +3232,7 @@ impl<'p> Interp<'p> {
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "mock", "", cost_usd,
+                        "mock", "", cost_usd, &goal,
                     );
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
@@ -3257,7 +3259,7 @@ impl<'p> Interp<'p> {
                             self.ai_cost_micro.set(self.ai_cost_micro.get() + real_micro);
                             append_ai_call_jsonl(
                                 &caller, &prompt, tier_name, model_id, model_ver,
-                                params, "live", "", real_usd,
+                                params, "live", "", real_usd, &goal,
                             );
                             // Record the live (response, real token-count) so a
                             // re-run with the same AXON_AI_REPLAY file reproduces
@@ -3283,7 +3285,7 @@ impl<'p> Interp<'p> {
                         // dispatched to a (mock or live) model.
                         append_ai_call_jsonl(
                             &caller, &prompt, tier_name, "none", "offline", params,
-                            "fallback", "offline: no model reachable", 0.0,
+                            "fallback", "offline: no model reachable", 0.0, &goal,
                         );
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));
                     }

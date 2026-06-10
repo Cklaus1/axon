@@ -13,6 +13,7 @@ use super::*;
 
 impl<'p> Interp<'p> {
     pub(super) fn run_goal_warm(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
             return Err(Self::unknown_goal_name(name));
         }
@@ -72,6 +73,7 @@ impl<'p> Interp<'p> {
         lo: i64,
         hi: i64,
     ) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
         if hi <= lo {
             return panic(format!(
                 "goal_run_random: hi ({hi}) must be greater than lo ({lo})"
@@ -158,6 +160,7 @@ impl<'p> Interp<'p> {
         lo: i64,
         hi: i64,
     ) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
         if hi <= lo {
             return panic(format!(
                 "goal_run_multistart: hi ({hi}) must be greater than lo ({lo})"
@@ -229,6 +232,7 @@ impl<'p> Interp<'p> {
         hi: i64,
         exploit: bool,
     ) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
         if hi <= lo {
             return panic(format!(
                 "goal tournament: hi ({hi}) must be greater than lo ({lo})"
@@ -334,6 +338,7 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn run_goal(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
             return Err(Self::unknown_goal_name(name));
         }

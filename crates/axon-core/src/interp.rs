@@ -316,6 +316,12 @@ pub struct Interp<'p> {
     /// audit can't be escaped by wrapping the I/O one call away). `None` outside
     /// any agent.
     enclosing_agent: RefCell<Option<String>>,
+    /// F3: the goal/metric name currently being optimized by a `run_goal*` call,
+    /// set for the duration of the optimization so an `ai_complete` invoked inside
+    /// a metric evaluation can stamp the CAUSAL goal that triggered it into the
+    /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
+    /// any goal optimization.
+    current_goal: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -1035,6 +1041,7 @@ impl<'p> Interp<'p> {
             max_depth: resolve_max_depth(),
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
+            current_goal: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
@@ -1147,6 +1154,23 @@ impl<'p> Interp<'p> {
         // capability builtin called from a helper of an agent is still logged to
         // that agent's action trail (the audit can't be escaped by indirection).
         self.enclosing_agent.borrow().clone()
+    }
+
+    /// F3: enter goal-optimization scope. Records `name` as the current goal until
+    /// the returned guard drops, so an `ai_complete` invoked inside a metric
+    /// evaluation is attributed to the goal that triggered it. Nesting-safe (the
+    /// previous goal is restored on drop). Call at the top of each `run_goal*`.
+    fn enter_goal(&self, name: &str) -> FnNameOptGuard<'_> {
+        FnNameOptGuard {
+            cell: &self.current_goal,
+            prev: self.current_goal.replace(Some(name.to_string())),
+        }
+    }
+
+    /// The goal/metric name currently being optimized, or `None` outside any
+    /// `run_goal*`. Stamped into the `ai_call` provenance for causal attribution.
+    fn current_goal_name(&self) -> Option<String> {
+        self.current_goal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.
