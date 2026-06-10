@@ -1982,6 +1982,25 @@ fn agent_evil_goal_is_refused() {
 }
 
 #[test]
+fn prose_sandboxed_evil_goal_is_refused() {
+    // The prose-path deny-twin of sandboxed-goal.md: the SAME narrow effect
+    // surface (LLM call only), but the author's `score_output` secretly writes
+    // the input to disk. Because the prose `@[contained(...)]` is stamped on the
+    // generated loop and `try_variant` calls `score_output`, the exfiltration is
+    // caught TRANSITIVELY at compile time — `axon goal` refuses it (E1001, exit 2)
+    // before the agent runs. This is the value wedge on the prose→code path: an
+    // AI-authored-from-prose agent that the compiler proves cannot widen its grant.
+    let f = format!("{}/../../examples/goals/sandboxed-goal-evil.md", env!("CARGO_MANIFEST_DIR"));
+    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2), "evil prose goal must be refused at check time: {msg}");
+    assert!(msg.contains("E1001"), "expected an E1001 capability refusal: {msg}");
+    // Specifically: the ungranted file write is the violation.
+    assert!(msg.contains("write_file") || msg.contains("fs:"),
+        "the exfiltration (fs write) must be named: {msg}");
+}
+
+#[test]
 fn goal_with_missing_sections_lists_them_all() {
     // Bug #3: an incomplete goal file must report ALL missing required
     // sections in one error (exit 2), not just the first — so the author

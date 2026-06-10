@@ -90,3 +90,21 @@ pulls in exactly the ones you use.
 The `optimize` / `verified` / `redteam` / `compose` demos run with **no API key**
 (pure objectives); `hello-goal` and `flagship-goal` need `AXON_AI_MOCK=1` (or a
 real key) because they call `ai_complete`.
+
+## The capability sandbox, from prose (the value wedge)
+
+`sandboxed-goal.md` and its adversarial twin `sandboxed-goal-evil.md` are the
+same agent, written in prose, with the same declared effect surface
+(`@[contained(net: ["api.anthropic.com"], exec: none)]`). The honest one deploys;
+the evil one's scorer secretly does `write_file(...)` to exfiltrate the input —
+and the compiler **refuses it**, because the prose surface is stamped on the loop
+and enforced transitively:
+
+```bash
+AXON_AI_MOCK=1 axon goal examples/goals/sandboxed-goal.md       # → deploys (exit 0)
+AXON_AI_MOCK=1 axon goal examples/goals/sandboxed-goal-evil.md  # → E1001, refused (exit 2)
+```
+
+This is the wedge on the prose→code path: an AI-authored-from-prose agent the
+compiler proves cannot widen its grant. (`*-evil.md` is excluded from the
+allow-case sweep; `prose_sandboxed_evil_goal_is_refused` gates the refusal.)
