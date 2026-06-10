@@ -34,7 +34,10 @@ declare -A PROGS
 PROGS[fib]='fn f(n: i64) -> i64 { if n < 2 { n } else { f(n-1) + f(n-2) } }
 fn main() -> i64 { f(10) }'
 PROGS[arith]='fn main() -> i64 { (21 + 21) * 2 - 4 }'
-PROGS[loop]='fn main() -> i64 { let mut s = 0  let mut i = 1  while i <= 10 { s = s + i  i = i + 1 }  s }'
+# NB: Axon has no `let mut` — declare with `let`, reassign with bare `x = …`.
+# The old `let mut` form parse-errored, so this case SILENTLY SKIPPED forever
+# (build-failed → SKIP), never actually testing a loop on wasm (a vacuous skip).
+PROGS[loop]='fn main() -> i64 { let s = 0  let i = 1  while i <= 10 { s = s + i  i = i + 1 }  s }'
 
 pass=0; fail=0; ran=0
 for name in "${!PROGS[@]}"; do
@@ -61,6 +64,13 @@ done
 
 echo "wasm_aot_run_parity: $pass/$ran ran-and-matched, $fail differ"
 if [ "$ran" -eq 0 ]; then echo "wasm_aot_run_parity: nothing linked — skipping"; exit 0; fi
+# Vacuous-skip guard: every PROGS entry is PURE-INT and MUST link+run. If the
+# env works (ran>0) but some program silently skipped (build/link failure — e.g.
+# a syntax break like the old `let mut`), that's a REGRESSION, not a skip.
+total=${#PROGS[@]}
+if [ "$ran" -lt "$total" ]; then
+  echo "wasm_aot_run_parity: FAIL — only $ran/$total pure-int programs linked+ran; the rest silently skipped (a build/link failure on a pure-int program is a regression, not a skip)"; exit 1
+fi
 [ "$fail" -eq 0 ] || exit 1
 echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter on pure-int programs ✓"
 exit 0
