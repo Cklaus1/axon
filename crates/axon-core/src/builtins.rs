@@ -579,6 +579,18 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Return `s` with leading and trailing ASCII whitespace removed.",
     },
     BuiltinFn {
+        // R15 resume runtime (v0): suspend the program, yield `req` to the host,
+        // and resume with the host's reply. Only valid under a suspendable host
+        // driver (`run_suspendable`); a bare `axon run` errors ("no host"), and
+        // native codegen refuses it (E0910 — interp-only). v0 carries str payloads
+        // (Send across the worker thread); arbitrary-Value payloads + a same-thread
+        // coroutine substrate are the next slice (see governance/specs/R15).
+        name: "host_await",
+        params: &[("req", "str")],
+        ret: "str",
+        doc: "Suspend, yield `req` to the host, resume with its reply (str). Needs a suspendable host (R15).",
+    },
+    BuiltinFn {
         name: "str_trim_start",
         params: &[("s", "str")],
         ret: "str",

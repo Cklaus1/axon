@@ -655,6 +655,65 @@ pub fn run_program_with_discharged(program: &Program, discharged: crate::verify:
     on_deep_stack(|| run_program_inner(program, discharged))
 }
 
+// ── R15 resume runtime (v0: thread substrate, str payloads) ─────────────────────
+//
+// `host_await(req)` suspends the program, yields `req` to the host, and resumes
+// with the host's reply. The interpreter (`Interp`/`Value`) is `!Send` (`Rc`), so
+// it CANNOT cross threads — but the program can run on a worker thread that owns
+// its OWN interp (created there, never moved), and the str payloads cross the
+// channel as `String` (which IS `Send`). The worker BLOCKING on the reply channel
+// is the suspension; the host (this caller's thread) regains control, services the
+// request, and unblocks the worker. No `Flow` plumbing, no `unsafe`, no
+// dependency — additive. v1 (arbitrary-`Value` payloads) needs a same-thread
+// stackful coroutine instead (governance/specs/R15-resume-runtime.md §4).
+struct HostChannels {
+    req_tx: std::sync::mpsc::Sender<String>,
+    rep_rx: std::sync::mpsc::Receiver<String>,
+}
+thread_local! {
+    static HOST_AWAIT: RefCell<Option<HostChannels>> = const { RefCell::new(None) };
+}
+
+/// Reach the active host channels from inside `host_await` (interp/builtins.rs).
+/// Returns the host's reply, or `Err(())` if there is no host (a bare `axon run`).
+pub(crate) fn host_await_yield(req: String) -> Result<String, ()> {
+    HOST_AWAIT.with(|h| {
+        let guard = h.borrow();
+        match &*guard {
+            Some(ch) => {
+                ch.req_tx.send(req).map_err(|_| ())?;
+                // Holding the borrow across this blocking recv is fine: nothing
+                // else on THIS thread touches HOST_AWAIT while the worker is parked.
+                ch.rep_rx.recv().map_err(|_| ())
+            }
+            None => Err(()),
+        }
+    })
+}
+
+/// Run `program` with a HOST driving its `host_await` suspensions. `host(req)`
+/// is called once per `host_await`, on THIS thread, and its return is fed back as
+/// the resume value. Returns the program's exit code. (R15 v0 — str payloads.)
+pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> String) -> i32 {
+    use std::sync::mpsc::channel;
+    let (req_tx, req_rx) = channel::<String>(); // worker → host (await requests)
+    let (rep_tx, rep_rx) = channel::<String>(); // host → worker (replies)
+    std::thread::scope(|scope| {
+        let worker = scope.spawn(move || {
+            HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
+            let code = run_program_inner(program, crate::verify::Discharged::default());
+            // Drop the channels → req_tx closes → the host loop below ends.
+            HOST_AWAIT.with(|h| *h.borrow_mut() = None);
+            code
+        });
+        // Host loop: service each suspension until the worker finishes (req_tx drops).
+        while let Ok(req) = req_rx.recv() {
+            let _ = rep_tx.send(host(&req));
+        }
+        worker.join().unwrap_or(101)
+    })
+}
+
 fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
     let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
@@ -1911,6 +1970,59 @@ mod tests {
     #[test]
     fn main_returns_exit_code() {
         assert_eq!(run("fn main() -> i64 { 7 }"), 7);
+    }
+
+    // ── R15 resume runtime (v0) — suspend/resume across a host driver ──────────
+    fn parse(src: &str) -> crate::ast::Program {
+        crate::parse_source(src).expect("parse failed")
+    }
+
+    #[test]
+    fn r15_host_await_single_roundtrip() {
+        // B1: the request reaches the host, and the host's reply flows back into
+        // the program. host("ab") → "abab"; str_len("abab") = 4.
+        let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
+        let code = super::run_suspendable(&prog, |req| format!("{req}{req}"));
+        assert_eq!(code, 4);
+    }
+
+    #[test]
+    fn r15_host_await_effects_fire_once_not_per_resume() {
+        // B2 (the load-bearing test): the host is called EXACTLY once per
+        // host_await — three awaits ⇒ three host calls. A replay-based suspend
+        // would re-run the prefix and call the host MORE than three times; the
+        // coroutine/thread substrate suspends in place, so it's exactly three.
+        let prog = parse(
+            "fn main() -> i64 { let a = host_await(\"1\")  let b = host_await(\"2\")  let c = host_await(\"3\")  str_len(a) + str_len(b) + str_len(c) }",
+        );
+        let mut calls = 0;
+        let code = super::run_suspendable(&prog, |_req| {
+            calls += 1;
+            "ok".to_string() // len 2
+        });
+        assert_eq!(calls, 3, "host must be called exactly once per host_await (no replay)");
+        assert_eq!(code, 6); // 2 + 2 + 2
+    }
+
+    #[test]
+    fn r15_no_await_runs_unchanged() {
+        // B4: a program that never suspends runs to completion under the driver,
+        // identically to a bare run, with zero host calls.
+        let prog = parse("fn main() -> i64 { 2 + 3 }");
+        let mut calls = 0;
+        let code = super::run_suspendable(&prog, |_| {
+            calls += 1;
+            String::new()
+        });
+        assert_eq!(code, 5);
+        assert_eq!(calls, 0, "no host_await ⇒ no suspension");
+    }
+
+    #[test]
+    fn r15_host_await_without_host_errors_cleanly() {
+        // A bare `run` (no driver) must error gracefully (exit 101), not hang.
+        let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);
+        assert_eq!(super::run_program(&prog), 101);
     }
 
     #[test]

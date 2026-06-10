@@ -1495,6 +1495,19 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 ok!(Value::Str(as_str(&args[0])?.to_uppercase()));
             }
+            // R15 resume runtime (v0): suspend, yield `req` to the host, resume
+            // with the reply. The worker thread blocks on the reply channel
+            // (that IS the suspension); a bare `axon run` (no host) errors.
+            "host_await" => {
+                want(1)?;
+                let req = as_str(&args[0])?.to_string();
+                match crate::interp::host_await_yield(req) {
+                    Ok(reply) => ok!(Value::Str(reply)),
+                    Err(()) => Err(Flow::Panic(
+                        "host_await: called outside a suspendable run (no host driver)".into(),
+                    )),
+                }
+            }
             "str_to_lower" => {
                 want(1)?;
                 ok!(Value::Str(as_str(&args[0])?.to_lowercase()));
