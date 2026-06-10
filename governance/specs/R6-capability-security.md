@@ -134,6 +134,10 @@ A module's `caps` (lockfile) is the union of its functions' `@[contained]` decla
 
 Given a committed `axon.lock` and matching bytes, resolution is fully deterministic and offline (no AI call at compile time). This is the reproducible-build property R6's gap column calls for.
 
+### 4.7 Ungrantable ambient channels (env)
+
+The `@[contained]` allowlists cover `fs` / `net` / `exec` — channels with a natural grant key (path prefix, host, yes/no). The process **environment** has no such key: env vars are an *ambient, secret-bearing* store (API keys, tokens) keyed by arbitrary names. There is therefore no clause that can grant env access, and a sandbox that let an *ungranted* env read through would not actually contain exfiltration (the sandboxed code could read `env_var("ANTHROPIC_API_KEY")` and leak it via an allowed `net` host). **Decision:** `env_var` inside any `@[contained]` fn is **denied unconditionally (E1001)** — fail-closed. The sanctioned pattern is to read the environment *outside* the contained boundary and pass the value in as an argument, so the sandboxed code only sees what it was explicitly handed. Across the import edge, env is never in the importer's ceiling, so an imported env read **widens** a `@[contained]` importer (E1203), consistent with §4.4. (`read_line`/`host_await` are *input* channels, not secret stores; `host_await` in particular is the mediated, trusted host channel used by the corrigibility/approval pattern, so they are **not** denied — only the secret-bearing env read is.)
+
 ---
 
 ## 5. Type rules

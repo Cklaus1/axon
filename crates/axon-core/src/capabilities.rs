@@ -47,6 +47,13 @@ enum IoKind {
     // produced by `classify_call` here, but kept so the enum stays exhaustive.
     #[allow(dead_code)]
     Exec,
+    // Reading the process environment (`env_var`). Unlike fs/net/exec there is NO
+    // allowlist clause that can grant it, so inside `@[contained]` it is denied
+    // unconditionally — env vars are an ambient, secret-bearing channel (API
+    // keys, tokens) and a sandbox that let ungranted env reads through would not
+    // actually contain exfiltration. The fix is to read the env OUTSIDE the
+    // contained boundary and pass the value in explicitly.
+    Env,
 }
 
 /// Match a function name to an I/O kind.
@@ -55,6 +62,9 @@ fn classify_call(name: &str) -> Option<IoKind> {
         "read_file"                             => Some(IoKind::FsRead),
         "write_file"                            => Some(IoKind::FsWrite),
         "exec"                                  => Some(IoKind::Exec),
+        // Reading the process environment is an ungrantable ambient channel; a
+        // @[contained] fn must not read host secrets it wasn't given.
+        "env_var"                               => Some(IoKind::Env),
         // Future net calls (http_get, ai_complete, etc.) — treat as net
         "http_get"
         | "http_post"
@@ -366,6 +376,7 @@ fn cap_label(kind: &IoKind) -> &'static str {
         IoKind::FsWrite => "fs:write",
         IoKind::Net => "net",
         IoKind::Exec => "exec",
+        IoKind::Env => "env",
     }
 }
 
@@ -925,6 +936,25 @@ fn check_call(
                 ));
             }
         }
+
+        IoKind::Env => {
+            // No allowlist clause can grant environment access, so a @[contained]
+            // fn may NOT read the process environment — env vars are an ambient,
+            // secret-bearing channel (API keys, tokens), and permitting an
+            // ungranted read would let sandboxed code exfiltrate host secrets
+            // (defeating the whole point of containment). Always deny.
+            errors.push(CapabilityError::new(
+                E1001,
+                format!(
+                    "`{name}(...)` is not permitted inside @[contained]: reading the process \
+                     environment is an ungovernable ambient channel (env vars often hold secrets) \
+                     and there is no capability clause that can grant it\n  \
+                     help: read the environment OUTSIDE the contained boundary and pass the value \
+                     in as an argument, so the sandboxed code only sees what you explicitly hand it"
+                ),
+                Span::dummy(),
+            ));
+        }
     }
 }
 
@@ -1354,6 +1384,70 @@ mod tests {
         let errs = check_capabilities(&p);
         assert!(errs.iter().any(|e| e.code == E1001),
             "a net call hidden in a spawn body must be caught under the fn's spec: {errs:?}");
+    }
+
+    // ── env_var: ungrantable ambient secret channel inside @[contained] ───────
+    #[test]
+    fn contained_fn_cannot_read_env_var() {
+        // The exfil hole: a sandboxed fn that grants only a specific net host can
+        // still read host secrets (API keys/tokens) from the environment and leak
+        // them via the allowed channel — defeating containment. env reads have no
+        // grant clause, so they're denied inside @[contained] (fail closed).
+        let p = parse(
+            "@[contained(net: [\"api.allowed.com\"], fs: [], exec: none)]\n\
+             fn evil() -> str { match env_var(\"SECRET_KEY\") { Ok(v) => v  Err(_) => \"\" } }\n\
+             fn main() -> i64 { len(evil()) }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001 && e.message.contains("environment")),
+            "reading env inside @[contained] must be denied (no grant clause exists): {errs:?}");
+    }
+
+    #[test]
+    fn env_var_outside_contained_is_allowed() {
+        // No false positive: env reads in UNCONTAINED code are unrestricted —
+        // containment is opt-in, and a program that declares no boundary keeps
+        // full ambient access.
+        let p = parse(
+            "fn main() -> i64 { match env_var(\"HOME\") { Ok(v) => len(v)  Err(_) => 0 } }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.is_empty(), "env_var outside @[contained] must be allowed: {errs:?}");
+    }
+
+    #[test]
+    fn env_read_outside_then_passed_into_contained_fn_is_allowed() {
+        // The sanctioned pattern the deny steers toward: read the env in the
+        // (uncontained) caller and hand the value to the contained fn explicitly,
+        // so the sandboxed code only sees what it was given.
+        let p = parse(
+            "@[contained(net: [], fs: [], exec: none)]\n\
+             fn process(cfg: str) -> i64 { len(cfg) }\n\
+             fn main() -> i64 {\n\
+               let c = match env_var(\"CONFIG\") { Ok(v) => v  Err(_) => \"\" }\n\
+               process(c)\n\
+             }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.is_empty(),
+            "reading env outside and passing the value into a contained fn must be allowed: {errs:?}");
+    }
+
+    #[test]
+    fn imported_env_read_widens_a_contained_importer_e1203() {
+        // The import-edge consequence: env has no grant clause, so it's never in
+        // the importer's ceiling — an imported module that reads the environment
+        // widens a @[contained] importer's surface (E1203), fail-closed.
+        let importer = parse(
+            "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
+             fn main() -> i64 { 0 }",
+        );
+        let imported = parse(
+            "fn peek() -> str { match env_var(\"SECRET\") { Ok(v) => v  Err(_) => \"\" } }",
+        );
+        let errs = check_import_capabilities(&importer, "mod::peek", &imported);
+        assert!(errs.iter().any(|e| e.code == E1203 && e.message.contains("env")),
+            "an imported env read must widen the contained importer's ceiling: {errs:?}");
     }
 
     #[test]

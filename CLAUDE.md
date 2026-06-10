@@ -178,6 +178,8 @@ fn test_panic() { assert(false) }
 //   net:   ["api.example.com", "*.trusted.io"]  allowlist of hosts (leading * glob)
 //   exec:  none | any                           process spawning
 //   never: [read("/etc/"), write("/"), net("*"), exec]   hard deny (overrides allowlist)
+//   env:   reading env_var(...) is DENIED inside @[contained] (E1001) — env is an
+//          ungrantable ambient secret channel; read it OUTSIDE the boundary, pass the value in
 @[contained(fs: [write("./out/")], net: ["api.example.com"], exec: none)]
 fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 }
 ```
