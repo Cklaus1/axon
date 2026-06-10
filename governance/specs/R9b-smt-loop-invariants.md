@@ -1,6 +1,10 @@
 # Tech Spec — R9b: SMT `@[verify]` over loops (invariant inference)
 
-**Status:** 📝 Draft (2026-06-03)
+**Status:** 📋 Planned / Not Started (Draft 2026-06-03) — the design is resolved (see the
+decisive fork in `README.md`) but NO implementation exists: `smt.rs` discharges only
+straight-line `i64`/`f64` fragments (`encode_block` returns `Unsupported` for While/For), and
+all §-acceptance criteria below are unchecked. This is correctly a 0%-built item, distinct from
+R9's shipped straight-line SMT.
 **Requirement:** `../REQUIREMENTS.md` R9 — *Layer-1/3 alignment; Formal Verification.* Extends `R9-smt-verify.md` (straight-line integer + float fragment, ✅ Reviewed/landed) past its hard boundary: loops.
 **Parent boundary:** R9-smt §4.2 / §10 scope loops OUT — *"Loops/recursion need invariants (a Phase-N extension)."* This is that extension.
 
