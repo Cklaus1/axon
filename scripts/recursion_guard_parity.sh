@@ -83,5 +83,22 @@ if [ "$sumexit" -ne 228 ]; then
 fi
 echo "  finite deep recursion (sum 5000): correct (exit 228) ✓"
 
-echo "recursion_guard_parity: OK — native deep recursion fails gracefully (exit 101), interp parity, normals unaffected"
+# (4) Recursion inside a SPAWNED worker (a real OS thread natively) must also fail
+# gracefully — sigaltstack is per-thread, so __axon_spawn installs the worker's own
+# alt-stack. Without it the worker SIGSEGVs (139) while main blocks on recv.
+SPAWN="$WORK/spawnrec.ax"
+printf 'fn rec(n: i64) -> i64 { rec(n + 1) }\nfn main() -> i64 {\n    let c = chan<i64>()\n    spawn { c.send(rec(0)) }\n    c.recv()\n}\n' > "$SPAWN"
+siout="$("$AXON" run "$SPAWN" 2>&1)"; siexit=$?
+"$AXON" build "$SPAWN" -o "$WORK/spawn_bin" --no-cache >/dev/null 2>&1
+snout="$("$WORK/spawn_bin" 2>&1)"; snexit=$?
+if [ "$siexit" -ne 101 ] || [ "$snexit" -ne 101 ]; then
+  echo "recursion_guard_parity: FAIL — spawned-worker recursion: interp=$siexit native=$snexit (both must be 101)"
+  echo "  native out: $snout"; exit 1
+fi
+if ! printf '%s' "$snout" | grep -q "stack overflow"; then
+  echo "recursion_guard_parity: FAIL — spawned worker overflow must print a diagnostic, got: $snout"; exit 1
+fi
+echo "  spawned-worker recursion: interp==native (exit 101, graceful) ✓"
+
+echo "recursion_guard_parity: OK — native deep recursion (main + worker) fails gracefully (exit 101), interp parity, normals unaffected"
 exit 0

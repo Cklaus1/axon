@@ -910,6 +910,26 @@ pub extern "C" fn __axon_dict_drop(d: *mut c_void) {
 
 // ── Spawn ─────────────────────────────────────────────────────────────────────
 
+/// Give the CURRENT thread its own alternate signal stack, so the process-wide
+/// SIGSEGV handler (installed on the main thread by
+/// `__axon_install_recursion_guard`) can also convert a stack overflow in THIS
+/// thread into the graceful exit-101 panic. `sigaltstack` is per-thread, so a
+/// spawned worker that doesn't do this would still SIGSEGV on overflow. Returns
+/// the backing buffer, which the caller must keep alive for the thread's lifetime.
+#[cfg(unix)]
+fn install_thread_recursion_guard() -> Option<Box<[u8]>> {
+    let mut buf = vec![0u8; RECURSION_GUARD_ALTSTACK_SIZE].into_boxed_slice();
+    let ss = libc::stack_t {
+        ss_sp: buf.as_mut_ptr() as *mut c_void,
+        ss_flags: 0,
+        ss_size: RECURSION_GUARD_ALTSTACK_SIZE,
+    };
+    if unsafe { libc::sigaltstack(&ss, core::ptr::null_mut()) } != 0 {
+        return None;
+    }
+    Some(buf)
+}
+
 /// Spawn a new OS thread.
 ///
 /// `fn_ptr` is a function pointer with signature `fn(*mut c_void)`.
@@ -921,6 +941,12 @@ pub extern "C" fn __axon_spawn(fn_ptr: *const c_void, env: *mut c_void) {
     let fn_ptr = fn_ptr as usize;  // move into thread
     let env = env as usize;
     std::thread::spawn(move || {
+        // Give this worker its own alt-stack so a stack overflow (deep recursion)
+        // HERE also lands in the graceful exit-101 handler instead of SIGSEGV. The
+        // buffer stays alive for the whole user-fn call (the handler _exits before
+        // this returns, so it's always live when an overflow fires).
+        #[cfg(unix)]
+        let _guard_stack = install_thread_recursion_guard();
         let f: extern "C" fn(*mut c_void) = unsafe { std::mem::transmute(fn_ptr) };
         f(env as *mut c_void);
     });
