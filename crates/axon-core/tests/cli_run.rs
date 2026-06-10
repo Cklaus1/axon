@@ -1760,6 +1760,45 @@ fn goal_run_constrained_rejects_an_undefined_constraint() {
 }
 
 #[test]
+fn goal_run_categorical_exhaustively_finds_the_best_unordered_choice() {
+    // Pillar 3 (categorical domains): goal_run_categorical treats the @[adaptive]
+    // fn's i64 arg as an unordered CHOICE INDEX in [0, n) — no ordinal/gradient
+    // assumption. With a budget covering the set (max_evals=0 → exhaustive) it
+    // ALWAYS finds the best choice, even when the good one (#3, score 100) is an
+    // isolated spike a hill-climb would step right past. goal_best_input reads the
+    // winning index back, proving the search located the specific choice.
+    let prog = "@[adaptive]\n\
+                fn pick(choice: i64) -> i64 { if choice == 3 { 100 } else { 10 } }\n\
+                fn main() -> i64 {\n\
+                  let best = goal_run_categorical(\"pick\", 6, 100.0, 0)\n\
+                  let winner = goal_best_input(\"pick\", 100.0)\n\
+                  if best == 100.0 && winner == 3 { 0 } else { 1 }\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_catgoal_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0),
+        "exhaustive categorical search must find the isolated best choice (#3): {out:?}");
+}
+
+#[test]
+fn goal_run_categorical_rejects_a_nonpositive_choice_count() {
+    // n_choices <= 0 is a programmer error (an empty domain), not a silent no-op.
+    let prog = "@[adaptive]\n\
+                fn pick(c: i64) -> i64 { c }\n\
+                fn main() -> i64 { let _ = goal_run_categorical(\"pick\", 0, 1.0, 5)\n 0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_catgoalerr_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "n_choices=0 must not succeed: {out:?}");
+    assert!(err.contains("n_choices") && err.contains("must be positive"),
+        "must explain the empty domain: {err}");
+}
+
+#[test]
 fn asi_constrained_goal_demo_holds_the_feasible_boundary() {
     // examples/asi/constrained_goal.ax is the public-face showcase of
     // goal_run_constrained: the unconstrained search races to the target (100)
@@ -1771,6 +1810,19 @@ fn asi_constrained_goal_demo_holds_the_feasible_boundary() {
     let s = String::from_utf8_lossy(&out.stdout);
     assert!(s.contains("unconstrained best: 100"), "free search reaches the target: {s}");
     assert!(s.contains("constrained best:   50"), "constrained search held at the cap: {s}");
+}
+
+#[test]
+fn asi_categorical_goal_demo_finds_the_best_strategy() {
+    // examples/asi/categorical_goal.ax showcases goal_run_categorical: an
+    // exhaustive search over 6 UNORDERED strategies finds the isolated best
+    // (#4, score 98) that a gradient hill-climb would step past. Gates the
+    // public-face demo (ROADMAP §2.7).
+    let out = axon().args(["run", &ex("asi/categorical_goal.ax")])
+        .env("AXON_AI_MOCK", "1").env("AXON_SEED", "1").output().unwrap();
+    assert!(out.status.success(), "categorical demo must run: {out:?}");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("strategy #4"), "must find the isolated best strategy (#4): {s}");
 }
 
 #[test]

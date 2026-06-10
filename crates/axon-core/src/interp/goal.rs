@@ -293,6 +293,97 @@ impl<'p> Interp<'p> {
         Ok(best_score)
     }
 
+    /// Categorical (unordered-choice) search: optimize an `@[adaptive] fn(i64) ->
+    /// num` whose single i64 argument is a CHOICE INDEX in `[0, n_choices)`. Unlike
+    /// the hill-climbers, this makes NO ordinal assumption — adjacent indices are
+    /// not treated as "near", so it suits a set of unrelated options (prompt
+    /// templates, models, strategies) where a gradient is meaningless and a climb
+    /// would converge to a local index region and miss the best choice. When the
+    /// budget covers the whole set (`max_evals <= 0` or `n_choices <= max_evals`)
+    /// it is EXHAUSTIVE — every choice evaluated, the true best guaranteed;
+    /// otherwise it RANDOM-samples `max_evals` choices. Each eval flows through
+    /// `call_fn` (provenance accumulates, so goal_best_input reads the winning
+    /// choice back) and the active `subject_to` constraint, if any. Direction-
+    /// agnostic: returns the score closest to `target`.
+    pub(super) fn run_goal_categorical(
+        &self,
+        name: &str,
+        n_choices: i64,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
+        let _goal_guard = self.enter_goal(name);
+        if n_choices <= 0 {
+            return panic(format!(
+                "goal_run_categorical: n_choices ({n_choices}) must be positive"
+            ));
+        }
+        let f = match self.fns.get(name) {
+            Some(f) => *f,
+            None if self.provenance.borrow().contains_key(name) => {
+                return Ok(self.best_observed(name, target, max_evals));
+            }
+            None => return Err(Self::unknown_goal_name(name)),
+        };
+        let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
+        let one_i64_param = f.params.len() == 1 && is_i64_type(&f.params[0].ty);
+        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+        let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
+        if !is_adaptive || !one_i64_param || !(i64_ret || f64_ret) {
+            return Ok(self.best_observed(name, target, max_evals));
+        }
+
+        let mut best_score: f64 = f64::NAN;
+        let mut best_dist: f64 = f64::INFINITY;
+        // Evaluate one choice; returns Ok(true) on an exact target hit (early-out).
+        let eval_choice =
+            |c: i64, best_score: &mut f64, best_dist: &mut f64| -> Result<bool, Flow> {
+                let result = self.call_fn(f, vec![Value::Int(c)])?;
+                let score = match numeric_score(&result) {
+                    Some(s) => self.apply_goal_constraint(&[Value::Int(c)], s)?,
+                    None => {
+                        return panic(format!(
+                            "@[adaptive] fn `{}` must return a number, got {}",
+                            f.name,
+                            result.type_name()
+                        ))
+                    }
+                };
+                let d = (score - target).abs();
+                if d < *best_dist {
+                    *best_dist = d;
+                    *best_score = score;
+                    if *best_dist <= f64::EPSILON {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            };
+
+        if max_evals <= 0 || n_choices <= max_evals {
+            // Exhaustive: every choice, the true best guaranteed.
+            for c in 0..n_choices {
+                if eval_choice(c, &mut best_score, &mut best_dist)? {
+                    break;
+                }
+            }
+        } else {
+            // Budget < |choices|: random-sample (with replacement) `max_evals` of them.
+            let mut i = 0;
+            while i < max_evals {
+                let c = (next_rand_u64() % n_choices as u64) as i64;
+                if eval_choice(c, &mut best_score, &mut best_dist)? {
+                    break;
+                }
+                i += 1;
+            }
+        }
+        if best_score.is_nan() {
+            best_score = target;
+        }
+        Ok(best_score)
+    }
+
     /// Multi-start hill climb. Picks `n_starts` random starting points
     /// uniformly in `[lo, hi)` (per-dim) and runs the existing
     /// coordinate-descent hill-climb (with Powell joint step) from each

@@ -244,6 +244,7 @@ forcing function for upcoming phase work — friction encountered while building
 | `code_review.ax` | two cooperating @[adaptive] fns (proposer + critic) |
 | `world_model.ax` | executable world model: predict → fit-check → compress-to-simplest (fit a refinement gate + MDL objective; `spec/worldmodel-loop.md`) |
 | `constrained_goal.ax` | constrained search (`subject_to`): `goal_run_constrained` hill-climbs only over candidates a boolean constraint accepts — a hard feasibility gate, not a soft penalty |
+| `categorical_goal.ax` | categorical search: `goal_run_categorical` treats the arg as an UNORDERED choice index (no gradient) — exhaustive over the set, finds an isolated best a hill-climb would miss |
 
 CLI surface simulated as `examples/asi/run.sh` (the eventual Phase-10 `axon goal …` shape).
 

@@ -956,6 +956,17 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Constrained search (`subject_to`): optimize the @[adaptive] function `name` toward `target` like `goal_run`, but only over candidates the boolean `constraint` function ACCEPTS. `constraint` names a fn sharing `name`'s parameter list and returning `bool`; an infeasible candidate is scored maximally-distant so the optimizer rejects it — a HARD feasibility gate, not a soft penalty folded into the metric. The constraint runs as a plain (non-@[adaptive]) call, so it never pollutes the score trajectory. Errors if `constraint` is not a defined fn. If every candidate is infeasible the result is a far-from-target sentinel (no feasible solution found).",
     },
     BuiltinFn {
+        name: "goal_run_categorical",
+        params: &[
+            ("name", "str"),
+            ("n_choices", "i64"),
+            ("target", "f64"),
+            ("max_evals", "i64"),
+        ],
+        ret: "f64",
+        doc: "Categorical (unordered-choice) search: optimize the @[adaptive] function `name` whose single i64 argument is a CHOICE INDEX in `[0, n_choices)`. Unlike `goal_run` (which hill-climbs and treats adjacent indices as near), this makes NO ordinal assumption — right for a set of unrelated options (prompt templates, models, strategies) where a gradient is meaningless. When the budget covers the whole set (`max_evals <= 0` or `n_choices <= max_evals`) it is EXHAUSTIVE — every choice evaluated, the true best guaranteed; otherwise it random-samples `max_evals` choices. Returns the best score (closest to `target`); provenance accumulates so `goal_best_input` reads the winning choice back.",
+    },
+    BuiltinFn {
         name: "goal_run_random",
         params: &[
             ("name", "str"),
@@ -1514,8 +1525,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // pure — a @[pure] fn calling any of them is E1207. (The run-variants
             // goal_run_random/multistart/continue + goal_eval were silently PURE
             // under P04; the read goal_count too, like goal_history/goal_best_*.)
-            | "goal_run" | "goal_run_constrained" | "goal_run_random"
-            | "goal_run_multistart" | "goal_continue"
+            | "goal_run" | "goal_run_constrained" | "goal_run_categorical"
+            | "goal_run_random" | "goal_run_multistart" | "goal_continue"
             | "goal_eval" | "goal_count"
             | "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
             | "goal_best_score" | "goal_history" | "goal_clear"
@@ -1558,8 +1569,8 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // goal_* accessors (incl. goal_count) touch process-global optimizer state
         // (modeled as IO). Must stay in lockstep with is_impure_builtin (see
         // builtin_effect_row_agrees_with_impurity).
-        "goal_run" | "goal_run_constrained" | "goal_run_random"
-        | "goal_run_multistart" | "goal_continue"
+        "goal_run" | "goal_run_constrained" | "goal_run_categorical"
+        | "goal_run_random" | "goal_run_multistart" | "goal_continue"
         | "goal_eval" => &["AI", "Net", "IO"],
         "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
         | "goal_best_score" | "goal_history" | "goal_clear" | "goal_count" => &["IO"],

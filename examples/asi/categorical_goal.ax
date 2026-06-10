@@ -1,0 +1,29 @@
+// Categorical search (pillar 3) — pick the best of N UNORDERED options.
+//
+// `goal_run_categorical` treats the @[adaptive] fn's i64 argument as a choice
+// INDEX with no ordering: choice 2 is not "between" 1 and 3, so a gradient is
+// meaningless. Unlike `goal_run` (which hill-climbs and assumes adjacent indices
+// are "near"), it does NOT climb — with a budget covering the set it searches
+// EXHAUSTIVELY, guaranteeing the best choice even when the winner is an isolated
+// spike a climb would step right past.
+//
+// Here six prompt strategies score differently and only strategy #4 is great.
+// A hill-climb over the index has no gradient leading to #4; the categorical
+// search evaluates every option and finds it.
+
+@[adaptive]
+fn strategy_score(choice: i64) -> i64 {
+    // An unordered scoreboard — neighbours tell you nothing about the winner.
+    if choice == 4 { 98 }
+    else if choice == 2 { 60 }
+    else if choice == 1 { 55 }
+    else { 30 }
+}
+
+fn main() -> i64 {
+    // max_evals = 0 → exhaustive over all 6 choices (the true best is guaranteed).
+    let best = goal_run_categorical("strategy_score", 6, 100.0, 0)
+    let winner = goal_best_input("strategy_score", 100.0)
+    println("best strategy score: {to_str_f64(best)} (strategy #{to_str(winner)})")
+    0
+}

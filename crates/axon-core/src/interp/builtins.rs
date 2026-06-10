@@ -1775,6 +1775,21 @@ impl<'p> Interp<'p> {
                 ok!(Value::Float(result?));
             }
 
+            // Categorical search: the @[adaptive] metric's single i64 arg is a
+            // CHOICE INDEX in [0, n_choices). No ordinal assumption (unlike the
+            // hill-climbers) — exhaustive when the budget covers the set, else a
+            // random sample. For unordered options (prompt templates, models).
+            "goal_run_categorical" => {
+                want(4)?;
+                let name = as_str(&args[0])?.to_string();
+                let n_choices = as_int(&args[1])?;
+                let target = as_float(&args[2])?;
+                let max_evals = as_int(&args[3])?;
+                ok!(Value::Float(
+                    self.run_goal_categorical(&name, n_choices, target, max_evals)?
+                ));
+            }
+
             // Random-search strategy. Baseline against the hill-climb
             // path; useful for multi-modal objectives where the
             // gradient gets stuck in a local optimum.
