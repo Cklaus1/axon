@@ -61,6 +61,19 @@ echo "  BY CONSTRUCTION — the program cannot execute even once."
 pause
 
 rule
+bold "BEAT 2½ — The SUBTLE agent. It abuses a capability it WAS granted."
+echo "Granted exactly fs: [write(\"./out/\")]. It writes its report (fine) — then"
+echo "tries to write OUT of its lane via a path it builds at runtime."
+echo "\$ axon check $D/agent_task_subtle.ax"
+"$AXON" check "$D/agent_task_subtle.ax"; rc=$?
+echo "exit=$rc  (2 = REFUSED)"
+echo
+echo "→ E1001: a write target it can't statically prove stays under ./out/ is"
+echo "  refused. Holding write(\"./out/\") does NOT grant write to /etc/cron.d via"
+echo "  a dynamic path. A real grant can't be abused beyond its declared scope."
+pause
+
+rule
 bold "BEAT 3 — The SAME evil agent, in Python. The 'sandbox' is a comment."
 echo "\$ python3 $D/foil_python.py"
 python3 "$D/foil_python.py"

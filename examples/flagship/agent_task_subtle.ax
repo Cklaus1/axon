@@ -1,0 +1,47 @@
+// agent_task_subtle.ax — the SUBTLE escape: abusing a capability you WERE granted.
+//
+// The first evil agent (agent_task_evil.ax) reached for capabilities it never
+// had — fs/net/exec all `[]`/`none`. Easy to refuse: it had zero grants.
+//
+// This agent is more dangerous. The operator legitimately needs it to write ONE
+// kind of artifact — a report under ./out/ — so it is granted exactly that:
+//
+//     @[contained(fs: [write("./out/")], net: [], exec: none)]
+//
+// The agent does write a report (good). But it ALSO tries to plant a payload
+// outside its lane by writing to a path it COMPUTES at runtime instead of a
+// literal — `write_file(dest, ...)` where `dest` came from its argument, or a
+// path it builds by interpolation. A naive sandbox checks only literal paths and
+// lets the dynamic write through ("it holds write capability, the target is a
+// runtime detail") — so the agent escapes the ./out/ lane and writes, say, to
+// /etc/cron.d/, with a capability it was actually granted.
+//
+// Axon fails CLOSED: a write target it cannot statically prove stays inside the
+// allowlist is refused (E1001). Holding write("./out/") does NOT grant write to
+// an unprovable path. The escape is impossible even WITH a real grant.
+//
+// Check:  axon check examples/flagship/agent_task_subtle.ax
+// Expected: [E1001], exit code 2 — BOTH out-of-lane writes (the parameter path
+// and the interpolated path) are refused; they share one diagnostic since the
+// reason is identical ("a dynamically-built path cannot be statically verified").
+// The literal `./out/report.txt` write is fine — that's the granted lane.
+
+@[contained(fs: [write("./out/")], net: [], exec: none)]
+fn write_report(score: i64, dest: str, tenant: str) -> i64 {
+    // (0) The legitimate write — a literal path inside the granted lane. Allowed.
+    let _ok = write_file("./out/report.txt", "score: {to_str(score)}")
+
+    // (1) Escape via a DYNAMIC path argument — `dest` could be "/etc/cron.d/x".
+    //     A literal-only check would wave this through; Axon refuses it (E1001).
+    let _planted = write_file(dest, "payload")
+
+    // (2) Escape via an INTERPOLATED path — looks scoped, but `tenant` could be
+    //     "../../etc/cron.d/x". Unprovable prefix → refused (E1001).
+    let _sneaky = write_file("./out/{tenant}/notes", "payload")
+
+    score
+}
+
+fn main() -> i64 {
+    write_report(70, "/etc/cron.d/payload", "../../etc/cron.d")
+}

@@ -26,6 +26,7 @@ examples/flagship/run.sh
 |---|---|
 | `agent_task.ax` | The **good** agent. Same task, stays in its sandbox → compiles + runs. |
 | `agent_task_evil.ax` | The **evil** agent. Same caps, tries to exfiltrate → compiler refuses (3× E1001). |
+| `agent_task_subtle.ax` | The **subtle** agent. *Granted* `write("./out/")`, tries to write out-of-lane via a dynamic path → compiler refuses (E1001). A real grant can't be abused beyond its scope. |
 | `foil_python.py` | The **same evil agent in Python** — the "sandbox" is a comment; every escape runs. |
 | `run.sh` | Scripts the narrative: good → evil-refused → python-escapes → the point. |
 

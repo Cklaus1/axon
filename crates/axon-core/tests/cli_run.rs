@@ -1206,7 +1206,7 @@ fn all_examples_typecheck_clean() {
     // compiler rejecting a violation). They are guarded by their own tests
     // (e.g. `contained_violation_demo_is_rejected_by_check`), so exclude them
     // from the "must check clean" sweep.
-    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax"];
+    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax", "agent_task_subtle.ax"];
     for f in &files {
         if f.file_name()
             .and_then(|n| n.to_str())
@@ -1342,6 +1342,21 @@ fn flagship_evil_agent_is_refused_on_all_three_vectors() {
     assert!(msg.contains("read_file"), "missing fs-read denial: {msg}");
     assert!(msg.contains("ai_complete"), "missing net denial (interpolation laundering?): {msg}");
     assert!(msg.contains("exec"), "missing exec denial: {msg}");
+}
+
+#[test]
+fn flagship_subtle_agent_cannot_abuse_a_granted_capability() {
+    // The subtle escape: an agent GRANTED `fs: [write("./out/")]` tries to write
+    // OUTSIDE its lane via a dynamic path (a parameter + an interpolation). A
+    // literal-only sandbox would wave the dynamic write through; Axon fails closed
+    // (E1001). Guards the capabilities.rs dynamic-path fix end-to-end AND the demo
+    // narration. The literal `./out/report.txt` write must NOT be flagged.
+    let out = axon().args(["check", &ex("flagship/agent_task_subtle.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "subtle agent must be refused: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(msg.contains("E1001"), "out-of-lane dynamic write must be E1001: {msg}");
+    assert!(msg.contains("dynamic path"), "denial should name the dynamic-path reason: {msg}");
+    assert!(!msg.contains("report.txt"), "the literal in-lane write must NOT be flagged: {msg}");
 }
 
 #[test]
