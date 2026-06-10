@@ -10,3 +10,9 @@ crate-type = ["staticlib"]  # Link into axon binaries as a native static lib.
 name = "axon_rt"
 
 [dependencies]
+
+# Unix-only: the SIGSEGV/altstack handler that turns a stack overflow (deep
+# recursion) into a graceful exit-101 panic instead of a raw SIGSEGV (139). Not
+# pulled on wasm/Windows — the guard is a no-op there.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

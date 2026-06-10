@@ -1122,6 +1122,10 @@ impl<'ctx> Codegen<'ctx> {
         // hill-climb.  No-op when the target list is empty, so non-AI
         // programs pay nothing.
         if f.name == "main" {
+            // Convert a native stack overflow (deep recursion) into a graceful
+            // exit-101 panic instead of a raw SIGSEGV (139) — interp parity on the
+            // recursion fault. First in the prologue so it covers everything after.
+            self.emit_recursion_guard_init();
             self.emit_adaptive_registry_init();
             // BUG_HUNT #19: register every fn name so native goal_run can reject
             // a typo'd metric the same way the interpreter does (I-9 parity).

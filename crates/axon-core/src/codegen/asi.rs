@@ -891,6 +891,28 @@ impl<'ctx> super::Codegen<'ctx> {
     /// main's prologue so native `@[adaptive]` provenance carries the program's
     /// `"src"` path — parity with the interpreter (`set_provenance_source`).
     /// No-op when the source path is unknown or the runtime extern is absent.
+    /// Emit a call (in `main`'s prologue) to install the native stack-overflow
+    /// guard, so deep recursion exits 101 gracefully instead of SIGSEGV-139.
+    /// No-op on wasm (no signals); the runtime fn itself is a no-op on non-unix.
+    pub(super) fn emit_recursion_guard_init(&mut self) {
+        if self.target_is_wasm {
+            return;
+        }
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let void_ty = self.ir.context.void_type();
+        let fn_ty = void_ty.fn_type(&[], false);
+        let f = self
+            .ir
+            .module
+            .get_function("__axon_install_recursion_guard")
+            .unwrap_or_else(|| {
+                self.ir.module.add_function("__axon_install_recursion_guard", fn_ty, None)
+            });
+        let _ = build_wrappers::w_call(&self.ir.builder, f, &[], "");
+    }
+
     pub(super) fn emit_provenance_source_init(&mut self) {
         if self.source_path.is_empty() {
             return;

@@ -1057,6 +1057,68 @@ pub extern "C" fn __axon_min_i64(a: i64, b: i64) -> i64 {
     a.min(b)
 }
 
+// ── Recursion guard (stack-overflow → graceful panic) ────────────────────────
+//
+// The interpreter bounds recursion with a depth counter and panics gracefully
+// (exit 101, "recursion limit exceeded …") on runaway/infinite recursion. Native
+// code runs on the real OS stack, so the same program SIGSEGVs (exit 139, no
+// diagnostic) when it overflows — a poor failure mode for a safety-first language
+// (and for AI-authored code, which may recurse without bound). This installs a
+// SIGSEGV handler that runs on a dedicated alternate stack (required — the normal
+// stack is exhausted) and converts the fault into the SAME graceful exit code
+// (101) plus a diagnostic, restoring native↔interp exit-code parity on the
+// recursion fault. codegen emits a call to `__axon_install_recursion_guard` at
+// program entry (native only; wasm has no signals). Async-signal-safe: the
+// handler only calls `write` + `_exit`.
+//
+// Caveats (documented, not silent): the message is not byte-identical to the
+// interpreter's (native can't know the depth/fn-name at the overflow point) — it
+// agrees on the EXIT CODE; the alt-stack is per-thread, so only the main thread's
+// overflow is converted (a worker fiber's would still SIGSEGV — an edge of an
+// edge). A SIGSEGV from any other cause would also print this message, but in a
+// memory-safe-by-construction language a stack overflow is the dominant cause.
+
+#[cfg(unix)]
+const RECURSION_GUARD_ALTSTACK_SIZE: usize = 64 * 1024;
+#[cfg(unix)]
+static mut RECURSION_GUARD_ALTSTACK: [u8; RECURSION_GUARD_ALTSTACK_SIZE] =
+    [0u8; RECURSION_GUARD_ALTSTACK_SIZE];
+
+#[cfg(unix)]
+extern "C" fn axon_segv_handler(_sig: i32) {
+    // async-signal-safe ONLY: write() + _exit(). No alloc, no formatting.
+    const MSG: &[u8] =
+        b"axon: panic: stack overflow (recursion too deep) \xe2\x80\x94 native uses the OS stack limit; under `axon run` raise it with AXON_MAX_DEPTH\n";
+    unsafe {
+        libc::write(2, MSG.as_ptr() as *const c_void, MSG.len());
+        libc::_exit(RUNTIME_PANIC_EXIT_CODE);
+    }
+}
+
+/// Install the stack-overflow → graceful-exit-101 handler. Called once at program
+/// entry by codegen-emitted `main` (native targets only). No-op on non-unix.
+#[no_mangle]
+pub extern "C" fn __axon_install_recursion_guard() {
+    #[cfg(unix)]
+    unsafe {
+        let ss = libc::stack_t {
+            ss_sp: core::ptr::addr_of_mut!(RECURSION_GUARD_ALTSTACK) as *mut c_void,
+            ss_flags: 0,
+            ss_size: RECURSION_GUARD_ALTSTACK_SIZE,
+        };
+        // If sigaltstack fails we simply don't install the handler (fall back to
+        // the raw SIGSEGV) rather than risk a handler with no stack to run on.
+        if libc::sigaltstack(&ss, core::ptr::null_mut()) != 0 {
+            return;
+        }
+        let mut sa: libc::sigaction = core::mem::zeroed();
+        sa.sa_sigaction = axon_segv_handler as *const () as usize;
+        sa.sa_flags = libc::SA_ONSTACK;
+        libc::sigemptyset(&mut sa.sa_mask);
+        libc::sigaction(libc::SIGSEGV, &sa, core::ptr::null_mut());
+    }
+}
+
 // ── String builtins — scalar-return (R1 Batch 2) ───────────────────────────────
 
 /// Check if haystack contains needle.

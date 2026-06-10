@@ -4606,6 +4606,33 @@ fn str_param_lambda_builds_and_runs_native() {
 }
 
 #[test]
+fn native_deep_recursion_panics_gracefully_not_segfault() {
+    // I-2 fault parity: the interpreter bounds recursion and panics gracefully
+    // (exit 101) on runaway recursion; native runs on the OS stack and used to
+    // SIGSEGV (exit 139, no diagnostic) — a poor failure mode, especially for
+    // AI-authored code. A SIGSEGV handler on an alt-stack now converts the stack
+    // overflow into the SAME exit code (101) plus a "stack overflow" message. The
+    // build+link+run is driven by scripts/recursion_guard_parity.sh (in the repo
+    // root, where the axon-rt runtime links cleanly — the test-spawn environment's
+    // final-link discovery is flaky, same as handler_resume_parity). Skips when
+    // codegen/link is unavailable.
+    let script = format!("{}/../../scripts/recursion_guard_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("recursion_guard_parity.sh not found — skipping");
+        return;
+    }
+    let out = std::process::Command::new("bash").arg(&script).output().expect("run recursion_guard_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/unix unavailable — recursion-guard parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "native deep recursion must fail gracefully (exit 101), not segfault:\n{stdout}{stderr}");
+    assert!(stdout.contains("recursion_guard_parity: OK"), "expected OK line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn native_str_valued_dict_get_aborts_loudly_not_silently_wrong() {
     // I-2 soundness: the v1 native dict is INT-valued. dict_get reinterprets the
     // value as i64; a STR value (dict_set(d,k,"…")) cannot be reconstructed, so
