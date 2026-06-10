@@ -1995,7 +1995,7 @@ mod tests {
         // A proposer emits this spec as TEXT (one rule per line) — ALL five rule
         // kinds, including the new fold-logical.
         let spec = RewriteSpec::parse(
-            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical",
+            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical\nfold-bound-builtin",
         )
         .expect("spec parses");
         spec.validate().expect("spec validates (E15xx clean)");
@@ -2035,6 +2035,32 @@ mod tests {
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
         assert!(rec.passed(), "fold-logical must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    /// The fold-bound-builtin rule through the firewall, with a built-in red-team:
+    /// the corpus includes `abs_i64(i64::MIN)` (a runtime overflow PANIC). The rule
+    /// correctly REFUSES to fold it, so the transformed program still panics — G1
+    /// proves the panic is preserved (a buggy rule that folded it to a value would
+    /// flip exit 101 → a value and G1 would reject). Same "earn your place by
+    /// clearing the gates" discipline as fold-logical.
+    #[test]
+    fn fold_bound_builtin_rule_clears_the_firewall() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![
+            prog("fn main() -> i64 { max_i64(3, 7) }"),
+            prog("fn main() -> i64 { min_i64(3, 7) }"),
+            prog("fn main() -> i64 { abs_i64(0 - 5) }"),
+            // Non-literal arg: the call is left intact and still computes correctly.
+            prog("fn f(x: i64) -> i64 { max_i64(x, 0) }\nfn main() -> i64 { f(0 - 3) }"),
+            // RED-TEAM: abs_i64(i64::MIN) panics; the rule must NOT fold it away.
+            prog("fn main() -> i64 { abs_i64(0 - 9223372036854775807 - 1) }"),
+        ];
+        let spec = RewriteSpec::parse("fold-int-literal\nfold-bound-builtin").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "fold-bound-builtin must clear G1/G2/G3: {:?}", rec.rejection());
     }
 
     /// RED-TEAM for the new rule: the UNSOUND drop-left variant (`L && false →

@@ -119,6 +119,13 @@ steps 1–2 (validate + compile-to-pass), both reviewed Rust, both fail-closed.
   `fold-logical` (short-circuit-sound logical folding — a genuinely NEW optimization, not a
   re-expression of a shipped pass), with its soundness boundary unit-tested (folds `false && R`,
   refuses `L && false`) and a red-team proving the unsound drop-left variant is caught by G1.
+  **Second widening LANDED**: `fold-bound-builtin` (folds the pure, total integer bound builtins
+  `min_i64`/`max_i64`/`abs_i64` over literal args — `max_i64(3,7)`→`7`), with the same CHECKED
+  discipline as `fold-int-literal` (it REFUSES to fold `abs_i64(i64::MIN)`, whose runtime overflow
+  panic must be preserved — a built-in red-team in its firewall corpus proves G1 catches a fold
+  that erased the panic). Capability-free by construction (it only ever replaces a builtin Call
+  with an Int literal, never emits a Call). Mirrors the checker / comptime / SMT constant folders
+  for these builtins, so all four evaluators agree.
 - **F3 — does a malformed/over-budget spec hang the verifier?** → **No.** Validation (§3 step
   1) rejects non-total specs *before* execution; the compile-to-pass evaluator runs under a
   fixed fuel budget and a wall-clock cap, and a runaway is a rejection (E15xx), never a hang.

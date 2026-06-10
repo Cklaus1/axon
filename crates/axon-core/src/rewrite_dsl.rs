@@ -69,6 +69,13 @@ pub enum RewriteRule {
     /// test). A genuinely NEW optimization (not a re-expression of a shipped
     /// pass), added under the "widen only as red-teamed" discipline.
     FoldLogicalShortCircuit,
+    /// Fold a pure, total integer bound builtin over literal args to its result
+    /// literal: `max_i64(3, 7)`→`7`, `min_i64(3, 7)`→`3`, `abs_i64(-5)`→`5`. Like
+    /// `FoldIntLiteral` this uses CHECKED semantics — `abs_i64(i64::MIN)` overflows
+    /// (panics at runtime), so it is NOT folded (the panic is preserved; G1 would
+    /// reject erasing it). min/max never overflow. Mirrors the checker / comptime
+    /// constant folders for these builtins (consistent across all evaluators).
+    FoldBoundBuiltin,
 }
 
 impl RewriteRule {
@@ -80,6 +87,7 @@ impl RewriteRule {
             RewriteRule::SimplifyBoolNot => "simplify-bool-not",
             RewriteRule::FoldConstBranch => "fold-const-branch",
             RewriteRule::FoldLogicalShortCircuit => "fold-logical",
+            RewriteRule::FoldBoundBuiltin => "fold-bound-builtin",
         }
     }
 
@@ -90,6 +98,7 @@ impl RewriteRule {
             "simplify-bool-not" => Some(RewriteRule::SimplifyBoolNot),
             "fold-const-branch" => Some(RewriteRule::FoldConstBranch),
             "fold-logical" => Some(RewriteRule::FoldLogicalShortCircuit),
+            "fold-bound-builtin" => Some(RewriteRule::FoldBoundBuiltin),
             _ => None,
         }
     }
@@ -175,6 +184,32 @@ impl RewriteRule {
                         // folded — the LEFT operand is always evaluated, so dropping
                         // it would erase L's side effects (unsound; G1 would reject).
                         _ => {}
+                    }
+                }
+                None
+            }
+            RewriteRule::FoldBoundBuiltin => {
+                // Children are already folded (bottom-up), so `max_i64(2+1, 7)`
+                // arrives here as `max_i64(3, 7)`. Fold only literal args, with
+                // checked abs so `abs_i64(i64::MIN)` (a runtime overflow panic) is
+                // NOT collapsed to a value — preserving behaviour exactly.
+                if let Expr::Call { callee, args, .. } = e {
+                    if let Expr::Ident(name) = callee.as_ref() {
+                        match (name.as_str(), args.as_slice()) {
+                            ("min_i64", [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))]) => {
+                                return Some(Expr::Literal(Literal::Int((*a).min(*b))));
+                            }
+                            ("max_i64", [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))]) => {
+                                return Some(Expr::Literal(Literal::Int((*a).max(*b))));
+                            }
+                            ("abs_i64", [Expr::Literal(Literal::Int(x))]) => {
+                                let folded = if *x < 0 { x.checked_neg() } else { Some(*x) };
+                                if let Some(v) = folded {
+                                    return Some(Expr::Literal(Literal::Int(v)));
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 None
@@ -282,6 +317,10 @@ impl RewriteSpec {
                     | RewriteRule::SimplifyBoolNot
                     | RewriteRule::FoldConstBranch
                     | RewriteRule::FoldLogicalShortCircuit
+                    // Consumes a builtin Call and REPLACES it with an Int literal —
+                    // it can only ever REMOVE a call, never emit one, so it cannot
+                    // introduce a capability.
+                    | RewriteRule::FoldBoundBuiltin
             )
         })
     }
@@ -639,5 +678,42 @@ mod tests {
                 panic!("expected an if, got {body:?}");
             }
         }
+    }
+
+    // ── fold-bound-builtin (min/max/abs constant folding) ─────────────────────
+    #[test]
+    fn fold_bound_builtin_folds_min_max_abs() {
+        let spec = RewriteSpec::parse("fold-bound-builtin").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        // Literal args fold directly.
+        assert!(matches!(body_tail(&pass(&prog("fn main() -> i64 { max_i64(3, 7) }"))),
+            Expr::Literal(Literal::Int(7))));
+        assert!(matches!(body_tail(&pass(&prog("fn main() -> i64 { min_i64(3, 7) }"))),
+            Expr::Literal(Literal::Int(3))));
+        // abs needs its arg pre-folded (`0 - 5` → -5) — compose with fold-int-literal.
+        let pass2 = compile(&RewriteSpec::parse("fold-int-literal\nfold-bound-builtin").unwrap());
+        assert!(matches!(body_tail(&pass2(&prog("fn main() -> i64 { abs_i64(0 - 5) }"))),
+            Expr::Literal(Literal::Int(5))));
+    }
+
+    #[test]
+    fn fold_bound_builtin_preserves_abs_i64_min_overflow() {
+        // abs_i64(i64::MIN) overflows (a runtime panic), so it must NOT be folded
+        // to a value — the same CHECKED discipline as fold-int-literal's div-by-0.
+        let pass = compile(&RewriteSpec::parse("fold-int-literal\nfold-bound-builtin").unwrap());
+        let out = pass(&prog(
+            "fn main() -> i64 { abs_i64(0 - 9223372036854775807 - 1) }",
+        ));
+        // The inner arithmetic folds to i64::MIN, but the abs call survives.
+        assert!(matches!(body_tail(&out), Expr::Call { .. }),
+            "abs_i64(i64::MIN) must NOT be folded (preserve the overflow panic)");
+    }
+
+    #[test]
+    fn fold_bound_builtin_is_capability_free() {
+        // It consumes a builtin Call and emits an Int literal — never a Call — so
+        // the closed-vocabulary capability-freedom property still holds.
+        assert!(RewriteSpec::parse("fold-bound-builtin").unwrap().cannot_express_capability());
     }
 }
