@@ -1995,7 +1995,7 @@ mod tests {
         // A proposer emits this spec as TEXT (one rule per line) — ALL five rule
         // kinds, including the new fold-logical.
         let spec = RewriteSpec::parse(
-            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical\nfold-bound-builtin",
+            "fold-int-literal\nfold-arith-identity\nsimplify-bool-not\nfold-const-branch\nfold-logical\nfold-bound-builtin\nfold-comparison-literal",
         )
         .expect("spec parses");
         spec.validate().expect("spec validates (E15xx clean)");
@@ -2061,6 +2061,30 @@ mod tests {
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
         assert!(rec.passed(), "fold-bound-builtin must clear G1/G2/G3: {:?}", rec.rejection());
+    }
+
+    /// fold-comparison-literal through the firewall: a corpus exercising literal
+    /// comparisons (true/false branches, ==/!=, the arith→compare→branch chain).
+    /// A comparison of two int literals is total, so folding it to a bool is
+    /// unconditionally behavior-preserving — proven over the corpus by G1.
+    #[test]
+    fn fold_comparison_literal_rule_clears_the_firewall() {
+        use crate::rewrite_dsl::{compile, RewriteSpec};
+        let c = vec![
+            prog("fn main() -> i64 { if 3 < 5 { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if 7 == 7 { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { if 2 != 2 { 7 } else { 9 } }"),
+            // The composition chain: arith → comparison → branch all fold.
+            prog("fn main() -> i64 { if (2 + 1) < 5 { 7 } else { 9 } }"),
+            // A non-literal comparison (x < 5) must be left intact and still work.
+            prog("fn f(x: i64) -> i64 { if x < 5 { 7 } else { 9 } }\nfn main() -> i64 { f(2) }"),
+        ];
+        let spec = RewriteSpec::parse("fold-int-literal\nfold-comparison-literal\nfold-const-branch").unwrap();
+        spec.validate().unwrap();
+        let pass = compile(&spec);
+        let boxed: &Pass = &pass;
+        let rec = verify_pass(boxed, &c);
+        assert!(rec.passed(), "fold-comparison-literal must clear G1/G2/G3: {:?}", rec.rejection());
     }
 
     /// RED-TEAM for the new rule: the UNSOUND drop-left variant (`L && false →

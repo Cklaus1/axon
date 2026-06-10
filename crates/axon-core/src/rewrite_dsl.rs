@@ -76,6 +76,13 @@ pub enum RewriteRule {
     /// reject erasing it). min/max never overflow. Mirrors the checker / comptime
     /// constant folders for these builtins (consistent across all evaluators).
     FoldBoundBuiltin,
+    /// Fold a comparison of two integer literals to its `bool` result:
+    /// `3 < 5`→`true`, `7 == 7`→`true`, `2 != 2`→`false` (`<`/`>`/`<=`/`>=`/`==`/`!=`).
+    /// Comparisons are total (never panic), so this is unconditionally sound. It
+    /// is the missing link in the constant-folding chain: `fold-int-literal` folds
+    /// the operands (`(2+1) < 5` → `3 < 5`), THIS folds the comparison to a bool,
+    /// and `fold-const-branch` then collapses the enclosing `if`.
+    FoldComparisonLiteral,
 }
 
 impl RewriteRule {
@@ -88,6 +95,7 @@ impl RewriteRule {
             RewriteRule::FoldConstBranch => "fold-const-branch",
             RewriteRule::FoldLogicalShortCircuit => "fold-logical",
             RewriteRule::FoldBoundBuiltin => "fold-bound-builtin",
+            RewriteRule::FoldComparisonLiteral => "fold-comparison-literal",
         }
     }
 
@@ -99,6 +107,7 @@ impl RewriteRule {
             "fold-const-branch" => Some(RewriteRule::FoldConstBranch),
             "fold-logical" => Some(RewriteRule::FoldLogicalShortCircuit),
             "fold-bound-builtin" => Some(RewriteRule::FoldBoundBuiltin),
+            "fold-comparison-literal" => Some(RewriteRule::FoldComparisonLiteral),
             _ => None,
         }
     }
@@ -214,6 +223,30 @@ impl RewriteRule {
                 }
                 None
             }
+            RewriteRule::FoldComparisonLiteral => {
+                // Children already folded, so `(2+1) < 5` arrives as `3 < 5`.
+                // Comparisons are total — no panic to preserve — so folding two
+                // int literals to the bool result is unconditionally sound.
+                if let Expr::BinOp { op, left, right } = e {
+                    if let (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) =
+                        (left.as_ref(), right.as_ref())
+                    {
+                        let r = match op {
+                            BinOp::Lt => Some(a < b),
+                            BinOp::Gt => Some(a > b),
+                            BinOp::LtEq => Some(a <= b),
+                            BinOp::GtEq => Some(a >= b),
+                            BinOp::Eq => Some(a == b),
+                            BinOp::NotEq => Some(a != b),
+                            _ => None,
+                        };
+                        if let Some(v) = r {
+                            return Some(Expr::Literal(Literal::Bool(v)));
+                        }
+                    }
+                }
+                None
+            }
         }
     }
 }
@@ -321,6 +354,8 @@ impl RewriteSpec {
                     // it can only ever REMOVE a call, never emit one, so it cannot
                     // introduce a capability.
                     | RewriteRule::FoldBoundBuiltin
+                    // Replaces a literal comparison with a bool literal — no Call.
+                    | RewriteRule::FoldComparisonLiteral
             )
         })
     }
@@ -715,5 +750,51 @@ mod tests {
         // It consumes a builtin Call and emits an Int literal — never a Call — so
         // the closed-vocabulary capability-freedom property still holds.
         assert!(RewriteSpec::parse("fold-bound-builtin").unwrap().cannot_express_capability());
+    }
+
+    // ── fold-comparison-literal (int comparison → bool) ───────────────────────
+    #[test]
+    fn fold_comparison_literal_folds_int_comparisons() {
+        let pass = compile(&RewriteSpec::parse("fold-comparison-literal").unwrap());
+        for (src, want) in [
+            ("fn main() -> i64 { if 3 < 5 { 1 } else { 0 } }", true),
+            ("fn main() -> i64 { if 7 == 7 { 1 } else { 0 } }", true),
+            ("fn main() -> i64 { if 2 != 2 { 1 } else { 0 } }", false),
+            ("fn main() -> i64 { if 9 <= 8 { 1 } else { 0 } }", false),
+        ] {
+            // The if-condition folds to the bool literal `want`.
+            let out = pass(&prog(src));
+            if let Item::FnDef(f) = &out.items[0] {
+                let body = match &f.body { Expr::Block(s) => s.last().unwrap().expr.clone(), o => o.clone() };
+                if let Expr::If { cond, .. } = &body {
+                    assert!(matches!(cond.as_ref(), Expr::Literal(Literal::Bool(b)) if *b == want),
+                        "`{src}` cond should fold to {want}: {cond:?}");
+                } else {
+                    panic!("expected an if in {src}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn fold_comparison_literal_composes_arith_then_branch() {
+        // The full chain it unlocks: `(2+1) < 5` → (int) `3 < 5` → (cmp) `true` →
+        // (branch) the taken arm. Reduces `if (2+1) < 5 { 1 } else { 2 }` to 1.
+        let spec = RewriteSpec::parse(
+            "fold-int-literal\nfold-comparison-literal\nfold-const-branch",
+        )
+        .unwrap();
+        spec.validate().unwrap();
+        let out = compile(&spec)(&prog("fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }"));
+        let mut tail = body_tail(&out);
+        while let Expr::Block(stmts) = &tail {
+            tail = stmts.last().unwrap().expr.clone();
+        }
+        assert!(matches!(tail, Expr::Literal(Literal::Int(1))), "should reduce to 1: {tail:?}");
+    }
+
+    #[test]
+    fn fold_comparison_literal_is_capability_free() {
+        assert!(RewriteSpec::parse("fold-comparison-literal").unwrap().cannot_express_capability());
     }
 }

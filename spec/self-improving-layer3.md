@@ -126,6 +126,13 @@ steps 1–2 (validate + compile-to-pass), both reviewed Rust, both fail-closed.
   that erased the panic). Capability-free by construction (it only ever replaces a builtin Call
   with an Int literal, never emits a Call). Mirrors the checker / comptime / SMT constant folders
   for these builtins, so all four evaluators agree.
+  **Third widening LANDED**: `fold-comparison-literal` (folds a comparison of two int literals to its
+  `bool` result — `3 < 5`→`true`, `7 == 7`→`true`). Comparisons are total (never panic), so it is
+  unconditionally behavior-preserving. It is the missing link in the constant-folding chain:
+  `fold-int-literal` folds the operands (`(2+1) < 5` → `3 < 5`), THIS folds the comparison to a bool,
+  and `fold-const-branch` then collapses the enclosing `if` — the three compose to fully evaluate a
+  constant-condition branch. Firewall-cleared (corpus exercises the full arith→compare→branch chain
+  plus a non-literal comparison left intact). Capability-free.
 - **F3 — does a malformed/over-budget spec hang the verifier?** → **No.** Validation (§3 step
   1) rejects non-total specs *before* execution; the compile-to-pass evaluator runs under a
   fixed fuel budget and a wall-clock cap, and a runaway is a rejection (E15xx), never a hang.
