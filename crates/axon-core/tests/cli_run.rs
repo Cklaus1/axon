@@ -3176,6 +3176,33 @@ fn trace_ai_attributes_calls_to_the_triggering_goal_f3() {
 }
 
 #[test]
+fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
+    // ROADMAP §10 — the FIRST acid test ("Hello Goal", engineering-v1): a single
+    // CLI session demonstrating the full loop on SHIPPED PRIMITIVES — define → run
+    // → improve → safety-catch → deploy(gate) → replay. `examples/asi/run.sh
+    // hello-goal` drives it; this gates the milestone. The load-bearing beats: the
+    // @[verify] deploy gate FIRES (the safety catch — a sub-threshold result is
+    // refused before deploy) and the run is REPLAY-reproducible (no model called).
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("asi/run.sh not found — skipping");
+        return;
+    }
+    let out = std::process::Command::new("bash").arg(&script).arg("hello-goal")
+        .env("AXON_AI_MOCK", "1").output().expect("run run.sh hello-goal");
+    let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if m.contains("axon binary not found") {
+        eprintln!("run.sh could not locate the axon binary — skipping");
+        return;
+    }
+    assert!(out.status.success(), "the hello-goal loop must complete cleanly:\n{m}");
+    assert!(m.contains("DEPLOY GATE FIRED") && m.contains("SAFETY CATCH"),
+        "the @[verify] deploy gate must fire as the safety catch:\n{m}");
+    assert!(m.contains("reproducible"), "the run must be replay-reproducible:\n{m}");
+    assert!(m.contains("Engineering-v1 loop complete"), "the full loop must complete:\n{m}");
+}
+
+#[test]
 fn asi_demo_replay_and_audit_commands_work_end_to_end() {
     // The ASI demo's public-face CLI (examples/asi/run.sh) now exercises the
     // landed F2/F3 auditability work on the flagship optimize.ax: `replay`

@@ -646,6 +646,19 @@ third are product v1.
 
 Until all three pass, Axon is a demo, not a product.
 
+**Status — the first acid test ("Hello Goal", engineering-v1) is now DEMONSTRABLE end-to-end on
+shipped primitives.** `examples/asi/run.sh hello-goal` drives the full loop in one session over
+`optimize.ax`: **run** (goal_run hill-climbs the metric) → the `@[verify]` **deploy gate fires** as the
+**safety catch** (a sub-threshold result is refused before deploy, exit 3) → **trace** (score
+trajectory) → **audit** (`axon trace --ai`: every `ai_complete` with its routed model, mode, metered
+cost, and the causal goal) → **improve** (one more cycle, resuming from the provenance log) → **replay**
+(`AXON_AI_REPLAY` re-runs from the LLM-call cache, byte-for-byte reproducible, the model never called).
+Gated by `asi_hello_goal_acid_test_loop_runs_end_to_end`. The CLI *shape* is still the simulated
+Phase-10 surface (`run.sh` stands in for the eventual `axon intent compile` / `axon ast approve` /
+`axon deploy` verbs); the underlying capabilities — search, the proof-gated safety catch, the
+Principal-attributed audit, deterministic replay — are all shipped. Acid tests 2–4 (the non-programmer
+prose UI) remain Phase 10–12.
+
 ---
 
 ## 10.5 Compression / world-model loop (MDL fitness)

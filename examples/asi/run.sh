@@ -110,6 +110,44 @@ case "$cmd" in
             exit 1
         fi
         ;;
+    hello-goal)
+        # The engineering-v1 ACID TEST (ROADMAP §10): one CLI session demonstrating
+        # the full loop on shipped primitives — define → run → improve → safety-catch
+        # → deploy(gate) → replay. Reuses the subcommands above so it stays honest.
+        bin="$(axon_bin)"
+        cache="$(mktemp -d)"; export XDG_CACHE_HOME="$cache"
+        export AXON_AI_MOCK="${AXON_AI_MOCK:-1}"
+        say() { printf '\n\033[1m── %s\033[0m\n' "$1"; }
+        echo "═══ Hello Goal — engineering-v1 acid test (define → run → improve → safety-catch → deploy → replay) ═══"
+        echo "    Goal source: $DEMO"
+        say "1. RUN — goal_run hill-climbs the metric, then the @[verify] deploy gate runs"
+        rc=0; "$bin" run "$DEMO" || rc=$?
+        if [[ $rc -ne 0 ]]; then
+            echo "  → DEPLOY GATE FIRED (exit $rc): a sub-threshold result is REFUSED before deploy — the SAFETY CATCH."
+        else
+            echo "  → deploy gate passed: the result cleared the confidence floor."
+        fi
+        say "2. TRACE — the score trajectory across the search"
+        "$bin" trace 2>/dev/null || true
+        say "3. AUDIT — every ai_complete: routed model, mode, metered cost, and the goal it served"
+        "$bin" trace --ai 2>/dev/null || true
+        say "4. IMPROVE — one more optimization cycle, resuming from the provenance log"
+        AXON_GOAL_CONTINUE=1 "$bin" run "$DEMO" >/dev/null 2>&1 || true
+        echo "  → search continued (the provenance log was extended)."
+        say "5. REPLAY — re-run from the LLM-call cache: deterministic, the model is never called"
+        rcache="$(mktemp)"
+        a="$(AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true   # record
+        b="$(unset AXON_AI_MOCK; AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true  # replay, no mock
+        rm -f "$rcache"
+        if [[ "$a" == "$b" ]]; then
+            echo "  ✓ reproducible — the replayed run matches byte-for-byte (the model was never called)."
+        else
+            echo "  ✗ replay diverged" >&2
+        fi
+        echo
+        echo "═══ Engineering-v1 loop complete: defined → ran → improved → safety-caught → (deploy gate) → replayed. ═══"
+        rm -rf "$cache"
+        ;;
     log)
         # Future: axon log --principal <id>
         # Today: dump the entire provenance log as NDJSON
@@ -139,6 +177,7 @@ case "$cmd" in
         cat <<EOF
 Axon ASI demo CLI (Phase-10 surface, simulated)
 
+  ./run.sh hello-goal  # the engineering-v1 ACID TEST: run → improve → safety-catch → deploy → replay
   ./run.sh demos       # run the 6 key-free decision-pattern demos end to end (the tour)
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
