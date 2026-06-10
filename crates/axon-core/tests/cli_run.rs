@@ -1826,6 +1826,42 @@ fn asi_categorical_goal_demo_finds_the_best_strategy() {
 }
 
 #[test]
+fn prose_effect_surface_enforcement_refuses_an_over_reaching_loop() {
+    // The value wedge, applied to a prose goal: a goal whose generated search loop
+    // needs MORE capability than its prose-declared effect surface allows is
+    // REFUSED at compile time, not run. The default loop calls ai_complete
+    // (network), but here the prose @[contained] grants only exec — no net — so
+    // `axon goal` fails the capability check (exit 2) rather than running an
+    // over-reaching agent. (examples/goals/sandboxed-goal.md is the positive case:
+    // a CONSISTENT surface compiles and runs.)
+    let md = "# Goal: over-reaching agent\n\n\
+        ## Intent\nDo a thing.\n\n\
+        ## Inputs\n- `text: str` — in.\n\n\
+        ## Outputs\n- `answer: str` — out.\n\n\
+        ## Score\nScore it.\n\n\
+        ## Constraints\n- none.\n\n\
+        ## Budget\n- 4 evals.\n\n\
+        ## Verify\n\n```axon\n@[verify(score >= 70)]\n```\n\n\
+        ## Redteam\n- none.\n\n\
+        ## Effect surface\n\n@[contained(exec: any)]\n\n\
+        ## Provenance\n- log.\n";
+    let f = std::env::temp_dir().join(format!("axon_sandbox_violate_{}.md", std::process::id()));
+    std::fs::write(&f, md).unwrap();
+    let out = axon().args(["goal", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}",
+        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(out.status.code(), Some(2),
+        "a loop exceeding its declared effect surface must be refused at compile time: {all}");
+    assert!(
+        all.contains("E1001") || all.contains("E1004")
+            || all.to_lowercase().contains("capab") || all.contains("contained")
+            || all.to_lowercase().contains("network"),
+        "the refusal must cite the capability/effect-surface violation: {all}"
+    );
+}
+
+#[test]
 fn goal_optimize_deploys() {
     let out = axon().args(["goal", &ex("goals/optimize-goal.md")]).output().unwrap();
     assert!(out.status.success(), "optimize-goal exited {:?}", out.status.code());

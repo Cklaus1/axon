@@ -30,7 +30,8 @@ the generated `.ax`:
 | `Redteam` | adversarial gate (when an author `redteam_check` is supplied) |
 | `Budget` (first integer, e.g. "Up to 20 …") | `goal_run`'s evaluation budget (`max_evals`) |
 | `Constraints` | documented intent — but **enforced during the search** when you supply a `feasible` predicate (see below) |
-| `Effect surface` / `Provenance` | documented intent (advisory in v1) |
+| `Effect surface` | documented intent — but **compiler-enforced** when it carries a `@[contained(...)]` declaration: it's stamped on the generated loop, so `try_variant` and everything it calls must stay within the declared capabilities (E1001/E1004), transitively |
+| `Provenance` | documented intent (advisory in v1) |
 
 The compiler wraps the author's logic in a goal-loop harness: an `@[adaptive]`
 `try_variant` driven by `goal_run` (hill-climb), the `@[verify]` deploy gate,
@@ -79,6 +80,7 @@ pulls in exactly the ones you use.
 |---|---|---|
 | `optimize-goal.md` | pure goal-directed optimization to a global max | deploys (exit 0) |
 | `constrained-goal.md` | constrained search — a `feasible` predicate holds the optimizer inside the valid range (`goal_run_constrained`) | deploys (exit 0) |
+| `sandboxed-goal.md` | a prose `@[contained(...)]` effect surface stamped on the loop — the compiler enforces the declared capability boundary (the value wedge) | deploys (exit 0) |
 | `compose-goal.md` | composing auto-bundled prelude helpers | deploys (exit 0) |
 | `verified-goal.md` | enforced confidence gate blocking an under-target agent | **blocks** (exit 101) |
 | `redteam-goal.md` | adversarial gate blocking a high-scoring but unsafe agent | **blocks** (exit 1) |

@@ -137,6 +137,14 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     // emit the default LLM-driven loop over prompt variants + test cases.
     if !provides("try_variant") {
         let _ = writeln!(out, "// ── Hill-climb target — driven by goal_run ───────────────");
+        // A prose `@[contained(...)]` effect surface is stamped on the loop so the
+        // compiler ENFORCES it (E1001/E1004): `try_variant` and everything it calls
+        // (build_prompt, score_output, ai_complete) must stay within the declared
+        // capabilities, transitively. The prose surface becomes a hard boundary.
+        if let Some(contained) = goal.contained_attr() {
+            let _ = writeln!(out, "// effect surface declared in prose — compiler-enforced:");
+            let _ = writeln!(out, "{contained}");
+        }
         let _ = writeln!(out, "@[adaptive]");
         let _ = writeln!(out, "fn try_variant(variant_id: i64) -> i64 {{");
         let _ = writeln!(out, "    let prompt = build_prompt(variant_id)");
@@ -153,6 +161,19 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
         let _ = writeln!(out, "    }}");
         let _ = writeln!(out, "    total / 2");
         let _ = writeln!(out, "}}");
+        let _ = writeln!(out);
+    } else if goal.contained_attr().is_some() {
+        // The author supplied their own try_variant, so we can't stamp the prose
+        // effect surface onto it — flag it loudly rather than silently dropping
+        // the declared boundary (the author must add @[contained(...)] themselves).
+        let _ = writeln!(
+            out,
+            "// NOTE: the prose declares an effect surface (@[contained]) but you supplied your own"
+        );
+        let _ = writeln!(
+            out,
+            "// `try_variant` — add that @[contained(...)] attribute to it so the compiler enforces it."
+        );
         let _ = writeln!(out);
     }
 
@@ -381,6 +402,34 @@ Some scoring.
         assert!(
             !ax.contains("goal_run(\"try_variant\""),
             "must NOT also emit the unconstrained goal_run: {ax}"
+        );
+    }
+
+    #[test]
+    fn prose_effect_surface_is_compiler_enforced_via_contained() {
+        // A `@[contained(...)]` declaration in the Effect surface section is
+        // stamped onto the generated try_variant, so the prose-declared
+        // capabilities are ENFORCED (E1001/E1004 at `axon check`), not merely
+        // documented — the value wedge applied to a prose goal. It must precede
+        // the @[adaptive] loop and must NOT also be lifted as orphan author code.
+        let md = SAMPLE.replace(
+            "## Effect surface\n\n- Just LLM calls.",
+            "## Effect surface\n\n@[contained(net: [\"api.anthropic.com\"], exec: none)]",
+        );
+        let g = GoalFile::parse(&md).unwrap();
+        assert_eq!(
+            g.contained_attr().as_deref(),
+            Some("@[contained(net: [\"api.anthropic.com\"], exec: none)]"),
+            "contained_attr must extract the bracket-balanced declaration"
+        );
+        let ax = emit(&g).unwrap();
+        let ci = ax.find("@[contained").expect("contained stamped on the loop");
+        let ai = ax.find("@[adaptive]").expect("adaptive try_variant present");
+        assert!(ci < ai, "@[contained] must precede the @[adaptive] loop: {ax}");
+        assert_eq!(
+            ax.matches("@[contained").count(),
+            1,
+            "exactly one @[contained] (not also lifted as orphan author code): {ax}"
         );
     }
 

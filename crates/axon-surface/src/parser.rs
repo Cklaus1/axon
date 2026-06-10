@@ -147,6 +147,40 @@ impl GoalFile {
         Ok(after[..end].trim().to_string())
     }
 
+    /// Extract a structured `@[contained(...)]` capability declaration from the
+    /// `Effect surface` section, if the author supplied one (as plain text, no
+    /// fence required). When present, `compile::emit` stamps it on the generated
+    /// search loop so the prose-declared effect surface is COMPILER-ENFORCED
+    /// (E1001/E1004 at `axon check`), not merely documented — the value wedge
+    /// ("the prose says no network; the compiler refuses it") applied to a prose
+    /// goal. Returns the full `@[contained(...)]` attribute text, or `None` when
+    /// the section is free prose (the common case — surface stays advisory).
+    ///
+    /// Bracket-balanced (not a naive `)]` scan) because a cap list nests brackets
+    /// and parens: `@[contained(fs: [write("./out/")], net: ["api"], exec: none)]`.
+    pub fn contained_attr(&self) -> Option<String> {
+        let body = &self.section("Effect surface")?.body;
+        let start = body.find("@[contained")?;
+        let mut depth = 0i32;
+        let mut begun = false;
+        for (i, ch) in body[start..].char_indices() {
+            match ch {
+                '[' => {
+                    depth += 1;
+                    begun = true;
+                }
+                ']' => {
+                    depth -= 1;
+                    if begun && depth == 0 {
+                        return Some(body[start..start + i + 1].trim().to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        None // unbalanced — treat as absent (the section stays advisory)
+    }
+
     /// The goal's evaluation budget — the first positive integer in the
     /// `Budget` section (e.g. "Up to 20 candidate summaries per run" → 20).
     /// Drives `goal_run`'s `max_evals` so the prose Budget bounds the search.
@@ -178,7 +212,11 @@ impl GoalFile {
     pub fn author_code(&self) -> String {
         let mut out = String::new();
         for (key, sec) in &self.sections {
-            if key == "Verify" {
+            // Verify holds the @[verify(...)] predicate (handled separately), and
+            // Effect surface may hold a @[contained(...)] declaration (handled by
+            // `contained_attr` + stamped on the loop) — neither is lifted as a fn
+            // body, so a bare attribute there can't become orphan top-level code.
+            if key == "Verify" || key == "Effect surface" {
                 continue;
             }
             for block in extract_axon_blocks(&sec.body) {
