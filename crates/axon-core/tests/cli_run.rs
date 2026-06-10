@@ -3967,6 +3967,34 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
 }
 
 #[test]
+fn codegen_arr_panic_messages_match_interp() {
+    // I-2 stderr text: the closure-taking array builtins that panic on bad input
+    // (arr_chunk(_,0), arr_max_by([]), arr_min_by([])) used to exit(101) with NO
+    // message; native now routes through __axon_msg_panic / __axon_msg_panic_i64
+    // so the panic line matches the interpreter. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/arr_panic_msg_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("arr_panic_msg_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run arr_panic_msg_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — arr panic message parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native arr panic messages must match the interpreter:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("arr_panic_msg_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_fuzz_parity_finds_no_divergence() {
     // R1f slice 1: the differential fuzzer. Unlike the fixed-case harnesses, it
     // generates seeded-random + edge inputs per builtin, emits ONE program

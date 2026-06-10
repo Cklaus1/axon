@@ -2362,6 +2362,22 @@ pub extern "C" fn __axon_msg_panic(msg_ptr: *const u8, msg_len: i64) -> ! {
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+/// Like `__axon_msg_panic`, but appends a runtime i64 to the message — for the
+/// interpreter messages that interpolate a value, e.g. `arr_chunk: chunk size
+/// must be positive, got <n>`. Prints `axon: panic: <msg><n>` and exits 101, so
+/// native matches the interpreter's stderr text byte-for-byte.
+#[no_mangle]
+pub extern "C" fn __axon_msg_panic_i64(msg_ptr: *const u8, msg_len: i64, n: i64) -> ! {
+    let msg = if msg_ptr.is_null() || msg_len <= 0 {
+        ""
+    } else {
+        let bytes = unsafe { std::slice::from_raw_parts(msg_ptr, msg_len as usize) };
+        std::str::from_utf8(bytes).unwrap_or("")
+    };
+    eprintln!("axon: panic: {msg}{n}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(

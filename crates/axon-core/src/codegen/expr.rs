@@ -2387,14 +2387,22 @@ impl<'ctx> super::Codegen<'ctx> {
         let src_i64 = build_wrappers::w_pointer_cast(
             &self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "mb_srci");
 
-        // Empty → exit(101), matching the interpreter panic.
+        // Empty → panic(101) with the SAME message the interpreter prints
+        // ("arr_max_by: array is empty" / "arr_min_by: array is empty"), via
+        // __axon_msg_panic (was a bare exit(101) with no message → stderr text
+        // diverged from interp).
         let empty_bb = self.ir.context.append_basic_block(fn_val, "mb.empty");
         let nonempty_bb = self.ir.context.append_basic_block(fn_val, "mb.nonempty");
         let is_empty = build_wrappers::w_int_compare(
             &self.ir.builder, inkwell::IntPredicate::EQ, len, i64_ty.const_zero(), "mb_isempty");
         build_wrappers::w_cond_br(&self.ir.builder, is_empty, empty_bb, nonempty_bb);
         self.ir.builder.position_at_end(empty_bb);
-        if let Some(exit_fn) = self.ir.module.get_function("exit") {
+        let mb_msg = if is_max { "arr_max_by: array is empty" } else { "arr_min_by: array is empty" };
+        if let Some(panic_fn) = self.ir.module.get_function("__axon_msg_panic") {
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, mb_msg, "mb_empty_msg");
+            let mlen = i64_ty.const_int(mb_msg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), mlen.into()], "");
+        } else if let Some(exit_fn) = self.ir.module.get_function("exit") {
             let code = self.ir.context.i32_type().const_int(101, false);
             build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
         }
@@ -2927,13 +2935,20 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.build_struct_gep(slice_ty, src_alloca, 1, "ck_dp").unwrap(), "ck_dat").into_pointer_value();
         let src = build_wrappers::w_pointer_cast(&self.ir.builder, src_raw, i64_ty.ptr_type(AddressSpace::default()), "ck_si");
 
-        // n <= 0 → exit(101) panic.
+        // n <= 0 → panic(101) with the interpreter's message, which interpolates
+        // the value: "arr_chunk: chunk size must be positive, got <n>". Use the
+        // i64-appending panic helper (was a bare exit(101) with no message).
         let bad_bb = self.ir.context.append_basic_block(fn_val, "ck.bad");
         let ok_bb = self.ir.context.append_basic_block(fn_val, "ck.ok");
         let npos = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::SGT, n, i64_ty.const_zero(), "ck_np");
         build_wrappers::w_cond_br(&self.ir.builder, npos, ok_bb, bad_bb);
         self.ir.builder.position_at_end(bad_bb);
-        if let Some(exit_fn) = self.ir.module.get_function("exit") {
+        let ck_msg = "arr_chunk: chunk size must be positive, got ";
+        if let Some(panic_fn) = self.ir.module.get_function("__axon_msg_panic_i64") {
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, ck_msg, "ck_bad_msg");
+            let mlen = i64_ty.const_int(ck_msg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), mlen.into(), n.into()], "");
+        } else if let Some(exit_fn) = self.ir.module.get_function("exit") {
             let code = self.ir.context.i32_type().const_int(101, false);
             build_wrappers::w_call(&self.ir.builder, exit_fn, &[code.into()], "");
         }

@@ -2196,6 +2196,10 @@ impl<'ctx> super::Codegen<'ctx> {
         {
             let mp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
             let _ = self.ir.module.add_function("__axon_msg_panic", mp_ty, None);
+            // …and the i64-interpolating variant: __axon_msg_panic_i64(msg, len, n)
+            // for messages that append a runtime value (e.g. "…got <n>").
+            let mpi_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into(), i64_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_msg_panic_i64", mpi_ty, None);
         }
 
         // ── Phase 5: refinement-precondition violation panic ─────────────────
