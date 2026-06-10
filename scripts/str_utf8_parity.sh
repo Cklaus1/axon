@@ -18,8 +18,16 @@ cd "$ROOT"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
+# str_trim's divergent inputs (Unicode whitespace, ASCII control chars) cannot
+# appear in a string literal — the lexer rejects raw U+00A0/control bytes — so
+# the trim cases are fed as RUNTIME strings via read_file. data1 is NBSP-padded
+# (U+00A0 = 0xC2 0xA0, which Rust's trim removes but the old byte<=32 codegen
+# kept); data2 is \x01-padded (which the old codegen stripped but Rust keeps).
+printf '\xc2\xa0hi\xc2\xa0' > "$WORK/trim1.txt"
+printf '\x01yo\x01'         > "$WORK/trim2.txt"
+
 PROG="$WORK/strutf.ax"
-cat > "$PROG" <<'AX'
+cat > "$PROG" <<AX
 fn main() -> i64 {
     println(str_reverse("héllo"))
     println(str_reverse("日本語"))
@@ -29,6 +37,8 @@ fn main() -> i64 {
     println(str_to_upper("héllo wörld"))
     println(str_to_lower("HÉLLO WÖRLD"))
     println(str_to_upper("straße"))
+    match read_file("$WORK/trim1.txt") { Ok(s) => println("[{str_trim(s)}]")  Err(e) => println("e1 {e}") }
+    match read_file("$WORK/trim2.txt") { Ok(s) => println("[{str_trim(s)}]")  Err(e) => println("e2 {e}") }
     0
 }
 AX
@@ -75,8 +85,18 @@ if ! echo "$native_out" | grep -q "STRASSE"; then
   echo "str_utf8_parity: FAIL — str_to_upper(\"straße\") did not grow ß→SS: $native_out"
   exit 1
 fi
+# str_trim must follow Unicode White_Space: REMOVE U+00A0 (the old byte<=32 kept it)…
+if ! echo "$native_out" | grep -q "\[hi\]"; then
+  echo "str_utf8_parity: FAIL — str_trim did not strip U+00A0 (Unicode whitespace): $native_out"
+  exit 1
+fi
+# …and KEEP ASCII control \x01 (the old byte<=32 wrongly stripped it).
+if ! printf '%s' "$native_out" | grep -q "$(printf '\[\x01yo\x01\]')"; then
+  echo "str_utf8_parity: FAIL — str_trim wrongly stripped ASCII control \\x01: $native_out"
+  exit 1
+fi
 
-echo "str_utf8_parity: OK — native str_reverse/str_replace/str_to_upper/str_to_lower match the interpreter:"
+echo "str_utf8_parity: OK — native str_reverse/str_replace/str_to_upper/str_to_lower/str_trim match the interpreter:"
 echo "$native_out" | sed 's/^/  /'
-echo "str_reverse, str_replace, and str_to_upper/lower match the interpreter"
+echo "str_reverse, str_replace, str_to_upper/lower, and str_trim match the interpreter"
 exit 0

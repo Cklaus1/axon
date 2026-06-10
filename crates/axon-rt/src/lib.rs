@@ -1641,6 +1641,35 @@ pub extern "C" fn __axon_str_to_lower(s_len: i64, s_ptr: *const u8, out_len: *mu
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
 
+/// `str_trim(s)` / `str_trim_start` / `str_trim_end` — trim Unicode whitespace,
+/// matching the interpreter (`str::trim`/`trim_start`/`trim_end`). The old inline
+/// codegen trimmed every byte `<= 32`, which both UNDER-trims (keeps U+00A0 and
+/// other Unicode whitespace the interp removes) and OVER-trims (strips ASCII
+/// control chars like `\x01` the interp keeps — Rust's `char::is_whitespace` is
+/// the Unicode White_Space set, not "byte <= 32"). Reachable via runtime strings
+/// (read_file / ai_complete / str_split), not just literals. I-2-canonical.
+/// Same str→str out-param ABI as str_reverse.
+macro_rules! axon_str_trim_fn {
+    ($name:ident, $method:ident) => {
+        #[no_mangle]
+        #[cfg(not(target_arch = "wasm32"))]
+        pub extern "C" fn $name(s: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
+            let result = unsafe { s.as_str() }.$method().to_string();
+            unsafe { write_str_out(&result, out_len, out_ptr) }
+        }
+        #[cfg(target_arch = "wasm32")]
+        #[no_mangle]
+        pub extern "C" fn $name(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
+            let s = AxonStr { len: s_len, ptr: s_ptr };
+            let result = unsafe { s.as_str() }.$method().to_string();
+            unsafe { write_str_out(&result, out_len, out_ptr) }
+        }
+    };
+}
+axon_str_trim_fn!(__axon_str_trim, trim);
+axon_str_trim_fn!(__axon_str_trim_start, trim_start);
+axon_str_trim_fn!(__axon_str_trim_end, trim_end);
+
 /// `str_digits_only(s)` — keep only the ASCII digit chars, matching the
 /// interpreter (`chars().filter(is_ascii_digit)`). Same str→str out-param ABI as
 /// str_reverse; native takes AxonStr by value, wasm32 takes the expanded scalar
