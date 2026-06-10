@@ -20,6 +20,30 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
+fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
+    // R7c precondition: the interpreter crate must compile for the WASI-free
+    // wasm32-unknown-unknown (in-browser) target — the prerequisite for the R15
+    // browser binding. run_suspendable / run_suspendable_stdio are cfg-split
+    // (native worker thread vs wasm direct run) so no unconditional std::thread
+    // reaches the wasm build. Guarded by a cargo check; skips if the target or
+    // cargo is unavailable.
+    let script = format!("{}/../../scripts/wasm_unknown_interp_builds.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_unknown_interp_builds.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_unknown_interp_builds.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("wasm32-unknown-unknown unavailable — skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "interp must compile for wasm32-unknown-unknown:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_unknown_interp_builds: PASS"), "expected PASS:\n{stdout}{stderr}");
+}
+
+#[test]
 fn r15_host_await_interactive_via_axon_run_reads_stdin() {
     // R15 resume runtime (v0): a program that suspends via `host_await` runs under
     // `axon run`'s stdin/stdout host — the request is written as a prompt, and a

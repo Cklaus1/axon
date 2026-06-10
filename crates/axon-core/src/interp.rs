@@ -699,6 +699,14 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
 /// is called once per `host_await`, on THIS thread; its return — `Some(reply)` or
 /// `None` at end-of-input — is fed back as the resume value. Returns the program's
 /// exit code. (R15 v0 — str payloads.)
+///
+/// NATIVE-ONLY: the substrate is a worker thread (`std::thread::scope`), which is
+/// unavailable on `wasm32` (`thread::spawn` traps). The browser binding (R7c)
+/// drives `host_await` via Asyncify + a JS import instead (R15 §13), NOT this
+/// thread-based path — so the wasm variant below runs the program with no host
+/// driver (a `host_await` call hits the clean "no host driver" panic, exit 101,
+/// rather than trapping on a thread spawn). Mirrors the `on_deep_stack` cfg split.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
     use std::sync::mpsc::channel;
     let (req_tx, req_rx) = channel::<String>(); // worker → host (await requests)
@@ -717,6 +725,17 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<S
         }
         worker.join().unwrap_or(101)
     })
+}
+
+/// wasm32 has no OS threads, so the worker-thread host-driver substrate can't run
+/// here. Run the program directly with NO host driver: a `host_await` call then
+/// hits the clean "called outside a suspendable run (no host driver)" panic
+/// (exit 101), rather than trapping on `thread::spawn`. The browser binding (R7c)
+/// will drive `host_await` via Asyncify + a JS import (R15 §13) — a different
+/// substrate that replaces this one on wasm, with the same surface + semantics.
+#[cfg(target_arch = "wasm32")]
+pub fn run_suspendable(program: &Program, _host: impl FnMut(&str) -> Option<String>) -> i32 {
+    run_program_inner(program, crate::verify::Discharged::default())
 }
 
 /// The default CLI host for `host_await`: write the request (a prompt) to stdout,
