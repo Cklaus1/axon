@@ -1,7 +1,8 @@
 # Tech Spec — Resume / suspend-across-host-event runtime
 
 **Spec ID:** `R15-resume-runtime` (Phase-6 continuation runtime; gates R7c interactive, R13/R14 UI)
-**Status:** Draft
+**Status:** Implementing — **slice-1 v0 LANDED** (`623d1a2`): `host_await(str)->str` via a
+worker-thread substrate (str payloads), B1/B2/B4/B5 green. Remaining slices below.
 **Risk class:** Structural
 **Author / date:** loop (autonomous), 2026-06-10
 
@@ -154,12 +155,22 @@ is ever spawned (the same-thread substrate is the only feasible one — §4).
 
 ### 11. Rollout & rollback
 
-Interp-only + additive → behind the existing effect machinery; the new `Flow::HostYield`
-variant and the `host_await` builtin are inert unless used. Rollback = revert the slice;
-nothing else depends on it yet. Slices: (1) the coroutine substrate + `host_await` +
-Rust-host entry point + B1/B2/B4 tests; (2) the loop case (B3) + drop/resource (B6) +
-E1315 codegen refusal (B5); (3) the kernel-scheduler `Suspended` state integration; (4) the
-browser binding (separate spec, R7c follow-on) and the `on_frame`/`fetch` surface.
+Interp-only + additive → the `host_await` builtin is inert unless a `run_suspendable`
+driver is active. Rollback = revert the slice; nothing else depends on it yet.
+
+Slices:
+- **(1) v0 — LANDED (`623d1a2`).** `host_await(str)->str` via a **worker-thread** substrate
+  (the `!Send` interp stays on the worker; str payloads cross as `String`, result as `i32`).
+  B1/B2/B4/**B5** green + a clean no-host error. No `Flow` variant or `unsafe` was needed —
+  the worker thread blocking on the reply channel IS the suspension. This validates the API
+  + the suspension property (B2: host called exactly once per await) NOW.
+- **(2) v1 — the coroutine swap.** Replace the thread substrate with a same-thread stackful
+  coroutine (§4) so **arbitrary-`Value` payloads** (dict/struct, not just str — they're
+  `!Send` so can't cross a thread) work, and to drop the per-suspend thread cost. This is
+  the intricate part (the yielder-lifetime plumbing). Adds B3 (loop) over real Values.
+- **(3)** drop/resource (B6) + the kernel-scheduler `Suspended(token)` state.
+- **(4)** the browser binding (single-threaded → Asyncify / JS step-loop; R7c follow-on) and
+  the `on_frame`/`fetch` surface (desugar to `host_await`, like Phase-8 `for!`).
 
 ### 12. Open questions
 
