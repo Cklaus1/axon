@@ -977,7 +977,19 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
             let has_main = program.items.iter().any(|it| {
                 matches!(it, axon_core::ast::Item::FnDef(fd) if fd.name == "main")
             });
-            if has_main {
+            // The G1 oracle proves a pass is behavior-preserving by comparing
+            // program OUTPUT — which is only meaningful for DETERMINISTIC, pure-
+            // compute programs. Exclude any member that does I/O (fs/net/exec: its
+            // output depends on external mutable state — e.g. file_roundtrip.ax
+            // read/writes a shared /tmp file that RACES under parallel verification,
+            // making G1 falsely reject a valid pass) or uses a non-deterministic
+            // builtin (clock/RNG/host input). This is the "pure-compute" contract
+            // this fn's doc-comment already promises, now enforced.
+            let pure = axon_core::capabilities::program_capabilities(&program).is_empty()
+                && !["now_ms", "random_i64", "random_f64", "host_await", "read_line"]
+                    .iter()
+                    .any(|b| src.contains(b));
+            if has_main && pure {
                 let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
                 corpus.push((name, bytes, program));
             }
