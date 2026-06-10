@@ -301,6 +301,13 @@ pub struct CheckCtx {
     /// among total fns has no per-fn decreasing measure, so it can't be proven to
     /// terminate → E1208, sound by refusal).
     total_fn_defs: HashMap<String, Expr>,
+    /// Names of impl methods whose body is IMPURE (calls an impure builtin / a
+    /// non-`@[pure]` fn / spawn / …). A `@[pure]` fn calling such a method via
+    /// `x.m()` is E1207 — closes the MethodCall hole in the purity gate (a pure
+    /// getter, whose body is pure, is NOT here, so it stays callable: no false
+    /// positive). Over dispatch: a name is impure if ANY impl method of that name
+    /// is impure (the checker has no receiver type — conservative, sound).
+    impure_method_names: HashSet<String>,
     /// Phase 5: `@[pure]` fn → (param names, body expr). Lets a refinement
     /// predicate CALL a pure function over the bound constant (depth ≤ 4),
     /// inlining its body in the constant evaluator. Pure fns are I/O-free
@@ -378,6 +385,7 @@ impl CheckCtx {
             pure_fns: HashSet::new(),
             total_fns: HashSet::new(),
             total_fn_defs: HashMap::new(),
+            impure_method_names: HashSet::new(),
             pure_fn_defs: HashMap::new(),
             refinement_base: HashMap::new(),
             refinement_pred: HashMap::new(),
@@ -535,6 +543,21 @@ impl CheckCtx {
                     // Whole-struct refinement predicate (`{…} where _.lo <= _.hi`).
                     if let Some(pred) = &td.refinement {
                         self.struct_refinements.insert(td.name.clone(), (**pred).clone());
+                    }
+                }
+            }
+        }
+        // Determine which impl-method NAMES are impure (body calls an impure
+        // builtin / a non-@[pure] fn / spawn / …), so a @[pure] fn calling such a
+        // method via `x.m()` can be flagged. A pure getter has no violations →
+        // stays callable. Computed once, after pure_fns is populated.
+        for item in &program.items {
+            if let Item::ImplBlock(blk) = item {
+                for m in &blk.methods {
+                    let mut v: Vec<(String, &'static str)> = Vec::new();
+                    Self::collect_purity_violations(&m.body, &self.pure_fns, &mut v);
+                    if !v.is_empty() {
+                        self.impure_method_names.insert(m.name.clone());
                     }
                 }
             }
@@ -1430,6 +1453,13 @@ impl CheckCtx {
         }
         let mut violations: Vec<(String, &'static str)> = Vec::new();
         Self::collect_purity_violations(&f.body, &self.pure_fns, &mut violations);
+        // Also flag `x.m()` where method `m` is impure — collect_purity_violations
+        // only inspects Ident callees, so an impure METHOD call slipped through
+        // (the MethodCall-vs-Call gap). A pure getter is not in
+        // impure_method_names, so it stays callable (no false positive).
+        if !self.impure_method_names.is_empty() {
+            Self::collect_impure_method_calls(&f.body, &self.impure_method_names, &mut violations);
+        }
         for (callee, kind) in violations {
             let file = self.file.clone();
             self.errors.push(
@@ -1448,6 +1478,24 @@ impl CheckCtx {
                 )),
             );
         }
+    }
+
+    /// Collect `x.m()` MethodCalls whose method name is in `impure_methods`
+    /// (their impl body is impure). Pushed as ("m", "impure method") so the
+    /// E1207 message reads uniformly with the Ident-call violations.
+    fn collect_impure_method_calls(
+        expr: &Expr,
+        impure_methods: &HashSet<String>,
+        out: &mut Vec<(String, &'static str)>,
+    ) {
+        if let Expr::MethodCall { method, .. } = expr {
+            if impure_methods.contains(method) {
+                out.push((method.clone(), "impure method"));
+            }
+        }
+        Self::for_each_child(expr, &mut |c| {
+            Self::collect_impure_method_calls(c, impure_methods, out)
+        });
     }
 
     /// Phase 5/6: a refinement predicate must be PURE — it is a static,

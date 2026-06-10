@@ -5815,6 +5815,29 @@ fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
 }
 
 #[test]
+fn pure_fn_calling_an_impure_method_is_e1207() {
+    // Purity gap (was a hole): collect_purity_violations only inspected Ident
+    // callees, so a @[pure] fn calling an IMPURE method (x.m() whose impl body
+    // does I/O) slipped through. Now the checker computes impure-method names and
+    // flags such calls. A PURE getter method stays callable (no false positive).
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_purem_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    // REJECT: @[pure] fn calls a method whose body does I/O.
+    let impure = "type C = { n: i64 }\ntrait L { fn log(self) -> i64 }\nimpl L for C { fn log(self: C) -> i64 { println(\"fx\")  self.n } }\n@[pure]\nfn p(c: C) -> i64 { c.log() }\nfn main() -> i64 { let c = C { n: 1 }  p(c) }";
+    let (code, m) = check(impure);
+    assert_eq!(code, 2, "@[pure] calling an impure method must fail: {m}");
+    assert!(m.contains("E1207"), "expected E1207: {m}");
+    // ACCEPT: @[pure] fn calls a PURE getter method (no false positive).
+    let pure = "type C = { n: i64 }\ntrait G { fn get(self) -> i64 }\nimpl G for C { fn get(self: C) -> i64 { self.n } }\n@[pure]\nfn p(c: C) -> i64 { c.get() + 1 }\nfn main() -> i64 { let c = C { n: 5 }  p(c) }";
+    assert_eq!(check(pure).0, 0, "@[pure] calling a pure getter must pass");
+}
+
+#[test]
 fn goal_optimizer_builtins_are_impure_e1207() {
     // Purity gap (was a hole): only `goal_run` (+ the goal_best_*/history/clear
     // accessors) were in is_impure_builtin, so a @[pure] fn calling the newer
