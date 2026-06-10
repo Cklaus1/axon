@@ -3080,6 +3080,46 @@ fn trace_json_is_machine_readable() {
 }
 
 #[test]
+fn trace_ai_summarizes_the_ai_call_audit_trail() {
+    // The viewing half of the auditability story: `axon trace --ai` surfaces the
+    // ai_complete audit trail (who called which routed model, in what mode, at
+    // what cost) that the provenance log records. Two fns at different tiers; the
+    // summary must show the calls, the tier→model routing, the mock mode, and a
+    // machine-readable JSON schema.
+    let prog = "@[ai(policy(tier: strong, budget: 3))]\n\
+                fn analyze() -> str { match ai_complete(\"analyze\") { Ok(s) => s  Err(e) => e } }\n\
+                @[ai(policy(tier: cheap, budget: 3))]\n\
+                fn label() -> str { match ai_complete(\"label\") { Ok(s) => s  Err(e) => e } }\n\
+                fn main() -> i64 { let _ = analyze()  let _ = label()  let _ = label()  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_aiaudit_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_aiaudit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+
+    let run = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
+
+    // Human view.
+    let human = axon().args(["trace", "--ai"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let h = String::from_utf8_lossy(&human.stdout);
+    assert!(human.status.success(), "trace --ai exited {:?}", human.status.code());
+    assert!(h.contains("3 ai_complete call(s)"), "must count all 3 calls: {h:?}");
+    assert!(h.contains("analyze") && h.contains("label"), "must list both fns: {h:?}");
+    assert!(h.contains("mock 3"), "all 3 calls were mock mode: {h:?}");
+
+    // JSON view (stable schema).
+    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+    let j = String::from_utf8_lossy(&jout.stdout);
+    assert!(j.contains("\"schema\":\"axon-ai-audit/1\""), "stable schema id: {j:?}");
+    assert!(j.contains("\"calls\":3"), "total calls: {j:?}");
+    assert!(j.contains("\"mock\":3"), "mode breakdown: {j:?}");
+    assert!(j.contains("\"tier\":\"strong\"") && j.contains("\"tier\":\"cheap\""), "per-fn tiers: {j:?}");
+}
+
+#[test]
 fn trace_missing_log_exits_nonzero() {
     let out = axon()
         .args(["trace"])

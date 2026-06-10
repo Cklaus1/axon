@@ -1826,7 +1826,10 @@ mod provenance;
 // call sites (json_quote, append_*_jsonl, read_best_input, …) are unchanged,
 // and re-export the public API at the original `interp::` path for main.rs.
 use provenance::*;
-pub use provenance::{ProvRecord, best_recorded_score, read_provenance, set_provenance_source};
+pub use provenance::{
+    AiCallRecord, ProvRecord, best_recorded_score, read_ai_calls, read_provenance,
+    set_provenance_source,
+};
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
 /// clock on first use). Single-threaded interpreter, so no CAS needed.

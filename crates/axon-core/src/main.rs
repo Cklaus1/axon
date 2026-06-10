@@ -264,6 +264,11 @@ enum Command {
         /// Emit the per-fn summary as a JSON array (for programmatic consumers).
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
+
+        /// Summarize the AI-call audit trail (ai_complete calls: model, mode,
+        /// cost) instead of the @[adaptive] score trajectory.
+        #[arg(long, help = "Summarize the ai_complete audit trail (model/mode/cost)")]
+        ai: bool,
     },
 
     /// Report the description-length (MDL) complexity of a .ax file.
@@ -451,7 +456,13 @@ fn dispatch(command: Command) {
         Command::Verify { file } => cmd_verify(file),
         Command::Target { action } => cmd_target(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
-        Command::Trace { func, path, json } => cmd_trace(func, path, json),
+        Command::Trace { func, path, json, ai } => {
+            if ai {
+                cmd_trace_ai(func, path, json)
+            } else {
+                cmd_trace(func, path, json)
+            }
+        }
         Command::Complexity { file, json } => cmd_complexity(file, json),
     }
 }
@@ -2250,6 +2261,113 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
         println!(
             "  {}{from}: {} eval(s)  range [{}, {}{at}]  first {} → last {}  [{}]",
             s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
+        );
+    }
+}
+
+/// Per-(fn, src) summary of the AI-call audit trail (`axon trace --ai`).
+struct AiTraceStat {
+    func: String,
+    src: String,
+    calls: usize,
+    cost_usd: f64,
+    tier: String,
+    model: String,
+    live: usize,
+    mock: usize,
+    replay: usize,
+    fallback: usize,
+}
+
+/// `axon trace --ai`: summarize the `ai_complete` audit trail from the provenance
+/// log — who called which routed model, in what mode (live/mock/replay/fallback),
+/// and the metered cost. The viewing half of the auditability story (the recording
+/// half is the provenance log + AXON_AI_REPLAY).
+fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
+    use std::collections::HashMap;
+    let Some(recs) = axon_core::interp::read_ai_calls(path.as_deref()) else {
+        eprintln!("no provenance log found (run a program that calls ai_complete first).");
+        process::exit(1);
+    };
+    let mut order: Vec<(String, String)> = Vec::new();
+    let mut groups: HashMap<(String, String), AiTraceStat> = HashMap::new();
+    let mut total = 0usize;
+    let mut total_cost = 0.0f64;
+    let (mut t_live, mut t_mock, mut t_replay, mut t_fallback) = (0usize, 0usize, 0usize, 0usize);
+    for r in &recs {
+        if func.as_ref().is_some_and(|f| f != &r.func) {
+            continue;
+        }
+        let key = (r.func.clone(), r.src.clone());
+        if !groups.contains_key(&key) {
+            order.push(key.clone());
+            groups.insert(
+                key.clone(),
+                AiTraceStat {
+                    func: r.func.clone(),
+                    src: r.src.clone(),
+                    calls: 0,
+                    cost_usd: 0.0,
+                    tier: r.tier.clone(),
+                    model: r.model.clone(),
+                    live: 0,
+                    mock: 0,
+                    replay: 0,
+                    fallback: 0,
+                },
+            );
+        }
+        let g = groups.get_mut(&key).unwrap();
+        g.calls += 1;
+        g.cost_usd += r.cost_usd;
+        if !r.tier.is_empty() {
+            g.tier = r.tier.clone();
+        }
+        if !r.model.is_empty() {
+            g.model = r.model.clone();
+        }
+        match r.mode.as_str() {
+            "live" => { g.live += 1; t_live += 1; }
+            "mock" => { g.mock += 1; t_mock += 1; }
+            "replay" => { g.replay += 1; t_replay += 1; }
+            "fallback" => { g.fallback += 1; t_fallback += 1; }
+            _ => {}
+        }
+        total += 1;
+        total_cost += r.cost_usd;
+    }
+
+    if json {
+        let body: Vec<String> = order
+            .iter()
+            .map(|k| {
+                let s = &groups[k];
+                format!(
+                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
+                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
+                )
+            })
+            .collect();
+        println!(
+            "{{\"schema\":\"axon-ai-audit/1\",\"calls\":{total},\"cost_usd\":{total_cost},\"modes\":{{\"live\":{t_live},\"mock\":{t_mock},\"replay\":{t_replay},\"fallback\":{t_fallback}}},\"by_fn\":[{}]}}",
+            body.join(","),
+        );
+        return;
+    }
+
+    if total == 0 {
+        println!("# ai-audit: 0 ai_complete call(s) logged");
+        return;
+    }
+    println!(
+        "# ai-audit: {total} ai_complete call(s), ${total_cost:.6} total  (live {t_live}  mock {t_mock}  replay {t_replay}  fallback {t_fallback})",
+    );
+    for k in &order {
+        let s = &groups[k];
+        let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
+        println!(
+            "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}",
+            s.func, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
         );
     }
 }

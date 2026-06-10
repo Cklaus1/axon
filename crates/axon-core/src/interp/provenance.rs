@@ -296,6 +296,51 @@ pub fn read_provenance(path: Option<&std::path::Path>) -> Option<Vec<ProvRecord>
     Some(out)
 }
 
+/// One `ai_call` audit record from the provenance log — the AI-call trail behind
+/// `axon trace --ai`. Captures who called which routed model, in what mode
+/// (live/mock/replay/fallback), and the metered cost.
+#[derive(Debug, Clone)]
+pub struct AiCallRecord {
+    pub func: String,
+    pub tier: String,
+    pub model: String,
+    /// "live" | "mock" | "replay" | "fallback".
+    pub mode: String,
+    pub cost_usd: f64,
+    pub src: String,
+}
+
+/// Read the `ai_call` events from the provenance log (the AI-call audit trail).
+/// `None` when the log is absent/unreadable; non-`ai_call` rows (adaptive scores,
+/// agent actions) are skipped.
+pub fn read_ai_calls(path: Option<&std::path::Path>) -> Option<Vec<AiCallRecord>> {
+    let owned;
+    let path = match path {
+        Some(p) => p,
+        None => {
+            owned = provenance_log_path()?;
+            &owned
+        }
+    };
+    let content = std::fs::read_to_string(path).ok()?;
+    let mut out = Vec::new();
+    for line in content.lines() {
+        if extract_json_str(line, "\"event\":").as_deref() != Some("ai_call") {
+            continue;
+        }
+        let Some(func) = extract_json_str(line, "\"fn\":") else { continue };
+        out.push(AiCallRecord {
+            func,
+            tier: extract_json_str(line, "\"tier\":").unwrap_or_default(),
+            model: extract_json_str(line, "\"model\":").unwrap_or_default(),
+            mode: extract_json_str(line, "\"mode\":").unwrap_or_default(),
+            cost_usd: extract_json_num(line, "\"cost_usd\":").unwrap_or(0.0),
+            src: extract_json_str(line, "\"src\":").unwrap_or_default(),
+        });
+    }
+    Some(out)
+}
+
 /// Extract the string value following `key` (e.g. `"fn":`) in a JSON line.
 /// Tolerant of our own fixed log format; assumes no escaped quotes in the value
 /// (true for fn names). `None` if absent or unterminated.
