@@ -5820,6 +5820,29 @@ fn impl_method_call_arity_is_checked_statically_e0305() {
 }
 
 #[test]
+fn sensitive_laundered_through_a_method_is_e1206() {
+    // SOUNDNESS (was a hole): the @[sensitive] E1206 check + the exfiltration
+    // taint-fixpoint only covered free fns / Call sites, so a sensitive value
+    // passed to a METHOD that forwards it to a sink (ai_complete/write_file/exec)
+    // escaped. The fixpoint now computes exfiltrating params for impl methods
+    // (mangled key) and the MethodCall arm checks them (self-offset). E1206.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_sm_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let base = "@[sensitive(pii)]\ntype User = { name: str, email: str }\ntype L = { id: i64 }\ntrait S { fn ship(self, payload: str) -> str }\nimpl S for L { fn ship(self: L, payload: str) -> str { match ai_complete(payload) { Ok(s) => s  Err(e) => e } } }\n";
+    // REJECT: sensitive field laundered through the exfiltrating method.
+    let (c, m) = check(&format!("{base}fn main() -> i64 {{ let u = User {{ name: \"A\", email: \"x\" }}\n let l = L {{ id: 1 }}\n let _ = l.ship(u.email)\n 0 }}"));
+    assert_eq!(c, 2, "sensitive→method-exfiltration must be E1206: {m}");
+    assert!(m.contains("E1206"), "expected E1206: {m}");
+    // ACCEPT: a non-sensitive arg to the same method.
+    assert_eq!(check(&format!("{base}fn main() -> i64 {{ let l = L {{ id: 1 }}\n let _ = l.ship(\"public\")\n 0 }}")).0, 0, "non-sensitive arg must pass");
+}
+
+#[test]
 fn total_attribute_rejects_while_loops_e1208() {
     // A `@[total]` fn must terminate. The totality analysis reasons about
     // recursion + bounded `for` ranges, but a `while` loop is unbounded and its

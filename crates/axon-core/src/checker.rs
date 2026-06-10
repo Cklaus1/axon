@@ -2433,6 +2433,48 @@ impl CheckCtx {
                             );
                         }
                     }
+                    // @[sensitive] exfiltration through a METHOD: if `key__method`
+                    // forwards a parameter to a sink (computed by the taint fixpoint,
+                    // which now covers impl methods), and the matching explicit arg
+                    // is a sensitive value, it's E1206 — the MethodCall analog of the
+                    // Call-site check (was missing entirely). Method param idx `p`
+                    // includes `self` at 0, so the explicit arg is at `p - 1`.
+                    if has_method && !self.sensitive_types.is_empty() {
+                        if let Some(positions) =
+                            self.exfiltrating_params.get(&format!("{key}__{method}")).cloned()
+                        {
+                            for p in positions {
+                                if p == 0 {
+                                    continue; // the receiver (`self`) slot
+                                }
+                                if let Some(arg) = args.get(p - 1) {
+                                    let apath = format!("{node_path}.arg_{}", p - 1);
+                                    if let Some((sname, cat)) =
+                                        self.sensitive_flow_in(arg, &apath, scope)
+                                    {
+                                        let file = self.file.clone();
+                                        let ai = p - 1;
+                                        self.errors.push(
+                                            CheckError::new(
+                                                E1206,
+                                                format!(
+                                                    "a `@[sensitive({cat})]` value from `{sname}` is passed to `{method}`, \
+                                                     which forwards argument {ai} to an exfiltration sink (AI call / file \
+                                                     write / exec) — sensitive data must never leave the program boundary"
+                                                ),
+                                            )
+                                            .node(&apath)
+                                            .at(&file, 0, 0)
+                                            .fix(format!(
+                                                "strip the sensitive fields before the call (e.g. build a redacted \
+                                                 projection of `{sname}`), or move the call behind a local-only boundary"
+                                            )),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -3547,19 +3589,39 @@ impl CheckCtx {
     /// of ITS already-known exfiltrating positions. Iterating to a fixpoint
     /// propagates taint through chains of helpers.
     fn compute_exfiltrating_params(&mut self, program: &Program) {
-        // Collect the (name, param-names, body) of every user fn once.
-        let fns: Vec<(String, Vec<String>, &Expr)> = program
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                Item::FnDef(f) => Some((
+        // Collect the (name, param-names, body) of every user fn once — free fns
+        // AND impl-block methods (keyed by the mangled `{Type}__{method}`, matching
+        // infer's collect_sigs, so a MethodCall site can look the method up). Was
+        // free-fns-only, so sensitive data laundered through a METHOD that forwards
+        // an arg to a sink escaped E1206 (the MethodCall-vs-Call gap class).
+        let ast_type_simple_name = |ty: &AxonType| -> String {
+            match ty {
+                AxonType::Named(n) => n.clone(),
+                AxonType::Generic { base, .. } => base.clone(),
+                _ => "Unknown".into(),
+            }
+        };
+        let mut fns: Vec<(String, Vec<String>, &Expr)> = Vec::new();
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) => fns.push((
                     f.name.clone(),
                     f.params.iter().map(|p| p.name.clone()).collect(),
                     &f.body,
                 )),
-                _ => None,
-            })
-            .collect();
+                Item::ImplBlock(blk) => {
+                    let ty = ast_type_simple_name(&blk.for_type);
+                    for m in &blk.methods {
+                        fns.push((
+                            format!("{ty}__{}", m.name),
+                            m.params.iter().map(|p| p.name.clone()).collect(),
+                            &m.body,
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
 
         let mut changed = true;
         // Bounded by the number of (fn, param) pairs; the fixpoint converges
