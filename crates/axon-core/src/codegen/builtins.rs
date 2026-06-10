@@ -226,11 +226,10 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("eprint".to_string(), fn_val);
         }
 
-        // C stdlib: int snprintf(char *buf, size_t n, const char *fmt, ...)
-        // R7: `n` is `size_t` — i32 on wasm32 (ILP32), i64 on native. Call sites
-        // pass the buffer length through `msize` to match this width.
-        let snprintf_ty = i32_ty.fn_type(&[i8_ptr.into(), malloc_size_ty.into(), i8_ptr.into()], true);
-        let snprintf_fn = self.ir.module.add_function("snprintf", snprintf_ty, None);
+        // (snprintf is no longer declared — to_str(i64)/to_str_f64 now delegate to
+        // axon-rt's __axon_i64_to_str_radix / __axon_f64_to_str (Rust formatting),
+        // so codegen emits NO libc snprintf at all. That removes the last variadic
+        // libc dep and lets number printing link on the browser target.)
 
         // to_str: i64 → { i64, ptr }
         // Uses malloc-allocated buffer so the returned str is heap-owned and
@@ -283,90 +282,39 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("to_str".to_string(), fn_val);
         }
 
-        // to_str_f64: f64 → { i64, ptr } via snprintf("%.6g")
-        // Uses malloc-allocated buffer so the returned str is heap-owned.
+        // to_str_f64: f64 → { i64, ptr }. Delegate to axon-rt's __axon_f64_to_str,
+        // which formats via the shared `axon_fmt_g` (a verbatim copy of the
+        // interpreter's `fmt_g`) — so native uses the SAME %.6g code as the
+        // interpreter oracle (no separate snprintf to drift from), matching by
+        // construction. fmt_g handles -0.0→"0" and any-NaN→"nan" internally, so
+        // the old codegen-side normalization is gone. NO libc snprintf → f64
+        // printing links on the browser target (wasm32-unknown-unknown) too.
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let f64_ty = self.ir.context.f64_type();
             let fn_ty = str_ty.fn_type(&[f64_ty.into()], false);
             let fn_val = self.ir.module.add_function("to_str_f64", fn_ty, None);
-
-            // Get (or re-use) malloc declaration.
-            let malloc_fn = self.ir.module.get_function("malloc").unwrap_or_else(|| {
-                let malloc_ty = i8_ptr.fn_type(&[i64_ty.into()], false);
-                self.ir.module.add_function("malloc", malloc_ty, None)
-            });
-
-            let fmt_bytes = self.ir.context.const_string(b"%.6g", true);
-            let fmt_global = self.ir.module.add_global(fmt_bytes.get_type(), None, "to_str_f64_fmt");
-            fmt_global.set_initializer(&fmt_bytes);
-            fmt_global.set_constant(true);
-
             let entry = self.ir.context.append_basic_block(fn_val, "entry");
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry);
+            let x = fn_val.get_nth_param(0).unwrap().into_float_value();
 
-            let raw_n = fn_val.get_nth_param(0).unwrap().into_float_value();
-            // I-2 parity: the interpreter's fmt_g returns "0" for x == 0.0, which
-            // (since -0.0 == 0.0) normalizes negative zero. C's snprintf("%.6g",
-            // -0.0) instead prints "-0". Collapse -0.0 → +0.0 here so native
-            // matches the oracle: n = (raw_n == 0.0) ? 0.0 : raw_n. The OEQ
-            // compare is true for both +0.0 and -0.0, so the select replaces
-            // negative zero with a literal +0.0 and leaves every other value.
-            let zero_f = f64_ty.const_float(0.0);
-            let is_zero = self.ir.builder
-                .build_float_compare(inkwell::FloatPredicate::OEQ, raw_n, zero_f, "iszero")
-                .unwrap();
-            let n_z = self.ir.builder
-                .build_select(is_zero, zero_f, raw_n, "n_norm")
-                .unwrap()
-                .into_float_value();
-            // I-2 parity: the interpreter's fmt_g returns "nan" for ANY NaN
-            // (sign-agnostic), but C's snprintf("%.6g", x) prints "-nan" when the
-            // NaN's sign bit is set (e.g. sqrt(-1.0) yields a negative NaN).
-            // Collapse any NaN to a canonical positive NaN so native prints
-            // "nan" too: n = isnan(n_z) ? +NaN : n_z. UNO(n_z, n_z) is true iff
-            // n_z is NaN (an unordered self-compare).
-            let pos_nan = f64_ty.const_float(f64::NAN);
-            let is_nan = self.ir.builder
-                .build_float_compare(inkwell::FloatPredicate::UNO, n_z, n_z, "isnan")
-                .unwrap();
-            let n = self.ir.builder
-                .build_select(is_nan, pos_nan, n_z, "n_nanorm")
-                .unwrap()
-                .into_float_value();
-            let fmt_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,fmt_global.as_pointer_value(), i8_ptr, "fmtptr");
-
-            // Pass 1: snprintf(NULL, 0, "%.6g", n) → required length.
-            let null_ptr = i8_ptr.const_null();
-            let zero64 = i64_ty.const_int(0, false);
-            let snp_len = build_wrappers::w_call(&self.ir.builder,
-                    snprintf_fn,
-                    &[null_ptr.into(), self.msize(zero64, "msz").into(), fmt_ptr.into(), n.into()],
-                    "snplen");
-            let len_i32 = snp_len.try_as_basic_value().left().unwrap().into_int_value();
-            let len_i64 = build_wrappers::w_int_z_extend(&self.ir.builder,len_i32, i64_ty, "len64");
-
-            // Allocate len + 1 bytes.
-            let one64 = i64_ty.const_int(1, false);
-            let alloc_size = build_wrappers::w_int_add(&self.ir.builder,len_i64, one64, "allocsz");
-            let buf_call = build_wrappers::w_call(&self.ir.builder,malloc_fn, &[self.msize(alloc_size, "msz").into()], "buf");
-            let buf_ptr = buf_call.try_as_basic_value().left().unwrap().into_pointer_value();
-
-            // Pass 2: snprintf(buf, len+1, "%.6g", n).
-            build_wrappers::w_call(&self.ir.builder,
-                    snprintf_fn,
-                    &[buf_ptr.into(), self.msize(alloc_size, "msz").into(), fmt_ptr.into(), n.into()],
-                    "snpwrite");
-
-            let out_alloca = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "out");
-            let len_ptr = build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), out_alloca, 0, "lenptr");
-            let dat_ptr = build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), out_alloca, 1, "datptr");
-            build_wrappers::w_store(&self.ir.builder,len_ptr, len_i64.into());
-            build_wrappers::w_store(&self.ir.builder,dat_ptr, buf_ptr.into());
-            let out = build_wrappers::w_load(&self.ir.builder,str_ty.into(), out_alloca, "outval");
-            build_wrappers::w_ret(&self.ir.builder, out);
-
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
+            let rt_ty = self.ir.context.void_type().fn_type(
+                &[f64_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
+            let rt_fn = self.ir.module.get_function("__axon_f64_to_str")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_f64_to_str", rt_ty, None));
+            let out_len = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "tf_olen");
+            let out_ptr = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "tf_optr");
+            let out_ptr_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr, i8_ptr_ptr, "tf_optrcast");
+            build_wrappers::w_call(&self.ir.builder, rt_fn, &[x.into(), out_len.into(), out_ptr_cast.into()], "tf_call");
+            let len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len, "tf_len").into_int_value();
+            let ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr, "tf_ptr").into_pointer_value();
+            let mut result = str_ty.const_zero();
+            result = build_wrappers::w_insert_value(&self.ir.builder, result, len.into(), 0, "tf_r0").into_struct_value();
+            result = build_wrappers::w_insert_value(&self.ir.builder, result, ptr.into(), 1, "tf_r1").into_struct_value();
+            build_wrappers::w_ret(&self.ir.builder, result.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("to_str_f64".to_string(), fn_val);
         }

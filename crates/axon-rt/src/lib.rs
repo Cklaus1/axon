@@ -1547,6 +1547,60 @@ pub extern "C" fn __axon_i64_to_str_radix(
     }
 }
 
+/// `%.6g`-format an f64, matching the interpreter oracle (interp/value.rs
+/// `fmt_g`, which the differential fuzzer converged onto C's snprintf("%.6g")).
+/// Copied here VERBATIM so codegen's to_str_f64 can delegate instead of calling
+/// libc snprintf — making native==interp by construction AND unblocking f64
+/// printing on the browser target (wasm32-unknown-unknown, no libc). KEEP IN SYNC
+/// with interp `fmt_g`.
+fn axon_fmt_g(x: f64) -> String {
+    if x == 0.0 {
+        return "0".into();
+    }
+    if x.is_nan() {
+        return "nan".into();
+    }
+    if x.is_infinite() {
+        return if x < 0.0 { "-inf" } else { "inf" }.into();
+    }
+    let p: i32 = 6;
+    let e = x.abs().log10().floor() as i32;
+    if e < -4 || e >= p {
+        let raw = format!("{:.*e}", (p - 1) as usize, x);
+        let (mantissa, exp) = raw.split_once('e').unwrap_or((raw.as_str(), "0"));
+        let mut m = mantissa.to_string();
+        if m.contains('.') {
+            while m.ends_with('0') {
+                m.pop();
+            }
+            if m.ends_with('.') {
+                m.pop();
+            }
+        }
+        let exp_n: i32 = exp.parse().unwrap_or(0);
+        let sign = if exp_n < 0 { '-' } else { '+' };
+        return format!("{m}e{sign}{:02}", exp_n.abs());
+    }
+    let decimals = (p - 1 - e).max(0) as usize;
+    let mut s = format!("{:.*}", decimals, x);
+    if s.contains('.') {
+        while s.ends_with('0') {
+            s.pop();
+        }
+        if s.ends_with('.') {
+            s.pop();
+        }
+    }
+    s
+}
+
+/// `to_str_f64(x)` → `%.6g` string via the shared `axon_fmt_g` (no libc snprintf).
+#[no_mangle]
+pub extern "C" fn __axon_f64_to_str(x: f64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    let s = axon_fmt_g(x);
+    unsafe { write_str_out(&s, out_len, out_ptr) }
+}
+
 /// Write a str result via out-params: malloc a NUL-terminated buffer, copy the
 /// string bytes, set *out_len and *out_ptr.  Caller owns the returned buffer.
 #[inline(never)]

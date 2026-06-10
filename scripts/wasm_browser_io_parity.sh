@@ -37,6 +37,7 @@ PROGS[hello]='fn main() { println("hello from the browser") }'
 PROGS[multi]='fn main() { println("line one")  println("line two")  println("line three") }'
 PROGS[strop]='fn main() { println(str_to_upper("shout"))  println(str_reverse("abc")) }'
 PROGS[nums]='fn main() { println(to_str(42))  println(to_str(0 - 7))  println("sum={6 * 7}") }'
+PROGS[floats]='fn main() { println(to_str_f64(3.14))  println(to_str_f64(1000000.0))  println("pi={3.14159}") }'
 
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 pass=0; fail=0; ran=0
