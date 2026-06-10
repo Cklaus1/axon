@@ -47,7 +47,11 @@ fn main() -> i64 {
     let slc = str_slice("hello world", 0, 5)
     let idx = str_index_of("hello", "l")
     let rep = str_repeat("ab", 3)
-    n + str_len(s) + str_len(slc) + idx + str_len(rep)
+    let up = str_to_upper("abc")
+    let lo = str_to_lower("ABC")
+    let tr = str_trim("  xy  ")
+    let pd = str_pad_start("z", 4, "0")
+    n + str_len(s) + str_len(slc) + idx + str_len(rep) + str_len(up) + str_len(lo) + str_len(tr) + str_len(pd)
 }
 AX
 
@@ -83,5 +87,5 @@ if [ "$((W_OUT % 256))" != "$I_EXIT" ]; then
   echo "wasm_str_abi_parity: FAIL — wasm ($W_OUT) != interp ($I_EXIT)"; exit 1
 fi
 
-echo "wasm_str_abi_parity: PASS — 7 str builtins run identically on interp, native, and AOT-wasm ✓"
+echo "wasm_str_abi_parity: PASS — 11 str builtins (incl. str_to_upper/lower/trim/pad) run identically on interp, native, and AOT-wasm ✓"
 exit 0
