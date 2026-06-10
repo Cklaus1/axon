@@ -1,31 +1,51 @@
 # Axon Session Status
 
-**Last update**: 2026-05-31 (second pass — see "Shipped after the first refresh" below)
+**Last update**: 2026-06-10
 **Branch**: `merge-asi-layer3` (pushed to `origin/merge-asi-layer3`)
-**Latest commit**: `eea2198` — underscore-prefixed names exempt from W0002
-shadowing (compounds across every demo using `let _ = …`).
+**Latest commit**: `baebc92` — merge remote-tracking branch; latest feature commit
+`044b73e` Layer-3 DSL widening (fold-logical rule kind, red-teamed).
 
 Snapshot of current state. Companion to `ROADMAP.md` (forward plan),
-`STATUS.md` (Phase-4 shipped state), `BUILD_DIAGNOSIS.md` and
-`CODEGEN_WRAPPER_PROTOTYPE.md` (native-build investigation).
+`STATUS.md` (Phase-4 shipped state), `BUILD_RESOLVED.md` (native build
+root-cause and resolution).
 
 ---
 
-## The headline: interpreter-first, ASI surface complete enough to compose
+## The headline: native build solved; full stack through Phase 8 + Layer-3 DSL
 
-The native LLVM/inkwell `codegen` build of `axon-core` still **doesn't
-finish** (historically 5h+; the `#[inline(never)]` wrapper fix is applied
-but is a constant-factor reduction, not asymptotic — see
-`BUILD_DIAGNOSIS.md`). The interpreter is the active execution path.
+The native LLVM/inkwell `codegen` build of `axon-core` **finishes in ~3–4
+seconds**. The long-standing stall (historically 5h+) was a `serde-json` ×
+`codegen` default-feature collision — recursive AST `Serialize`/`Deserialize`
+derives drove rustc's monomorphizer into exponential type-relation work. Fixed
+by dropping `serde-json` from `default` (see `BUILD_RESOLVED.md`). `cargo
+build -p axon-core` produces a working native `axon` binary; `axon build
+foo.ax` emits a real native binary. Do **not** enable `codegen + serde-json`
+together.
 
-But the *language surface* shipped through the interpreter is now wide
-and consistent enough that an ASI program can be written entirely in
-pure Axon, with safety primitives, an optimizer, persistence, and a
-17-builtin goal-introspection suite — all composable. The `safe_self_improve`
-flagship demo (`examples/asi/safe_self_improve.ax`) ties the whole stack
-together: `mod`-imports a Tier-1 Agent, runs the multi-arg optimizer over
-an action catalog, gates each step through the safety quartet, and
-demonstrates a latching kill-switch.
+The interpreter remains the primary execution path for `run`/`test`/`goal`/
+`check` (codegen-free, sub-second). Native and interpreter outputs are
+byte-identical on all `examples/` under `AXON_AI_MOCK=1`.
+
+Beyond the build fix, the following major milestones have landed since the
+prior session snapshot:
+
+- **Phase 5 SMT discharge** wired into the DEFAULT pipeline (proven
+  for-all-inputs refinement/verify checks are statically elided; `514e059`).
+- **Phase 6 effects + replay-based multi-shot resume** landed (`7a79772`,
+  E1314); handler discharge (E04) for inline + named handlers.
+- **Phase 7 kernel services** — R12 slices 1–5:
+  principal/scheduler/supervisor/Store/LLM\<Caps> (`3aae955`). One gap
+  remains: kernel `Goal\<M>` is unbuilt — only the `LLM\<Caps>` half of
+  slice 5 shipped (`kernel.rs:485` is a comment stub + `LlmGateway`); no
+  `KernelGoal` struct or principal-scoped goal builtins yet.
+- **Phase 8 surface** — `for!` search + `goal{}` block desugar to `goal_run`
+  at parse time (`221a5d0`).
+- **Multi-provider LLM backend** — `AXON_AI_PROVIDER=anthropic|openai` +
+  `AXON_AI_BASE_URL`/`API_KEY` + `.env` support; trainloop gateway and
+  NIM/OpenRouter work via OpenAI-compat codec (`a6205b3`).
+- **Layer-3 self-improving RewriteSpec DSL** — AI-authored compiler passes as
+  DATA; firewall rejects unsound paths; `fold-logical` rule kind added and
+  red-teamed (`983395f` / `3da3509` / `044b73e`).
 
 ## Shipped after the first refresh (since `5926377`)
 
@@ -233,7 +253,7 @@ builtin shipped.
 | `axon check f.ax` | static pipeline only |
 | `axon test f.ax` | run `@[test]` fns in-process (honors `should_fail`) |
 | `axon goal g.md` | prose `goal.md` → `.ax` (axon-surface) → check → run; `--iterate N` for autonomous convergence |
-| `axon build f.ax` | native AOT — cfg(codegen) stub unless built `--features codegen` (the slow path) |
+| `axon build f.ax` | native AOT binary — codegen is DEFAULT (~3s build); byte-identical to interp on all `examples/` under `AXON_AI_MOCK=1` |
 | `axon parse f.ax` / `axon lsp` | need `--features serde-json` |
 
 - All `examples/*.ax` (deterministic) + 18 ASI demos run cleanly via the interpreter.
@@ -283,8 +303,11 @@ phase spec lands.
 In-language opportunities still on the table:
 1. HashMap / Set primitive (O(1) `arr_unique`, dict-shaped state).
 2. Cross-file `mod` polish — qualified access, re-exports.
-3. Native build validation on a beefy machine, once a CI invocation is
-   feasible (the wrapper fix is applied; the constant-factor win is
-   measured but the multi-hour build still needs CI scheduling).
-4. Powell's-method generalization to longer line searches with a
+3. Phase 5 remaining: widen SMT static discharge so a provable obligation
+   elides its runtime check in the default pipeline.
+4. Phase 6 remaining: row-variable unification (E03, HM-level open rows),
+   `resume`/shallow-continuation runtime (handlers currently erase to body).
+5. Layer-3 DSL: expand the RewriteSpec rule vocabulary beyond the current
+   four verified passes; wire the firewall into CI.
+6. Powell's-method generalization to longer line searches with a
    bracketing step instead of pure geometric doubling.
