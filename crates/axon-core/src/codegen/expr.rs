@@ -615,6 +615,49 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 
+    /// Soundness guard for the v1 INT-valued native dict. After a `__axon_dict_get`
+    /// call has written the value's tag to `tag_slot` and returned `found` (i1):
+    /// if the found value is a STR (tag 2), codegen cannot reconstruct an
+    /// `Option<str>` here, and reinterpreting the str pointer as an i64 would
+    /// SILENTLY return a wrong value (the interpreter returns the str — an I-2
+    /// divergence). Split the current block and, on the str path, abort via
+    /// `__axon_msg_panic` (exit 101) with a clear "use `axon run`" message; the
+    /// builder is left positioned on the no-str continuation block. `who` names
+    /// the calling builtin for the message. (The str/array-valued *sources* —
+    /// `dict_from_str`/`arr_group_by` — stay E0910-refused; this catches the
+    /// `dict_set(d,k,"…")` + read path that has no compile-time str signal.)
+    fn emit_dict_str_value_guard(
+        &mut self,
+        found: inkwell::values::IntValue<'ctx>,
+        tag_slot: PointerValue<'ctx>,
+        fn_val: FunctionValue<'ctx>,
+        who: &str,
+    ) {
+        // Defensive: if the current block is already terminated, do nothing.
+        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+            return;
+        }
+        let i64_ty = self.ir.context.i64_type();
+        let tag = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), tag_slot, "dvg_tag").into_int_value();
+        let is_str_tag = build_wrappers::w_int_compare(
+            &self.ir.builder, inkwell::IntPredicate::EQ, tag, i64_ty.const_int(2, false), "dvg_isstr");
+        let is_str = build_wrappers::w_and(&self.ir.builder, found, is_str_tag, "dvg_strfound");
+        let panic_bb = self.ir.context.append_basic_block(fn_val, "dvg_panic");
+        let cont_bb = self.ir.context.append_basic_block(fn_val, "dvg_cont");
+        build_wrappers::w_cond_br(&self.ir.builder, is_str, panic_bb, cont_bb);
+        self.ir.builder.position_at_end(panic_bb);
+        let msg = format!(
+            "{who}: str-valued dicts are not supported by native codegen \
+             (v1 dict is int-valued) — use `axon run`");
+        if let Some(panic_fn) = self.ir.module.get_function("__axon_msg_panic") {
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, &msg, "dvg_msg");
+            let mlen = i64_ty.const_int(msg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, panic_fn, &[g.into(), mlen.into()], "");
+        }
+        build_wrappers::w_unreachable(&self.ir.builder);
+        self.ir.builder.position_at_end(cont_bb);
+    }
+
     // ── Binary operation emission ─────────────────────────────────────────────
 
     /// Emit a guarded call to `__axon_arith_panic` on the *current* block's
@@ -4646,6 +4689,14 @@ impl<'ctx> super::Codegen<'ctx> {
                 let found = self.ir.builder
                     .build_call(f, &[d.into(), key.into(), tag_slot.into(), pay_slot.into(), sl_slot.into()], "dg_call")
                     .unwrap().try_as_basic_value().left()?.into_int_value();
+                // Soundness guard (I-2): the v1 native dict is INT-valued. If the
+                // found value is a STR (tag 2), codegen cannot reconstruct an
+                // Option<str> here — building Option<i64> from the str pointer
+                // would SILENTLY return a wrong value (the interpreter returns the
+                // str). Abort LOUDLY instead of miscomputing. (dict_from_str /
+                // arr_group_by — the str/array-valued sources — stay E0910-refused;
+                // this catches the dict_set(d,k,"…")+get path.)
+                self.emit_dict_str_value_guard(found, tag_slot, fn_val, "dict_get");
                 let payload = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), pay_slot, "dg_p").into_int_value();
                 // Build Option<i64> via emit_option + select on the found flag.
                 let some_v = self.emit_option(Some(payload.into()), &Type::I64);
@@ -4918,6 +4969,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 let found = self.ir.builder
                     .build_call(f, &[d.into(), key.into(), tag_slot.into(), pay_slot.into(), sl_slot.into()], "go_call")
                     .unwrap().try_as_basic_value().left()?.into_int_value();
+                // Same I-2 soundness guard as dict_get: a str value can't be read
+                // back as i64 here — abort loudly rather than miscompute.
+                self.emit_dict_str_value_guard(found, tag_slot, fn_val, "dict_get_or");
                 let payload = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), pay_slot, "go_p");
                 // select(found, payload, default).
                 let chosen = self.ir.builder.build_select(found, payload, default, "go_sel").unwrap();
