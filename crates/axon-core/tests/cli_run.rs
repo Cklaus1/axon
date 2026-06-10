@@ -67,6 +67,31 @@ fn wasm_browser_host_await_round_trips_r7c() {
 }
 
 #[test]
+fn wasm_asyncify_host_await_suspends_across_async_r7c() {
+    // R15 §13 B3: the BROWSER-ASYNC binding. The axon-wasm module is instrumented
+    // with `wasm-opt --asyncify` so the SAME axon_host_await import can SUSPEND the
+    // module across an async JS operation (a Promise: input box / fetch /
+    // requestAnimationFrame) and REWIND to resume at host_await — the capability
+    // that gates all interactive browser targets. Asserts the async round-trip for a
+    // 2-turn program, a multi-turn while-loop, and host_await_opt. Skips if the
+    // wasm target, wasm-opt (binaryen), or node is absent.
+    let script = format!("{}/../../scripts/wasm_asyncify_host_await.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_asyncify_host_await.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_asyncify_host_await.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("wasm/wasm-opt/node unavailable — asyncify host_await skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "host_await must suspend across async JS work via Asyncify:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_asyncify_host_await: PASS"), "expected PASS:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_interpreter_evals_identically_to_native_r7c() {
     // R7c foundation: the Axon INTERPRETER runs in the browser
     // (wasm32-unknown-unknown) as a dynamic `eval` of .ax source — the axon-wasm

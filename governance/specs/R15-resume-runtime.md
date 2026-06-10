@@ -230,3 +230,34 @@ Concrete slices (each independently testable under `node`):
 This keeps the §4 semantics (`host_await(req)->reply`, effects fire once, EOF via
 `host_await_opt`) identical between the native thread substrate and the browser Asyncify
 substrate — two bindings, one surface.
+
+#### 13a. Status — B1/B2/B3 ALL LANDED (2026-06-10)
+
+- **B2 ✓** (`b6ea133`): `crates/axon-wasm` cdylib — `axon_alloc/axon_eval/axon_output_*`
+  C-ABI exports, zero wasm-bindgen imports; the interpreter evaluates `.ax` in the browser as
+  dynamic eval. Gated `wasm_browser_interp_parity.sh` (8 programs byte-identical native vs
+  wasm-under-node). Fix: `now_ms`/`sleep_ms` are cfg-stubbed on wasm (`SystemTime`/`thread::sleep`
+  trap on unknown-unknown — every program had trapped at `Interp::build`→`rng_seed`).
+- **B1 ✓** (`149e02e`): `host_await_yield` cfg-split three ways — native worker-thread channel,
+  wasip1 stdin, browser `axon_host_await(req_ptr,req_len,out_ptr,out_cap)->i64` JS import; the
+  request goes to the HOST (page UI / tool-call), not stdout. Gated `wasm_browser_host_await.sh`
+  (synchronous round-trip + EOF). The synchronous plumbing Asyncify wraps.
+- **B3 ✓** (this slice): `wasm-opt --asyncify --pass-arg=asyncify-imports@env.axon_host_await`
+  instruments the module so the SAME `axon_host_await` import SUSPENDS the wasm across an async
+  JS operation (a Promise — input box / fetch / requestAnimationFrame) and REWINDS to resume at
+  the call. `scripts/wasm_asyncify_driver.js` runs the Asyncify state machine (state 1=unwind →
+  await Promise → start_rewind → re-enter `axon_eval`). Gated `wasm_asyncify_host_await.sh` +
+  cli `wasm_asyncify_host_await_suspends_across_async_r7c`: a 2-turn program, a multi-turn
+  while-loop, and `host_await_opt` all round-trip across real async (`setTimeout`) replies.
+  **This closes the browser-async binding — interactive Axon now suspends/resumes in the browser.**
+  Binaryen-108 feature flags required for modern-rustc wasm (`--enable-bulk-memory --enable-sign-ext
+  --enable-mutable-globals --enable-nontrapping-float-to-int --enable-simd --enable-reference-types
+  --enable-multivalue`).
+
+  **Known edge:** a DEEPLY-nested suspend point (`host_await` inside `while→match→match→if`, e.g.
+  `examples/interactive/guess.ax`) overflows the JS engine call stack during Asyncify *rewind*
+  under binaryen 108 — the rewind re-enters every saved wasm frame; the limit is the engine stack,
+  not the (ample) data buffer. Shallow-to-moderate suspend points (loops, Option, multi-turn) work.
+  Mitigations if needed later: a newer binaryen, `--asyncify` with `asyncify-addlist` tuning, or the
+  JS step-loop fallback. The deep-nest program DOES run on the synchronous browser host and on
+  native/wasip1, so it is a browser-async-only limitation, not a semantic regression.
