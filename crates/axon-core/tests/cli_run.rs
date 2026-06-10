@@ -7440,7 +7440,10 @@ fn sensitive_value_laundered_through_a_transform_is_e1206() {
     let cases = [
         ("str builtin", mk("let e = str_to_upper(u.email)")),
         ("interpolation", mk("let e = \"addr: {u.email}\"")),
-        ("interpolation direct field", mk("let e = str_trim(u.email)")),
+        ("str trim builtin", mk("let e = str_trim(u.email)")),
+        ("if branch", mk("let e = if str_len(u.name) > 0 { u.email } else { \"\" }")),
+        ("match arm", mk("let e = match u.name { _ => u.email }")),
+        ("block tail", mk("let e = { let tmp = u.email  tmp }")),
     ];
     for (label, src) in cases {
         let f = std::env::temp_dir().join(format!("axon_xform_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
@@ -7455,8 +7458,9 @@ fn sensitive_value_laundered_through_a_transform_is_e1206() {
     // and sensitive data transformed but used PURELY locally (no sink) is fine.
     let clean = format!(
         "{hdr}fn ok(name: str) -> str {{ let e = str_to_upper(name)\n  match ai_complete(e) {{ Ok(s) => s  Err(_) => \"\" }} }}\n\
+         fn branch(u: User) -> str {{ let e = if str_len(u.name) > 0 {{ \"public-a\" }} else {{ \"public-b\" }}\n  match ai_complete(e) {{ Ok(s) => s  Err(_) => \"\" }} }}\n\
          fn local(u: User) -> i64 {{ let e = str_to_upper(u.email)\n  str_len(e) }}\n\
-         fn main() -> i64 {{ let z = ok(\"public\")\n  let u = User {{ name: \"Ada\", email: \"x\" }}\n  local(u) }}\n"
+         fn main() -> i64 {{ let z = ok(\"public\")\n  let u = User {{ name: \"Ada\", email: \"x\" }}\n  let y = branch(u)\n  local(u) }}\n"
     );
     let f = std::env::temp_dir().join(format!("axon_xform_clean_{}.ax", std::process::id()));
     std::fs::write(&f, &clean).unwrap();

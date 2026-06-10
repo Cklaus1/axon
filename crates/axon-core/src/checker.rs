@@ -3863,6 +3863,40 @@ impl CheckCtx {
                     return Some(found);
                 }
             }
+            // (g) Value-producing control flow — `let e = if c { u.email } else { x }`,
+            // `let e = match k { _ => u.email }`. The result is one of the branch /
+            // arm bodies, so a sensitive value in any of them flows out. (Residual:
+            // a pattern that DESTRUCTURES a sensitive subject — `match u { User{email}
+            // => email }` — binds the field to a fresh name not in sensitive_locals;
+            // and result-depends-on-sensitive-subject leakage is not modelled. Both
+            // need pattern-binding / control-dependence taint — documented limits.)
+            Expr::If { then, else_, .. } => {
+                if let Some(found) = self.sensitive_flow_in(then, &format!("{apath}.then"), scope) {
+                    return Some(found);
+                }
+                if let Some(e) = else_ {
+                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.else"), scope) {
+                        return Some(found);
+                    }
+                }
+            }
+            Expr::Match { arms, .. } => {
+                for (i, arm) in arms.iter().enumerate() {
+                    if let Some(found) =
+                        self.sensitive_flow_in(&arm.body, &format!("{apath}.arm_{i}"), scope)
+                    {
+                        return Some(found);
+                    }
+                }
+            }
+            // (h) A block — the value is its tail expression.
+            Expr::Block(stmts) => {
+                if let Some(tail) = stmts.last() {
+                    if let Some(found) = self.sensitive_flow_in(&tail.expr, &format!("{apath}.tail"), scope) {
+                        return Some(found);
+                    }
+                }
+            }
             _ => {}
         }
         None
