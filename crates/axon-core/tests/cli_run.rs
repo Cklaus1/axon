@@ -5793,6 +5793,33 @@ fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
 }
 
 #[test]
+fn impl_method_call_arity_is_checked_statically_e0305() {
+    // SOUNDNESS (was a hole): the MethodCall arm checked method EXISTENCE (E0403)
+    // but never arity, so `r.area(99, 200)` on a 0-explicit-arg method passed the
+    // checker and panicked at runtime. Now E0305 fires. Method sigs include `self`
+    // as param 0; explicit args map to params[1..].
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_marity_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let rect = "type Rect = { w: i64, h: i64 }\ntrait Area { fn area(self) -> i64 }\nimpl Area for Rect { fn area(self: Rect) -> i64 { self.w * self.h } }\n";
+    // REJECT: too many args (method takes 0 besides self).
+    let (c, m) = check(&format!("{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area(99, 200) }}"));
+    assert_eq!(c, 2, "wrong method arity must fail check: {m}");
+    assert!(m.contains("E0305"), "expected E0305: {m}");
+    // ACCEPT: correct arity (0 explicit args).
+    assert_eq!(check(&format!("{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area() }}")).0, 0, "correct method call must pass");
+
+    // A method that takes self + 1 explicit arg: both directions.
+    let add = "type C = { n: i64 }\ntrait A { fn add(self, x: i64) -> i64 }\nimpl A for C { fn add(self: C, x: i64) -> i64 { self.n + x } }\n";
+    assert_eq!(check(&format!("{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add(5) }}")).0, 0, "self+1arg correct call must pass");
+    assert_eq!(check(&format!("{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add() }}")).0, 2, "self+1arg missing arg must fail");
+}
+
+#[test]
 fn total_attribute_rejects_while_loops_e1208() {
     // A `@[total]` fn must terminate. The totality analysis reasons about
     // recursion + bounded `for` ranges, but a `while` loop is unbounded and its

@@ -2398,6 +2398,40 @@ impl CheckCtx {
                                 .at(&file, 0, 0)
                                 .fix(hint),
                         );
+                    } else if let Some(sig) =
+                        self.fn_sigs.get(&format!("{key}__{method}")).cloned()
+                    {
+                        // ARITY check for the impl method (was MISSING — a wrong
+                        // arg count passed both infer and the checker, then panicked
+                        // at runtime "expected N args, got M"). Method sigs include
+                        // `self` as param 0, so the explicit call args map to
+                        // params[1..]. Arity ONLY — type-checking `self` across impls
+                        // is fragile (skip it to avoid false positives). If the
+                        // mangled sig isn't found we simply don't check (no FP).
+                        let expected = sig.params.len().saturating_sub(1);
+                        if args.len() != expected {
+                            let file = self.file.clone();
+                            let span = self.current_span;
+                            self.errors.push(
+                                CheckError::new(
+                                    E0305,
+                                    format!(
+                                        "method `{method}` on `{key}` takes {expected} argument{} but {} {} supplied",
+                                        if expected == 1 { "" } else { "s" },
+                                        args.len(),
+                                        if args.len() == 1 { "was" } else { "were" },
+                                    ),
+                                )
+                                .node(node_path)
+                                .at(&file, 0, 0)
+                                .with_span(span)
+                                .expected(expected.to_string())
+                                .found(args.len().to_string())
+                                .fix(format!(
+                                    "`{method}` takes {expected} argument(s) besides the receiver `self`"
+                                )),
+                            );
+                        }
                     }
                 }
             }
