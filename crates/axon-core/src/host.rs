@@ -7,6 +7,9 @@
 //! behavior is byte-identical.
 
 use std::cell::RefCell;
+// Only the native clock path + the test mock use SystemTime; the wasm now_ms is
+// a fixed 0 (no clock there), so the import is native/test-only.
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── The trait ────────────────────────────────────────────────────────────────
@@ -51,16 +54,29 @@ impl AxonHost for DefaultHost {
         std::env::var(key).ok()
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn now_ms(&self) -> i64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0)
     }
+    // wasm32 has no SystemTime clock (it PANICS on unknown-unknown). A real clock
+    // arrives via the JS-import host in the R7c browser binding; here `now_ms()`
+    // is a fixed 0 so a program that reads it doesn't trap.
+    #[cfg(target_arch = "wasm32")]
+    fn now_ms(&self) -> i64 {
+        0
+    }
 
+    #[cfg(not(target_arch = "wasm32"))]
     fn sleep_ms(&self, ms: u64) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
+    // wasm32 has no OS threads — sleeping is a no-op (a browser host would yield
+    // to the event loop via the R7c async binding instead).
+    #[cfg(target_arch = "wasm32")]
+    fn sleep_ms(&self, _ms: u64) {}
 
     fn exec(&self, cmd: &str, args: &[String]) -> Result<String, String> {
         let output = std::process::Command::new(cmd)

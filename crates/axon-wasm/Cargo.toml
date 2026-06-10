@@ -1,0 +1,18 @@
+[package]
+name = "axon-wasm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# A wasm32-unknown-unknown cdylib: the codegen-free Axon INTERPRETER exposed to
+# JavaScript as a dynamic `eval` of `.ax` source — the in-browser playground /
+# REPL (run arbitrary source with no per-program AOT compile, which the codegen
+# browser path can't do), and the entry-point foundation for the R15 browser
+# `host_await` binding (R7c). Depends on axon-core WITHOUT the codegen feature
+# (no LLVM/inkwell on wasm) — the pure tree-walking interpreter only.
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+axon-core = { path = "../axon-core", default-features = false }

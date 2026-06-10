@@ -1762,11 +1762,22 @@ pub fn ai_mock_enabled() -> bool {
 }
 
 /// Milliseconds since the Unix epoch.
+#[cfg(not(target_arch = "wasm32"))]
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+/// wasm32 (esp. unknown-unknown / the browser) has no `SystemTime` clock —
+/// `SystemTime::now()` PANICS there ("time not implemented"), which would trap
+/// `Interp::build` (rng seeding) for EVERY program. Return a fixed 0: the RNG
+/// then seeds deterministically (fine for a browser playground; a real clock for
+/// `now_ms()`/`temporal_*` will arrive via a JS-import host in the R7c binding).
+#[cfg(target_arch = "wasm32")]
+fn now_ms() -> i64 {
+    0
 }
 
 // Goal-directed optimization (run_goal*/hill_climb*/introspection) extracted to

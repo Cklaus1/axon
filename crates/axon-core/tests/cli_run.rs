@@ -43,6 +43,31 @@ fn host_await_runs_identically_on_wasm_wasip1() {
 }
 
 #[test]
+fn wasm_interpreter_evals_identically_to_native_r7c() {
+    // R7c foundation: the Axon INTERPRETER runs in the browser
+    // (wasm32-unknown-unknown) as a dynamic `eval` of .ax source — the axon-wasm
+    // cdylib (axon_alloc/axon_eval/axon_output_*, zero JS-glue imports). A
+    // playground/REPL capability distinct from the codegen AOT path, and the
+    // entry-point foundation for the R15 browser host_await binding. This runs
+    // compute programs through the wasm interp (under Node) and the native interp
+    // and asserts identical stdout+exit. Skips if the target or node is absent.
+    let script = format!("{}/../../scripts/wasm_browser_interp_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_browser_interp_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_interp_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("wasm/node unavailable — wasm interp parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "the wasm interpreter must eval identically to native:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_browser_interp_parity: PASS"), "expected PASS:\n{stdout}{stderr}");
+}
+
+#[test]
 fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
     // R7c precondition: the interpreter crate must compile for the WASI-free
     // wasm32-unknown-unknown (in-browser) target — the prerequisite for the R15

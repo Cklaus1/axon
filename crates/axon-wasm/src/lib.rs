@@ -1,0 +1,85 @@
+//! `axon-wasm` — the Axon interpreter as a `wasm32-unknown-unknown` cdylib, driven
+//! from JavaScript by raw C-ABI exports (no wasm-bindgen, so the module has zero
+//! JS-glue imports and loads with a bare `WebAssembly.instantiate`).
+//!
+//! It is the in-browser PLAYGROUND/REPL: run arbitrary `.ax` source dynamically
+//! via the tree-walking interpreter — distinct from the codegen browser path,
+//! which AOT-compiles each program separately and can't `eval` source. It is also
+//! the entry-point foundation for the R15 browser `host_await` binding (R7c): a
+//! follow-on slice adds an imported `axon_host_await` + Asyncify so a suspending
+//! program can be driven from the page; this slice runs the non-suspending case.
+//!
+//! ABI (all lengths are byte counts; pointers index the module's linear memory):
+//!   axon_alloc(len) -> ptr        — reserve `len` bytes; JS writes the source there
+//!   axon_eval(ptr, len) -> i32    — parse+run the source; returns the exit code;
+//!                                   captures the program's stdout for read-back
+//!   axon_output_ptr() -> ptr      — start of the captured output (valid until the
+//!   axon_output_len() -> len        next axon_eval)
+//!
+//! Typical JS:
+//!   const p = inst.exports.axon_alloc(bytes.length);
+//!   new Uint8Array(mem.buffer, p, bytes.length).set(bytes);
+//!   const code = inst.exports.axon_eval(p, bytes.length);
+//!   const out  = new TextDecoder().decode(new Uint8Array(mem.buffer,
+//!                  inst.exports.axon_output_ptr(), inst.exports.axon_output_len()));
+
+use std::cell::RefCell;
+
+thread_local! {
+    /// The captured stdout of the most recent `axon_eval`, held so JS can read it
+    /// back via `axon_output_ptr`/`axon_output_len` after the call returns.
+    static LAST_OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Reserve `len` bytes of linear memory and hand JS the pointer. JS fills it with
+/// the `.ax` source, then passes the same (ptr, len) to `axon_eval`, which
+/// reclaims the buffer. Returns a null pointer for a zero-length request.
+#[no_mangle]
+pub extern "C" fn axon_alloc(len: usize) -> *mut u8 {
+    if len == 0 {
+        return std::ptr::null_mut();
+    }
+    let mut buf = Vec::<u8>::with_capacity(len);
+    let ptr = buf.as_mut_ptr();
+    std::mem::forget(buf); // ownership passes to JS; axon_eval reclaims it
+    ptr
+}
+
+/// Parse and run the `.ax` source at `(ptr, len)` via the interpreter, capturing
+/// its stdout for read-back. Returns the program's exit code (0 ok; 1 a parse
+/// error; the interpreter's runtime-flow codes — 3 verify / 4 corrigible / 5
+/// ai-policy / 6 refine / 7 goal-budget / 101 panic — otherwise). Reclaims the
+/// source buffer that `axon_alloc` handed out.
+///
+/// # Safety
+/// `ptr`/`len` must be a buffer previously returned by `axon_alloc(len)` that JS
+/// filled with exactly `len` bytes of UTF-8 source. Calling otherwise is UB.
+#[no_mangle]
+pub unsafe extern "C" fn axon_eval(ptr: *mut u8, len: usize) -> i32 {
+    // Reclaim the source buffer (alloc'd by axon_alloc with capacity == len).
+    let src_bytes = if ptr.is_null() || len == 0 {
+        Vec::new()
+    } else {
+        unsafe { Vec::from_raw_parts(ptr, len, len) }
+    };
+    let src = String::from_utf8_lossy(&src_bytes).into_owned();
+
+    let (code, output) = match axon_core::parse_source(&src) {
+        Ok(program) => axon_core::interp::run_program_capturing(&program),
+        Err(e) => (1, format!("axon: parse error:\n{e}\n")),
+    };
+    LAST_OUTPUT.with(|o| *o.borrow_mut() = output.into_bytes());
+    code
+}
+
+/// Pointer to the captured output of the last `axon_eval` (valid until the next).
+#[no_mangle]
+pub extern "C" fn axon_output_ptr() -> *const u8 {
+    LAST_OUTPUT.with(|o| o.borrow().as_ptr())
+}
+
+/// Byte length of the captured output of the last `axon_eval`.
+#[no_mangle]
+pub extern "C" fn axon_output_len() -> usize {
+    LAST_OUTPUT.with(|o| o.borrow().len())
+}
