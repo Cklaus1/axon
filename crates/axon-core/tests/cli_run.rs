@@ -5763,6 +5763,36 @@ fn total_callee_must_be_total_no_termination_launder_e1208() {
 }
 
 #[test]
+fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
+    // SOUNDNESS (was a hole — the capability-surface item-walk gap): check_program's
+    // @[pure]/@[total] loops matched only Item::FnDef, so the SAME attribute on an
+    // impl-block METHOD was silently unenforced — a @[total] method could loop
+    // forever, a @[pure] method could do I/O. Both are now checked (E1208/E1207).
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_implattr_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    let hdr = "type C = { n: i64 }\ntrait T { fn m(self) -> i64 }\n";
+
+    // REJECT: @[total] method with an unbounded while.
+    let (c, m) = check(&format!("{hdr}impl T for C {{\n  @[total]\n  fn m(self: C) -> i64 {{ let x = 0\n while x == 0 {{ x = 0 }}\n x }}\n}}\nfn main() -> i64 {{ 0 }}"));
+    assert_eq!(c, 2, "@[total] method with while must be E1208: {m}");
+    assert!(m.contains("E1208"), "expected E1208: {m}");
+
+    // REJECT: @[pure] method doing I/O.
+    let (c, m) = check(&format!("{hdr}impl T for C {{\n  @[pure]\n  fn m(self: C) -> i64 {{ println(\"io\")\n self.n }}\n}}\nfn main() -> i64 {{ 0 }}"));
+    assert_eq!(c, 2, "@[pure] method doing I/O must be E1207: {m}");
+    assert!(m.contains("E1207"), "expected E1207: {m}");
+
+    // ACCEPT: a valid @[pure] + @[total] method (no false positive).
+    let (c, m) = check(&format!("{hdr}impl T for C {{\n  @[pure]\n  @[total]\n  fn m(self: C) -> i64 {{ self.n + 1 }}\n}}\nfn main() -> i64 {{ 0 }}"));
+    assert_eq!(c, 0, "a valid pure+total method must pass: {m}");
+}
+
+#[test]
 fn total_attribute_rejects_while_loops_e1208() {
     // A `@[total]` fn must terminate. The totality analysis reasons about
     // recursion + bounded `for` ranges, but a `while` loop is unbounded and its

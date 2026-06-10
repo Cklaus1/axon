@@ -548,6 +548,24 @@ impl CheckCtx {
                 }
             }
         }
+        // …and @[pure] IMPL METHODS — `check_program`'s loops only matched
+        // `Item::FnDef`, so a `@[pure]`/`@[total]` attribute on an impl-block
+        // method was silently UNENFORCED (the capability-surface item-walk gap).
+        // Check each method's own body directly (run unconditionally — a program
+        // may have pure methods but no free pure fns, so the guard above wouldn't
+        // fire). Methods are NOT added to `pure_fns`: they dispatch via MethodCall
+        // not Ident, and a bare method name could collide with a free fn — so
+        // method-to-METHOD purity stays a documented residual; the method's own
+        // body (I/O, impure free-fn calls) is now enforced.
+        for item in &program.items {
+            if let Item::ImplBlock(blk) = item {
+                for m in &blk.methods {
+                    if m.attrs.iter().any(|a| a.name == "pure") {
+                        self.check_purity(m);
+                    }
+                }
+            }
+        }
 
         // Phase 5 §3: a @[total] fn must terminate. For a recursive @[total] fn,
         // require a strictly-decreasing well-founded measure at every recursive
@@ -556,6 +574,18 @@ impl CheckCtx {
             if let Item::FnDef(f) = item {
                 if f.attrs.iter().any(|a| a.name == "total") {
                     self.check_totality(f);
+                }
+            }
+            // @[total] IMPL METHODS too (same item-walk gap as @[pure] above): a
+            // `@[total]` method with an unbounded `while` / non-decreasing
+            // recursion was silently accepted. check_totality enforces the
+            // method's own body; method-to-method totality is the same documented
+            // residual as @[pure] (methods aren't added to total_fns).
+            if let Item::ImplBlock(blk) = item {
+                for m in &blk.methods {
+                    if m.attrs.iter().any(|a| a.name == "total") {
+                        self.check_totality(m);
+                    }
                 }
             }
         }
