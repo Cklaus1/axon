@@ -733,19 +733,25 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
-            } else if spec.fs_read.is_empty() {
-                // Non-literal (dynamic / string-interpolated) path AND an empty
-                // read allowlist. We can't match the target against a prefix,
-                // but an empty allowlist grants ZERO read capability, so the
-                // call is denied regardless of how the path is built. This
-                // closes the laundering hole where `read_file("/etc/{p}")` would
-                // otherwise slip past `fs: []` (an interpolated arg is not a
-                // `Literal::Str`). A NON-empty allowlist with a dynamic path
-                // stays runtime-deferred (Phase-9 `Sandbox<P>`), as documented.
+            } else {
+                // Non-literal (dynamic / string-interpolated) path. We cannot
+                // match the target against the allowlist, and `@[contained]` has
+                // no runtime target enforcement yet, so the capability boundary
+                // fails CLOSED (sound by refusal) — NOT open. An empty allowlist
+                // grants zero read capability; a NON-empty one can't constrain a
+                // dynamic path (it could escape via `..` or be built to any
+                // value), so an unverifiable target is refused either way. This
+                // closes the laundering hole where `read_file(p)` /
+                // `read_file("/etc/{p}")` slipped past a `fs: [read("./ok/")]`
+                // allowlist (the dynamic arg is not a `Literal::Str`).
+                let help = if spec.fs_read.is_empty() {
+                    "no read capability is granted; add an `fs: [read(\"...\")]` clause and use a LITERAL path"
+                } else {
+                    "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
+                };
                 errors.push(CapabilityError::new(
                     E1001,
-                    "`read_file(<dynamic path>)` is not permitted: no `fs: [read(...)]` in @[contained]\n  \
-                     help: a dynamically-built path cannot be checked statically; add an `fs: [read(\"...\")]` clause to grant read capability (the target is then enforced at runtime)".to_string(),
+                    format!("`read_file(<dynamic path>)` is not permitted by @[contained]\n  help: {help}"),
                     Span::dummy(),
                 ));
             }
@@ -792,13 +798,21 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
-            } else if spec.fs_write.is_empty() {
-                // Dynamic/interpolated path + empty write allowlist → deny.
-                // (Same laundering-hole closure as FsRead above.)
+            } else {
+                // Dynamic/interpolated path → fail CLOSED (see FsRead above): a
+                // non-literal path can't be verified against the allowlist, and
+                // there is no runtime target enforcement, so a write to an
+                // unprovable path is refused whether or not the allowlist is
+                // empty. Closes the `write_file(p, ...)` / `write_file("/etc/{p}",
+                // ...)` launder past a non-empty `fs: [write("./out/")]`.
+                let help = if spec.fs_write.is_empty() {
+                    "no write capability is granted; add an `fs: [write(\"...\")]` clause and use a LITERAL path"
+                } else {
+                    "a dynamically-built path cannot be statically verified against the sandbox (it could escape the allowlist); use a literal path"
+                };
                 errors.push(CapabilityError::new(
                     E1001,
-                    "`write_file(<dynamic path>, ...)` is not permitted: no `fs: [write(...)]` in @[contained]\n  \
-                     help: a dynamically-built path cannot be checked statically; add an `fs: [write(\"...\")]` clause to grant write capability (the target is then enforced at runtime)".to_string(),
+                    format!("`write_file(<dynamic path>, ...)` is not permitted by @[contained]\n  help: {help}"),
                     Span::dummy(),
                 ));
             }
@@ -869,18 +883,21 @@ fn check_call(
                         Span::dummy(),
                     ));
                 }
-            } else if spec.net_allow.is_empty() {
-                // Dynamic/interpolated argument + empty net allowlist → deny.
-                // Closes the laundering hole where `ai_complete("leak {x}")`
-                // (an interpolated arg, not a `Literal::Str`) would otherwise
-                // slip past `net: []`. This is the boundary the whole sandbox
-                // story rests on, so it fails CLOSED, not open.
+            } else {
+                // Dynamic host (a non-AI net call like `http_get(url)` with a
+                // computed URL — AI builtins have a fixed `ai_host`, so they took
+                // the branch above). Fail CLOSED: an unverifiable host can't be
+                // matched against the allowlist and there's no runtime check, so
+                // it's refused whether or not the allowlist is empty. Closes the
+                // launder past a non-empty `net: ["ok.com"]` via a computed URL.
+                let help = if spec.net_allow.is_empty() {
+                    "no network capability is granted; add a `net: [\"...\"]` clause and use a LITERAL host"
+                } else {
+                    "a dynamically-built host cannot be statically verified against the sandbox; use a literal host"
+                };
                 errors.push(CapabilityError::new(
                     E1001,
-                    format!(
-                        "`{name}(<dynamic argument>)` is not permitted: no `net: [...]` in @[contained]\n  \
-                         help: a dynamically-built argument cannot be checked statically; add a `net: [\"...\"]` clause to grant network capability"
-                    ),
+                    format!("`{name}(<dynamic argument>)` is not permitted by @[contained]\n  help: {help}"),
                     Span::dummy(),
                 ));
             }
@@ -1045,17 +1062,32 @@ mod tests {
     }
 
     #[test]
-    fn non_literal_arg_with_nonempty_allowlist_is_runtime_deferred() {
-        let spec = make_spec(vec!["./data/"], vec![], vec![]);
-        // Dynamic path + NON-EMPTY allowlist: the fn already holds read
-        // capability, only the specific target is unverifiable statically, so it
-        // is deferred to runtime (Phase-9 `Sandbox<P>`) — no static error. This
-        // is the legitimate boundary; the hole was the EMPTY-allowlist case
-        // below, which now fails closed.
+    fn non_literal_arg_with_nonempty_allowlist_fails_closed() {
+        // SECURITY (was fail-OPEN): a dynamic path against a NON-EMPTY allowlist
+        // used to be allowed ("runtime-deferred"), but @[contained] has no runtime
+        // target check, so the write/read actually happened — a `@[contained(fs:
+        // [read("./data/")])]` fn could `read_file(p)` ANY path. It now fails
+        // CLOSED: an unverifiable dynamic target is refused (E1001) because it
+        // could escape the allowlist (e.g. via `..`) and nothing enforces it at
+        // runtime. (Holding SOME capability does not make an arbitrary target ok.)
+        let spec = make_spec(vec!["./data/"], vec!["./out/"], vec![]);
         let args = vec![Expr::Ident("path".into())];
+
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
-        assert!(errors.is_empty(), "Dynamic path with a granted capability is runtime-deferred");
+        assert_eq!(errors.len(), 1, "dynamic read against a non-empty allowlist must fail closed");
+        assert_eq!(errors[0].code, E1001);
+
+        let mut errors = Vec::new();
+        check_call("write_file", &args, &spec, &mut errors);
+        assert_eq!(errors.len(), 1, "dynamic write against a non-empty allowlist must fail closed");
+        assert_eq!(errors[0].code, E1001);
+
+        // No false positive: a LITERAL path inside the allowlist still passes.
+        let lit = vec![Expr::Literal(crate::ast::Literal::Str("./data/x.txt".into()))];
+        let mut errors = Vec::new();
+        check_call("read_file", &lit, &spec, &mut errors);
+        assert!(errors.is_empty(), "a literal in-allowlist read must still be permitted");
     }
 
     #[test]

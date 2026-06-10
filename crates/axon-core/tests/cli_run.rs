@@ -812,6 +812,38 @@ fn contained_sandbox_rejects_path_traversal_e1001() {
 }
 
 #[test]
+fn contained_sandbox_rejects_dynamic_path_fails_closed_e1001() {
+    // SECURITY (was fail-OPEN): a NON-literal path against a NON-EMPTY allowlist
+    // used to be allowed ("runtime-deferred"), but @[contained] has no runtime
+    // target check — so a `@[contained(fs: [write("./out/")])]` fn could
+    // `write_file(p, …)` ANY path (e.g. /etc/passwd) by passing it as a parameter
+    // or building it via interpolation. It now fails CLOSED (E1001): an
+    // unverifiable target can escape the allowlist and nothing enforces it later.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_dynp_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // Path as a parameter → unverifiable → rejected.
+    let (c, m) = check("@[contained(fs: [write(\"./out/\")], net: [], exec: none)]\nfn save(p: str, d: str) -> i64 { let _ = write_file(p, d)\n 0 }\nfn main() -> i64 { save(\"/etc/passwd\", \"x\") }");
+    assert_eq!(c, 2, "dynamic write path must be rejected: {m}");
+    assert!(m.contains("E1001"), "expected E1001 for dynamic path: {m}");
+
+    // Path built by interpolation (no provable prefix containment) → rejected.
+    assert_eq!(check("@[contained(fs: [write(\"./out/\")], net: [], exec: none)]\nfn save(name: str, d: str) -> i64 { let p = \"/etc/{name}\"\n let _ = write_file(p, d)\n 0 }\nfn main() -> i64 { save(\"passwd\", \"x\") }").0, 2, "interpolated write path must be rejected");
+    // Read side too.
+    assert_eq!(check("@[contained(fs: [read(\"./data/\")], net: [], exec: none)]\nfn load(p: str) -> i64 { let _ = read_file(p)\n 0 }\nfn main() -> i64 { load(\"/etc/passwd\") }").0, 2, "dynamic read path must be rejected");
+
+    // No false positive: a LITERAL path inside the allowlist still passes, and
+    // ai_complete (a fixed-host net call with a dynamic PROMPT) stays permitted.
+    assert_eq!(check("@[contained(fs: [write(\"./out/\")], net: [], exec: none)]\nfn save(d: str) -> i64 { let _ = write_file(\"./out/log.txt\", d)\n 0 }\nfn main() -> i64 { save(\"x\") }").0, 0, "literal in-allowlist write must be allowed");
+    assert_eq!(check("@[contained(net: [\"api.anthropic.com\"], fs: [], exec: none)]\nfn ask(q: str) -> str { match ai_complete(q) { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = ask(\"hi\")\n 0 }").0, 0, "ai_complete with a dynamic prompt + fixed host must be allowed");
+}
+
+#[test]
 fn contained_sandbox_is_enforced_transitively_through_helpers() {
     // Security: a `@[contained]` sandbox must not be escapable by moving the
     // forbidden I/O one function call away. A contained fn that calls a helper
