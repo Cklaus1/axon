@@ -1,0 +1,35 @@
+// Constrained optimization (pillar 3 — `subject_to`).
+//
+// `goal_run_constrained` hill-climbs an @[adaptive] metric toward a target like
+// `goal_run`, but only over candidates a boolean constraint fn ACCEPTS. The
+// constraint is a HARD feasibility gate (infeasible candidates are rejected by
+// the optimizer), not a soft penalty folded into the metric — so the search is
+// kept inside the feasible region rather than nudged away from its edges.
+//
+// Here `revenue(x) = x`, so the UNCONSTRAINED optimum races x toward the target
+// (100). The constraint `x <= 50` caps the feasible region, so the best the
+// constrained search can reach is x = 50 (revenue 50). The contrast between the
+// two runs is the whole point: same metric, same budget, the constraint alone
+// changes where the search lands.
+
+@[adaptive]
+fn revenue(x: i64) -> i64 { x }
+
+// The feasibility gate: a spend cap. Shares `revenue`'s parameter list and
+// returns bool — true = feasible, false = the optimizer must reject it.
+fn within_budget(x: i64) -> bool { x <= 50 }
+
+fn main() -> i64 {
+    // Unconstrained: climbs toward the target (100), unaware of the cap.
+    let free = goal_run("revenue", 100.0, 200)
+    println("unconstrained best: {to_str_f64(free)}  (races toward the target)")
+
+    goal_clear("revenue")
+
+    // Constrained: the same climb, but `within_budget` forbids x > 50, so the
+    // best feasible score is 50 — the optimizer settles ON the budget boundary.
+    let capped = goal_run_constrained("revenue", "within_budget", 100.0, 200)
+    println("constrained best:   {to_str_f64(capped)}  (held at the spend cap x<=50)")
+
+    0
+}

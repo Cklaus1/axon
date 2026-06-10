@@ -1702,6 +1702,65 @@ fn goal_run_optimizes_a_mixed_i64_f64_metric_f1() {
 }
 
 #[test]
+fn goal_run_constrained_holds_the_search_inside_the_feasible_region() {
+    // Pillar 3 (`subject_to`): goal_run_constrained hill-climbs an @[adaptive]
+    // metric but only over candidates the boolean constraint ACCEPTS — a HARD
+    // feasibility gate, not a soft penalty baked into the metric. `revenue(x)=x`
+    // races toward the target (100) when unconstrained, but `x<=50` caps the
+    // feasible best at 50. The CONTRAST (free exceeds the cap; capped is held at
+    // it) proves the constraint — not the metric — bounded the outcome.
+    let prog = "@[adaptive]\n\
+                fn revenue(x: i64) -> i64 { x }\n\
+                fn within_budget(x: i64) -> bool { x <= 50 }\n\
+                fn main() -> i64 {\n\
+                  let free = goal_run(\"revenue\", 100.0, 200)\n\
+                  goal_clear(\"revenue\")\n\
+                  let capped = goal_run_constrained(\"revenue\", \"within_budget\", 100.0, 200)\n\
+                  if free > 50.0 && capped <= 50.0 { 0 } else { 1 }\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_constrgoal_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0),
+        "constrained search must stay <=50 while the free search exceeds it: {:?}", out);
+}
+
+#[test]
+fn goal_run_constrained_rejects_an_undefined_constraint() {
+    // Silently ignoring a missing constraint would defeat the purpose — the
+    // caller would believe the search is constrained when it is not. Fail loudly.
+    let prog = "@[adaptive]\n\
+                fn m(x: i64) -> i64 { x }\n\
+                fn main() -> i64 {\n\
+                  let r = goal_run_constrained(\"m\", \"nope\", 100.0, 50)\n\
+                  0\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_constrerr_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_ne!(out.status.code(), Some(0), "must not succeed with an undefined constraint: {out:?}");
+    assert!(err.contains("not defined") && err.contains("nope"),
+        "must name the undefined constraint fn: {err}");
+}
+
+#[test]
+fn asi_constrained_goal_demo_holds_the_feasible_boundary() {
+    // examples/asi/constrained_goal.ax is the public-face showcase of
+    // goal_run_constrained: the unconstrained search races to the target (100)
+    // while the constrained one is held at the spend cap (50). Gating the demo
+    // file keeps the language-identity example honest (ROADMAP §2.7).
+    let out = axon().args(["run", &ex("asi/constrained_goal.ax")])
+        .env("AXON_AI_MOCK", "1").output().unwrap();
+    assert!(out.status.success(), "constrained_goal demo must run: {out:?}");
+    let s = String::from_utf8_lossy(&out.stdout);
+    assert!(s.contains("unconstrained best: 100"), "free search reaches the target: {s}");
+    assert!(s.contains("constrained best:   50"), "constrained search held at the cap: {s}");
+}
+
+#[test]
 fn goal_optimize_deploys() {
     let out = axon().args(["goal", &ex("goals/optimize-goal.md")]).output().unwrap();
     assert!(out.status.success(), "optimize-goal exited {:?}", out.status.code());

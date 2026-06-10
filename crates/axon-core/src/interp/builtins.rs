@@ -1745,6 +1745,36 @@ impl<'p> Interp<'p> {
                 ok!(Value::Float(self.run_goal(&name, target, max_evals)?));
             }
 
+            // Constrained search (pillar 3, `subject_to`): hill-climb the
+            // @[adaptive] `metric` toward `target`, but only over candidates the
+            // boolean `constraint` fn ACCEPTS. The constraint shares the metric's
+            // parameter list; an infeasible candidate is scored maximally-distant
+            // so the optimizer rejects it (a hard gate, not a soft penalty baked
+            // into the metric). The constraint runs as a plain call, so it never
+            // pollutes the score trajectory. If every candidate is infeasible the
+            // result is the INFEASIBLE_SCORE sentinel.
+            "goal_run_constrained" => {
+                want(4)?;
+                let name = as_str(&args[0])?.to_string();
+                let constraint = as_str(&args[1])?.to_string();
+                let target = as_float(&args[2])?;
+                let max_evals = as_int(&args[3])?;
+                // Fail loudly if the constraint names no defined fn — silently
+                // ignoring it would defeat the whole point (the caller believes
+                // the search is constrained when it is not).
+                if !self.fns.contains_key(constraint.as_str()) {
+                    return panic(format!(
+                        "goal_run_constrained: constraint fn `{constraint}` is not defined"
+                    ));
+                }
+                *self.goal_constraint.borrow_mut() = Some(constraint);
+                let result = self.run_goal(&name, target, max_evals);
+                // Clear BEFORE propagating so a metric error can't leave a stale
+                // constraint armed for the next goal_run.
+                *self.goal_constraint.borrow_mut() = None;
+                ok!(Value::Float(result?));
+            }
+
             // Random-search strategy. Baseline against the hill-climb
             // path; useful for multi-modal objectives where the
             // gradient gets stuck in a local optimum.

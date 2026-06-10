@@ -11,6 +11,14 @@
 
 use super::*;
 
+/// Score assigned to a candidate that violates a `goal_run_constrained`
+/// constraint. Finite (so distance arithmetic never produces NaN/inf), yet far
+/// enough from any realistic optimization target that the distance-minimizing
+/// hill-climbers always prefer a feasible point. If EVERY candidate is
+/// infeasible the search returns this sentinel, a detectable "no feasible
+/// solution found" signal. See `Interp::apply_goal_constraint`.
+const INFEASIBLE_SCORE: f64 = 1e300;
+
 impl<'p> Interp<'p> {
     pub(super) fn run_goal_warm(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
         let _goal_guard = self.enter_goal(name);
@@ -69,6 +77,35 @@ impl<'p> Interp<'p> {
         Ok(self.best_observed(name, target, max_evals))
     }
 
+    /// Apply the active `subject_to` constraint (set by `goal_run_constrained`)
+    /// to one candidate's observed `score`. The constraint fn shares the metric's
+    /// parameter list and returns `bool`: a FEASIBLE candidate keeps its real
+    /// score; an INFEASIBLE one is reported as `INFEASIBLE_SCORE` — a finite
+    /// magnitude so far from any realistic `target` that the distance-minimizing
+    /// optimizer always rejects it in favor of any feasible point (and the search
+    /// is steered toward feasibility without per-strategy special-casing). A no-op
+    /// returning `score` unchanged when no constraint is active, so plain
+    /// `goal_run` is byte-identical. The constraint is evaluated as a plain (not
+    /// `@[adaptive]`) call, so it never pollutes the provenance trajectory; the
+    /// metric's REAL score is what `call_fn` already recorded.
+    pub(super) fn apply_goal_constraint(
+        &self,
+        args: &[Value],
+        score: f64,
+    ) -> Result<f64, Flow> {
+        let cname = self.goal_constraint.borrow().clone();
+        let Some(cname) = cname else { return Ok(score) };
+        let Some(cf) = self.fns.get(cname.as_str()).copied() else { return Ok(score) };
+        match self.call_fn(cf, args.to_vec())? {
+            Value::Bool(true) => Ok(score),
+            Value::Bool(false) => Ok(INFEASIBLE_SCORE),
+            other => panic(format!(
+                "constraint `{cname}` must return bool, got {}",
+                other.type_name()
+            )),
+        }
+    }
+
     /// Coordinate-descend an `@[adaptive] fn(…mixed i64/f64…) -> i64|f64` toward
     /// `target` (F1). Each dimension is stepped in its OWN type (integer halving
     /// for i64, float halving for f64), accepting any move that gets the observed
@@ -96,7 +133,7 @@ impl<'p> Interp<'p> {
         let eval_at = |xs: &[Value]| -> Result<f64, Flow> {
             let other = self.call_fn(f, xs.to_vec())?;
             match numeric_score(&other) {
-                Some(s) => Ok(s),
+                Some(s) => self.apply_goal_constraint(xs, s),
                 None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
@@ -486,9 +523,10 @@ impl<'p> Interp<'p> {
     /// [`Interp::call_fn`], so the provenance store accumulates as a side effect.
     pub(super) fn hill_climb_i64(&self, f: &FnDef, target: f64, max_evals: i64) -> Result<f64, Flow> {
         let eval_at = |x: i64| -> Result<f64, Flow> {
-            let other = self.call_fn(f, vec![Value::Int(x)])?;
+            let args = vec![Value::Int(x)];
+            let other = self.call_fn(f, args.clone())?;
             match numeric_score(&other) {
-                Some(s) => Ok(s),
+                Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
@@ -617,10 +655,10 @@ impl<'p> Interp<'p> {
             _ => vec![0; n_dims],
         };
         let eval_at = |xs: &[i64]| -> Result<f64, Flow> {
-            let args = xs.iter().map(|&x| Value::Int(x)).collect();
-            let other = self.call_fn(f, args)?;
+            let args: Vec<Value> = xs.iter().map(|&x| Value::Int(x)).collect();
+            let other = self.call_fn(f, args.clone())?;
             match numeric_score(&other) {
-                Some(s) => Ok(s),
+                Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,
@@ -795,10 +833,10 @@ impl<'p> Interp<'p> {
             _ => vec![0.0; n_dims],
         };
         let eval_at = |xs: &[f64]| -> Result<f64, Flow> {
-            let args = xs.iter().map(|&x| Value::Float(x)).collect();
-            let result = self.call_fn(f, args)?;
+            let args: Vec<Value> = xs.iter().map(|&x| Value::Float(x)).collect();
+            let result = self.call_fn(f, args.clone())?;
             match numeric_score(&result) {
-                Some(s) => Ok(s),
+                Some(s) => self.apply_goal_constraint(&args, s),
                 None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
                     f.name,

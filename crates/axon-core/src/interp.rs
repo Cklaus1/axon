@@ -322,6 +322,12 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
+    /// Active `subject_to` constraint fn name during `goal_run_constrained`
+    /// (pillar-3 constrained search). When set, the optimizer scores an
+    /// INFEASIBLE candidate as maximally distant so it is rejected; the real
+    /// score is still recorded in provenance. `None` outside a constrained goal
+    /// (so plain `goal_run` is byte-identical). See `apply_goal_constraint`.
+    goal_constraint: RefCell<Option<String>>,
     /// Per-call AI tier from a `tier:` named arg (R3b), set by `eval_call` for
     /// the duration of a single builtin dispatch. `ai_complete`'s tier
     /// resolution reads this first (step 1: per-call > policy > default).
@@ -1042,6 +1048,7 @@ impl<'p> Interp<'p> {
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
+            goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
             ai_calls_this_fn: Cell::new(0),
