@@ -3666,14 +3666,22 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(ne_bb);
         }
 
-        // acc: Sum/Mean start 0.0; Extreme starts the first element (loaded once
-        // len>0 is guaranteed). To keep it simple, init Extreme to ±inf so the
-        // first compare always wins.
+        // acc: Sum/Mean start 0.0. Extreme/ArgExtreme start at the FIRST ELEMENT
+        // (xs[0] — `len>0` is guaranteed by the empty-check above), matching the
+        // interpreter (`best = xs[0]`). A ±inf sentinel diverged on NaN: the
+        // ordered OGT/OLT predicate is false when either operand is NaN, so an
+        // all-NaN array never beat the sentinel and native returned ±inf where the
+        // interp keeps NaN (arr_max_f64([NaN]) → interp NaN, native -inf). Seeding
+        // with xs[0] makes the self-compare a no-op and NaN propagate identically.
         let acc_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "af_acc");
-        let init = match &op {
+        let init: inkwell::values::FloatValue = match &op {
             ArrReduceF64::Sum | ArrReduceF64::Mean => f64_ty.const_float(0.0),
-            ArrReduceF64::Extreme { is_max: true } | ArrReduceF64::ArgExtreme { is_max: true } => f64_ty.const_float(f64::NEG_INFINITY),
-            ArrReduceF64::Extreme { is_max: false } | ArrReduceF64::ArgExtreme { is_max: false } => f64_ty.const_float(f64::INFINITY),
+            ArrReduceF64::Extreme { .. } | ArrReduceF64::ArgExtreme { .. } => {
+                let p0 = unsafe {
+                    self.ir.builder.build_gep(f64_ty, f64_data, &[i64_ty.const_zero()], "af_first").unwrap()
+                };
+                build_wrappers::w_load(&self.ir.builder, f64_ty.into(), p0, "af_first_v").into_float_value()
+            }
         };
         build_wrappers::w_store(&self.ir.builder, acc_slot, init.into());
         let idx_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "af_i");

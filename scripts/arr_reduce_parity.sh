@@ -95,6 +95,13 @@ check fmax    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_max_f6
 check fmin    'fn main() -> i64 { let a = [3.5, 7.5, 2.0]  f64_to_i64(arr_min_f64(&a) * 10.0) }'
 check famax   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmax_f64(&a) }'
 check famin   'fn main() -> i64 { let a = [3.5, 7.5, 2.0, 9.1]  arr_argmin_f64(&a) }'
+# NaN-in-array: native used to seed the Extreme accumulator with ±inf, so an
+# all-NaN (or NaN-leading) array returned ±inf where the interp keeps NaN
+# (ordered OGT/OLT is false for NaN). `f64_to_i64(nan)`=0 but `f64_to_i64(-inf)`=
+# i64::MIN, so the divergence shows up here. Now both seed with xs[0].
+check fmax_nan  'fn main() -> i64 { let nan = 0.0 / 0.0  let a = [nan, nan]  f64_to_i64(arr_max_f64(&a)) }'
+check fmin_nan  'fn main() -> i64 { let nan = 0.0 / 0.0  let a = [nan, 2.0]  f64_to_i64(arr_min_f64(&a)) }'
+check fmax_nlead 'fn main() -> i64 { let nan = 0.0 / 0.0  let a = [nan, 5.0]  f64_to_i64(arr_max_f64(&a)) }'
 check std1   'fn main() -> i64 { let a = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0]  f64_to_i64(arr_std_f64(&a) * 100.0) }'
 check std_s  'fn main() -> i64 { let a = [10.0, 10.0, 10.0]  f64_to_i64(arr_std_f64(&a)) }'
 check std_o  'fn main() -> i64 { let a = [5.0]  f64_to_i64(arr_std_f64(&a)) }'
