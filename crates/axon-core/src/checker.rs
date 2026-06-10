@@ -2739,7 +2739,18 @@ impl CheckCtx {
                 let val_path = format!("{node_path}.value");
                 self.check_expr(value, &val_path, scope);
                 let ty = self.resolve_expr_type(value, &val_path, scope);
-                scope.insert(name.clone(), ty);
+                // A reassignment does NOT change the variable's type (Axon vars are
+                // single-type; a type-changing reassignment is an infer-level error).
+                // Crucially, do NOT overwrite a known declared type with `Unknown`
+                // when the RHS is a BinOp / lambda / unknown-call (all of which
+                // resolve to `Unknown` in the checker's syntactic fallback) — that
+                // erasure made every downstream structural check (field access,
+                // arity, option-as-value) silently SKIP the variable after a
+                // reassignment like `x = x + 1`, missing real errors (e.g. `x.foo`
+                // on an i64). Keep the prior type when the new one is Unknown.
+                if !matches!(ty, Type::Unknown) || !scope.contains_key(name) {
+                    scope.insert(name.clone(), ty);
+                }
             }
             Expr::AssignTo { place, value } => {
                 self.check_expr(place, &format!("{node_path}.place"), scope);

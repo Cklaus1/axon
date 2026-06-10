@@ -5815,6 +5815,29 @@ fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
 }
 
 #[test]
+fn reassignment_does_not_erase_declared_type_for_later_checks() {
+    // Checker bug (was a missed-diagnostic hole): Expr::Assign unconditionally
+    // overwrote the scope type with resolve_expr_type(rhs), which is Unknown for a
+    // BinOp/lambda/unknown-call. That erasure made downstream structural checks
+    // (field access, arity, option-as-value) SKIP the variable after a
+    // reassignment like `x = x + 1`. Now the prior known type is preserved.
+    let check = |src: &str| -> (i32, String) {
+        let f = std::env::temp_dir().join(format!("axon_reassign_{}_{}.ax", std::process::id(), src.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    // field access on an i64 is E0401 — and must STILL be caught after a BinOp
+    // reassignment (the Unknown-erasure used to drop it).
+    let (c, m) = check("fn main() -> i64 { let x = 5\n x = x + 1\n let y = x.foo\n 0 }");
+    assert_eq!(c, 2, "post-reassign field access must still be caught: {m}");
+    assert!(m.contains("E0401"), "expected E0401: {m}");
+    // a plain reassignment chain must remain valid (no false positive).
+    assert_eq!(check("fn main() -> i64 { let x = 5\n x = x + 1\n x = x * 2\n x }").0, 0, "valid reassignment must pass");
+}
+
+#[test]
 fn impl_method_call_arity_is_checked_statically_e0305() {
     // SOUNDNESS (was a hole): the MethodCall arm checked method EXISTENCE (E0403)
     // but never arity, so `r.area(99, 200)` on a 0-explicit-arg method passed the
