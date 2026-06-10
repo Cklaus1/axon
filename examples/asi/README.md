@@ -233,9 +233,10 @@ the data-model contract is exercised today:
 | `compile` | `axon ast review` | ✅ wraps `axon check` |
 | `run` | `axon goal run` | ✅ wraps `axon run` |
 | `trace` | `axon trace show <id>` | ✅ filters provenance log |
+| `audit` | `axon trace --ai` | ✅ AI-call audit: model, mode, cost, goal |
 | `improve` | `axon goal improve <id>` | ✅ rerun continues search |
 | `redteam` | `axon redteam <plan-id>` | ⚠️ part of `main` for now |
-| `replay` | `axon trace replay <id>` | ❌ Phase 9 (deterministic LLM needed) |
+| `replay` | `axon trace replay <id>` | ✅ `AXON_AI_REPLAY` memoizes ai_complete → byte-for-byte reproducible re-run |
 | `log` | `axon log --principal <id>` | ✅ raw NDJSON dump |
 | `clear` | (testing helper) | ✅ wipes provenance log |
 
@@ -246,9 +247,10 @@ the data-model contract is exercised today:
    best observed score < 90.
 2. **Constraint trips.** All variants score < 90 → `@[verify]` fires
    `__axon_verify_panic` → process aborts before any deploy.
-3. **Sim/prod disagreement** — *not yet exercisable*. Today there's no
-   simulator separate from the live LLM; Phase 9 introduces replay +
-   sim and this becomes a real failure mode.
+3. **Sim/prod disagreement** — replay now exists (`./run.sh replay` records
+   every `ai_complete` and re-runs from the cache, byte-for-byte reproducible);
+   the remaining gap is a *simulator distinct from* the live LLM so sim and prod
+   can disagree. The deterministic-replay half (Phase 9) is done.
 4. **LLM-compiler returns low-confidence AST** — *not yet
    exercisable*. The English-surface compiler is Phase 10.
 5. **Redteam catches hallucination.** `redteam_one(0)` checks variant 0

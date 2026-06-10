@@ -3151,6 +3151,42 @@ fn trace_ai_attributes_calls_to_the_triggering_goal_f3() {
 }
 
 #[test]
+fn asi_demo_replay_and_audit_commands_work_end_to_end() {
+    // The ASI demo's public-face CLI (examples/asi/run.sh) now exercises the
+    // landed F2/F3 auditability work on the flagship optimize.ax: `replay`
+    // records every ai_complete then re-runs from the cache, verifying byte-for-
+    // byte reproducibility (the model is never re-called); `audit` shows the
+    // AI-call trail. Both run under mock. Skips if run.sh can't find the binary.
+    let script = format!("{}/../../examples/asi/run.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("asi/run.sh not found — skipping");
+        return;
+    }
+    // replay: record → replay → "reproducible".
+    let rep = std::process::Command::new("bash").arg(&script).arg("replay")
+        .env("AXON_AI_MOCK", "1").output().expect("run run.sh replay");
+    let r = format!("{}{}", String::from_utf8_lossy(&rep.stdout), String::from_utf8_lossy(&rep.stderr));
+    if r.contains("axon binary not found") {
+        eprintln!("run.sh could not locate the axon binary — skipping");
+        return;
+    }
+    assert!(rep.status.success() && r.contains("reproducible"),
+        "run.sh replay must report byte-for-byte reproducibility:\n{r}");
+
+    // audit: the AI-call trail (run once to populate the log, then audit).
+    let cache = std::env::temp_dir().join(format!("axon_asiaudit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::process::Command::new("bash").arg(&script).arg("run")
+        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let aud = std::process::Command::new("bash").arg(&script).arg("audit")
+        .env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let a = String::from_utf8_lossy(&aud.stdout);
+    let _ = std::fs::remove_dir_all(&cache);
+    assert!(a.contains("ai_complete call(s)") && a.contains("goal `try_variant`"),
+        "run.sh audit must show the AI-call trail attributed to the goal:\n{a}");
+}
+
+#[test]
 fn trace_missing_log_exits_nonzero() {
     let out = axon()
         .args(["trace"])

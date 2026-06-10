@@ -68,6 +68,12 @@ case "$cmd" in
         # Extra args pass through (e.g. --fn try_variant).
         "$(axon_bin)" trace "$@"
         ;;
+    audit)
+        # The AI-call audit trail: every ai_complete with its routed model, mode
+        # (live/mock/replay/fallback), metered cost, and the goal it served.
+        # `axon trace --ai` — the Containment-pillar accountability view.
+        "$(axon_bin)" trace --ai "$@"
+        ;;
     improve)
         # Continue the search across runs: AXON_GOAL_CONTINUE makes goal_run
         # resume its hill-climb from the best input recorded in the persisted
@@ -82,12 +88,27 @@ case "$cmd" in
         "$(axon_bin)" run "$DEMO"
         ;;
     replay)
-        # Future: axon trace replay <run-id> — deterministic re-execution
-        # GAP: not implemented.  Phase 9 deliverable.  Today's runs are
-        # non-deterministic because ai_complete responses vary.
-        echo "GAP: replay requires deterministic ai_complete (Phase 9)." >&2
-        echo "     Today's traces are observational, not replayable." >&2
-        exit 64
+        # F2 (LANDED): deterministic re-execution via the LLM-call replay cache.
+        # AXON_AI_REPLAY memoizes every ai_complete by (prompt, model). We RECORD
+        # one run, then REPLAY from the cache ALONE — no model, no mock, no key —
+        # and verify the second run reproduces the first byte-for-byte. AXON_SEED
+        # pins any other RNG so the whole run is deterministic, not just the LLM.
+        bin="$(axon_bin)"
+        cache="$(mktemp)"
+        seed="${AXON_SEED:-42}"
+        echo "# 1. RECORD — run once, memoizing every ai_complete into the replay cache"
+        rec="$(AXON_SEED="$seed" AXON_AI_MOCK="${AXON_AI_MOCK:-1}" AXON_AI_REPLAY="$cache" "$bin" run "$DEMO" 2>&1)" || true
+        echo "# 2. REPLAY — re-run from the cache ALONE (no AXON_AI_MOCK, no key, no model)"
+        rep="$(AXON_SEED="$seed" AXON_AI_REPLAY="$cache" "$bin" run "$DEMO" 2>&1)" || true
+        rm -f "$cache"
+        if [[ "$rec" == "$rep" ]]; then
+            echo "✓ reproducible — the replayed run matches the recorded run byte-for-byte"
+            echo "  (every ai_complete answered from the cache; the model was never called)"
+        else
+            echo "✗ replay diverged:" >&2
+            diff <(printf '%s' "$rec") <(printf '%s' "$rep") | head -20 >&2
+            exit 1
+        fi
         ;;
     log)
         # Future: axon log --principal <id>
@@ -122,10 +143,11 @@ Axon ASI demo CLI (Phase-10 surface, simulated)
   ./run.sh compile     # parse + type-check the .ax (future: axon ast review)
   ./run.sh run         # compile + execute (AXON_AI_MOCK=1 for key-free, or set ANTHROPIC_API_KEY)
   ./run.sh trace       # axon trace — per-fn score trajectory (add --fn NAME or --json)
+  ./run.sh audit       # axon trace --ai — AI-call audit: model, mode, cost, goal
   ./run.sh analyze     # score-trajectory analysis (plateau, recommendations)
   ./run.sh improve     # continue search — adds more evals to the same log
   ./run.sh redteam     # run the adversarial pass (currently part of main)
-  ./run.sh replay      # GAP: deterministic replay (Phase 9)
+  ./run.sh replay      # deterministic re-execution via the LLM-call replay cache (F2)
   ./run.sh log         # dump full provenance log as NDJSON
   ./run.sh clear       # wipe provenance log
 
