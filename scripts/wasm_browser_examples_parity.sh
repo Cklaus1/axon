@@ -13,6 +13,13 @@
 # FLOOR guard catches a mass-skip regression. Skips (exit 0) without node/toolchain.
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"; cd "$ROOT"
+# Serialize the wasm parity scripts under one shared lock: each builds its
+# wasm artifacts next to the source (examples/$base.*.wasm), so concurrent runs
+# (cargo's parallel test threads invoke several of these at once) clobber each
+# other's intermediates — a file race that surfaces as spurious DIFFER /
+# "No such file". flock makes the wasm sweeps run one at a time (orthogonal to
+# the ~370 other tests, which keep running in parallel). No-op without flock.
+if command -v flock >/dev/null 2>&1; then exec 9>"${TMPDIR:-/tmp}/axon_wasm_parity.lock" && flock 9; fi
 
 FLOOR=28   # actual is 29/29; headroom for minor churn, catches mass regression
 
