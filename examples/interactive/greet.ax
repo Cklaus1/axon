@@ -1,0 +1,16 @@
+// An INTERACTIVE Axon program. `host_await(prompt)` suspends the program, hands
+// `prompt` to the host (the `axon run` CLI prints it and reads a line of stdin),
+// and resumes with what you typed. This is the R15 resume runtime (v0): the
+// program genuinely SUSPENDS and resumes — no busy-wait, no replay.
+//
+//   axon run examples/interactive/greet.ax
+//   (type answers at each prompt)
+
+fn main() -> i64 {
+    println("=== Axon — suspend/resume via host_await (R15) ===")
+    let name = host_await("What's your name? ")
+    println("Hello, {name}!")
+    let mood = host_await("How are you feeling? ")
+    println("Glad to hear you're {mood}, {name}.")
+    str_len(name)
+}

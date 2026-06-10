@@ -20,6 +20,41 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
+fn r15_host_await_interactive_via_axon_run_reads_stdin() {
+    // R15 resume runtime (v0): a program that suspends via `host_await` runs under
+    // `axon run`'s stdin/stdout host — the request is written as a prompt, and a
+    // line of stdin becomes the resume reply, flowing back into the program. This
+    // is the end-to-end interactive path (a prompt loop / REPL works via the CLI).
+    use std::io::Write;
+    use std::process::Stdio;
+    let f = std::env::temp_dir().join(format!("axon_r15_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "fn main() -> i64 {\n  \
+           let name = host_await(\"name> \")\n  \
+           println(\"Hello, {name}!\")\n  \
+           str_len(name)\n\
+         }\n",
+    )
+    .unwrap();
+    let mut child = axon()
+        .arg("run")
+        .arg(&f)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"Ada\n").unwrap();
+    let out = child.wait_with_output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("name> "), "the host_await request must be written as a prompt: {stdout}");
+    assert!(stdout.contains("Hello, Ada!"), "the stdin reply must flow into the program: {stdout}");
+    assert_eq!(out.status.code(), Some(3), "exit = str_len(\"Ada\") = 3, got {:?}", out.status.code());
+}
+
+#[test]
 fn phase6_with_handler_runs_and_intercepts_io() {
     // Phase 6 handlers (interpreter): an inline `on IO(p) => resume(p)` handler
     // INTERCEPTS the IO effect of a `println` in the handled body. In the

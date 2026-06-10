@@ -2291,8 +2291,17 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // refinement-return / scalar-`@[verify]` obligations Z3 can prove ∀-inputs,
     // and run with those checks elided. Without the feature this is an empty set
     // (no behaviour change) — the runtime gate enforces everything as before.
-    let discharged = compute_discharged(&program);
-    let code = axon_core::interp::run_program_with_discharged(&program, discharged);
+    // R15: a program that suspends via `host_await` runs under the stdin/stdout
+    // host driver, so `axon run` of an interactive program (a prompt loop) reads
+    // user input. (The `contains` check is a cheap gate; a non-host_await program
+    // mentioning the name in a comment would just take the equivalent worker-thread
+    // path — same result.) Otherwise the normal, deep-stack run path.
+    let code = if src.contains("host_await") {
+        axon_core::interp::run_suspendable_stdio(&program)
+    } else {
+        let discharged = compute_discharged(&program);
+        axon_core::interp::run_program_with_discharged(&program, discharged)
+    };
     process::exit(code);
 }
 

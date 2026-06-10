@@ -714,6 +714,25 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> String) 
     })
 }
 
+/// The default CLI host for `host_await`: write the request (a prompt) to stdout,
+/// then read a line from stdin as the reply (trailing newline stripped; EOF → "").
+/// This makes an interactive Axon program — a prompt loop, a REPL, a quiz — work
+/// under a plain `axon run`. (R15 v0; the program's own `println`s and the prompt
+/// both go to the shared process stdout, ordered by the suspension protocol.)
+pub fn run_suspendable_stdio(program: &Program) -> i32 {
+    use std::io::{BufRead, Write};
+    let stdin = std::io::stdin();
+    run_suspendable(program, |prompt| {
+        print!("{prompt}");
+        let _ = std::io::stdout().flush();
+        let mut line = String::new();
+        match stdin.lock().read_line(&mut line) {
+            Ok(0) | Err(_) => String::new(), // EOF or error → empty reply
+            Ok(_) => line.trim_end_matches(['\n', '\r']).to_string(),
+        }
+    })
+}
+
 fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -> i32 {
     let mut interp = Interp::build(program).with_discharged(discharged);
     // BUG_HUNT #23: a missing entry point is a COMPILE-time error (the program
