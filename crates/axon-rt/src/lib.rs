@@ -230,6 +230,21 @@ struct Dict {
     map: Mutex<StdMap<String, DictVal>>,
 }
 
+/// Abort (exit 101) if the dict holds any non-Int value. The v1 native dict ABI
+/// hands values to codegen as raw i64, so a Str (pointer) or Float (bits) value
+/// read out by the BULK readers (`dict_values` / `dict_to_pairs`) would be a
+/// SILENT wrong value vs the interpreter (I-2) — the bulk-reader analog of
+/// codegen's per-value `dict_get` non-int guard. (The single-value readers
+/// guard at the codegen call site, where the tag is in an out-param.)
+fn dict_abort_if_nonint(guard: &StdMap<String, DictVal>, who: &str) {
+    if guard.values().any(|v| !matches!(v, DictVal::Int(_))) {
+        eprintln!(
+            "axon: panic: {who}: non-int-valued dicts (str/float) are not supported \
+             by native codegen (v1 dict is int-valued) — use `axon run`");
+        std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+    }
+}
+
 /// Create an empty dict. Opaque handle to an `Arc<Dict>`.
 #[no_mangle]
 pub extern "C" fn __axon_dict_new() -> *mut c_void {
@@ -514,6 +529,7 @@ pub extern "C" fn __axon_dict_values(
     }
     let dict = unsafe { dict_borrow(d) };
     let guard = dict.map.lock().unwrap();
+    dict_abort_if_nonint(&guard, "dict_values");
     let n = guard.len();
     if n == 0 {
         unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
@@ -594,6 +610,7 @@ pub extern "C" fn __axon_dict_to_pairs(
     }
     let dict = unsafe { dict_borrow(d) };
     let guard = dict.map.lock().unwrap();
+    dict_abort_if_nonint(&guard, "dict_to_pairs");
     let n = guard.len();
     if n == 0 {
         unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }

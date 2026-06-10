@@ -4126,7 +4126,7 @@ fn native_str_valued_dict_get_aborts_loudly_not_silently_wrong() {
     assert_eq!(run.status.code(), Some(101), "str-valued dict_get must abort, not return a garbage int");
     let err = String::from_utf8_lossy(&run.stderr);
     assert!(
-        err.contains("str-valued dicts are not supported"),
+        err.contains("non-int-valued dicts"),
         "the abort must explain the v1 int-valued-dict limitation, got stderr: {err}"
     );
     // And it must NOT have printed a garbage integer to stdout first.
