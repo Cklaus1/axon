@@ -85,71 +85,75 @@ fn program_calls_goal_run(item: &ast::Item) -> bool {
     body_of(item).into_iter().any(expr_calls_goal_run)
 }
 
-/// Recursively: does `e` (or any sub-expression) call `goal_run`?
-fn expr_calls_goal_run(e: &ast::Expr) -> bool {
+/// Recursively: does `e` (or any sub-expression) call the builtin named `target`?
+fn expr_calls(e: &ast::Expr, target: &str) -> bool {
     use ast::Expr;
     if let Expr::Call { callee, .. } = e {
         if let Expr::Ident(name) = callee.as_ref() {
-            if name == "goal_run" {
+            if name == target {
                 return true;
             }
         }
     }
-    // Reuse the resolver's child-expr enumeration shape inline: walk the
-    // structural children that can hold nested calls.
+    // Walk the structural children that can hold nested calls.
     match e {
-        Expr::BinOp { left, right, .. } => expr_calls_goal_run(left) || expr_calls_goal_run(right),
-        Expr::UnaryOp { operand, .. } => expr_calls_goal_run(operand),
+        Expr::BinOp { left, right, .. } => expr_calls(left, target) || expr_calls(right, target),
+        Expr::UnaryOp { operand, .. } => expr_calls(operand, target),
         Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
-            expr_calls_goal_run(value)
+            expr_calls(value, target)
         }
         Expr::Call { callee, args, .. } => {
-            expr_calls_goal_run(callee) || args.iter().any(expr_calls_goal_run)
+            expr_calls(callee, target) || args.iter().any(|a| expr_calls(a, target))
         }
         Expr::MethodCall { receiver, args, .. } => {
-            expr_calls_goal_run(receiver) || args.iter().any(expr_calls_goal_run)
+            expr_calls(receiver, target) || args.iter().any(|a| expr_calls(a, target))
         }
         Expr::Question(b) | Expr::Spawn(b) | Expr::Comptime(b) | Expr::Lambda { body: b, .. } => {
-            expr_calls_goal_run(b)
+            expr_calls(b, target)
         }
-        Expr::Return(inner) => inner.as_ref().map(|b| expr_calls_goal_run(b)).unwrap_or(false),
-        Expr::FieldAccess { receiver, .. } => expr_calls_goal_run(receiver),
+        Expr::Return(inner) => inner.as_ref().map(|b| expr_calls(b, target)).unwrap_or(false),
+        Expr::FieldAccess { receiver, .. } => expr_calls(receiver, target),
         Expr::Index { receiver, index } => {
-            expr_calls_goal_run(receiver) || expr_calls_goal_run(index)
+            expr_calls(receiver, target) || expr_calls(index, target)
         }
         Expr::If { cond, then, else_ } => {
-            expr_calls_goal_run(cond)
-                || expr_calls_goal_run(then)
-                || else_.as_ref().map(|b| expr_calls_goal_run(b)).unwrap_or(false)
+            expr_calls(cond, target)
+                || expr_calls(then, target)
+                || else_.as_ref().map(|b| expr_calls(b, target)).unwrap_or(false)
         }
         Expr::Match { subject, arms } => {
-            expr_calls_goal_run(subject) || arms.iter().any(|a| expr_calls_goal_run(&a.body))
+            expr_calls(subject, target) || arms.iter().any(|a| expr_calls(&a.body, target))
         }
-        Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().any(expr_calls_goal_run),
-        Expr::Block(stmts) => stmts.iter().any(|s| expr_calls_goal_run(&s.expr)),
+        Expr::Tuple(xs) | Expr::Array(xs) => xs.iter().any(|x| expr_calls(x, target)),
+        Expr::Block(stmts) => stmts.iter().any(|s| expr_calls(&s.expr, target)),
         Expr::While { cond, body } => {
-            expr_calls_goal_run(cond) || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+            expr_calls(cond, target) || body.iter().any(|s| expr_calls(&s.expr, target))
         }
         Expr::WhileLet { expr, body, .. } => {
-            expr_calls_goal_run(expr) || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+            expr_calls(expr, target) || body.iter().any(|s| expr_calls(&s.expr, target))
         }
         Expr::For { start, end, body, .. } => {
-            expr_calls_goal_run(start)
-                || expr_calls_goal_run(end)
-                || body.iter().any(|s| expr_calls_goal_run(&s.expr))
+            expr_calls(start, target)
+                || expr_calls(end, target)
+                || body.iter().any(|s| expr_calls(&s.expr, target))
         }
-        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => expr_calls_goal_run(b),
-        Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_calls_goal_run(v)),
-        Expr::Assign { value, .. } => expr_calls_goal_run(value),
+        Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => expr_calls(b, target),
+        Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_calls(v, target)),
+        Expr::Assign { value, .. } => expr_calls(value, target),
         Expr::AssignTo { place, value } => {
-            expr_calls_goal_run(place) || expr_calls_goal_run(value)
+            expr_calls(place, target) || expr_calls(value, target)
         }
         Expr::FmtStr { parts } => parts.iter().any(|p| match p {
-            ast::FmtPart::Expr(e) => expr_calls_goal_run(e),
+            ast::FmtPart::Expr(e) => expr_calls(e, target),
             _ => false,
         }),
         _ => false,
     }
+}
+
+/// Recursively: does `e` (or any sub-expression) call `goal_run`?
+fn expr_calls_goal_run(e: &ast::Expr) -> bool {
+    expr_calls(e, "goal_run")
 }
 
 // ── Public surface ────────────────────────────────────────────────────────────
@@ -815,6 +819,39 @@ impl<'ctx> Codegen<'ctx> {
             for item in &program.items {
                 if let ast::Item::FnDef(f) = item {
                     self.goal_name_targets.push(f.name.clone());
+                }
+            }
+        }
+
+        // ── R3: native AI tier-routing refusal (I-2, sound-by-refusal). ───────
+        // The native `__axon_ai_complete` ABI carries no model, so it always
+        // routes to the DEFAULT model (sonnet) — which is exactly the `balanced`
+        // tier (= DEFAULT_TIER). So native MATCHES the interpreter for balanced /
+        // no-policy fns, but would SILENTLY misroute a `cheap`/`strong` policy
+        // (the interp routes those to haiku/opus via `Tier::api_model`). Rather
+        // than emit a binary that quietly calls the wrong model, refuse (E0910):
+        // such a program runs faithfully under the interpreter. (An unknown tier
+        // name also refuses — the interp stops with E1302, which native can't
+        // replicate.) The tier is resolved by the SHARED `tier_from_attrs`, so
+        // codegen and the interpreter agree on each fn's tier exactly.
+        for (mangled, f) in &fn_work {
+            if !expr_calls(&f.body, "ai_complete") {
+                continue;
+            }
+            let refuse = !matches!(
+                crate::ai_routing::tier_from_attrs(&f.attrs),
+                Ok(crate::ai_routing::Tier::Balanced)
+            );
+            if refuse {
+                let msg = format!(
+                    "codegen error [E0910]: native codegen cannot honor a non-`balanced` AI \
+                     tier for `ai_complete` in `{mangled}` — the native runtime routes every \
+                     call to the default (balanced/sonnet) model, so a `cheap`/`strong` policy \
+                     would silently call the wrong model. Run this program under the interpreter \
+                     (`axon run`), which routes the tier correctly, or use the `balanced` tier."
+                );
+                if !self.codegen_errors.iter().any(|e| e == &msg) {
+                    self.codegen_errors.push(msg);
                 }
             }
         }

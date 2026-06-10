@@ -1704,6 +1704,9 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     // Abort if emission recorded hard errors (e.g. a builtin with no native
     // lowering — E0910). Better an honest failure than a wrong wasm object.
     if !cg.codegen_errors().is_empty() {
+        for e in cg.codegen_errors() {
+            eprintln!("{e}");
+        }
         eprintln!("error: {} codegen error(s); wasm build aborted", cg.codegen_errors().len());
         process::exit(2);
     }
@@ -3157,6 +3160,9 @@ fn build_ir_and_link(
     // builtin with no native lowering — E0910). Shipping the binary would
     // silently compute a wrong value.
     if !cg.codegen_errors().is_empty() {
+        for e in cg.codegen_errors() {
+            eprintln!("{e}");
+        }
         return Err(format!("{} codegen error(s); build aborted", cg.codegen_errors().len()));
     }
 

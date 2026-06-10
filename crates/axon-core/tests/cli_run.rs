@@ -4346,6 +4346,58 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
 }
 
 #[test]
+fn build_refuses_non_balanced_ai_tier_e0910_r3() {
+    // R3 (I-2, sound-by-refusal): the native `__axon_ai_complete` ABI carries no
+    // model, so it always routes to the default (balanced/sonnet) model. A fn
+    // with @[ai(policy(tier: strong))] (or cheap) would therefore SILENTLY call
+    // the wrong model natively, while the interpreter routes it correctly via
+    // Tier::api_model. Native must REFUSE (E0910) rather than misroute. A
+    // `balanced`/no-policy fn matches the interpreter and must still build.
+    let codegen_absent = |m: &str| m.contains("requires building axon with the `codegen` feature");
+
+    // (1) strong tier → refuse, naming the fn + steering to `balanced`/interp.
+    let f = std::env::temp_dir().join(format!("axon_aitier_{}.ax", std::process::id()));
+    std::fs::write(
+        &f,
+        "@[ai(policy(tier: strong, budget: 2))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
+    )
+    .unwrap();
+    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_aitier_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if codegen_absent(&msg) {
+        eprintln!("codegen feature absent — AI-tier refusal test skipped");
+        return;
+    }
+    assert!(!out.status.success(), "a strong-tier ai_complete native build must FAIL:\n{msg}");
+    assert!(
+        msg.contains("E0910") && msg.contains("balanced") && msg.contains("summ"),
+        "must refuse with E0910 naming the fn and steering to `balanced`/interp, got:\n{msg}"
+    );
+
+    // (2) balanced tier → must NOT trigger the tier refusal (matches the interp).
+    let g = std::env::temp_dir().join(format!("axon_aibal_{}.ax", std::process::id()));
+    std::fs::write(
+        &g,
+        "@[ai(policy(tier: balanced, budget: 2))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
+    )
+    .unwrap();
+    let out2 = axon().args(["build", g.to_str().unwrap(), "-o"])
+        .arg(std::env::temp_dir().join(format!("axon_aibal_{}.bin", std::process::id())))
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&g);
+    let msg2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
+    assert!(
+        !msg2.contains("cannot honor a non-`balanced` AI tier"),
+        "a balanced-tier ai_complete must NOT hit the tier refusal (it matches the interpreter), got:\n{msg2}"
+    );
+}
+
+#[test]
 fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
     // Interpolating a Result/Option in a string (e.g. `println("r={r}")` where
     // r = parse_int(...)) used to pass the `{i1,…}` tag-struct straight to

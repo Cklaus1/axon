@@ -106,6 +106,27 @@ impl Tier {
     }
 }
 
+/// Resolve the AI tier a fn's `ai_complete` calls run at, from its attributes:
+/// the enclosing `@[ai(policy(tier: X))]`, else [`DEFAULT_TIER`]. `Err(raw)`
+/// carries the unknown tier name (the caller raises E1302). This is the SINGLE
+/// source of the policy→tier rule, shared by the interpreter's `current_ai_tier`
+/// and the native codegen's tier-routing refusal (so both agree on which tier a
+/// call uses — interp routes to it, native refuses cheap/strong it can't honor).
+/// Per-call `tier:` args (R3b) are resolved separately by the caller; this is the
+/// fn-level policy step only.
+pub fn tier_from_attrs(attrs: &[crate::ast::Attr]) -> Result<Tier, String> {
+    let Some(ai) = attrs.iter().find(|a| a.name == "ai") else {
+        return Ok(DEFAULT_TIER);
+    };
+    for arg in &ai.args {
+        if let Some(rest) = arg.strip_prefix("tier:") {
+            let raw = rest.trim();
+            return Tier::parse(raw).ok_or_else(|| raw.to_string());
+        }
+    }
+    Ok(DEFAULT_TIER)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,6 +151,26 @@ mod tests {
     fn unknown_tier_is_none() {
         assert_eq!(Tier::parse("turbo"), None);
         assert_eq!(Tier::parse(""), None);
+    }
+
+    #[test]
+    fn tier_from_attrs_resolves_policy_or_default() {
+        use crate::ast::Attr;
+        let attr = |name: &str, args: &[&str]| Attr {
+            name: name.to_string(),
+            args: args.iter().map(|s| s.to_string()).collect(),
+        };
+        // No attrs / no @[ai] → DEFAULT_TIER (balanced — the one native honors).
+        assert_eq!(tier_from_attrs(&[]), Ok(DEFAULT_TIER));
+        assert_eq!(tier_from_attrs(&[attr("pure", &[])]), Ok(Tier::Balanced));
+        // @[ai(policy(tier: X))] flattens to an `ai` attr carrying a `tier:` arg.
+        assert_eq!(tier_from_attrs(&[attr("ai", &["policy", "tier: strong"])]), Ok(Tier::Strong));
+        assert_eq!(tier_from_attrs(&[attr("ai", &["tier:cheap"])]), Ok(Tier::Cheap));
+        assert_eq!(tier_from_attrs(&[attr("ai", &["tier: balanced"])]), Ok(Tier::Balanced));
+        // An @[ai] with no tier: arg falls back to the default.
+        assert_eq!(tier_from_attrs(&[attr("ai", &["budget: 3"])]), Ok(DEFAULT_TIER));
+        // Unknown tier name surfaces the raw name (caller raises E1302).
+        assert_eq!(tier_from_attrs(&[attr("ai", &["tier: turbo"])]), Err("turbo".to_string()));
     }
 
     #[test]

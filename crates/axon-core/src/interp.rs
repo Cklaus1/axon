@@ -1180,28 +1180,20 @@ impl<'p> Interp<'p> {
                 ))),
             };
         }
-        // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default.
+        // Steps 2-3: the enclosing @[ai(policy(tier:))], else the default —
+        // resolved via the shared `ai_routing::tier_from_attrs` so the interp and
+        // the native codegen refusal agree on a fn's tier exactly.
         let name = self.current_fn.borrow().clone();
         let Some(f) = self.fns.get(name.as_str()) else {
             return Ok(DEFAULT_TIER);
         };
-        let Some(ai) = f.attrs.iter().find(|a| a.name == "ai") else {
-            return Ok(DEFAULT_TIER);
-        };
-        for arg in &ai.args {
-            if let Some(rest) = arg.strip_prefix("tier:") {
-                let raw = rest.trim();
-                return match Tier::parse(raw) {
-                    Some(t) => Ok(t),
-                    None => Err(Flow::AiPolicyUnreachable(format!(
-                        "[{}] unknown AI tier `{raw}` — configured tiers: {}",
-                        crate::error::E1302,
-                        Tier::configured()
-                    ))),
-                };
-            }
-        }
-        Ok(DEFAULT_TIER)
+        crate::ai_routing::tier_from_attrs(&f.attrs).map_err(|raw| {
+            Flow::AiPolicyUnreachable(format!(
+                "[{}] unknown AI tier `{raw}` — configured tiers: {}",
+                crate::error::E1302,
+                Tier::configured()
+            ))
+        })
     }
 
     fn call_fn(&self, f: &FnDef, args: Vec<Value>) -> R {
