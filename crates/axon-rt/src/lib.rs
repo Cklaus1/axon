@@ -2378,6 +2378,45 @@ pub extern "C" fn __axon_msg_panic_i64(msg_ptr: *const u8, msg_len: i64, n: i64)
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+// ── assert_eq panic helpers (I-2 stderr text + values) ───────────────────────
+// The interpreter prints `axon: panic: assertion failed: <a> != <b>` to STDERR
+// with the ACTUAL values; native codegen used to printf a generic message to
+// STDOUT (wrong stream, no values, no prefix). These print the interpreter's
+// exact line (same Rust Display/Debug formatting) and exit 101.
+#[no_mangle]
+pub extern "C" fn __axon_assert_eq_i64_panic(a: i64, b: i64) -> ! {
+    eprintln!("axon: panic: assertion failed: {a} != {b}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+#[no_mangle]
+pub extern "C" fn __axon_assert_eq_f64_panic(a: f64, b: f64) -> ! {
+    // `{a}`/`{b}` use Rust's f64 Display — identical to the interpreter, which
+    // also formats with `{}` (NOT the `%.6g` form `to_str_f64` uses).
+    eprintln!("axon: panic: assertion failed: {a} != {b}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_assert_eq_str_panic(a: AxonStr, b: AxonStr) -> ! {
+    __axon_assert_eq_str_panic_impl(unsafe { a.as_str() }, unsafe { b.as_str() })
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_assert_eq_str_panic(
+    a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8,
+) -> ! {
+    __axon_assert_eq_str_panic_impl(
+        unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() },
+        unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() },
+    )
+}
+fn __axon_assert_eq_str_panic_impl(a: &str, b: &str) -> ! {
+    // `{a:?}`/`{b:?}` = Rust Debug (quoted + escaped) — matches the interpreter's
+    // `format!("assertion failed: {a:?} != {b:?}")`.
+    eprintln!("axon: panic: assertion failed: {a:?} != {b:?}");
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(

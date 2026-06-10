@@ -3967,6 +3967,35 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
 }
 
 #[test]
+fn codegen_assert_failure_messages_match_interp() {
+    // I-2: the assert family's FAILURE output must match the interpreter on
+    // stdout, stderr, AND exit. Native used to printf a generic message to STDOUT
+    // ("assertion failed: values not equal"); the interp prints "axon: panic:
+    // assertion failed: <a> != <b>" (with values) to STDERR. Now routed through
+    // __axon_msg_panic / __axon_assert_eq_*_panic. Skips when codegen can't build.
+    let script = format!("{}/../../scripts/assert_msg_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("assert_msg_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run assert_msg_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — assert message parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native assert failures must match the interpreter:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("assert_msg_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_arr_panic_messages_match_interp() {
     // I-2 stderr text: the closure-taking array builtins that panic on bad input
     // (arr_chunk(_,0), arr_max_by([]), arr_min_by([])) used to exit(101) with NO

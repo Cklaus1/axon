@@ -149,17 +149,16 @@ impl<'ctx> super::Codegen<'ctx> {
             build_wrappers::w_cond_br(&self.ir.builder,cond, ok_bb, fail_bb);
 
             self.ir.builder.position_at_end(fail_bb);
-            let msg = b"assertion failed\n\0";
-            let msg_const = self.ir.context.const_string(msg, false);
-            let msg_global = self.ir.module.add_global(msg_const.get_type(), None, "assert_msg");
-            msg_global.set_initializer(&msg_const);
-            msg_global.set_constant(true);
-            let msg_ptr = msg_global.as_pointer_value();
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_ptr.into()], "");
-            // Exit 101 to match the interpreter's panic exit code (I-2 parity:
-            // a failed assert is a runtime crash, not a generic exit-1).
-            let panic_code = i32_ty.const_int(101, false);
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[panic_code.into()], "");
+            // I-2: the interpreter prints "axon: panic: assertion failed" to STDERR
+            // (exit 101). Route through __axon_msg_panic so native matches the
+            // stream + prefix + text (was printf "assertion failed" to STDOUT).
+            let amsg = "assertion failed";
+            let mp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_msg_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_msg_panic", mp_ty, None));
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, amsg, "assert_msg");
+            let mlen = i64_ty.const_int(amsg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, p, &[g.into(), mlen.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
 
             self.ir.builder.position_at_end(ok_bb);
@@ -333,12 +332,13 @@ impl<'ctx> super::Codegen<'ctx> {
             let eq = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::EQ, a, b_param, "eq");
             build_wrappers::w_cond_br(&self.ir.builder,eq, ok_bb, fail_bb);
             self.ir.builder.position_at_end(fail_bb);
-            let msg = self.ir.context.const_string(b"assertion failed: values not equal\n\0", false);
-            let msg_g = self.ir.module.add_global(msg.get_type(), None, "assert_eq_msg");
-            msg_g.set_initializer(&msg);
-            msg_g.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
+            // I-2: print the interpreter's exact stderr line "axon: panic:
+            // assertion failed: <a> != <b>" (with values) + exit 101, instead of a
+            // generic message to STDOUT.
+            let aei_ty = void_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_assert_eq_i64_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_assert_eq_i64_panic", aei_ty, None));
+            build_wrappers::w_call(&self.ir.builder, p, &[a.into(), b_param.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -359,12 +359,15 @@ impl<'ctx> super::Codegen<'ctx> {
             let is_ok_val = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::EQ, tag, bool_ty.const_int(1, false), "isok");
             build_wrappers::w_cond_br(&self.ir.builder,is_ok_val, fail_bb, ok_bb);
             self.ir.builder.position_at_end(fail_bb);
-            let msg = self.ir.context.const_string(b"assertion failed: expected Err, got Ok\n\0", false);
-            let msg_g = self.ir.module.add_global(msg.get_type(), None, "assert_err_msg");
-            msg_g.set_initializer(&msg);
-            msg_g.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
+            // I-2: interp prints "axon: panic: assert_err: expected Err, got Ok" to
+            // STDERR (note the `assert_err:` prefix, NOT `assertion failed:`).
+            let aemsg = "assert_err: expected Err, got Ok";
+            let mp_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_msg_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_msg_panic", mp_ty, None));
+            let g = build_wrappers::w_global_string_ptr(&self.ir.builder, aemsg, "assert_err_msg");
+            let mlen = i64_ty.const_int(aemsg.len() as u64, false);
+            build_wrappers::w_call(&self.ir.builder, p, &[g.into(), mlen.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -880,12 +883,12 @@ impl<'ctx> super::Codegen<'ctx> {
             let eq = build_wrappers::w_float_compare(&self.ir.builder,FloatPredicate::OEQ, a, b_param, "eq");
             build_wrappers::w_cond_br(&self.ir.builder,eq, ok_bb, fail_bb);
             self.ir.builder.position_at_end(fail_bb);
-            let msg = self.ir.context.const_string(b"assertion failed: f64 values not equal\n\0", false);
-            let msg_g = self.ir.module.add_global(msg.get_type(), None, "assert_eq_f64_msg");
-            msg_g.set_initializer(&msg);
-            msg_g.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[msg_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
+            // I-2: interp prints "axon: panic: assertion failed: <a> != <b>" (f64
+            // Display, with values) to STDERR. Delegate to the rt helper.
+            let aef_ty = void_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_assert_eq_f64_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_assert_eq_f64_panic", aef_ty, None));
+            build_wrappers::w_call(&self.ir.builder, p, &[a.into(), b_param.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -912,14 +915,13 @@ impl<'ctx> super::Codegen<'ctx> {
             let b_len = build_wrappers::w_extract_value(&self.ir.builder,b_struct, 0, "b_len").into_int_value();
             let len_eq = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::EQ, a_len, b_len, "len_eq");
             build_wrappers::w_cond_br(&self.ir.builder,len_eq, cmp_bb, len_fail_bb);
-            // lengths differ → fail
+            // lengths differ → fail. I-2: interp prints one message regardless of
+            // why ("assertion failed: <a:?> != <b:?>", debug-quoted, to STDERR).
             self.ir.builder.position_at_end(len_fail_bb);
-            let fail_msg = self.ir.context.const_string(b"assert_eq_str failed: lengths differ\n\0", false);
-            let fail_g = self.ir.module.add_global(fail_msg.get_type(), None, "aeqs_len_msg");
-            fail_g.set_initializer(&fail_msg);
-            fail_g.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[fail_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
+            let aes_ty = void_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_assert_eq_str_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_assert_eq_str_panic", aes_ty, None));
+            build_wrappers::w_call(&self.ir.builder, p, &[a_struct.into(), b_struct.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             // same length — compare bytes via memcmp
             self.ir.builder.position_at_end(cmp_bb);
@@ -933,14 +935,12 @@ impl<'ctx> super::Codegen<'ctx> {
             let zero32 = i32_ty.const_zero();
             let bytes_eq = build_wrappers::w_int_compare(&self.ir.builder,IntPredicate::EQ, cmp_result, zero32, "bytes_eq");
             build_wrappers::w_cond_br(&self.ir.builder,bytes_eq, ok_bb, bytes_fail_bb);
-            // bytes differ → fail
+            // bytes differ → fail (same interp message as the length case).
             self.ir.builder.position_at_end(bytes_fail_bb);
-            let bytes_msg = self.ir.context.const_string(b"assert_eq_str failed: bytes differ\n\0", false);
-            let bytes_g = self.ir.module.add_global(bytes_msg.get_type(), None, "aeqs_bytes_msg");
-            bytes_g.set_initializer(&bytes_msg);
-            bytes_g.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder,printf_fn, &[bytes_g.as_pointer_value().into()], "");
-            build_wrappers::w_call(&self.ir.builder,exit_fn, &[i32_ty.const_int(101, false).into()], "");
+            let aes_ty = void_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
+            let p = self.ir.module.get_function("__axon_assert_eq_str_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_assert_eq_str_panic", aes_ty, None));
+            build_wrappers::w_call(&self.ir.builder, p, &[a_struct.into(), b_struct.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
             self.ir.builder.position_at_end(ok_bb);
             build_wrappers::w_ret_void(&self.ir.builder);
@@ -2200,6 +2200,16 @@ impl<'ctx> super::Codegen<'ctx> {
             // for messages that append a runtime value (e.g. "…got <n>").
             let mpi_ty = void_ty.fn_type(&[i8_ptr.into(), i64_ty.into(), i64_ty.into()], false);
             let _ = self.ir.module.add_function("__axon_msg_panic_i64", mpi_ty, None);
+            // assert_eq panic helpers — print the interpreter's exact stderr line
+            // (`assertion failed: <a> != <b>`) with the actual values, exit 101.
+            let f64_ty = self.ir.context.f64_type();
+            let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let aei_ty = void_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_assert_eq_i64_panic", aei_ty, None);
+            let aef_ty = void_ty.fn_type(&[f64_ty.into(), f64_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_assert_eq_f64_panic", aef_ty, None);
+            let aes_ty = void_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
+            let _ = self.ir.module.add_function("__axon_assert_eq_str_panic", aes_ty, None);
         }
 
         // ── Phase 5: refinement-precondition violation panic ─────────────────
