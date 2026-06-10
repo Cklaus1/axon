@@ -108,9 +108,18 @@ Items are labelled `[PARALLEL-SAFE]` when they touch no shared core files (codeg
 **Key files:** `/home/cklaus/projects/axon/crates/axon-core/src/codegen/builtins.rs` (lines 3370-3860), `/home/cklaus/projects/axon/crates/axon-rt/src/lib.rs`
 
 ### R3 tail: native AI tier routing
-**Effort: M**
-**Parity gate:** New `scripts/ai_tier_parity.sh` — under `AXON_AI_MOCK=1`, a `tier: strong` program must produce byte-identical output from interp and native. The mock path already returns `MOCK_AI_COMPLETE` regardless of model; the test documents the contract. Live routing correctness (strong → opus) is covered by `api_model_is_tier_specific_and_distinct` unit test in `axon-ai/src/lib.rs`.
-**Biggest risk:** The attribute-walking at emit-call time in codegen — if `current_fn_attrs` doesn't have `@[ai(policy(tier: X))]` accessible (e.g., for nested helper functions), the codegen silently falls back to DEFAULT_MODEL, which is exactly current behavior. This is safe but means tier routing only works on the directly-annotated function, not callees. Document this as a known limitation.
+**Status (2026-06-10): SOUNDNESS HOLE CLOSED via refusal (3a7d668); routing capability deferred.**
+The silent-misroute bug is fixed: native codegen now REFUSES (E0910) a build whose fn directly
+calls `ai_complete` under a non-`balanced`/unknown tier, instead of quietly routing `strong`/`cheap`
+to the default sonnet model. `balanced`/no-policy fns build and run byte-identical to the interpreter
+under `AXON_AI_MOCK` (the native runtime already honors mock + has `ai_complete_inner_model(prompt,
+model)`). Tier resolution is single-sourced in `ai_routing::tier_from_attrs` (shared by interp's
+`current_ai_tier` and the codegen refusal). Gated: `ai_routing` unit test + cli
+`build_refuses_non_balanced_ai_tier_e0910_r3`.
+**Remaining (the original "routing" ask — additive, lower priority now the hole is closed):** thread
+the resolved model through a new C ABI so native HONORS cheap/strong (gains the capability) instead of
+refusing. The runtime is ready; needs a model-carrying ABI + per-call-site `(env_key, default)`
+constants from `Tier::api_model` emitted in codegen. Then replace the refusal with the routed call.
 **Key files:** `crates/axon-ai/src/lib.rs`, `crates/axon-core/src/codegen/builtins.rs`, `crates/axon-core/src/ai_routing.rs`
 
 ### R2a: Type-map threading
