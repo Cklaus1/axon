@@ -29,7 +29,8 @@ the generated `.ax`:
 | `Verify` (an ```axon `@[verify(...)]` block) | the runtime deploy gate |
 | `Redteam` | adversarial gate (when an author `redteam_check` is supplied) |
 | `Budget` (first integer, e.g. "Up to 20 …") | `goal_run`'s evaluation budget (`max_evals`) |
-| `Constraints` / `Effect surface` / `Provenance` | documented intent (advisory in v1) |
+| `Constraints` | documented intent — but **enforced during the search** when you supply a `feasible` predicate (see below) |
+| `Effect surface` / `Provenance` | documented intent (advisory in v1) |
 
 The compiler wraps the author's logic in a goal-loop harness: an `@[adaptive]`
 `try_variant` driven by `goal_run` (hill-climb), the `@[verify]` deploy gate,
@@ -51,6 +52,11 @@ Three functions, if you define them, override the default harness:
   a documentary `@[verify(score >= N)]` pass-through.
 - `fn redteam_check() -> bool` — an adversarial check. When present, the goal
   deploys only if the verify gate **and** `redteam_check()` pass.
+- `fn feasible(x: i64) -> bool` — a per-candidate feasibility predicate over
+  `try_variant`'s parameter (the prose **Constraints**, encoded). When present,
+  the harness drives `goal_run_constrained` instead of `goal_run`, so the search
+  only accepts feasible candidates — a **hard gate during the search**, not a soft
+  penalty. The constraint is enforced, not merely documented.
 
 ### Prelude auto-bundling
 
@@ -72,6 +78,7 @@ pulls in exactly the ones you use.
 | Goal | Shows | Outcome (no key) |
 |---|---|---|
 | `optimize-goal.md` | pure goal-directed optimization to a global max | deploys (exit 0) |
+| `constrained-goal.md` | constrained search — a `feasible` predicate holds the optimizer inside the valid range (`goal_run_constrained`) | deploys (exit 0) |
 | `compose-goal.md` | composing auto-bundled prelude helpers | deploys (exit 0) |
 | `verified-goal.md` | enforced confidence gate blocking an under-target agent | **blocks** (exit 101) |
 | `redteam-goal.md` | adversarial gate blocking a high-scoring but unsafe agent | **blocks** (exit 1) |

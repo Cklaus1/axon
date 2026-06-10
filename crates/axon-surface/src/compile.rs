@@ -183,7 +183,16 @@ pub fn emit(goal: &GoalFile) -> Result<String> {
     let _ = writeln!(out, "    println(\"goal: {} — searching variants...\")", goal.title);
     // goal_run drives the @[adaptive] try_variant (hill-climbing variant_id).
     // Its target is an f64; the result is converted back to i64 for the gate.
-    let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, {budget})");
+    // If the author supplied a `feasible(variant_id) -> bool` predicate (the prose
+    // Constraints section, encoded), the search is CONSTRAINED: goal_run_constrained
+    // only accepts feasible candidates — a hard gate, so the prose constraint is
+    // actually enforced during the search, not just documented.
+    if provides("feasible") {
+        let _ = writeln!(out, "    // constrained by the author's `feasible` predicate (prose Constraints)");
+        let _ = writeln!(out, "    let result = goal_run_constrained(\"try_variant\", \"feasible\", {target}.0, {budget})");
+    } else {
+        let _ = writeln!(out, "    let result = goal_run(\"try_variant\", {target}.0, {budget})");
+    }
     let _ = writeln!(out, "    let best = f64_to_i64(result)");
     let _ = writeln!(out, "    println(\"best score: {{to_str(best)}} (target {target})\")");
     let _ = writeln!(out, "    let _ = assert_deployable(best)");
@@ -347,6 +356,31 @@ Some scoring.
         assert!(
             !after[..after.find("}}").unwrap_or(after.len()).min(80)].contains('1'),
             "redteam fail branch must not return 1"
+        );
+    }
+
+    #[test]
+    fn feasible_predicate_wires_constrained_search() {
+        // A `feasible(variant_id) -> bool` predicate supplied in a prose ```axon
+        // block (the Constraints section, encoded) makes the generated search
+        // CONSTRAINED: `main` drives goal_run_constrained, not goal_run, so the
+        // prose constraint is ENFORCED during the search rather than merely
+        // documented. Same author-provides-fn → scaffold-wires-it pattern as
+        // redteam_check, but a hard per-candidate feasibility gate.
+        let md = format!(
+            "{SAMPLE}\n## Implementation\n\n```axon\n\
+             fn feasible(variant_id: i64) -> bool {{ variant_id >= 0 }}\n```\n"
+        );
+        let g = GoalFile::parse(&md).unwrap();
+        let ax = emit(&g).unwrap();
+        assert!(ax.contains("fn feasible(variant_id: i64) -> bool"), "feasible lifted: {ax}");
+        assert!(
+            ax.contains("goal_run_constrained(\"try_variant\", \"feasible\", 70.0, 100)"),
+            "constrained search must be wired when feasible is provided: {ax}"
+        );
+        assert!(
+            !ax.contains("goal_run(\"try_variant\""),
+            "must NOT also emit the unconstrained goal_run: {ax}"
         );
     }
 
