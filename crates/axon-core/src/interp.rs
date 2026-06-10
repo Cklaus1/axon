@@ -666,6 +666,11 @@ pub fn run_program_with_discharged(program: &Program, discharged: crate::verify:
 // request, and unblocks the worker. No `Flow` plumbing, no `unsafe`, no
 // dependency — additive. v1 (arbitrary-`Value` payloads) needs a same-thread
 // stackful coroutine instead (governance/specs/R15-resume-runtime.md §4).
+// NATIVE substrate: a worker thread blocks in `host_await_yield` on this channel
+// while the host (the caller's thread) services the request. wasm has no threads,
+// so the wasm `host_await_yield` below reads stdin DIRECTLY instead (synchronous,
+// single-stack) — these channel types are native-only.
+#[cfg(not(target_arch = "wasm32"))]
 struct HostChannels {
     req_tx: std::sync::mpsc::Sender<String>,
     // `None` reply = end-of-input (host has no more to give) — distinct from an
@@ -673,13 +678,15 @@ struct HostChannels {
     // EOF-aware `host_await_opt` surfaces the distinction as `None`.
     rep_rx: std::sync::mpsc::Receiver<Option<String>>,
 }
+#[cfg(not(target_arch = "wasm32"))]
 thread_local! {
     static HOST_AWAIT: RefCell<Option<HostChannels>> = const { RefCell::new(None) };
 }
 
 /// Reach the active host channels from inside `host_await` (interp/builtins.rs).
 /// Returns `Ok(Some(reply))`, `Ok(None)` at end-of-input, or `Err(())` if there is
-/// no host at all (a bare `axon run`).
+/// no host at all (a bare `axon run`). NATIVE: blocks on the worker channel.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     HOST_AWAIT.with(|h| {
         let guard = h.borrow();
@@ -693,6 +700,25 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
             None => Err(()),
         }
     })
+}
+
+/// WASM: no threads, so there's no worker/channel substrate. Read the reply from
+/// stdin DIRECTLY on the single stack — a synchronous host_await that works under
+/// `wasmtime` (wasip1) with piped stdin, the same observable behavior as native's
+/// stdio host. Writes the request (a prompt) to stdout, reads one line as the
+/// reply (trailing newline stripped; EOF → `None`). This makes interactive Axon
+/// programs run on headless wasm. (The BROWSER — wasm32-unknown-unknown, no stdin
+/// — needs the Asyncify + JS-import substrate instead; R7c, R15 §13.)
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
+    use std::io::{BufRead, Write};
+    print!("{req}");
+    let _ = std::io::stdout().flush();
+    let mut line = String::new();
+    match std::io::stdin().lock().read_line(&mut line) {
+        Ok(0) | Err(_) => Ok(None), // EOF / no stdin → end-of-input
+        Ok(_) => Ok(Some(line.trim_end_matches(['\n', '\r']).to_string())),
+    }
 }
 
 /// Run `program` with a HOST driving its `host_await` suspensions. `host(req)`

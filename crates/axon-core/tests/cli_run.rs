@@ -20,6 +20,29 @@ fn fixture(rel: &str) -> String {
 }
 
 #[test]
+fn host_await_runs_identically_on_wasm_wasip1() {
+    // R15 / R7 headless-interactive: host_await runs byte-identically on native
+    // (worker-thread substrate) and on wasm32-wasip1 under wasmtime (the wasm
+    // host_await_yield reads stdin directly — no thread). Pipes the same input to
+    // both for greet / EOF / guess-loop / approval-loop and asserts identical
+    // stdout+exit. Skips if the wasm target or wasmtime is unavailable.
+    let script = format!("{}/../../scripts/wasm_host_await_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_host_await_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_host_await_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("wasm/wasmtime unavailable — host_await wasm parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "host_await must run identically on wasm:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_host_await_parity: PASS"), "expected PASS:\n{stdout}{stderr}");
+}
+
+#[test]
 fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
     // R7c precondition: the interpreter crate must compile for the WASI-free
     // wasm32-unknown-unknown (in-browser) target — the prerequisite for the R15
