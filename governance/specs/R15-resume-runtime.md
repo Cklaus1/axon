@@ -164,10 +164,20 @@ Slices:
   B1/B2/B4/**B5** green + a clean no-host error. No `Flow` variant or `unsafe` was needed —
   the worker thread blocking on the reply channel IS the suspension. This validates the API
   + the suspension property (B2: host called exactly once per await) NOW.
+- **(1b) v0+ — LANDED (`f71d75e`, `652376e`).** A stdin/stdout host (`run_suspendable_stdio`)
+  wired to `axon run`, so interactive programs work via the CLI (B1 end-to-end through the
+  binary). **B3 (host_await in a loop) also passes in v0** — the loop shape is
+  payload-agnostic, so the thread substrate handles it; only arbitrary-`Value` payloads
+  actually need the coroutine. Demo: `examples/interactive/`. So v0 already covers
+  **B1/B2/B3/B4/B5**.
 - **(2) v1 — the coroutine swap.** Replace the thread substrate with a same-thread stackful
-  coroutine (§4) so **arbitrary-`Value` payloads** (dict/struct, not just str — they're
-  `!Send` so can't cross a thread) work, and to drop the per-suspend thread cost. This is
-  the intricate part (the yielder-lifetime plumbing). Adds B3 (loop) over real Values.
+  coroutine (§4) so **arbitrary-`Value` payloads** (dict/struct — they're `!Send`, so can't
+  cross a thread) work, and to drop the per-suspend thread cost. This is the intricate part
+  (the yielder-lifetime plumbing + vendored `unsafe`). *This is the ONLY thing the coroutine
+  is needed for* — str/scalar payloads, loops, and the suspension property all work on the
+  thread substrate today. A safe alternative to evaluate first: **deep-clone Values to a
+  `Send` owned form** across the thread (no `unsafe`, no coroutine) — viable for native
+  hosts, though the browser (single-threaded) still needs the coroutine/Asyncify path.
 - **(3)** drop/resource (B6) + the kernel-scheduler `Suspended(token)` state.
 - **(4)** the browser binding (single-threaded → Asyncify / JS step-loop; R7c follow-on) and
   the `on_frame`/`fetch` surface (desugar to `host_await`, like Phase-8 `for!`).
