@@ -1067,6 +1067,96 @@ pub fn count_redundant_branch_sites(e: &Expr) -> usize {
     here + child_exprs(e).into_iter().map(count_redundant_branch_sites).sum::<usize>()
 }
 
+// ── The compare-fold REWRITE PASS (R10, fifth template) ───────────────────────
+//
+// Fold a comparison of two integer LITERALS to a bool literal: `3 < 5 → true`,
+// `2 == 2 → true`, `7 >= 9 → false`. DISTINCT from constant-fold (`Int OP Int →
+// Int`) and redundant-branch-fold (`if <bool-lit>`): this turns `Int CMP Int →
+// Bool`. Provably behavior-preserving and TOTAL — both operands are literals (no
+// dropped side effects), and integer comparison never panics. Like the other
+// fold passes it REDUCES description length (fewer `axon complexity` bits) for
+// identical behavior — the "simpler, not just faster" axis.
+
+/// Evaluate `<a> <cmp> <b>` for integer literals; `None` for a non-comparison op.
+/// Mirrors `interp` `eval_binop_vals` for the `Int CMP Int → Bool` cases.
+fn try_fold_compare(op: &BinOp, a: i64, b: i64) -> Option<bool> {
+    match op {
+        BinOp::Eq => Some(a == b),
+        BinOp::NotEq => Some(a != b),
+        BinOp::Lt => Some(a < b),
+        BinOp::Gt => Some(a > b),
+        BinOp::LtEq => Some(a <= b),
+        BinOp::GtEq => Some(a >= b),
+        _ => None,
+    }
+}
+
+/// The discovered optimization as a runnable [`Pass`]: fold integer-literal
+/// comparisons throughout the program. Passes G1 by construction-then-proof
+/// (`try_fold_compare` only folds total, literal cases) and G2 (adds no capability).
+pub fn compare_fold_pass(program: &Program) -> Program {
+    Program {
+        items: program.items.iter().map(compare_fold_item).collect(),
+    }
+}
+
+fn compare_fold_item(item: &Item) -> Item {
+    match item {
+        Item::FnDef(f) => {
+            let mut nf = f.clone();
+            nf.body = compare_fold_expr(&f.body);
+            Item::FnDef(nf)
+        }
+        Item::ImplBlock(b) => {
+            let mut nb = b.clone();
+            nb.methods = b
+                .methods
+                .iter()
+                .map(|m| {
+                    let mut nm = m.clone();
+                    nm.body = compare_fold_expr(&m.body);
+                    nm
+                })
+                .collect();
+            Item::ImplBlock(nb)
+        }
+        other => other.clone(),
+    }
+}
+
+/// Recursively compare-fold `e`: fold children first, then collapse a top-level
+/// `<int-lit> <cmp> <int-lit>` to a bool literal.
+fn compare_fold_expr(e: &Expr) -> Expr {
+    let folded = map_child_exprs(e, compare_fold_expr);
+    if let Expr::BinOp { op, left, right } = &folded {
+        if let (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) =
+            (left.as_ref(), right.as_ref())
+        {
+            if let Some(v) = try_fold_compare(op, *a, *b) {
+                return Expr::Literal(Literal::Bool(v));
+            }
+        }
+    }
+    folded
+}
+
+/// Count compare-fold sites (read-only) — an `<int-lit> <cmp> <int-lit>` BinOp.
+/// Uses the SAME `try_fold_compare` test as the pass, so detector and rewrite
+/// agree exactly.
+pub fn count_compare_fold_sites(e: &Expr) -> usize {
+    let here = if let Expr::BinOp { op, left, right } = e {
+        match (left.as_ref(), right.as_ref()) {
+            (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) => {
+                usize::from(try_fold_compare(op, *a, *b).is_some())
+            }
+            _ => 0,
+        }
+    } else {
+        0
+    };
+    here + child_exprs(e).into_iter().map(count_compare_fold_sites).sum::<usize>()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1515,6 +1605,50 @@ mod tests {
         let pass: &Pass = &constant_fold_pass;
         let rec = verify_pass(pass, &c);
         assert!(rec.passed(), "constant-fold must clear G1/G2: {rec:?}");
+    }
+
+    #[test]
+    fn compare_fold_pass_folds_literals_and_clears_the_gates() {
+        // `3 < 5` → bool literal `true`; behavior is preserved (the value the
+        // program yields is identical), and the pass clears the four gates.
+        let p = prog("fn main() -> i64 { if 3 < 5 { 1 } else { 0 } }");
+        let folded = compare_fold_pass(&p);
+        // The `3 < 5` inside the if-cond becomes `true`.
+        if let Item::FnDef(f) = &folded.items[0] {
+            let cond = match &f.body {
+                Expr::Block(stmts) => match &stmts.last().unwrap().expr {
+                    Expr::If { cond, .. } => (**cond).clone(),
+                    other => other.clone(),
+                },
+                Expr::If { cond, .. } => (**cond).clone(),
+                other => other.clone(),
+            };
+            assert!(
+                matches!(cond, Expr::Literal(Literal::Bool(true))),
+                "3 < 5 should fold to literal true, got {cond:?}"
+            );
+        } else {
+            panic!("expected a fn");
+        }
+        // G1/G2/G3 over a corpus with a foldable comparison + a runtime compare
+        // (over a variable, which must NOT fold) + a non-arith program.
+        let c = vec![
+            prog("fn main() -> i64 { if 2 == 2 { 7 } else { 9 } }"),
+            prog("fn main() -> i64 { let x = 5\n if x > 3 { 1 } else { 0 } }"),
+            prog("fn main() { println(\"hi\") }"),
+        ];
+        let pass: &Pass = &compare_fold_pass;
+        let rec = verify_pass(pass, &c);
+        assert!(rec.passed(), "compare-fold must clear the gates: {rec:?}");
+    }
+
+    #[test]
+    fn count_compare_fold_sites_agrees_with_the_pass() {
+        // Only `<int-lit> CMP <int-lit>` counts; a compare over a variable does not.
+        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { if 3 < 5 { 1 } else { 0 } }")), 1);
+        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { let x = 1\n if x < 5 { 1 } else { 0 } }")), 0);
+        // A non-comparison literal BinOp is NOT a compare-fold site.
+        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { 2 + 3 }")), 0);
     }
 
     #[test]
