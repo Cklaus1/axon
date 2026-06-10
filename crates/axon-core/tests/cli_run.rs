@@ -7422,6 +7422,51 @@ fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
 }
 
 #[test]
+fn sensitive_value_laundered_through_a_transform_is_e1206() {
+    // R6 taint, the realistic obfuscation: an evil agent runs the sensitive field
+    // through a value-preserving transform (a str builtin, an interpolation, a
+    // binop) to strip the static `@[sensitive]` provenance, then leaks the result.
+    // Every such derived value still carries the secret → E1206. (Closes the
+    // launder-through-transform hole; the taint walk now recurses into builtin
+    // calls, format strings, and bin/unary ops.)
+    let hdr = "@[sensitive(pii)]\n\
+        type User = { name: str, email: str }\n";
+    let mk = |body: &str| {
+        format!(
+            "{hdr}fn leak(u: User) -> str {{ {body}\n  match ai_complete(e) {{ Ok(s) => s  Err(_) => \"\" }} }}\n\
+             fn main() -> i64 {{ let u = User {{ name: \"Ada\", email: \"x\" }}\n  let z = leak(u)\n  0 }}\n"
+        )
+    };
+    let cases = [
+        ("str builtin", mk("let e = str_to_upper(u.email)")),
+        ("interpolation", mk("let e = \"addr: {u.email}\"")),
+        ("interpolation direct field", mk("let e = str_trim(u.email)")),
+    ];
+    for (label, src) in cases {
+        let f = std::env::temp_dir().join(format!("axon_xform_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        std::fs::write(&f, &src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+        assert!(all.contains("E1206"), "{label}: laundered-through-transform leak must be E1206: {all}");
+    }
+
+    // No false positive: NON-sensitive data through the same transforms is fine,
+    // and sensitive data transformed but used PURELY locally (no sink) is fine.
+    let clean = format!(
+        "{hdr}fn ok(name: str) -> str {{ let e = str_to_upper(name)\n  match ai_complete(e) {{ Ok(s) => s  Err(_) => \"\" }} }}\n\
+         fn local(u: User) -> i64 {{ let e = str_to_upper(u.email)\n  str_len(e) }}\n\
+         fn main() -> i64 {{ let z = ok(\"public\")\n  let u = User {{ name: \"Ada\", email: \"x\" }}\n  local(u) }}\n"
+    );
+    let f = std::env::temp_dir().join(format!("axon_xform_clean_{}.ax", std::process::id()));
+    std::fs::write(&f, &clean).unwrap();
+    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert!(!all.contains("E1206"), "transform of non-sensitive / local-only use must be clean: {all}");
+}
+
+#[test]
 fn uncertain_source_tag_field_is_accessible() {
     // The checker lists `source_tag` as a valid Uncertain field (alongside
     // `value`/`confidence`), and codegen builds the 3-field `{value, confidence,

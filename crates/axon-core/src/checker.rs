@@ -3813,6 +3813,56 @@ impl CheckCtx {
                     }
                 }
             }
+            // (d) A BUILTIN call that DERIVES its result from a sensitive arg —
+            // `str_to_upper(u.email)`, `str_concat(u.email, x)`, `str_len(u.email)`.
+            // Every builtin's output is a function of its inputs (none discard +
+            // re-synthesise data), so the result still carries the secret; recurse
+            // into its args. User fns are NOT blanket-recursed here — their precise
+            // flow is (a1) above (taint only when the fn returns its tainted arg),
+            // so a fn that drops its arg doesn't cause a false positive.
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(cn) = callee.as_ref() {
+                    if crate::builtins::is_known_builtin(cn) {
+                        for (i, e) in args.iter().enumerate() {
+                            if let Some(found) =
+                                self.sensitive_flow_in(e, &format!("{apath}.arg_{i}"), scope)
+                            {
+                                return Some(found);
+                            }
+                        }
+                    }
+                }
+            }
+            // (e) String interpolation — `"addr: {u.email}"` embeds the secret in
+            // the result text. Recurse into each interpolated sub-expression. (The
+            // direct-sink form is caught at the sink; this closes the let-bound
+            // launder `let e = "{u.email}"; sink(e)`.)
+            Expr::FmtStr { parts } => {
+                for (i, p) in parts.iter().enumerate() {
+                    if let crate::ast::FmtPart::Expr(e) = p {
+                        if let Some(found) =
+                            self.sensitive_flow_in(e, &format!("{apath}.part_{i}"), scope)
+                        {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+            // (f) Arithmetic / comparison / logical ops over a sensitive operand —
+            // the result is derived from (and leaks information about) the secret.
+            Expr::BinOp { left, right, .. } => {
+                if let Some(found) = self.sensitive_flow_in(left, &format!("{apath}.left"), scope) {
+                    return Some(found);
+                }
+                if let Some(found) = self.sensitive_flow_in(right, &format!("{apath}.right"), scope) {
+                    return Some(found);
+                }
+            }
+            Expr::UnaryOp { operand, .. } => {
+                if let Some(found) = self.sensitive_flow_in(operand, &format!("{apath}.operand"), scope) {
+                    return Some(found);
+                }
+            }
             _ => {}
         }
         None
