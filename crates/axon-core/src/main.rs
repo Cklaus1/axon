@@ -17,6 +17,11 @@ use std::time::Instant;
 use clap::{Parser, Subcommand};
 use axon_core::parse_source;
 
+/// A compiled Layer-3 RewriteSpec pass: AST → rewritten AST. Boxed so a spec
+/// compiled from `--spec` outlives the match arm that built it (`axon improve
+/// verify`). Aliased to keep the signature out of `clippy::type_complexity`.
+type DslPass = Box<dyn Fn(&axon_core::ast::Program) -> axon_core::ast::Program>;
+
 // ── CLI definition ────────────────────────────────────────────────────────────
 
 /// Version string with build identity: `<semver> (<git-sha>)`, e.g.
@@ -1200,7 +1205,7 @@ fn cmd_improve(action: ImproveAction) {
             // evaluator, and run the SAME four gates. The AI never authors Rust —
             // it composes the closed, reviewed rule vocabulary as data. Compiled
             // into an owned closure (so it outlives the match) when `--spec` is set.
-            let dsl_pass: Option<Box<dyn Fn(&axon_core::ast::Program) -> axon_core::ast::Program>> =
+            let dsl_pass: Option<DslPass> =
                 if let Some(spec_path) = &spec {
                     let text = match std::fs::read_to_string(spec_path) {
                         Ok(t) => t,
