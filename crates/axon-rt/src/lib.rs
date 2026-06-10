@@ -265,7 +265,6 @@ pub struct StrI64Pair {
 /// interpreter. The slice is passed as (len, *const StrI64Pair) scalars (the
 /// str_join slice-arg ABI). Later pairs win on a key conflict (BTreeMap insert
 /// order = iteration order). Returns a fresh opaque handle; null/empty → {}.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_from_pairs(len: i64, data: *const StrI64Pair) -> *mut c_void {
     let mut out: StdMap<String, DictVal> = StdMap::new();
@@ -429,14 +428,22 @@ pub extern "C" fn __axon_dict_get(
 }
 
 /// Whether `key` is present.
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-pub extern "C" fn __axon_dict_has(d: *mut c_void, key: AxonStr) -> bool {
+fn dict_has_impl(d: *mut c_void, key: AxonStr) -> bool {
     if d.is_null() { return false; }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let has = dict.map.lock().unwrap().contains_key(&k);
     has
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_has(d: *mut c_void, key: AxonStr) -> bool {
+    dict_has_impl(d, key)
+}
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_dict_has(d: *mut c_void, key_len: i64, key_ptr: *const u8) -> bool {
+    dict_has_impl(d, AxonStr { len: key_len, ptr: key_ptr })
 }
 
 /// Number of entries.
@@ -451,9 +458,7 @@ pub extern "C" fn __axon_dict_len(d: *mut c_void) -> i64 {
 /// Remove `key`, returning whether it was present (writing the prior value's
 /// tag + payload to the out-params, same convention as `__axon_dict_get`). For
 /// a Str value, `*out_payload` is a freshly-malloc'd null-terminated copy.
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-pub extern "C" fn __axon_dict_remove(
+fn dict_remove_impl(
     d: *mut c_void,
     key: AxonStr,
     out_tag: *mut i64,
@@ -485,6 +490,29 @@ pub extern "C" fn __axon_dict_remove(
             true
         }
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_remove(
+    d: *mut c_void,
+    key: AxonStr,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    dict_remove_impl(d, key, out_tag, out_payload, out_str_len)
+}
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_dict_remove(
+    d: *mut c_void,
+    key_len: i64,
+    key_ptr: *const u8,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    dict_remove_impl(d, AxonStr { len: key_len, ptr: key_ptr }, out_tag, out_payload, out_str_len)
 }
 
 /// Atomically bump an i64 counter at `key`: initialize to 1 if absent (or if
@@ -518,7 +546,6 @@ pub extern "C" fn __axon_dict_inc(d: *mut c_void, key_len: i64, key_ptr: *const 
 /// slice's `{len, data}` via out-params: `*out_len` = #keys, `*out_data` = a
 /// malloc'd array of `AxonStr` structs (each key's bytes also malloc'd +
 /// null-terminated). The codegen assembles the `{i64,ptr}` slice from these.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_keys(
     d: *mut c_void,
@@ -561,7 +588,6 @@ pub extern "C" fn __axon_dict_keys(
 /// SAME convention as `__axon_dict_get` (Int→n, Float→bits, Str→ptr) — the
 /// int-valued case is the supported surface, mirroring `dict_get`. The codegen
 /// assembles the `{i64,ptr}` slice from these out-params.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_values(
     d: *mut c_void,
@@ -664,7 +690,6 @@ pub extern "C" fn __axon_str_split(
 /// malloc'd + null-terminated, the i64 value reinterpreted with the dict_values
 /// convention). Same out-param shape as dict_keys; codegen wraps it in a
 /// {i64, ptr} slice whose element is the (str,i64) tuple.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_to_pairs(
     d: *mut c_void,
@@ -749,7 +774,6 @@ pub extern "C" fn __axon_dict_map_values(
 /// recoverable error (a key with `=`/newline, matching the interp's Err case)
 /// the read_file way — via a NEGATIVE out_len, so codegen builds `Err(msg)`;
 /// `out_len >= 0` → `Ok(serialized)`. The string buffer is malloc'd either way.
-#[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_to_str(
     d: *mut c_void,

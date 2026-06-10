@@ -38,15 +38,28 @@ WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 # dict pattern (dict_new/set/get/inc/get_or/len) all link+run. The gap was never
 # a deep "i64→i32 retarget" — it was MISSING `#[cfg(target_arch="wasm32")]` extern
 # variants; adding them (scalar-expanded for AxonStr-by-value args) unblocks each.
-# Still object-only = the un-ported dict externs (keys/values/to_pairs/merge/
-# from_pairs/to_str/map_values/filter/each/has/remove) — same fix, pending.
+# Still object-only = only the CLOSURE-taking dict externs (map_values/filter/
+# each) — same fix (a wasm extern variant), pending. The whole non-closure dict
+# API (new/set/get/has/remove/inc/get_or/len/keys/values/to_pairs/merge/
+# from_pairs/to_str) now links+runs on wasm.
 declare -A PROGS
 PROGS[fib]='fn f(n: i64) -> i64 { if n < 2 { n } else { f(n-1) + f(n-2) } }
 fn main() -> i64 { f(10) }'
 PROGS[arith]='fn main() -> i64 { (21 + 21) * 2 - 4 }'
 PROGS[float]='fn main() -> i64 { f64_to_i64(sqrt(16.0)) }'
 PROGS[array]='fn main() -> i64 { let xs = [1, 2, 3]  let ys = arr_map(xs, |x| x * 10)  arr_sum_i64(&ys) }'
-PROGS[dict]='fn main() -> i64 { let d = dict_new()  dict_set(d, "a", 5)  dict_inc(d, "a")  dict_get_or(d, "a", 0) + dict_len(d) }'
+PROGS[dict]='fn main() -> i64 {
+    let d = dict_new()
+    dict_set(d, "a", 10)
+    dict_set(d, "b", 20)
+    dict_inc(d, "a")
+    let h = if dict_has(d, "a") { 1 } else { 0 }
+    let ks = dict_keys(d)
+    let vs = dict_values(d)
+    let removed = dict_remove(d, "b")
+    let r = match removed { Some(v) => v  None => 0 }
+    dict_get_or(d, "a", 0) + len(ks) + len(vs) + h + r + dict_len(d)
+}'
 # NB: Axon has no `let mut` — declare with `let`, reassign with bare `x = …`.
 # The old `let mut` form parse-errored, so this case SILENTLY SKIPPED forever
 # (build-failed → SKIP), never actually testing a loop on wasm (a vacuous skip).
@@ -85,5 +98,5 @@ if [ "$ran" -lt "$total" ]; then
   echo "wasm_aot_run_parity: FAIL — only $ran/$total pure-int programs linked+ran; the rest silently skipped (a build/link failure on a pure-int program is a regression, not a skip)"; exit 1
 fi
 [ "$fail" -eq 0 ] || exit 1
-echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter across the linkable subset (recursion/loop/f64/array+closure/dict-counter) ✓"
+echo "wasm_aot_run_parity: PASS — AOT wasm runs identically to the interpreter across the linkable subset (recursion/loop/f64/array+closure/dict set/get/has/remove/inc/keys/values) ✓"
 exit 0
