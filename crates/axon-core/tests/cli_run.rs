@@ -8589,6 +8589,30 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
 }
 
 #[test]
+fn wasm_browser_examples_run_identically_via_js_host() {
+    // R7c breadth: real examples/*.ax (not just hand-picked snippets) AOT-compile
+    // to the WASI-FREE browser target (wasm32-unknown-unknown) and produce stdout
+    // identical to the interpreter under the Node host. Skips host/non-deterministic
+    // /time-dependent examples; a linked example that DIFFERS or imports wasi fails;
+    // a FLOOR guards a mass-skip regression. scripts/wasm_browser_examples_parity.sh;
+    // skips cleanly without node / the wasm toolchain.
+    let script = format!("{}/../../scripts/wasm_browser_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_browser_examples_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_examples_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("node/codegen/wasm unavailable — browser example sweep skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "real examples must run identically on the browser target:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_browser_examples_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_browser_println_matches_interp_via_js_host() {
     // R7c (browser I/O): a browser has no wasi, so println can't use stdout.
     // codegen lowers println to C `puts`; the unknown-unknown axon-rt shims puts
