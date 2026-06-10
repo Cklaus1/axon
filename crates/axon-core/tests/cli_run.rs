@@ -3996,6 +3996,28 @@ fn codegen_assert_failure_messages_match_interp() {
 }
 
 #[test]
+fn codegen_str_count_matches_interp() {
+    // interp↔native parity for str_count (had NO test). The old inline strstr loop
+    // returned 0 for an empty needle; the interp returns char_count+1 (one match
+    // per char boundary, e.g. str_count("héllo","")=6). Codegen now delegates to
+    // axon-rt __axon_str_count. Skips when codegen can't build (LLVM absent).
+    let script = format!("{}/../../scripts/str_count_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("str_count_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run str_count_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — str_count parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "native str_count must match the interpreter:\n{stdout}{stderr}");
+    assert!(stdout.contains("str_count_parity: OK"), "expected the OK line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn codegen_arr_panic_messages_match_interp() {
     // I-2 stderr text: the closure-taking array builtins that panic on bad input
     // (arr_chunk(_,0), arr_max_by([]), arr_min_by([])) used to exit(101) with NO

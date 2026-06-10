@@ -1947,6 +1947,31 @@ fn __axon_parse_bool_impl(src: &str, out_ok: *mut i64, out_val: *mut i64, out_le
     }
 }
 
+// ── str_count (non-overlapping match count, I-2 with the interpreter) ─────────
+/// `str_count(s, needle) -> i64`. Delegates to Rust's `s.matches(needle).count()`
+/// — byte-identical to the interpreter (`interp/builtins.rs`). The old inline
+/// codegen used a `strstr` loop that returned 0 for an empty needle (interp
+/// returns one match per char boundary = char_count+1) and mis-handles an
+/// embedded NUL (strstr stops at it). Returns the count directly (scalar).
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_str_count(s: AxonStr, needle: AxonStr) -> i64 {
+    __axon_str_count_impl(unsafe { s.as_str() }, unsafe { needle.as_str() })
+}
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_str_count(
+    s_len: i64, s_ptr: *const u8, n_len: i64, n_ptr: *const u8,
+) -> i64 {
+    __axon_str_count_impl(
+        unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() },
+        unsafe { AxonStr { len: n_len, ptr: n_ptr }.as_str() },
+    )
+}
+fn __axon_str_count_impl(s: &str, needle: &str) -> i64 {
+    s.matches(needle).count() as i64
+}
+
 // ── BUG_HUNT #38: str_reverse (char-correct, not byte-reverse) ────────────────
 /// `str_reverse(s)` — reverse by Unicode scalar (char), matching the
 /// interpreter (`chars().rev()`). The old inline codegen reversed BYTES, which

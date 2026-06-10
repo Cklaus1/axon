@@ -1816,89 +1816,27 @@ impl<'ctx> super::Codegen<'ctx> {
         }
 
         self.declare_phase9_math_builtins();
-        // ── Phase 10: str_count(s: str, needle: str) -> i64 ─────────────────
-        // Count non-overlapping occurrences of needle in s.
-        // Algorithm: walk s with strstr, advance past each match by needle_len.
-        // Returns 0 when needle is empty or not found.
-        //
-        // CFG:
-        //   entry     → early_ret (needle_len == 0)
-        //             → loop     (needle_len > 0)
-        //   loop      → found    (strstr != null)
-        //             → done     (strstr == null)
-        //   found     → loop
-        //   early_ret : return 0
-        //   done      : return count
-        //
-        // Allocas are placed in entry_bb (before the branch) so they dominate
-        // all successors, keeping the IR valid even without mem2reg.
+        // ── str_count(s: str, needle: str) -> i64 ───────────────────────────
+        // Delegate to axon-rt's __axon_str_count (Rust `s.matches(needle).count()`)
+        // — byte-identical to the interpreter (I-2). The old inline `strstr` loop
+        // returned 0 for an empty needle (interp returns char_count+1, one match
+        // per char boundary) and mis-handled an embedded NUL. Same delegate-to-rt
+        // pattern as str_to_upper; returns the count scalar directly.
         {
             let str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
+            let rt_fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
+            let rt_fn = self.ir.module.get_function("__axon_str_count")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_str_count", rt_fn_ty, None));
             let fn_ty = i64_ty.fn_type(&[str_ty.into(), str_ty.into()], false);
             let fn_val = self.ir.module.add_function("str_count", fn_ty, None);
-
-            let entry_bb     = self.ir.context.append_basic_block(fn_val, "sc_entry");
-            let early_ret_bb = self.ir.context.append_basic_block(fn_val, "sc_early_ret");
-            let loop_bb      = self.ir.context.append_basic_block(fn_val, "sc_loop");
-            let found_bb     = self.ir.context.append_basic_block(fn_val, "sc_found");
-            let done_bb      = self.ir.context.append_basic_block(fn_val, "sc_done");
+            let bb = self.ir.context.append_basic_block(fn_val, "sc_entry");
             let saved = self.ir.builder.get_insert_block();
-
-            // ── entry: extract fields, place allocas, then branch ───────────
-            self.ir.builder.position_at_end(entry_bb);
-            let s      = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let needle = fn_val.get_nth_param(1).unwrap().into_struct_value();
-            let s_ptr      = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "sc_sptr").into_pointer_value();
-            let needle_len = build_wrappers::w_extract_value(&self.ir.builder,needle, 0, "sc_nlen").into_int_value();
-            let needle_ptr = build_wrappers::w_extract_value(&self.ir.builder,needle, 1, "sc_nptr").into_pointer_value();
-            let zero = i64_ty.const_zero();
-
-            // Allocas here so they dominate all successors (including done_bb).
-            let cur_slot   = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "sc_cur");
-            let count_slot = build_wrappers::w_alloca(&self.ir.builder,i64_ty.into(), "sc_cnt");
-            build_wrappers::w_store(&self.ir.builder,cur_slot, s_ptr.into());
-            build_wrappers::w_store(&self.ir.builder,count_slot, zero.into());
-
-            let strstr_fn = self.ir.module.get_function("strstr").unwrap_or_else(|| {
-                let t = i8_ptr.fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
-                self.ir.module.add_function("strstr", t, None)
-            });
-
-            let needle_empty = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::EQ, needle_len, zero, "sc_nempty");
-            build_wrappers::w_cond_br(&self.ir.builder,needle_empty, early_ret_bb, loop_bb);
-
-            // ── early_ret: return 0 for empty needle ─────────────────────────
-            self.ir.builder.position_at_end(early_ret_bb);
-            build_wrappers::w_ret(&self.ir.builder, zero.into());
-
-            // ── loop: cur = strstr(cur, needle); branch on null ──────────────
-            self.ir.builder.position_at_end(loop_bb);
-            let cur = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), cur_slot, "sc_cur_v").into_pointer_value();
-            let found_ptr = build_wrappers::w_call(&self.ir.builder,
-                strstr_fn, &[cur.into(), needle_ptr.into()], "sc_fp").try_as_basic_value().left().unwrap().into_pointer_value();
-            let found_int = build_wrappers::w_ptr_to_int(&self.ir.builder,found_ptr, i64_ty, "sc_fpi");
-            let null_int  = build_wrappers::w_ptr_to_int(&self.ir.builder,i8_ptr.const_null(), i64_ty, "sc_ni");
-            let is_found = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::NE, found_int, null_int, "sc_isf");
-            build_wrappers::w_cond_br(&self.ir.builder,is_found, found_bb, done_bb);
-
-            // ── found: count++, advance cursor past the match ────────────────
-            self.ir.builder.position_at_end(found_bb);
-            let cnt = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), count_slot, "sc_cnt_v").into_int_value();
-            let cnt1 = build_wrappers::w_int_add(&self.ir.builder,cnt, i64_ty.const_int(1, false), "sc_cnt1");
-            build_wrappers::w_store(&self.ir.builder,count_slot, cnt1.into());
-            let next = unsafe {
-                build_wrappers::w_gep(&self.ir.builder,self.ir.context.i8_type().into(), found_ptr, &[needle_len], "sc_next")
-            };
-            build_wrappers::w_store(&self.ir.builder,cur_slot, next.into());
-            build_wrappers::w_br(&self.ir.builder,loop_bb);
-
-            // ── done: return accumulated count ───────────────────────────────
-            self.ir.builder.position_at_end(done_bb);
-            let final_count = build_wrappers::w_load(&self.ir.builder,i64_ty.into(), count_slot, "sc_final").into_int_value();
-            build_wrappers::w_ret(&self.ir.builder, final_count.into());
-
+            self.ir.builder.position_at_end(bb);
+            let s = fn_val.get_nth_param(0).unwrap();
+            let needle = fn_val.get_nth_param(1).unwrap();
+            let count = build_wrappers::w_call(&self.ir.builder, rt_fn, &[s.into(), needle.into()], "sc_call")
+                .try_as_basic_value().left().unwrap().into_int_value();
+            build_wrappers::w_ret(&self.ir.builder, count.into());
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("str_count".to_string(), fn_val);
             self.fn_return_types.insert("str_count".to_string(), Type::I64);
