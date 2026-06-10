@@ -1423,8 +1423,9 @@ impl Parser {
             Some(Token::Ident(s)) if s == "with" && self.peek_is_with_handler() => {
                 self.parse_with_handler()
             }
-            // Phase 8 surface: `goal { metric: "m", target: <f64>, budget: <i64> }`
-            // — the declarative optimization bundle (ROADMAP §8 exit criterion).
+            // Phase 8 surface: `goal { metric: "m", target: <f64>, budget: <i64>,
+            // subject_to?: "constraint" }` — the declarative optimization bundle
+            // (ROADMAP §8 exit criterion); `subject_to` makes the search constrained.
             // `goal` is a bare identifier, so only treat it as the block form when
             // it is immediately followed by `{`; a plain variable named `goal` in
             // expr position is never followed by `{`, so it is unaffected.
@@ -1677,6 +1678,7 @@ impl Parser {
         let mut target: Option<Expr> = None;
         let mut budget: Option<Expr> = None;
         let mut principal: Option<Expr> = None;
+        let mut subject_to: Option<Expr> = None;
         while !self.at(&Token::RBrace) {
             let field = self.expect_ident()?;
             self.expect(&Token::Colon)?;
@@ -1686,10 +1688,11 @@ impl Parser {
                 "target" => target = Some(value),
                 "budget" => budget = Some(value),
                 "principal" => principal = Some(value),
+                "subject_to" => subject_to = Some(value),
                 other => {
                     return Err(ParseError::Unexpected(
                         Token::Ident(other.to_string()),
-                        "a `goal` field: metric / target / budget / principal".into(),
+                        "a `goal` field: metric / target / budget / subject_to / principal".into(),
                     ))
                 }
             }
@@ -1705,12 +1708,22 @@ impl Parser {
         // `principal` is reserved (budget-scoping hook); discard for now so the
         // field is accepted without yet binding goal_run spend to a principal.
         let _ = principal;
-        // Desugar to goal_run(metric, target, budget).
-        Ok(Expr::Call {
-            callee: Box::new(Expr::Ident("goal_run".to_string())),
-            args: vec![metric, target, budget],
-            tier: None,
-        })
+        // `subject_to:` (a string naming the boolean constraint fn) makes the
+        // search CONSTRAINED — desugar to goal_run_constrained(metric, constraint,
+        // target, budget), the hard-feasibility-gate kernel. Without it, the plain
+        // goal_run(metric, target, budget).
+        match subject_to {
+            Some(constraint) => Ok(Expr::Call {
+                callee: Box::new(Expr::Ident("goal_run_constrained".to_string())),
+                args: vec![metric, constraint, target, budget],
+                tier: None,
+            }),
+            None => Ok(Expr::Call {
+                callee: Box::new(Expr::Ident("goal_run".to_string())),
+                args: vec![metric, target, budget],
+                tier: None,
+            }),
+        }
     }
 
     /// Parse a `{ … }` loop body into a statement list.

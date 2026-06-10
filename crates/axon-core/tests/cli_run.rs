@@ -776,6 +776,19 @@ fn phase8_surface_search_keywords() {
     assert_eq!(code, 0);
     assert!(out.contains("80"), "goal block reached the peak score: {out:?}");
 
+    // `goal { … subject_to: … }` desugars to the CONSTRAINED optimizer
+    // (goal_run_constrained): `revenue` races to the target unconstrained, but the
+    // `cap` constraint holds the feasible best at 50.
+    let (code, out) = run(
+        "@[adaptive]\n\
+         fn revenue(x: i64) -> i64 { x }\n\
+         fn cap(x: i64) -> bool { x <= 50 }\n\
+         fn main() -> i64 { \
+           let capped = goal { metric: \"revenue\", subject_to: \"cap\", target: 100.0, budget: 200 }\n\
+           if capped <= 50.0 { 0 } else { 1 } }",
+    );
+    assert_eq!(code, 0, "goal-block subject_to must desugar to constrained search (held at the cap): {out:?}");
+
     // Regression: a plain `for` loop and a `goal_run(...)` call are unaffected by
     // the new surface forms (the `!` / `goal {` triggers are narrow).
     let (code, _) = run(
