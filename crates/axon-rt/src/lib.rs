@@ -2417,6 +2417,18 @@ fn __axon_assert_eq_str_panic_impl(a: &str, b: &str) -> ! {
     std::process::exit(RUNTIME_PANIC_EXIT_CODE);
 }
 
+/// random_i64 inverted-bounds panic — prints the interpreter's EXACT line (with
+/// the lo/hi values) to STDERR and exits 101. Native codegen used to printf a
+/// generic, value-less message to STDOUT with no `axon: panic:` prefix.
+#[no_mangle]
+pub extern "C" fn __axon_random_inverted_panic(lo: i64, hi: i64) -> ! {
+    eprintln!(
+        "axon: panic: random_i64: inverted bounds — lo ({lo}) must be <= hi ({hi}); \
+         the range is [lo, hi). Did you swap the arguments?"
+    );
+    std::process::exit(RUNTIME_PANIC_EXIT_CODE);
+}
+
 /// Produce the verify-panic message without aborting.  Factored out so unit
 /// tests can assert on the formatted text without taking the process down.
 fn format_verify_panic(

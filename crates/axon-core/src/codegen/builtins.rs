@@ -91,9 +91,12 @@ impl<'ctx> super::Codegen<'ctx> {
         let printf_ty = i32_ty.fn_type(&[i8_ptr.into()], /*variadic=*/true);
         let printf_fn = self.ir.module.add_function("printf", printf_ty, None);
 
-        // C stdlib: void exit(int status)
+        // C stdlib: void exit(int status). Declared here so later code can
+        // `get_function("exit")`; the assert/panic builtins now route through the
+        // __axon_*_panic rt helpers (stderr + interp-matching message) rather than
+        // calling exit directly, so the binding itself is unused here.
         let exit_ty = void_ty.fn_type(&[i32_ty.into()], false);
-        let exit_fn = self.ir.module.add_function("exit", exit_ty, None);
+        let _exit_fn = self.ir.module.add_function("exit", exit_ty, None);
 
         // axon_println: takes { i64, i8* } Axon str struct, calls puts on the data ptr
         {
@@ -1746,18 +1749,15 @@ impl<'ctx> super::Codegen<'ctx> {
             );
             build_wrappers::w_cond_br(&self.ir.builder, is_inverted, inverted_bb, chk_eq_bb);
 
-            // Inverted bounds: print an error and exit(101) — loud failure, not
-            // a silent garbage value (I-9). Mirrors the interpreter's panic.
+            // Inverted bounds: panic(101) with the interpreter's EXACT stderr
+            // line (incl. the lo/hi values) via __axon_random_inverted_panic —
+            // loud failure, not a silent garbage value (I-9). Was a printf to
+            // STDOUT with generic, value-less text and no "axon: panic:" prefix.
             self.ir.builder.position_at_end(inverted_bb);
-            let msg = b"random_i64: inverted bounds (lo must be <= hi); the range is [lo, hi)\n\0";
-            let msg_const = self.ir.context.const_string(msg, false);
-            let msg_global = self.ir.module.add_global(msg_const.get_type(), None, "random_i64_inv_msg");
-            msg_global.set_initializer(&msg_const);
-            msg_global.set_constant(true);
-            build_wrappers::w_call(&self.ir.builder, printf_fn, &[msg_global.as_pointer_value().into()], "");
-            // Exit 101 — runtime panic code, matching the interpreter (I-2 parity).
-            let panic_code = i32_ty.const_int(101, false);
-            build_wrappers::w_call(&self.ir.builder, exit_fn, &[panic_code.into()], "");
+            let rip_ty = void_ty.fn_type(&[i64_ty.into(), i64_ty.into()], false);
+            let rip = self.ir.module.get_function("__axon_random_inverted_panic")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_random_inverted_panic", rip_ty, None));
+            build_wrappers::w_call(&self.ir.builder, rip, &[lo.into(), hi.into()], "");
             build_wrappers::w_unreachable(&self.ir.builder);
 
             // hi == lo → empty range branch.

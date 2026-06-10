@@ -64,6 +64,22 @@ if [ "$inv_code" = "136" ]; then
   echo "random_i64_parity: FAIL — hi<lo SIGFPE'd instead of a graceful failure"
   exit 1
 fi
+# Case 2b: the inverted-bounds FAILURE must match the interpreter byte-for-byte
+# on stdout, stderr, and exit (101) — not just "non-zero". The interp prints
+# "axon: panic: random_i64: inverted bounds — lo (20) must be <= hi (10); …" to
+# STDERR; native used to printf a generic, value-less message to STDOUT.
+i_out="$("$AXON" run "$WORK/inv.ax" 2>"$WORK/inv.ie")"; i_code=$?; i_err="$(cat "$WORK/inv.ie")"
+n_out="$("$WORK/inv" 2>"$WORK/inv.ne")"; n_code=$?; n_err="$(cat "$WORK/inv.ne")"
+if [ "$i_out" != "$n_out" ] || [ "$i_err" != "$n_err" ] || [ "$i_code" != "$n_code" ]; then
+  echo "random_i64_parity: FAIL — inverted-bounds output differs interp vs native:"
+  echo "  interp [$i_code] out='$i_out' err='$i_err'"
+  echo "  native [$n_code] out='$n_out' err='$n_err'"
+  exit 1
+fi
+if ! echo "$n_err" | grep -q 'axon: panic: random_i64: inverted bounds — lo (20) must be <= hi (10)'; then
+  echo "random_i64_parity: FAIL — inverted-bounds stderr must echo lo/hi values: '$n_err'"
+  exit 1
+fi
 
 # Case 3: normal [10,20) → in range, exit 0.
 cat > "$WORK/ok.ax" <<'AX'
