@@ -1677,6 +1677,31 @@ fn run_error_handling_propagates_results() {
 }
 
 #[test]
+fn goal_run_optimizes_a_mixed_i64_f64_metric_f1() {
+    // F1 (Goal-directedness): goal_run now LIVE-optimizes an @[adaptive] metric
+    // with MIXED i64/f64 params (previously these fell to retrospective
+    // best_observed — no live search). Each dimension is coordinate-descended in
+    // its own type. The optimum of `quality` is 0.0 at (a=3, b=2.0); a cold start
+    // is ~-13, so finding a near-optimal score proves the live search ran.
+    let prog = "@[adaptive]\n\
+                fn quality(a: i64, b: f64) -> f64 {\n\
+                  let da = i64_to_f64(a) - 3.0\n\
+                  let db = b - 2.0\n\
+                  0.0 - da * da - db * db\n\
+                }\n\
+                fn main() -> i64 {\n\
+                  let best = goal_run(\"quality\", 0.0, 200)\n\
+                  if best > 0.0 - 0.5 { 0 } else { 1 }\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_mixedgoal_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    assert_eq!(out.status.code(), Some(0),
+        "mixed i64/f64 metric must be live-optimized to near its optimum: {:?}", out);
+}
+
+#[test]
 fn goal_optimize_deploys() {
     let out = axon().args(["goal", &ex("goals/optimize-goal.md")]).output().unwrap();
     assert!(out.status.success(), "optimize-goal exited {:?}", out.status.code());

@@ -50,9 +50,122 @@ impl<'p> Interp<'p> {
                     });
                     return self.hill_climb_multi_f64_from(f, target, max_evals, seed);
                 }
+                // F1: a MIXED i64/f64 parameter list with a numeric return — live
+                // coordinate descent over the heterogeneous tuple (each param
+                // stepped in its own type). Previously these fell through to
+                // `best_observed` (retrospective only — no live search). call_fn
+                // already records the (score, typed-prefix input) for an @[adaptive]
+                // call, so no provenance change is needed.
+                let any_i64 = f.params.iter().any(|p| is_i64_type(&p.ty));
+                let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
+                let all_numeric =
+                    f.params.iter().all(|p| is_i64_type(&p.ty) || is_f64_type(&p.ty));
+                if !f.params.is_empty() && all_numeric && any_i64 && any_f64 && (i64_ret || f64_ret)
+                {
+                    return self.hill_climb_mixed(f, target, max_evals);
+                }
             }
         }
         Ok(self.best_observed(name, target, max_evals))
+    }
+
+    /// Coordinate-descend an `@[adaptive] fn(…mixed i64/f64…) -> i64|f64` toward
+    /// `target` (F1). Each dimension is stepped in its OWN type (integer halving
+    /// for i64, float halving for f64), accepting any move that gets the observed
+    /// score closer to `target`; on a full no-improvement sweep the steps halve.
+    /// Direction-agnostic (returns the score closest to `target`). Cold-start at
+    /// the type zero per param — mixed tuples aren't in the typed warm-start
+    /// stores, so no cross-run continuation (the homogeneous paths keep that). Each
+    /// eval flows through `call_fn`, so the provenance store accumulates as usual.
+    pub(super) fn hill_climb_mixed(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
+        let n = f.params.len();
+        let unlimited = max_evals <= 0;
+        let mut cur: Vec<Value> = f
+            .params
+            .iter()
+            .map(|p| if is_i64_type(&p.ty) { Value::Int(0) } else { Value::Float(0.0) })
+            .collect();
+        // Per-dimension step magnitude (a wide first probe, then a halving cascade).
+        let mut step: Vec<f64> = vec![if unlimited { 1024.0 } else { 64.0 }; n];
+
+        let eval_at = |xs: &[Value]| -> Result<f64, Flow> {
+            let other = self.call_fn(f, xs.to_vec())?;
+            match numeric_score(&other) {
+                Some(s) => Ok(s),
+                None => panic(format!(
+                    "@[adaptive] fn `{}` must return a number, got {}",
+                    f.name,
+                    other.type_name()
+                )),
+            }
+        };
+
+        let mut best_score = eval_at(&cur)?;
+        let mut best_dist = (best_score - target).abs();
+        let mut evals: i64 = 1;
+        if best_dist <= f64::EPSILON {
+            return Ok(best_score);
+        }
+
+        loop {
+            let mut improved = false;
+            for d in 0..n {
+                // i64 dims stop refining once their step rounds below 1.
+                let is_int = matches!(cur[d], Value::Int(_));
+                if is_int && step[d] < 1.0 {
+                    continue;
+                }
+                for &dir in &[1.0f64, -1.0f64] {
+                    if !unlimited && evals >= max_evals {
+                        return Ok(best_score);
+                    }
+                    let mut cand = cur.clone();
+                    match &cur[d] {
+                        Value::Int(v) => {
+                            let s = (step[d] * dir) as i64;
+                            if s == 0 {
+                                continue;
+                            }
+                            cand[d] = Value::Int(v.saturating_add(s));
+                        }
+                        Value::Float(v) => cand[d] = Value::Float(v + step[d] * dir),
+                        _ => continue,
+                    }
+                    let sc = eval_at(&cand)?;
+                    evals += 1;
+                    let dist = (sc - target).abs();
+                    if dist < best_dist {
+                        best_dist = dist;
+                        best_score = sc;
+                        cur = cand;
+                        improved = true;
+                        if best_dist <= f64::EPSILON {
+                            return Ok(best_score);
+                        }
+                    }
+                }
+            }
+            if !improved {
+                // Halve every step; stop when no dim can still make progress
+                // (i64 step < 1 and f64 step below a fine floor).
+                let mut active = false;
+                for (d, s) in step.iter_mut().enumerate() {
+                    *s /= 2.0;
+                    let floor = if matches!(cur[d], Value::Int(_)) { 1.0 } else { 1e-6 };
+                    if *s >= floor {
+                        active = true;
+                    }
+                }
+                if !active {
+                    return Ok(best_score);
+                }
+            }
+        }
     }
 
     /// Random-search strategy for an `@[adaptive] fn(i64, …) -> i64`.
