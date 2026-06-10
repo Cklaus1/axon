@@ -937,6 +937,27 @@ extern "C" {
     fn axon_host_write(ptr: *const u8, len: i64);
 }
 
+/// C `malloc`/`free` shims for the browser target (wasm32-unknown-unknown has no
+/// libc). codegen emits `malloc` for string interpolation (axon_concat) and a few
+/// buffer builtins; route it to Rust's allocator (dlmalloc on this target — the
+/// same path `libc_malloc` already uses). Matches the runtime's no-GC contract:
+/// callers own the buffer and it's never freed (so `free` is a safe no-op — its
+/// Layout isn't recoverable from a bare pointer anyway).
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[no_mangle]
+pub extern "C" fn malloc(size: usize) -> *mut u8 {
+    let n = if size == 0 { 1 } else { size };
+    match std::alloc::Layout::from_size_align(n, 1) {
+        Ok(layout) => unsafe { std::alloc::alloc(layout) },
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+#[no_mangle]
+pub extern "C" fn free(_ptr: *mut u8) {
+    // no-op: the runtime leaks by design (no GC); Layout isn't recoverable here.
+}
+
 /// C `puts` shim for the browser target (wasm32-unknown-unknown has no libc).
 /// codegen lowers `println` to `puts(data_ptr)` (Axon strs are NUL-terminated),
 /// which is undefined without a libc; route it to the host write import + a
