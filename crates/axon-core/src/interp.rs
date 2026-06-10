@@ -2024,6 +2024,25 @@ mod tests {
     }
 
     #[test]
+    fn r15_host_await_loop_n_times() {
+        // B3: a while-loop of host_await — the common interactive shape (an event /
+        // prompt loop). The host feeds a different reply each iteration; the
+        // program accumulates and the host is called exactly N times (loop count).
+        let prog = parse(
+            "fn main() -> i64 { let total = 0  let i = 0  while i < 3 { let s = host_await(\"w\")  total = total + str_len(s)  i = i + 1 }  total }",
+        );
+        let replies = ["ab", "cde", "f"]; // lengths 2, 3, 1
+        let mut n = 0;
+        let code = super::run_suspendable(&prog, |_req| {
+            let r = replies[n].to_string();
+            n += 1;
+            r
+        });
+        assert_eq!(n, 3, "host called once per loop iteration");
+        assert_eq!(code, 6, "2 + 3 + 1");
+    }
+
+    #[test]
     fn r15_no_await_runs_unchanged() {
         // B4: a program that never suspends runs to completion under the driver,
         // identically to a bare run, with zero host calls.
