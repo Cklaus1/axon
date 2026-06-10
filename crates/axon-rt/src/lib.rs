@@ -1857,6 +1857,95 @@ fn __axon_parse_int_radix_impl(
     }
 }
 
+// ── parse_float (whole-string, I-2 with the interpreter) ──────────────────────
+/// `parse_float(s) -> Result<f64, str>`. The whole parse lives here (the
+/// delegate-to-rt pattern, like parse_int_radix): codegen only assembles the
+/// Result. Byte-identical to the interpreter (`interp/builtins.rs` parse_float):
+/// `s.trim().parse::<f64>()` — WHOLE-string (so `"12abc"` is Err, unlike libc
+/// `strtod` which prefix-parses), and the Err message echoes the ORIGINAL input.
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_parse_float(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_ok: *mut i64,
+    out_val: *mut f64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_float_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, out_ok, out_val, out_len, out_ptr)
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_parse_float(
+    s: AxonStr,
+    out_ok: *mut i64,
+    out_val: *mut f64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_float_impl(unsafe { s.as_str() }, out_ok, out_val, out_len, out_ptr)
+}
+fn __axon_parse_float_impl(src: &str, out_ok: *mut i64, out_val: *mut f64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    match src.trim().parse::<f64>() {
+        Ok(f) => unsafe {
+            *out_ok = 1;
+            *out_val = f;
+        },
+        Err(_) => unsafe {
+            *out_ok = 0;
+            *out_val = 0.0;
+            write_str_out(&format!("could not parse `{src}` as a float"), out_len, out_ptr);
+        },
+    }
+}
+
+// ── parse_bool (whole-string, I-2 with the interpreter) ───────────────────────
+/// `parse_bool(s) -> Result<bool, str>`. Delegate-to-rt: accepts exactly
+/// `"true"`/`"false"` AFTER `trim()` (so `"  true  "` is Ok, unlike the old
+/// hand-emitted codegen which compared the raw bytes), `out_val` = 1/0. The Err
+/// message echoes the original input, matching `interp/builtins.rs` parse_bool.
+#[no_mangle]
+#[cfg(target_arch = "wasm32")]
+pub extern "C" fn __axon_parse_bool(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_bool_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, out_ok, out_val, out_len, out_ptr)
+}
+#[no_mangle]
+#[cfg(not(target_arch = "wasm32"))]
+pub extern "C" fn __axon_parse_bool(
+    s: AxonStr,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    __axon_parse_bool_impl(unsafe { s.as_str() }, out_ok, out_val, out_len, out_ptr)
+}
+fn __axon_parse_bool_impl(src: &str, out_ok: *mut i64, out_val: *mut i64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+    match src.trim() {
+        "true" => unsafe {
+            *out_ok = 1;
+            *out_val = 1;
+        },
+        "false" => unsafe {
+            *out_ok = 1;
+            *out_val = 0;
+        },
+        _ => unsafe {
+            *out_ok = 0;
+            *out_val = 0;
+            write_str_out(&format!("could not parse `{src}` as a bool (expected `true` or `false`)"), out_len, out_ptr);
+        },
+    }
+}
+
 // ── BUG_HUNT #38: str_reverse (char-correct, not byte-reverse) ────────────────
 /// `str_reverse(s)` — reverse by Unicode scalar (char), matching the
 /// interpreter (`chars().rev()`). The old inline codegen reversed BYTES, which

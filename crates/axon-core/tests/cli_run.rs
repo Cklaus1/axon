@@ -3910,6 +3910,35 @@ fn codegen_parse_int_radix_matches_interp() {
 }
 
 #[test]
+fn codegen_parse_float_bool_matches_interp() {
+    // parse_float / parse_bool must match the interpreter on VALUE and Err
+    // MESSAGE. The old hand-emitted codegen diverged (strtod prefix-parsed
+    // "12abc"; parse_float Err was empty; parse_bool didn't trim and said
+    // "invalid bool"). Both now delegate to axon-rt (__axon_parse_float /
+    // __axon_parse_bool). Skips when codegen can't build (LLVM absent).
+    let script = format!("{}/../../scripts/parse_float_bool_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("parse_float_bool_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run parse_float_bool_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — parse_float_bool parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native parse_float/parse_bool must match the interpreter:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("parse_float_bool_parity: OK"),
+        "expected the OK line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_fuzz_parity_finds_no_divergence() {
     // R1f slice 1: the differential fuzzer. Unlike the fixed-case harnesses, it
     // generates seeded-random + edge inputs per builtin, emits ONE program

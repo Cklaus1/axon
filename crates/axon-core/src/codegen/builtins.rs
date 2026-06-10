@@ -1637,124 +1637,77 @@ impl<'ctx> super::Codegen<'ctx> {
             // tag is stored as i1 (matches parse_float convention)
             let result_ty = self.ir.context.struct_type(&[i1_ty.into(), i8_arr16_ty.into()], false);
 
-            let strncmp_fn = self.ir.module.get_function("strncmp").unwrap_or_else(|| {
-                let ft = self.ir.context.i32_type().fn_type(
-                    &[i8_ptr.into(), i8_ptr.into(), i64_ty.into()], false);
-                self.ir.module.add_function("strncmp", ft, None)
-            });
+            // Delegate the whole parse to axon-rt's __axon_parse_bool — accepts
+            // "true"/"false" AFTER trim() (so "  true  " is Ok, which the old
+            // strncmp-on-raw-bytes path rejected) and produces the interpreter's
+            // Err message ("could not parse `<s>` as a bool …"), not "invalid
+            // bool". out_val is i64 (0/1); the i1 payload is `out_val != 0`.
+            let void_ty = self.ir.context.void_type();
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let i8_ptr_ptr = i8_ptr.ptr_type(inkwell::AddressSpace::default());
 
             let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
             let fn_val = self.ir.module.add_function("parse_bool", fn_ty, None);
 
-            let entry_bb    = self.ir.context.append_basic_block(fn_val, "pb_entry");
-            let check_f_bb  = self.ir.context.append_basic_block(fn_val, "pb_chk_false");
-            let ok_true_bb  = self.ir.context.append_basic_block(fn_val, "pb_ok_true");
-            let ok_false_bb = self.ir.context.append_basic_block(fn_val, "pb_ok_false");
-            let err_bb      = self.ir.context.append_basic_block(fn_val, "pb_err");
-
+            let entry_bb = self.ir.context.append_basic_block(fn_val, "pb_entry");
+            let ok_bb    = self.ir.context.append_basic_block(fn_val, "pb_ok");
+            let err_bb   = self.ir.context.append_basic_block(fn_val, "pb_err");
             let saved = self.ir.builder.get_insert_block();
             self.ir.builder.position_at_end(entry_bb);
 
-            let s     = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let s_len = build_wrappers::w_extract_value(&self.ir.builder,s, 0, "pb_slen").into_int_value();
-            let s_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "pb_sptr").into_pointer_value();
+            let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
+            let rt_ty = void_ty.fn_type(
+                &[str_ty.into(), i64_ptr.into(), i64_ptr.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false);
+            let rt_fn = self.ir.module.get_function("__axon_parse_bool")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_bool", rt_ty, None));
+            let out_ok_slot  = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pb_ok_slot");
+            let out_val_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pb_val_slot");
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pb_len_slot");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pb_ptr_slot");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pb_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn,
+                &[s.into(), out_ok_slot.into(), out_val_slot.into(), out_len_slot.into(), out_ptr_slot_cast.into()],
+                "");
 
-            // Check s == "true": len==4 && strncmp(s_ptr,"true",4)==0
-            let len4 = i64_ty.const_int(4, false);
-            let is_len4 = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::EQ, s_len, len4, "pb_l4");
-            let true_lit_g = self.ir.module.add_global(
-                self.ir.context.i8_type().array_type(5), None, "pb_true_lit");
-            true_lit_g.set_initializer(&self.ir.context.const_string(b"true", true));
-            true_lit_g.set_linkage(inkwell::module::Linkage::Private);
-            let true_lit = true_lit_g.as_pointer_value();
-            let cmp_t = build_wrappers::w_call(&self.ir.builder,strncmp_fn,
-                &[s_ptr.into(), true_lit.into(), self.msize(len4, "msz").into()], "pb_cmpt")
-                .try_as_basic_value().left().unwrap().into_int_value();
-            let cmp_t_eq = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::EQ, cmp_t,
-                self.ir.context.i32_type().const_int(0, false), "pb_teq");
-            let is_true_str = build_wrappers::w_and(&self.ir.builder,is_len4, cmp_t_eq, "pb_istrue");
-            build_wrappers::w_cond_br(&self.ir.builder,is_true_str, ok_true_bb, check_f_bb);
+            let ok_flag = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_ok_slot, "pb_okflag").into_int_value();
+            let zero = i64_ty.const_int(0, false);
+            let is_ok = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, ok_flag, zero, "pb_isok");
+            build_wrappers::w_cond_br(&self.ir.builder, is_ok, ok_bb, err_bb);
 
-            // check_f_bb: check s == "false": len==5 && strncmp(s_ptr,"false",5)==0
-            self.ir.builder.position_at_end(check_f_bb);
-            let len5 = i64_ty.const_int(5, false);
-            let is_len5 = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::EQ, s_len, len5, "pb_l5");
-            let false_lit_g = self.ir.module.add_global(
-                self.ir.context.i8_type().array_type(6), None, "pb_false_lit");
-            false_lit_g.set_initializer(&self.ir.context.const_string(b"false", true));
-            false_lit_g.set_linkage(inkwell::module::Linkage::Private);
-            let false_lit = false_lit_g.as_pointer_value();
-            let cmp_f = build_wrappers::w_call(&self.ir.builder,strncmp_fn,
-                &[s_ptr.into(), false_lit.into(), self.msize(len5, "msz").into()], "pb_cmpf")
-                .try_as_basic_value().left().unwrap().into_int_value();
-            let cmp_f_eq = build_wrappers::w_int_compare(&self.ir.builder,
-                inkwell::IntPredicate::EQ, cmp_f,
-                self.ir.context.i32_type().const_int(0, false), "pb_feq");
-            let is_false_str = build_wrappers::w_and(&self.ir.builder,is_len5, cmp_f_eq, "pb_isfalse");
-            build_wrappers::w_cond_br(&self.ir.builder,is_false_str, ok_false_bb, err_bb);
+            // ok_bb: { tag=1, payload = (out_val != 0) as i1 }
+            self.ir.builder.position_at_end(ok_bb);
+            let val_i64 = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_val_slot, "pb_valint").into_int_value();
+            let val_i1 = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, val_i64, zero, "pb_valbool");
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pb_ok_alloca");
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 0, "pb_ot_tag"),
+                i1_ty.const_int(1, false).into());
+            let payload_ok = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), ok_alloca, 1, "pb_ot_pay");
+            let bool_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_ok, i1_ty.ptr_type(inkwell::AddressSpace::default()), "pb_ot_bptr");
+            build_wrappers::w_store(&self.ir.builder, bool_ptr, val_i1.into());
+            let ok_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), ok_alloca, "pb_ot_val");
+            build_wrappers::w_ret(&self.ir.builder, ok_val);
 
-            // ok_true_bb: tag=1, payload = i1 true cast to [16 x i8]
-            self.ir.builder.position_at_end(ok_true_bb);
-            {
-                let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pb_ot_slot");
-                build_wrappers::w_store(&self.ir.builder,
-                    build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 0, "pb_ot_tag"),
-                    i1_ty.const_int(1, false).into());
-                let payload_ptr = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 1, "pb_ot_pay");
-                let bool_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,
-                    payload_ptr, i1_ty.ptr_type(inkwell::AddressSpace::default()), "pb_ot_bptr");
-                build_wrappers::w_store(&self.ir.builder,bool_ptr, i1_ty.const_int(1, false).into());
-                let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pb_ot_val");
-                build_wrappers::w_ret(&self.ir.builder, val);
-            }
-
-            // ok_false_bb: tag=1, payload = i1 false cast to [16 x i8]
-            self.ir.builder.position_at_end(ok_false_bb);
-            {
-                let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pb_of_slot");
-                build_wrappers::w_store(&self.ir.builder,
-                    build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 0, "pb_of_tag"),
-                    i1_ty.const_int(1, false).into());
-                let payload_ptr = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 1, "pb_of_pay");
-                let bool_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,
-                    payload_ptr, i1_ty.ptr_type(inkwell::AddressSpace::default()), "pb_of_bptr");
-                build_wrappers::w_store(&self.ir.builder,bool_ptr, i1_ty.const_int(0, false).into());
-                let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pb_of_val");
-                build_wrappers::w_ret(&self.ir.builder, val);
-            }
-
-            // err_bb: tag=0, payload = str{"invalid bool"} cast to [16 x i8]
+            // err_bb: { tag=0, payload = str{out_len, out_ptr} }
             self.ir.builder.position_at_end(err_bb);
-            {
-                let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pb_err_slot");
-                build_wrappers::w_store(&self.ir.builder,
-                    build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 0, "pb_err_tag"),
-                    i1_ty.const_int(0, false).into());
-                let payload_ptr = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 1, "pb_err_pay");
-                let str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,
-                    payload_ptr, str_ty.ptr_type(inkwell::AddressSpace::default()), "pb_err_sptr");
-                let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "pb_err_s");
-                let err_msg = b"invalid bool";
-                let err_lit_g = self.ir.module.add_global(
-                    self.ir.context.i8_type().array_type(err_msg.len() as u32 + 1),
-                    None, "pb_err_msg");
-                err_lit_g.set_initializer(&self.ir.context.const_string(err_msg, true));
-                err_lit_g.set_linkage(inkwell::module::Linkage::Private);
-                let err_lit = err_lit_g.as_pointer_value();
-                build_wrappers::w_store(&self.ir.builder,
-                    build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_alloca, 0, "pb_esl"),
-                    i64_ty.const_int(err_msg.len() as u64, false).into());
-                build_wrappers::w_store(&self.ir.builder,
-                    build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_alloca, 1, "pb_esp"),
-                    err_lit.into());
-                let err_str_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), err_str_alloca, "pb_esv");
-                build_wrappers::w_store(&self.ir.builder,str_ptr, err_str_val);
-                let val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pb_err_val");
-                build_wrappers::w_ret(&self.ir.builder, val);
-            }
+            let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pb_emlen").into_int_value();
+            let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pb_emptr").into_pointer_value();
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder, result_ty.into(), "pb_err_alloca");
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 0, "pb_err_tag"),
+                i1_ty.const_int(0, false).into());
+            let payload_err = build_wrappers::w_struct_gep(&self.ir.builder, result_ty.into(), err_alloca, 1, "pb_err_pay");
+            let str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder, payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "pb_err_sptr");
+            let err_str_alloca = build_wrappers::w_alloca(&self.ir.builder, str_ty.into(), "pb_err_s");
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), err_str_alloca, 0, "pb_esl"), msg_len.into());
+            build_wrappers::w_store(&self.ir.builder,
+                build_wrappers::w_struct_gep(&self.ir.builder, str_ty.into(), err_str_alloca, 1, "pb_esp"), msg_ptr.into());
+            let err_str_val = build_wrappers::w_load(&self.ir.builder, str_ty.into(), err_str_alloca, "pb_esv");
+            build_wrappers::w_store(&self.ir.builder, str_ptr, err_str_val);
+            let err_val = build_wrappers::w_load(&self.ir.builder, result_ty.into(), err_alloca, "pb_err_val");
+            build_wrappers::w_ret(&self.ir.builder, err_val);
 
             if let Some(b) = saved { self.ir.builder.position_at_end(b); }
             self.functions.insert("parse_bool".to_string(), fn_val);
@@ -3078,11 +3031,11 @@ impl<'ctx> super::Codegen<'ctx> {
             let i8_arr16_ty = self.ir.context.i8_type().array_type(16);
             let result_ty = self.ir.context.struct_type(&[bool_ty.into(), i8_arr16_ty.into()], false);
 
-            let strtod_ty = f64_ty.fn_type(&[i8_ptr.into(), i8_ptr_ptr.into()], false);
-            let strtod_fn = self.ir.module.get_function("strtod").unwrap_or_else(|| {
-                self.ir.module.add_function("strtod", strtod_ty, None)
-            });
-
+            // Delegate the whole parse to axon-rt's __axon_parse_float (Rust
+            // `trim().parse::<f64>()`, whole-string) — byte-identical to interp
+            // (value AND Err message), unlike the old libc `strtod` which
+            // prefix-parsed (`"12abc"` → 12) and emitted an EMPTY Err message.
+            // Drops the libc `strtod` dep too. Mirrors the parse_int delegation.
             let fn_ty = result_ty.fn_type(&[str_ty.into()], false);
             let fn_val = self.ir.module.add_function("parse_float", fn_ty, None);
 
@@ -3093,42 +3046,51 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(entry_bb);
 
             let s = fn_val.get_nth_param(0).unwrap().into_struct_value();
-            let data_ptr = build_wrappers::w_extract_value(&self.ir.builder,s, 1, "pf_data").into_pointer_value();
+            let i64_ptr = i64_ty.ptr_type(inkwell::AddressSpace::default());
+            let f64_ptr_ty = f64_ty.ptr_type(inkwell::AddressSpace::default());
+            let rt_ty = void_ty.fn_type(
+                &[str_ty.into(), i64_ptr.into(), f64_ptr_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()],
+                false);
+            let rt_fn = self.ir.module.get_function("__axon_parse_float")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_float", rt_ty, None));
+            let out_ok_slot  = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pf_ok_slot");
+            let out_val_slot = build_wrappers::w_alloca(&self.ir.builder, f64_ty.into(), "pf_val_slot");
+            let out_len_slot = build_wrappers::w_alloca(&self.ir.builder, i64_ty.into(), "pf_len_slot");
+            let out_ptr_slot = build_wrappers::w_alloca(&self.ir.builder, i8_ptr.into(), "pf_ptr_slot");
+            let out_ptr_slot_cast = build_wrappers::w_pointer_cast(&self.ir.builder, out_ptr_slot, i8_ptr_ptr, "pf_ptrptr");
+            build_wrappers::w_call(&self.ir.builder, rt_fn,
+                &[s.into(), out_ok_slot.into(), out_val_slot.into(), out_len_slot.into(), out_ptr_slot_cast.into()],
+                "");
 
-            let endptr_slot = build_wrappers::w_alloca(&self.ir.builder,i8_ptr.into(), "pf_endptr");
-            build_wrappers::w_store(&self.ir.builder,endptr_slot, i8_ptr.const_null().into());
-            let endptr_cast = build_wrappers::w_pointer_cast(&self.ir.builder,endptr_slot, i8_ptr_ptr, "pf_endptr_cast");
-
-            let parsed_f64 = build_wrappers::w_call(&self.ir.builder,strtod_fn, &[data_ptr.into(), endptr_cast.into()], "pf_strtod")
-                .try_as_basic_value().left().unwrap().into_float_value();
-
-            let endptr_val = build_wrappers::w_load(&self.ir.builder,i8_ptr.into(), endptr_slot, "pf_endptr_val").into_pointer_value();
-            let endptr_int = build_wrappers::w_ptr_to_int(&self.ir.builder,endptr_val, i64_ty, "pf_ep_int");
-            let data_int   = build_wrappers::w_ptr_to_int(&self.ir.builder,data_ptr, i64_ty, "pf_data_int");
-            let consumed   = build_wrappers::w_int_compare(&self.ir.builder,inkwell::IntPredicate::NE, endptr_int, data_int, "pf_consumed");
-            build_wrappers::w_cond_br(&self.ir.builder,consumed, ok_bb, err_bb);
+            let ok_flag = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_ok_slot, "pf_okflag").into_int_value();
+            let zero = i64_ty.const_int(0, false);
+            let is_ok = build_wrappers::w_int_compare(&self.ir.builder, inkwell::IntPredicate::NE, ok_flag, zero, "pf_isok");
+            build_wrappers::w_cond_br(&self.ir.builder, is_ok, ok_bb, err_bb);
 
             // ok_bb: { tag=1, payload=f64 as [16 x i8] }
             self.ir.builder.position_at_end(ok_bb);
-            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_ok_slot");
+            let parsed_f64 = build_wrappers::w_load(&self.ir.builder, f64_ty.into(), out_val_slot, "pf_parsed").into_float_value();
+            let ok_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_ok_alloca");
             let tag_ptr_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 0, "pf_tag_ok");
             build_wrappers::w_store(&self.ir.builder,tag_ptr_ok, bool_ty.const_int(1, false).into());
             let payload_ok = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), ok_alloca, 1, "pf_pay_ok");
-            let f64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, f64_ty.ptr_type(inkwell::AddressSpace::default()), "pf_f64_ptr");
+            let f64_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_ok, f64_ptr_ty, "pf_f64_ptr");
             build_wrappers::w_store(&self.ir.builder,f64_ptr, parsed_f64.into());
             let ok_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), ok_alloca, "pf_ok_val");
             build_wrappers::w_ret(&self.ir.builder, ok_val);
 
-            // err_bb: { tag=0, payload=str{len=0, ptr=null} }
+            // err_bb: { tag=0, payload=str{out_len, out_ptr} }
             self.ir.builder.position_at_end(err_bb);
-            let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_err_slot");
+            let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pf_emlen").into_int_value();
+            let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pf_emptr").into_pointer_value();
+            let err_alloca = build_wrappers::w_alloca(&self.ir.builder,result_ty.into(), "pf_err_alloca");
             let tag_ptr_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 0, "pf_tag_err");
             build_wrappers::w_store(&self.ir.builder,tag_ptr_err, bool_ty.const_int(0, false).into());
             let payload_err = build_wrappers::w_struct_gep(&self.ir.builder,result_ty.into(), err_alloca, 1, "pf_pay_err");
             let err_str_ptr = build_wrappers::w_pointer_cast(&self.ir.builder,payload_err, str_ty.ptr_type(inkwell::AddressSpace::default()), "pf_str_err_ptr");
             let err_str_slot = build_wrappers::w_alloca(&self.ir.builder,str_ty.into(), "pf_str_err");
-            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 0, ""), i64_ty.const_int(0, false).into());
-            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 1, ""), i8_ptr.const_null().into());
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 0, ""), msg_len.into());
+            build_wrappers::w_store(&self.ir.builder,build_wrappers::w_struct_gep(&self.ir.builder,str_ty.into(), err_str_slot, 1, ""), msg_ptr.into());
             let err_str_val = build_wrappers::w_load(&self.ir.builder,str_ty.into(), err_str_slot, "pf_err_str_val");
             build_wrappers::w_store(&self.ir.builder,err_str_ptr, err_str_val);
             let err_val = build_wrappers::w_load(&self.ir.builder,result_ty.into(), err_alloca, "pf_err_val");
