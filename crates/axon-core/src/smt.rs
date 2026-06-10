@@ -17,7 +17,7 @@
 
 #![cfg(feature = "smt")]
 
-use crate::ast::{BinOp, Expr, FnDef, Item, Literal, Program, Stmt};
+use crate::ast::{BinOp, Expr, FnDef, Item, Literal, Program, Stmt, UnaryOp};
 
 use z3::ast::{Ast, Bool, Int, Real};
 use z3::{Config, Context, SatResult, Solver};
@@ -310,6 +310,25 @@ fn encode_expr_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)
             Some(c.ite(&a, &b))
         }
         Expr::Block(stmts) => encode_block_real(ctx, stmts, params),
+        // Float bound builtins (counterpart of the integer min/max/abs case).
+        Expr::Call { callee, args, .. } => {
+            let Expr::Ident(name) = callee.as_ref() else { return None };
+            match (name.as_str(), args.len()) {
+                ("min_f64", 2) | ("max_f64", 2) => {
+                    let a = encode_expr_real(ctx, &args[0], params)?;
+                    let b = encode_expr_real(ctx, &args[1], params)?;
+                    let cond = if name == "min_f64" { a.le(&b) } else { a.ge(&b) };
+                    Some(cond.ite(&a, &b))
+                }
+                ("abs_f64", 1) => {
+                    let x = encode_expr_real(ctx, &args[0], params)?;
+                    let zero = f64_to_real(ctx, 0.0);
+                    let neg = &zero - &x;
+                    Some(x.ge(&zero).ite(&x, &neg))
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }
@@ -335,6 +354,17 @@ fn encode_block_real<'c>(
 /// [`encode_bool`]).
 fn encode_bool_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)]) -> Option<Bool<'c>> {
     match e {
+        Expr::BinOp { op: BinOp::And, left, right } => {
+            let l = encode_bool_real(ctx, left, params)?;
+            let r = encode_bool_real(ctx, right, params)?;
+            Some(Bool::and(ctx, &[&l, &r]))
+        }
+        Expr::BinOp { op: BinOp::Or, left, right } => {
+            let l = encode_bool_real(ctx, left, params)?;
+            let r = encode_bool_real(ctx, right, params)?;
+            Some(Bool::or(ctx, &[&l, &r]))
+        }
+        Expr::UnaryOp { op: UnaryOp::Not, operand } => Some(encode_bool_real(ctx, operand, params)?.not()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr_real(ctx, left, params)?;
             let r = encode_expr_real(ctx, right, params)?;
@@ -378,6 +408,30 @@ fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> 
             Some(c.ite(&a, &b))
         }
         Expr::Block(stmts) => encode_block(ctx, stmts, params),
+        // Pure, total integer bound builtins, encoded exactly via `ite` — these are
+        // the common shape of a provable @[verify]/refinement postcondition (clamp,
+        // bound). min/max(a,b) = ite(a≤b|a≥b, a, b); abs(x) = ite(x≥0, x, -x). The
+        // proof runs over ℤ (like the rest of this encoder), which stays sound: an
+        // i64 overflow (e.g. abs_i64(i64::MIN)) panics at runtime BEFORE the return
+        // check, so eliding a proven check is still observably a no-op (I-2).
+        Expr::Call { callee, args, .. } => {
+            let Expr::Ident(name) = callee.as_ref() else { return None };
+            match (name.as_str(), args.len()) {
+                ("min_i64", 2) | ("max_i64", 2) => {
+                    let a = encode_expr(ctx, &args[0], params)?;
+                    let b = encode_expr(ctx, &args[1], params)?;
+                    let cond = if name == "min_i64" { a.le(&b) } else { a.ge(&b) };
+                    Some(cond.ite(&a, &b))
+                }
+                ("abs_i64", 1) => {
+                    let x = encode_expr(ctx, &args[0], params)?;
+                    let zero = Int::from_i64(ctx, 0);
+                    let neg = &zero - &x;
+                    Some(x.ge(&zero).ite(&x, &neg))
+                }
+                _ => None,
+            }
+        }
         // Unary minus shows up as `0 - x` from the parser, handled by BinOp::Sub.
         _ => None,
     }
@@ -399,9 +453,22 @@ fn encode_block<'c>(ctx: &'c Context, stmts: &[Stmt], params: &[(String, Int<'c>
     encode_expr(ctx, &tail.expr, &env)
 }
 
-/// Encode a boolean condition (a comparison of integer terms) as a Z3 `Bool`.
+/// Encode a boolean condition (a comparison of integer terms, or a logical
+/// combination of such) as a Z3 `Bool`. Handles `&&`/`||`/`!` so a conjunctive
+/// guard like `if x > 0 && x < 10 { … }` is in-fragment.
 fn encode_bool<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> Option<Bool<'c>> {
     match e {
+        Expr::BinOp { op: BinOp::And, left, right } => {
+            let l = encode_bool(ctx, left, params)?;
+            let r = encode_bool(ctx, right, params)?;
+            Some(Bool::and(ctx, &[&l, &r]))
+        }
+        Expr::BinOp { op: BinOp::Or, left, right } => {
+            let l = encode_bool(ctx, left, params)?;
+            let r = encode_bool(ctx, right, params)?;
+            Some(Bool::or(ctx, &[&l, &r]))
+        }
+        Expr::UnaryOp { op: UnaryOp::Not, operand } => Some(encode_bool(ctx, operand, params)?.not()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr(ctx, left, params)?;
             let r = encode_expr(ctx, right, params)?;
@@ -1176,6 +1243,64 @@ mod tests {
     fn smt_is_deterministic() {
         let src = "@[verify(value >= 0)]\nfn f(x: i64) -> i64 { if x >= 0 { x } else { 0 - x } }";
         assert_eq!(prove(src), prove(src), "same program ⇒ same proof result");
+    }
+
+    // ── Encoder widening: bound builtins (min/max/abs) + logical connectives ──
+    #[test]
+    fn smt_proves_bound_builtins() {
+        // max_i64(x, 0) >= 0, abs_i64(x) >= 0, and min_i64(x, 10) <= 10 hold ∀x.
+        for (src, what) in [
+            ("@[verify(value >= 0)]\nfn f(x: i64) -> i64 { max_i64(x, 0) }", "max_i64"),
+            ("@[verify(value >= 0)]\nfn f(x: i64) -> i64 { abs_i64(x) }", "abs_i64"),
+            ("@[verify(value <= 10)]\nfn f(x: i64) -> i64 { min_i64(x, 10) }", "min_i64"),
+        ] {
+            assert!(matches!(prove(src).as_slice(), [ProofResult::Proven { .. }]),
+                "{what} bound must be proven, got {:?}", prove(src));
+        }
+    }
+
+    #[test]
+    fn smt_proves_conjunctive_guard() {
+        // A `&&` condition is now in-fragment: in the then-arm x>0 && x<10 holds,
+        // so returning x satisfies value >= 0; the else-arm returns 0.
+        let r = prove(
+            "@[verify(value >= 0)]\n\
+             fn band(x: i64) -> i64 { if x > 0 && x < 10 { x } else { 0 } }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+    }
+
+    #[test]
+    fn smt_disproves_false_bound_builtin_no_unsound_proof() {
+        // SOUNDNESS: the widening must NOT falsely prove a bound that doesn't
+        // hold. max_i64(x, 0) >= 5 is false (x<=0 → result 0 < 5) → counterexample.
+        let r = prove(
+            "@[verify(value >= 5)]\n\
+             fn f(x: i64) -> i64 { max_i64(x, 0) }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "a false bound over max_i64 must be disproven, not proven: got {r:?}");
+    }
+
+    #[test]
+    fn smt_proves_f64_bound_builtin() {
+        let r = prove(
+            "@[verify(value >= 0.0)]\n\
+             fn fclamp(x: f64) -> f64 { max_f64(x, 0.0) }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+    }
+
+    #[test]
+    fn smt_user_call_still_unsupported_not_falsely_proven() {
+        // The widening is limited to the named bound builtins — an arbitrary user
+        // fn call stays Unsupported (runtime gate kept), never falsely proven.
+        let r = prove(
+            "fn helper(x: i64) -> i64 { x + 100 }\n\
+             @[verify(value >= 0)]\n\
+             fn uses_call(x: i64) -> i64 { helper(x) }",
+        );
+        assert!(matches!(r.as_slice(), [ProofResult::Unsupported { .. }]), "got {r:?}");
     }
 
     // ── R9: composite (conjunction) predicates ───────────────────────────────
