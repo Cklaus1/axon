@@ -5815,6 +5815,35 @@ fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
 }
 
 #[test]
+fn goal_optimizer_builtins_are_impure_e1207() {
+    // Purity gap (was a hole): only `goal_run` (+ the goal_best_*/history/clear
+    // accessors) were in is_impure_builtin, so a @[pure] fn calling the newer
+    // optimizer variants (goal_run_random/multistart/continue, goal_eval) or the
+    // goal_count read passed P04 silently. All touch the non-deterministic
+    // provenance store → now E1207. The effect catalog is kept in lockstep (the
+    // builtin_effect_row_agrees_with_impurity unit test guards that).
+    let check = |body: &str| -> (i32, String) {
+        let src = format!(
+            "@[adaptive]\nfn metric(x: i64) -> i64 {{ 0 - (x - 7) * (x - 7) }}\n@[pure]\nfn p() -> i64 {{ {body} }}\nfn main() -> i64 {{ p() }}\n"
+        );
+        let f = std::env::temp_dir().join(format!("axon_goalpure_{}_{}.ax", std::process::id(), body.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+    for body in [
+        "goal_count(\"metric\")",
+        "f64_to_i64(goal_continue(\"metric\", 0.0, 5))",
+        "f64_to_i64(goal_eval(\"metric\", 3))",
+    ] {
+        let (c, m) = check(body);
+        assert_eq!(c, 2, "@[pure] calling `{body}` must be rejected: {m}");
+        assert!(m.contains("E1207"), "expected E1207 for `{body}`: {m}");
+    }
+}
+
+#[test]
 fn reassignment_does_not_erase_declared_type_for_later_checks() {
     // Checker bug (was a missed-diagnostic hole): Expr::Assign unconditionally
     // overwrote the scope type with resolve_expr_type(rhs), which is Unknown for a

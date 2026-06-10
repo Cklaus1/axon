@@ -1466,8 +1466,15 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
             // environment / process control
             | "env_var" | "exit"
-            // online optimization / channels / concurrency
-            | "goal_run" | "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
+            // online optimization / channels / concurrency. ALL goal_* touch the
+            // non-deterministic in-memory provenance store (the run-variants mutate
+            // it + call the @[adaptive] metric, the queries read it), so none is
+            // pure — a @[pure] fn calling any of them is E1207. (The run-variants
+            // goal_run_random/multistart/continue + goal_eval were silently PURE
+            // under P04; the read goal_count too, like goal_history/goal_best_*.)
+            | "goal_run" | "goal_run_random" | "goal_run_multistart" | "goal_continue"
+            | "goal_eval" | "goal_count"
+            | "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
             | "goal_best_score" | "goal_history" | "goal_clear"
             | "chan_new" | "chan_send" | "chan_recv"
     )
@@ -1502,9 +1509,16 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // Online optimization — goal_run can re-call adaptive fns, log, and read
         // provenance, so it spans {AI, Net, IO}; the read-only goal_* accessors
         // touch process-global optimizer state (modeled as IO).
-        "goal_run" => &["AI", "Net", "IO"],
+        // The run-variants all re-call the @[adaptive] metric (which may
+        // ai_complete), log, and mutate provenance — same {AI, Net, IO} span as
+        // goal_run. goal_eval runs the metric once (held-out eval). The read-only
+        // goal_* accessors (incl. goal_count) touch process-global optimizer state
+        // (modeled as IO). Must stay in lockstep with is_impure_builtin (see
+        // builtin_effect_row_agrees_with_impurity).
+        "goal_run" | "goal_run_random" | "goal_run_multistart" | "goal_continue"
+        | "goal_eval" => &["AI", "Net", "IO"],
         "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
-        | "goal_best_score" | "goal_history" | "goal_clear" => &["IO"],
+        | "goal_best_score" | "goal_history" | "goal_clear" | "goal_count" => &["IO"],
 
         // Channels / concurrency.
         "chan_new" | "chan_send" | "chan_recv" => &["Chan"],
