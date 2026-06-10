@@ -1302,6 +1302,60 @@ mod tests {
         assert!(errs.is_empty(), "pure recursive method dispatch: no errors: {errs:?}");
     }
 
+    // ── Laundering through deferred / nested control forms ────────────────────
+    // check_expr recurses into Lambda, Spawn, and WithHandler bodies; these guard
+    // that a @[contained] fn cannot hide a forbidden I/O call inside one of them
+    // (no false negative), and the companion that a GRANTED call inside the same
+    // form is still allowed (no false positive). A future refactor that drops one
+    // of those recursion arms would reopen a real laundering hole — these catch it.
+    #[test]
+    fn contained_fn_cannot_launder_via_lambda_body() {
+        let p = parse(
+            "@[contained(net: [], fs: [], exec: none)]\n\
+             fn s() -> i64 { let f = || { match ai_complete(\"exfil\") { Ok(t) => len(t)  Err(_) => 0 } }  f() }\n\
+             fn main() -> i64 { s() }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a lambda body must be caught under the fn's spec: {errs:?}");
+    }
+
+    #[test]
+    fn lambda_body_within_grant_is_allowed() {
+        let p = parse(
+            "@[contained(net: [\"api.anthropic.com\"], fs: [], exec: none)]\n\
+             fn s() -> i64 { let f = || { match ai_complete(\"ok\") { Ok(t) => len(t)  Err(_) => 0 } }  f() }\n\
+             fn main() -> i64 { s() }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.is_empty(),
+            "an ai_complete call in a lambda within the granted net host must be allowed: {errs:?}");
+    }
+
+    #[test]
+    fn contained_fn_cannot_launder_via_with_handler_body() {
+        let p = parse(
+            "@[contained(net: [], fs: [], exec: none)]\n\
+             fn s() -> i64 { with handler { on IO(p) => resume(0) } { match ai_complete(\"exfil\") { Ok(t) => len(t)  Err(_) => 0 } } }\n\
+             fn main() -> i64 { s() }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a with-handler body must be caught under the fn's spec: {errs:?}");
+    }
+
+    #[test]
+    fn contained_fn_cannot_launder_via_spawn_body() {
+        let p = parse(
+            "@[contained(net: [], fs: [], exec: none)]\n\
+             fn s() -> i64 { spawn { match ai_complete(\"exfil\") { Ok(t) => len(t)  Err(_) => 0 } }  0 }\n\
+             fn main() -> i64 { s() }",
+        );
+        let errs = check_capabilities(&p);
+        assert!(errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a spawn body must be caught under the fn's spec: {errs:?}");
+    }
+
     #[test]
     fn impl_method_cannot_launder_capability_past_import_ceiling() {
         // The end-to-end consequence: an importer contained to fs-read only must
