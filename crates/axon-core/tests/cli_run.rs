@@ -8589,6 +8589,31 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
 }
 
 #[test]
+fn wasm_examples_run_identically_on_aot_wasm() {
+    // R7 (AOT-wasm BREADTH): once every __axon_* extern has a wasm variant
+    // (str/dict/array/f64/closures all ported), real `examples/*.ax` — not just
+    // curated exit-code snippets — AOT-compile to wasm32-wasip1, link, and run
+    // under wasmtime with byte-identical STDOUT to the interpreter. The sweep
+    // skips host/non-deterministic examples and enforces a floor so a mass link
+    // regression can't vacuously pass. scripts/wasm_examples_parity.sh; skips
+    // cleanly when the codegen/wasm toolchain is absent.
+    let script = format!("{}/../../scripts/wasm_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_examples_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_examples_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen/wasm unavailable — AOT-wasm example sweep skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "real examples must run identically on AOT-wasm:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_examples_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_str_abi_bridge_runs_str_builtins() {
     // R7 (AOT-wasm str/array ABI): LLVM expands a by-value AxonStr arg into
     // scalars (i64 len, i32 ptr); axon-rt's wasm build declares that expanded
