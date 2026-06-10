@@ -312,7 +312,6 @@ unsafe fn dict_borrow(d: *mut c_void) -> Arc<Dict> {
     clone
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn dict_key_of(key: AxonStr) -> String {
     unsafe { key.as_str() }.to_string()
 }
@@ -335,6 +334,13 @@ fn dict_val_of(tag: i64, payload: i64, payload_str: *const u8, payload_str_len: 
 
 /// Set `key` → tagged value. Str payloads arrive as (ptr,len); int/float in
 /// `payload`. The dict owns its key + Str-value copies.
+fn dict_set_impl(d: *mut c_void, key: AxonStr, tag: i64, payload: i64, payload_str: *const u8, payload_str_len: i64) {
+    if d.is_null() { return; }
+    let dict = unsafe { dict_borrow(d) };
+    let k = dict_key_of(key);
+    let v = dict_val_of(tag, payload, payload_str, payload_str_len);
+    dict.map.lock().unwrap().insert(k, v);
+}
 #[cfg(not(target_arch = "wasm32"))]
 #[no_mangle]
 pub extern "C" fn __axon_dict_set(
@@ -345,19 +351,27 @@ pub extern "C" fn __axon_dict_set(
     payload_str: *const u8,
     payload_str_len: i64,
 ) {
-    if d.is_null() { return; }
-    let dict = unsafe { dict_borrow(d) };
-    let k = dict_key_of(key);
-    let v = dict_val_of(tag, payload, payload_str, payload_str_len);
-    dict.map.lock().unwrap().insert(k, v);
+    dict_set_impl(d, key, tag, payload, payload_str, payload_str_len)
+}
+// wasm32: the by-value AxonStr key expands to (i64 len, i32 ptr) scalars.
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_dict_set(
+    d: *mut c_void,
+    key_len: i64,
+    key_ptr: *const u8,
+    tag: i64,
+    payload: i64,
+    payload_str: *const u8,
+    payload_str_len: i64,
+) {
+    dict_set_impl(d, AxonStr { len: key_len, ptr: key_ptr }, tag, payload, payload_str, payload_str_len)
 }
 
 /// Look up `key`. Returns 1 if found (writing the tag + payload out-params), 0
 /// if absent. For a Str value, `*out_payload` is set to a freshly-malloc'd,
 /// null-terminated copy's pointer and `*out_str_len` to its byte length.
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-pub extern "C" fn __axon_dict_get(
+fn dict_get_impl(
     d: *mut c_void,
     key: AxonStr,
     out_tag: *mut i64,
@@ -389,6 +403,29 @@ pub extern "C" fn __axon_dict_get(
             true
         }
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_get(
+    d: *mut c_void,
+    key: AxonStr,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    dict_get_impl(d, key, out_tag, out_payload, out_str_len)
+}
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_dict_get(
+    d: *mut c_void,
+    key_len: i64,
+    key_ptr: *const u8,
+    out_tag: *mut i64,
+    out_payload: *mut i64,
+    out_str_len: *mut i64,
+) -> bool {
+    dict_get_impl(d, AxonStr { len: key_len, ptr: key_ptr }, out_tag, out_payload, out_str_len)
 }
 
 /// Whether `key` is present.
@@ -453,9 +490,7 @@ pub extern "C" fn __axon_dict_remove(
 /// Atomically bump an i64 counter at `key`: initialize to 1 if absent (or if
 /// the existing value is non-Int — matching the interpreter's get-or-0 + 1),
 /// else previous+1. Returns the new value. The common frequency-table primitive.
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
+fn dict_inc_impl(d: *mut c_void, key: AxonStr) -> i64 {
     if d.is_null() { return 0; }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
@@ -467,6 +502,16 @@ pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
     let next = cur + 1;
     guard.insert(k, DictVal::Int(next));
     next
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
+    dict_inc_impl(d, key)
+}
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_dict_inc(d: *mut c_void, key_len: i64, key_ptr: *const u8) -> i64 {
+    dict_inc_impl(d, AxonStr { len: key_len, ptr: key_ptr })
 }
 
 /// Collect the keys into a fresh `[str]` slice (BTreeMap order). Writes the
