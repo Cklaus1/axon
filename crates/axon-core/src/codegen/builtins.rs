@@ -388,16 +388,19 @@ impl<'ctx> super::Codegen<'ctx> {
             self.functions.insert("len".to_string(), fn_val);
         }
 
-        // parse_int(s: str) -> Result<i64, str>  ==  parse_int_radix(s, 10).
+        // parse_int(s: str) -> Result<i64, str>.
         //
-        // Delegate to axon-rt's __axon_parse_int_radix (Rust `str::parse`, whole-
-        // string, with the #37 byte-identical Err message), exactly like the
-        // parse_int_radix block below — base is just the constant 10. This drops
-        // the old libc `strtoll` (+ the endptr "whole string consumed" dance), so
-        // parse_int emits NO libc dep and links on the browser target
-        // (wasm32-unknown-unknown) too; native matches the interpreter by
-        // construction. (Verified in the interpreter: parse_int(s) and
-        // parse_int_radix(s, 10) return the identical Ok/Err, message included.)
+        // Delegate the VALUE parse to axon-rt's __axon_parse_int_radix(s, 10)
+        // (Rust `from_str_radix`, whole-string), exactly like the parse_int_radix
+        // block below — base is just the constant 10. This drops the old libc
+        // `strtoll` (+ the endptr dance), so parse_int emits NO libc dep and links
+        // on the browser target (wasm32-unknown-unknown) too. CAVEAT (I-2): the
+        // Ok/Err *value* is identical to parse_int_radix(s, 10), but the Err
+        // *message* is NOT — the interpreter's `parse_int` adds a radix-prefix hint
+        // (`0x1F` → "...base-10 only; strip the radix prefix") that `parse_int_radix`
+        // does not. So the Err branch below rebuilds the message via
+        // `__axon_parse_int_err` (the hinted base-10 builder) to match interp's
+        // parse_int byte-for-byte. (`parse_int_err_parity.sh` guards this.)
         {
             let i8_arr16_ty = self.ir.context.i8_type().array_type(16);
             let result_ty = self.ir.context.struct_type(&[bool_ty.into(), i8_arr16_ty.into()], false);
@@ -449,6 +452,18 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // err_bb: { tag=0, payload = str { out_len, out_ptr } }
             self.ir.builder.position_at_end(err_bb);
+            // I-2: `parse_int`'s Err message must match the INTERPRETER's parse_int,
+            // which adds a radix-prefix hint (`0x1F` → "...base-10 only; strip the
+            // radix prefix") that `parse_int_radix` (base 10) does NOT. The radix
+            // delegate above produced the no-hint `parse_int_radix` message, so
+            // rebuild the message here via `__axon_parse_int_err` (the dedicated
+            // hinted base-10 builder), overwriting the out slots. The parsed VALUE
+            // is unaffected; `parse_int_radix` keeps the no-hint message.
+            let perr_ty = void_ty.fn_type(&[str_ty.into(), i64_ptr.into(), i8_ptr_ptr.into()], false);
+            let perr_fn = self.ir.module.get_function("__axon_parse_int_err")
+                .unwrap_or_else(|| self.ir.module.add_function("__axon_parse_int_err", perr_ty, None));
+            build_wrappers::w_call(&self.ir.builder, perr_fn,
+                &[s.into(), out_len_slot.into(), out_ptr_slot_cast.into()], "");
             let err_str_ty = self.ir.context.struct_type(&[i64_ty.into(), i8_ptr.into()], false);
             let msg_len = build_wrappers::w_load(&self.ir.builder, i64_ty.into(), out_len_slot, "pi_emlen").into_int_value();
             let msg_ptr = build_wrappers::w_load(&self.ir.builder, i8_ptr.into(), out_ptr_slot, "pi_emptr").into_pointer_value();
