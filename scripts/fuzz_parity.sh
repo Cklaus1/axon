@@ -139,6 +139,13 @@ fuzz() {
         vals[++cnt]="\"end.\""
         vals[++cnt]="\"oo\""
         vals[++cnt]="\"o\""
+        # Multibyte/Unicode — the corpus gap that hid the inline-IR str
+        # divergences (str_to_upper byte-ASCII vs Rust Unicode, etc.). These
+        # exercise the char-vs-byte boundary for every str builtin.
+        vals[++cnt]="\"héllo\""
+        vals[++cnt]="\"straße\""
+        vals[++cnt]="\"日本語\""
+        vals[++cnt]="\"café au lait\""
       }
       for (i=1;i<=cnt;i++) {
         e = expr
