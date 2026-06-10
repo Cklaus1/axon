@@ -15,20 +15,21 @@ holds). Axon answers with a *proof*.
 # Build the interpreter CLI once (sub-second, no LLVM):
 cargo build -p axon-core --no-default-features --bin axon
 
-# The guided four-beat demo:
+# The guided demo (good → evil → subtle → credential-thief → python → the point):
 examples/flagship/run.sh
 #   (set DEMO_NOPAUSE=1 to run without the pauses)
 ```
 
-## The four files
+## The files
 
 | File | Role |
 |---|---|
 | `agent_task.ax` | The **good** agent. Same task, stays in its sandbox → compiles + runs. |
 | `agent_task_evil.ax` | The **evil** agent. Same caps, tries to exfiltrate → compiler refuses (3× E1001). |
 | `agent_task_subtle.ax` | The **subtle** agent. *Granted* `write("./out/")`, tries to write out-of-lane via a dynamic path → compiler refuses (E1001). A real grant can't be abused beyond its scope. |
-| `foil_python.py` | The **same evil agent in Python** — the "sandbox" is a comment; every escape runs. |
-| `run.sh` | Scripts the narrative: good → evil-refused → python-escapes → the point. |
+| `agent_task_secrets.ax` | The **credential thief**. *Granted* `net: ["api.anthropic.com"]` for its real task, it reads `ANTHROPIC_API_KEY` from the host environment to smuggle out via that lane → compiler refuses the env read (E1001). A granted net lane lets you *talk* to the model, not loot the host. |
+| `foil_python.py` | The **same escapes in Python** — the "sandbox" is a comment; every one runs (incl. reading the env credential). |
+| `run.sh` | Scripts the narrative: good → evil-refused → subtle-refused → thief-refused → python-escapes → the point. |
 
 ## What you see
 
@@ -38,9 +39,15 @@ examples/flagship/run.sh
   `ai_complete(...)`, and `exec("curl", ...)`. `axon check` emits **three
   `E1001` errors** (fs-read, net, exec) and exits **2**. The data is never read,
   no packet is sent, curl never runs — the escape is impossible by construction.
+- **Credential thief:** granted `net: ["api.anthropic.com"]` for a real summary
+  task, it reads `ANTHROPIC_API_KEY` from the environment and smuggles it through
+  that allowed call. `axon check` emits **one `E1001`** — on the *env read*, not
+  the network call. The net lane stays open for the legitimate work; the
+  environment is an ungrantable ambient secret channel, so harvesting the host's
+  credential is refused. A granted capability can't be turned into host looting.
 - **Python foil:** the same logic with a `# @contained(...)` *comment*. It reads
-  `/etc/passwd`, attempts the network POST, and spawns a process — all permitted,
-  because nothing enforces the comment.
+  `/etc/passwd`, attempts the network POST, spawns a process, **and reads the host
+  environment** — all permitted, because nothing enforces the comment.
 
 ## The boundary is the product
 

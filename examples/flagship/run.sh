@@ -74,6 +74,21 @@ echo "  a dynamic path. A real grant can't be abused beyond its declared scope."
 pause
 
 rule
+bold "BEAT 2¾ — The CREDENTIAL thief. It steals a host secret via its legit net lane."
+echo "Granted net: [\"api.anthropic.com\"] because it legitimately calls an LLM."
+echo "It does the summary (allowed) — then reads ANTHROPIC_API_KEY from the host"
+echo "environment and smuggles it out through that same allowed network call."
+echo "\$ axon check $D/agent_task_secrets.ax"
+"$AXON" check "$D/agent_task_secrets.ax"; rc=$?
+echo "exit=$rc  (2 = REFUSED)"
+echo
+echo "→ ONE E1001 — on the env read, NOT the network call. The net lane is open"
+echo "  for the real task; the environment is an ambient secret channel with no"
+echo "  grant clause, so harvesting the host's API key is refused. A granted net"
+echo "  capability lets you TALK to the model — not loot the host to feed it."
+pause
+
+rule
 bold "BEAT 3 — The SAME evil agent, in Python. The 'sandbox' is a comment."
 echo "\$ python3 $D/foil_python.py"
 python3 "$D/foil_python.py"

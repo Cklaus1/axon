@@ -1327,7 +1327,7 @@ fn all_examples_typecheck_clean() {
     // compiler rejecting a violation). They are guarded by their own tests
     // (e.g. `contained_violation_demo_is_rejected_by_check`), so exclude them
     // from the "must check clean" sweep.
-    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax", "agent_task_subtle.ax"];
+    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax", "agent_task_subtle.ax", "agent_task_secrets.ax"];
     for f in &files {
         if f.file_name()
             .and_then(|n| n.to_str())
@@ -1478,6 +1478,26 @@ fn flagship_subtle_agent_cannot_abuse_a_granted_capability() {
     assert!(msg.contains("E1001"), "out-of-lane dynamic write must be E1001: {msg}");
     assert!(msg.contains("dynamic path"), "denial should name the dynamic-path reason: {msg}");
     assert!(!msg.contains("report.txt"), "the literal in-lane write must NOT be flagged: {msg}");
+}
+
+#[test]
+fn flagship_secrets_agent_cannot_read_env_via_granted_net() {
+    // The credential-theft escape: an agent GRANTED net to its legitimate LLM
+    // endpoint reads a host secret (ANTHROPIC_API_KEY) from the environment and
+    // smuggles it out through that allowed network call. The env read is refused
+    // (E1001) even though the network lane is open — the environment is an
+    // ungrantable ambient secret channel. Guards the env-deny fix end-to-end AND
+    // the demo narration: exactly ONE E1001 (the env read), and the granted
+    // ai_complete calls must NOT be flagged.
+    let out = axon().args(["check", &ex("flagship/agent_task_secrets.ax")]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "credential-thief agent must be refused: {:?}", out);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let n = msg.matches("E1001").count();
+    assert_eq!(n, 1, "expected exactly 1 E1001 (the env read), got {n}: {msg}");
+    assert!(msg.contains("env_var") && msg.contains("environment"),
+        "denial must name the env read as the violation: {msg}");
+    assert!(!msg.contains("ai_complete"),
+        "the granted-host ai_complete calls must NOT be flagged (net lane is open): {msg}");
 }
 
 #[test]

