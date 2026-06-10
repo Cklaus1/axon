@@ -719,14 +719,13 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     })
 }
 
-/// WASM: no threads, so there's no worker/channel substrate. Read the reply from
-/// stdin DIRECTLY on the single stack — a synchronous host_await that works under
-/// `wasmtime` (wasip1) with piped stdin, the same observable behavior as native's
-/// stdio host. Writes the request (a prompt) to stdout, reads one line as the
-/// reply (trailing newline stripped; EOF → `None`). This makes interactive Axon
-/// programs run on headless wasm. (The BROWSER — wasm32-unknown-unknown, no stdin
-/// — needs the Asyncify + JS-import substrate instead; R7c, R15 §13.)
-#[cfg(target_arch = "wasm32")]
+/// WASI wasm (wasmtime): no threads, so there's no worker/channel substrate. Read
+/// the reply from stdin DIRECTLY on the single stack — a synchronous host_await
+/// that works under `wasmtime` (wasip1) with piped stdin, the same observable
+/// behavior as native's stdio host. Writes the request (a prompt) to stdout,
+/// reads one line as the reply (trailing newline stripped; EOF → `None`). This
+/// makes interactive Axon programs run on headless wasm.
+#[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
 pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     use std::io::{BufRead, Write};
     print!("{req}");
@@ -736,6 +735,32 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
         Ok(0) | Err(_) => Ok(None), // EOF / no stdin → end-of-input
         Ok(_) => Ok(Some(line.trim_end_matches(['\n', '\r']).to_string())),
     }
+}
+
+/// BROWSER wasm (`wasm32-unknown-unknown`): no stdin, no threads. Yield the request
+/// to JavaScript via an imported `axon_host_await(req_ptr, req_len, out_ptr,
+/// out_cap) -> i64` host function: JS reads the request from linear memory, writes
+/// up to `out_cap` reply bytes into `out_ptr`, and returns the reply byte length
+/// (or a negative value for end-of-input → `None`). v1 is SYNCHRONOUS (the page
+/// answers immediately — a tool-call, a pre-filled value); the ASYNC cases (input
+/// box, fetch, frame loop) are the R15 §13 B3 follow-on, where `wasm-opt
+/// --asyncify` lets THIS SAME import suspend the module and resume after a JS
+/// Promise. The axon-wasm cdylib hosts this binding; JS must supply the import.
+#[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
+pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
+    extern "C" {
+        fn axon_host_await(req_ptr: *const u8, req_len: usize, out_ptr: *mut u8, out_cap: usize) -> i64;
+    }
+    // A generous fixed reply buffer (the page truncates to fit). 64 KiB covers a
+    // prompt reply / tool result; larger payloads should stream (future).
+    let mut buf = vec![0u8; 64 * 1024];
+    let n = unsafe { axon_host_await(req.as_ptr(), req.len(), buf.as_mut_ptr(), buf.len()) };
+    if n < 0 {
+        return Ok(None); // end-of-input
+    }
+    let n = (n as usize).min(buf.len());
+    buf.truncate(n);
+    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
 }
 
 /// Run `program` with a HOST driving its `host_await` suspensions. `host(req)`

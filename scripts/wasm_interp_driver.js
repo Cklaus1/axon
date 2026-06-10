@@ -17,7 +17,16 @@ if (!wasmPath || !axPath) {
 const src = fs.readFileSync(axPath); // Buffer of UTF-8 source bytes
 const wasmBytes = fs.readFileSync(wasmPath);
 
-WebAssembly.instantiate(wasmBytes, {})
+// The module imports `axon_host_await` (referenced by the browser host_await
+// binding). Compute programs never call it; provide an EOF stub (returns -1n)
+// so instantiation succeeds. A real interactive driver supplies a live host.
+const imports = {
+  env: {
+    axon_host_await: (_reqPtr, _reqLen, _outPtr, _outCap) => -1n,
+  },
+};
+
+WebAssembly.instantiate(wasmBytes, imports)
   .then(({ instance }) => {
     const e = instance.exports;
     const len = src.length;

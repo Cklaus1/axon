@@ -43,6 +43,30 @@ fn host_await_runs_identically_on_wasm_wasip1() {
 }
 
 #[test]
+fn wasm_browser_host_await_round_trips_r7c() {
+    // R15 §13 B1: host_await works in the BROWSER substrate — a suspending program
+    // run by the axon-wasm interpreter gets its replies from an imported (JS)
+    // `axon_host_await`, with the request handed to the host (not stdout). The
+    // synchronous precursor to the Asyncify async binding (B3). host_await_yield is
+    // cfg-split three ways: native=worker-thread channel, wasip1=stdin,
+    // unknown-unknown=JS import. Skips if the target or node is absent.
+    let script = format!("{}/../../scripts/wasm_browser_host_await.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("wasm_browser_host_await.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_host_await.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("wasm/node unavailable — browser host_await skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(out.status.success(), "host_await must round-trip through the browser JS host:\n{stdout}{stderr}");
+    assert!(stdout.contains("wasm_browser_host_await: PASS"), "expected PASS:\n{stdout}{stderr}");
+}
+
+#[test]
 fn wasm_interpreter_evals_identically_to_native_r7c() {
     // R7c foundation: the Axon INTERPRETER runs in the browser
     // (wasm32-unknown-unknown) as a dynamic `eval` of .ax source — the axon-wasm
