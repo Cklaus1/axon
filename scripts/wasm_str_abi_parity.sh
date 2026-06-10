@@ -6,8 +6,9 @@
 # rustc would otherwise pass `#[repr(C)] AxonStr` INDIRECTLY on wasm32 (a single
 # i32 pointer) — a `function signature mismatch` at link, and a trap at runtime.
 # axon-rt now declares the EXPANDED scalar form under `#[cfg(target_arch=wasm32)]`
-# for all 13 str/array-taking externs, so a STRING-using program links clean and
-# runs. This harness proves it: a program exercising 7 distinct str builtins must
+# for the str/array-taking externs, so a STRING-using program links clean and
+# runs. This harness proves it: a program exercising 13 distinct str builtins —
+# including str_split/str_join, which return/read an ARRAY of AxonStr — must
 # produce the SAME value across interp, native AOT, and AOT-wasm.
 #
 # Skips (exit 0) when codegen / the wasm toolchain is absent.
@@ -35,8 +36,8 @@ AXON="target/debug/axon"
 INTERP="target/debug/axon-run"
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 
-# A program that routes through 7 distinct str builtins, each of which takes an
-# AxonStr by value (the exact externs the wasm bridge rewrites). The final i64
+# A program that routes through 13 distinct str builtins (str scalars/transforms
+# plus str_split/str_join, which round-trip an ARRAY of AxonStr). The final i64
 # is the cross-engine oracle.
 SRC="$WORK/strmix.ax"
 cat > "$SRC" <<'AX'
@@ -51,7 +52,9 @@ fn main() -> i64 {
     let lo = str_to_lower("ABC")
     let tr = str_trim("  xy  ")
     let pd = str_pad_start("z", 4, "0")
-    n + str_len(s) + str_len(slc) + idx + str_len(rep) + str_len(up) + str_len(lo) + str_len(tr) + str_len(pd)
+    let parts = str_split("a,b,c", ",")
+    let joined = str_join(parts, "-")
+    n + str_len(s) + str_len(slc) + idx + str_len(rep) + str_len(up) + str_len(lo) + str_len(tr) + str_len(pd) + len(parts) + str_len(joined)
 }
 AX
 
@@ -87,5 +90,5 @@ if [ "$((W_OUT % 256))" != "$I_EXIT" ]; then
   echo "wasm_str_abi_parity: FAIL — wasm ($W_OUT) != interp ($I_EXIT)"; exit 1
 fi
 
-echo "wasm_str_abi_parity: PASS — 11 str builtins (incl. str_to_upper/lower/trim/pad) run identically on interp, native, and AOT-wasm ✓"
+echo "wasm_str_abi_parity: PASS — 13 str builtins incl. str_to_upper/lower/trim/pad + str_split/str_join (array-of-str) run identically on interp, native, and AOT-wasm ✓"
 exit 0

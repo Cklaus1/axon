@@ -557,16 +557,12 @@ pub extern "C" fn __axon_dict_values(
 /// `*out_data` = a malloc'd array of `AxonStr` (each part's bytes malloc'd +
 /// null-terminated). Same shape as `__axon_dict_keys`; codegen assembles the
 /// `{i64,ptr}` slice from these.
-#[cfg(not(target_arch = "wasm32"))]
-#[no_mangle]
-pub extern "C" fn __axon_str_split(
-    s: AxonStr,
-    sep: AxonStr,
-    out_len: *mut i64,
-    out_data: *mut *mut u8,
-) {
-    let s = unsafe { s.as_str() };
-    let sep = unsafe { sep.as_str() };
+// Shared body: split `s` on `sep` and write the `[str]` slice out-params (a
+// malloc'd array of `AxonStr` + each part's bytes). The array element layout is
+// `size_of::<AxonStr>()`, which is target-correct on BOTH native ({i64,64-ptr})
+// and wasm32 ({i64,32-ptr}) — codegen reads it back with the same target str
+// struct, so the layout agrees by construction.
+fn str_split_impl(s: &str, sep: &str, out_len: *mut i64, out_data: *mut *mut u8) {
     let parts: Vec<&str> = if sep.is_empty() { vec![s] } else { s.split(sep).collect() };
     let n = parts.len();
     if n == 0 {
@@ -589,6 +585,32 @@ pub extern "C" fn __axon_str_split(
         *out_len = n as i64;
         *out_data = arr as *mut u8;
     }
+}
+#[cfg(not(target_arch = "wasm32"))]
+#[no_mangle]
+pub extern "C" fn __axon_str_split(
+    s: AxonStr,
+    sep: AxonStr,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    str_split_impl(unsafe { s.as_str() }, unsafe { sep.as_str() }, out_len, out_data)
+}
+// wasm32: codegen expands each by-value AxonStr arg into (i64 len, i32 ptr)
+// scalars (the str_reverse ABI note). Reconstruct and delegate.
+#[cfg(target_arch = "wasm32")]
+#[no_mangle]
+pub extern "C" fn __axon_str_split(
+    s_len: i64,
+    s_ptr: *const u8,
+    sep_len: i64,
+    sep_ptr: *const u8,
+    out_len: *mut i64,
+    out_data: *mut *mut u8,
+) {
+    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let sep = AxonStr { len: sep_len, ptr: sep_ptr };
+    str_split_impl(unsafe { s.as_str() }, unsafe { sep.as_str() }, out_len, out_data)
 }
 
 /// Collect the entries into a fresh `[(str, i64)]` slice (BTreeMap key order) —
