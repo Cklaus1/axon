@@ -2376,6 +2376,93 @@ impl<'p> Interp<'p> {
                 ok!(Value::Int(spent));
             }
 
+            // ── R12b: kernel Goal — principal-scoped, budgeted objective runner ──
+            // `kernel_goal_create(principal, name, target) -> i64` — register a
+            // goal optimizing the @[adaptive] `name` toward `target`, scoped to
+            // `principal` (its Slice-1 budget bounds total spend). Typo-guards
+            // `name` like goal_run. Returns an opaque goal handle.
+            "kernel_goal_create" => {
+                want(3)?;
+                let principal = as_int(&args[0])?;
+                let name = as_str(&args[1])?.to_string();
+                let target = as_float(&args[2])?;
+                // Typo guard: `name` must be a defined fn or already-recorded goal.
+                if !self.fns.contains_key(&name) && !self.provenance.borrow().contains_key(&name) {
+                    return panic(format!(
+                        "kernel_goal_create: `{name}` is neither a defined function nor a recorded goal"
+                    ));
+                }
+                let mut goals = self.goals.borrow_mut();
+                let handle = goals.len();
+                goals.push(crate::kernel::KernelGoal::new(principal.max(0) as usize, name, target));
+                ok!(Value::Int(handle as i64));
+            }
+            // `kernel_goal_run(goal, max_evals) -> f64` — run ≤ max_evals optimizer
+            // evaluations, but no more than the principal's remaining budget; debit
+            // that budget by the evals used; update best. If the budget bounds the
+            // run below max_evals, STOP and raise GoalBudgetExhausted (exit 7) — the
+            // partial best stays queryable.
+            "kernel_goal_run" => {
+                want(2)?;
+                let g = as_int(&args[0])?;
+                let max_evals = as_int(&args[1])?;
+                let (principal, name, target) = {
+                    let goals = self.goals.borrow();
+                    match goals.get(g.max(0) as usize) {
+                        Some(k) => (k.principal, k.name.clone(), k.target),
+                        None => return panic(format!("kernel_goal_run: invalid goal handle {g}")),
+                    }
+                };
+                let avail = self.principals.borrow().budget_remaining(principal).max(0);
+                let evals = max_evals.max(0).min(avail);
+                // Run the existing optimizer for `evals` steps (warm-starts from
+                // accumulated provenance, like goal_continue).
+                let best = self.run_goal(&name, target, evals)?;
+                if evals > 0 {
+                    self.principals.borrow_mut().spend(principal, evals);
+                }
+                {
+                    let mut goals = self.goals.borrow_mut();
+                    if let Some(k) = goals.get_mut(g.max(0) as usize) {
+                        k.evals_spent += evals;
+                        k.best_score = best;
+                    }
+                }
+                if evals < max_evals.max(0) {
+                    // Budget bounded the run short of the request → exhausted.
+                    return Err(Flow::GoalBudgetExhausted(format!(
+                        "goal `{name}` (principal {principal}) ran {evals} of {} requested evaluations before its budget was exhausted",
+                        max_evals.max(0)
+                    )));
+                }
+                ok!(Value::Float(best));
+            }
+            // `kernel_goal_best_score(goal) -> f64` — best observed score (no spend).
+            "kernel_goal_best_score" => {
+                want(1)?;
+                let g = as_int(&args[0])?;
+                let best = self.goals.borrow().get(g.max(0) as usize).map(|k| k.best_score).unwrap_or(0.0);
+                ok!(Value::Float(best));
+            }
+            // `kernel_goal_spent(goal) -> i64` — evaluations charged to the principal.
+            "kernel_goal_spent" => {
+                want(1)?;
+                let g = as_int(&args[0])?;
+                let spent = self.goals.borrow().get(g.max(0) as usize).map(|k| k.evals_spent).unwrap_or(0);
+                ok!(Value::Int(spent));
+            }
+            // `kernel_goal_budget_left(goal) -> i64` — the principal's remaining budget.
+            "kernel_goal_budget_left" => {
+                want(1)?;
+                let g = as_int(&args[0])?;
+                let p = self.goals.borrow().get(g.max(0) as usize).map(|k| k.principal);
+                let left = match p {
+                    Some(principal) => self.principals.borrow().budget_remaining(principal).max(0),
+                    None => 0,
+                };
+                ok!(Value::Int(left));
+            }
+
             // `goal_eval(name, input) -> f64` — HELD-OUT evaluation (R5).
             "goal_eval" => {
                 want(2)?;

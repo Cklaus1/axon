@@ -5885,6 +5885,61 @@ fn pure_fn_calling_an_impure_method_is_e1207() {
 }
 
 #[test]
+fn kernel_goal_is_principal_budget_scoped_r12b() {
+    // R12b: a kernel Goal runs the optimizer scoped to a Principal's budget —
+    // each eval debits the principal; exhausting it STOPS with exit 7 (E1604),
+    // partial best queryable. Implements R12b-kernel-goal.md B1-B7.
+    let metric = "@[adaptive]\nfn metric(x: i64) -> i64 { 0 - (x - 7) * (x - 7) }\n";
+    let run = |body: &str| -> (i32, String) {
+        let src = format!("{metric}fn main() -> i64 {{ {body} }}\n");
+        let f = std::env::temp_dir().join(format!("axon_kgoal_{}_{}.ax", std::process::id(), body.len()));
+        std::fs::write(&f, src).unwrap();
+        let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+        let _ = std::fs::remove_file(&f);
+        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+    };
+
+    // B3: budget 10, run 5 → spent 5, budget_left 5, exit 0.
+    let (c, m) = run("let r = principal_root(\"r\", true, false, false, 10)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 5)\n println(\"spent {to_str(kernel_goal_spent(g))} left {to_str(kernel_goal_budget_left(g))}\")\n 0");
+    assert_eq!(c, 0, "B3 sufficient budget must exit 0: {m}");
+    assert!(m.contains("spent 5 left 5"), "B3: 5 evals charged, 5 left: {m}");
+
+    // B4 (load-bearing): budget 3, run 100 → exhausted, exit 7, body after stops.
+    let (c, m) = run("let r = principal_root(\"r\", true, false, false, 3)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 100)\n println(\"UNREACHABLE\")\n 0");
+    assert_eq!(c, 7, "B4 budget exhaust must exit 7 (E1604): {m}");
+    assert!(m.contains("goal budget exhausted") && !m.contains("UNREACHABLE"), "B4 stops at the ceiling: {m}");
+
+    // B2: unknown metric name → typo-guard panic (exit 101).
+    let (c, _) = run("let r = principal_root(\"r\", true, false, false, 5)\n let g = kernel_goal_create(r, \"nope\", 0.0)\n 0");
+    assert_eq!(c, 101, "B2 unknown metric name must panic");
+
+    // B6/B7: queries don't spend; a second run accumulates and stays bounded.
+    let (c, m) = run("let r = principal_root(\"r\", true, false, false, 8)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 3)\n let s1 = kernel_goal_spent(g)\n let _q = kernel_goal_best_score(g)\n let s2 = kernel_goal_spent(g)\n let _ = kernel_goal_run(g, 3)\n println(\"s1 {to_str(s1)} s2 {to_str(s2)} total {to_str(kernel_goal_spent(g))} left {to_str(kernel_goal_budget_left(g))}\")\n 0");
+    assert_eq!(c, 0, "B6/B7 must exit 0: {m}");
+    assert!(m.contains("s1 3 s2 3 total 6 left 2"), "B6 query no-spend + B7 accumulate: {m}");
+}
+
+#[test]
+fn kernel_goal_builtins_are_codegen_refused_e0910() {
+    // I-2: the kernel_goal_* builtins are interp-only; native codegen must REFUSE
+    // them (E0910), never silently miscompile. Skips if codegen can't build.
+    let f = std::env::temp_dir().join(format!("axon_kgcg_{}.ax", std::process::id()));
+    std::fs::write(&f, "@[adaptive]\nfn m(x: i64) -> i64 { x }\nfn main() -> i64 { let r = principal_root(\"r\", true, false, false, 5)\n let g = kernel_goal_create(r, \"m\", 0.0)\n let _ = kernel_goal_run(g, 2)\n 0 }\n").unwrap();
+    let bin = std::env::temp_dir().join(format!("axon_kgcg_{}.bin", std::process::id()));
+    let out = axon().args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    if msg.contains("LLVM") && msg.contains("not") && msg.contains("available") {
+        eprintln!("codegen unavailable — skipping"); return;
+    }
+    // codegen-less (interp-only) axon binary prints a use-`axon run` hint; either
+    // that or an explicit E0910 is an acceptable refusal (never a built binary).
+    let refused = msg.contains("E0910") || msg.contains("use `axon run`") || !bin.exists();
+    let _ = std::fs::remove_file(&bin);
+    assert!(refused, "codegen must refuse kernel_goal_*, not build it: {msg}");
+}
+
+#[test]
 fn goal_optimizer_builtins_are_impure_e1207() {
     // Purity gap (was a hole): only `goal_run` (+ the goal_best_*/history/clear
     // accessors) were in is_impure_builtin, so a @[pure] fn calling the newer

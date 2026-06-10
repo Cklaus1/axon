@@ -1204,6 +1204,37 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Phase-7 (R12 Slice 5): µ$ spent through this gateway so far.",
     },
+    // ── Kernel Goal (R12b) — principal-scoped, budgeted objective runner ──────
+    BuiltinFn {
+        name: "kernel_goal_create",
+        params: &[("principal", "i64"), ("name", "str"), ("target", "f64")],
+        ret: "i64",
+        doc: "Phase-7 (R12b): register a goal optimizing the `@[adaptive]` fn `name` toward `target`, scoped to `principal` (its budget bounds total spend). Returns an opaque goal handle. Panics if `name` is neither a defined fn nor a recorded goal.",
+    },
+    BuiltinFn {
+        name: "kernel_goal_run",
+        params: &[("goal", "i64"), ("max_evals", "i64")],
+        ret: "f64",
+        doc: "Phase-7 (R12b): run up to `max_evals` optimizer evaluations, but no more than the principal's remaining budget; debit that budget by the evals used and return the best score. If the budget bounds the run short of `max_evals`, the goal STOPS and the program exits 7 (E1604, goal budget exhausted) — the partial best stays queryable via kernel_goal_best_score.",
+    },
+    BuiltinFn {
+        name: "kernel_goal_best_score",
+        params: &[("goal", "i64")],
+        ret: "f64",
+        doc: "Phase-7 (R12b): best observed score for a kernel goal (no new spend).",
+    },
+    BuiltinFn {
+        name: "kernel_goal_spent",
+        params: &[("goal", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12b): number of evaluations charged to the principal for this goal.",
+    },
+    BuiltinFn {
+        name: "kernel_goal_budget_left",
+        params: &[("goal", "i64")],
+        ret: "i64",
+        doc: "Phase-7 (R12b): the goal's principal's remaining budget (no new spend).",
+    },
     // ── Corrigibility (R9) — the latching kill-switch ────────────────────────
     BuiltinFn {
         name: "corrigible_halt",

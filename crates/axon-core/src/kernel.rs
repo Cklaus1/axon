@@ -521,6 +521,31 @@ impl LlmGateway {
     }
 }
 
+/// R12b: a principal-scoped, budgeted objective runner. A `KernelGoal` records
+/// the `@[adaptive]` metric `name` and `target` to optimize, the owning Slice-1
+/// `principal` (whose `Budget` bounds total spend), how many evaluations have
+/// been charged so far (`evals_spent`), and the best score observed. The interp
+/// runs the EXISTING optimizer (`run_goal`) for `min(requested, budget_remaining)`
+/// evaluations, debits the principal's budget, and refuses to exceed it (E1604,
+/// exit 7). Authority (Slice 1) and spend are ONE model — a goal can never spend
+/// beyond its principal's grant. See governance/specs/R12b-kernel-goal.md.
+#[derive(Debug, Clone)]
+pub struct KernelGoal {
+    pub principal: usize,
+    pub name: String,
+    pub target: f64,
+    pub evals_spent: i64,
+    pub best_score: f64,
+}
+
+impl KernelGoal {
+    pub fn new(principal: usize, name: String, target: f64) -> Self {
+        // best_score starts at `target` — the `goal_best_score` convention for a
+        // goal with no recorded evaluations yet.
+        KernelGoal { principal, name, target, evals_spent: 0, best_score: target }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

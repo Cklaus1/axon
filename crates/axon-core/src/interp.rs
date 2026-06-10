@@ -153,6 +153,13 @@ pub enum Flow {
     /// postcondition (3), a kill-switch (4), an ai-policy stop (5), and a generic
     /// bug-panic (101).
     RefineViolation(String),
+    /// R12b: a kernel `Goal` exhausted its principal's budget mid-run. Not a
+    /// crash — the goal hit the spend ceiling its principal was granted — so a
+    /// distinct flow (exit code 7) lets a supervisor branch on "goal ran out of
+    /// budget" apart from a @[verify] (3), kill-switch (4), ai-policy (5),
+    /// refinement (6), and a generic panic (101). The partial best is preserved
+    /// (queryable via `kernel_goal_best_score`). See R12b-kernel-goal.md (E1604).
+    GoalBudgetExhausted(String),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -178,6 +185,12 @@ pub const AI_POLICY_EXIT_CODE: i32 = 5;
 /// (static) so a supervisor can branch on "a caller passed an out-of-contract
 /// value" specifically. The spec's Z3-free runtime-check fallback (Phase-5 §4).
 pub const REFINE_VIOLATION_EXIT_CODE: i32 = 6;
+
+/// Process exit code when a kernel `Goal` exhausts its principal's budget mid-run
+/// (R12b / E1604). Distinct from 101 (panic), 6 (refinement), 5 (ai-policy), 4
+/// (corrigible), 3 (verify), 2 (static) so a supervisor can branch on "goal out
+/// of budget" specifically. VERIFIED free in the exit-code table.
+pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
 
 type R = Result<Value, Flow>;
 
@@ -363,6 +376,10 @@ pub struct Interp<'p> {
     /// Each mediates AI calls with per-token cost metering debited from its
     /// principal's budget (Slice 1), degrading to a fallback + latch on overrun.
     llm_gateways: RefCell<Vec<crate::kernel::LlmGateway>>,
+    /// Phase 7 (R12b): principal-scoped `KernelGoal`s, indexed by handle. Each
+    /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
+    /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
+    goals: RefCell<Vec<crate::kernel::KernelGoal>>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -862,6 +879,13 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
             eprintln!("axon: refinement violated: {msg}");
             REFINE_VIOLATION_EXIT_CODE
         }
+        Err(Flow::GoalBudgetExhausted(msg)) => {
+            // R12b: a kernel Goal hit its principal's budget ceiling. Not a crash;
+            // distinct exit code (7) so a supervisor can branch on it. (E1604)
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: goal budget exhausted: {msg}");
+            GOAL_BUDGET_EXIT_CODE
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -898,6 +922,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // A refinement-precondition violation inside a test is a failure too
         // (lets `@[test(should_fail)]` assert a bad arg is caught).
         Err(Flow::RefineViolation(m)) => Err(m),
+        // A kernel-goal budget exhaustion inside a test is a failure too (lets
+        // `@[test(should_fail)]` assert the budget ceiling fired).
+        Err(Flow::GoalBudgetExhausted(m)) => Err(m),
         Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
         // E1314 multi-shot-unsound inside a test is a failure (lets
         // `@[test(should_fail)]` assert the unsound-replay case is refused).
@@ -911,7 +938,7 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m) | Flow::GoalBudgetExhausted(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -997,6 +1024,7 @@ impl<'p> Interp<'p> {
             supervisors: RefCell::new(Vec::new()),
             stores: RefCell::new(Vec::new()),
             llm_gateways: RefCell::new(Vec::new()),
+            goals: RefCell::new(Vec::new()),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }
