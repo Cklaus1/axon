@@ -57,11 +57,33 @@ spec must pick one before any code (Gate 1):
 | **(b) CPS transform** | Transform the program to continuation-passing style so the continuation is a reified, callable value. | Viable but a **large front-end change** (every eval form rewritten), and it fights the existing direct recursive-descent `eval`. Deferred — too invasive for the first sound mechanism. |
 | **(c) Stackful coroutine** | Run `eval` on a **separate stack**; `host_await` PARKS that stack (yielding `req`); `resume` UNPARKS it with `reply`. The interpreter's recursive `eval` is **unchanged** — suspension is a runtime concern, not a code-shape concern. | **RECOMMENDED** for the interpreter. Preserves all existing semantics by construction (I-2), no CPS rewrite, and maps onto the shipped cooperative-scheduler fiber model (`kernel.rs`) — which today has only `Ready/Done/Failed` and needs a `Suspended(token)` state + a park/unpark channel. |
 
-**Resolution: (c) stackful coroutine, interpreter-only.** A suspendable computation runs on
-its own OS thread (v1 — simplest correct substrate; a stackful-coroutine crate is a later
-perf swap), parked on a `Condvar`/channel. `host_await(req)` sends `req` to the host channel
-and blocks on the reply channel; `resume(token, reply)` sends `reply` and unblocks. The host
-driver (`cmd_run`, or the kernel scheduler) owns the token→channels map.
+**Resolution: (c) stackful coroutine, interpreter-only — and it MUST be SAME-THREAD.**
+
+> **Substrate correction (verified against code, 2026-06-10).** The first draft proposed an
+> OS-thread substrate ("park the worker thread on a channel"). **That is INFEASIBLE.**
+> `Interp<'p>` and `Value` are pervasively `Rc<RefCell<…>>` (`Value::Chan`/`Dict`,
+> `interp.rs:35,252` — every interp field is `RefCell`, values hold `Rc`), so both are
+> **`!Send`**: the interp can't be owned by another thread, and a `req`/`reply` `Value`
+> can't cross a channel between threads. A thread substrate would require either making the
+> entire interpreter `Send` (`Rc→Arc`, `RefCell→Mutex` everywhere — a huge, perf-regressing
+> refactor) or restricting `host_await` to `Send`-only payloads (a crippled API). Both are
+> rejected.
+
+The substrate is therefore a **same-thread stackful coroutine**: a crate
+(`corosensei` — `no_std`, the cleanest safe-ish API; or `generator`) switches the *stack
+pointer* on the current thread, so the `Rc`/`RefCell` graph stays valid and nothing needs to
+be `Send`. The coroutine runs `eval(main)`; `host_await(req)` calls the coroutine's
+`suspend(req)` (saving the worker stack, returning to the host's stack); the host driver
+calls `coroutine.resume(reply)` to continue. The host owns the token→coroutine map.
+
+**The hard part of slice 1 (call it out): yielder plumbing.** `host_await` is reached DEEP
+inside the recursive `eval`, but the coroutine's *yielder/suspend handle* is created at the
+coroutine boundary. So the handle must be reachable from `eval` — stored on the `Interp`
+behind a `RefCell<Option<…>>`, like `resume_replay`. Its lifetime is tied to the coroutine
+(< the `Interp`'s), so storing it needs a scoped install/uninstall around each
+`coroutine.resume`, or a contained `unsafe` lifetime-erasure (the handle is only valid while
+the coroutine is running, which is exactly when `eval` runs). This is the slice-1 design
+risk; the test that proves it correct is B2.
 
 **Codegen:** native/wasm codegen does NOT get suspend-across-call in v1 (that needs Asyncify
 or a CPS lowering). A program that reaches `host_await` under codegen is **E0910-refused** —
@@ -124,9 +146,11 @@ acceptance set — they are follow-on slices.)
 ### 10. Performance budget
 
 The non-suspending path (B4 — the overwhelming common case) must be **zero-overhead**:
-no thread/coroutine is spawned unless a program actually reaches `host_await`. A suspendable
-run pays one thread spawn + two channel hops per suspend (v1); a stackful-coroutine crate
-(later) removes the thread cost.
+no coroutine stack is allocated unless a program actually reaches `host_await` (the entry
+point runs `eval` directly and only wraps it in a coroutine when the program is declared
+suspendable / the first `host_await` is hit). A suspendable run pays one coroutine-stack
+allocation + a register-save stack-switch per suspend — far cheaper than a thread; no thread
+is ever spawned (the same-thread substrate is the only feasible one — §4).
 
 ### 11. Rollout & rollback
 
@@ -139,9 +163,11 @@ browser binding (separate spec, R7c follow-on) and the `on_frame`/`fetch` surfac
 
 ### 12. Open questions
 
-- **Q1 — substrate:** OS thread (v1, simplest, proven) vs a stackful-coroutine crate
-  (`corosensei`/`generator`, no thread, but a dependency + `unsafe`). *Lean: thread for v1,
-  swap later behind the same API.*
+- **Q1 — substrate: RESOLVED to a same-thread stackful-coroutine crate** (OS thread is OUT —
+  `Interp`/`Value` are `!Send`, verified). Open sub-question: `corosensei` (maintained,
+  `no_std`, used by async runtimes) vs `generator` vs a hand-rolled `ucontext`/`makecontext`
+  binding. *Lean: `corosensei`.* The remaining risk is the `unsafe` stack switch (vendored by
+  the crate) + the yielder-lifetime plumbing (§4) — both contained to the runtime module.
 - **Q2 — token identity:** an opaque `u64` handle in a host-owned map (like the kernel
   `*mut` handles) — unforgeable, I-4-compatible. Confirmed direction.
 - **Q3 — multi-shot:** does a host ever resume the SAME token twice (multi-shot
