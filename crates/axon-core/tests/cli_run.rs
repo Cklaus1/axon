@@ -3939,6 +3939,34 @@ fn codegen_parse_float_bool_matches_interp() {
 }
 
 #[test]
+fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
+    // I-2 soundness: i64_to_str_radix on an out-of-range base must PANIC (exit
+    // 101, same message) on both engines. Native (axon-rt __axon_i64_to_str_radix)
+    // used to return an empty string + exit 0 — silently accepting an invalid
+    // base. Skips when codegen can't build (LLVM absent).
+    let script = format!("{}/../../scripts/i64_radix_panic_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("i64_radix_panic_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash").arg(&script).output().expect("run i64_radix_panic_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen unavailable — i64_radix panic parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native i64_to_str_radix must panic like interp on a bad base:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("i64_radix_panic_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn codegen_fuzz_parity_finds_no_divergence() {
     // R1f slice 1: the differential fuzzer. Unlike the fixed-case harnesses, it
     // generates seeded-random + edge inputs per builtin, emits ONE program

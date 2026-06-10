@@ -1509,13 +1509,14 @@ pub extern "C" fn __axon_i64_to_str_radix(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    // Validate base.
+    // Validate base. I-2: the interpreter PANICS on an out-of-range base
+    // (`i64_to_str_radix: radix must be 2..=36, got N`, exit 101); native used to
+    // return an empty string + exit 0 — a soundness divergence (it silently
+    // accepted an invalid base). Panic identically. (`to_str(i64)` always passes
+    // base 10, so this never fires on that path.)
     if !(2..=36).contains(&base) {
-        // Return empty string.
-        let buf = unsafe { libc_malloc(1) };
-        unsafe { *buf = 0 };
-        unsafe { *out_len = 0; *out_ptr = buf; }
-        return;
+        eprintln!("axon: panic: i64_to_str_radix: radix must be 2..=36, got {base}");
+        std::process::exit(RUNTIME_PANIC_EXIT_CODE);
     }
     let base = base as u64;
 
