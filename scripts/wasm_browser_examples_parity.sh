@@ -37,9 +37,9 @@ for f in examples/*.ax; do
   # Skip host / non-deterministic / time-dependent examples: AI, randomness, the
   # clock (now_ms directly AND temporal_*, which stamps created_at via __axon_now_ms
   # internally — no wasi clock on the browser; a Date.now() host import is the
-  # follow-on), I/O, exec, goal search, spawn. (parse_int users currently stay
-  # object-only on the browser — they pull C strtoll, not yet shimmed/extern'd —
-  # reported below, not failed.)
+  # follow-on), I/O, exec, goal search, spawn. (Everything else now links wasi-free
+  # and matches — 29/29; an object-only example would be a NEW frontier, reported
+  # below, not failed.)
   if grep -qE 'ai_complete|ai_extract|random_|now_ms|temporal_|sleep_ms|read_line|read_file|write_file|exec\(|goal_run|goal_step|for!|spawn|llm_|agent_' "$f"; then
     continue
   fi
