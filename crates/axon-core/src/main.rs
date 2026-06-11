@@ -342,6 +342,13 @@ enum Command {
               help = "Safety gate to enforce (\"verify\" blocks on @[verify] failure)")]
         gate: Option<String>,
 
+        /// Declare or raise the risk level (low|medium|high|critical).
+        /// Risk is derived from effect rows; this flag may only raise it, not lower it.
+        /// Risk >= High triggers the full simulate→stress→redteam→verify→deploy pipeline.
+        #[arg(long, value_name = "LEVEL",
+              help = "Risk level override: low|medium|high|critical (derived from effect rows if omitted)")]
+        risk: Option<String>,
+
         /// Emit the deploy report as stable JSON (`axon-deploy/1`).
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
@@ -597,7 +604,7 @@ fn dispatch(command: Command) {
         Command::Complexity { file, json } => cmd_complexity(file, json),
         Command::Intent { action } => cmd_intent(action),
         Command::Ast { action } => cmd_ast(action),
-        Command::Deploy { file, gate, json } => cmd_deploy(file, gate, json),
+        Command::Deploy { file, gate, risk, json } => cmd_deploy(file, gate, risk, json),
         Command::Redteam { file, json } => cmd_redteam(file, json),
     }
 }
@@ -3808,8 +3815,83 @@ fn cmd_ast_approve(file: PathBuf) {
     println!("  approval record: {}", approved_path.display());
 }
 
-/// `axon deploy` — run a .ax program through the safety-gate pipeline.
-fn cmd_deploy(file: PathBuf, gate: Option<String>, json_flag: bool) {
+// ── Phase 11: risk derivation from AST effect rows ───────────────────────────
+
+/// Parse a risk level name into the integer representation (0=Low … 3=Critical).
+fn parse_risk_level(s: &str) -> Option<i64> {
+    match s.to_lowercase().as_str() {
+        "low" => Some(0),
+        "medium" => Some(1),
+        "high" => Some(2),
+        "critical" => Some(3),
+        _ => None,
+    }
+}
+
+fn risk_level_name(r: i64) -> &'static str {
+    match r {
+        0 => "low",
+        1 => "medium",
+        2 => "high",
+        _ => "critical",
+    }
+}
+
+/// Derive the baseline risk level from a program's effect rows and `@[contained]` attributes.
+///
+/// Effect bits follow the ef_* constants in `examples/stdlib/effect.ax`:
+///   fs_read=1, fs_write=2, net=4, exec=8
+///
+/// Mapping (matches `risk_from_effects` in `examples/stdlib/risk.ax`):
+///   exec present              → Critical (3)
+///   net + fs_write present    → High (2)
+///   net OR fs_write present   → Medium (1)
+///   pure (empty row)          → Low (0)
+fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
+    let mut has_exec = false;
+    let mut has_net = false;
+    let mut has_fs_write = false;
+
+    for item in &program.items {
+        if let axon_core::ast::Item::FnDef(f) = item {
+            // Walk declared effect rows
+            if let Some(row) = &f.effect_row {
+                for eff in &row.effects {
+                    match eff.to_lowercase().as_str() {
+                        "exec" => has_exec = true,
+                        "net" => has_net = true,
+                        "fs" | "io" => has_fs_write = true,
+                        _ => {}
+                    }
+                }
+            }
+            // Also scan @[contained] attribute args for net/exec/write caps
+            for attr in &f.attrs {
+                if attr.name == "contained" {
+                    for arg in &attr.args {
+                        let a = arg.to_lowercase();
+                        if a.contains("exec") { has_exec = true; }
+                        if a.contains("net") { has_net = true; }
+                        if a.contains("write") { has_fs_write = true; }
+                    }
+                }
+            }
+        }
+    }
+
+    if has_exec { 3 }
+    else if has_net && has_fs_write { 2 }
+    else if has_net || has_fs_write { 1 }
+    else { 0 }
+}
+
+/// `axon deploy` — run a .ax program through the risk-gated safety pipeline.
+///
+/// Phase 11: risk is derived from effect rows; `--risk LEVEL` may only raise it.
+/// Risk >= High triggers: simulate → stress → redteam_check → assert_deployable → main.
+/// Risk < High runs:     redteam_check → assert_deployable → main.
+/// Any gate function that returns false/non-zero blocks the deploy.
+fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, json_flag: bool) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
@@ -3850,11 +3932,70 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, json_flag: bool) {
         process::exit(2);
     }
 
+    // Phase 11: compute final risk (derived from AST; user may only raise it).
+    let derived_risk = derive_risk_from_ast(&program);
+    let declared_risk = risk_flag.as_deref().and_then(parse_risk_level).unwrap_or(0);
+    if risk_flag.is_some() && declared_risk == -1 {
+        eprintln!("error: invalid --risk level '{}' — expected low|medium|high|critical",
+                  risk_flag.as_deref().unwrap_or(""));
+        process::exit(2);
+    }
+    let risk = std::cmp::max(derived_risk, declared_risk);
+    let requires_full_pipeline = risk >= 2; // >= High
+
     // Check if approve file exists (informational, not blocking).
     let approved_path = PathBuf::from(format!("{}.approved", file.display()));
     let is_approved = approved_path.exists();
 
-    // Run the program.
+    // Phase 11: run the risk-gated pipeline.
+    // High/Critical: simulate → stress → redteam_check → assert_deployable
+    // Low/Medium:    redteam_check → assert_deployable
+    // A gate function that is absent is treated as "passed" (open gate).
+    // A gate function that returns false / non-zero halts the deploy.
+    const HIGH_RISK_GATES: &[&str] = &["simulate", "stress", "redteam_check", "assert_deployable"];
+    const LOW_RISK_GATES:  &[&str] = &["redteam_check", "assert_deployable"];
+    let gates = if requires_full_pipeline { HIGH_RISK_GATES } else { LOW_RISK_GATES };
+
+    let mut stages_run: Vec<String> = Vec::new();
+    let mut failed_gate: Option<(String, i32)> = None;
+
+    for &gate_fn in gates {
+        if failed_gate.is_some() { break; }
+        match axon_core::interp::run_named_fn_as_bool(&program, gate_fn) {
+            None => {} // function not present — gate is open
+            Some(0) => {
+                stages_run.push(gate_fn.to_string());
+            }
+            Some(code) => {
+                stages_run.push(gate_fn.to_string());
+                failed_gate = Some((gate_fn.to_string(), code));
+            }
+        }
+    }
+
+    let risk_name = risk_level_name(risk);
+
+    if let Some((failed, code)) = failed_gate {
+        let stages_json = stages_run.iter()
+            .map(|s| format!("\"{}\"", s))
+            .collect::<Vec<_>>().join(",");
+        if json_flag {
+            println!(
+                "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"blocked_gate\",\
+                 \"gate\":\"{failed}\",\"exit_code\":{code},\"risk\":\"{risk_name}\",\
+                 \"stages_run\":[{stages_json}],\"approved\":{is_approved}}}",
+                json_str(&file.display().to_string()),
+            );
+        } else {
+            eprintln!("deploy: {} — BLOCKED at gate '{failed}' (exit {code})", file.display());
+            if !stages_run.is_empty() {
+                eprintln!("  stages run: {}", stages_run.join(" → "));
+            }
+        }
+        process::exit(1);
+    }
+
+    // All gates passed — run the program.
     let exit_code = axon_core::interp::run_program(&program);
 
     // With --gate verify, treat exit 3 (verify failure) as blocking.
@@ -3871,15 +4012,24 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, json_flag: bool) {
         "error"
     };
 
+    let stages_json = stages_run.iter()
+        .map(|s| format!("\"{}\"", s))
+        .collect::<Vec<_>>().join(",");
+
     if json_flag {
         println!(
-            "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"{status}\",\"exit_code\":{exit_code},\"approved\":{is_approved}}}",
+            "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"{status}\",\
+             \"exit_code\":{exit_code},\"risk\":\"{risk_name}\",\
+             \"stages_run\":[{stages_json}],\"approved\":{is_approved}}}",
             json_str(&file.display().to_string()),
         );
     } else {
-        println!("deploy: {} — {status}", file.display());
+        println!("deploy: {} — {status} (risk: {risk_name})", file.display());
         if !is_approved {
             eprintln!("warning: no .approved file found — run `axon ast approve {}` first", file.display());
+        }
+        if requires_full_pipeline && !stages_run.is_empty() {
+            println!("  pipeline stages: {}", stages_run.join(" → "));
         }
     }
 

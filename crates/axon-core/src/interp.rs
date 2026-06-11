@@ -722,6 +722,58 @@ pub fn run_program_with_discharged(program: &Program, discharged: crate::verify:
     on_deep_stack(|| run_program_inner(program, discharged))
 }
 
+/// Phase 11: call a specific named function (no args) and return an exit code.
+///
+/// - Returns `None` if the function does not exist in the program (gate is skipped).
+/// - Returns `Some(0)` if the function returns `true`, `0`, or `()` without panicking.
+/// - Returns `Some(1)` if the function returns `false` or a non-zero `i64`.
+/// - Returns `Some(exit_code)` for any runtime error (panic, verify, etc.).
+///
+/// Globals are initialized before calling so the function can read module-level lets.
+pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
+    on_deep_stack(|| {
+        let mut interp = Interp::build(program).with_discharged(crate::verify::Discharged::default());
+        if !interp.fns.contains_key(fn_name) {
+            return None;
+        }
+        // Initialize globals so the gate function can read module-level lets.
+        if let Err(e) = interp.init_globals() {
+            let code = match e {
+                Flow::Exit(c) => c,
+                Flow::Panic(_) => 101,
+                _ => 101,
+            };
+            return Some(code);
+        }
+        let f: &FnDef = *interp.fns.get(fn_name)?;
+        let result = interp.call_fn(f, vec![]);
+        Some(match result {
+            Ok(Value::Bool(true)) => 0,
+            Ok(Value::Bool(false)) => 1,
+            Ok(Value::Int(0)) => 0,
+            Ok(Value::Int(_)) => 1,
+            Ok(_) => 0,
+            Err(Flow::Exit(c)) => c,
+            Err(Flow::VerifyFailed(msg)) => {
+                let _ = std::io::stdout().flush();
+                eprintln!("axon: verify failed in {fn_name}: {msg}");
+                VERIFY_FAILED_EXIT_CODE
+            }
+            Err(Flow::Halted(msg)) => {
+                let _ = std::io::stdout().flush();
+                eprintln!("axon: halted in {fn_name}: {msg}");
+                HALTED_EXIT_CODE
+            }
+            Err(Flow::Panic(msg)) => {
+                let _ = std::io::stdout().flush();
+                eprintln!("axon: panic in {fn_name}: {msg}");
+                101
+            }
+            Err(_) => 101,
+        })
+    })
+}
+
 // ── R15 resume runtime (v0: thread substrate, str payloads) ─────────────────────
 //
 // `host_await(req)` suspends the program, yields `req` to the host, and resumes
