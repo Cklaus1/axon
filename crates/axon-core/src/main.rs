@@ -3656,7 +3656,7 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         }
     };
 
-    let ax_src = match axon_surface::compile::emit(&goal) {
+    let skeleton = match axon_surface::compile::emit(&goal) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("error: intent compilation failed: {e}");
@@ -3664,17 +3664,63 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         }
     };
 
+    // Phase-10 v1.1: LLM-driven body generation.
+    // When AXON_INTENT_GEN=1 and the skeleton contains TODO stubs, call the AI
+    // to fill in the function bodies from the prose.  Falls back to the skeleton
+    // on any AI error so the command always produces a usable .ax file.
+    let stub_count = skeleton.matches("TODO").count();
+    let (ax_src, llm_generated) = if stub_count > 0 && std::env::var("AXON_INTENT_GEN").is_ok() {
+        eprintln!("axon: LLM body generation ({stub_count} TODO stub(s))…");
+        let prose = intent_compile_prose_context(&goal);
+        let prompt = format!(
+            "You are an Axon code generator.  Fill in the TODO stubs in the Axon skeleton below \
+             so that the program correctly implements the described goal.  Return ONLY valid Axon \
+             source code — the complete file — with NO markdown fences, NO explanation, NO \
+             surrounding text.  Keep every line that is NOT a TODO unchanged.\n\n\
+             GOAL DESCRIPTION:\n{prose}\n\n\
+             SKELETON (replace every TODO with real Axon code):\n{skeleton}"
+        );
+        #[cfg(feature = "asi-runtime")]
+        {
+            match axon_ai::complete(&prompt) {
+                Ok(generated) => {
+                    // Strip any accidental markdown fences the model might emit.
+                    let body = strip_md_fences(&generated);
+                    // Prepend a provenance comment so reviewers know this was LLM-authored.
+                    let marked = format!("// LLM-generated (axon intent compile --gen)\n{body}");
+                    eprintln!("axon: LLM generation complete ({} bytes)", marked.len());
+                    (marked, true)
+                }
+                Err(e) => {
+                    eprintln!("axon: LLM generation failed ({e}); falling back to skeleton");
+                    (skeleton, false)
+                }
+            }
+        }
+        #[cfg(not(feature = "asi-runtime"))]
+        {
+            let _ = prompt; // avoid unused-variable warning
+            eprintln!(
+                "axon: LLM body generation requires `--features asi-runtime` + ANTHROPIC_API_KEY \
+                 (or AXON_AI_MOCK=1 for the deterministic path)"
+            );
+            (skeleton, false)
+        }
+    } else {
+        (skeleton, false)
+    };
+
     let out_path = out.unwrap_or_else(|| file.with_extension("ax"));
 
     if json_flag {
-        // axon-intent-compile/1 schema
+        // axon-intent-compile/1 schema (extended with `generated` + `stubs` fields)
         let sections: Vec<String> = goal.sections.keys().map(|k| format!("{k:?}")).collect();
         let sections_joined = sections.iter()
             .map(|s| format!("\"{}\"", s.trim_matches('"')))
             .collect::<Vec<_>>()
             .join(",");
         println!(
-            "{{\"schema\":\"axon-intent-compile/1\",\"title\":{},\"sections\":[{}],\"path\":{},\"ax_bytes\":{}}}",
+            "{{\"schema\":\"axon-intent-compile/1\",\"title\":{},\"sections\":[{}],\"path\":{},\"ax_bytes\":{},\"stubs\":{stub_count},\"generated\":{llm_generated}}}",
             json_str(&goal.title),
             sections_joined,
             json_str(&out_path.display().to_string()),
@@ -3687,7 +3733,40 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         eprintln!("error writing {}: {e}", out_path.display());
         process::exit(1);
     });
-    println!("compiled {} → {} ({} bytes)", file.display(), out_path.display(), ax_src.len());
+    let gen_note = if llm_generated { " (LLM-generated)" } else { "" };
+    println!("compiled {} → {} ({} bytes){gen_note}", file.display(), out_path.display(), ax_src.len());
+}
+
+/// Build a prose context string for the LLM body-generation prompt from a parsed GoalFile.
+fn intent_compile_prose_context(goal: &axon_surface::parser::GoalFile) -> String {
+    let mut ctx = format!("Goal: {}\n\n", goal.title);
+    for name in &["Intent", "Inputs", "Outputs", "Score", "Constraints", "Budget", "Verify"] {
+        if let Some(sec) = goal.section(name) {
+            ctx.push_str(&format!("## {name}\n{}\n\n", sec.body.trim()));
+        }
+    }
+    ctx
+}
+
+/// Strip outermost ```axon / ``` or ``` / ``` markdown fences from a model response,
+/// returning the inner content.  If no fence is found, returns the input unchanged.
+#[cfg(feature = "asi-runtime")]
+fn strip_md_fences(s: &str) -> String {
+    let trimmed = s.trim();
+    // Try ` ```axon ` fence first, then bare ` ``` `.
+    for fence in &["```axon", "```"] {
+        if let Some(start) = trimmed.find(fence) {
+            let after_open = &trimmed[start + fence.len()..];
+            // Skip the rest of the opening line.
+            let body_start = after_open.find('\n').map(|i| i + 1).unwrap_or(0);
+            let body = &after_open[body_start..];
+            // Find the closing fence.
+            if let Some(end) = body.rfind("```") {
+                return body[..end].trim_end().to_string();
+            }
+        }
+    }
+    trimmed.to_string()
 }
 
 /// `axon ast review` / `axon ast approve` — review or approve a .ax AST.
