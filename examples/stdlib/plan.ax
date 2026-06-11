@@ -1,0 +1,361 @@
+// Tier-2 stdlib: Plan, Schedule, Feedback — Goal-directedness pillar completions.
+//
+// ROADMAP §6 three remaining Tier-2 types (all in Goal-directedness pillar):
+//
+//   Plan<T>       — "Agent.propose() output": a typed candidate action proposal
+//                   from an agent, carrying the proposed value, the agent's
+//                   confidence, and the reasoning trace that produced it.
+//
+//   Schedule      — "when goals run": a recurrence spec describing how often and
+//                   under what conditions a goal should be re-evaluated.
+//
+//   Feedback<G,M> — "improvement-loop output": the typed result of one iteration
+//                   of the improve loop — what changed, by how much, and whether
+//                   the improvement met the goal's target.
+//
+// Together these close the improve-cycle vocabulary: an agent PROPOSEs a Plan
+// → the system runs the goal on a SCHEDULE → each run produces Feedback → the
+// Feedback drives the next Plan proposal. This is the ROADMAP's self-improvement
+// loop made observable as first-class values rather than side effects.
+//
+//   axon test examples/stdlib/plan.ax
+//   axon run  examples/stdlib/plan.ax
+
+// ── Plan ──────────────────────────────────────────────────────────────────────
+// An agent's PROPOSAL for what to do next. Carrying the candidate value, the
+// agent's confidence in the proposal, and a short reasoning trace.
+//
+// `Plan` is what an @[agent] fn's `propose()` step returns — it's the interface
+// between the agent's internal deliberation and the goal runner's evaluation step.
+// The goal runner evaluates the plan, compares the score against the target, and
+// either accepts or generates feedback that drives the next proposal.
+//
+// Confidence is 0..100 (percentage). An agent proposing below `min_confidence`
+// signals it does not trust its own output — the goal runner should skip evaluation
+// and either re-propose or stop early.
+
+type Plan = {
+    val:        i64,   // the proposed candidate value (the thing being optimized)
+    confidence: i64,   // agent's confidence in this proposal (0..100)
+    reason:     str,   // short prose trace of why this value was chosen
+    agent:      str,   // which agent produced this plan
+}
+
+fn plan(val: i64, confidence: i64, reason: str, agent: str) -> Plan {
+    assert(confidence >= 0 && confidence <= 100)
+    Plan { val: val, confidence: confidence, reason: reason, agent: agent }
+}
+
+// Shorthand for a confident plan (confidence = 100).
+fn plan_certain(val: i64, reason: str, agent: str) -> Plan {
+    Plan { val: val, confidence: 100, reason: reason, agent: agent }
+}
+
+// A plan with very low confidence — the agent signals uncertainty.
+fn plan_uncertain(val: i64, reason: str, agent: str) -> Plan {
+    Plan { val: val, confidence: 20, reason: reason, agent: agent }
+}
+
+// Should the goal runner skip evaluation of this plan?
+// True when the agent's confidence is below the threshold — don't waste compute
+// evaluating a plan the proposing agent already doubts.
+fn plan_skip(p: Plan, min_confidence: i64) -> bool {
+    p.confidence < min_confidence
+}
+
+// Is this plan from a specific agent?
+fn plan_from(p: Plan, agent_name: str) -> bool {
+    str_eq(p.agent, agent_name)
+}
+
+// Revise a plan: keep the same agent, update val and confidence.
+fn plan_revise(p: Plan, new_val: i64, new_confidence: i64, new_reason: str) -> Plan {
+    assert(new_confidence >= 0 && new_confidence <= 100)
+    Plan { val: new_val, confidence: new_confidence, reason: new_reason, agent: p.agent }
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+// A recurrence spec for when a goal should re-run. Three strategies:
+//
+//   interval — re-run every N evaluations (timer-free; good for offline batches)
+//   on_score — re-run only when the latest score falls below a threshold
+//              (reactive re-evaluation: trigger when quality degrades)
+//   budget   — re-run until a total evaluation budget is exhausted
+//
+// The scheduler reads a Schedule value and calls `schedule_should_run` to decide
+// whether the current tick merits running the goal again.
+
+type Schedule = {
+    strategy:    i64,   // 0=interval, 1=on_score, 2=budget
+    interval_n:  i64,   // for strategy=0: run every N ticks
+    score_floor: i64,   // for strategy=1: re-run when score < floor
+    budget_cap:  i64,   // for strategy=2: max total evaluations
+    ticks:       i64,   // how many times schedule_tick has been called
+    runs:        i64,   // how many times the goal has actually run
+    last_score:  i64,   // most recently observed score (updated by schedule_record)
+}
+
+fn schedule_interval(every_n: i64) -> Schedule {
+    assert(every_n > 0)
+    Schedule { strategy: 0, interval_n: every_n, score_floor: 0, budget_cap: 0,
+               ticks: 0, runs: 0, last_score: 0 }
+}
+
+fn schedule_on_score(floor: i64) -> Schedule {
+    Schedule { strategy: 1, interval_n: 0, score_floor: floor, budget_cap: 0,
+               ticks: 0, runs: 0, last_score: floor + 1 }  // start above floor → don't fire immediately
+}
+
+fn schedule_budget(max_runs: i64) -> Schedule {
+    assert(max_runs > 0)
+    Schedule { strategy: 2, interval_n: 0, score_floor: 0, budget_cap: max_runs,
+               ticks: 0, runs: 0, last_score: 0 }
+}
+
+// Advance the tick counter. Call once per evaluation opportunity.
+fn schedule_tick(s: Schedule) -> Schedule {
+    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,
+               budget_cap: s.budget_cap, ticks: s.ticks + 1, runs: s.runs, last_score: s.last_score }
+}
+
+// Record that the goal ran and what score it produced.
+fn schedule_record(s: Schedule, score: i64) -> Schedule {
+    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,
+               budget_cap: s.budget_cap, ticks: s.ticks, runs: s.runs + 1, last_score: score }
+}
+
+// Should the goal run on this tick?
+fn schedule_should_run(s: Schedule) -> bool {
+    if s.strategy == 0 {
+        // interval: run every interval_n ticks
+        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }
+    } else if s.strategy == 1 {
+        // on_score: run when last score fell below floor
+        s.last_score < s.score_floor
+    } else {
+        // budget: run until cap reached
+        s.runs < s.budget_cap
+    }
+}
+
+// Has this schedule exhausted its budget? Only meaningful for budget strategy.
+fn schedule_exhausted(s: Schedule) -> bool {
+    s.strategy == 2 && s.runs >= s.budget_cap
+}
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+// The typed result of ONE improve-loop iteration. Bundles what the goal runner
+// observed: the plan that was proposed, the score it achieved, the previous best
+// score (so we know if this was an improvement), and whether the goal was met.
+//
+// The improve loop: propose Plan → run goal → produce Feedback → feed to next
+// Plan proposal → repeat. Feedback is the VALUE that flows between iterations.
+
+type Feedback = {
+    plan:        Plan,   // the plan whose evaluation produced this feedback
+    score:       i64,    // the score achieved by running the goal on plan.val
+    prev_score:  i64,    // the best score before this evaluation
+    target:      i64,    // the goal's target threshold
+    goal_met:    bool,   // score >= target
+    improved:    bool,   // score > prev_score (got better, even if not yet met)
+    iteration:   i64,    // which iteration of the improve loop this is
+}
+
+fn feedback(plan: Plan, score: i64, prev_score: i64, target: i64, iter: i64) -> Feedback {
+    Feedback {
+        plan:       plan,
+        score:      score,
+        prev_score: prev_score,
+        target:     target,
+        goal_met:   score >= target,
+        improved:   score > prev_score,
+        iteration:  iter,
+    }
+}
+
+// How much did the score change? Positive = improvement, negative = regression.
+fn feedback_delta(f: Feedback) -> i64 { f.score - f.prev_score }
+
+// Is this feedback from a confident plan?
+fn feedback_is_confident(f: Feedback, min_confidence: i64) -> bool {
+    f.plan.confidence >= min_confidence
+}
+
+// Produce a summary string for logging/tracing.
+fn feedback_summary(f: Feedback) -> str {
+    let dir = if f.improved { "↑" } else { "→" }
+    let met = if f.goal_met { " [GOAL MET]" } else { "" }
+    "{dir} iter {to_str(f.iteration)}: score {to_str(f.score)} (was {to_str(f.prev_score)}){met}"
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Plan tests ────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_plan_skip_below_confidence() {
+    let p = plan(42, 15, "guessing", "agent-a")
+    assert(plan_skip(p, 50))
+    assert(!plan_skip(p, 10))
+}
+
+@[test]
+fn test_plan_certain_has_full_confidence() {
+    let p = plan_certain(99, "very sure", "agent-b")
+    assert_eq(p.confidence, 100)
+    assert(!plan_skip(p, 90))
+}
+
+@[test]
+fn test_plan_revise_updates_fields() {
+    let p = plan(10, 50, "first guess", "agent-a")
+    let p2 = plan_revise(p, 20, 80, "refined")
+    assert_eq(p2.val, 20)
+    assert_eq(p2.confidence, 80)
+    assert(plan_from(p2, "agent-a"))  // agent preserved
+}
+
+@[test]
+fn test_plan_from_checks_agent() {
+    let p = plan(0, 100, "ok", "alice")
+    assert(plan_from(p, "alice"))
+    assert(!plan_from(p, "bob"))
+}
+
+// ── Schedule tests ─────────────────────────────────────────────────────────────
+
+@[test]
+fn test_schedule_interval_fires_at_right_ticks() {
+    let s = schedule_interval(3)
+    let s1 = schedule_tick(s)   // tick 1 — should not fire
+    assert(!schedule_should_run(s1))
+    let s2 = schedule_tick(s1)  // tick 2 — should not fire
+    assert(!schedule_should_run(s2))
+    let s3 = schedule_tick(s2)  // tick 3 — should fire
+    assert(schedule_should_run(s3))
+    let s4 = schedule_tick(s3)  // tick 4 — should not fire
+    assert(!schedule_should_run(s4))
+}
+
+@[test]
+fn test_schedule_on_score_fires_when_score_drops() {
+    let s = schedule_on_score(80)
+    // Default last_score is above floor — should not fire.
+    assert(!schedule_should_run(s))
+    // Record a score drop:
+    let s2 = schedule_record(s, 70)   // score 70 < floor 80
+    assert(schedule_should_run(s2))
+    // Record recovery:
+    let s3 = schedule_record(s2, 90)  // score 90 >= floor 80
+    assert(!schedule_should_run(s3))
+}
+
+@[test]
+fn test_schedule_budget_exhausts() {
+    let s = schedule_budget(3)
+    assert(!schedule_exhausted(s))
+    let s1 = schedule_record(s, 80)
+    let s2 = schedule_record(s1, 85)
+    let s3 = schedule_record(s2, 90)
+    assert(schedule_exhausted(s3))
+    assert(!schedule_should_run(s3))
+}
+
+@[test]
+fn test_schedule_budget_allows_runs_within_cap() {
+    let s = schedule_budget(5)
+    let s1 = schedule_record(s, 80)
+    assert(schedule_should_run(s1))   // 1 run, cap 5 → still allowed
+}
+
+// ── Feedback tests ─────────────────────────────────────────────────────────────
+
+@[test]
+fn test_feedback_goal_met_when_score_reaches_target() {
+    let p = plan_certain(90, "try 90", "optimizer")
+    let f = feedback(p, 90, 70, 85, 1)
+    assert(f.goal_met)
+    assert(f.improved)
+    assert_eq(feedback_delta(f), 20)
+}
+
+@[test]
+fn test_feedback_not_met_below_target() {
+    let p = plan_certain(75, "try 75", "optimizer")
+    let f = feedback(p, 75, 70, 85, 1)
+    assert(!f.goal_met)
+    assert(f.improved)    // better than prev (70→75)
+}
+
+@[test]
+fn test_feedback_not_improved_when_score_drops() {
+    let p = plan_certain(60, "try 60", "optimizer")
+    let f = feedback(p, 60, 70, 85, 2)
+    assert(!f.goal_met)
+    assert(!f.improved)
+    assert_eq(feedback_delta(f), -10)
+}
+
+@[test]
+fn test_feedback_is_confident_checks_plan() {
+    let p = plan(80, 60, "moderate", "opt")
+    let f = feedback(p, 80, 70, 85, 1)
+    assert(feedback_is_confident(f, 50))
+    assert(!feedback_is_confident(f, 80))
+}
+
+// ── The improve loop: Plan → run → Feedback → next Plan ─────────────────────
+// Simulate 3 iterations of the self-improvement loop:
+// - agent proposes a value, goal runner evaluates, produces feedback,
+//   agent refines its proposal.
+@[test]
+fn test_improve_loop_converges_to_target() {
+    let target = 90
+
+    // Iteration 1: agent proposes 60
+    let p1 = plan(60, 70, "initial guess", "optimizer")
+    let f1 = feedback(p1, 60, 0, target, 1)
+    assert(!f1.goal_met)
+    assert(f1.improved)   // 60 > 0
+
+    // Iteration 2: agent sees feedback and proposes 80
+    let p2 = plan_revise(p1, 80, 80, "improved based on feedback")
+    let f2 = feedback(p2, 80, f1.score, target, 2)
+    assert(!f2.goal_met)
+    assert(f2.improved)   // 80 > 60
+
+    // Iteration 3: agent proposes 92
+    let p3 = plan_revise(p2, 92, 95, "close to target")
+    let f3 = feedback(p3, 92, f2.score, target, 3)
+    assert(f3.goal_met)   // 92 >= 90
+    assert(f3.improved)   // 92 > 80
+}
+
+fn main() -> i64 {
+    println("── plan: agent proposal lifecycle ─────────────────────────────")
+    let p = plan(75, 65, "initial search point", "hill-climber")
+    if plan_skip(p, 80) {
+        println("plan skipped (confidence {to_str(p.confidence)} < 80)")
+    } else {
+        println("plan accepted: val={to_str(p.val)}, confidence={to_str(p.confidence)}")
+    }
+    let p2 = plan_revise(p, 90, 90, "refined after feedback")
+    println("revised plan: val={to_str(p2.val)}, confidence={to_str(p2.confidence)}")
+    println("")
+    println("── schedule: recurrence policy ─────────────────────────────────")
+    let sched = schedule_interval(2)
+    let s1 = schedule_tick(schedule_tick(sched))
+    if schedule_should_run(s1) {
+        println("interval schedule: tick 2 → fires")
+    }
+    println("")
+    println("── feedback: improvement loop result ───────────────────────────")
+    let f = feedback(p2, 90, 75, 85, 3)
+    println(feedback_summary(f))
+    if f.goal_met {
+        println("→ goal met on iteration {to_str(f.iteration)}")
+    }
+    0
+}
