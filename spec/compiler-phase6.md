@@ -430,14 +430,21 @@ Phase 6 is done when:
 - [x] ✅ A `with` handler over a builtin discharges its effect (interp: real
       tail-resumptive `resume`; native codegen: the tail-resumptive direct-builtin
       subset is lowered, the rest soundly E0910-refused — `handler_resume_parity.sh`).
-- [ ] 📋 Row variable `e` propagates through `map<A,B,e>(xs, f)` correctly (open rows
-      are currently conservative; precise unification is the E03/HM slice).
+- [x] ✅ Row variable `e` propagates through `map<A,B,e>(xs, f)` correctly. At a call
+      `forwarder(concrete_fn)` the concrete callback's effects flow into the caller's
+      required row (E03 higher-order case via `invoked_param_indices` /
+      `callback_arg_effects`). Guard: `row_variable_propagates_through_map_style_forwarder`.
+      Open rows (body of a row-polymorphic fn) stay `Allowed::Open` — the correct
+      conservative semantics for the body (its effects are row-bounded by `...e`).
 - [x] ✅ An `@[adaptive] fn try_variant(i: i64) -> i64 | {AI, Net}` is accepted; the
       hill-climb still works (`goal_run` over an effect-row-bearing adaptive fn).
 - [x] ✅ A surface-marked file using raw `| {Net}` produces E1306.
 - [x] ✅ A substrate-marked file using raw `| {Net}` is accepted.
-- [ ] 📋 `@[contained(IO)]` emits the E1316 deprecation notice in `--effects-strict`
-      (the `@[contained]`↔effect bridge is landed; the deprecation notice is reserved).
+- [x] ✅ `@[contained(IO)]` emits the E1316 deprecation notice when `--effects-strict`
+      is passed to `axon check`. The notice is a "warning" severity diagnostic pointing
+      users toward the Phase-6 `| {…}` effect-row syntax. Guards:
+      `contained_annotation_emits_e1316_in_strict_mode` /
+      `no_contained_annotation_emits_no_e1316`.
 - [x] ✅ Refinement predicate (Phase 5) using `now_ms()` (or any impure builtin) is
       rejected — a refinement must be pure/deterministic. Emitted as **E1209**
       (the refinement-predicate code) rather than the nominally-reserved E1311.
@@ -450,10 +457,10 @@ Phase 6 is done when:
       consistency) plus `effects.ax` and the `*_parity.sh` harnesses.
 - [x] ✅ No measurable overhead vs. Phase 5: effect rows erase before codegen (inert
       handlers lower to their body) and `all_examples_parity` stays byte-identical.
-- [ ] `examples/asi/optimize.ax` annotated with effect rows compiles, runs, and
-      ROADMAP §9.5 gap F4 (budget meter) is closer to addressable: every `ai_complete`
-      call now carries `{AI, Net}` in its type, ready for Phase-7 `LLM<Caps>` to
-      meter.
+- [x] ✅ `examples/asi/optimize.ax` annotated with effect rows (`| {AI, Net}` on
+      `score_one_sample`, `score_variant`, `try_variant`, `redteam_one`) compiles and
+      type-checks cleanly. Every `ai_complete` call now carries `{AI, Net}` in its
+      declared type, ready for Phase-7 `LLM<Caps>` to meter (ROADMAP §9.5 F4).
 
 ---
 

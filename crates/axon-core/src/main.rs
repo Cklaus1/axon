@@ -71,6 +71,12 @@ enum Command {
         /// Without this flag (dev mode), a missing lock entry is only W1210.
         #[arg(long, help = "Require every import to match axon.lock (CI mode)")]
         locked: bool,
+
+        /// Emit E1316 deprecation notices for `@[contained(...)]` annotations.
+        /// Phase-4 `@[contained]` is superseded by the Phase-6 effect-row syntax
+        /// `fn f() -> T | {IO, Net}`; this flag surfaces migration opportunities.
+        #[arg(long, help = "Warn on deprecated @[contained] annotations (E1316)")]
+        effects_strict: bool,
     },
 
     /// Write `axon.lock` pinning each `use`d module to its content hash (R6).
@@ -452,7 +458,7 @@ fn main() {
 fn dispatch(command: Command) {
     match command {
         Command::Parse { file } => cmd_parse(file),
-        Command::Check { file, json, locked } => cmd_check(file, json, locked),
+        Command::Check { file, json, locked, effects_strict } => cmd_check(file, json, locked, effects_strict),
         Command::Lock { file } => cmd_lock(file),
         Command::VerifyLock { file } => cmd_verify_lock(file),
         Command::Build { files, out, release, target, no_cache, cache_dir } => {
@@ -597,7 +603,7 @@ fn cmd_complexity(file: PathBuf, json: bool) {
 
 // ── check ─────────────────────────────────────────────────────────────────────
 
-fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
+fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
 
@@ -672,6 +678,34 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool) {
     // strings with no span — they keep the string emit path.
     let mut string_errors = import_cap_errors;
     string_errors.extend(lock_errors);
+
+    // Phase 6 §8 E1316: emit deprecation notices for @[contained] annotations
+    // when --effects-strict is set. These are warnings only — they do not cause
+    // a non-zero exit code unless paired with other errors. The notice points
+    // users toward the Phase-6 `| {…}` effect-row syntax.
+    if effects_strict {
+        for warn in axon_core::effects::check_contained_strict(&program) {
+            if use_json {
+                let d = axon_core::PipelineDiagnostic {
+                    code: warn.code.to_string(),
+                    message: warn.message.clone(),
+                    file: file.display().to_string(),
+                    line: 0,
+                    col: 0,
+                    severity: "warning".to_string(),
+                    caret: String::new(),
+                    expected: None,
+                    found: None,
+                    help: Some(
+                        "replace `@[contained(...)]` with an effect-row clause `| {…}` on the fn signature".to_string(),
+                    ),
+                };
+                eprintln!("{}", d.json());
+            } else {
+                eprintln!("warning: [{}] {}", warn.code, warn.message);
+            }
+        }
+    }
 
     if located.is_empty() && string_errors.is_empty() {
         // Print nothing on success (Unix convention).

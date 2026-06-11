@@ -160,6 +160,37 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     errors
 }
 
+/// `--effects-strict` mode: emit E1316 deprecation notices for every function
+/// annotated with `@[contained(...)]`. Phase 4's `@[contained]` attribute is
+/// superseded by the Phase-6 effect-row syntax `fn f() -> T | {IO, Net}`;
+/// this pass surfaces migration opportunities when the user asks for strict
+/// checking. Severity is "warning" in the caller so that existing programs
+/// compile unchanged in normal mode.
+pub fn check_contained_strict(program: &Program) -> Vec<EffectError> {
+    use crate::error::E1316;
+    let mut out = Vec::new();
+    for item in &program.items {
+        let Item::FnDef(f) = item else { continue };
+        let Some(spec) = &f.contained else { continue };
+        let row = contained_effect_row(spec);
+        let row_str = if row.is_empty() {
+            "{}".to_string()
+        } else {
+            format!("{{{}}}", row.join(", "))
+        };
+        out.push(EffectError {
+            code: E1316,
+            message: format!(
+                "`{}` uses `@[contained(...)]`, which is deprecated in favour of the \
+                 Phase-6 effect-row syntax; migrate to `fn {}(...) -> T | {row_str} {{ … }}`",
+                f.name, f.name
+            ),
+            span: Span::dummy(),
+        });
+    }
+    out
+}
+
 /// Compute each function's inferred (transitive) effect set to a fixpoint. A
 /// fn's effects are the builtin effects of every call in its body plus the
 /// inferred effects of every user-fn it calls. Iterated until no set grows, so
@@ -1262,5 +1293,50 @@ mod tests {
              fn pure_caller() -> i64 | {} { apply(dbl, 5) }",
         );
         assert!(errs.is_empty(), "a pure callback must not leak, got {errs:?}");
+    }
+
+    // ── E1316 deprecation notice (Phase 6 §8) ────────────────────────────────
+
+    #[test]
+    fn contained_annotation_emits_e1316_in_strict_mode() {
+        use crate::error::E1316;
+        let prog = parse_source(
+            "@[contained(net: [\"api.example.com\"])]\nfn fetch(u: str) -> i64 { 0 }",
+        )
+        .unwrap();
+        let warns = check_contained_strict(&prog);
+        assert!(
+            warns.iter().any(|w| w.code == E1316 && w.message.contains("fetch")),
+            "E1316 must fire for a @[contained] fn in strict mode, got {warns:?}"
+        );
+    }
+
+    #[test]
+    fn no_contained_annotation_emits_no_e1316() {
+        use crate::error::E1316;
+        let prog = parse_source("fn fetch(u: str) -> i64 | {Net} { 0 }").unwrap();
+        let warns = check_contained_strict(&prog);
+        assert!(
+            !warns.iter().any(|w| w.code == E1316),
+            "E1316 must NOT fire for an effect-row fn (already migrated), got {warns:?}"
+        );
+    }
+
+    #[test]
+    fn row_variable_propagates_through_map_style_forwarder() {
+        // Spec §10 checklist: `map<A,B,e>(xs, f)` where `f` carries `{Net}` must
+        // flow `Net` to the caller's required row. The `apply`-style forwarder
+        // test above covers the mechanism; this one explicitly names the shapes
+        // from the spec to confirm the checklist item is met.
+        let errs = check(
+            "fn fetch_i64(x: i64) -> i64 | {Net, AI} { x }\n\
+             fn map_fn(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
+             fn caller() -> i64 | {} { map_fn(fetch_i64, 5) }",
+        );
+        assert!(
+            errs.iter().any(|e| e.code == E1310
+                && (e.message.contains("Net") || e.message.contains("AI"))),
+            "callback Net/AI must leak to the closed-row caller, got {errs:?}"
+        );
     }
 }

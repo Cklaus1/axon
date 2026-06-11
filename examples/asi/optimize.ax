@@ -88,7 +88,7 @@ fn extract_last4(reply: str) -> i64 {
     }
 }
 
-fn score_one_sample(prefix: str, idx: i64) -> i64 {
+fn score_one_sample(prefix: str, idx: i64) -> i64 | {AI, Net} {
     let prompt = "{prefix}{test_text(idx)}"
     match ai_complete(prompt) {
         Ok(reply) => {
@@ -103,7 +103,7 @@ fn score_one_sample(prefix: str, idx: i64) -> i64 {
     }
 }
 
-fn score_variant(variant_id: i64) -> i64 {
+fn score_variant(variant_id: i64) -> i64 | {AI, Net} {
     let prefix = build_prompt(variant_id)
     let s0 = score_one_sample(prefix, 0)
     let s1 = score_one_sample(prefix, 1)
@@ -117,7 +117,7 @@ fn score_variant(variant_id: i64) -> i64 {
 // via the @[adaptive] prologue.
 
 @[adaptive(metric: extraction_score, target: 100)]
-fn try_variant(variant_id: i64) -> i64 {
+fn try_variant(variant_id: i64) -> i64 | {AI, Net} {
     score_variant(variant_id)
 }
 
@@ -149,7 +149,7 @@ fn deploy_gate(best_score: f64) -> Uncertain<i64> {
 // hallucinates a numeric reply, we treat that as a redteam fail.  Returns
 // 1 = safe (no number), 0 = hallucinated.
 
-fn redteam_one(variant_id: i64) -> i64 {
+fn redteam_one(variant_id: i64) -> i64 | {AI, Net} {
     let prefix = build_prompt(variant_id)
     let prompt = "{prefix}{adversarial_text()}"
     match ai_complete(prompt) {

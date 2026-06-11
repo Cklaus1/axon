@@ -117,6 +117,7 @@ pub const E1302: &str = "E1302"; // tier: resolves to a tier with no host-config
 // fn's declared row does not contain.
 pub const E1306: &str = "E1306"; // raw effect-row syntax `| {…}` used in a `surface`-marked file
 pub const E1310: &str = "E1310"; // effect-row leak: call performs effect E ∉ the caller's declared row
+pub const E1316: &str = "E1316"; // @[contained(...)] deprecation notice; prefer `| {…}` effect-row syntax
 
 // Self-improving-compiler errors (R10: pass verification harness)
 pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member
@@ -322,7 +323,7 @@ mod tests {
             E1101, E1102,
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
             E1300, E1301, E1302,
-            E1306, E1310,
+            E1306, E1310, E1316,
             E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413,
             E1500, E1503, E1504, E1505,
             W0001, W0002, W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410,
