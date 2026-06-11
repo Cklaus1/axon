@@ -74,11 +74,25 @@ Budget: 50 calls"></textarea>
   </div>
 </div>
 
-<!-- Pane 4: Red Team -->
+<!-- Pane 4: Improve -->
 <div class="pane" id="p4">
   <div class="pane-header">
-    <span class="pane-title">Red Team Check</span>
+    <span class="pane-title">Improve</span>
     <span class="pane-step">Step 4</span>
+  </div>
+  <div class="pane-body">
+    <p style="font-size:.85rem;color:#8b949e;margin-bottom:.6rem">Run the goal optimizer — the system searches for the best variant and shows the score trajectory.</p>
+    <button class="btn" id="btn-improve" onclick="runImprove()" disabled style="background:#1f6feb">Run Improve Cycle</button>
+    <div class="status" id="s-improve"></div>
+    <div class="code-area" id="improve-out" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Pane 5: Red Team -->
+<div class="pane" id="p5">
+  <div class="pane-header">
+    <span class="pane-title">Red Team Check</span>
+    <span class="pane-step">Step 5</span>
   </div>
   <div class="pane-body">
     <button class="btn" id="btn-redteam" onclick="runRedteam()" disabled style="background:#6e40c9">Run Redteam</button>
@@ -87,11 +101,11 @@ Budget: 50 calls"></textarea>
   </div>
 </div>
 
-<!-- Pane 5: Deploy -->
-<div class="pane" id="p5">
+<!-- Pane 6: Deploy -->
+<div class="pane" id="p6">
   <div class="pane-header">
     <span class="pane-title">Deploy</span>
-    <span class="pane-step">Step 5</span>
+    <span class="pane-step">Step 6</span>
   </div>
   <div class="pane-body">
     <label style="font-size:.82rem;color:#8b949e">Risk level:
@@ -109,11 +123,11 @@ Budget: 50 calls"></textarea>
   </div>
 </div>
 
-<!-- Pane 6: Trace -->
-<div class="pane" id="p6">
+<!-- Pane 7: Trace -->
+<div class="pane" id="p7">
   <div class="pane-header">
     <span class="pane-title">Trace</span>
-    <span class="pane-step">Step 6</span>
+    <span class="pane-step">Step 7</span>
   </div>
   <div class="pane-body">
     <button class="btn" id="btn-trace" onclick="showTrace()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d">Show Trace</button>
@@ -126,9 +140,9 @@ Budget: 50 calls"></textarea>
 let axContent = '';
 let running = false;
 // Track which steps have succeeded so we can restore the right button states
-const done = {compiled: false, reviewed: false, approved: false, redteamed: false};
+const done = {compiled: false, reviewed: false, approved: false, improved: false, redteamed: false};
 
-const ALL_BTNS = ['btn-compile','btn-review','btn-approve','btn-redteam','btn-deploy','btn-trace'];
+const ALL_BTNS = ['btn-compile','btn-review','btn-approve','btn-improve','btn-redteam','btn-deploy','btn-trace'];
 
 function lockAll() {
   running = true;
@@ -141,9 +155,9 @@ function unlockByState() {
   document.getElementById('btn-compile').disabled = false;
   document.getElementById('btn-review').disabled = !done.compiled;
   document.getElementById('btn-approve').disabled = !done.reviewed;
-  document.getElementById('btn-redteam').disabled = !done.approved;
+  document.getElementById('btn-improve').disabled = !done.approved;
+  document.getElementById('btn-redteam').disabled = !done.improved;
   document.getElementById('btn-deploy').disabled = !done.redteamed;
-  // trace is always available
   document.getElementById('btn-trace').disabled = false;
 }
 
@@ -217,15 +231,51 @@ async function approveAst() {
   finally { unlockByState(); }
 }
 
+async function runImprove() {
+  if (running || !axContent) { fail('s-improve', 'approve AST first'); return; }
+  lockAll(); spin('s-improve');
+  try {
+    const j = await post('/api/goal/improve', {content: axContent});
+    let summary = '';
+    if (j.best_score !== undefined && j.best_score !== null) {
+      summary += 'Best score: ' + j.best_score + '\n';
+    }
+    if (j.run_output) { summary += '\nRun output:\n' + j.run_output; }
+    if (j.trajectory && j.trajectory.length > 0) {
+      summary += '\nScore trajectory:\n';
+      j.trajectory.forEach(t => {
+        const arr = t.trend === 'improving' ? '↑' : t.trend === 'regressing' ? '↓' : '→';
+        summary += '  ' + t.fn + ': ' + t.first + ' → ' + t.last + ' ' + arr + ' (' + t.evals + ' evals)\n';
+      });
+    }
+    show('improve-out', summary || JSON.stringify(j, null, 2));
+    if (j.ok !== false && !j.error) {
+      const scoreLabel = (j.best_score !== undefined && j.best_score !== null) ? ' — best score: ' + j.best_score : '';
+      ok('s-improve', 'optimization complete' + scoreLabel);
+      done.improved = true;
+    } else {
+      fail('s-improve', j.error || 'optimizer failed');
+    }
+  } catch(e) { fail('s-improve', e.message); }
+  finally { unlockByState(); }
+}
+
 async function runRedteam() {
-  if (running || !axContent) { fail('s4', 'approve AST first'); return; }
+  if (running || !axContent) { fail('s4', 'run improve first'); return; }
   lockAll(); spin('s4');
   try {
     const j = await post('/api/redteam', {content: axContent});
-    show('redteam-out', JSON.stringify(j, null, 2));
-    const passed = j.ok !== false && !j.error;
-    if (passed) { ok('s4', 'redteam passed'); }
-    else { fail('s4', 'redteam flagged issues — review before deploying'); }
+    const caught = j.caught === true;
+    const reason = j.message || '';
+    const display = (caught && reason ? '⚠ REDTEAM CAUGHT: ' + reason + '\n\n' : '') + JSON.stringify(j, null, 2);
+    show('redteam-out', display);
+    if (caught) {
+      fail('s4', 'REDTEAM CAUGHT — ' + (reason || 'adversarial issue detected'));
+    } else if (j.ok !== false && !j.error) {
+      ok('s4', 'redteam passed — no adversarial issues found');
+    } else {
+      fail('s4', j.error || 'redteam check error');
+    }
     done.redteamed = true;
   } catch(e) { fail('s4', e.message); }
   finally { unlockByState(); }

@@ -31,6 +31,10 @@ pub fn handle(mut req: Request, axon_bin: &str) {
         ("GET", "/api/trace") => {
             (200, crate::api::trace(axon_bin), "application/json")
         }
+        ("POST", "/api/goal/improve") => {
+            let b = read_body(&mut req);
+            (200, crate::api::goal_improve(&b, axon_bin), "application/json")
+        }
         _ => {
             (404, r#"{"error":"not found"}"#.to_string(), "application/json")
         }

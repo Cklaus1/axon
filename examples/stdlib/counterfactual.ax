@@ -1,0 +1,271 @@
+// Tier-2 stdlib: Counterfactual — "what if X had been different?" as a VALUE type.
+//
+// A `Counterfactual` bundles an actual observed input, a hypothetical alternative
+// input, the outcomes under both, and the derived causal effect.  It is the
+// structured result of a do-calculus query (do(X=hypothetical) vs. X=actual,
+// holding everything else fixed) — the value-level counterpart to the causal model
+// in `examples/stdlib/causal.ax`.
+//
+// Pattern:
+//   1. Run the model under ACTUAL conditions  → actual_out
+//   2. Run the model under HYPOTHETICAL input → cf_out
+//   3. effect = cf_out − actual_out
+//
+// Uses:
+//   - Safety audit: "would the redteam check have caught this under a stricter threshold?"
+//   - Optimizer debrief: "had we started from a different variant, would we have scored higher?"
+//   - Budget analysis: "had we spent 2× as much, what would the return have been?"
+//
+//   axon test examples/stdlib/counterfactual.ax
+//   axon run  examples/stdlib/counterfactual.ax
+
+// ── Core type ─────────────────────────────────────────────────────────────────
+
+type Counterfactual = {
+    actual_input:  i64,   // the input that actually occurred
+    cf_input:      i64,   // the hypothetical alternative input
+    actual_out:    i64,   // outcome under actual conditions
+    cf_out:        i64,   // outcome under hypothetical conditions
+    effect:        i64,   // cf_out − actual_out (positive = counterfactual better)
+}
+
+// Construct from precomputed outcomes (user calls the model; we record the result).
+fn cf_create(actual_input: i64, cf_input: i64, actual_out: i64, cf_out: i64) -> Counterfactual {
+    Counterfactual {
+        actual_input: actual_input,
+        cf_input: cf_input,
+        actual_out: actual_out,
+        cf_out: cf_out,
+        effect: cf_out - actual_out,
+    }
+}
+
+// ── Queries ───────────────────────────────────────────────────────────────────
+
+// The causal effect: how much better (or worse) the counterfactual was.
+fn cf_effect(c: Counterfactual) -> i64 { c.effect }
+
+// Percent change relative to the actual outcome.
+// Avoids division-by-zero: uses abs(actual_out)+1 as denominator.
+fn cf_pct_change(c: Counterfactual) -> i64 {
+    c.effect * 100 / (abs_i64(c.actual_out) + 1)
+}
+
+// Would the counterfactual input have produced a strictly better outcome?
+fn cf_would_improve(c: Counterfactual) -> bool { c.cf_out > c.actual_out }
+
+// Is the effect negligibly small (< threshold in absolute terms)?
+fn cf_is_negligible(c: Counterfactual, threshold: i64) -> bool {
+    abs_i64(c.effect) < threshold
+}
+
+// A readable summary for tracing/logging.
+fn cf_summary(c: Counterfactual) -> str {
+    let dir = if c.effect > 0 { "+" } else { "" }
+    "cf: actual({to_str(c.actual_input)})={to_str(c.actual_out)} vs hyp({to_str(c.cf_input)})={to_str(c.cf_out)}, effect={dir}{to_str(c.effect)}"
+}
+
+// ── Counterfactual set ────────────────────────────────────────────────────────
+// Multiple counterfactuals over different hypothetical inputs (e.g. sensitivity analysis).
+
+type CfSet = { items: [i64], n: i64 }   // flat storage: pairs (cf_input, effect)
+
+fn cfs_empty() -> CfSet {
+    CfSet { items: [], n: 0 }
+}
+
+fn cfs_record(cs: CfSet, c: Counterfactual) -> CfSet {
+    let items2 = arr_push(arr_push(cs.items, c.cf_input), c.effect)
+    CfSet { items: items2, n: cs.n + 1 }
+}
+
+// Retrieve the i-th counterfactual's effect.
+fn cfs_effect_at(cs: CfSet, i: i64) -> i64 {
+    cs.items[i * 2 + 1]
+}
+
+// Retrieve the i-th hypothetical input.
+fn cfs_input_at(cs: CfSet, i: i64) -> i64 {
+    cs.items[i * 2]
+}
+
+// How many of the counterfactuals would improve over the actual?
+fn cfs_count_improving(cs: CfSet) -> i64 {
+    let count = 0
+    let i = 0
+    while i < cs.n {
+        if cfs_effect_at(cs, i) > 0 {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    count
+}
+
+// The best (maximum effect) counterfactual input.
+fn cfs_best_input(cs: CfSet) -> i64 {
+    let best_eff = if cs.n > 0 { cfs_effect_at(cs, 0) } else { 0 }
+    let best_inp = if cs.n > 0 { cfs_input_at(cs, 0) } else { 0 }
+    let i = 1
+    while i < cs.n {
+        let eff = cfs_effect_at(cs, i)
+        if eff > best_eff {
+            best_eff = eff
+            best_inp = cfs_input_at(cs, i)
+        }
+        i = i + 1
+    }
+    best_inp
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── cf_create / effect / pct_change ──────────────────────────────────────────
+
+@[test]
+fn test_cf_effect_positive() {
+    let c = cf_create(100, 50, 200, 250)   // more efficient at lower input
+    assert_eq(cf_effect(c), 50)
+    assert(cf_would_improve(c))
+}
+
+@[test]
+fn test_cf_effect_negative() {
+    let c = cf_create(100, 200, 300, 250)  // higher input actually hurt
+    assert_eq(cf_effect(c), -50)
+    assert(!cf_would_improve(c))
+}
+
+@[test]
+fn test_cf_effect_zero() {
+    let c = cf_create(10, 20, 100, 100)    // no difference
+    assert_eq(cf_effect(c), 0)
+    assert(!cf_would_improve(c))
+}
+
+@[test]
+fn test_cf_pct_change_positive() {
+    // actual_out=100, cf_out=150, effect=50, pct = 50*100/(100+1)=49
+    let c = cf_create(1, 2, 100, 150)
+    assert(cf_pct_change(c) > 40)
+    assert(cf_pct_change(c) < 60)
+}
+
+@[test]
+fn test_cf_is_negligible() {
+    let c = cf_create(10, 11, 100, 102)    // 2-unit effect
+    assert(cf_is_negligible(c, 5))
+    assert(!cf_is_negligible(c, 1))
+}
+
+// ── Safety audit pattern ───────────────────────────────────────────────────────
+// "Would the redteam check have caught this if the threshold were stricter?"
+// Model: check passes when score >= threshold.
+
+@[pure]
+fn redteam_score(threshold: i64) -> i64 {
+    // Simulate: base score = 85, threshold raises the bar.
+    // Score is 1 (caught) if threshold > 85, 0 (missed) otherwise.
+    if threshold > 85 { 1 } else { 0 }
+}
+
+@[test]
+fn test_cf_safety_audit() {
+    // Actual: threshold = 70 → check missed (score=0)
+    // Hypothetical: threshold = 90 → check would have caught (score=1)
+    let actual_out = redteam_score(70)
+    let cf_out = redteam_score(90)
+    let c = cf_create(70, 90, actual_out, cf_out)
+    assert_eq(c.actual_out, 0)     // missed
+    assert_eq(c.cf_out, 1)         // would catch
+    assert_eq(cf_effect(c), 1)     // counterfactual BETTER (would have caught it)
+    assert(cf_would_improve(c))
+}
+
+// ── Optimizer debrief pattern ─────────────────────────────────────────────────
+// "Had we started from variant 3 instead of variant 1, what score would we have got?"
+
+@[pure]
+fn variant_score(v: i64) -> i64 {
+    if v == 1 { 60 } else if v == 2 { 75 } else if v == 3 { 90 } else { 50 }
+}
+
+@[test]
+fn test_cf_optimizer_debrief() {
+    let c = cf_create(1, 3, variant_score(1), variant_score(3))
+    assert_eq(cf_effect(c), 30)        // 90 - 60 = 30 points higher
+    assert_eq(cf_pct_change(c), 49)    // 30*100/61 ≈ 49%
+    assert(cf_would_improve(c))
+}
+
+// ── CfSet sensitivity analysis ────────────────────────────────────────────────
+// Sweep all variants; find which alternative would have scored best.
+
+@[test]
+fn test_cfs_sensitivity_sweep() {
+    let actual_v = 1
+    let actual_score = variant_score(actual_v)
+    let cs = cfs_empty()
+    let v = 1
+    while v <= 4 {
+        let c = cf_create(actual_v, v, actual_score, variant_score(v))
+        cs = cfs_record(cs, c)
+        v = v + 1
+    }
+    assert_eq(cs.n, 4)
+    // How many alternatives score higher than variant 1?
+    assert_eq(cfs_count_improving(cs), 2)   // variants 2 and 3 beat variant 1
+    // Best alternative input is variant 3 (score 90)
+    assert_eq(cfs_best_input(cs), 3)
+}
+
+@[test]
+fn test_cfs_empty_is_zero() {
+    let cs = cfs_empty()
+    assert_eq(cs.n, 0)
+    assert_eq(cfs_count_improving(cs), 0)
+}
+
+// ── Budget counterfactual ─────────────────────────────────────────────────────
+// "Had we allocated 2× the budget, would we have hit the goal?"
+
+@[pure]
+fn roi_at_budget(calls: i64) -> i64 {
+    // Diminishing returns: sqrt-ish growth.
+    if calls <= 5 { calls * 12 }
+    else if calls <= 20 { 60 + (calls - 5) * 6 }
+    else { 150 + (calls - 20) * 2 }
+}
+
+@[test]
+fn test_cf_budget_doubling() {
+    let actual_calls = 10
+    let cf_calls = 20                       // double the budget
+    let c = cf_create(actual_calls, cf_calls, roi_at_budget(actual_calls), roi_at_budget(cf_calls))
+    assert(cf_would_improve(c))
+    assert(cf_pct_change(c) > 0)
+}
+
+fn main() -> i64 {
+    println("── counterfactual: what-if analysis ─────────────────────────────")
+    let c = cf_create(100, 50, 200, 260)
+    println(cf_summary(c))
+    println("would improve: {to_str(cf_would_improve(c))}")
+    println("pct change: {to_str(cf_pct_change(c))}%")
+    println("")
+    println("── sensitivity sweep over 4 variants ───────────────────────────")
+    let actual_v = 1
+    let actual_score = variant_score(actual_v)
+    let cs = cfs_empty()
+    let v = 1
+    while v <= 4 {
+        let cv = cf_create(actual_v, v, actual_score, variant_score(v))
+        cs = cfs_record(cs, cv)
+        println("  variant {to_str(v)}: score={to_str(variant_score(v))}, effect={to_str(cf_effect(cv))}")
+        v = v + 1
+    }
+    println("best alternative: variant {to_str(cfs_best_input(cs))}, improving alternatives: {to_str(cfs_count_improving(cs))}/4")
+    0
+}
