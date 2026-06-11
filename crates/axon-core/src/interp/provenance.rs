@@ -95,9 +95,17 @@ pub(super) fn append_provenance_jsonl(
 /// R4 §4.3 — append one `event:"agent_action"` audit record for a capability-
 /// bearing action taken inside an `@[agent]` function. `action` is the tool
 /// (builtin) name; `caps_used` is the capability kind it exercises (the I-11
-/// link). Compiler-injected at the call site, so an agent's actions are logged
+/// link). F3 (Phase 9): `effect_row` is the row-polymorphic effect tag
+/// ("FS"/"Net"/"Exec"/"AI"); `principal` is the name of the executing principal.
+/// Compiler-injected at the call site, so an agent's actions are logged
 /// whether or not the agent "cooperates" (I-13, the highest-trust zone).
-pub(super) fn append_agent_action_jsonl(fn_name: &str, action: &str, caps_used: &str) {
+pub(super) fn append_agent_action_jsonl(
+    fn_name: &str,
+    action: &str,
+    caps_used: &str,
+    effect_row: &str,
+    principal: &str,
+) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
@@ -113,10 +121,12 @@ pub(super) fn append_agent_action_jsonl(fn_name: &str, action: &str, caps_used: 
     };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\
-         \"action\":{a},\"caps_used\":{c}{src_field}}}\n",
+         \"action\":{a},\"caps_used\":{c},\"effect_row\":{er},\"principal\":{pr}{src_field}}}\n",
         f = json_quote(fn_name),
         a = json_quote(action),
         c = json_quote(caps_used),
+        er = json_quote(effect_row),
+        pr = json_quote(principal),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
@@ -151,6 +161,9 @@ pub(super) fn append_ai_call_jsonl(
     // F3: the goal/metric being optimized when this AI call fired ("" if none) —
     // the causal goal→call link for `axon trace --ai` cost-attribution.
     goal: &str,
+    // F3 (Phase 9): effect row tag ("AI") and the executing principal name.
+    effect_row: &str,
+    principal: &str,
 ) {
     let Some(path) = provenance_log_path() else { return };
     if let Some(dir) = path.parent() {
@@ -174,7 +187,7 @@ pub(super) fn append_ai_call_jsonl(
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"ai_call\",\"tier\":{t},\"model\":{m},\
          \"model_version\":{mv},\"params_hash\":{ph},\"prompt_hash\":{prh},\"mode\":{md},\
-         \"reason\":{rs},\"cost_usd\":{cost}{goal_field}{src_field}}}\n",
+         \"reason\":{rs},\"cost_usd\":{cost},\"effect_row\":{er},\"principal\":{pr}{goal_field}{src_field}}}\n",
         f = json_quote(fn_name),
         t = json_quote(tier),
         m = json_quote(model),
@@ -183,6 +196,8 @@ pub(super) fn append_ai_call_jsonl(
         prh = json_quote(&sha256_hex(prompt)),
         md = json_quote(mode),
         rs = json_quote(reason),
+        er = json_quote(effect_row),
+        pr = json_quote(principal),
     );
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
@@ -318,6 +333,11 @@ pub struct AiCallRecord {
     /// The goal/metric being optimized when the call fired ("" if none) — F3.
     pub goal: String,
     pub src: String,
+    /// F3 (Phase 9): the effect-row tag this call exercises. Always "AI" for ai_call events.
+    pub effect_row: String,
+    /// F3 (Phase 9): the name of the principal executing when the call fired.
+    /// "root" when no named principal is in scope.
+    pub principal: String,
 }
 
 /// Read the `ai_call` events from the provenance log (the AI-call audit trail).
@@ -347,6 +367,8 @@ pub fn read_ai_calls(path: Option<&std::path::Path>) -> Option<Vec<AiCallRecord>
             cost_usd: extract_json_num(line, "\"cost_usd\":").unwrap_or(0.0),
             goal: extract_json_str(line, "\"goal\":").unwrap_or_default(),
             src: extract_json_str(line, "\"src\":").unwrap_or_default(),
+            effect_row: extract_json_str(line, "\"effect_row\":").unwrap_or_else(|| "AI".to_string()),
+            principal: extract_json_str(line, "\"principal\":").unwrap_or_else(|| "root".to_string()),
         });
     }
     Some(out)

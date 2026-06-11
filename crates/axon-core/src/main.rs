@@ -2379,6 +2379,8 @@ struct AiTraceStat {
     tier: String,
     model: String,
     goal: String,
+    /// F3 (Phase 9): the principal that made the most recent call in this group.
+    principal: String,
     live: usize,
     mock: usize,
     replay: usize,
@@ -2417,6 +2419,7 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
                     tier: r.tier.clone(),
                     model: r.model.clone(),
                     goal: r.goal.clone(),
+                    principal: r.principal.clone(),
                     live: 0,
                     mock: 0,
                     replay: 0,
@@ -2436,6 +2439,9 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         if !r.goal.is_empty() {
             g.goal = r.goal.clone();
         }
+        if !r.principal.is_empty() {
+            g.principal = r.principal.clone();
+        }
         match r.mode.as_str() {
             "live" => { g.live += 1; t_live += 1; }
             "mock" => { g.mock += 1; t_mock += 1; }
@@ -2453,13 +2459,13 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
             .map(|k| {
                 let s = &groups[k];
                 format!(
-                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"goal\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
-                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.goal, s.live, s.mock, s.replay, s.fallback,
+                    "{{\"fn\":\"{}\",\"src\":\"{}\",\"calls\":{},\"cost_usd\":{},\"tier\":\"{}\",\"model\":\"{}\",\"goal\":\"{}\",\"principal\":\"{}\",\"live\":{},\"mock\":{},\"replay\":{},\"fallback\":{}}}",
+                    s.func, s.src, s.calls, s.cost_usd, s.tier, s.model, s.goal, s.principal, s.live, s.mock, s.replay, s.fallback,
                 )
             })
             .collect();
         println!(
-            "{{\"schema\":\"axon-ai-audit/1\",\"calls\":{total},\"cost_usd\":{total_cost},\"modes\":{{\"live\":{t_live},\"mock\":{t_mock},\"replay\":{t_replay},\"fallback\":{t_fallback}}},\"by_fn\":[{}]}}",
+            "{{\"schema\":\"axon-ai-audit/2\",\"calls\":{total},\"cost_usd\":{total_cost},\"modes\":{{\"live\":{t_live},\"mock\":{t_mock},\"replay\":{t_replay},\"fallback\":{t_fallback}}},\"by_fn\":[{}]}}",
             body.join(","),
         );
         return;
@@ -2476,8 +2482,9 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
         let s = &groups[k];
         let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
         let goal = if s.goal.is_empty() { String::new() } else { format!("  → goal `{}`", s.goal) };
+        let principal = if s.principal == "root" { String::new() } else { format!("  principal:{}", s.principal) };
         println!(
-            "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}{goal}",
+            "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}{goal}{principal}",
             s.func, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
         );
     }

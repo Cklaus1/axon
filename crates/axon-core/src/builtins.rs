@@ -1085,6 +1085,19 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "bool",
         doc: "Phase-7 (R12 Slice 1): would a mint grant anything — does the parent hold every requested cap and have budget to carve? The explicit gate (mint is total and safe without it).",
     },
+    // ── F3 (Phase 9): Principal audit-context builtins ───────────────────────
+    BuiltinFn {
+        name: "principal_activate",
+        params: &[("handle", "i64")],
+        ret: "()",
+        doc: "F3 (Phase 9): set the named principal as the current audit context so capability audit records (ai_call, agent_action) carry its name. A negative or unknown handle resets to \"root\". Interp-only.",
+    },
+    BuiltinFn {
+        name: "principal_current_name",
+        params: &[],
+        ret: "str",
+        doc: "F3 (Phase 9): return the name of the principal currently active in the audit context. Returns \"root\" when none has been set via principal_activate.",
+    },
     // ── Phase 7 (R12 Slice 2): cooperative scheduler (fiber run-queue) ───────
     // Fibers are (named fn, i64 arg) run cooperatively in a seed-deterministic
     // round-robin; a panicking fiber is caught (observable, not a process abort).

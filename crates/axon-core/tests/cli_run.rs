@@ -3376,7 +3376,7 @@ fn trace_ai_summarizes_the_ai_call_audit_trail() {
     let _ = std::fs::remove_dir_all(&cache);
     let _ = std::fs::remove_file(&f);
     let j = String::from_utf8_lossy(&jout.stdout);
-    assert!(j.contains("\"schema\":\"axon-ai-audit/1\""), "stable schema id: {j:?}");
+    assert!(j.contains("\"schema\":\"axon-ai-audit/2\""), "stable schema id (F3 adds principal+effect_row): {j:?}");
     assert!(j.contains("\"calls\":3"), "total calls: {j:?}");
     assert!(j.contains("\"mock\":3"), "mode breakdown: {j:?}");
     assert!(j.contains("\"tier\":\"strong\"") && j.contains("\"tier\":\"cheap\""), "per-fn tiers: {j:?}");
@@ -3411,6 +3411,55 @@ fn trace_ai_attributes_calls_to_the_triggering_goal_f3() {
     assert!(j.contains("\"fn\":\"quality\""), "the metric fn must appear: {j:?}");
     assert!(j.contains("\"goal\":\"quality\""),
         "AI calls inside goal_run must be attributed to the goal `quality`: {j:?}");
+}
+
+#[test]
+fn f3_principal_activate_sets_audit_context_and_principal_current_name_reads_it() {
+    // F3 (Phase 9): principal_activate(handle) sets the current principal for
+    // audit attribution; principal_current_name() reads it back. Default is "root".
+    let prog = "fn main() -> i64 {\n\
+                  let h = principal_root(\"agent-alpha\", true, false, false, 1000)\n\
+                  let _ = principal_activate(h)\n\
+                  let name = principal_current_name()\n\
+                  if str_eq(name, \"agent-alpha\") { 0 } else { 1 }\n\
+                }\n";
+    let f = std::env::temp_dir().join(format!("axon_pact_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    let code = out.status.code().unwrap_or(-1);
+    assert_eq!(code, 0, "principal_activate should set the name; principal_current_name returns it: {out:?}");
+}
+
+#[test]
+fn f3_ai_call_audit_record_carries_principal_and_effect_row() {
+    // F3 (Phase 9): every ai_call audit record carries `effect_row:"AI"` and the
+    // `principal` name (default "root"). The axon trace --ai --json output surfaces
+    // `principal` in each by_fn entry, and the schema is axon-ai-audit/2.
+    let prog = "@[ai(policy(tier: balanced, budget: 50))]\n\
+                fn query() -> i64 {\n\
+                  let _ = match ai_complete(\"ping\") { Ok(_) => 0  Err(_) => 0 }\n\
+                  0\n\
+                }\n\
+                fn main() -> i64 { query() }\n";
+    let f = std::env::temp_dir().join(format!("axon_f3ef_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let cache = std::env::temp_dir().join(format!("axon_f3ef_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&cache);
+
+    let run = axon().args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
+
+    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::fs::remove_dir_all(&cache);
+    let _ = std::fs::remove_file(&f);
+    let j = String::from_utf8_lossy(&jout.stdout);
+
+    // Schema v2 is stamped when F3 fields are present.
+    assert!(j.contains("\"schema\":\"axon-ai-audit/2\""), "schema must be v2 with F3 fields: {j:?}");
+    // principal defaults to "root" when no principal_activate has been called.
+    assert!(j.contains("\"principal\":\"root\""), "default principal must be root: {j:?}");
 }
 
 #[test]

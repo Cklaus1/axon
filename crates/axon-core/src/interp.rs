@@ -322,6 +322,11 @@ pub struct Interp<'p> {
     /// audit trail (`axon trace --ai` cost-attribution per goal). `None` outside
     /// any goal optimization.
     current_goal: RefCell<Option<String>>,
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Set via `principal_activate(handle)` to associate a kernel
+    /// principal with the execution context, so capability audit records carry the
+    /// principal name rather than the opaque "root" default. Defaults to "root".
+    current_principal: RefCell<String>,
     /// Active `subject_to` constraint fn name during `goal_run_constrained`
     /// (pillar-3 constrained search). When set, the optimizer scores an
     /// INFEASIBLE candidate as maximally distant so it is rejected; the real
@@ -1048,6 +1053,7 @@ impl<'p> Interp<'p> {
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
+            current_principal: RefCell::new("root".to_string()),
             goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),
@@ -1178,6 +1184,12 @@ impl<'p> Interp<'p> {
     /// `run_goal*`. Stamped into the `ai_call` provenance for causal attribution.
     fn current_goal_name(&self) -> Option<String> {
         self.current_goal.borrow().clone()
+    }
+
+    /// F3 (Phase 9): the name of the principal currently in scope for audit
+    /// attribution. Defaults to "root"; overridden by `principal_activate`.
+    fn current_principal_name(&self) -> String {
+        self.current_principal.borrow().clone()
     }
 
     /// Whether the currently-executing fn carries an `@[ai(policy)]` attribute.

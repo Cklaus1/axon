@@ -12,6 +12,17 @@
 
 use super::*;
 
+/// F3 (Phase 9): map a raw capability kind (from `capability_of_builtin`) to its
+/// effect-row tag for audit records. Unmapped kinds default to the raw cap name.
+fn cap_to_effect_row(cap: &str) -> &'static str {
+    match cap {
+        "net" | "ai" => "Net",
+        "fs" => "FS",
+        "exec" => "Exec",
+        _ => "Other",
+    }
+}
+
 /// Phase 7 (R12 Slice 4): the durable-store NDJSON log path for store `key`:
 /// `$XDG_CACHE_HOME/axon/stores/<key>.ndjson` (or under `$HOME/.cache`). Sibling
 /// of the provenance log dir, so it reuses the same cache-root discovery. The key
@@ -96,7 +107,11 @@ impl<'p> Interp<'p> {
         // (no capability) are not logged; non-agent callers are unaffected.
         if let Some(cap) = crate::capabilities::capability_of_builtin(name) {
             if let Some(agent_fn) = self.current_agent_fn() {
-                append_agent_action_jsonl(&agent_fn, name, cap);
+                // F3 (Phase 9): map the raw cap kind to its effect-row tag and
+                // include the current principal name for audit attribution.
+                let effect_row = cap_to_effect_row(cap);
+                let principal = self.current_principal_name();
+                append_agent_action_jsonl(&agent_fn, name, cap, effect_row, &principal);
             }
         }
 
@@ -2014,6 +2029,34 @@ impl<'p> Interp<'p> {
                 ok!(Value::Bool(ok));
             }
 
+            // F3 (Phase 9): `principal_activate(handle) -> ()` — set the named
+            // principal as the current audit context so capability audit records
+            // (ai_call, agent_action) carry its name rather than the opaque "root"
+            // default. A negative or unknown handle resets to "root". Interp-only.
+            "principal_activate" => {
+                want(1)?;
+                let h = as_int(&args[0])?;
+                let name = if h >= 0 {
+                    self.principals
+                        .borrow()
+                        .get(h as usize)
+                        .map(|p| p.name.clone())
+                        .unwrap_or_else(|| "root".to_string())
+                } else {
+                    "root".to_string()
+                };
+                *self.current_principal.borrow_mut() = name;
+                ok!(Value::Tuple(vec![]));
+            }
+
+            // F3 (Phase 9): `principal_current_name() -> str` — return the name of
+            // the principal currently active in the audit context. "root" when none
+            // has been set via principal_activate. Useful for audit queries.
+            "principal_current_name" => {
+                want(0)?;
+                ok!(Value::Str(self.current_principal_name()));
+            }
+
             // ── Phase 7 (R12 Slice 2): cooperative scheduler ────────────────────
             // A fiber run-queue over the eager-spawn model. Fibers are (named fn,
             // i64 arg); `scheduler_run` runs the ready ones in a seed-deterministic
@@ -3257,12 +3300,14 @@ impl<'p> Interp<'p> {
                 let replay_model = tier.api_model();
                 // F3: the goal being optimized when this call fired (causal link).
                 let goal = self.current_goal_name().unwrap_or_default();
+                // F3 (Phase 9): principal name for audit attribution.
+                let principal = self.current_principal_name();
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
                     let micro = tier.cost_micro(cached_tokens);
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "replay", "", micro as f64 / 1_000_000.0, &goal,
+                        "replay", "", micro as f64 / 1_000_000.0, &goal, "AI", &principal,
                     );
                     ok!(Value::Ok(Box::new(Value::Str(cached))));
                 }
@@ -3277,7 +3322,7 @@ impl<'p> Interp<'p> {
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
                     append_ai_call_jsonl(
                         &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "mock", "", cost_usd, &goal,
+                        "mock", "", cost_usd, &goal, "AI", &principal,
                     );
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
@@ -3304,7 +3349,7 @@ impl<'p> Interp<'p> {
                             self.ai_cost_micro.set(self.ai_cost_micro.get() + real_micro);
                             append_ai_call_jsonl(
                                 &caller, &prompt, tier_name, model_id, model_ver,
-                                params, "live", "", real_usd, &goal,
+                                params, "live", "", real_usd, &goal, "AI", &principal,
                             );
                             // Record the live (response, real token-count) so a
                             // re-run with the same AXON_AI_REPLAY file reproduces
@@ -3330,7 +3375,7 @@ impl<'p> Interp<'p> {
                         // dispatched to a (mock or live) model.
                         append_ai_call_jsonl(
                             &caller, &prompt, tier_name, "none", "offline", params,
-                            "fallback", "offline: no model reachable", 0.0, &goal,
+                            "fallback", "offline: no model reachable", 0.0, &goal, "AI", &principal,
                         );
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));
                     }
