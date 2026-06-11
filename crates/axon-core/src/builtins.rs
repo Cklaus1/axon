@@ -1085,6 +1085,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "bool",
         doc: "Phase-7 (R12 Slice 1): would a mint grant anything — does the parent hold every requested cap and have budget to carve? The explicit gate (mint is total and safe without it).",
     },
+    // ── F5 (Phase 9): Sandbox<P> — runtime effect-row enforcement ────────────
+    // A sandbox scopes a function call to a named principal with a declared effect
+    // ceiling. Any builtin that carries an effect NOT in the ceiling is refused at
+    // runtime (Flow::SandboxViolation, exit 8) — the dynamic counterpart to the
+    // static @[contained] / effect-row check. Designed for AI-generated tool
+    // execution where the tool function is not known at compile time.
+    BuiltinFn {
+        name: "sandbox_create",
+        params: &[("principal", "i64"), ("allowed_effects", "str")],
+        ret: "i64",
+        doc: "F5 (Phase 9): register a runtime sandbox bound to `principal` that allows only the comma-separated `allowed_effects` (e.g. \"AI,Net\" or \"IO\" or \"\"). Returns a sandbox handle (i64). Interp-only (codegen E0910-refused).",
+    },
+    BuiltinFn {
+        name: "sandbox_run",
+        params: &[("sandbox", "i64"), ("fn_name", "str"), ("arg", "i64")],
+        ret: "i64",
+        doc: "F5 (Phase 9): call the named user function with `arg` inside the sandbox identified by `sandbox`. Any builtin that attempts an effect not declared in the sandbox ceiling raises a SandboxViolation (exit 8) and the call is refused. Returns the function's i64 result on success. Interp-only (codegen E0910-refused).",
+    },
     // ── F3 (Phase 9): Principal audit-context builtins ───────────────────────
     BuiltinFn {
         name: "principal_activate",
@@ -1544,6 +1562,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
             | "goal_best_score" | "goal_history" | "goal_clear"
             | "chan_new" | "chan_send" | "chan_recv"
+            // F5 sandbox execution — runs user code that may have effects (modeled as IO)
+            | "sandbox_run"
     )
 }
 
@@ -1590,6 +1610,11 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // Channels / concurrency.
         "chan_new" | "chan_send" | "chan_recv" => &["Chan"],
+
+        // Sandbox execution — runs arbitrary user code; effects depend on what
+        // the fn does, but the sandbox itself is modeled as IO to prevent it
+        // from appearing inside pure contexts without annotation.
+        "sandbox_run" => &["IO"],
 
         // Everything else is pure.
         _ => &[],

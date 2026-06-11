@@ -115,6 +115,35 @@ impl<'p> Interp<'p> {
             }
         }
 
+        // F5 (Phase 9): runtime sandbox enforcement. If there is an active
+        // sandbox AND this builtin has a non-empty effect row, check that every
+        // effect it requires is in the sandbox's allowed set. Any effect outside
+        // the ceiling is refused (SandboxViolation, exit 8) before the real call.
+        // Pure builtins (empty row) are always allowed — this check costs nothing
+        // for the common case. sandbox_create/sandbox_run themselves are exempt
+        // (they manage sandbox state; exempting them avoids infinite regress).
+        {
+            let sb_handle = self.active_sandbox.get();
+            if sb_handle >= 0 && name != "sandbox_create" && name != "sandbox_run" {
+                let row = crate::builtins::builtin_effect_row(name);
+                if !row.is_empty() {
+                    let sbs = self.sandboxes.borrow();
+                    if let Some(sb) = sbs.get(sb_handle as usize) {
+                        for &eff in row {
+                            if !sb.allowed.contains(eff) {
+                                return Err(crate::interp::Flow::SandboxViolation(format!(
+                                    "builtin `{name}` requires effect `{eff}` which is not \
+                                     in the active sandbox's allowed set {:?} \
+                                     (principal handle {})",
+                                    sb.allowed, sb.principal
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Phase 6 (multi-shot resume): if we are REPLAYING a continuation to
         // service a `resume(v)`, the handled effect's op is FED the resume value
         // instead of really running — this is what makes the continuation
@@ -2027,6 +2056,64 @@ impl<'p> Interp<'p> {
                 let g = as_int(&args[4])?;
                 let ok = h >= 0 && self.principals.borrow().can_mint(h as usize, n, f, e, g);
                 ok!(Value::Bool(ok));
+            }
+
+            // F5 (Phase 9): `sandbox_create(principal, allowed_effects) -> i64`
+            // Register a runtime sandbox that allows only the comma-separated
+            // effects in `allowed_effects` (e.g. "AI,Net", "IO", or "" = pure).
+            // The sandbox is bound to `principal` for audit attribution. Returns
+            // the sandbox handle (an index into `self.sandboxes`). Interp-only.
+            "sandbox_create" => {
+                want(2)?;
+                let principal = as_int(&args[0])?;
+                let raw = as_str(&args[1])?.to_string();
+                let allowed: std::collections::HashSet<String> = raw
+                    .split(',')
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let mut sbs = self.sandboxes.borrow_mut();
+                let handle = sbs.len() as i64;
+                sbs.push(SandboxEntry { principal, allowed });
+                ok!(Value::Int(handle));
+            }
+
+            // F5 (Phase 9): `sandbox_run(sandbox, fn_name, arg) -> i64`
+            // Call the named user function with `arg` inside the sandbox. Any
+            // builtin that attempts an effect outside the sandbox's ceiling raises
+            // SandboxViolation (exit 8) and the call is refused. The active sandbox
+            // is restored to its previous value after the call (nesting-safe). The
+            // function's return value (coerced to i64; () → 0) is returned. Interp-only.
+            "sandbox_run" => {
+                want(3)?;
+                let sb_handle = as_int(&args[0])?;
+                let fn_name = as_str(&args[1])?.to_string();
+                let arg = as_int(&args[2])?;
+                // Validate sandbox handle.
+                {
+                    let sbs = self.sandboxes.borrow();
+                    if sb_handle < 0 || sb_handle as usize >= sbs.len() {
+                        return panic(format!(
+                            "sandbox_run: unknown sandbox handle {sb_handle}"
+                        ));
+                    }
+                }
+                // Validate the function exists.
+                let Some(f) = self.fns.get(&fn_name).copied() else {
+                    return panic(format!(
+                        "sandbox_run: no function `{fn_name}`"
+                    ));
+                };
+                // Set the active sandbox, save the previous value for restore.
+                let prev_sandbox = self.active_sandbox.replace(sb_handle);
+                let result = self.call_fn(f, vec![Value::Int(arg)]);
+                self.active_sandbox.set(prev_sandbox);
+                match result {
+                    Ok(Value::Int(n)) => ok!(Value::Int(n)),
+                    Ok(Value::Tuple(ref v)) if v.is_empty() => ok!(Value::Int(0)),
+                    Ok(v) => ok!(v),
+                    Err(e) => return Err(e),
+                }
             }
 
             // F3 (Phase 9): `principal_activate(handle) -> ()` — set the named

@@ -160,6 +160,12 @@ pub enum Flow {
     /// refinement (6), and a generic panic (101). The partial best is preserved
     /// (queryable via `kernel_goal_best_score`). See R12b-kernel-goal.md (E1604).
     GoalBudgetExhausted(String),
+    /// F5 (Phase 9): a builtin tried to perform an effect outside the ceiling
+    /// declared by the active `Sandbox<P>` — e.g. an AI-emitted tool attempted
+    /// `ai_complete` (Net effect) when the sandbox only permits `FS`. A distinct
+    /// flow (exit code 8) so a supervisor can tell "the sandbox caught this" apart
+    /// from a genuine crash (101), a policy rejection (3), or the kill-switch (4).
+    SandboxViolation(String),
 }
 
 /// Process exit code for an `@[verify]` / deploy-gate rejection. Distinct from
@@ -191,6 +197,14 @@ pub const REFINE_VIOLATION_EXIT_CODE: i32 = 6;
 /// (corrigible), 3 (verify), 2 (static) so a supervisor can branch on "goal out
 /// of budget" specifically. VERIFIED free in the exit-code table.
 pub const GOAL_BUDGET_EXIT_CODE: i32 = 7;
+
+/// Process exit code when `sandbox_run` catches a builtin attempting an effect
+/// outside the sandbox's declared ceiling (F5 / Phase 9). Distinct from 101
+/// (crash), 7 (goal-budget), 6 (refinement), 5 (ai-policy), 4 (kill-switch),
+/// 3 (verify), 2 (static) so a supervisor can branch on "the sandbox caught this"
+/// specifically. The tool call is refused; the sandbox and the enclosing program
+/// continue with an `Err` result.
+pub const SANDBOX_VIOLATION_EXIT_CODE: i32 = 8;
 
 type R = Result<Value, Flow>;
 
@@ -258,6 +272,18 @@ impl Env {
     fn from_snapshot(captured: HashMap<String, Value>) -> Self {
         Env { scopes: vec![captured] }
     }
+}
+
+// ── Sandbox state ────────────────────────────────────────────────────────────
+
+/// F5 (Phase 9): one live sandbox entry — a named principal + the concrete set
+/// of effects it allows at runtime. Created by `sandbox_create`; enforced by
+/// `call_builtin` whenever `active_sandbox` points at this entry.
+struct SandboxEntry {
+    /// The principal handle this sandbox is scoped to (for audit attribution).
+    principal: i64,
+    /// The concrete effects this sandbox permits (e.g. {"AI", "Net"}).
+    allowed: std::collections::HashSet<String>,
 }
 
 // ── Interpreter ──────────────────────────────────────────────────────────────
@@ -397,6 +423,13 @@ pub struct Interp<'p> {
     /// runs the existing optimizer (`run_goal`) scoped to a Slice-1 principal's
     /// budget, refusing to exceed it (E1604, exit 7). See R12b-kernel-goal.md.
     goals: RefCell<Vec<crate::kernel::KernelGoal>>,
+    /// F5 (Phase 9): registered sandboxes, indexed by handle (0-based). Created
+    /// by `sandbox_create`; the handle is the index into this vec.
+    sandboxes: RefCell<Vec<SandboxEntry>>,
+    /// F5 (Phase 9): the handle of the currently active sandbox (-1 = none).
+    /// `sandbox_run` sets this before calling the user fn and restores it after.
+    /// `call_builtin` reads it to gate effectful builtins.
+    active_sandbox: Cell<i64>,
     /// Phase 5: named refinement → its predicate Expr (binder `_`). Collected
     /// from `RefineDef` items (inline `where` on a param desugars to a synthetic
     /// named refinement during parsing). Drives the runtime precondition check in
@@ -928,6 +961,14 @@ fn run_program_inner(program: &Program, discharged: crate::verify::Discharged) -
             eprintln!("axon: goal budget exhausted: {msg}");
             GOAL_BUDGET_EXIT_CODE
         }
+        Err(Flow::SandboxViolation(msg)) => {
+            // F5: a sandboxed call attempted an effect outside its declared ceiling.
+            // Not a crash — the sandbox is doing its job — distinct exit code (8)
+            // so a supervisor can branch on "the sandbox caught this" specifically.
+            let _ = std::io::stdout().flush();
+            eprintln!("axon: sandbox violation: {msg}");
+            SANDBOX_VIOLATION_EXIT_CODE
+        }
         // A stray return/break/continue escaping `main` — treat as clean exit.
         Err(_) => 0,
     }
@@ -967,6 +1008,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
         // A kernel-goal budget exhaustion inside a test is a failure too (lets
         // `@[test(should_fail)]` assert the budget ceiling fired).
         Err(Flow::GoalBudgetExhausted(m)) => Err(m),
+        // A sandbox violation inside a test is a failure (lets
+        // `@[test(should_fail)]` assert the sandbox ceiling fired).
+        Err(Flow::SandboxViolation(m)) => Err(m),
         Err(Flow::Resume(_)) => Err("`resume` called outside an effect-handler arm".to_string()),
         // E1314 multi-shot-unsound inside a test is a failure (lets
         // `@[test(should_fail)]` assert the unsound-replay case is refused).
@@ -980,7 +1024,9 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m) | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m) | Flow::GoalBudgetExhausted(m) => m,
+        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m)
+        | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m)
+        | Flow::GoalBudgetExhausted(m) | Flow::SandboxViolation(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -1070,6 +1116,8 @@ impl<'p> Interp<'p> {
             stores: RefCell::new(Vec::new()),
             llm_gateways: RefCell::new(Vec::new()),
             goals: RefCell::new(Vec::new()),
+            sandboxes: RefCell::new(Vec::new()),
+            active_sandbox: Cell::new(-1),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
         }
@@ -2709,6 +2757,59 @@ mod tests {
             let code = run_program(&program);
             assert_eq!(code, expected, "{file}: expected exit {expected}, got {code}");
         }
+    }
+
+    #[test]
+    fn sandbox_run_enforces_effect_ceiling_at_runtime_f5() {
+        // F5 gate: sandbox_run must deny a builtin whose effect row is outside
+        // the sandbox's declared ceiling (exit 8, SANDBOX_VIOLATION_EXIT_CODE),
+        // and must allow builtins whose effects are within the ceiling.
+
+        // Case 1: sandbox allows only "IO" — random_i64 ("Random") is denied.
+        let src_denied = r#"
+            fn noisy(_x: i64) -> i64 { random_i64(1, 100) }
+            fn main() -> i64 {
+                let p = principal_root("test", false, false, false, 100)
+                let sb = sandbox_create(p, "IO")
+                sandbox_run(sb, "noisy", 0)
+            }
+        "#;
+        assert_eq!(run(src_denied), SANDBOX_VIOLATION_EXIT_CODE,
+            "sandbox_run should exit {} when the fn calls random_i64 but Random is not allowed",
+            SANDBOX_VIOLATION_EXIT_CODE);
+
+        // Case 2: sandbox allows "Random" — random_i64 is permitted; result is non-error.
+        let src_allowed = r#"
+            fn make_rand(_x: i64) -> i64 {
+                let r = random_i64(1, 10)
+                r
+            }
+            fn main() -> i64 {
+                let p = principal_root("test2", false, false, false, 100)
+                let sb = sandbox_create(p, "Random")
+                let v = sandbox_run(sb, "make_rand", 0)
+                if v >= 1 && v <= 10 { 0 } else { 1 }
+            }
+        "#;
+        std::env::set_var("AXON_SEED", "42");
+        let result = run(src_allowed);
+        std::env::remove_var("AXON_SEED");
+        assert_eq!(result, 0, "sandbox_run should succeed and return a value in [1,10] when Random is allowed");
+    }
+
+    #[test]
+    fn sandbox_create_and_run_pure_fn_f5() {
+        // A pure fn (no effects) always runs inside any sandbox, including an empty ceiling.
+        // sandbox_run always passes 1 i64 arg, so the fn must accept it.
+        let src = r#"
+            fn double(x: i64) -> i64 { x * 2 }
+            fn main() -> i64 {
+                let p = principal_root("pure", false, false, false, 100)
+                let sb = sandbox_create(p, "")
+                sandbox_run(sb, "double", 21)
+            }
+        "#;
+        assert_eq!(run(src), 42, "pure fn should run inside an empty-ceiling sandbox");
     }
 
     #[test]
