@@ -101,7 +101,10 @@ case "$cmd" in
         echo "# 2. REPLAY — re-run from the cache ALONE (no AXON_AI_MOCK, no key, no model)"
         rep="$(AXON_SEED="$seed" AXON_AI_REPLAY="$cache" "$bin" run "$DEMO" 2>&1)" || true
         rm -f "$cache"
-        if [[ "$rec" == "$rep" ]]; then
+        # run-id lines differ between runs by design (each run gets a unique ID);
+        # strip them before the byte-for-byte comparison.
+        strip_run_id() { grep -v '^axon: run-id '; }
+        if [[ "$(printf '%s' "$rec" | strip_run_id)" == "$(printf '%s' "$rep" | strip_run_id)" ]]; then
             echo "✓ reproducible — the replayed run matches the recorded run byte-for-byte"
             echo "  (every ai_complete answered from the cache; the model was never called)"
         else
@@ -139,7 +142,8 @@ case "$cmd" in
         a="$(AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true   # record
         b="$(unset AXON_AI_MOCK; AXON_AI_REPLAY="$rcache" "$bin" run "$DEMO" 2>&1)" || true  # replay, no mock
         rm -f "$rcache"
-        if [[ "$a" == "$b" ]]; then
+        strip_rid() { grep -v '^axon: run-id '; }
+        if [[ "$(printf '%s' "$a" | strip_rid)" == "$(printf '%s' "$b" | strip_rid)" ]]; then
             echo "  ✓ reproducible — the replayed run matches byte-for-byte (the model was never called)."
         else
             echo "  ✗ replay diverged" >&2

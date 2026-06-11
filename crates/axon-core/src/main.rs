@@ -280,6 +280,12 @@ enum Command {
         /// cost) instead of the @[adaptive] score trajectory.
         #[arg(long, help = "Summarize the ai_complete audit trail (model/mode/cost)")]
         ai: bool,
+
+        /// Replay the run with this run-id: re-execute the source file with the
+        /// same RNG seed that was used in the original run (Phase 9 / F2).
+        /// The run-id is printed to stderr by `axon run` / `axon goal`.
+        #[arg(long, value_name = "RUN_ID", help = "Replay a prior run by its run-id (see axon run stderr)")]
+        replay: Option<String>,
     },
 
     /// Report the description-length (MDL) complexity of a .ax file.
@@ -475,8 +481,10 @@ fn dispatch(command: Command) {
         Command::Verify { file } => cmd_verify(file),
         Command::Target { action } => cmd_target(action),
         Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
-        Command::Trace { func, path, json, ai } => {
-            if ai {
+        Command::Trace { func, path, json, ai, replay } => {
+            if let Some(run_id) = replay {
+                cmd_trace_replay(run_id, path)
+            } else if ai {
                 cmd_trace_ai(func, path, json)
             } else {
                 cmd_trace(func, path, json)
@@ -2475,11 +2483,85 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
     }
 }
 
+/// `axon trace --replay <run-id>` — Phase 9 / F2 CLI wrapper.
+///
+/// Looks up the `run_start` record for `run_id` in the provenance log, sets
+/// `AXON_SEED` to the stored seed, and re-executes the original source file.
+/// Combined with `AXON_AI_REPLAY=<cache>` the user gets a byte-identical replay
+/// of any prior run (the AI-call cache was produced automatically by that run).
+fn cmd_trace_replay(run_id: String, path: Option<PathBuf>) {
+    use axon_core::interp::find_run_start;
+    let rec = match find_run_start(&run_id, path.as_deref()) {
+        Some(r) => r,
+        None => {
+            eprintln!("error: run-id '{run_id}' not found in provenance log");
+            eprintln!(
+                "hint: run-ids are printed by `axon run` / `axon goal` (check stderr output)"
+            );
+            process::exit(1);
+        }
+    };
+    eprintln!(
+        "axon: replaying run-id {rid} (seed={seed}, src={src})",
+        rid = rec.run_id,
+        seed = rec.seed,
+        src = rec.src,
+    );
+    // Fix the seed so the re-run is deterministic.
+    std::env::set_var("AXON_SEED", rec.seed.to_string());
+    let source_path = PathBuf::from(&rec.src);
+    cmd_run(source_path, false, vec![]);
+}
+
+// ── Phase 9: run-id + seed helpers ───────────────────────────────────────────
+
+/// Generate a short, unique run-ID for one `axon run` / `axon goal` invocation.
+/// Format: `<ts_hex_10>-<pid_mix_8>` — sortable, no external crates, no collisions
+/// within any realistic invocation rate.
+fn generate_run_id() -> String {
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let pid = std::process::id() as u64;
+    let mix = (ts ^ pid.wrapping_mul(0x9e3779b97f4a7c15)) & 0xFFFF_FFFF;
+    format!("{ts:010x}-{mix:08x}")
+}
+
+/// Return the effective RNG seed that will be used by the interpreter: the
+/// `AXON_SEED` env var (parsed as u64, `| 1` for the non-zero sentinel) when
+/// set, or a time-based entropy value.  Mirrors the logic in `interp::rng_seed`
+/// so main.rs and the interpreter always agree on which seed was used.
+fn effective_seed() -> u64 {
+    if let Ok(s) = std::env::var("AXON_SEED") {
+        if let Ok(n) = s.trim().parse::<u64>() {
+            return n | 1;
+        }
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    ts | 1
+}
+
 // ── run ───────────────────────────────────────────────────────────────────────
 
 fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // Fix 5: validate .ax extension.
     validate_ax_extension(&file);
+
+    // Phase 9: stamp a run-start event (run-id + effective seed) so this run can
+    // be replayed deterministically via `axon trace --replay <run-id>`.
+    let run_id = generate_run_id();
+    let seed = effective_seed();
+    // If AXON_SEED was not already set, fix it to the seed we're about to stamp
+    // so the interpreter and the provenance record are guaranteed to agree.
+    if std::env::var("AXON_SEED").is_err() {
+        std::env::set_var("AXON_SEED", seed.to_string());
+    }
+    axon_core::interp::append_run_start_jsonl(&run_id, seed, &file.display().to_string());
+    eprintln!("axon: run-id {run_id}");
 
     // Stamp provenance with this program's identity so `trace` keeps its
     // metrics distinct from other programs that share a function name

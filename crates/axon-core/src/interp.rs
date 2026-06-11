@@ -1858,8 +1858,8 @@ mod provenance;
 // and re-export the public API at the original `interp::` path for main.rs.
 use provenance::*;
 pub use provenance::{
-    AiCallRecord, ProvRecord, best_recorded_score, read_ai_calls, read_provenance,
-    set_provenance_source,
+    AiCallRecord, ProvRecord, RunStartRecord, append_run_start_jsonl, best_recorded_score,
+    find_run_start, provenance_log_path, read_ai_calls, read_provenance, set_provenance_source,
 };
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the

@@ -12,7 +12,7 @@ use super::*;
 
 /// The provenance log path: `$XDG_CACHE_HOME/axon/provenance.jsonl` (or
 /// `$HOME/.cache/axon/...`), matching axon-rt's location.
-pub(super) fn provenance_log_path() -> Option<std::path::PathBuf> {
+pub fn provenance_log_path() -> Option<std::path::PathBuf> {
     let base = std::env::var("XDG_CACHE_HOME")
         .ok()
         .filter(|s| !s.is_empty())
@@ -455,4 +455,75 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = file.write_all(line.as_bytes());
     }
+}
+
+// ── Phase 9: run-start stamping + deterministic replay (F2 CLI wrapper) ──────
+//
+// Each `axon run` / `axon goal` stamps a `run_start` event to the provenance
+// log carrying the run-id (short hex token), the effective RNG seed, and the
+// source file path.  `axon trace --replay <run-id>` reads this record back and
+// re-executes the same source with the same seed — giving a deterministic
+// (Trace, Seed) pair for every run.
+
+/// Stamp a `run_start` event to the provenance log. Called once per CLI
+/// invocation from the `axon run` / `axon goal` boundary (in main.rs) with the
+/// run-id and effective seed that will govern this run.  Best-effort; errors
+/// are silently ignored so a broken provenance path never aborts a user run.
+pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
+    let Some(path) = provenance_log_path() else { return };
+    if let Some(dir) = path.parent() {
+        if std::fs::create_dir_all(dir).is_err() {
+            return;
+        }
+    }
+    let ts = now_ms().max(0) as u64;
+    let line = format!(
+        "{{\"ts_ms\":{ts},\"fn\":\"__run__\",\"event\":\"run_start\",\
+         \"run_id\":{rid},\"seed\":{seed},\"src\":{src}}}\n",
+        rid = json_quote(run_id),
+        src = json_quote(src),
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// A parsed `run_start` provenance record — the replay anchor for one run.
+#[derive(Debug, Clone)]
+pub struct RunStartRecord {
+    pub run_id: String,
+    pub seed: u64,
+    pub src: String,
+    pub ts_ms: u64,
+}
+
+/// Find the `run_start` record for `run_id` in the provenance log.  Returns
+/// `None` if the log is absent/unreadable or the run-id is not found.
+pub fn find_run_start(
+    run_id: &str,
+    path: Option<&std::path::Path>,
+) -> Option<RunStartRecord> {
+    let owned;
+    let path = match path {
+        Some(p) => p,
+        None => {
+            owned = provenance_log_path()?;
+            &owned
+        }
+    };
+    let content = std::fs::read_to_string(path).ok()?;
+    for line in content.lines() {
+        if extract_json_str(line, "\"event\":").as_deref() != Some("run_start") {
+            continue;
+        }
+        let Some(rid) = extract_json_str(line, "\"run_id\":") else { continue };
+        if rid != run_id {
+            continue;
+        }
+        let seed = extract_json_num(line, "\"seed\":").unwrap_or(0.0) as u64;
+        let src = extract_json_str(line, "\"src\":").unwrap_or_default();
+        let ts_ms = extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0) as u64;
+        return Some(RunStartRecord { run_id: rid, seed, src, ts_ms });
+    }
+    None
 }

@@ -36,7 +36,14 @@ check() {
   local n_out n_code w_out w_code
   n_out="$(printf '%b' "$input" | "$NATIVE" run "$prog" 2>&1)"; n_code=$?
   w_out="$(printf '%b' "$input" | "$WASMTIME" run --dir=. "$WASM" "$prog" 2>&1)"; w_code=$?
-  if [ "$n_out" != "$w_out" ] || [ "$n_code" != "$w_code" ]; then
+  # Strip CLI diagnostics that differ by design: run-id (unique per invocation)
+  # is emitted by the full `axon` CLI but not by the lighter `axon-run` wasm
+  # target. All user-visible output must still match.
+  strip_diag() { grep -v '^axon: run-id '; }
+  local n_cmp w_cmp
+  n_cmp="$(printf '%s' "$n_out" | strip_diag)"
+  w_cmp="$(printf '%s' "$w_out" | strip_diag)"
+  if [ "$n_cmp" != "$w_cmp" ] || [ "$n_code" != "$w_code" ]; then
     echo "wasm_host_await_parity: FAIL ($label): native[$n_code] != wasm[$w_code]"
     echo "--- native ---"; echo "$n_out" | sed 's/^/  /'
     echo "--- wasm ---";   echo "$w_out" | sed 's/^/  /'

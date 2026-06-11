@@ -313,6 +313,43 @@ fn ai_replay_reproduces_a_recorded_run_without_the_live_model_f2() {
 }
 
 #[test]
+fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
+    // Phase 9 / F2 CLI wrapper: every `axon run` emits a run-id to stderr and
+    // stamps it (+ the effective seed) to the provenance log.
+    // `axon trace --replay <run-id>` re-runs the source with the same seed,
+    // producing byte-identical output for deterministic programs.
+    let prog = "fn main() -> i64 { let x = random_i64(1, 1000)  println(to_str(x))  0 }\n";
+    let f = std::env::temp_dir().join(format!("axon_p9_rid_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+
+    // 1. First run: capture the run-id from stderr and the output from stdout.
+    let run1 = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_AI_MOCK")
+        .output()
+        .unwrap();
+    assert_eq!(run1.status.code(), Some(0), "first run must succeed: {run1:?}");
+    let stderr1 = String::from_utf8_lossy(&run1.stderr).to_string();
+    let run_id = stderr1
+        .lines()
+        .find_map(|l| l.strip_prefix("axon: run-id ").map(str::trim).map(str::to_string))
+        .expect("run-id must appear on stderr");
+    assert!(!run_id.is_empty(), "run-id must be non-empty, stderr: {stderr1}");
+    let out1 = String::from_utf8_lossy(&run1.stdout).to_string();
+
+    // 2. Replay: `axon trace --replay <run-id>` must produce the same random value.
+    let replay = axon()
+        .args(["trace", "--replay", &run_id])
+        .output()
+        .unwrap();
+    assert_eq!(replay.status.code(), Some(0), "replay must succeed: {replay:?}");
+    let out2 = String::from_utf8_lossy(&replay.stdout).to_string();
+    assert_eq!(out1, out2, "replay output must match the original (same seed)");
+
+    let _ = std::fs::remove_file(&f);
+}
+
+#[test]
 fn phase6_handler_resume_semantics() {
     // Tail-resumptive, single-shot effect-handler discharge in the interpreter.
     // `run` returns main's i64; we assert on (exit code, stdout).
