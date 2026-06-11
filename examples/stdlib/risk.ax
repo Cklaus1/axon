@@ -1,0 +1,397 @@
+// Tier-1 stdlib: Risk — derived risk classification + simulation pipeline gate.
+//
+// ROADMAP §4 Phase 11: "Risk is *derived* from effect rows + budget magnitude +
+// irreversibility annotation (users may raise, not lower); Risk ≥ High automatically
+// triggers simulate → stress → redteam → verify → deploy; rejection at any gate
+// halts the deploy."
+//
+// Risk levels are ordered integers (Low < Medium < High < Critical) so callers can
+// compare them with >= / <= without a match table. The derivation rules are:
+//
+//   Effect rows:
+//     exec present              → at least Critical
+//     net + fs_write present    → at least High
+//     net or fs_write present   → at least Medium
+//     pure (empty row)          → Low
+//   Budget magnitude (burn %):
+//     >= 80 %                   → at least Critical
+//     >= 50 %                   → at least High
+//     >= 25 %                   → at least Medium
+//   Irreversibility annotation:
+//     true                      → raise by one level (clamped at Critical)
+//
+//   Final risk = max(effects_risk, budget_risk, irreversible_raise(base))
+//   Users MAY raise risk (never lower) via `risk_raise`.
+//
+// Pipeline gate (the Phase-11 forcing function):
+//   Risk < High  → skip simulation, run deploy directly.
+//   Risk >= High → simulate → stress → redteam → verify → deploy in sequence;
+//                  rejection at any gate halts the run (returns failure).
+//
+//   axon test examples/stdlib/risk.ax
+//   axon run  examples/stdlib/risk.ax
+
+// ── Risk levels ──────────────────────────────────────────────────────────────
+
+fn risk_low() -> i64 { 0 }
+fn risk_medium() -> i64 { 1 }
+fn risk_high() -> i64 { 2 }
+fn risk_critical() -> i64 { 3 }
+
+fn risk_name(r: i64) -> str {
+    if r <= 0 { "Low" } else {
+        if r == 1 { "Medium" } else {
+            if r == 2 { "High" } else { "Critical" }
+        }
+    }
+}
+
+// Users may raise risk, but not lower it (monotone-up).
+fn risk_raise(current: i64, floor: i64) -> i64 {
+    if floor > current { floor } else { current }
+}
+
+fn risk_clamp(r: i64) -> i64 {
+    clamp_i64(r, risk_low(), risk_critical())
+}
+
+// ── Risk derivation ──────────────────────────────────────────────────────────
+//
+// Effect bits must match the ef_* constants in effect.ax:
+//   fs_read=1, fs_write=2, net=4, exec=8
+// Callers pass the ef_union / ef_add result from their effect set.
+
+fn risk_from_effects(effect_set: i64) -> i64 {
+    let exec_bit = 8
+    let net_bit = 4
+    let fs_write_bit = 2
+    let has_exec = bit_and(effect_set, exec_bit) != 0
+    let has_net = bit_and(effect_set, net_bit) != 0
+    let has_fs_write = bit_and(effect_set, fs_write_bit) != 0
+    if has_exec { risk_critical() } else {
+        if has_net && has_fs_write { risk_high() } else {
+            if has_net || has_fs_write { risk_medium() } else { risk_low() }
+        }
+    }
+}
+
+// budget_burn_pct = (used * 100 / cap), clamped 0..100.
+fn risk_from_budget(budget_burn_pct: i64) -> i64 {
+    if budget_burn_pct >= 80 { risk_critical() } else {
+        if budget_burn_pct >= 50 { risk_high() } else {
+            if budget_burn_pct >= 25 { risk_medium() } else { risk_low() }
+        }
+    }
+}
+
+// Irreversibility raises risk by one level (clamped at Critical).
+fn risk_from_irreversibility(base: i64, irreversible: bool) -> i64 {
+    if irreversible { risk_clamp(base + 1) } else { base }
+}
+
+// Combine all three axes — max wins.
+fn risk_derive(effect_set: i64, budget_burn_pct: i64, irreversible: bool) -> i64 {
+    let er = risk_from_effects(effect_set)
+    let br = risk_from_budget(budget_burn_pct)
+    let base = max_i64(er, br)
+    risk_from_irreversibility(base, irreversible)
+}
+
+fn risk_requires_pipeline(r: i64) -> bool {
+    r >= risk_high()
+}
+
+// ── GateResult ───────────────────────────────────────────────────────────────
+//
+// Each pipeline gate returns a (passed, reason) pair.  A GateResult value
+// packs both into a struct so callers can inspect failures without exceptions.
+
+type GateResult = { passed: bool, reason: str }
+
+fn gate_pass() -> GateResult {
+    GateResult { passed: true, reason: "ok" }
+}
+
+fn gate_fail(reason: str) -> GateResult {
+    GateResult { passed: false, reason: reason }
+}
+
+// ── Pipeline stages ──────────────────────────────────────────────────────────
+//
+// Each stage is a function ()-> GateResult (modelled here as concrete helpers
+// that callers substitute with their own logic).  The pipeline stops at the first
+// gate that fails.
+
+type PipelineResult = {
+    stage_reached: i64,   // 0=none, 1=sim, 2=stress, 3=redteam, 4=verify, 5=deploy
+    deployed: bool,
+    failed_stage: str,
+    failed_reason: str,
+}
+
+fn pipeline_ok() -> PipelineResult {
+    PipelineResult {
+        stage_reached: 5,
+        deployed: true,
+        failed_stage: "none",
+        failed_reason: "none",
+    }
+}
+
+fn pipeline_halted(stage: str, reason: str, reached: i64) -> PipelineResult {
+    PipelineResult {
+        stage_reached: reached,
+        deployed: false,
+        failed_stage: stage,
+        failed_reason: reason,
+    }
+}
+
+// Run a Risk-gated deploy pipeline given five gate callbacks.
+// If Risk < High the simulate/stress/redteam stages are skipped; only verify → deploy run.
+// The deploy fn is called only if all preceding gates pass.
+fn pipeline_run(
+    risk: i64,
+    sim_result: GateResult,
+    stress_result: GateResult,
+    redteam_result: GateResult,
+    verify_result: GateResult,
+    deploy_result: GateResult
+) -> PipelineResult {
+    if risk_requires_pipeline(risk) {
+        // simulate gate
+        if !sim_result.passed {
+            pipeline_halted("simulate", sim_result.reason, 1)
+        } else {
+            // stress gate
+            if !stress_result.passed {
+                pipeline_halted("stress", stress_result.reason, 2)
+            } else {
+                // redteam gate
+                if !redteam_result.passed {
+                    pipeline_halted("redteam", redteam_result.reason, 3)
+                } else {
+                    // verify gate
+                    if !verify_result.passed {
+                        pipeline_halted("verify", verify_result.reason, 4)
+                    } else {
+                        // deploy gate
+                        if !deploy_result.passed {
+                            pipeline_halted("deploy", deploy_result.reason, 5)
+                        } else {
+                            pipeline_ok()
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        // Low / Medium risk: only verify → deploy
+        if !verify_result.passed {
+            pipeline_halted("verify", verify_result.reason, 4)
+        } else {
+            if !deploy_result.passed {
+                pipeline_halted("deploy", deploy_result.reason, 5)
+            } else {
+                pipeline_ok()
+            }
+        }
+    }
+}
+
+fn pipeline_summary(p: PipelineResult) -> str {
+    if p.deployed {
+        "deployed ✓"
+    } else {
+        "HALTED at {p.failed_stage}: {p.failed_reason}"
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_risk_levels_are_ordered() {
+    assert(risk_low() < risk_medium())
+    assert(risk_medium() < risk_high())
+    assert(risk_high() < risk_critical())
+}
+
+@[test]
+fn test_risk_names() {
+    assert_eq_str(risk_name(risk_low()), "Low")
+    assert_eq_str(risk_name(risk_medium()), "Medium")
+    assert_eq_str(risk_name(risk_high()), "High")
+    assert_eq_str(risk_name(risk_critical()), "Critical")
+}
+
+@[test]
+fn test_risk_raise_is_monotone_up() {
+    assert_eq(risk_raise(risk_low(), risk_medium()), risk_medium())  // raised
+    assert_eq(risk_raise(risk_high(), risk_low()), risk_high())      // not lowered
+    assert_eq(risk_raise(risk_high(), risk_high()), risk_high())     // unchanged
+}
+
+@[test]
+fn test_risk_from_effects() {
+    let pure_set = 0
+    let net_bit = 4
+    let fs_write_bit = 2
+    let exec_bit = 8
+    assert_eq(risk_from_effects(pure_set), risk_low())
+    assert_eq(risk_from_effects(net_bit), risk_medium())
+    assert_eq(risk_from_effects(fs_write_bit), risk_medium())
+    assert_eq(risk_from_effects(bit_or(net_bit, fs_write_bit)), risk_high())
+    assert_eq(risk_from_effects(exec_bit), risk_critical())
+}
+
+@[test]
+fn test_risk_from_budget() {
+    assert_eq(risk_from_budget(10), risk_low())
+    assert_eq(risk_from_budget(30), risk_medium())
+    assert_eq(risk_from_budget(60), risk_high())
+    assert_eq(risk_from_budget(85), risk_critical())
+}
+
+@[test]
+fn test_irreversibility_raises_by_one() {
+    assert_eq(risk_from_irreversibility(risk_low(), true), risk_medium())
+    assert_eq(risk_from_irreversibility(risk_high(), true), risk_critical())
+    // Clamped at Critical
+    assert_eq(risk_from_irreversibility(risk_critical(), true), risk_critical())
+    // false: no change
+    assert_eq(risk_from_irreversibility(risk_medium(), false), risk_medium())
+}
+
+@[test]
+fn test_risk_derive_max_wins() {
+    // Pure effects, low budget, reversible → Low
+    assert_eq(risk_derive(0, 10, false), risk_low())
+    // Exec effect dominates everything else
+    assert_eq(risk_derive(8, 10, false), risk_critical())
+    // Budget 60% + net → High (budget wins over net alone = Medium)
+    let net = 4
+    assert_eq(risk_derive(net, 60, false), risk_high())
+    // Pure + irreversible → Medium
+    assert_eq(risk_derive(0, 10, true), risk_medium())
+}
+
+@[test]
+fn test_requires_pipeline_threshold() {
+    assert(!risk_requires_pipeline(risk_low()))
+    assert(!risk_requires_pipeline(risk_medium()))
+    assert(risk_requires_pipeline(risk_high()))
+    assert(risk_requires_pipeline(risk_critical()))
+}
+
+@[test]
+fn test_pipeline_low_risk_skips_sim_stages() {
+    // Low risk: all gates pass except simulate (but sim is skipped)
+    let r = pipeline_run(
+        risk_low(),
+        gate_fail("sim would have blocked"),  // skipped — risk < High
+        gate_fail("stress would have blocked"),
+        gate_fail("redteam would have blocked"),
+        gate_pass(),   // verify ok
+        gate_pass()    // deploy ok
+    )
+    assert(r.deployed)
+}
+
+@[test]
+fn test_pipeline_high_risk_runs_all_gates() {
+    // High risk: simulate fails → halt at simulate
+    let r = pipeline_run(
+        risk_high(),
+        gate_fail("simulation diverges from prod"),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "simulate")
+}
+
+@[test]
+fn test_pipeline_halts_at_first_failure() {
+    // High risk, simulate passes, stress fails
+    let r = pipeline_run(
+        risk_high(),
+        gate_pass(),
+        gate_fail("latency SLO violated under stress"),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "stress")
+    assert_eq(r.stage_reached, 2)
+}
+
+@[test]
+fn test_pipeline_full_pass_deploys() {
+    let r = pipeline_run(
+        risk_critical(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(r.deployed)
+    assert_eq(r.stage_reached, 5)
+}
+
+@[test]
+fn test_pipeline_redteam_catch() {
+    // The "First Redteam Catch" acid test: all good until redteam
+    let r = pipeline_run(
+        risk_high(),
+        gate_pass(),
+        gate_pass(),
+        gate_fail("adversarial input bypasses guard"),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert_eq_str(r.failed_stage, "redteam")
+    assert_eq(r.stage_reached, 3)
+}
+
+// ── Main demo ─────────────────────────────────────────────────────────────────
+
+fn main() {
+    // Scenario: an AI agent that writes to the filesystem and consumes 65 % of its
+    // budget performing an irreversible migration.  What is its risk level?
+    let net_bit = 4
+    let fs_write_bit = 2
+    let effects = bit_or(net_bit, fs_write_bit)   // net + fs_write
+    let budget_pct = 65                            // 65 % burned
+    let irreversible = true
+
+    let risk = risk_derive(effects, budget_pct, irreversible)
+    println("derived risk: {risk_name(risk)} (level {to_str(risk)})")
+    println("pipeline required: {to_str_bool(risk_requires_pipeline(risk))}")
+
+    // Simulate the approval pipeline.  All gates pass in this happy path.
+    let result = pipeline_run(
+        risk,
+        gate_pass(),   // simulate: no divergence from prod
+        gate_pass(),   // stress:   latency SLO holds
+        gate_pass(),   // redteam:  no adversarial bypass found
+        gate_pass(),   // verify:   post-conditions satisfied
+        gate_pass()    // deploy:   safety gate cleared
+    )
+    println("pipeline result: {pipeline_summary(result)}")
+
+    // Unhappy path: the redteam gate catches an adversarial bypass.
+    let blocked = pipeline_run(
+        risk,
+        gate_pass(),
+        gate_pass(),
+        gate_fail("adversarial input bypasses the output filter"),
+        gate_pass(),
+        gate_pass()
+    )
+    println("blocked result:  {pipeline_summary(blocked)}")
+}
