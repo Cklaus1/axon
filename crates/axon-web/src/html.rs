@@ -124,6 +124,28 @@ Budget: 50 calls"></textarea>
 
 <script>
 let axContent = '';
+let running = false;
+// Track which steps have succeeded so we can restore the right button states
+const done = {compiled: false, reviewed: false, approved: false, redteamed: false};
+
+const ALL_BTNS = ['btn-compile','btn-review','btn-approve','btn-redteam','btn-deploy','btn-trace'];
+
+function lockAll() {
+  running = true;
+  ALL_BTNS.forEach(id => { document.getElementById(id).disabled = true; });
+}
+
+function unlockByState() {
+  running = false;
+  // btn-compile is always enabled
+  document.getElementById('btn-compile').disabled = false;
+  document.getElementById('btn-review').disabled = !done.compiled;
+  document.getElementById('btn-approve').disabled = !done.reviewed;
+  document.getElementById('btn-redteam').disabled = !done.approved;
+  document.getElementById('btn-deploy').disabled = !done.redteamed;
+  // trace is always available
+  document.getElementById('btn-trace').disabled = false;
+}
 
 function spin(id) {
   document.getElementById(id).innerHTML = '<span class="spinner"></span>running…';
@@ -134,7 +156,6 @@ function ok(id, msg) {
 function fail(id, msg) {
   document.getElementById(id).innerHTML = '<span class="err">✗ ' + msg + '</span>';
 }
-function enable(id) { document.getElementById(id).disabled = false; }
 function show(id, txt) {
   const el = document.getElementById(id);
   el.style.display = '';
@@ -151,9 +172,10 @@ async function post(path, body) {
 }
 
 async function compileIntent() {
+  if (running) return;
   const content = document.getElementById('intent-input').value.trim();
   if (!content) { fail('s1', 'enter intent first'); return; }
-  spin('s1');
+  lockAll(); spin('s1');
   try {
     const j = await post('/api/intent/compile', {content});
     if (j.error) { fail('s1', j.error); return; }
@@ -162,51 +184,56 @@ async function compileIntent() {
     show('intent-out', JSON.stringify(j, null, 2));
     show('ax-content', axText);
     ok('s1', 'compiled');
-    enable('btn-review');
+    done.compiled = true;
   } catch(e) { fail('s1', e.message); }
+  finally { unlockByState(); }
 }
 
 async function reviewAst() {
-  if (!axContent) { fail('s2', 'compile intent first'); return; }
-  spin('s2');
+  if (running || !axContent) { fail('s2', 'compile intent first'); return; }
+  lockAll(); spin('s2');
   try {
     const j = await post('/api/ast/review', {content: axContent});
     show('review-out', JSON.stringify(j, null, 2));
     if (j.error) { fail('s2', j.error); return; }
     ok('s2', 'reviewed');
-    enable('btn-approve');
+    done.reviewed = true;
   } catch(e) { fail('s2', e.message); }
+  finally { unlockByState(); }
 }
 
 async function approveAst() {
-  if (!axContent) { fail('s3', 'review AST first'); return; }
-  spin('s3');
+  if (running || !axContent) { fail('s3', 'review AST first'); return; }
+  lockAll(); spin('s3');
   try {
     const j = await post('/api/ast/approve', {content: axContent});
     if (j.ok) {
       ok('s3', 'approved — AST signed');
-      enable('btn-redteam');
+      done.approved = true;
     } else {
       fail('s3', j.error || 'approval failed');
     }
   } catch(e) { fail('s3', e.message); }
+  finally { unlockByState(); }
 }
 
 async function runRedteam() {
-  if (!axContent) { fail('s4', 'approve AST first'); return; }
-  spin('s4');
+  if (running || !axContent) { fail('s4', 'approve AST first'); return; }
+  lockAll(); spin('s4');
   try {
     const j = await post('/api/redteam', {content: axContent});
     show('redteam-out', JSON.stringify(j, null, 2));
     const passed = j.ok !== false && !j.error;
-    if (passed) { ok('s4', 'redteam passed'); enable('btn-deploy'); }
-    else { fail('s4', 'redteam flagged issues — review before deploying'); enable('btn-deploy'); }
+    if (passed) { ok('s4', 'redteam passed'); }
+    else { fail('s4', 'redteam flagged issues — review before deploying'); }
+    done.redteamed = true;
   } catch(e) { fail('s4', e.message); }
+  finally { unlockByState(); }
 }
 
 async function runDeploy() {
-  if (!axContent) { fail('s5', 'complete prior steps first'); return; }
-  spin('s5');
+  if (running || !axContent) { fail('s5', 'complete prior steps first'); return; }
+  lockAll(); spin('s5');
   try {
     const risk = document.getElementById('risk-sel').value;
     const body = {content: axContent};
@@ -217,16 +244,19 @@ async function runDeploy() {
     if (deployed) { ok('s5', 'deployed'); }
     else { fail('s5', j.failed_reason || j.error || 'deploy blocked by gate'); }
   } catch(e) { fail('s5', e.message); }
+  finally { unlockByState(); }
 }
 
 async function showTrace() {
-  spin('s6');
+  if (running) return;
+  lockAll(); spin('s6');
   try {
     const r = await fetch('/api/trace');
     const j = await r.json();
     show('trace-out', JSON.stringify(j, null, 2));
     ok('s6', 'trace loaded');
   } catch(e) { fail('s6', e.message); }
+  finally { unlockByState(); }
 }
 </script>
 </body>
