@@ -54,6 +54,8 @@ impl<'p> Interp<'p> {
                         if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
                             let mut pe = Env::new();
                             pe.define("_".into(), v.clone());
+                            // Also bind the bound name for inline `let x: T where E[x] > k`.
+                            pe.define(name.clone(), v.clone());
                             if let Value::Bool(false) = self.eval(pred, &mut pe)? {
                                 return Err(Flow::RefineViolation(format!(
                                     "the value bound to `{}` (= {}) violates the refinement `{}` \
@@ -347,6 +349,16 @@ impl<'p> Interp<'p> {
             }
 
             Expr::Index { receiver, index } => {
+                // Phase 13 Slice 2: E[dist] and Var[dist] moment predicates.
+                // Intercept before normal array indexing to avoid "undefined E".
+                if let Expr::Ident(tag) = receiver.as_ref() {
+                    if matches!(tag.as_str(), "E" | "Var") {
+                        let dist_val = self.eval(index, env)?;
+                        if let Some(moment) = eval_dist_moment(tag, &dist_val) {
+                            return Ok(Value::Float(moment));
+                        }
+                    }
+                }
                 let arr = self.eval(receiver, env)?;
                 let idx = self.eval_int(index, env)?;
                 match arr {
@@ -532,6 +544,19 @@ impl<'p> Interp<'p> {
     }
 
     pub(super) fn eval_call(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
+        // Phase 13 Slice 2: P(dist op k) probability predicate.
+        // The argument is a comparison expression, not a plain value — intercept
+        // before normal arg evaluation to avoid evaluating "dist <= k" literally.
+        if let Expr::Ident(name) = callee {
+            if name == "P" && args.len() == 1 {
+                if let Some(prob) = self.eval_prob_pred(&args[0], env) {
+                    return Ok(Value::Float(prob));
+                }
+                // If we can't recognize the pattern, fall through to "undefined P"
+                // which will surface as a meaningful error rather than a type error.
+            }
+        }
+
         // Evaluate arguments left-to-right.
         let mut argv = Vec::with_capacity(args.len());
         for a in args {
@@ -904,4 +929,215 @@ impl<'p> Interp<'p> {
         }
     }
 
+    // ── Phase 13 Slice 2: probabilistic predicate helpers ────────────────────
+
+    /// Evaluate `P(dist op k)` — extracts the distribution and threshold from
+    /// the comparison argument and returns the tail probability as `Some(f64)`.
+    /// Returns `None` when the pattern isn't recognized (falls through to error).
+    fn eval_prob_pred(&self, arg: &Expr, env: &mut Env) -> Option<f64> {
+        use crate::ast::BinOp;
+        let Expr::BinOp { op, left, right } = arg else { return None };
+        let dist_val = self.eval(left, env).ok()?;
+        let k = self.eval_f64_val(right, env)?;
+        let cdf = eval_dist_cdf(&dist_val, k)?;
+        Some(match op {
+            BinOp::LtEq => cdf,
+            BinOp::Lt => cdf,       // continuous: P(X < k) == P(X <= k)
+            BinOp::Gt => 1.0 - cdf,
+            BinOp::GtEq => 1.0 - cdf,
+            BinOp::Eq => {
+                // For continuous distributions P(X = k) = 0; Categorical: exact mass
+                if let Value::Struct { name, fields } = &dist_val {
+                    if name == "Categorical" {
+                        if let Some(Value::Array(probs)) = fields.get("probs") {
+                            let ki = k as i64;
+                            if ki >= 0 && (ki as usize) < probs.len() {
+                                if let Value::Float(p) = probs[ki as usize] {
+                                    return Some(p);
+                                }
+                            }
+                        }
+                    }
+                }
+                0.0
+            }
+            _ => return None,
+        })
+    }
+
+    /// Evaluate an expression as f64 (literal float or literal int cast).
+    fn eval_f64_val(&self, expr: &Expr, env: &mut Env) -> Option<f64> {
+        match self.eval(expr, env).ok()? {
+            Value::Float(f) => Some(f),
+            Value::Int(n) => Some(n as f64),
+            _ => None,
+        }
+    }
+
+}
+
+// ── Phase 13: distribution moment + CDF evaluation (free fns) ────────────────
+
+/// Compute E[dist] or Var[dist] from a runtime distribution struct value.
+/// Returns None for unrecognized distributions.
+pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
+    let Value::Struct { name, fields } = dist else { return None };
+    match name.as_str() {
+        "Gaussian" => {
+            let mu = get_f64_field(fields, "mu")?;
+            let sigma = get_f64_field(fields, "sigma")?;
+            match tag {
+                "E" => Some(mu),
+                "Var" => Some(sigma * sigma),
+                _ => None,
+            }
+        }
+        "Beta" => {
+            let alpha = get_f64_field(fields, "alpha")?;
+            let beta_b = get_f64_field(fields, "beta_b")?;
+            let s = alpha + beta_b;
+            match tag {
+                "E" => Some(alpha / s),
+                "Var" => Some((alpha * beta_b) / (s * s * (s + 1.0))),
+                _ => None,
+            }
+        }
+        "Categorical" => {
+            let probs = get_f64_array_field(fields, "probs")?;
+            if probs.is_empty() { return None; }
+            let mean: f64 = probs.iter().enumerate().map(|(i, p)| i as f64 * p).sum();
+            match tag {
+                "E" => Some(mean),
+                "Var" => {
+                    let e2: f64 = probs.iter().enumerate().map(|(i, p)| i as f64 * i as f64 * p).sum();
+                    Some(e2 - mean * mean)
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Compute CDF P(X <= k) for a distribution struct value.
+fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
+    let Value::Struct { name, fields } = dist else { return None };
+    match name.as_str() {
+        "Gaussian" => {
+            let mu = get_f64_field(fields, "mu")?;
+            let sigma = get_f64_field(fields, "sigma")?;
+            if sigma <= 0.0 { return None; }
+            Some(gaussian_cdf(mu, sigma, k))
+        }
+        "Beta" => {
+            let alpha = get_f64_field(fields, "alpha")?;
+            let beta_b = get_f64_field(fields, "beta_b")?;
+            if alpha <= 0.0 || beta_b <= 0.0 { return None; }
+            Some(beta_cdf(alpha, beta_b, k))
+        }
+        "Categorical" => {
+            let probs = get_f64_array_field(fields, "probs")?;
+            let ki = k as i64;
+            if ki < 0 { return Some(0.0); }
+            let limit = (ki as usize + 1).min(probs.len());
+            Some(probs[..limit].iter().sum())
+        }
+        _ => None,
+    }
+}
+
+fn get_f64_field(fields: &HashMap<String, Value>, key: &str) -> Option<f64> {
+    match fields.get(key)? {
+        Value::Float(f) => Some(*f),
+        Value::Int(n) => Some(*n as f64),
+        _ => None,
+    }
+}
+
+fn get_f64_array_field(fields: &HashMap<String, Value>, key: &str) -> Option<Vec<f64>> {
+    match fields.get(key)? {
+        Value::Array(items) => {
+            let mut out = Vec::with_capacity(items.len());
+            for v in items {
+                match v {
+                    Value::Float(f) => out.push(*f),
+                    Value::Int(n) => out.push(*n as f64),
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+// Gaussian CDF via Abramowitz & Stegun erf approximation (max error < 1.5e-7)
+fn gaussian_cdf(mu: f64, sigma: f64, x: f64) -> f64 {
+    let z = (x - mu) / (sigma * std::f64::consts::SQRT_2);
+    0.5 * (1.0 + erf(z))
+}
+
+fn erf(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    sign * (1.0 - poly * (-x * x).exp())
+}
+
+// Beta CDF via Lentz continued-fraction algorithm for regularized incomplete beta
+fn beta_cdf(alpha: f64, beta_b: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    if x >= 1.0 { return 1.0; }
+    // Use symmetry relation for numerical stability
+    if x > (alpha + 1.0) / (alpha + beta_b + 2.0) {
+        return 1.0 - beta_cdf(beta_b, alpha, 1.0 - x);
+    }
+    let ln_beta = ln_gamma(alpha) + ln_gamma(beta_b) - ln_gamma(alpha + beta_b);
+    let front = (alpha * x.ln() + beta_b * (1.0 - x).ln() - ln_beta).exp() / alpha;
+    front * beta_cf(alpha, beta_b, x)
+}
+
+fn beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
+    let max_iter = 200;
+    let eps = 1e-10;
+    let mut c = 1.0;
+    let mut d = 1.0 - (alpha + beta_b) * x / (alpha + 1.0);
+    d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+    let mut f = d;
+    for m in 1..=max_iter {
+        let m = m as f64;
+        // Even step
+        let num = m * (beta_b - m) * x / ((alpha + 2.0 * m - 1.0) * (alpha + 2.0 * m));
+        d = 1.0 + num * d;
+        c = 1.0 + num / c;
+        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        f *= d * c;
+        // Odd step
+        let num = -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
+        d = 1.0 + num * d;
+        c = 1.0 + num / c;
+        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        let delta = d * c;
+        f *= delta;
+        if (delta - 1.0).abs() < eps { break; }
+    }
+    f
+}
+
+fn ln_gamma(x: f64) -> f64 {
+    // Lanczos approximation
+    let p = [
+        676.5203681218851_f64, -1259.1392167224028, 771.32342877765313,
+        -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+        9.9843695780195716e-6, 1.5056327351493116e-7,
+    ];
+    let x = x - 1.0;
+    let mut a = 0.99999999999980993_f64;
+    for (i, &p_i) in p.iter().enumerate() {
+        a += p_i / (x + i as f64 + 1.0);
+    }
+    let t = x + 7.5;
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
 }

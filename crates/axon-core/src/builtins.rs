@@ -1563,6 +1563,30 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Phase 13: Sample from Categorical(probs) — returns index i with probability probs[i]. Panics on empty probs. Impure: Random effect.",
     },
+    // ── Phase 13 Slice 2: probabilistic predicate pseudo-builtins ─────────────
+    // E[dist], Var[dist], P(dist op k) are predicate-level forms; they parse as
+    // Index/Call expressions. Registering E, Var, P in BUILTINS silences the
+    // resolver's "undefined name" (E0001) check. Infer/checker treat them
+    // specially via `is_prob_pred_ident`. These have no interpreter dispatch —
+    // they are handled directly in eval.rs (Index arm / eval_call).
+    BuiltinFn {
+        name: "E",
+        params: &[("dist", "Any")],
+        ret: "f64",
+        doc: "Phase 13 Slice 2: E[dist] — expected value (mean) of a distribution in a refinement predicate.",
+    },
+    BuiltinFn {
+        name: "Var",
+        params: &[("dist", "Any")],
+        ret: "f64",
+        doc: "Phase 13 Slice 2: Var[dist] — variance of a distribution in a refinement predicate.",
+    },
+    BuiltinFn {
+        name: "P",
+        params: &[("event", "bool")],
+        ret: "f64",
+        doc: "Phase 13 Slice 2: P(dist op k) — tail probability of a distribution in a refinement predicate.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1585,6 +1609,13 @@ pub struct BuiltinSig {
 /// purity checker to distinguish a builtin call from a user-function call.
 pub fn is_known_builtin(name: &str) -> bool {
     BUILTINS.iter().any(|b| b.name == name)
+}
+
+/// Phase 13 Slice 2: true if `name` is one of the probabilistic predicate
+/// pseudo-builtins (`E`, `Var`, `P`). These are handled specially in infer.rs
+/// (skip normal type constraints) and in eval.rs (intercepted before normal dispatch).
+pub fn is_prob_pred_ident(name: &str) -> bool {
+    matches!(name, "E" | "Var" | "P")
 }
 
 /// The declared return type of a builtin (`ret` field), or `None` if unknown.

@@ -1,5 +1,32 @@
 # Axon Changelog
 
+## Phase 13 Slice 2 — Probabilistic Refinement Predicates (iteration 11)
+
+- **`E[dist]`, `Var[dist]`, `P(dist op k)` syntax** in refinement predicates, fully landed.
+  These forms appear inside `T where <pred>` clauses (named refinements, inline parameter
+  refinements, let-binding annotations) and at runtime in any expression context.
+- **Parser**: no changes needed — `E[x]` parses as `Expr::Index`, `P(x <= k)` as
+  `Expr::Call`; the existing grammar already handles both.
+- **Resolver/Infer/Checker**: `E`, `Var`, `P` registered as pseudo-builtins in `BUILTINS`
+  (silences E0001). `infer.rs` returns `Type::F64` for `E[...]`/`Var[...]` index nodes and
+  `P(...)` calls without applying the normal array/comparison constraints. `checker.rs` skips
+  the E0402 array-indexing check and the E0102 comparison-type check for these forms.
+- **Runtime (`interp/eval.rs`)**: `E[dist]` and `Var[dist]` intercepted in the `Expr::Index`
+  arm before normal array indexing; `P(dist op k)` intercepted in `eval_call`. All three
+  families (Gaussian, Beta, Categorical) supported. Closed-form CDF implementations using
+  Abramowitz & Stegun erf, Lentz continued-fraction for regularized incomplete beta, and
+  Lanczos ln-gamma — byte-identical copies in both `interp/eval.rs` (runtime) and
+  `checker.rs` (static interval-arithmetic discharge).
+- **Static discharge (`checker.rs`)**: `eval_pred_f64` evaluates `E[_]`/`Var[_]`/`P(...)`
+  against `RefineVal::Struct` constant fields for Gaussian and Beta families; statically
+  discharges true predicates at compile time.
+- **Inline parameter refinement fix**: both `_` and the parameter name are bound in
+  pred_env for precondition and let-binding checks, so `fn f(g: Gaussian where E[g] > 0.0)`
+  works correctly (previously only `_` was bound).
+- **26 distribution tests** + **10 belief tests** pass (`axon test examples/stdlib/distribution.ax`).
+- **Violation exit code**: exit 6 (`REFINE_VIOLATION_EXIT_CODE`) on runtime predicate failure.
+- **Phase 13 marked ✅ Complete** in CLAUDE.md phase table.
+
 ## Phase 12 — Web UI Goal Approval Flow (iteration 8)
 
 - **`crates/axon-web`** — new crate: minimal synchronous HTTP server (`tiny_http`) that is a

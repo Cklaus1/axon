@@ -678,6 +678,17 @@ impl InferCtx {
                     _ => None,
                 };
 
+                // Phase 13 Slice 2: P(dist op k) probability predicate.
+                // The argument is a comparison whose LHS is a distribution struct —
+                // skip all type-checking for these; they are handled at runtime.
+                // NOTE: we intentionally do NOT infer args here because `dist <= k`
+                // would constrain the distribution type against f64, causing E0102.
+                if let Some(ref name) = fn_name {
+                    if crate::builtins::is_prob_pred_ident(name) {
+                        return Type::F64;
+                    }
+                }
+
                 // Handle `chan<T>()` lowered form: "chan::<T>" → Type::Chan(T)
                 if let Some(ref name) = fn_name {
                     if let Some(inner) = name.strip_prefix("chan::<").and_then(|s| s.strip_suffix(">")) {
@@ -1153,6 +1164,15 @@ impl InferCtx {
 
             // ── Index ─────────────────────────────────────────────────────────
             Expr::Index { receiver, index } => {
+                // Phase 13 Slice 2: E[dist] and Var[dist] distribution moment
+                // predicates. Skip the normal array/I64 constraints; infer the
+                // inner expression for its side-effects on scope but return F64.
+                if let Expr::Ident(tag) = receiver.as_ref() {
+                    if crate::builtins::is_prob_pred_ident(tag) {
+                        self.infer_expr(index, scope, ret_ty);
+                        return Type::F64;
+                    }
+                }
                 let recv_ty = self.infer_expr(receiver, scope, ret_ty);
                 let idx_ty = self.infer_expr(index, scope, ret_ty);
                 self.constrain(idx_ty, Type::I64, "slice index");

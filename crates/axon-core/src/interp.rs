@@ -1455,6 +1455,9 @@ impl<'p> Interp<'p> {
                         let val = env.get(&p.name).cloned().unwrap_or(Value::Unit);
                         let mut pred_env = Env::new();
                         pred_env.define("_".into(), val.clone());
+                        // Also bind the parameter name (for inline refinements
+                        // `p: T where E[p] > k` that use the param name directly).
+                        pred_env.define(p.name.clone(), val.clone());
                         if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
                             return Err(Flow::RefineViolation(format!(
                                 "parameter `{}` of `{}` (= {}) violates the refinement `{}` — \

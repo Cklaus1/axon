@@ -256,6 +256,97 @@ fn test_categorical_sample_degenerate_always_returns_one() {
     assert_eq(s, 1)
 }
 
+// ── Phase 13 Slice 2: E[dist], Var[dist], P(dist op k) predicate tests ────────
+
+@[test]
+fn test_gaussian_E_moment_predicate() {
+    // E[Gaussian(2.0, 1.0)] should be 2.0.
+    let g = gaussian_new(2.0, 1.0)
+    let mean = E[g]
+    assert(approx_eq(mean, 2.0, 0.0001))
+}
+
+@[test]
+fn test_gaussian_Var_moment_predicate() {
+    // Var[Gaussian(0.0, 3.0)] should be 9.0.
+    let g = gaussian_new(0.0, 3.0)
+    let v = Var[g]
+    assert(approx_eq(v, 9.0, 0.0001))
+}
+
+@[test]
+fn test_beta_E_moment_predicate() {
+    // E[Beta(2, 5)] = 2/7 ≈ 0.2857.
+    let b = beta_new(2.0, 5.0)
+    let mean = E[b]
+    assert(approx_eq(mean, 2.0 / 7.0, 0.0001))
+}
+
+@[test]
+fn test_beta_Var_moment_predicate() {
+    // Var[Beta(2, 5)] = (2*5)/((7^2)*(8)) = 10/392 ≈ 0.02551.
+    let b = beta_new(2.0, 5.0)
+    let v = Var[b]
+    assert(approx_eq(v, 10.0 / 392.0, 0.0001))
+}
+
+@[test]
+fn test_categorical_E_moment_predicate() {
+    // probs = [0.2, 0.5, 0.3]; E[X] = 0*0.2 + 1*0.5 + 2*0.3 = 1.1.
+    let c = categorical_new([0.2, 0.5, 0.3])
+    let mean = E[c]
+    assert(approx_eq(mean, 1.1, 0.0001))
+}
+
+@[test]
+fn test_categorical_Var_moment_predicate() {
+    // probs = [0.5, 0.5]; E=0.5, E[X^2]=0*0.5+1*0.5=0.5, Var=0.5-0.25=0.25.
+    let c = categorical_new([0.5, 0.5])
+    let v = Var[c]
+    assert(approx_eq(v, 0.25, 0.0001))
+}
+
+@[test]
+fn test_gaussian_P_cdf_predicate_lte() {
+    // P(Gaussian(0, 1) <= 0) ≈ 0.5.
+    let g = gaussian_new(0.0, 1.0)
+    let prob = P(g <= 0.0)
+    assert(approx_eq(prob, 0.5, 0.001))
+}
+
+@[test]
+fn test_gaussian_P_cdf_predicate_gt() {
+    // P(Gaussian(0, 1) > 0) ≈ 0.5.
+    let g = gaussian_new(0.0, 1.0)
+    let prob = P(g > 0.0)
+    assert(approx_eq(prob, 0.5, 0.001))
+}
+
+@[test]
+fn test_beta_P_cdf_predicate() {
+    // P(Beta(1, 1) <= 0.5) = 0.5 (uniform on [0,1]).
+    let b = beta_new(1.0, 1.0)
+    let prob = P(b <= 0.5)
+    assert(approx_eq(prob, 0.5, 0.001))
+}
+
+@[test]
+fn test_categorical_P_cdf_predicate() {
+    // P(Categorical([0.1, 0.4, 0.5]) <= 1) = 0.1 + 0.4 = 0.5.
+    let c = categorical_new([0.1, 0.4, 0.5])
+    let prob = P(c <= 1)
+    assert(approx_eq(prob, 0.5, 0.0001))
+}
+
+@[test]
+fn test_prob_predicate_composable_in_condition() {
+    // Combining E[dist] and P(dist op k) in a conditional.
+    let g = gaussian_new(0.0, 1.0)
+    let low_mean = E[g] < 1.0
+    let sym_tail = P(g > 2.0) < 0.1
+    assert(low_mean && sym_tail)
+}
+
 fn main() -> i64 {
     // Demo: moments and a sample for each distribution family.
     let g = gaussian_new(0.0, 1.0)

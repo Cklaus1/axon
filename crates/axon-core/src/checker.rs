@@ -197,9 +197,12 @@ const DEFERRED_PREFIXES: &[&str] = &["Uncertain", "Temporal", "Goal", "Dict"];
 /// discharging a constant-argument obligation. Only forms this slice can fold
 /// are represented (an i64 constant, or a string-literal value — which serves
 /// both `str_len(_)` length reasoning and `str_eq(_, "lit")` equality).
+/// Phase 13 Slice 2: Float added for distribution moment predicates.
 #[derive(Clone)]
+#[allow(dead_code)]
 enum RefineVal {
     Int(i64),
+    Float(f64),
     Str(String),
     /// A struct value: field name → its (constant) RefineVal. Backs whole-struct
     /// refinements where the binder `_` is the instance and `_.field` projects.
@@ -1043,6 +1046,7 @@ impl CheckCtx {
                 let span = self.current_span;
                 let shown = match bound {
                     RefineVal::Int(v) => v.to_string(),
+                    RefineVal::Float(f) => f.to_string(),
                     RefineVal::Str(s) => format!("{s:?}"),
                     RefineVal::Struct(_) => "the struct value".to_string(),
                 };
@@ -1085,6 +1089,7 @@ impl CheckCtx {
             let span = self.current_span;
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
+                RefineVal::Float(f) => f.to_string(),
                 RefineVal::Str(s) => format!("{s:?}"),
                 RefineVal::Struct(_) => "the struct value".to_string(),
             };
@@ -1126,6 +1131,7 @@ impl CheckCtx {
             let span = self.current_span;
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
+                RefineVal::Float(f) => f.to_string(),
                 RefineVal::Str(s) => format!("{s:?}"),
                 RefineVal::Struct(_) => "the struct value".to_string(),
             };
@@ -1170,6 +1176,7 @@ impl CheckCtx {
             let span = self.current_span;
             let shown = match bound {
                 RefineVal::Int(v) => v.to_string(),
+                RefineVal::Float(f) => f.to_string(),
                 RefineVal::Str(s) => format!("{s:?}"),
                 RefineVal::Struct(_) => "the struct value".to_string(),
             };
@@ -1233,17 +1240,31 @@ impl CheckCtx {
                 BinOp::And => Some(self.eval_pred_bool(left, env, depth)? && self.eval_pred_bool(right, env, depth)?),
                 BinOp::Or => Some(self.eval_pred_bool(left, env, depth)? || self.eval_pred_bool(right, env, depth)?),
                 BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                    let l = self.eval_pred_int(left, env, depth)?;
-                    let r = self.eval_pred_int(right, env, depth)?;
-                    Some(match op {
-                        BinOp::Eq => l == r,
-                        BinOp::NotEq => l != r,
-                        BinOp::Lt => l < r,
-                        BinOp::Gt => l > r,
-                        BinOp::LtEq => l <= r,
-                        BinOp::GtEq => l >= r,
-                        _ => unreachable!(),
-                    })
+                    // Try integer comparison first; fall back to float (Phase 13
+                    // distribution moment predicates produce f64 values).
+                    if let (Some(l), Some(r)) = (self.eval_pred_int(left, env, depth), self.eval_pred_int(right, env, depth)) {
+                        return Some(match op {
+                            BinOp::Eq => l == r,
+                            BinOp::NotEq => l != r,
+                            BinOp::Lt => l < r,
+                            BinOp::Gt => l > r,
+                            BinOp::LtEq => l <= r,
+                            BinOp::GtEq => l >= r,
+                            _ => unreachable!(),
+                        });
+                    }
+                    if let (Some(l), Some(r)) = (self.eval_pred_f64(left, env, depth), self.eval_pred_f64(right, env, depth)) {
+                        return Some(match op {
+                            BinOp::Eq => (l - r).abs() < f64::EPSILON,
+                            BinOp::NotEq => (l - r).abs() >= f64::EPSILON,
+                            BinOp::Lt => l < r,
+                            BinOp::Gt => l > r,
+                            BinOp::LtEq => l <= r,
+                            BinOp::GtEq => l >= r,
+                            _ => unreachable!(),
+                        });
+                    }
+                    None
                 }
                 _ => None,
             },
@@ -1390,6 +1411,98 @@ impl CheckCtx {
             new_env.insert(p.clone(), RefineVal::Int(v));
         }
         self.eval_pred_int(body, &new_env, depth + 1)
+    }
+
+    /// Phase 13 Slice 2: Evaluate a float-valued sub-expression of a predicate.
+    /// Recognises float literals, bound Float/Int variables, distribution moment
+    /// expressions `E[dist]` / `Var[dist]`, probability expressions `P(dist op k)`,
+    /// and float arithmetic — all closed-form for constant distribution parameters.
+    fn eval_pred_f64(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<f64> {
+        use crate::ast::{BinOp, Literal};
+        match e {
+            Expr::Literal(Literal::Float(f)) => Some(*f),
+            Expr::Literal(Literal::Int(n)) => Some(*n as f64),
+            Expr::Ident(n) => match env.get(n)? {
+                RefineVal::Float(f) => Some(*f),
+                RefineVal::Int(n) => Some(*n as f64),
+                _ => None,
+            },
+            // E[dist] / Var[dist] — index notation for distribution moments
+            Expr::Index { receiver, index } => {
+                if let Expr::Ident(tag) = receiver.as_ref() {
+                    if matches!(tag.as_str(), "E" | "Var") {
+                        let dist_rv = self.eval_pred_dist(index, env, depth)?;
+                        return checker_dist_moment(tag, &dist_rv);
+                    }
+                }
+                None
+            }
+            // P(dist op k) — tail probability
+            Expr::Call { callee, args, .. } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if name == "P" && args.len() == 1 {
+                        if let Expr::BinOp { op, left, right } = &args[0] {
+                            let dist_rv = self.eval_pred_dist(left, env, depth)?;
+                            let k = self.eval_pred_f64(right, env, depth)?;
+                            let cdf = checker_dist_cdf(&dist_rv, k)?;
+                            return Some(match op {
+                                BinOp::LtEq | BinOp::Lt => cdf,
+                                BinOp::Gt | BinOp::GtEq => 1.0 - cdf,
+                                _ => return None,
+                            });
+                        }
+                    }
+                }
+                None
+            }
+            Expr::BinOp { op, left, right } => {
+                let l = self.eval_pred_f64(left, env, depth)?;
+                let r = self.eval_pred_f64(right, env, depth)?;
+                match op {
+                    BinOp::Add => Some(l + r),
+                    BinOp::Sub => Some(l - r),
+                    BinOp::Mul => Some(l * r),
+                    BinOp::Div if r != 0.0 => Some(l / r),
+                    _ => None,
+                }
+            }
+            Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
+                Some(-self.eval_pred_f64(operand, env, depth)?)
+            }
+            _ => None,
+        }
+    }
+
+    /// Evaluate a distribution-valued sub-expression in a predicate context.
+    /// Returns a struct-like map of field name → RefineVal suitable for
+    /// `checker_dist_moment` / `checker_dist_cdf`.
+    fn eval_pred_dist(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<HashMap<String, f64>> {
+        match e {
+            Expr::Ident(n) => {
+                if let RefineVal::Struct(fields) = env.get(n)? {
+                    let mut out = HashMap::new();
+                    for (k, v) in fields {
+                        if let Some(f) = refine_val_to_f64(v) {
+                            out.insert(k.clone(), f);
+                        }
+                    }
+                    Some(out)
+                } else {
+                    None
+                }
+            }
+            // Constant struct literal in a predicate (unlikely but correct)
+            Expr::StructLit { fields, .. } => {
+                let mut out = HashMap::new();
+                for (k, v) in fields {
+                    if let Some(f) = self.eval_pred_f64(v, env, depth) {
+                        out.insert(k.clone(), f);
+                    }
+                }
+                if out.is_empty() { None } else { Some(out) }
+            }
+            _ => None,
+        }
     }
 
 
@@ -2297,6 +2410,14 @@ impl CheckCtx {
 
             // ── Call ─────────────────────────────────────────────────────────
             Expr::Call { callee, args, .. } => {
+                // Phase 13 Slice 2: P(dist op k) — skip checking args entirely;
+                // the argument is a comparison with a distribution struct on the
+                // left which does not type-check via the normal comparison rules.
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if crate::builtins::is_prob_pred_ident(name) {
+                        return; // skip all further checks for prob predicates
+                    }
+                }
                 self.check_expr(callee, &format!("{node_path}.callee"), scope);
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
@@ -2705,6 +2826,14 @@ impl CheckCtx {
 
             // ── Index ────────────────────────────────────────────────────────
             Expr::Index { receiver, index } => {
+                // Phase 13 Slice 2: E[dist] and Var[dist] are distribution moment
+                // predicates — skip all array/I64 constraints for them.
+                if let Expr::Ident(tag) = receiver.as_ref() {
+                    if crate::builtins::is_prob_pred_ident(tag) {
+                        self.check_expr(index, &format!("{node_path}.index"), scope);
+                        return;
+                    }
+                }
                 let recv_path = format!("{node_path}.receiver");
                 self.check_expr(receiver, &recv_path, scope);
                 self.check_expr(index, &format!("{node_path}.index"), scope);
@@ -5090,6 +5219,119 @@ fn closest_name<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
         })
         .min_by_key(|(d, _)| *d)
         .map(|(_, s)| s)
+}
+
+// ── Phase 13 Slice 2: distribution moment + CDF helpers (checker-side) ────────
+
+fn refine_val_to_f64(v: &RefineVal) -> Option<f64> {
+    match v {
+        RefineVal::Float(f) => Some(*f),
+        RefineVal::Int(n) => Some(*n as f64),
+        _ => None,
+    }
+}
+
+/// Compute E[dist] or Var[dist] from a field-map of f64 values.
+fn checker_dist_moment(tag: &str, fields: &HashMap<String, f64>) -> Option<f64> {
+    // Gaussian: mu, sigma → E=mu, Var=sigma²
+    if let (Some(&mu), Some(&sigma)) = (fields.get("mu"), fields.get("sigma")) {
+        return match tag {
+            "E" => Some(mu),
+            "Var" => Some(sigma * sigma),
+            _ => None,
+        };
+    }
+    // Beta: alpha, beta_b → E=alpha/(alpha+beta_b), Var=...
+    if let (Some(&alpha), Some(&beta_b)) = (fields.get("alpha"), fields.get("beta_b")) {
+        let s = alpha + beta_b;
+        return match tag {
+            "E" => Some(alpha / s),
+            "Var" => Some((alpha * beta_b) / (s * s * (s + 1.0))),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Compute CDF P(X <= k) from a field-map for known distributions.
+fn checker_dist_cdf(fields: &HashMap<String, f64>, k: f64) -> Option<f64> {
+    // Gaussian
+    if let (Some(&mu), Some(&sigma)) = (fields.get("mu"), fields.get("sigma")) {
+        if sigma > 0.0 {
+            let z = (k - mu) / (sigma * std::f64::consts::SQRT_2);
+            return Some(0.5 * (1.0 + checker_erf(z)));
+        }
+    }
+    // Beta
+    if let (Some(&alpha), Some(&beta_b)) = (fields.get("alpha"), fields.get("beta_b")) {
+        if alpha > 0.0 && beta_b > 0.0 {
+            // Reuse the same beta CDF implementation via a simpler approximation
+            // for the checker-side (constant fold only): use the closed-form from
+            // the spec §4.2 for constant parameters.
+            // For k outside [0,1] the Beta CDF is 0 or 1:
+            if k <= 0.0 { return Some(0.0); }
+            if k >= 1.0 { return Some(1.0); }
+            // Use regularized incomplete beta (Lentz CF), same algo as interp side
+            return Some(checker_beta_cdf(alpha, beta_b, k));
+        }
+    }
+    None
+}
+
+fn checker_erf(x: f64) -> f64 {
+    let t = 1.0 / (1.0 + 0.3275911 * x.abs());
+    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    sign * (1.0 - poly * (-x * x).exp())
+}
+
+fn checker_beta_cdf(alpha: f64, beta_b: f64, x: f64) -> f64 {
+    if x > (alpha + 1.0) / (alpha + beta_b + 2.0) {
+        return 1.0 - checker_beta_cdf(beta_b, alpha, 1.0 - x);
+    }
+    let ln_beta = checker_ln_gamma(alpha) + checker_ln_gamma(beta_b) - checker_ln_gamma(alpha + beta_b);
+    let front = (alpha * x.ln() + beta_b * (1.0 - x).ln() - ln_beta).exp() / alpha;
+    front * checker_beta_cf(alpha, beta_b, x)
+}
+
+fn checker_beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
+    let max_iter = 200;
+    let eps = 1e-10;
+    let mut c = 1.0_f64;
+    let mut d = 1.0 - (alpha + beta_b) * x / (alpha + 1.0);
+    d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+    let mut f = d;
+    for m in 1..=max_iter {
+        let m = m as f64;
+        let num = m * (beta_b - m) * x / ((alpha + 2.0 * m - 1.0) * (alpha + 2.0 * m));
+        d = 1.0 + num * d;
+        c = 1.0 + num / c;
+        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        f *= d * c;
+        let num = -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
+        d = 1.0 + num * d;
+        c = 1.0 + num / c;
+        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        let delta = d * c;
+        f *= delta;
+        if (delta - 1.0).abs() < eps { break; }
+    }
+    f
+}
+
+fn checker_ln_gamma(x: f64) -> f64 {
+    let p = [676.5203681218851_f64, -1259.1392167224028, 771.32342877765313,
+        -176.61502916214059, 12.507343278686905, -0.13857109526572012,
+        9.9843695780195716e-6, 1.5056327351493116e-7];
+    let x = x - 1.0;
+    let mut a = 0.99999999999980993_f64;
+    for (i, &p_i) in p.iter().enumerate() {
+        a += p_i / (x + i as f64 + 1.0);
+    }
+    let t = x + 7.5;
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + a.ln()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
