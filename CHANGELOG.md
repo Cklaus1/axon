@@ -1,5 +1,23 @@
 # Axon Changelog
 
+## Phase 14 Slice 1 — CRDT + VectorClock userland stdlib (iteration 12)
+
+- **`GCounter`** (grow-only counter): per-node component array; `merge = component-wise max`;
+  `gcounter_value = arr_sum_i64(counts)`. Proves convergence under concurrent increments.
+- **`PNCounter`** (positive-negative counter): two `GCounter`s (pos + neg); value = pos − neg;
+  can go negative; merge delegates to each component's `gcounter_merge`.
+- **`LWWRegister`** (last-write-wins register): `(val, ts)` pair; `merge = higher-timestamp wins`;
+  equal-timestamp tie-break = higher value (deterministic on all replicas).
+- **`VectorClock`** (causal ordering — "Causal ordering as type", ROADMAP §4 Phase-14):
+  per-node logical clock array; `vc_tick` records a local event; `vc_merge` is component-wise max;
+  `vc_happens_before(a, b)` = ∀i a[i]≤b[i] ∧ ∃i a[i]<b[i]; `vc_concurrent` = neither
+  happens-before the other. Key test: after A sends to B (B = merge(B,A) then tick B),
+  A happens-before B — send establishes causal ordering.
+- **15 `@[test]`s** pass (`axon test examples/stdlib/crdt.ax`), covering convergence,
+  idempotency, commutativity, and transitivity of the happens-before relation.
+- **CLAUDE.md** Phase 14 row added (🚧 Slice 1). `Replicated<T>` and `Quorum<T>` remain
+  for Slice 2.
+
 ## Phase 13 Slice 2 — Probabilistic Refinement Predicates (iteration 11)
 
 - **`E[dist]`, `Var[dist]`, `P(dist op k)` syntax** in refinement predicates, fully landed.

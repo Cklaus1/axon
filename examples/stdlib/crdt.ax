@@ -1,0 +1,388 @@
+// Phase 14 / Tier-2 stdlib: CRDT — Conflict-free Replicated Data Types.
+//
+// CRDTs are data structures that can be replicated and updated concurrently
+// across multiple nodes without coordination, and always converge to the same
+// state after merging. The merge operation is the join of a semilattice.
+//
+// This module implements four types that realise ROADMAP §4 Phase-14
+// "Replicated<T>, Quorum<T>, CRDT<T> as Tier-2 stdlib (Store constructors)"
+// and "Causal ordering as type":
+//
+//   GCounter    — grow-only counter (merge = component-wise max)
+//   PNCounter   — positive-negative counter built from two GCounters
+//   LWWRegister — last-write-wins register (merge = higher-timestamp wins)
+//   VectorClock — causal ordering; implements the happens-before relation
+//
+// KEY PROPERTY demonstrated by tests: CONVERGENCE — two replicas that have
+// seen the same set of updates converge to identical state regardless of the
+// order those updates were received, with no coordination.
+//
+//   axon test examples/stdlib/crdt.ax   # run @[test]s
+//   axon run  examples/stdlib/crdt.ax   # demo
+
+// ── GCounter ──────────────────────────────────────────────────────────────────
+// Grow-only counter. Each node (0-indexed) owns one component and may only
+// increment it. value = sum of all components. merge = component-wise max.
+
+type GCounter = { counts: [i64], n: i64 }
+
+fn gcounter_new(n_nodes: i64) -> GCounter {
+    GCounter { counts: arr_repeat(0, n_nodes), n: n_nodes }
+}
+
+fn gcounter_increment(g: GCounter, node: i64) -> GCounter {
+    assert(node >= 0 && node < g.n)
+    let cs = []
+    let i = 0
+    while i < g.n {
+        cs = arr_push(cs, if i == node { g.counts[i] + 1 } else { g.counts[i] })
+        i = i + 1
+    }
+    GCounter { counts: cs, n: g.n }
+}
+
+fn gcounter_value(g: GCounter) -> i64 { arr_sum_i64(g.counts) }
+
+fn gcounter_merge(a: GCounter, b: GCounter) -> GCounter {
+    assert(a.n == b.n)
+    let cs = []
+    let i = 0
+    while i < a.n {
+        let v = if a.counts[i] > b.counts[i] { a.counts[i] } else { b.counts[i] }
+        cs = arr_push(cs, v)
+        i = i + 1
+    }
+    GCounter { counts: cs, n: a.n }
+}
+
+// ── PNCounter ─────────────────────────────────────────────────────────────────
+// Positive-negative counter: two GCounters (increments + decrements).
+// value = sum(pos) - sum(neg).  merge = merge each component separately.
+// Invariant: the net value may go negative.
+
+type PNCounter = { pos: GCounter, neg: GCounter }
+
+fn pncounter_new(n_nodes: i64) -> PNCounter {
+    PNCounter { pos: gcounter_new(n_nodes), neg: gcounter_new(n_nodes) }
+}
+
+fn pncounter_increment(p: PNCounter, node: i64) -> PNCounter {
+    PNCounter { pos: gcounter_increment(p.pos, node), neg: p.neg }
+}
+
+fn pncounter_decrement(p: PNCounter, node: i64) -> PNCounter {
+    PNCounter { pos: p.pos, neg: gcounter_increment(p.neg, node) }
+}
+
+fn pncounter_value(p: PNCounter) -> i64 {
+    gcounter_value(p.pos) - gcounter_value(p.neg)
+}
+
+fn pncounter_merge(a: PNCounter, b: PNCounter) -> PNCounter {
+    PNCounter {
+        pos: gcounter_merge(a.pos, b.pos),
+        neg: gcounter_merge(a.neg, b.neg),
+    }
+}
+
+// ── LWWRegister ───────────────────────────────────────────────────────────────
+// Last-write-wins register: a (value, timestamp) pair. merge chooses the
+// entry with the higher timestamp. Concurrent writes (equal timestamps) bias
+// to the higher value to ensure determinism (same tie-breaking on all nodes).
+
+type LWWRegister = { val: i64, ts: i64 }
+
+fn lww_new(val: i64) -> LWWRegister { LWWRegister { val: val, ts: 0 } }
+
+fn lww_write(r: LWWRegister, val: i64, ts: i64) -> LWWRegister {
+    if ts > r.ts { LWWRegister { val: val, ts: ts } } else { r }
+}
+
+fn lww_read(r: LWWRegister) -> i64 { r.val }
+
+fn lww_merge(a: LWWRegister, b: LWWRegister) -> LWWRegister {
+    if a.ts > b.ts {
+        a
+    } else if b.ts > a.ts {
+        b
+    } else {
+        // tie-break: higher value wins (deterministic on all replicas)
+        if a.val >= b.val { a } else { b }
+    }
+}
+
+// ── VectorClock ───────────────────────────────────────────────────────────────
+// Causal ordering ("Causal ordering as type", ROADMAP §4 Phase-14).
+// A vector clock is a tuple of logical timestamps, one per node.
+// Invariants:
+//   - vc_tick(vc, node) records a local event at `node`
+//   - vc_recv(local, remote) merges on message receipt (component-wise max,
+//     then tick the receiver) so that send HAPPENS-BEFORE recv
+//   - vc_happens_before(a, b): a → b iff ∀i: a[i] ≤ b[i] AND ∃i: a[i] < b[i]
+//   - vc_concurrent(a, b): neither happens-before the other
+
+type VectorClock = { clocks: [i64], n: i64 }
+
+fn vc_new(n_nodes: i64) -> VectorClock {
+    VectorClock { clocks: arr_repeat(0, n_nodes), n: n_nodes }
+}
+
+fn vc_tick(vc: VectorClock, node: i64) -> VectorClock {
+    assert(node >= 0 && node < vc.n)
+    let cs = []
+    let i = 0
+    while i < vc.n {
+        cs = arr_push(cs, if i == node { vc.clocks[i] + 1 } else { vc.clocks[i] })
+        i = i + 1
+    }
+    VectorClock { clocks: cs, n: vc.n }
+}
+
+// Merge two clocks (component-wise max) — called on message receipt before
+// ticking the receiver. The result is NOT yet ticked; call vc_tick after.
+fn vc_merge(a: VectorClock, b: VectorClock) -> VectorClock {
+    assert(a.n == b.n)
+    let cs = []
+    let i = 0
+    while i < a.n {
+        let v = if a.clocks[i] > b.clocks[i] { a.clocks[i] } else { b.clocks[i] }
+        cs = arr_push(cs, v)
+        i = i + 1
+    }
+    VectorClock { clocks: cs, n: a.n }
+}
+
+// a happens-before b: every component of a ≤ corresponding b, and at least
+// one is strictly less.
+fn vc_happens_before(a: VectorClock, b: VectorClock) -> bool {
+    assert(a.n == b.n)
+    let all_leq = true
+    let some_lt = false
+    let i = 0
+    while i < a.n {
+        if a.clocks[i] > b.clocks[i] { all_leq = false }
+        if a.clocks[i] < b.clocks[i] { some_lt = true }
+        i = i + 1
+    }
+    all_leq && some_lt
+}
+
+// a and b are concurrent: neither happens-before the other.
+fn vc_concurrent(a: VectorClock, b: VectorClock) -> bool {
+    !vc_happens_before(a, b) && !vc_happens_before(b, a)
+}
+
+// Clocks are equal: every component matches.
+fn vc_eq(a: VectorClock, b: VectorClock) -> bool {
+    assert(a.n == b.n)
+    let ok = true
+    let i = 0
+    while i < a.n {
+        if a.clocks[i] != b.clocks[i] { ok = false }
+        i = i + 1
+    }
+    ok
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests — convergence + causal ordering are the contracts.
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── GCounter tests ────────────────────────────────────────────────────────────
+
+@[test]
+fn test_gcounter_increment_and_value() {
+    let g = gcounter_new(3)
+    let g = gcounter_increment(g, 0)
+    let g = gcounter_increment(g, 1)
+    let g = gcounter_increment(g, 1)
+    // node 0 has 1, node 1 has 2, node 2 has 0 → value = 3
+    assert_eq(gcounter_value(g), 3)
+}
+
+// THE headline: convergence under concurrent updates.
+// Two replicas diverge, then merge — they must agree.
+@[test]
+fn test_gcounter_convergence_regardless_of_merge_order() {
+    // Replica A: node 0 increments 3 times
+    let a = gcounter_increment(gcounter_increment(gcounter_increment(gcounter_new(2), 0), 0), 0)
+    // Replica B: node 1 increments 2 times
+    let b = gcounter_increment(gcounter_increment(gcounter_new(2), 1), 1)
+    // merge(a, b) == merge(b, a)  [commutativity]
+    let ab = gcounter_merge(a, b)
+    let ba = gcounter_merge(b, a)
+    assert_eq(gcounter_value(ab), 5)
+    assert_eq(gcounter_value(ba), 5)
+}
+
+@[test]
+fn test_gcounter_merge_is_idempotent() {
+    let g = gcounter_increment(gcounter_new(2), 0)
+    // merge(g, g) == g  [idempotency]
+    let gg = gcounter_merge(g, g)
+    assert_eq(gcounter_value(gg), gcounter_value(g))
+}
+
+// ── PNCounter tests ───────────────────────────────────────────────────────────
+
+@[test]
+fn test_pncounter_increment_and_decrement() {
+    let p = pncounter_new(2)
+    let p = pncounter_increment(p, 0)
+    let p = pncounter_increment(p, 0)
+    let p = pncounter_decrement(p, 1)
+    assert_eq(pncounter_value(p), 1)
+}
+
+@[test]
+fn test_pncounter_convergence() {
+    // Replica A: +3 on node 0
+    let a = pncounter_increment(pncounter_increment(pncounter_increment(pncounter_new(2), 0), 0), 0)
+    // Replica B: -2 on node 1
+    let b = pncounter_decrement(pncounter_decrement(pncounter_new(2), 1), 1)
+    let merged = pncounter_merge(a, b)
+    assert_eq(pncounter_value(merged), 1)  // 3 - 2 = 1
+}
+
+@[test]
+fn test_pncounter_value_can_go_negative() {
+    let p = pncounter_new(2)
+    let p = pncounter_decrement(p, 0)
+    let p = pncounter_decrement(p, 0)
+    assert_eq(pncounter_value(p), -2)
+}
+
+// ── LWWRegister tests ─────────────────────────────────────────────────────────
+
+@[test]
+fn test_lww_higher_timestamp_wins() {
+    let r = lww_new(10)
+    let r = lww_write(r, 42, 5)
+    let r = lww_write(r, 7, 3)   // older timestamp — ignored
+    assert_eq(lww_read(r), 42)
+}
+
+@[test]
+fn test_lww_merge_picks_later_write() {
+    let a = lww_write(lww_new(0), 100, 10)   // node A wrote 100 at t=10
+    let b = lww_write(lww_new(0), 200, 20)   // node B wrote 200 at t=20
+    let ab = lww_merge(a, b)
+    let ba = lww_merge(b, a)
+    assert_eq(lww_read(ab), 200)  // t=20 > t=10
+    assert_eq(lww_read(ba), 200)  // commutative
+}
+
+@[test]
+fn test_lww_concurrent_writes_tie_break_deterministically() {
+    let a = lww_write(lww_new(0), 50, 5)   // same timestamp
+    let b = lww_write(lww_new(0), 99, 5)
+    let ab = lww_merge(a, b)
+    let ba = lww_merge(b, a)
+    // Both replicas agree on 99 (higher value wins tie)
+    assert_eq(lww_read(ab), 99)
+    assert_eq(lww_read(ba), 99)
+}
+
+// ── VectorClock tests ─────────────────────────────────────────────────────────
+
+@[test]
+fn test_vc_initial_clock_is_all_zeros() {
+    let vc = vc_new(3)
+    assert_eq(vc.clocks[0], 0)
+    assert_eq(vc.clocks[1], 0)
+    assert_eq(vc.clocks[2], 0)
+}
+
+@[test]
+fn test_vc_tick_increments_only_the_target_node() {
+    let vc = vc_tick(vc_new(3), 1)
+    assert_eq(vc.clocks[0], 0)
+    assert_eq(vc.clocks[1], 1)
+    assert_eq(vc.clocks[2], 0)
+}
+
+// THE headline: send → recv establishes happens-before.
+// After A sends a message to B, A's clock happens-before B's.
+@[test]
+fn test_vc_send_happens_before_recv() {
+    let a = vc_tick(vc_new(2), 0)          // A records a local event
+    // B receives A's message: merge(B, A), then tick B
+    let b_after_recv = vc_tick(vc_merge(vc_new(2), a), 1)
+    assert(vc_happens_before(a, b_after_recv))
+    assert(!vc_happens_before(b_after_recv, a))
+}
+
+@[test]
+fn test_vc_independent_events_are_concurrent() {
+    let a = vc_tick(vc_new(2), 0)   // A records an event — B knows nothing
+    let b = vc_tick(vc_new(2), 1)   // B records an event — A knows nothing
+    assert(vc_concurrent(a, b))
+    assert(!vc_happens_before(a, b))
+    assert(!vc_happens_before(b, a))
+}
+
+@[test]
+fn test_vc_merge_reflects_both_histories() {
+    let a = vc_tick(vc_tick(vc_new(2), 0), 0)   // A: [2, 0]
+    let b = vc_tick(vc_new(2), 1)               // B: [0, 1]
+    let merged = vc_merge(a, b)                  // [2, 1]
+    assert_eq(merged.clocks[0], 2)
+    assert_eq(merged.clocks[1], 1)
+    // Both originals happen-before the merge
+    assert(vc_happens_before(a, merged))
+    assert(vc_happens_before(b, merged))
+}
+
+@[test]
+fn test_vc_happens_before_is_transitive() {
+    let a = vc_tick(vc_new(2), 0)                          // a → b → c
+    let b = vc_tick(vc_merge(vc_tick(vc_new(2), 1), a), 1)
+    let c = vc_tick(vc_merge(vc_tick(vc_new(2), 0), b), 0)
+    assert(vc_happens_before(a, b))
+    assert(vc_happens_before(b, c))
+    assert(vc_happens_before(a, c))   // transitivity
+}
+
+// ── Demo ──────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("── CRDT demo ─────────────────────────────────────────────────────")
+
+    println("")
+    println("GCounter — grow-only counter across 3 nodes:")
+    let g0 = gcounter_increment(gcounter_increment(gcounter_new(3), 0), 0)
+    let g1 = gcounter_increment(gcounter_new(3), 1)
+    let gm = gcounter_merge(g0, g1)
+    println("  node-0 replica value: {to_str(gcounter_value(g0))}")
+    println("  node-1 replica value: {to_str(gcounter_value(g1))}")
+    println("  merged value:         {to_str(gcounter_value(gm))}")
+
+    println("")
+    println("PNCounter — +3 on node-0, -2 on node-1, then merge:")
+    let p0 = pncounter_increment(pncounter_increment(pncounter_increment(pncounter_new(2), 0), 0), 0)
+    let p1 = pncounter_decrement(pncounter_decrement(pncounter_new(2), 1), 1)
+    let pm = pncounter_merge(p0, p1)
+    println("  merged value: {to_str(pncounter_value(pm))} (3 - 2 = 1)")
+
+    println("")
+    println("LWWRegister — concurrent writes, highest-timestamp wins:")
+    let ra = lww_write(lww_new(0), 42, 10)
+    let rb = lww_write(lww_new(0), 99, 20)
+    let rm = lww_merge(ra, rb)
+    println("  node-A wrote 42 @ t=10, node-B wrote 99 @ t=20")
+    println("  merged reads: {to_str(lww_read(rm))}")
+
+    println("")
+    println("VectorClock — causal ordering across 2 nodes:")
+    let va = vc_tick(vc_new(2), 0)
+    let vb = vc_tick(vc_merge(vc_new(2), va), 1)
+    if vc_happens_before(va, vb) {
+        println("  A[1,0] → B[1,1]: send happens-before recv ✓")
+    }
+    let vc_a = vc_tick(vc_new(2), 0)
+    let vc_b = vc_tick(vc_new(2), 1)
+    if vc_concurrent(vc_a, vc_b) {
+        println("  A[1,0] ∥ B[0,1]: independent events are concurrent ✓")
+    }
+    0
+}
