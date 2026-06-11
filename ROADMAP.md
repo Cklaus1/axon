@@ -520,7 +520,7 @@ prioritized as input to the Phase 5–10 schedule. Replace any conflicting handw
 | # | Gap | Phase target | Notes |
 |---|---|---|---|
 | F1 | ~~`goal_run` only live-hill-climbs `fn(i64) -> i64`~~ — **closed for i64^N, f64^N, AND mixed i64/f64**. The interpreter coordinate-descends over all-i64, all-f64, OR mixed numeric param lists (each dimension stepped in its own type — `hill_climb_mixed`); `goal_best_inputs(name, target) -> [i64]` / `goal_best_inputs_f64 -> [f64]` return the homogeneous input tuples (mixed tuples log score + typed-prefix inputs, but have no cross-run warm-start store). string / categorical domains still wait on a Phase-8 strategy parameter. | 8 | Done for all numeric (incl. mixed). |
-| F2 | ~~`ai_complete` is non-deterministic; cannot reproduce a run~~ — **replay ENGINE landed**: `AXON_AI_REPLAY=<file>` memoizes every `ai_complete` by `(prompt, model)` → `(response, tokens)`; a first run records, a re-run replays the response (and the deterministic cost) verbatim — no live call, no mock, no API key — so an AI run is exactly reproducible. mode:"replay" is stamped in the provenance log. Gated `ai_replay_reproduces_a_recorded_run_without_the_live_model_f2`. Remaining: an `axon trace replay` CLI wrapper + RNG-seed capture for full-run determinism (the LLM-memoization core — the hard part — is done). | 9 | The auditability backbone. **LLM-call memoization DONE; CLI sugar + seed capture remain.** |
+| F2 | ~~`ai_complete` is non-deterministic; cannot reproduce a run~~ — **CLOSED.** `AXON_AI_REPLAY=<file>` memoizes every `ai_complete` by `(prompt, model)` → `(response, tokens)`, stamping mode:"replay" in the provenance log. `axon trace --replay <run-id>` looks up the `run_start` record (run-id + effective RNG seed + source path), fixes `AXON_SEED` to the stored seed, and re-executes the source — byte-identical replay with no live model. Gated `ai_replay_reproduces_a_recorded_run_without_the_live_model_f2` + `phase9_run_id_stamped_and_trace_replay_reproduces_run`. | 9 | ✅ DONE. |
 | F3 | ~~Provenance log no Principal, no effect row, no causal link~~ — **CLOSED.** Every `ai_call` and `agent_action` audit record now carries `effect_row` (the row-polymorphic effect tag: "AI"/"FS"/"Net"/"Exec") and `principal` (the executing principal's name, default "root"). `principal_activate(handle)` sets the current audit-context principal; `principal_current_name()` reads it back. `axon trace --ai --json` schema is `axon-ai-audit/2`. | 7 + 9 | ✅ DONE. |
 | F4 | ~~No budget meter — token cost per `ai_complete` call is invisible~~ — **CLOSED (kernel cost_meter landed).** R3c metered per-call-count (E1301); `llm_gateway.ax` modeled per-token cost in userland; **now the KERNEL interpreter meters it**: every dispatched `ai_complete` charges `tier.cost_micro(est_tokens)` (`ai_routing::Tier::rate_micro`, cheap<balanced<strong) to a run-global meter, stamps the REAL `cost_usd` into the `ai_call` provenance (was hardcoded 0), and exposes the running total via the `ai_cost_spent() -> i64` (µ$) builtin. Deterministic ⇒ works under mock. | ✅ | `LLM<Capabilities>` mediates every call, ticks `Budget<R...>`. **Call-count meter (R3c) + per-token kernel cost meter (cost_usd real, ai_cost_spent) done; only the *live* token-count-from-model-response remains (uses a deterministic length estimate today).** |
 | F5 | ~~No runtime sandbox for AI-emitted plans~~ — **CLOSED.** `sandbox_create(principal, allowed_effects)` registers a runtime sandbox with a comma-separated effect ceiling; `sandbox_run(sandbox, fn_name, arg)` executes a named function inside it. Any builtin that attempts an effect outside the ceiling raises `SandboxViolation` (exit 8) — the dynamic counterpart to static `@[contained]`/effect-row checking. Gated `sandbox_run_enforces_effect_ceiling_at_runtime_f5`. | 9 | ✅ DONE. |
@@ -646,18 +646,14 @@ third are product v1.
 
 Until all three pass, Axon is a demo, not a product.
 
-**Status — the first acid test ("Hello Goal", engineering-v1) is now DEMONSTRABLE end-to-end on
-shipped primitives.** `examples/asi/run.sh hello-goal` drives the full loop in one session over
-`optimize.ax`: **run** (goal_run hill-climbs the metric) → the `@[verify]` **deploy gate fires** as the
-**safety catch** (a sub-threshold result is refused before deploy, exit 3) → **trace** (score
-trajectory) → **audit** (`axon trace --ai`: every `ai_complete` with its routed model, mode, metered
-cost, and the causal goal) → **improve** (one more cycle, resuming from the provenance log) → **replay**
-(`AXON_AI_REPLAY` re-runs from the LLM-call cache, byte-for-byte reproducible, the model never called).
-Gated by `asi_hello_goal_acid_test_loop_runs_end_to_end`. The CLI *shape* is still the simulated
-Phase-10 surface (`run.sh` stands in for the eventual `axon intent compile` / `axon ast approve` /
-`axon deploy` verbs); the underlying capabilities — search, the proof-gated safety catch, the
-Principal-attributed audit, deterministic replay — are all shipped. Acid tests 2–4 (the non-programmer
-prose UI) remain Phase 10–12.
+**Status — ALL FOUR acid tests are now DEMONSTRABLE on shipped primitives (commit 73cc2ba).**
+
+- **Hello Goal (#1, CLI, engineering-v1):** `examples/asi/run.sh hello-goal` drives the full loop: **run** (goal_run hill-climbs the metric) → `@[verify]` **deploy gate** (safety catch, exit 3) → **trace** → **audit** (`axon trace --ai`) → **improve** → **replay** (`AXON_AI_REPLAY`, byte-identical). Gated by `asi_hello_goal_acid_test_loop_runs_end_to_end`.
+- **First Goal (#2, web UI + CLI):** `axon intent compile` + web UI approval flow: Intent pane → AST Review pane → Approve pane → Deploy pane. Covered by `axon-web` e2e test + Phase-10 v1.1 LLM generation.
+- **First Improvement (#3, web UI `/api/goal/improve` pane):** User clicks "Run Improve Cycle"; score trajectory (e.g. 51→96) displayed. Gated by `post_goal_improve_returns_json` test + `axon-goal-improve/1` schema.
+- **First Redteam Catch (#4, web UI redteam reason text):** `run_json_merged` extracts prose reasoning lines alongside JSON; UI shows `⚠ REDTEAM CAUGHT: REDTEAM FAILED: blocking deploy` in plain English.
+
+The CLI *shape* for #1 is still the simulated Phase-10 surface (`run.sh` stands in for the eventual verbs); the underlying capabilities — search, the proof-gated safety catch, the Principal-attributed audit, deterministic replay — are all shipped. The web UI (#2–4) is backed by the `axon-web` server (Phase 12).
 
 ---
 

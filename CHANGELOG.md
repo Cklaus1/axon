@@ -1,5 +1,20 @@
 # Axon Changelog
 
+## Gap closure — F2 closed, acid test coverage + ROADMAP updates (iteration 15)
+
+- **`post_goal_improve_returns_json` test** — new `axon-web` test that exercises the
+  `POST /api/goal/improve` endpoint and asserts the `axon-goal-improve/1` schema is
+  returned. This is the missing unit coverage for Acid Test 3 (First Improvement pane).
+- **`html_contains_all_panes` updated** — added "Improve" to the pane-title list and
+  `/api/goal/improve` to the endpoint reference list; the test now covers all 7 UI panes
+  and all 7 API endpoints (was 6 panes / 6 endpoints — the Improve pane was silently
+  untested).
+- **ROADMAP.md F2 closed** — marked `axon trace --replay <run-id>` + RNG-seed capture
+  as ✅ DONE (the implementation in `cmd_trace_replay` + `find_run_start` has been shipped
+  since Phase 9; the ROADMAP note still said "CLI sugar + seed capture remain").
+- **ROADMAP.md acid test status updated** — all four acid tests (Hello Goal, First Goal,
+  First Improvement, First Redteam Catch) documented as DEMONSTRABLE on shipped primitives.
+
 ## Phase 14 Slice 1 — CRDT + VectorClock userland stdlib (iteration 12)
 
 - **`GCounter`** (grow-only counter): per-node component array; `merge = component-wise max`;

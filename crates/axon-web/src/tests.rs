@@ -114,9 +114,20 @@ fn get_trace_returns_json() {
 }
 
 #[test]
+fn post_goal_improve_returns_json() {
+    start_server_thread(18086);
+    let payload = "{\"content\":\"fn main() { println(\\\"ok\\\") }\"}";
+    let (status, body) = post_json(18086, "/api/goal/improve", payload);
+    assert_eq!(status, 200, "status: {status}, body: {body:.200}");
+    let v: serde_json::Value = serde_json::from_str(&body)
+        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    assert_eq!(v["schema"], "axon-goal-improve/1", "wrong schema in goal/improve response");
+}
+
+#[test]
 fn html_contains_all_panes() {
     let html = crate::html::INDEX_HTML;
-    for step in ["Intent", "AST Review", "Approve", "Red Team", "Deploy", "Trace"] {
+    for step in ["Intent", "AST Review", "Approve", "Improve", "Red Team", "Deploy", "Trace"] {
         assert!(html.contains(step), "HTML missing pane: {step}");
     }
     // Every API endpoint referenced in the JS
@@ -124,6 +135,7 @@ fn html_contains_all_panes() {
         "/api/intent/compile",
         "/api/ast/review",
         "/api/ast/approve",
+        "/api/goal/improve",
         "/api/redteam",
         "/api/deploy",
         "/api/trace",
