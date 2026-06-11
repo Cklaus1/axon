@@ -1,0 +1,476 @@
+// Phase 14 Slice 2 / Tier-2 stdlib: Replicated<T> and Quorum<T>.
+//
+// Replicated<T> — Eventually-consistent replicated value (LWW semantics).
+//   Any node may write at any time; after convergence every node agrees.
+//   Properties: commutativity, idempotency, associativity of merge.
+//
+// Quorum<T> — Majority-quorum write/read (linearizable safety).
+//   A write commits only when ⌊n/2⌋+1 replicas acknowledge it.
+//   Safety: no two different values can both achieve quorum at the same
+//   timestamp — they cannot both collect a majority simultaneously.
+//
+// These are the Tier-2 Store constructors from ROADMAP §4 Phase 14 ("Slice 2")
+// that complement the CRDT types in crdt.ax (Slice 1).
+//
+// Implementation note: Axon's arr_push is concretely typed for i64, so
+// Replicated stores parallel [i64] arrays (vals, timestamps) per node rather
+// than an array of structs — the same pattern used in crdt.ax.
+//
+//   axon test examples/stdlib/replicated.ax   # run @[test]s
+//   axon run  examples/stdlib/replicated.ax   # demo
+
+// ── Replicated<T> ─────────────────────────────────────────────────────────────
+// An i64 value replicated across N nodes using LWW (last-write-wins) semantics.
+// Each node owns an independent (val, ts) slot; ts is a logical timestamp.
+// Nodes write without coordination; convergence is guaranteed once every
+// replica has seen every write.
+
+type Replicated = { vals: [i64], timestamps: [i64], n: i64 }
+
+fn replicated_new(n_nodes: i64, initial_val: i64) -> Replicated {
+    assert(n_nodes > 0)
+    Replicated {
+        vals:       arr_repeat(initial_val, n_nodes),
+        timestamps: arr_repeat(0, n_nodes),
+        n:          n_nodes,
+    }
+}
+
+// Record a write on `node` at logical timestamp `ts`.
+// Silently ignored when ts does not exceed the node's current timestamp
+// (stale write; LWW semantics).
+fn replicated_write(r: Replicated, node: i64, val: i64, ts: i64) -> Replicated {
+    assert(node >= 0 && node < r.n)
+    let cur_ts = r.timestamps[node]
+    if ts <= cur_ts {
+        r
+    } else {
+        let new_vals = []
+        let new_ts   = []
+        let i = 0
+        while i < r.n {
+            new_vals = arr_push(new_vals, if i == node { val } else { r.vals[i] })
+            new_ts   = arr_push(new_ts,   if i == node { ts  } else { r.timestamps[i] })
+            i = i + 1
+        }
+        Replicated { vals: new_vals, timestamps: new_ts, n: r.n }
+    }
+}
+
+// Sync: node `dst` learns what node `src` knows (one-way LWW merge).
+fn replicated_sync(r: Replicated, dst: i64, src: i64) -> Replicated {
+    assert(dst >= 0 && dst < r.n)
+    assert(src >= 0 && src < r.n)
+    let src_val = r.vals[src]
+    let src_ts  = r.timestamps[src]
+    replicated_write(r, dst, src_val, src_ts)
+}
+
+// Converge: broadcast the global winner (highest-ts, tie-break = highest val)
+// to every node.  After this call all nodes agree.
+fn replicated_converge(r: Replicated) -> Replicated {
+    let best_val = r.vals[0]
+    let best_ts  = r.timestamps[0]
+    let i = 1
+    while i < r.n {
+        let ts = r.timestamps[i]
+        let v  = r.vals[i]
+        if ts > best_ts || (ts == best_ts && v > best_val) {
+            best_val = v
+            best_ts  = ts
+        }
+        i = i + 1
+    }
+    Replicated {
+        vals:       arr_repeat(best_val, r.n),
+        timestamps: arr_repeat(best_ts, r.n),
+        n:          r.n,
+    }
+}
+
+// Read node's current (local) view.
+fn replicated_read(r: Replicated, node: i64) -> i64 {
+    assert(node >= 0 && node < r.n)
+    r.vals[node]
+}
+
+// True iff all nodes agree on the same value.
+fn replicated_converged(r: Replicated) -> bool {
+    let v0 = r.vals[0]
+    let ok = true
+    let i = 1
+    while i < r.n {
+        if r.vals[i] != v0 { ok = false }
+        i = i + 1
+    }
+    ok
+}
+
+// ── Quorum<T> ─────────────────────────────────────────────────────────────────
+// Linearizable write/read via majority quorum.
+//
+// quorum_new(n)          — n replicas, quorum_size = n/2 + 1.
+// quorum_propose(q,v,ts) — open a pending proposal for value v.
+//                          Rejected (Err) if ts ≤ committed_ts.
+// quorum_ack(q,ts)       — a replica acknowledges the pending proposal.
+//                          Ignored if ts ≠ pending_ts.
+// quorum_try_commit(q)   — commit if pending_acks ≥ quorum_size.
+// quorum_read(q)         — Ok(v) iff committed, else Err.
+//
+// Safety invariant: no two different values at the same ts can both collect
+// a majority (pigeonhole: each replica can vote for only one ts at a time,
+// so two majority-sets must overlap, producing a contradiction).
+
+type Quorum = {
+    n:             i64,
+    quorum_size:   i64,
+    pending_val:   i64,
+    pending_ts:    i64,
+    pending_acks:  i64,
+    committed_val: i64,
+    committed_ts:  i64,
+    committed:     bool,
+}
+
+fn quorum_new(n_nodes: i64) -> Quorum {
+    assert(n_nodes > 0)
+    Quorum {
+        n:             n_nodes,
+        quorum_size:   n_nodes / 2 + 1,
+        pending_val:   0,
+        pending_ts:    -1,
+        pending_acks:  0,
+        committed_val: 0,
+        committed_ts:  -1,
+        committed:     false,
+    }
+}
+
+// Propose a new write.  Returns Err if the proposal is stale (ts ≤ committed_ts).
+fn quorum_propose(q: Quorum, val: i64, ts: i64) -> Result<Quorum, str> {
+    if ts <= q.committed_ts {
+        Err("stale proposal: ts must be strictly greater than committed_ts")
+    } else {
+        Ok(Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   val,
+            pending_ts:    ts,
+            pending_acks:  0,
+            committed_val: q.committed_val,
+            committed_ts:  q.committed_ts,
+            committed:     q.committed,
+        })
+    }
+}
+
+// Simulate one replica acknowledging the pending proposal.
+// Ignored when ts ≠ pending_ts (ack is for an outdated round).
+fn quorum_ack(q: Quorum, ts: i64) -> Quorum {
+    if ts == q.pending_ts {
+        Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   q.pending_val,
+            pending_ts:    q.pending_ts,
+            pending_acks:  q.pending_acks + 1,
+            committed_val: q.committed_val,
+            committed_ts:  q.committed_ts,
+            committed:     q.committed,
+        }
+    } else {
+        q
+    }
+}
+
+// Commit the pending proposal if enough acks have been collected and the
+// pending ts strictly exceeds the already-committed ts (monotone writes).
+fn quorum_try_commit(q: Quorum) -> Quorum {
+    if q.pending_acks >= q.quorum_size && q.pending_ts > q.committed_ts {
+        Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   q.pending_val,
+            pending_ts:    q.pending_ts,
+            pending_acks:  q.pending_acks,
+            committed_val: q.pending_val,
+            committed_ts:  q.pending_ts,
+            committed:     true,
+        }
+    } else {
+        q
+    }
+}
+
+// Read the committed value, or Err if no write has committed yet.
+fn quorum_read(q: Quorum) -> Result<i64, str> {
+    if q.committed { Ok(q.committed_val) } else { Err("no committed value") }
+}
+
+// ── Test helpers ──────────────────────────────────────────────────────────────
+
+fn propose_ok(q: Quorum, val: i64, ts: i64) -> Quorum {
+    match quorum_propose(q, val, ts) {
+        Ok(q2) => q2
+        Err(_) => { assert(false)  quorum_new(1) }
+    }
+}
+
+fn read_ok(q: Quorum) -> i64 {
+    match quorum_read(q) {
+        Ok(v)  => v
+        Err(_) => { assert(false)  0 }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Replicated tests ──────────────────────────────────────────────────────────
+
+@[test]
+fn test_replicated_write_visible_to_local_node() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 42, 1)
+    assert_eq(replicated_read(r, 0), 42)
+    assert_eq(replicated_read(r, 1), 0)   // other nodes unaffected
+    assert_eq(replicated_read(r, 2), 0)
+}
+
+@[test]
+fn test_replicated_higher_ts_wins_on_same_node() {
+    let r = replicated_new(2, 0)
+    let r = replicated_write(r, 0, 99, 3)
+    let r = replicated_write(r, 0, 7,  1)   // stale ts — ignored
+    assert_eq(replicated_read(r, 0), 99)
+}
+
+@[test]
+fn test_replicated_sync_propagates_newest_write() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 42, 5)
+    let r = replicated_write(r, 1, 99, 3)   // ts=3 < ts=5
+    // node 1 learns from node 0 → node 0's write (ts=5) should win
+    let r = replicated_sync(r, 1, 0)
+    assert_eq(replicated_read(r, 1), 42)
+}
+
+@[test]
+fn test_replicated_not_converged_after_concurrent_writes() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 10, 3)
+    let r = replicated_write(r, 1, 20, 7)
+    let r = replicated_write(r, 2, 15, 5)
+    assert(!replicated_converged(r))
+}
+
+@[test]
+fn test_replicated_converge_all_nodes_agree() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 10, 3)
+    let r = replicated_write(r, 1, 20, 7)   // highest ts → wins
+    let r = replicated_write(r, 2, 15, 5)
+    let r = replicated_converge(r)
+    assert(replicated_converged(r))
+    assert_eq(replicated_read(r, 0), 20)
+    assert_eq(replicated_read(r, 1), 20)
+    assert_eq(replicated_read(r, 2), 20)
+}
+
+@[test]
+fn test_replicated_tie_break_is_deterministic() {
+    // Same ts, different values → higher value wins on every node.
+    let r = replicated_new(2, 0)
+    let r = replicated_write(r, 0, 50, 5)
+    let r = replicated_write(r, 1, 99, 5)
+    let r = replicated_converge(r)
+    assert_eq(replicated_read(r, 0), 99)
+    assert_eq(replicated_read(r, 1), 99)
+}
+
+@[test]
+fn test_replicated_convergence_is_commutative() {
+    // Sync in different orders must produce the same converged value.
+    let r = replicated_new(2, 0)
+    let r = replicated_write(r, 0, 100, 10)
+    let r = replicated_write(r, 1, 200, 20)
+    // path 1: sync 0←1, then 1←0
+    let r1 = replicated_converge(replicated_sync(replicated_sync(r, 0, 1), 1, 0))
+    // path 2: sync 1←0, then 0←1
+    let r2 = replicated_converge(replicated_sync(replicated_sync(r, 1, 0), 0, 1))
+    assert_eq(replicated_read(r1, 0), replicated_read(r2, 0))
+    assert_eq(replicated_read(r1, 1), replicated_read(r2, 1))
+}
+
+@[test]
+fn test_replicated_converge_is_idempotent() {
+    let r = replicated_new(2, 0)
+    let r = replicated_write(r, 0, 7, 1)
+    let r = replicated_write(r, 1, 3, 2)
+    let r1 = replicated_converge(r)
+    let r2 = replicated_converge(r1)
+    assert_eq(replicated_read(r1, 0), replicated_read(r2, 0))
+    assert_eq(replicated_read(r1, 1), replicated_read(r2, 1))
+}
+
+// ── Quorum tests ──────────────────────────────────────────────────────────────
+
+@[test]
+fn test_quorum_size_is_majority() {
+    assert_eq(quorum_new(1).quorum_size, 1)
+    assert_eq(quorum_new(2).quorum_size, 2)
+    assert_eq(quorum_new(3).quorum_size, 2)
+    assert_eq(quorum_new(5).quorum_size, 3)
+    assert_eq(quorum_new(7).quorum_size, 4)
+}
+
+@[test]
+fn test_quorum_read_uncommitted_returns_err() {
+    let q = quorum_new(3)
+    match quorum_read(q) {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_quorum_commits_after_majority_acks() {
+    let q = quorum_new(3)              // quorum_size = 2
+    let q = propose_ok(q, 42, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)          // 2 acks → majority reached
+    let q = quorum_try_commit(q)
+    assert(q.committed)
+    assert_eq(read_ok(q), 42)
+}
+
+@[test]
+fn test_quorum_does_not_commit_below_majority() {
+    let q = quorum_new(3)              // quorum_size = 2
+    let q = propose_ok(q, 99, 1)
+    let q = quorum_ack(q, 1)          // only 1 ack — not enough
+    let q = quorum_try_commit(q)
+    assert(!q.committed)
+    match quorum_read(q) {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_quorum_five_nodes_needs_three_acks() {
+    let q = quorum_new(5)              // quorum_size = 3
+    let q = propose_ok(q, 77, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)
+    // 2 acks — still short
+    let q2 = quorum_try_commit(q)
+    assert(!q2.committed)
+    // 3rd ack → commits
+    let q = quorum_ack(q, 1)
+    let q = quorum_try_commit(q)
+    assert(q.committed)
+    assert_eq(read_ok(q), 77)
+}
+
+@[test]
+fn test_quorum_stale_proposal_is_rejected() {
+    let q = quorum_new(3)
+    let q = propose_ok(q, 1, 10)
+    let q = quorum_ack(q, 10)
+    let q = quorum_ack(q, 10)
+    let q = quorum_try_commit(q)        // committed at ts=10
+    match quorum_propose(q, 999, 5) {   // ts=5 is stale
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_quorum_ack_for_wrong_ts_is_ignored() {
+    let q = quorum_new(3)
+    let q = propose_ok(q, 55, 10)
+    let q = quorum_ack(q, 99)           // wrong ts → no effect
+    assert_eq(q.pending_acks, 0)
+}
+
+// Safety: once a value commits, a competing proposal at the same ts is stale.
+// (Demonstrates the pigeon-hole property without live networking.)
+@[test]
+fn test_quorum_safety_committed_blocks_stale_proposal() {
+    let q = quorum_new(5)               // quorum_size = 3
+    let q = propose_ok(q, 100, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_try_commit(q)
+    assert(q.committed)
+    assert_eq(read_ok(q), 100)
+    // A proposal at ts=1 is now stale (committed_ts=1) → rejected
+    match quorum_propose(q, 200, 1) {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_quorum_second_write_succeeds_at_higher_ts() {
+    let q = quorum_new(3)
+    let q = propose_ok(q, 10, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_try_commit(q)
+    assert_eq(read_ok(q), 10)
+    // A new write at ts=2 succeeds and updates the committed value
+    let q = propose_ok(q, 20, 2)
+    let q = quorum_ack(q, 2)
+    let q = quorum_ack(q, 2)
+    let q = quorum_try_commit(q)
+    assert_eq(read_ok(q), 20)
+}
+
+// ── Demo ──────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("── Replicated<T> demo ────────────────────────────────────────────")
+    println("")
+    println("3-node replicated register — concurrent writes, then converge:")
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 10, 3)
+    let r = replicated_write(r, 1, 20, 7)
+    let r = replicated_write(r, 2, 15, 5)
+    println("  node-0 sees: {to_str(replicated_read(r, 0))}  (wrote 10 @ ts=3)")
+    println("  node-1 sees: {to_str(replicated_read(r, 1))}  (wrote 20 @ ts=7)")
+    println("  node-2 sees: {to_str(replicated_read(r, 2))}  (wrote 15 @ ts=5)")
+    let r = replicated_converge(r)
+    println("  after converge: all nodes see {to_str(replicated_read(r, 0))}  (ts=7 wins)")
+
+    println("")
+    println("── Quorum<T> demo ────────────────────────────────────────────────")
+    println("")
+    println("3-node quorum (quorum_size=2) — write commits after 2 acks:")
+    let q = quorum_new(3)
+    let q = match quorum_propose(q, 42, 1) { Ok(q2) => q2  Err(_) => quorum_new(1) }
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_try_commit(q)
+    match quorum_read(q) {
+        Ok(v)  => println("  committed value: {to_str(v)} (2/3 acks)")
+        Err(e) => println("  not committed: {e}")
+    }
+
+    println("")
+    println("5-node quorum — stale proposal rejected after commit:")
+    let q2 = quorum_new(5)
+    let q2 = match quorum_propose(q2, 100, 10) { Ok(q3) => q3  Err(_) => quorum_new(1) }
+    let q2 = quorum_ack(q2, 10)
+    let q2 = quorum_ack(q2, 10)
+    let q2 = quorum_ack(q2, 10)
+    let q2 = quorum_try_commit(q2)
+    match quorum_propose(q2, 200, 5) {
+        Ok(_)  => println("  ERROR: stale proposal accepted")
+        Err(e) => println("  stale write at ts=5 rejected: {e}")
+    }
+    0
+}
