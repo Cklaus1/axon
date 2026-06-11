@@ -3509,7 +3509,288 @@ impl<'p> Interp<'p> {
                 );
             }
 
+            // ── Phase 13: Probabilistic distribution builtins ───────────────────
+            // Pure helpers (CDF/PDF/moments) — no RNG, no side effects.
+            // Impure sampling variants share the same section but carry the
+            // "Random" effect row (enforced in builtins.rs is_impure_builtin).
+
+            "gaussian_pdf" => {
+                want(3)?;
+                let mu = as_float(&args[0])?;
+                let sigma = as_float(&args[1])?;
+                let x = as_float(&args[2])?;
+                if sigma <= 0.0 {
+                    return panic(format!("gaussian_pdf: sigma must be > 0 (got {sigma})"));
+                }
+                let z = (x - mu) / sigma;
+                let pdf = (-0.5 * z * z).exp() / (sigma * (2.0 * std::f64::consts::PI).sqrt());
+                ok!(Value::Float(pdf));
+            }
+
+            "gaussian_cdf" => {
+                want(3)?;
+                let mu = as_float(&args[0])?;
+                let sigma = as_float(&args[1])?;
+                let x = as_float(&args[2])?;
+                if sigma <= 0.0 {
+                    return panic(format!("gaussian_cdf: sigma must be > 0 (got {sigma})"));
+                }
+                let z = (x - mu) / (sigma * std::f64::consts::SQRT_2);
+                ok!(Value::Float(0.5 * (1.0 + erf_approx(z))));
+            }
+
+            "gaussian_sample" => {
+                want(2)?;
+                let mu = as_float(&args[0])?;
+                let sigma = as_float(&args[1])?;
+                if sigma <= 0.0 {
+                    return panic(format!("gaussian_sample: sigma must be > 0 (got {sigma})"));
+                }
+                ok!(Value::Float(mu + sigma * std_normal_sample()));
+            }
+
+            "beta_mean" => {
+                want(2)?;
+                let alpha = as_float(&args[0])?;
+                let beta_b = as_float(&args[1])?;
+                if alpha <= 0.0 || beta_b <= 0.0 {
+                    return panic(format!("beta_mean: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                }
+                ok!(Value::Float(alpha / (alpha + beta_b)));
+            }
+
+            "beta_variance" => {
+                want(2)?;
+                let alpha = as_float(&args[0])?;
+                let beta_b = as_float(&args[1])?;
+                if alpha <= 0.0 || beta_b <= 0.0 {
+                    return panic(format!("beta_variance: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                }
+                let s = alpha + beta_b;
+                ok!(Value::Float((alpha * beta_b) / (s * s * (s + 1.0))));
+            }
+
+            "beta_cdf" => {
+                want(3)?;
+                let alpha = as_float(&args[0])?;
+                let beta_b = as_float(&args[1])?;
+                let x = as_float(&args[2])?;
+                if alpha <= 0.0 || beta_b <= 0.0 {
+                    return panic(format!("beta_cdf: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                }
+                ok!(Value::Float(reg_inc_beta(alpha, beta_b, x)));
+            }
+
+            "beta_sample" => {
+                want(2)?;
+                let alpha = as_float(&args[0])?;
+                let beta_b = as_float(&args[1])?;
+                if alpha <= 0.0 || beta_b <= 0.0 {
+                    return panic(format!("beta_sample: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                }
+                // Beta(alpha, beta_b) = Gamma(alpha) / (Gamma(alpha) + Gamma(beta_b))
+                let ga = gamma_sample(alpha);
+                let gb = gamma_sample(beta_b);
+                let s = ga + gb;
+                ok!(Value::Float(if s > 0.0 { ga / s } else { alpha / (alpha + beta_b) }));
+            }
+
+            "categorical_mean" => {
+                want(1)?;
+                let probs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!("categorical_mean: expected [f64], got {}", other.type_name())),
+                };
+                if probs.is_empty() {
+                    return panic("categorical_mean: probs must be non-empty".to_string());
+                }
+                let mean: f64 = probs.iter().enumerate().map(|(i, v)| {
+                    i as f64 * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
+                }).sum();
+                ok!(Value::Float(mean));
+            }
+
+            "categorical_variance" => {
+                want(1)?;
+                let probs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!("categorical_variance: expected [f64], got {}", other.type_name())),
+                };
+                if probs.is_empty() {
+                    return panic("categorical_variance: probs must be non-empty".to_string());
+                }
+                let mean: f64 = probs.iter().enumerate().map(|(i, v)| {
+                    i as f64 * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
+                }).sum();
+                let e_x2: f64 = probs.iter().enumerate().map(|(i, v)| {
+                    (i as f64) * (i as f64) * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
+                }).sum();
+                ok!(Value::Float(e_x2 - mean * mean));
+            }
+
+            "categorical_cdf" => {
+                want(2)?;
+                let probs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!("categorical_cdf: expected [f64], got {}", other.type_name())),
+                };
+                let k = as_int(&args[1])?;
+                if probs.is_empty() {
+                    return panic("categorical_cdf: probs must be non-empty".to_string());
+                }
+                if k < 0 {
+                    ok!(Value::Float(0.0));
+                }
+                let k_usize = k as usize;
+                let cdf: f64 = probs.iter().take(k_usize + 1).map(|v| {
+                    match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
+                }).sum::<f64>().min(1.0);
+                ok!(Value::Float(cdf));
+            }
+
+            "categorical_sample" => {
+                want(1)?;
+                let probs = match &args[0] {
+                    Value::Array(v) => v.clone(),
+                    other => return panic(format!("categorical_sample: expected [f64], got {}", other.type_name())),
+                };
+                if probs.is_empty() {
+                    return panic("categorical_sample: probs must be non-empty".to_string());
+                }
+                let u = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
+                let mut cum = 0.0;
+                let mut result = probs.len() as i64 - 1;
+                for (i, v) in probs.iter().enumerate() {
+                    let p = match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 };
+                    cum += p;
+                    if u < cum {
+                        result = i as i64;
+                        break;
+                    }
+                }
+                ok!(Value::Int(result));
+            }
+
             _ => Ok(None),
         }
     }
+}
+
+// ── Phase 13 math helpers ─────────────────────────────────────────────────────
+
+/// erf(x) approximation — Abramowitz & Stegun 7.1.26, max error ≤ 1.5e-7.
+fn erf_approx(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let ax = x.abs();
+    let t = 1.0 / (1.0 + 0.3275911 * ax);
+    let poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
+        - 0.284496736) * t + 0.254829592) * t;
+    sign * (1.0 - poly * (-ax * ax).exp())
+}
+
+/// Standard normal sample via Box-Muller transform.
+fn std_normal_sample() -> f64 {
+    let u1 = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+    let u2 = (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0;
+    (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos()
+}
+
+/// Gamma(k) sample via Marsaglia-Tsang "squeeze" method.
+/// Works for any k > 0 (uses k < 1 reduction: Gamma(k) = Gamma(k+1) * U^(1/k)).
+fn gamma_sample(k: f64) -> f64 {
+    if k < 1.0 {
+        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        return gamma_sample(k + 1.0) * u.powf(1.0 / k);
+    }
+    let d = k - 1.0 / 3.0;
+    let c = 1.0 / (9.0 * d).sqrt();
+    loop {
+        let x = std_normal_sample();
+        let v_inner = 1.0 + c * x;
+        if v_inner <= 0.0 { continue; }
+        let v = v_inner * v_inner * v_inner;
+        let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
+        let x2 = x * x;
+        if u < 1.0 - 0.0331 * x2 * x2 {
+            return d * v;
+        }
+        if u.ln() < 0.5 * x2 + d * (1.0 - v + v.ln()) {
+            return d * v;
+        }
+    }
+}
+
+/// Regularized incomplete beta I_x(a, b) via Lentz continued fraction.
+/// Returns P(X ≤ x) for X ~ Beta(a, b). Clamped to [0, 1].
+fn reg_inc_beta(a: f64, b: f64, x: f64) -> f64 {
+    if x <= 0.0 { return 0.0; }
+    if x >= 1.0 { return 1.0; }
+    // Use symmetry for numerical stability when x > (a+1)/(a+b+2)
+    let sym = (a + 1.0) / (a + b + 2.0);
+    if x > sym {
+        return 1.0 - reg_inc_beta(b, a, 1.0 - x);
+    }
+    // log of Beta(a, b) via Stirling-accurate log-gamma approximation
+    let lbeta_val = log_gamma(a) + log_gamma(b) - log_gamma(a + b);
+    let front = (a * x.ln() + b * (1.0 - x).ln() - lbeta_val).exp() / a;
+    front * beta_cf(a, b, x)
+}
+
+/// Log-gamma via Lanczos approximation (g=7, n=9 coefficients, ~15 digits).
+fn log_gamma(z: f64) -> f64 {
+    const G: f64 = 7.0;
+    const C: [f64; 9] = [
+        0.999_999_999_999_809_93,
+        676.520_368_121_885_10,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_13,
+        -176.615_029_162_140_60,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_572e-6,
+        1.505_632_735_149_312_2e-7,
+    ];
+    if z < 0.5 {
+        // Reflection: Γ(z)Γ(1-z) = π/sin(πz)
+        std::f64::consts::PI.ln() - (std::f64::consts::PI * z).sin().ln() - log_gamma(1.0 - z)
+    } else {
+        let z = z - 1.0;
+        let x = C[0] + C[1..].iter().enumerate().map(|(i, &c)| c / (z + i as f64 + 1.0)).sum::<f64>();
+        let t = z + G + 0.5;
+        (2.0 * std::f64::consts::PI).sqrt().ln() + x.ln() + (z + 0.5) * t.ln() - t
+    }
+}
+
+/// Lentz's continued fraction for the incomplete beta function.
+/// Evaluates the CF expansion convergent to beta_cf(a, b, x).
+fn beta_cf(a: f64, b: f64, x: f64) -> f64 {
+    const MAX_ITER: usize = 200;
+    const EPS: f64 = 3.0e-7;
+    const TINY: f64 = 1.0e-30;
+    let qab = a + b;
+    let qap = a + 1.0;
+    let qam = a - 1.0;
+    let mut c = 1.0_f64;
+    let mut d = (1.0 - qab * x / qap).abs().max(TINY);
+    d = 1.0 / d;
+    let mut h = d;
+    for m in 1..=MAX_ITER {
+        let m = m as f64;
+        let m2 = 2.0 * m;
+        // Even step
+        let aa = m * (b - m) * x / ((qam + m2) * (a + m2));
+        d = (1.0 + aa * d).abs().max(TINY);
+        c = (1.0 + aa / c).abs().max(TINY);
+        d = 1.0 / d;
+        h *= d * c;
+        // Odd step
+        let aa = -(a + m) * (qab + m) * x / ((a + m2) * (qap + m2));
+        d = (1.0 + aa * d).abs().max(TINY);
+        c = (1.0 + aa / c).abs().max(TINY);
+        d = 1.0 / d;
+        let delta = d * c;
+        h *= delta;
+        if (delta - 1.0).abs() < EPS { break; }
+    }
+    h
 }

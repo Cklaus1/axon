@@ -1,0 +1,192 @@
+// Tier-1 stdlib: Belief — discrete Bayesian probabilistic state.
+//
+// A Belief is a probability distribution over a finite set of named hypotheses.
+// Supports Bayesian update (`belief_observe`) and MAP/entropy extraction.
+//
+// Phase 13: Slice 1 — userland probabilistic state type.
+// Uses `categorical_*` distribution builtins + standard Axon array builtins.
+//
+//   axon test examples/stdlib/belief.ax   # run @[test]s
+//   axon run  examples/stdlib/belief.ax   # demo
+
+// ── Belief type ───────────────────────────────────────────────────────────────
+
+type Belief = { labels: [str], probs: [f64] }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn approx_eq_b(a: f64, b: f64, tol: f64) -> bool {
+    let d = a - b
+    d >= -tol && d <= tol
+}
+
+// ── Constructors ──────────────────────────────────────────────────────────────
+
+// Uniform belief over `labels`.
+fn belief_uniform(labels: [str]) -> Belief {
+    let n = len(labels)
+    assert(n > 0)
+    let p = 1.0 / (n as f64)
+    let probs = arr_repeat(p, n)
+    Belief { labels: labels, probs: probs }
+}
+
+// Belief from explicit labels + probability masses.
+fn belief_new(labels: [str], probs: [f64]) -> Belief {
+    assert(len(labels) == len(probs))
+    Belief { labels: labels, probs: probs }
+}
+
+// ── Queries ───────────────────────────────────────────────────────────────────
+
+// Number of hypotheses.
+fn belief_size(b: Belief) -> i64 {
+    len(b.labels)
+}
+
+// Probability of the hypothesis labelled `name` (0.0 if absent).
+fn belief_prob(b: Belief, name: str) -> f64 {
+    let n = len(b.labels)
+    let i = 0
+    let found = 0.0
+    while i < n {
+        if str_eq(b.labels[i], name) {
+            found = b.probs[i]
+        }
+        i = i + 1
+    }
+    found
+}
+
+// Index of the most probable hypothesis.
+fn belief_map_index(b: Belief) -> i64 {
+    arr_argmax_f64(b.probs)
+}
+
+// Label of the most probable hypothesis.
+fn belief_map(b: Belief) -> str {
+    let idx = belief_map_index(b)
+    b.labels[idx]
+}
+
+// Entropy -sum(p*ln(p)) in nats (0 for a degenerate distribution).
+fn belief_entropy(b: Belief) -> f64 {
+    let n = len(b.probs)
+    let h = 0.0
+    let i = 0
+    while i < n {
+        let p = b.probs[i]
+        if p > 0.0 {
+            h = h - p * ln(p)
+        }
+        i = i + 1
+    }
+    h
+}
+
+// Sample a hypothesis index (impure: Random effect).
+fn belief_sample_index(b: Belief) -> i64 {
+    categorical_sample(b.probs)
+}
+
+// Sample a hypothesis label (impure: Random effect).
+fn belief_sample(b: Belief) -> str {
+    b.labels[belief_sample_index(b)]
+}
+
+// ── Bayesian update ───────────────────────────────────────────────────────────
+
+// Multiply prior probs element-wise by likelihoods and renormalize.
+// Returns the posterior Belief.
+fn belief_observe(b: Belief, likelihoods: [f64]) -> Belief {
+    let n = len(b.probs)
+    assert(len(likelihoods) == n)
+    // Compute unnormalized weights: zip probs with likelihoods, then multiply
+    let pairs = arr_zip(b.probs, likelihoods)
+    let unnorm = arr_map(pairs, |pair| pair.0 * pair.1)
+    let total = arr_sum_f64(unnorm)
+    assert(total > 0.0)
+    let normalized = arr_map(unnorm, |p| p / total)
+    Belief { labels: b.labels, probs: normalized }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_belief_uniform_sums_to_one() {
+    let b = belief_uniform(["a", "b", "c", "d"])
+    let total = arr_sum_f64(b.probs)
+    assert(approx_eq_b(total, 1.0, 0.001))
+}
+
+@[test]
+fn test_belief_uniform_equal_probs() {
+    let b = belief_uniform(["x", "y"])
+    assert(approx_eq_b(b.probs[0], 0.5, 0.001))
+    assert(approx_eq_b(b.probs[1], 0.5, 0.001))
+}
+
+@[test]
+fn test_belief_prob_lookup() {
+    let b = belief_new(["cat", "dog", "fish"], [0.5, 0.3, 0.2])
+    assert(approx_eq_b(belief_prob(b, "cat"), 0.5, 0.001))
+    assert(approx_eq_b(belief_prob(b, "dog"), 0.3, 0.001))
+    assert(approx_eq_b(belief_prob(b, "fish"), 0.2, 0.001))
+    assert(approx_eq_b(belief_prob(b, "bird"), 0.0, 0.001))
+}
+
+@[test]
+fn test_belief_map() {
+    let b = belief_new(["A", "B", "C"], [0.1, 0.7, 0.2])
+    assert(str_eq(belief_map(b), "B"))
+}
+
+@[test]
+fn test_belief_map_index() {
+    let b = belief_new(["p", "q", "r"], [0.3, 0.2, 0.5])
+    assert_eq(belief_map_index(b), 2)
+}
+
+@[test]
+fn test_belief_entropy_uniform_exceeds_degenerate() {
+    let b_uniform = belief_new(["a", "b", "c", "d"], [0.25, 0.25, 0.25, 0.25])
+    let b_degenerate = belief_new(["a", "b"], [1.0, 0.0])
+    assert(belief_entropy(b_uniform) > belief_entropy(b_degenerate))
+}
+
+@[test]
+fn test_belief_entropy_degenerate_is_zero() {
+    let b = belief_new(["only"], [1.0])
+    assert(approx_eq_b(belief_entropy(b), 0.0, 0.001))
+}
+
+@[test]
+fn test_belief_observe_basic() {
+    // Prior 50/50, evidence: H0 is 4x more likely than H1
+    let prior = belief_new(["H0", "H1"], [0.5, 0.5])
+    let posterior = belief_observe(prior, [0.8, 0.2])
+    assert(approx_eq_b(posterior.probs[0], 0.8, 0.001))
+    assert(approx_eq_b(posterior.probs[1], 0.2, 0.001))
+}
+
+@[test]
+fn test_belief_observe_updates_map() {
+    let prior = belief_new(["A", "B", "C"], [0.33, 0.33, 0.34])
+    let posterior = belief_observe(prior, [0.1, 0.8, 0.1])
+    assert(str_eq(belief_map(posterior), "B"))
+}
+
+@[test]
+fn test_belief_size() {
+    let b = belief_new(["a", "b", "c"], [0.2, 0.3, 0.5])
+    assert_eq(belief_size(b), 3)
+}
+
+fn main() {
+    let prior = belief_new(["cloudy", "sunny", "rainy"], [0.3, 0.4, 0.3])
+    println("Prior MAP: {belief_map(prior)}")
+    println("Entropy: {to_str_f64(belief_entropy(prior))}")
+    let posterior = belief_observe(prior, [0.7, 0.1, 0.9])
+    println("Posterior MAP: {belief_map(posterior)}")
+    println("P(rainy|obs): {to_str_f64(posterior.probs[2])}")
+}

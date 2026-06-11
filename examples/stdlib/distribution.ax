@@ -1,0 +1,278 @@
+// Tier-1 stdlib: Distribution — userland wrappers over the Phase-13 distribution builtins.
+//
+// Three tractable distribution families with validated constructors, pure query
+// functions, and impure sampling functions (effect row: Random).
+//
+// Distribution builtins are defined in spec/compiler-phase13.md §2.  This file
+// provides the recommended userland interface — callers should use these structs
+// and helpers rather than calling the raw builtins directly.
+//
+//   axon test examples/stdlib/distribution.ax   # run the @[test]s
+//   axon run  examples/stdlib/distribution.ax   # demo
+
+// ── Struct types ──────────────────────────────────────────────────────────────
+
+type Gaussian    = { mu: f64, sigma: f64 }
+type Beta        = { alpha: f64, beta_b: f64 }
+type Categorical = { probs: [f64] }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+// Approximate equality within a tolerance — used in tests to compare f64 values.
+fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
+    let diff = a - b
+    diff >= -tol && diff <= tol
+}
+
+// Sum a [f64] array.  Wraps arr_sum_f64 for brevity.
+fn sum_f64_arr(xs: [f64]) -> f64 {
+    arr_sum_f64(xs)
+}
+
+// ── Gaussian constructors and queries ─────────────────────────────────────────
+
+// Construct a Gaussian distribution.  Panics if sigma <= 0.0.
+fn gaussian_new(mu: f64, sigma: f64) -> Gaussian {
+    if sigma <= 0.0 {
+        println("gaussian_new: sigma must be > 0.0")
+        assert(false)
+    }
+    Gaussian { mu: mu, sigma: sigma }
+}
+
+// Mean of the distribution.
+fn gaussian_mean(g: Gaussian) -> f64 {
+    g.mu
+}
+
+// Standard deviation of the distribution.
+fn gaussian_std(g: Gaussian) -> f64 {
+    g.sigma
+}
+
+// P(X <= x) for this Gaussian — delegates to gaussian_cdf.
+fn gaussian_prob_lte(g: Gaussian, x: f64) -> f64 {
+    gaussian_cdf(g.mu, g.sigma, x)
+}
+
+// Probability density at x — delegates to gaussian_pdf.
+fn gaussian_density(g: Gaussian, x: f64) -> f64 {
+    gaussian_pdf(g.mu, g.sigma, x)
+}
+
+// ── Beta constructors and queries ─────────────────────────────────────────────
+
+// Construct a Beta distribution.  Panics if alpha <= 0.0 or beta_b <= 0.0.
+fn beta_new(alpha: f64, beta_b: f64) -> Beta {
+    if alpha <= 0.0 {
+        println("beta_new: alpha must be > 0.0")
+        assert(false)
+    }
+    if beta_b <= 0.0 {
+        println("beta_new: beta_b must be > 0.0")
+        assert(false)
+    }
+    Beta { alpha: alpha, beta_b: beta_b }
+}
+
+// Mean (expected value) of the Beta distribution.
+fn beta_mu(b: Beta) -> f64 {
+    beta_mean(b.alpha, b.beta_b)
+}
+
+// Variance of the Beta distribution.
+fn beta_sigma2(b: Beta) -> f64 {
+    beta_variance(b.alpha, b.beta_b)
+}
+
+// P(X <= x) for this Beta distribution.
+fn beta_prob_lte(b: Beta, x: f64) -> f64 {
+    beta_cdf(b.alpha, b.beta_b, x)
+}
+
+// ── Categorical constructors and queries ──────────────────────────────────────
+
+// Construct a Categorical distribution.
+// Panics if probs is empty or if the sum of probs is not within 0.001 of 1.0.
+fn categorical_new(probs: [f64]) -> Categorical {
+    if len(probs) == 0 {
+        println("categorical_new: probs must not be empty")
+        assert(false)
+    }
+    let s = sum_f64_arr(probs)
+    let diff = s - 1.0
+    let ok = diff >= -0.001 && diff <= 0.001
+    if !ok {
+        println("categorical_new: probs must sum to 1.0 (within 0.001)")
+        assert(false)
+    }
+    Categorical { probs: probs }
+}
+
+// Mean (expected value) of the Categorical distribution.
+fn categorical_mu(c: Categorical) -> f64 {
+    categorical_mean(c.probs)
+}
+
+// Variance of the Categorical distribution.
+fn categorical_sigma2(c: Categorical) -> f64 {
+    categorical_variance(c.probs)
+}
+
+// P(X <= k) for this Categorical distribution.
+fn categorical_prob_lte(c: Categorical, k: i64) -> f64 {
+    categorical_cdf(c.probs, k)
+}
+
+// ── Sampling functions (effect row: Random) ───────────────────────────────────
+
+// Draw one sample from the Gaussian.  Non-deterministic; use AXON_SEED for replay.
+fn dist_sample_gaussian(g: Gaussian) -> f64 {
+    gaussian_sample(g.mu, g.sigma)
+}
+
+// Draw one sample from the Beta distribution.  Returns a value in [0.0, 1.0].
+fn dist_sample_beta(b: Beta) -> f64 {
+    beta_sample(b.alpha, b.beta_b)
+}
+
+// Draw one index from the Categorical distribution.  Returns a value in [0, len(probs)).
+fn dist_sample_categorical(c: Categorical) -> i64 {
+    categorical_sample(c.probs)
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_gaussian_mean_and_std() {
+    let g = gaussian_new(3.5, 1.2)
+    assert(approx_eq(gaussian_mean(g), 3.5, 0.0001))
+    assert(approx_eq(gaussian_std(g), 1.2, 0.0001))
+}
+
+@[test]
+fn test_gaussian_prob_lte_standard_normal_at_zero() {
+    // P(X <= 0) for the standard normal is exactly 0.5.
+    let g = gaussian_new(0.0, 1.0)
+    assert(approx_eq(gaussian_prob_lte(g, 0.0), 0.5, 0.001))
+}
+
+@[test]
+fn test_gaussian_density_standard_normal_at_zero() {
+    // The standard-normal PDF at 0 is 1/sqrt(2*pi) ≈ 0.39894.
+    let g = gaussian_new(0.0, 1.0)
+    assert(approx_eq(gaussian_density(g, 0.0), 0.39894, 0.0001))
+}
+
+@[test]
+fn test_gaussian_cdf_shifts_with_mu() {
+    // P(X <= mu) = 0.5 regardless of mu (by symmetry).
+    let g = gaussian_new(10.0, 2.0)
+    assert(approx_eq(gaussian_prob_lte(g, 10.0), 0.5, 0.001))
+}
+
+@[test]
+fn test_beta_mu_uniform() {
+    // E[Beta(1, 1)] = 1/(1+1) = 0.5.
+    let b = beta_new(1.0, 1.0)
+    assert(approx_eq(beta_mu(b), 0.5, 0.0001))
+}
+
+@[test]
+fn test_beta_mu_asymmetric() {
+    // E[Beta(2, 8)] = 2/10 = 0.2.
+    let b = beta_new(2.0, 8.0)
+    assert(approx_eq(beta_mu(b), 0.2, 0.0001))
+}
+
+@[test]
+fn test_beta_variance() {
+    // Var[Beta(2, 2)] = (2*2)/((4)^2 * 5) = 4/80 = 0.05.
+    let b = beta_new(2.0, 2.0)
+    assert(approx_eq(beta_sigma2(b), 0.05, 0.0001))
+}
+
+@[test]
+fn test_beta_cdf_uniform_at_half() {
+    // Beta(1,1) is Uniform[0,1]; P(X <= 0.5) = 0.5.
+    let b = beta_new(1.0, 1.0)
+    assert(approx_eq(beta_prob_lte(b, 0.5), 0.5, 0.001))
+}
+
+@[test]
+fn test_beta_cdf_boundary() {
+    let b = beta_new(2.0, 3.0)
+    // P(X <= 0.0) = 0.0 and P(X <= 1.0) = 1.0.
+    assert(approx_eq(beta_prob_lte(b, 0.0), 0.0, 0.0001))
+    assert(approx_eq(beta_prob_lte(b, 1.0), 1.0, 0.0001))
+}
+
+@[test]
+fn test_categorical_mu_uniform() {
+    // Four equally likely outcomes {0, 1, 2, 3}: E[X] = (0+1+2+3)/4 = 1.5.
+    let c = categorical_new([0.25, 0.25, 0.25, 0.25])
+    assert(approx_eq(categorical_mu(c), 1.5, 0.0001))
+}
+
+@[test]
+fn test_categorical_mu_degenerate() {
+    // Degenerate distribution: P(X=2) = 1.  E[X] = 2.0.
+    let c = categorical_new([0.0, 0.0, 1.0])
+    assert(approx_eq(categorical_mu(c), 2.0, 0.0001))
+}
+
+@[test]
+fn test_categorical_cdf_is_cumulative() {
+    // probs = [0.1, 0.4, 0.3, 0.2].
+    // P(X <= 0) = 0.1, P(X <= 1) = 0.5, P(X <= 2) = 0.8, P(X <= 3) = 1.0.
+    let c = categorical_new([0.1, 0.4, 0.3, 0.2])
+    assert(approx_eq(categorical_prob_lte(c, 0), 0.1, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 1), 0.5, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 2), 0.8, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 3), 1.0, 0.0001))
+}
+
+@[test]
+fn test_categorical_cdf_out_of_range() {
+    // P(X <= -1) = 0.0; P(X <= 99) = 1.0.
+    let c = categorical_new([0.3, 0.7])
+    assert(approx_eq(categorical_prob_lte(c, -1), 0.0, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 99), 1.0, 0.0001))
+}
+
+@[test]
+fn test_beta_sample_is_in_unit_interval() {
+    // beta_sample returns values in [0.0, 1.0].
+    let b = beta_new(1.0, 1.0)
+    let s = dist_sample_beta(b)
+    assert(s >= 0.0 && s <= 1.0)
+}
+
+@[test]
+fn test_categorical_sample_degenerate_always_returns_one() {
+    // P(X=1) = 1.0 — sampling must always yield 1.
+    let c = categorical_new([0.0, 1.0])
+    let s = dist_sample_categorical(c)
+    assert_eq(s, 1)
+}
+
+fn main() -> i64 {
+    // Demo: moments and a sample for each distribution family.
+    let g = gaussian_new(0.0, 1.0)
+    println("Gaussian(0, 1): mean={to_str_f64(gaussian_mean(g))}, std={to_str_f64(gaussian_std(g))}")
+    println("  P(X <= 0)     = {to_str_f64(gaussian_prob_lte(g, 0.0))}  (expect ≈0.5)")
+    println("  PDF at 0      = {to_str_f64(gaussian_density(g, 0.0))}  (expect ≈0.3989)")
+
+    let b = beta_new(2.0, 5.0)
+    println("Beta(2, 5):   mean={to_str_f64(beta_mu(b))}, var={to_str_f64(beta_sigma2(b))}")
+    println("  P(X <= 0.5)   = {to_str_f64(beta_prob_lte(b, 0.5))}")
+    let bs = dist_sample_beta(b)
+    println("  sample        = {to_str_f64(bs)}  (in [0,1])")
+
+    let c = categorical_new([0.1, 0.4, 0.3, 0.2])
+    println("Categorical([0.1,0.4,0.3,0.2]): mean={to_str_f64(categorical_mu(c))}, var={to_str_f64(categorical_sigma2(c))}")
+    println("  P(X <= 1)     = {to_str_f64(categorical_prob_lte(c, 1))}  (expect 0.5)")
+    let cs = dist_sample_categorical(c)
+    println("  sample        = {to_str(cs)}  (in {{0,1,2,3}})")
+    0
+}

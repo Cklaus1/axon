@@ -1494,6 +1494,75 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "Drop the recorded provenance for the @[adaptive] function `name` so a follow-up `goal_run` starts fresh. Returns the count of evicted records.",
     },
+    // ── Phase 13: Probabilistic distribution builtins ────────────────────────
+    // Pure functions (empty effect row) — moment computations and CDF/PDF:
+    BuiltinFn {
+        name: "gaussian_pdf",
+        params: &[("mu", "f64"), ("sigma", "f64"), ("x", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Gaussian probability density function at `x` for N(mu, sigma²). Panics if sigma ≤ 0. Pure.",
+    },
+    BuiltinFn {
+        name: "gaussian_cdf",
+        params: &[("mu", "f64"), ("sigma", "f64"), ("x", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Gaussian cumulative distribution P(X ≤ x) for X ~ N(mu, sigma²). Uses erf approximation (max error ≤ 1.5e-7). Panics if sigma ≤ 0. Pure.",
+    },
+    BuiltinFn {
+        name: "beta_mean",
+        params: &[("alpha", "f64"), ("beta_b", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Expected value of Beta(alpha, beta_b) = alpha / (alpha + beta_b). Panics if alpha ≤ 0 or beta_b ≤ 0. Pure.",
+    },
+    BuiltinFn {
+        name: "beta_variance",
+        params: &[("alpha", "f64"), ("beta_b", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Variance of Beta(alpha, beta_b) = alpha*beta_b / ((alpha+beta_b)²*(alpha+beta_b+1)). Panics if alpha ≤ 0 or beta_b ≤ 0. Pure.",
+    },
+    BuiltinFn {
+        name: "beta_cdf",
+        params: &[("alpha", "f64"), ("beta_b", "f64"), ("x", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Beta cumulative distribution P(X ≤ x) for X ~ Beta(alpha, beta_b). Uses regularized incomplete beta (Lentz continued-fraction). Panics if alpha ≤ 0 or beta_b ≤ 0. Returns 0 for x ≤ 0, 1 for x ≥ 1. Pure.",
+    },
+    BuiltinFn {
+        name: "categorical_mean",
+        params: &[("probs", "[f64]")],
+        ret: "f64",
+        doc: "Phase 13: Expected value of Categorical(probs) treating indices as values: sum(i * probs[i]). Panics on empty probs. Pure.",
+    },
+    BuiltinFn {
+        name: "categorical_variance",
+        params: &[("probs", "[f64]")],
+        ret: "f64",
+        doc: "Phase 13: Variance of Categorical(probs): E[X²] - E[X]². Panics on empty probs. Pure.",
+    },
+    BuiltinFn {
+        name: "categorical_cdf",
+        params: &[("probs", "[f64]"), ("k", "i64")],
+        ret: "f64",
+        doc: "Phase 13: Categorical cumulative distribution P(X ≤ k) = sum(probs[0..=k]). Returns 0 for k < 0, 1 for k ≥ len(probs). Panics on empty probs. Pure.",
+    },
+    // Impure (Random effect row) — sampling:
+    BuiltinFn {
+        name: "gaussian_sample",
+        params: &[("mu", "f64"), ("sigma", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Sample from N(mu, sigma²) using Box-Muller transform. Panics if sigma ≤ 0. Impure: Random effect.",
+    },
+    BuiltinFn {
+        name: "beta_sample",
+        params: &[("alpha", "f64"), ("beta_b", "f64")],
+        ret: "f64",
+        doc: "Phase 13: Sample from Beta(alpha, beta_b) via Gamma ratio (Marsaglia-Tsang). Returns value in [0, 1]. Panics if alpha ≤ 0 or beta_b ≤ 0. Impure: Random effect.",
+    },
+    BuiltinFn {
+        name: "categorical_sample",
+        params: &[("probs", "[f64]")],
+        ret: "i64",
+        doc: "Phase 13: Sample from Categorical(probs) — returns index i with probability probs[i]. Panics on empty probs. Impure: Random effect.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1564,6 +1633,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "chan_new" | "chan_send" | "chan_recv"
             // F5 sandbox execution — runs user code that may have effects (modeled as IO)
             | "sandbox_run"
+            // Phase 13: distribution sampling (Random effect)
+            | "gaussian_sample" | "beta_sample" | "categorical_sample"
     )
 }
 
@@ -1592,6 +1663,9 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
 
         // Randomness / nondeterminism.
         "random_i64" | "random_f64" => &["Random"],
+
+        // Phase 13: distribution sampling.
+        "gaussian_sample" | "beta_sample" | "categorical_sample" => &["Random"],
 
         // Online optimization — goal_run can re-call adaptive fns, log, and read
         // provenance, so it spans {AI, Net, IO}; the read-only goal_* accessors
