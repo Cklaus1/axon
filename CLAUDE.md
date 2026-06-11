@@ -32,6 +32,13 @@ axon trace                                # summarize the provenance log: per-@[
 axon trace --ai                           # AI-call audit trail: per-fn ai_complete calls, tier→model, mode (live/mock/replay/fallback), metered cost, and the goal each served (--json → axon-ai-audit/1)
 axon build examples/hello.ax              # native AOT binary   (codegen is now DEFAULT; builds in ~3s — see BUILD_RESOLVED.md)
 axon --version                            # e.g. "axon 0.1.0 (02cd617)" — semver + git SHA (build.rs); "-dirty" if uncommitted
+
+# Phase-10 Hello-Goal CLI flow (compile → review → approve → deploy):
+axon intent compile examples/goals/hello-goal.md   # prose .md → typed .ax skeleton (--out path; --json → axon-intent-compile/1)
+axon ast review    examples/goals/hello-goal.ax    # type-check + list fns/attrs/effects (--json → axon-ast-review/1)
+axon ast approve   examples/goals/hello-goal.ax    # record human sign-off (writes <file>.ax.approved)
+axon deploy        examples/goals/hello-goal.ax    # safety-gate pipeline → run (--gate verify; --json → axon-deploy/1)
+axon redteam       examples/goals/hello-goal.ax    # run redteam_check fn (--json → axon-redteam/1)
 ```
 
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
@@ -221,6 +228,7 @@ fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 
 | 9 | ✅ Complete | **Replay, audit, sandbox.** Slice 1 LANDED: every `axon run` / `axon goal` stamps a `run_start` event to the provenance log (run-id + effective RNG seed + source path); `axon trace --replay <run-id>` looks up the record and re-executes the source with the same seed → deterministic `(Trace, Seed)` pair for every run (F2 CLI wrapper, ROADMAP §9.5). The run-id is printed to stderr and is the replay handle. **F3 LANDED (Slice 2):** every capability audit record (`ai_call`, `agent_action`) now carries `effect_row` (the row-polymorphic effect tag: "AI"/"FS"/"Net"/"Exec") and `principal` (the name of the executing principal, default "root"). `principal_activate(handle)` sets the current principal for audit attribution; `principal_current_name()` reads it back. `axon trace --ai --json` schema bumped to `axon-ai-audit/2`; human view shows `principal:` when non-root. **F5 LANDED (Slice 3):** `Sandbox<P>` runtime effect enforcement — `sandbox_create(principal, allowed_effects)` registers a sandbox with a comma-separated effect ceiling; `sandbox_run(sandbox, fn_name, arg)` executes a named function inside it; any builtin whose effect row exceeds the ceiling raises `SandboxViolation` (exit 8, distinct from panic/verify/halt/ai-policy/refine/goal-budget). Interp-only (codegen E0910-refused). Phase 9 is now complete. |
 | 9 (Layer-3) | 🚧 Prototype | Self-improving compiler: AI-authored passes as DATA (`RewriteSpec` DSL); 4-gate firewall (`verify_pass`: G1 interp-oracle correctness, G2 capability-monotonicity, G3 test-preservation, G4 perf) rejects unsound paths. Closed rule vocabulary: `fold-int-literal`, `fold-arith-identity`, `simplify-bool-not`, `fold-const-branch`, `fold-logical` (red-teamed), and `fold-bound-builtin` (min/max/abs over literals, checked-abs preserves the i64::MIN panic, firewall-cleared with a built-in red-team) |
 | 10 v0–v1 | ✅ Landed | Codegen-free tree-walking interpreter (`interp.rs`) → `axon run`/`test`/`goal`; prose→AST surface compiler (`axon goal`, lifts ` ```axon ` blocks); ASI builtins in the interpreter. Native codegen build diagnosed as serial LLVM-IR-gen (`BUILD_DIAGNOSIS.md`); fix prototyped (`CODEGEN_WRAPPER_PROTOTYPE.md`) |
+| 10 v1.1 | ✅ Landed | **Phase-10 Hello-Goal CLI flow:** `axon intent compile` (prose .md → typed .ax; `--json → axon-intent-compile/1`), `axon ast review` (type-check + structured item list; `--json → axon-ast-review/1`), `axon ast approve` (human sign-off → `.ax.approved` marker), `axon deploy` (safety-gate pipeline: type-check → run, `--gate verify` treats exit 3 as blocking; `--json → axon-deploy/1`), `axon redteam` (execute `redteam_check` fn; `--json → axon-redteam/1`). All five Phase-10 CLI verbs now exist; `*.ax.approved` in `.gitignore`. **Remaining:** LLM-driven body generation (v1 lifts author-written blocks; v1.1 still stubs missing bodies with `TODO:`). |
 
 ## Forward Roadmap
 

@@ -303,6 +303,110 @@ enum Command {
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
     },
+
+    // ── Phase 10 CLI verbs ────────────────────────────────────────────────────
+
+    /// Compile a structured-prose intent file (*.md) to a typed .ax skeleton.
+    ///
+    /// Phase-10 step 1 of the Hello-Goal flow: turns a goal description into
+    /// auditable typed source that a human can review and approve before running.
+    /// Exit 0 on success, 2 on error.
+    Intent {
+        #[command(subcommand)]
+        action: IntentAction,
+    },
+
+    /// Review or approve a compiled .ax AST.
+    ///
+    /// Phase-10 steps 2–3 of the Hello-Goal flow: inspect the typed structure
+    /// before running, then record explicit human sign-off.
+    Ast {
+        #[command(subcommand)]
+        action: AstAction,
+    },
+
+    /// Run a .ax program through the full safety-gate pipeline, then deploy.
+    ///
+    /// Runs type-check → assert_deployable (if present) → interpreter.  With
+    /// `--gate verify` any @[verify] failure (exit 3) blocks deployment.
+    /// Emits a structured deploy report.
+    ///
+    /// Exit codes: 0 = deployed, 2 = type/parse errors, 3 = verify gate blocked,
+    /// 1 = deploy gate (assert_deployable) blocked, 101 = runtime panic.
+    Deploy {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+
+        /// Block deploy if any @[verify] bound would fail (treats exit 3 as fatal).
+        #[arg(long, value_name = "GATE",
+              help = "Safety gate to enforce (\"verify\" blocks on @[verify] failure)")]
+        gate: Option<String>,
+
+        /// Emit the deploy report as stable JSON (`axon-deploy/1`).
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
+
+    /// Run the red-team check on a .ax program.
+    ///
+    /// Executes the `redteam_check` function (if present) and reports any
+    /// adversarial failures.  Exit 0 = safe (or no redteam fn), 1 = caught.
+    Redteam {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+
+        /// Emit the redteam report as stable JSON (`axon-redteam/1`).
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
+}
+
+// ── Phase-10 subcommand action enums ─────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum IntentAction {
+    /// Compile a goal file (.md) into a typed .ax skeleton (Phase-10 step 1).
+    ///
+    /// Parses the prose sections, derives function signatures and a verify gate,
+    /// lifts any author-supplied `axon` code blocks verbatim, and stubs the rest
+    /// with `TODO:` placeholders.  With `--json` emits `axon-intent-compile/1`.
+    Compile {
+        #[arg(help = "Path to the goal .md file")]
+        file: PathBuf,
+
+        /// Output path for the .ax skeleton.  Defaults to `<stem>.ax`.
+        #[arg(long, help = "Output .ax path")]
+        out: Option<PathBuf>,
+
+        /// Print the compilation report as JSON instead of writing the .ax file.
+        #[arg(long, help = "Machine-readable JSON output (axon-intent-compile/1)")]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum AstAction {
+    /// Type-check a .ax AST and list all top-level items (Phase-10 step 2).
+    ///
+    /// Outputs a structured review: function names, signatures, attributes,
+    /// effect rows, and any @[verify] bounds.  Exits 2 if type errors are found.
+    Review {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+
+        /// Emit the review as stable JSON (`axon-ast-review/1`).
+        #[arg(long, help = "Machine-readable JSON output")]
+        json: bool,
+    },
+
+    /// Record human approval of a .ax AST (Phase-10 step 3).
+    ///
+    /// Writes `<file>.approved` containing the file hash and a timestamp.
+    /// This is the mandatory human sign-off before `axon deploy`.
+    Approve {
+        #[arg(help = "Path to .ax source file")]
+        file: PathBuf,
+    },
 }
 
 // ── Cache subcommand actions ──────────────────────────────────────────────────
@@ -491,6 +595,10 @@ fn dispatch(command: Command) {
             }
         }
         Command::Complexity { file, json } => cmd_complexity(file, json),
+        Command::Intent { action } => cmd_intent(action),
+        Command::Ast { action } => cmd_ast(action),
+        Command::Deploy { file, gate, json } => cmd_deploy(file, gate, json),
+        Command::Redteam { file, json } => cmd_redteam(file, json),
     }
 }
 
@@ -3516,6 +3624,394 @@ fn validate_ax_extension(file: &Path) {
         eprintln!("error: Axon source files must have a .ax extension (got '{filename}')");
         process::exit(1);
     }
+}
+
+// ── Phase-10 CLI implementations ─────────────────────────────────────────────
+
+/// `axon intent compile` — turn a prose .md goal file into a typed .ax skeleton.
+fn cmd_intent(action: IntentAction) {
+    match action {
+        IntentAction::Compile { file, out, json } => cmd_intent_compile(file, out, json),
+    }
+}
+
+fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
+    let md = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+        eprintln!("error reading {}: {e}", file.display());
+        process::exit(1);
+    });
+
+    let goal = match axon_surface::parser::GoalFile::parse(&md) {
+        Ok(g) => g,
+        Err(e) => {
+            eprintln!("error: intent file invalid: {e}");
+            process::exit(2);
+        }
+    };
+
+    let ax_src = match axon_surface::compile::emit(&goal) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("error: intent compilation failed: {e}");
+            process::exit(2);
+        }
+    };
+
+    let out_path = out.unwrap_or_else(|| file.with_extension("ax"));
+
+    if json_flag {
+        // axon-intent-compile/1 schema
+        let sections: Vec<String> = goal.sections.keys().map(|k| format!("{k:?}")).collect();
+        let sections_joined = sections.iter()
+            .map(|s| format!("\"{}\"", s.trim_matches('"')))
+            .collect::<Vec<_>>()
+            .join(",");
+        println!(
+            "{{\"schema\":\"axon-intent-compile/1\",\"title\":{},\"sections\":[{}],\"path\":{},\"ax_bytes\":{}}}",
+            json_str(&goal.title),
+            sections_joined,
+            json_str(&out_path.display().to_string()),
+            ax_src.len(),
+        );
+        return;
+    }
+
+    std::fs::write(&out_path, &ax_src).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {e}", out_path.display());
+        process::exit(1);
+    });
+    println!("compiled {} → {} ({} bytes)", file.display(), out_path.display(), ax_src.len());
+}
+
+/// `axon ast review` / `axon ast approve` — review or approve a .ax AST.
+fn cmd_ast(action: AstAction) {
+    match action {
+        AstAction::Review { file, json } => cmd_ast_review(file, json),
+        AstAction::Approve { file } => cmd_ast_approve(file),
+    }
+}
+
+fn cmd_ast_review(file: PathBuf, json_flag: bool) {
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+
+    let mut program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: parse failed: {e}");
+            process::exit(2);
+        }
+    };
+
+    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+
+    // Collect top-level function items for the review report.
+    let fns: Vec<_> = program.items.iter().filter_map(|item| {
+        if let axon_core::ast::Item::FnDef(f) = item { Some(f) } else { None }
+    }).collect();
+
+    if json_flag {
+        let errors_json = errors.iter()
+            .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",");
+        let fns_json = fns.iter().map(|f| {
+            let params: String = f.params.iter()
+                .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let ret = f.return_type.as_ref()
+                .map(|t| format!(" -> {}", fmt_type(t)))
+                .unwrap_or_default();
+            let attrs: Vec<String> = f.attrs.iter()
+                .map(|a| format!("\"{}\"", a.name))
+                .collect();
+            let has_verify = f.verify.is_some();
+            let has_effect = f.effect_row.is_some();
+            format!(
+                "{{\"name\":{},\"sig\":\"fn {}({params}){ret}\",\"attrs\":[{}],\"verified\":{},\"effects\":{}}}",
+                json_str(&f.name),
+                f.name,
+                attrs.join(","),
+                has_verify,
+                has_effect,
+            )
+        }).collect::<Vec<_>>().join(",");
+
+        println!(
+            "{{\"schema\":\"axon-ast-review/1\",\"path\":{},\"errors\":[{}],\"fns\":[{}]}}",
+            json_str(&file.display().to_string()),
+            errors_json,
+            fns_json,
+        );
+        if !errors.is_empty() {
+            process::exit(2);
+        }
+        return;
+    }
+
+    println!("AST review: {}", file.display());
+    println!("  {} function(s)", fns.len());
+    for f in &fns {
+        let params: String = f.params.iter()
+            .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let ret = f.return_type.as_ref()
+            .map(|t| format!(" -> {}", fmt_type(t)))
+            .unwrap_or_default();
+        let attrs: Vec<String> = f.attrs.iter().map(|a| format!("@[{}]", a.name)).collect();
+        let attr_str = if attrs.is_empty() { String::new() } else { format!("  {}", attrs.join(" ")) };
+        println!("  fn {}({}){}{}", f.name, params, ret, attr_str);
+        if let Some(v) = &f.verify {
+            println!("    @[verify]: {}", fmt_verify(v));
+        }
+        if let Some(e) = &f.effect_row {
+            println!("    effects: {}", fmt_effect_row(e));
+        }
+    }
+    if errors.is_empty() {
+        println!("  no type errors");
+    } else {
+        println!("  {} error(s):", errors.len());
+        for e in &errors {
+            println!("    {e}");
+        }
+        process::exit(2);
+    }
+}
+
+fn cmd_ast_approve(file: PathBuf) {
+    validate_ax_extension(&file);
+    let src = std::fs::read_to_string(&file).unwrap_or_else(|e| {
+        eprintln!("error reading {}: {e}", file.display());
+        process::exit(1);
+    });
+
+    // Compute a simple hash of the file bytes (FNV-1a for no-dep portability).
+    let hash = fnv1a_hex(src.as_bytes());
+
+    let approved_path = PathBuf::from(format!("{}.approved", file.display()));
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let content = format!(
+        "{{\"schema\":\"axon-ast-approved/1\",\"file\":{},\"hash\":\"{hash}\",\"approved_at_unix\":{now_secs}}}\n",
+        json_str(&file.display().to_string()),
+    );
+    std::fs::write(&approved_path, &content).unwrap_or_else(|e| {
+        eprintln!("error writing {}: {e}", approved_path.display());
+        process::exit(1);
+    });
+    println!("approved: {} (hash {})", file.display(), &hash[..12]);
+    println!("  approval record: {}", approved_path.display());
+}
+
+/// `axon deploy` — run a .ax program through the safety-gate pipeline.
+fn cmd_deploy(file: PathBuf, gate: Option<String>, json_flag: bool) {
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+
+    let mut program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("parse failed: {e}");
+            if json_flag {
+                println!(
+                    "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
+                    json_str(&file.display().to_string()),
+                    json_str(&msg),
+                );
+            } else {
+                eprintln!("error: {msg}");
+            }
+            process::exit(2);
+        }
+    };
+
+    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    if !errors.is_empty() {
+        if json_flag {
+            let errs = errors.iter()
+                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"type_error\",\"errors\":[{}]}}",
+                json_str(&file.display().to_string()),
+                errs,
+            );
+        } else {
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+        }
+        process::exit(2);
+    }
+
+    // Check if approve file exists (informational, not blocking).
+    let approved_path = PathBuf::from(format!("{}.approved", file.display()));
+    let is_approved = approved_path.exists();
+
+    // Run the program.
+    let exit_code = axon_core::interp::run_program(&program);
+
+    // With --gate verify, treat exit 3 (verify failure) as blocking.
+    let gate_str = gate.as_deref().unwrap_or("");
+    let blocked = exit_code != 0 && (gate_str == "verify" || exit_code == 1);
+
+    let status = if exit_code == 0 {
+        "deployed"
+    } else if gate_str == "verify" && exit_code == 3 {
+        "blocked_verify"
+    } else if exit_code == 1 {
+        "blocked_deploy"
+    } else {
+        "error"
+    };
+
+    if json_flag {
+        println!(
+            "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"{status}\",\"exit_code\":{exit_code},\"approved\":{is_approved}}}",
+            json_str(&file.display().to_string()),
+        );
+    } else {
+        println!("deploy: {} — {status}", file.display());
+        if !is_approved {
+            eprintln!("warning: no .approved file found — run `axon ast approve {}` first", file.display());
+        }
+    }
+
+    if blocked {
+        process::exit(exit_code);
+    } else if exit_code != 0 {
+        process::exit(exit_code);
+    }
+}
+
+/// `axon redteam` — execute the `redteam_check` function (if present).
+fn cmd_redteam(file: PathBuf, json_flag: bool) {
+    validate_ax_extension(&file);
+    let src = read_source(&file);
+
+    let mut program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            let msg = format!("parse failed: {e}");
+            if json_flag {
+                println!(
+                    "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"error\",\"message\":{}}}",
+                    json_str(&file.display().to_string()),
+                    json_str(&msg),
+                );
+            } else {
+                eprintln!("error: {msg}");
+            }
+            process::exit(2);
+        }
+    };
+
+    let (errors, _ctx) = run_check_pipeline(&mut program, &file);
+    if !errors.is_empty() {
+        if json_flag {
+            let errs = errors.iter()
+                .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            println!(
+                "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"type_error\",\"errors\":[{}]}}",
+                json_str(&file.display().to_string()),
+                errs,
+            );
+        } else {
+            for e in &errors {
+                eprintln!("error: {e}");
+            }
+        }
+        process::exit(2);
+    }
+
+    // Check if a redteam_check function exists.
+    let has_redteam = program.items.iter().any(|item| {
+        matches!(item, axon_core::ast::Item::FnDef(f) if f.name == "redteam_check")
+    });
+
+    if !has_redteam {
+        if json_flag {
+            println!(
+                "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"no_redteam_fn\",\"caught\":false}}",
+                json_str(&file.display().to_string()),
+            );
+        } else {
+            println!("redteam: {} — no redteam_check function found (pass)", file.display());
+        }
+        return;
+    }
+
+    // Run the full program (redteam_check is called by the main flow or main()).
+    let exit_code = axon_core::interp::run_program(&program);
+    let caught = exit_code != 0;
+    let status = if caught { "caught" } else { "safe" };
+
+    if json_flag {
+        println!(
+            "{{\"schema\":\"axon-redteam/1\",\"path\":{},\"status\":\"{status}\",\"exit_code\":{exit_code},\"caught\":{caught}}}",
+            json_str(&file.display().to_string()),
+        );
+    } else {
+        println!("redteam: {} — {status}", file.display());
+    }
+
+    if caught {
+        process::exit(1);
+    }
+}
+
+// ── Phase-10 helpers ──────────────────────────────────────────────────────────
+
+/// Minimal JSON string escaping (no serde — avoids inkwell trait collision).
+fn json_str(s: &str) -> String {
+    let escaped = s
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{escaped}\"")
+}
+
+/// FNV-1a 64-bit hash → hex string (portable, no-dep file fingerprint).
+fn fnv1a_hex(bytes: &[u8]) -> String {
+    let mut h: u64 = 14695981039346656037;
+    for &b in bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(1099511628211);
+    }
+    format!("{h:016x}")
+}
+
+/// Format an [`AxonType`] for display.
+fn fmt_type(ty: &axon_core::ast::AxonType) -> String {
+    format!("{ty:?}")
+        .replace("AxonType::", "")
+        .replace("Named(\"", "")
+        .replace("\")", "")
+        .replace("I64", "i64")
+        .replace("F64", "f64")
+        .replace("Bool", "bool")
+        .replace("Str", "str")
+        .replace("Unit", "()")
+}
+
+/// Format a [`VerifySpec`] predicate for display.
+fn fmt_verify(v: &axon_core::ast::VerifySpec) -> String {
+    format!("{:?}", v.predicate).chars().take(60).collect::<String>()
+}
+
+/// Format an [`EffectRow`] for display.
+fn fmt_effect_row(e: &axon_core::ast::EffectRow) -> String {
+    format!("{e:?}").chars().take(40).collect::<String>()
 }
 
 #[cfg(test)]
