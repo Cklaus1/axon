@@ -1,0 +1,16 @@
+[package]
+name = "axon-web"
+version = "0.1.0"
+edition = "2021"
+description = "Axon Goal Approval Flow — web UI thin shell over the CLI"
+
+[[bin]]
+name = "axon-web"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+
+[dev-dependencies]

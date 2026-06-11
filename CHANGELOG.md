@@ -1,5 +1,25 @@
 # Axon Changelog
 
+## Phase 12 — Web UI Goal Approval Flow (iteration 8)
+
+- **`crates/axon-web`** — new crate: minimal synchronous HTTP server (`tiny_http`) that is a
+  thin JSON proxy over the Phase-10 CLI commands. Every UI button maps to `axon foo --json`.
+- **API endpoints** — `POST /api/intent/compile`, `/api/ast/review`, `/api/ast/approve`,
+  `/api/redteam`, `/api/deploy`, `GET /api/trace`; each writes the request body to a temp
+  file, invokes the `axon` binary, returns CLI JSON verbatim or wraps non-JSON output in
+  `{ok, exit_code, stdout, stderr}`.
+- **Single-page UI** — 6-pane approval-flow HTML page served at `GET /`; panes follow
+  the intent → AST → approve → redteam → deploy → trace sequence. Embedded as
+  `crate::html::INDEX_HTML` (no static-file serving dependency).
+- **`spec/compiler-phase12.md`** — Phase 12 spec with API contract, UI layout, and exit
+  criteria.
+- **7 tests pass** (`cargo test -p axon-web`): HTML served at `/`, `index.html`, 404 JSON
+  for unknown routes, JSON responses for all POST endpoints, JSON for trace, and a
+  structural HTML content check for all 6 panes and all API endpoint references.
+- **Phase 5 marked ✅ Complete** — struct whole-refinement is runtime-enforced by design
+  (all four obligation sites closed); the deferral is now explicitly noted in the status
+  table rather than leaving Phase 5 in "In progress".
+
 ## Tooling
 
 - **World-model / compress-to-fit loop (prototype #1)** — `examples/stdlib/world.ax` +
