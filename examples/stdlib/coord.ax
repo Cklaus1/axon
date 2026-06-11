@@ -1,0 +1,396 @@
+// Phase 14+ / Tier-2 stdlib: Causal ordering as type + Cross-Principal goal coordination.
+//
+// This module ships the two remaining Phase 14+ deliverables from ROADMAP §4:
+//
+//   1. CausallyOrdered — "causal ordering as type".
+//      Unlike VectorClock in crdt.ax (an algorithm), CausallyOrdered is a VALUE
+//      that carries its causal provenance inline: every write stamps the result
+//      with the writer's node and the clock at write time, so the happens-before
+//      relation is PART OF THE VALUE, not computed retroactively.
+//
+//      The headline contract: `co_can_read(reader_clock, item)` returns false
+//      when the reader has not yet observed all writes that preceded `item`.
+//      A reader that hasn't caught up to the writer's causal past must wait —
+//      this is causal consistency made observable in userland.
+//
+//   2. CoordGoal — cross-Principal goal coordination.
+//      A goal that requires a majority quorum of N principals to each
+//      independently accept a candidate before it is committed. No minority
+//      can force acceptance; a principal whose score is below the target
+//      automatically rejects. This composes Principal + Goal + Quorum
+//      semantics and closes the ROADMAP's "Cross-Principal goal coordination" item.
+//
+//   KEY CONTRACTS:
+//   - Causal consistency: co_can_read returns false until the reader's clock
+//     dominates the writer's clock (the reader has seen all prior writes).
+//   - Coordination safety: coord_goal_quorum_met returns false until strictly
+//     more than half of all principals have accepted the candidate.
+//
+//   axon test examples/stdlib/coord.ax
+//   axon run  examples/stdlib/coord.ax
+
+// ── Inlined VectorClock (from crdt.ax) ────────────────────────────────────────
+// Inlined so this file is self-contained (Axon has no module imports yet).
+
+type VClock = { cs: [i64], n: i64 }
+
+fn vcl_new(n: i64) -> VClock { VClock { cs: arr_repeat(0, n), n: n } }
+
+fn vcl_tick(v: VClock, node: i64) -> VClock {
+    assert(node >= 0 && node < v.n)
+    let out = []
+    let i = 0
+    while i < v.n {
+        out = arr_push(out, if i == node { v.cs[i] + 1 } else { v.cs[i] })
+        i = i + 1
+    }
+    VClock { cs: out, n: v.n }
+}
+
+fn vcl_merge(a: VClock, b: VClock) -> VClock {
+    assert(a.n == b.n)
+    let out = []
+    let i = 0
+    while i < a.n {
+        out = arr_push(out, if a.cs[i] > b.cs[i] { a.cs[i] } else { b.cs[i] })
+        i = i + 1
+    }
+    VClock { cs: out, n: a.n }
+}
+
+// a → b: a causally precedes b iff every component of a ≤ b AND at least one <.
+fn vcl_before(a: VClock, b: VClock) -> bool {
+    assert(a.n == b.n)
+    let all_le = true
+    let some_lt = false
+    let i = 0
+    while i < a.n {
+        if a.cs[i] > b.cs[i] { all_le = false }
+        if a.cs[i] < b.cs[i] { some_lt = true }
+        i = i + 1
+    }
+    all_le && some_lt
+}
+
+fn vcl_concurrent(a: VClock, b: VClock) -> bool {
+    !vcl_before(a, b) && !vcl_before(b, a)
+}
+
+// ── CausallyOrdered ────────────────────────────────────────────────────────────
+// An i64 value tagged with the vector clock at the moment it was written and
+// the node that wrote it.  The TIMESTAMP on the value is its causal past.
+
+type CausallyOrdered = {
+    val:    i64,
+    clock:  VClock,    // the writer's clock at write time (the causal provenance)
+    writer: i64,       // which node wrote this value
+}
+
+// Create a new causally-ordered value at node `writer` with initial value `v`.
+// The writer ticks its own component at construction time.
+fn co_new(n_nodes: i64, v: i64, writer: i64) -> CausallyOrdered {
+    let clk = vcl_tick(vcl_new(n_nodes), writer)
+    CausallyOrdered { val: v, clock: clk, writer: writer }
+}
+
+// Node `writer` writes a new value `v`, advancing only its own clock component.
+// The new clock is the merge of the current item clock with the writer's tick —
+// so it carries ALL prior causal dependencies of the original item.
+fn co_write(item: CausallyOrdered, v: i64, writer: i64) -> CausallyOrdered {
+    let ticked = vcl_tick(item.clock, writer)
+    CausallyOrdered { val: v, clock: ticked, writer: writer }
+}
+
+// A reader with `reader_clock` may safely read `item` when its clock dominates
+// the item's clock — i.e., the reader has observed everything the writer had
+// seen when the write occurred (causal consistency).
+fn co_can_read(reader_clock: VClock, item: CausallyOrdered) -> bool {
+    // reader_clock dominates item.clock iff item.clock → reader_clock OR they are equal.
+    // Equivalently: NOT (item.clock causally precedes but reader has not caught up).
+    // Reader is safe iff every component of item.clock ≤ reader_clock.
+    let i = 0
+    let dominated = true
+    while i < item.clock.n {
+        if item.clock.cs[i] > reader_clock.cs[i] { dominated = false }
+        i = i + 1
+    }
+    dominated
+}
+
+// a causally precedes b?
+fn co_happens_before(a: CausallyOrdered, b: CausallyOrdered) -> bool {
+    vcl_before(a.clock, b.clock)
+}
+
+// Neither a→b nor b→a? (concurrent writes)
+fn co_concurrent(a: CausallyOrdered, b: CausallyOrdered) -> bool {
+    vcl_concurrent(a.clock, b.clock)
+}
+
+// ── CoordGoal ──────────────────────────────────────────────────────────────────
+// Cross-Principal goal coordination. N independent principals each evaluate
+// a candidate and submit a score.  The goal is committed (accepted) only when
+// a strict majority — ⌊n/2⌋+1 — of principals each report a score ≥ target.
+//
+// Safety invariant: a minority coalition cannot force acceptance no matter how
+// high their scores are.  A principal that scores below `target` rejects.
+//
+// The consensus score is the MINIMUM accepted score (conservative: we commit
+// to what every accepting principal can vouch for).
+
+type CoordGoal = {
+    target:    i64,    // minimum score each principal must reach
+    n:         i64,    // total number of principals
+    scores:    [i64],  // scores[i] = principal i's submitted score (0 = not yet)
+    submitted: [i64],  // submitted[i] = 1 if principal i has voted, else 0
+}
+
+fn coord_goal_new(n_principals: i64, target: i64) -> CoordGoal {
+    assert(n_principals > 0)
+    CoordGoal {
+        target:    target,
+        n:         n_principals,
+        scores:    arr_repeat(0, n_principals),
+        submitted: arr_repeat(0, n_principals),
+    }
+}
+
+// Principal `pid` submits score `score` for the current candidate.
+// A principal may only submit once (idempotent: repeated submissions are ignored).
+fn coord_goal_propose(cg: CoordGoal, pid: i64, score: i64) -> CoordGoal {
+    assert(pid >= 0 && pid < cg.n)
+    if cg.submitted[pid] == 1 {
+        cg   // idempotent
+    } else {
+        let new_scores = []
+        let new_sub    = []
+        let i = 0
+        while i < cg.n {
+            new_scores = arr_push(new_scores, if i == pid { score } else { cg.scores[i] })
+            new_sub    = arr_push(new_sub, if i == pid { 1 } else { cg.submitted[i] })
+            i = i + 1
+        }
+        CoordGoal { target: cg.target, n: cg.n, scores: new_scores, submitted: new_sub }
+    }
+}
+
+// How many principals have submitted a score ≥ target?
+fn coord_goal_accept_count(cg: CoordGoal) -> i64 {
+    let count = 0
+    let i = 0
+    while i < cg.n {
+        if cg.submitted[i] == 1 && cg.scores[i] >= cg.target { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+// Quorum threshold: strict majority = ⌊n/2⌋ + 1.
+fn coord_goal_quorum(cg: CoordGoal) -> i64 { cg.n / 2 + 1 }
+
+// Has the goal reached quorum? (majority of principals accepted)
+fn coord_goal_quorum_met(cg: CoordGoal) -> bool {
+    coord_goal_accept_count(cg) >= coord_goal_quorum(cg)
+}
+
+// Conservative consensus score: minimum accepted score across all accepting
+// principals.  Only valid when quorum is met; returns -1 otherwise.
+fn coord_goal_consensus_score(cg: CoordGoal) -> i64 {
+    if !coord_goal_quorum_met(cg) {
+        -1
+    } else {
+        let best = 9999999
+        let i = 0
+        while i < cg.n {
+            if cg.submitted[i] == 1 && cg.scores[i] >= cg.target {
+                if cg.scores[i] < best { best = cg.scores[i] }
+            }
+            i = i + 1
+        }
+        best
+    }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── CausallyOrdered tests ─────────────────────────────────────────────────────
+
+// A value written at node 0 causally precedes one written later at node 1
+// (after node 1 has received node 0's write and ticked its own clock).
+@[test]
+fn test_co_write_establishes_causal_order() {
+    let v0 = co_new(2, 10, 0)            // node 0 writes 10; clock = [1,0]
+    // node 1 receives node 0's write and then writes 20:
+    let v1_clock_after_recv = vcl_tick(vcl_merge(vcl_new(2), v0.clock), 1)
+    let v1 = CausallyOrdered { val: 20, clock: v1_clock_after_recv, writer: 1 }
+    assert(co_happens_before(v0, v1))
+    assert(!co_happens_before(v1, v0))
+}
+
+// Two concurrent writes (neither has seen the other's clock) are concurrent.
+@[test]
+fn test_co_concurrent_writes_are_concurrent() {
+    let a = co_new(2, 10, 0)    // clock = [1,0]
+    let b = co_new(2, 20, 1)    // clock = [0,1]
+    assert(co_concurrent(a, b))
+    assert(!co_happens_before(a, b))
+    assert(!co_happens_before(b, a))
+}
+
+// A reader whose clock dominates the item's clock CAN read it safely.
+@[test]
+fn test_co_can_read_when_reader_dominates() {
+    let item = co_new(2, 42, 0)          // item clock = [1,0]
+    // A reader that has seen node 0's write: clock = [1,1] (dominates [1,0]).
+    let reader_clock = vcl_tick(vcl_tick(vcl_new(2), 0), 1)
+    assert(co_can_read(reader_clock, item))
+}
+
+// A reader whose clock does NOT yet cover the item's provenance CANNOT safely read.
+@[test]
+fn test_co_cannot_read_stale_reader() {
+    let item = co_new(2, 42, 0)      // item clock = [1,0]
+    let stale_reader = vcl_new(2)    // reader clock = [0,0] — hasn't seen node 0's write
+    assert(!co_can_read(stale_reader, item))
+}
+
+// A write advances only the writing node's clock component; other components
+// propagate the original item's causal history.
+@[test]
+fn test_co_write_advances_writer_clock() {
+    let v0 = co_new(3, 10, 0)        // [1,0,0]
+    let v1 = co_write(v0, 20, 1)     // writer=1, clock = merge([1,0,0], tick(1)) = [1,1,0]
+    assert(v1.val == 20)
+    assert(v1.writer == 1)
+    // v0 causally precedes v1 (v0's clock [1,0,0] → v1's clock [1,1,0])
+    assert(co_happens_before(v0, v1))
+}
+
+// ── CoordGoal tests ────────────────────────────────────────────────────────────
+
+// A freshly created coordination goal has no submissions and quorum is not met.
+@[test]
+fn test_coord_goal_starts_unmet() {
+    let cg = coord_goal_new(3, 80)
+    assert(!coord_goal_quorum_met(cg))
+    assert_eq(coord_goal_accept_count(cg), 0)
+    assert_eq(coord_goal_consensus_score(cg), -1)
+}
+
+// Quorum threshold for 3 principals is 2 (⌊3/2⌋+1 = 2).
+@[test]
+fn test_coord_goal_quorum_threshold() {
+    assert_eq(coord_goal_quorum(coord_goal_new(3, 80)), 2)
+    assert_eq(coord_goal_quorum(coord_goal_new(5, 80)), 3)
+    assert_eq(coord_goal_quorum(coord_goal_new(1, 80)), 1)
+}
+
+// 1 out of 3 principals accepting does NOT meet quorum.
+@[test]
+fn test_coord_goal_minority_cannot_commit() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(cg, 0, 95)    // principal 0 accepts (score ≥ 80)
+    assert(!coord_goal_quorum_met(cg2))
+    assert_eq(coord_goal_accept_count(cg2), 1)
+}
+
+// 2 out of 3 principals accepting DOES meet quorum.
+@[test]
+fn test_coord_goal_majority_commits() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(coord_goal_propose(cg, 0, 95), 1, 88)
+    assert(coord_goal_quorum_met(cg2))
+    assert_eq(coord_goal_accept_count(cg2), 2)
+}
+
+// Consensus score is the minimum across accepting principals (conservative).
+@[test]
+fn test_coord_goal_consensus_is_minimum_accepted() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(coord_goal_propose(cg, 0, 95), 1, 88)
+    // min(95, 88) = 88
+    assert_eq(coord_goal_consensus_score(cg2), 88)
+}
+
+// A principal that scores BELOW target does not count as accepted.
+@[test]
+fn test_coord_goal_below_target_does_not_count() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(coord_goal_propose(cg, 0, 50), 1, 60)  // both below 80
+    assert(!coord_goal_quorum_met(cg2))
+    assert_eq(coord_goal_accept_count(cg2), 0)
+}
+
+// Proposals are idempotent: a second proposal from the same principal is ignored.
+@[test]
+fn test_coord_goal_proposal_is_idempotent() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(cg, 0, 95)
+    let cg3 = coord_goal_propose(cg2, 0, 50)    // same pid; should be ignored
+    assert_eq(cg3.scores[0], 95)                 // first score kept
+    assert_eq(coord_goal_accept_count(cg3), 1)
+}
+
+// All 3 principals accept → quorum still met; consensus is the minimum.
+@[test]
+fn test_coord_goal_full_consensus() {
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(
+        coord_goal_propose(coord_goal_propose(cg, 0, 90), 1, 85), 2, 92)
+    assert(coord_goal_quorum_met(cg2))
+    assert_eq(coord_goal_accept_count(cg2), 3)
+    assert_eq(coord_goal_consensus_score(cg2), 85)
+}
+
+// ── Cross-Principal safety headline test ──────────────────────────────────────
+// Two principals (Alice and Bob) optimize a shared goal with target=80.
+// Alice proposes score=90 (accepts) but Bob proposes score=70 (rejects).
+// Since only 1/2 principals meet the target, quorum is NOT met and the goal
+// is NOT committed — a majority is required, safety is preserved.
+@[test]
+fn test_cross_principal_minority_cannot_override_safety() {
+    // 2 principals, target=80: quorum threshold = ⌊2/2⌋+1 = 2 (unanimous)
+    let goal = coord_goal_new(2, 80)
+    let alice_id = 0
+    let bob_id   = 1
+    let after_alice = coord_goal_propose(goal, alice_id, 90)   // accepts
+    let after_bob   = coord_goal_propose(after_alice, bob_id, 70)  // rejects (< 80)
+    assert_eq(coord_goal_accept_count(after_bob), 1)
+    assert(!coord_goal_quorum_met(after_bob))
+    // Even though Alice scored 90, Bob's rejection prevents commitment.
+    assert_eq(coord_goal_consensus_score(after_bob), -1)
+}
+
+fn main() -> i64 {
+    println("── coord: causal ordering as type ─────────────────────────────")
+    let n = 2
+    let v0 = co_new(n, 10, 0)
+    let v1 = co_write(v0, 20, 1)
+    println("node 0 writes 10, then node 1 writes 20 (after receiving node 0's write)")
+    if co_happens_before(v0, v1) {
+        println("→ v0 causally precedes v1 (correct causal order)")
+    }
+    let stale = vcl_new(n)
+    let up_to_date = vcl_merge(v0.clock, vcl_tick(vcl_new(n), 1))
+    if !co_can_read(stale, v0) {
+        println("→ stale reader cannot safely read v0 (causal consistency enforced)")
+    }
+    if co_can_read(up_to_date, v0) {
+        println("→ up-to-date reader can safely read v0")
+    }
+    println("")
+    println("── coord: cross-principal goal coordination ────────────────────")
+    let cg = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(coord_goal_propose(cg, 0, 90), 1, 85)
+    if !coord_goal_quorum_met(cg2) {
+        println("1/3 principals accepted — quorum not yet met")
+    }
+    let cg3 = coord_goal_propose(cg2, 2, 88)
+    if coord_goal_quorum_met(cg3) {
+        let score = coord_goal_consensus_score(cg3)
+        println("3/3 principals accepted — goal committed, consensus score {to_str(score)}")
+    }
+    0
+}
