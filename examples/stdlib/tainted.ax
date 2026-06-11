@@ -1,0 +1,376 @@
+// Tier-2 stdlib: info-flow lattice — Tainted, Trusted, Secret, Public.
+//
+// ROADMAP §6 Tier-2 types: `Tainted<T>`, `Trusted<T>`, `Secret<T>`, `Public<T>`.
+// These are VALUE TYPES that pair an i64 with an info-flow property, making the
+// data-sensitivity and data-trust contracts OBSERVABLE and CHECKABLE in userland
+// — the value-level counterpart to the kernel `@[contained]` / effect-row checks.
+//
+// Two orthogonal axes:
+//
+//   TRUST axis (who produced this data? how reliable is it?)
+//   ─────────────────────────────────────────────────────────
+//   Tainted  — wraps a value with a SOURCE TRUST LEVEL (0=AI .. 4=Constant).
+//              Combining two Tainted values yields the LOWER trust (taint propagates).
+//              Derived from source.ax's trust lattice.
+//   Trusted  — a Tainted value that has been EXPLICITLY VALIDATED against a floor.
+//              The validation is the explicit user approval the ROADMAP requires
+//              before a low-trust value can drive a consequential action.
+//
+//   CONFIDENTIALITY axis (who may READ this data?)
+//   ────────────────────────────────────────────────
+//   Secret   — wraps a value with a CONFIDENTIALITY LEVEL (0=public .. 3=secret).
+//              A Secret may only flow to a context whose CLEARANCE >= its level.
+//   Public   — a value with no flow restrictions (shorthand for Secret at level 0).
+//
+// KEY CONTRACTS (the tests are the spec):
+//   - `tainted_combine` propagates the LOWER of two trust levels (taint is sticky).
+//   - `trust_validate` returns Err when the value's trust is below the floor.
+//   - `secret_can_flow_to` is false when the reader's clearance < the secret's level.
+//   - An AI-tainted value (trust=0) must clear a User-floor validation before it can
+//     become Trusted and be used in a consequential path.
+//
+// Relationship to source.ax: source.ax tracks VALUE PROVENANCE (which source produced
+// a scalar).  tainted.ax is FLOW TYPING: the value itself carries its constraints so
+// the Axon type checker / effect system can reason about where it is allowed to go.
+//
+//   axon test examples/stdlib/tainted.ax
+//   axon run  examples/stdlib/tainted.ax
+
+// ── Trust constants (mirrors source.ax) ──────────────────────────────────────
+fn trust_ai()       -> i64 { 0 }   // AI inference — can be confidently wrong
+fn trust_net()      -> i64 { 1 }   // network response — could be adversarial
+fn trust_system()   -> i64 { 2 }   // system sensor / runtime reading
+fn trust_user()     -> i64 { 3 }   // human-stated intent
+fn trust_constant() -> i64 { 4 }   // in-source-code constant — maximally trusted
+
+// ── Confidentiality level constants ──────────────────────────────────────────
+fn cl_public()       -> i64 { 0 }  // no restrictions; anyone may read
+fn cl_internal()     -> i64 { 1 }  // internal use; not for external AI/Net
+fn cl_confidential() -> i64 { 2 }  // confidential; requires elevated clearance
+fn cl_secret()       -> i64 { 3 }  // secret; only root-level contexts may access
+
+// ── Tainted ───────────────────────────────────────────────────────────────────
+// A value paired with its SOURCE TRUST LEVEL. Trust propagates pessimistically:
+// any derivation involving a low-trust value produces a low-trust result.
+
+type Tainted = { val: i64, trust: i64 }
+
+fn tainted(v: i64, trust: i64) -> Tainted {
+    assert(trust >= 0 && trust <= 4)
+    Tainted { val: v, trust: trust }
+}
+
+fn tainted_ai(v: i64)       -> Tainted { Tainted { val: v, trust: trust_ai() } }
+fn tainted_net(v: i64)      -> Tainted { Tainted { val: v, trust: trust_net() } }
+fn tainted_system(v: i64)   -> Tainted { Tainted { val: v, trust: trust_system() } }
+fn tainted_user(v: i64)     -> Tainted { Tainted { val: v, trust: trust_user() } }
+fn tainted_constant(v: i64) -> Tainted { Tainted { val: v, trust: trust_constant() } }
+
+// Combine two Tainted values: the result takes the LOWER trust (taint is sticky).
+// The combined value is the sum of the two vals (a placeholder — replace with
+// the actual combining operation in real use).
+fn tainted_combine(a: Tainted, b: Tainted) -> Tainted {
+    let t = if a.trust <= b.trust { a.trust } else { b.trust }
+    Tainted { val: a.val + b.val, trust: t }
+}
+
+// Apply a pure function to the Tainted value, preserving the trust tag.
+fn tainted_map(t: Tainted, delta: i64) -> Tainted {
+    Tainted { val: t.val + delta, trust: t.trust }
+}
+
+// Does this Tainted value need human/explicit validation before it drives an action?
+fn tainted_needs_validation(t: Tainted) -> bool {
+    t.trust == trust_ai() || t.trust == trust_net()
+}
+
+// ── Trusted ───────────────────────────────────────────────────────────────────
+// A Tainted value that has passed an EXPLICIT VALIDATION gate (trust >= floor).
+// This is the "human sign-off" / "explicit approval" the ROADMAP requires before
+// a low-trust value can drive a consequential action (ROADMAP §2.4: the AST is
+// the legal artifact, not the English).
+
+type Trusted = { val: i64, trust: i64, floor: i64 }
+
+// Validate: if t.trust >= floor, return Trusted(ok); else Err.
+fn trust_validate(t: Tainted, floor: i64) -> Result<Trusted, str> {
+    if t.trust >= floor {
+        Ok(Trusted { val: t.val, trust: t.trust, floor: floor })
+    } else {
+        Err("trust below validation floor")
+    }
+}
+
+// Extract the value from a Trusted value (no further checks needed — it has
+// already passed the floor).
+fn trusted_val(t: Trusted) -> i64 { t.val }
+fn trusted_trust(t: Trusted) -> i64 { t.trust }
+
+// Trusted values can be further combined; result is still Trusted if both parts
+// cleared the SAME floor. Returns the lower-trust part.
+fn trusted_combine(a: Trusted, b: Trusted) -> Trusted {
+    let min_floor = if a.floor <= b.floor { a.floor } else { b.floor }
+    let t = if a.trust <= b.trust { a.trust } else { b.trust }
+    Trusted { val: a.val + b.val, trust: t, floor: min_floor }
+}
+
+// ── Secret ────────────────────────────────────────────────────────────────────
+// A value with a CONFIDENTIALITY LEVEL. A Secret at level L may only flow to
+// contexts whose clearance >= L. This enforces the "need to know" principle.
+//
+// The classic info-flow rule: SECRET data cannot flow DOWN to a PUBLIC sink
+// (exfiltration). Exfiltration via AI/Net is the primary concern for ASI agents
+// that process confidential data and then call out to external models.
+
+type Secret = { val: i64, level: i64 }
+
+fn secret(v: i64, level: i64) -> Secret {
+    assert(level >= 0 && level <= 3)
+    Secret { val: v, level: level }
+}
+
+fn secret_public(v: i64)       -> Secret { Secret { val: v, level: cl_public() } }
+fn secret_internal(v: i64)     -> Secret { Secret { val: v, level: cl_internal() } }
+fn secret_confidential(v: i64) -> Secret { Secret { val: v, level: cl_confidential() } }
+fn secret_secret(v: i64)       -> Secret { Secret { val: v, level: cl_secret() } }
+
+// Can this Secret flow to a reader/context with the given clearance?
+// Rule: reader_clearance >= secret.level → allowed; else blocked.
+fn secret_can_flow_to(s: Secret, reader_clearance: i64) -> bool {
+    reader_clearance >= s.level
+}
+
+// Declassify: if reader has sufficient clearance, produce a Public value.
+// Public means "no flow restrictions from this point on."
+fn secret_declassify(s: Secret, reader_clearance: i64) -> Result<i64, str> {
+    if secret_can_flow_to(s, reader_clearance) {
+        Ok(s.val)
+    } else {
+        Err("clearance insufficient for declassification")
+    }
+}
+
+// Join two secrets: result takes the HIGHER confidentiality level (more restrictive).
+// Combining a public and a confidential piece produces a confidential result.
+fn secret_combine(a: Secret, b: Secret) -> Secret {
+    let level = if a.level >= b.level { a.level } else { b.level }
+    Secret { val: a.val + b.val, level: level }
+}
+
+// ── Public ────────────────────────────────────────────────────────────────────
+// A value with no flow restrictions — either it was never sensitive, or it has
+// been explicitly declassified by an authorized context.
+//
+// Public is a zero-overhead tag: it marks that the value has cleared any flow
+// check, so callers don't need to re-check. It composes cleanly with Tainted:
+// a Public value may still have a low TRUST level (e.g., an AI inference that
+// has been validated as non-sensitive).
+
+type Public = { val: i64 }
+
+fn public(v: i64) -> Public { Public { val: v } }
+fn public_val(p: Public) -> i64 { p.val }
+
+// Pair a Public value with a trust tag, producing a Tainted (so it can
+// participate in the trust-propagation lattice).
+fn public_with_trust(p: Public, trust: i64) -> Tainted {
+    Tainted { val: p.val, trust: trust }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  Tests — the info-flow contracts
+// ════════════════════════════════════════════════════════════════════════════
+
+// ── Tainted tests ─────────────────────────────────────────────────────────────
+
+@[test]
+fn test_taint_propagates_pessimistically() {
+    // Constant + AI → AI (the least-trusted wins).
+    let c = tainted_constant(100)
+    let a = tainted_ai(50)
+    let r = tainted_combine(c, a)
+    assert_eq(r.trust, trust_ai())
+}
+
+@[test]
+fn test_taint_combine_is_commutative_on_trust() {
+    let a = tainted_user(10)
+    let b = tainted_net(20)
+    let ab = tainted_combine(a, b)
+    let ba = tainted_combine(b, a)
+    assert_eq(ab.trust, ba.trust)
+}
+
+@[test]
+fn test_tainted_map_preserves_trust() {
+    let t = tainted_net(42)
+    let t2 = tainted_map(t, 8)
+    assert_eq(t2.val, 50)
+    assert_eq(t2.trust, trust_net())
+}
+
+@[test]
+fn test_tainted_needs_validation_for_ai_and_net() {
+    assert(tainted_needs_validation(tainted_ai(1)))
+    assert(tainted_needs_validation(tainted_net(1)))
+    assert(!tainted_needs_validation(tainted_user(1)))
+    assert(!tainted_needs_validation(tainted_constant(1)))
+}
+
+// ── Trusted tests ─────────────────────────────────────────────────────────────
+
+@[test]
+fn test_trust_validate_succeeds_above_floor() {
+    let t = tainted_user(99)
+    let result = trust_validate(t, trust_user())
+    match result {
+        Ok(trusted) => assert_eq(trusted_val(trusted), 99)
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_trust_validate_fails_below_floor() {
+    // An AI-tainted value cannot clear a User-level floor.
+    let t = tainted_ai(99)
+    let result = trust_validate(t, trust_user())
+    match result {
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_ai_value_cannot_drive_consequential_action_without_validation() {
+    // Simulate an AI-sourced score that must clear User-level trust before
+    // it drives an action (the ROADMAP §2.4 / §5 "approval" gate).
+    let ai_score = tainted_ai(85)
+
+    // The "action" requires trust >= User:
+    let validated = trust_validate(ai_score, trust_user())
+    match validated {
+        Ok(_) => assert(false)           // should NOT succeed
+        Err(_) => assert(true)           // correctly blocked
+    }
+
+    // If the same score were from a user (explicit human approval):
+    let user_score = tainted_user(85)
+    let validated2 = trust_validate(user_score, trust_user())
+    match validated2 {
+        Ok(t) => assert_eq(trusted_val(t), 85)
+        Err(_) => assert(false)
+    }
+}
+
+// ── Secret / Public tests ──────────────────────────────────────────────────────
+
+@[test]
+fn test_secret_can_flow_to_sufficient_clearance() {
+    let s = secret_confidential(42)           // level=2
+    assert(secret_can_flow_to(s, cl_confidential()))  // clearance 2 = ok
+    assert(secret_can_flow_to(s, cl_secret()))        // clearance 3 > 2 = ok
+    assert(!secret_can_flow_to(s, cl_internal()))     // clearance 1 < 2 = blocked
+    assert(!secret_can_flow_to(s, cl_public()))       // clearance 0 < 2 = blocked
+}
+
+@[test]
+fn test_secret_cannot_exfiltrate_to_ai_clearance() {
+    // An AI/Net context has clearance = cl_public (0) — it has no access to
+    // confidential or above. This is the exfiltration guard.
+    let confidential_data = secret_confidential(1234)
+    let ai_clearance = cl_public()     // AI/Net contexts cannot read confidential data
+    assert(!secret_can_flow_to(confidential_data, ai_clearance))
+}
+
+@[test]
+fn test_declassify_allows_sufficient_clearance() {
+    let s = secret_internal(77)
+    let result = secret_declassify(s, cl_internal())
+    match result {
+        Ok(v) => assert_eq(v, 77)
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_declassify_blocks_insufficient_clearance() {
+    let s = secret_secret(77)
+    let result = secret_declassify(s, cl_confidential())  // one level short
+    match result {
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_secret_combine_takes_max_level() {
+    // Public + Confidential → Confidential (most restrictive).
+    let a = secret_public(10)
+    let b = secret_confidential(20)
+    let r = secret_combine(a, b)
+    assert_eq(r.level, cl_confidential())
+}
+
+@[test]
+fn test_public_is_freely_shareable() {
+    let p = public(42)
+    let s = secret_public(p.val)
+    assert(secret_can_flow_to(s, cl_public()))
+    assert(secret_can_flow_to(s, cl_secret()))   // all clearances ≥ 0
+}
+
+// ── Headline: the full info-flow pipeline ────────────────────────────────────
+// An AI agent receives a CONFIDENTIAL input, processes it, and tries to send
+// the result to an external endpoint (AI/Net clearance = 0 = public).
+// The Secret type blocks this exfiltration attempt.
+@[test]
+fn test_no_exfiltration_of_confidential_to_ai() {
+    let confidential_input = secret_confidential(9999)  // level=2
+
+    // Agent processes the input (operation on raw val — in production, the
+    // agent would receive a Trusted value, not a raw int, but this demo
+    // shows the flow check at the SINK):
+    let processed = secret(confidential_input.val * 2, cl_confidential())
+
+    // Sink is an AI/Net call with clearance = cl_public (0).
+    let ai_net_clearance = cl_public()
+    let can_send = secret_can_flow_to(processed, ai_net_clearance)
+    assert(!can_send)   // BLOCKED: confidential data may not flow to AI/Net
+
+    // A Public result CAN be sent to the AI/Net sink:
+    let public_result = secret_public(42)
+    assert(secret_can_flow_to(public_result, ai_net_clearance))
+}
+
+fn main() -> i64 {
+    println("── tainted: trust (integrity) axis ────────────────────────────")
+    let ai_score = tainted_ai(85)
+    println("AI-sourced score: {to_str(ai_score.val)} (trust={to_str(ai_score.trust)}/4)")
+    if tainted_needs_validation(ai_score) {
+        println("→ needs validation before driving a consequential action")
+    }
+    let validated = trust_validate(ai_score, trust_user())
+    match validated {
+        Ok(_) => println("→ validation passed (unexpected)")
+        Err(e) => println("→ validation blocked: {e}")
+    }
+    let user_score = tainted_user(85)
+    let v2 = trust_validate(user_score, trust_user())
+    match v2 {
+        Ok(t) => println("→ user-sourced score {to_str(trusted_val(t))} cleared the User floor")
+        Err(_) => println("→ unexpected failure")
+    }
+    println("")
+    println("── tainted: confidentiality (secrecy) axis ─────────────────────")
+    let conf = secret_confidential(1234)
+    let ai_clearance = cl_public()
+    if !secret_can_flow_to(conf, ai_clearance) {
+        println("→ BLOCKED: confidential data (level 2) cannot flow to AI/Net (clearance 0)")
+    }
+    let result = secret_declassify(conf, cl_secret())
+    match result {
+        Ok(v) => println("→ root-level principal (clearance 3) declassified value: {to_str(v)}")
+        Err(_) => println("→ unexpected block")
+    }
+    0
+}
