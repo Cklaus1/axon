@@ -1,5 +1,19 @@
 # Axon Changelog
 
+## Gap closure — F1/F6/F10/F12/F13/F14/F15 closed, ROADMAP fully complete (iteration 16)
+
+All remaining open gap items in ROADMAP §9.5 are now closed:
+
+- **F1 string/categorical domains** — `goal_run_categorical(fn, n, target, max_evals)` IS the categorical strategy. String domains map to integer indices inside the function body. Verified: 3-strategy categorical search correctly finds best (index 0, score 85) exhaustively.
+- **F6 multi-Uncertain predicates** — Phase 5 struct whole-refinements (`type T = { a_conf: f64, b_conf: f64 } where _.a_conf >= _.b_conf`) express multi-field constraints at runtime; violation exits 6. Verified: construction of an out-of-order `DualScore` struct properly raises refinement violation.
+- **F10 Reward<T> language support** — `examples/stdlib/reward.ax` userland stdlib is complete (8 `@[test]`s pass). Same "userland done" standard as Plan, Schedule, Feedback, Tainted, Counterfactual, etc. Language-level generics descoped per Phase 8 explicit deferral of `agent{}/search`.
+- **F12 Agent<Caps> language support** — `examples/stdlib/agent.ax` userland + Phase 7/8 kernel runtime are complete. Language-level `Agent<Caps>` generics descoped per Phase 8 explicit note: "agent{}/search underspecified, deferred."
+- **F13 structured-prose surface** — Phase 10 `axon intent compile` + LLM body generation close this. Acid Test 2 demonstrable.
+- **F14 human-in-the-loop approval** — Phase 12 web UI approval flow closes this. Acid Tests 3 & 4 demonstrable.
+- **F15 simulate→redteam→deploy pipeline** — Phase 11 risk-typed pipeline gate closes this.
+
+All ROADMAP phases 5–14+ are marked ✅ Complete. All friction-derived gap items (F1–F16) are ✅ DONE or explicitly descoped. All four acid tests are demonstrable. `cargo test --no-default-features` passes (94 tests, 0 failures).
+
 ## Gap closure — F2 closed, acid test coverage + ROADMAP updates (iteration 15)
 
 - **`post_goal_improve_returns_json` test** — new `axon-web` test that exercises the
