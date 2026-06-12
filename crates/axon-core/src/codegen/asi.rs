@@ -33,13 +33,23 @@ impl<'ctx> super::Codegen<'ctx> {
     /// the codegen counterpart to the interpreter's `append_agent_action_jsonl`
     /// — the highest-trust zone's un-opt-out-able audit trail (I-13).
     pub(super) fn emit_agent_action_log(&mut self, action: &str) {
-        let Some(agent_fn) = self.current_agent_fn.clone() else { return };
-        let Some(caps) = crate::capabilities::capability_of_builtin(action) else { return };
+        let Some(agent_fn) = self.current_agent_fn.clone() else {
+            return;
+        };
+        let Some(caps) = crate::capabilities::capability_of_builtin(action) else {
+            return;
+        };
         let log_fn = match self.ir.module.get_function("__axon_log_agent_action") {
             Some(f) => f,
             None => return,
         };
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
@@ -50,9 +60,12 @@ impl<'ctx> super::Codegen<'ctx> {
             &self.ir.builder,
             log_fn,
             &[
-                fn_g.into(), i64_ty.const_int(agent_fn.len() as u64, false).into(),
-                act_g.into(), i64_ty.const_int(action.len() as u64, false).into(),
-                cap_g.into(), i64_ty.const_int(caps.len() as u64, false).into(),
+                fn_g.into(),
+                i64_ty.const_int(agent_fn.len() as u64, false).into(),
+                act_g.into(),
+                i64_ty.const_int(action.len() as u64, false).into(),
+                cap_g.into(),
+                i64_ty.const_int(caps.len() as u64, false).into(),
             ],
             "",
         );
@@ -68,23 +81,24 @@ impl<'ctx> super::Codegen<'ctx> {
             None => return, // safety: declare_builtins should have added this
         };
         // Skip if the current basic block is already terminated.
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
         let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, fn_name, "prov_fn_name");
-        let evt_g  = build_wrappers::w_global_string_ptr(&self.ir.builder, event,   "prov_event");
+        let evt_g = build_wrappers::w_global_string_ptr(&self.ir.builder, event, "prov_event");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
-        let evt_len  = i64_ty.const_int(event.len()    as u64, false);
+        let evt_len = i64_ty.const_int(event.len() as u64, false);
         let _ = build_wrappers::w_call(
             &self.ir.builder,
             prov_fn,
-            &[
-                name_g.into(),
-                name_len.into(),
-                evt_g.into(),
-                evt_len.into(),
-            ],
+            &[name_g.into(), name_len.into(), evt_g.into(), evt_len.into()],
             "",
         );
     }
@@ -97,7 +111,13 @@ impl<'ctx> super::Codegen<'ctx> {
     /// the on-disk JSONL stays complete.
     pub(super) fn emit_provenance_log_ret(&mut self, fn_name: &str, ret_val: BasicValueEnum<'ctx>) {
         // Skip if the current basic block is already terminated.
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
@@ -111,7 +131,11 @@ impl<'ctx> super::Codegen<'ctx> {
                 // (input, score) via the `_in` entry point so goal_run can
                 // warm-start. Otherwise fall back to the score-only log.
                 if let Some(input_iv) = self.current_adaptive_input {
-                    if let Some(rt) = self.ir.module.get_function("__axon_provenance_log_ret_i64_in") {
+                    if let Some(rt) = self
+                        .ir
+                        .module
+                        .get_function("__axon_provenance_log_ret_i64_in")
+                    {
                         let _ = build_wrappers::w_call(
                             &self.ir.builder,
                             rt,
@@ -208,7 +232,13 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Skip if the current basic block is already terminated — we can't
         // legally insert further IR there.
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
 
@@ -244,33 +274,40 @@ impl<'ctx> super::Codegen<'ctx> {
         // Translate operator string → LLVM float predicate.  Matches the set
         // accepted by `verify::decode_verify_predicate`.
         let pred = match op_str {
-            ">="          => FloatPredicate::OGE,
-            ">"           => FloatPredicate::OGT,
-            "<="          => FloatPredicate::OLE,
-            "<"           => FloatPredicate::OLT,
-            "=="          => FloatPredicate::OEQ,
-            "!="          => FloatPredicate::ONE,
+            ">=" => FloatPredicate::OGE,
+            ">" => FloatPredicate::OGT,
+            "<=" => FloatPredicate::OLE,
+            "<" => FloatPredicate::OLT,
+            "==" => FloatPredicate::OEQ,
+            "!=" => FloatPredicate::ONE,
             // Unknown op string: silently no-op (mirrors static checker).
             _ => return,
         };
 
         let bound_const = f64_ty.const_float(bound);
-        let cmp = build_wrappers::w_float_compare(&self.ir.builder, pred, actual, bound_const, "verify_cmp");
+        let cmp = build_wrappers::w_float_compare(
+            &self.ir.builder,
+            pred,
+            actual,
+            bound_const,
+            "verify_cmp",
+        );
 
         // Build branch: cmp ? continue : panic.  We append two blocks to the
         // current function and route the *current* block into them.
         let panic_bb = self.ir.context.append_basic_block(llvm_fn, "verify_panic");
-        let cont_bb  = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
+        let cont_bb = self.ir.context.append_basic_block(llvm_fn, "verify_ok");
 
         build_wrappers::w_cond_br(&self.ir.builder, cmp, cont_bb, panic_bb);
 
         // ── Panic path ────────────────────────────────────────────────────
         self.ir.builder.position_at_end(panic_bb);
         let i64_ty = self.ir.context.i64_type();
-        let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "verify_fn_name");
-        let op_g   = build_wrappers::w_global_string_ptr(&self.ir.builder, op_str,   "verify_op");
+        let name_g =
+            build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "verify_fn_name");
+        let op_g = build_wrappers::w_global_string_ptr(&self.ir.builder, op_str, "verify_op");
         let name_len = i64_ty.const_int(fn_name.len() as u64, false);
-        let op_len   = i64_ty.const_int(op_str.len()   as u64, false);
+        let op_len = i64_ty.const_int(op_str.len() as u64, false);
         let _ = build_wrappers::w_call(
             &self.ir.builder,
             panic_fn,
@@ -309,8 +346,12 @@ impl<'ctx> super::Codegen<'ctx> {
             None => return,
         };
         for param in &f.params {
-            let ast::AxonType::Named(rname) = &param.ty else { continue };
-            let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() else { continue };
+            let ast::AxonType::Named(rname) = &param.ty else {
+                continue;
+            };
+            let Some(pred) = self.refine_preds.get(rname.as_str()).cloned() else {
+                continue;
+            };
 
             // Bail out honestly if the predicate is outside the subset BOTH
             // engines can evaluate — refusing (E0910) rather than skipping the
@@ -392,7 +433,8 @@ impl<'ctx> super::Codegen<'ctx> {
             self.ir.builder.position_at_end(panic_bb);
             let i64_ty = self.ir.context.i64_type();
             let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &f.name, "refine_fn");
-            let pn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &param.name, "refine_param");
+            let pn_g =
+                build_wrappers::w_global_string_ptr(&self.ir.builder, &param.name, "refine_param");
             let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, rname, "refine_name");
             let _ = build_wrappers::w_call(
                 &self.ir.builder,
@@ -427,7 +469,9 @@ impl<'ctx> super::Codegen<'ctx> {
         ret_val: BasicValueEnum<'ctx>,
         llvm_fn: FunctionValue<'ctx>,
     ) {
-        let Some((rname, pred)) = self.current_ret_refine.clone() else { return };
+        let Some((rname, pred)) = self.current_ret_refine.clone() else {
+            return;
+        };
         let panic_fn = match self.ir.module.get_function("__axon_refine_panic") {
             Some(f) => f,
             None => return,
@@ -493,7 +537,10 @@ impl<'ctx> super::Codegen<'ctx> {
         };
 
         let fn_name = llvm_fn.get_name().to_str().unwrap_or("?").to_string();
-        let panic_bb = self.ir.context.append_basic_block(llvm_fn, "refine_ret_panic");
+        let panic_bb = self
+            .ir
+            .context
+            .append_basic_block(llvm_fn, "refine_ret_panic");
         let cont_bb = self.ir.context.append_basic_block(llvm_fn, "refine_ret_ok");
         build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
 
@@ -502,7 +549,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let i64_ty = self.ir.context.i64_type();
         let param_label = "<return>";
         let fn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &fn_name, "refine_ret_fn");
-        let pn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, param_label, "refine_ret_slot");
+        let pn_g =
+            build_wrappers::w_global_string_ptr(&self.ir.builder, param_label, "refine_ret_slot");
         let rn_g = build_wrappers::w_global_string_ptr(&self.ir.builder, &rname, "refine_ret_name");
         let _ = build_wrappers::w_call(
             &self.ir.builder,
@@ -552,12 +600,16 @@ impl<'ctx> super::Codegen<'ctx> {
         // ── Per-field refinements ─────────────────────────────────────────────
         if let Some(refs) = self.struct_field_refines.get(name).cloned() {
             for (fname, rn) in refs {
-                let Some(pred) = self.refine_preds.get(&rn).cloned() else { continue };
+                let Some(pred) = self.refine_preds.get(&rn).cloned() else {
+                    continue;
+                };
                 if !Self::refine_predicate_is_lowerable(&pred, &self.fndefs) {
                     self.refuse_struct_refine(name, &fname, &rn);
                     continue;
                 }
-                let Some(idx) = field_names.iter().position(|n| n == &fname) else { continue };
+                let Some(idx) = field_names.iter().position(|n| n == &fname) else {
+                    continue;
+                };
                 if self.block_terminated() {
                     return;
                 }
@@ -574,7 +626,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 let sem = field_sem_types.get(idx).cloned();
 
                 let label = format!("field `{fname}` of `{name}` (refinement `{rn}`)");
-                let cond = self.emit_refine_pred_with_underscore(&pred, (slot, fty), sem, &label, llvm_fn);
+                let cond =
+                    self.emit_refine_pred_with_underscore(&pred, (slot, fty), sem, &label, llvm_fn);
                 if let Some(cond) = cond {
                     self.emit_refine_branch(cond, name, &fname, &rn, llvm_fn, "refine_fld");
                 }
@@ -618,7 +671,9 @@ impl<'ctx> super::Codegen<'ctx> {
         sem: Option<Type>,
         llvm_fn: FunctionValue<'ctx>,
     ) {
-        let Some(pred) = self.refine_preds.get(rname).cloned() else { return };
+        let Some(pred) = self.refine_preds.get(rname).cloned() else {
+            return;
+        };
         if self.ir.module.get_function("__axon_refine_panic").is_none() {
             return;
         }
@@ -637,7 +692,13 @@ impl<'ctx> super::Codegen<'ctx> {
             return;
         }
         let fn_name = llvm_fn.get_name().to_str().unwrap_or("?").to_string();
-        let cond = self.emit_refine_pred_with_underscore(&pred, (slot, val_ty), sem, &format!("let `{binding}`"), llvm_fn);
+        let cond = self.emit_refine_pred_with_underscore(
+            &pred,
+            (slot, val_ty),
+            sem,
+            &format!("let `{binding}`"),
+            llvm_fn,
+        );
         if let Some(cond) = cond {
             self.emit_refine_branch(cond, &fn_name, binding, rname, llvm_fn, "refine_let");
         }
@@ -649,7 +710,10 @@ impl<'ctx> super::Codegen<'ctx> {
     fn emit_refine_pred_with_underscore(
         &mut self,
         pred: &ast::Expr,
-        binder: (inkwell::values::PointerValue<'ctx>, inkwell::types::BasicTypeEnum<'ctx>),
+        binder: (
+            inkwell::values::PointerValue<'ctx>,
+            inkwell::types::BasicTypeEnum<'ctx>,
+        ),
         sem: Option<Type>,
         label: &str,
         llvm_fn: FunctionValue<'ctx>,
@@ -699,8 +763,14 @@ impl<'ctx> super::Codegen<'ctx> {
         tag: &str,
     ) {
         let panic_fn = self.ir.module.get_function("__axon_refine_panic").unwrap();
-        let panic_bb = self.ir.context.append_basic_block(llvm_fn, &format!("{tag}_panic"));
-        let cont_bb = self.ir.context.append_basic_block(llvm_fn, &format!("{tag}_ok"));
+        let panic_bb = self
+            .ir
+            .context
+            .append_basic_block(llvm_fn, &format!("{tag}_panic"));
+        let cont_bb = self
+            .ir
+            .context
+            .append_basic_block(llvm_fn, &format!("{tag}_ok"));
         build_wrappers::w_cond_br(&self.ir.builder, cond, cont_bb, panic_bb);
 
         self.ir.builder.position_at_end(panic_bb);
@@ -789,8 +859,12 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Call { callee, args, .. } => {
                 // Only direct calls to a known builtin in the pure-predicate set,
                 // or to a user `@[pure]` fn, with all args lowerable.
-                let ast::Expr::Ident(name) = callee.as_ref() else { return false };
-                let args_ok = args.iter().all(|a| Self::refine_predicate_is_lowerable(a, fndefs));
+                let ast::Expr::Ident(name) = callee.as_ref() else {
+                    return false;
+                };
+                let args_ok = args
+                    .iter()
+                    .all(|a| Self::refine_predicate_is_lowerable(a, fndefs));
                 if !args_ok {
                     return false;
                 }
@@ -824,33 +898,41 @@ impl<'ctx> super::Codegen<'ctx> {
             None => return,
         };
         // Skip if the current basic block is already terminated (defensive).
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
-        let i8_ptr = self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default());
+        let i8_ptr = self
+            .ir
+            .context
+            .i8_type()
+            .ptr_type(inkwell::AddressSpace::default());
         let targets = self.adaptive_registry_targets.clone();
         for name in &targets {
             let target_fn = match self.functions.get(name).copied() {
                 Some(f) => f,
                 None => continue,
             };
-            let name_g = build_wrappers::w_global_string_ptr(&self.ir.builder, name, "adapt_reg_name");
+            let name_g =
+                build_wrappers::w_global_string_ptr(&self.ir.builder, name, "adapt_reg_name");
             let name_len = i64_ty.const_int(name.len() as u64, false);
             // Cast the user fn's pointer to i8* for the C ABI.
             let fn_ptr_val = target_fn.as_global_value().as_pointer_value();
-            let cast_ptr = self.ir
+            let cast_ptr = self
+                .ir
                 .builder
                 .build_pointer_cast(fn_ptr_val, i8_ptr, "adapt_reg_fn")
                 .unwrap();
             let _ = build_wrappers::w_call(
                 &self.ir.builder,
                 reg_fn,
-                &[
-                    name_g.into(),
-                    name_len.into(),
-                    cast_ptr.into(),
-                ],
+                &[name_g.into(), name_len.into(), cast_ptr.into()],
                 "",
             );
         }
@@ -870,7 +952,13 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(f) => f,
             None => return,
         };
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
@@ -898,7 +986,13 @@ impl<'ctx> super::Codegen<'ctx> {
         if self.target_is_wasm {
             return;
         }
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let void_ty = self.ir.context.void_type();
@@ -908,7 +1002,9 @@ impl<'ctx> super::Codegen<'ctx> {
             .module
             .get_function("__axon_install_recursion_guard")
             .unwrap_or_else(|| {
-                self.ir.module.add_function("__axon_install_recursion_guard", fn_ty, None)
+                self.ir
+                    .module
+                    .add_function("__axon_install_recursion_guard", fn_ty, None)
             });
         let _ = build_wrappers::w_call(&self.ir.builder, f, &[], "");
     }
@@ -921,7 +1017,13 @@ impl<'ctx> super::Codegen<'ctx> {
             Some(f) => f,
             None => return,
         };
-        if self.ir.builder.get_insert_block().and_then(|b| b.get_terminator()).is_some() {
+        if self
+            .ir
+            .builder
+            .get_insert_block()
+            .and_then(|b| b.get_terminator())
+            .is_some()
+        {
             return;
         }
         let i64_ty = self.ir.context.i64_type();
@@ -961,40 +1063,39 @@ impl<'ctx> super::Codegen<'ctx> {
 
         // Extract (value, confidence) from a side that may or may not be Uncertain.
         // For non-Uncertain sides, confidence defaults to 1.0.
-        let extract = |this: &Self,
-                       val: BasicValueEnum<'ctx>,
-                       sem: &Option<Type>|
-         -> Option<(BasicValueEnum<'ctx>, inkwell::values::FloatValue<'ctx>)> {
-            if let Some(Type::Uncertain(_)) = sem {
-                if let BasicValueEnum::StructValue(sv) = val {
-                    let v = this
-                        .ir
-                        .builder
-                        .build_extract_value(sv, 0, "unc_v")
-                        .ok()?;
-                    let c = this
-                        .ir
-                        .builder
-                        .build_extract_value(sv, 1, "unc_c")
-                        .ok()?
-                        .into_float_value();
-                    return Some((v, c));
+        let extract =
+            |this: &Self,
+             val: BasicValueEnum<'ctx>,
+             sem: &Option<Type>|
+             -> Option<(BasicValueEnum<'ctx>, inkwell::values::FloatValue<'ctx>)> {
+                if let Some(Type::Uncertain(_)) = sem {
+                    if let BasicValueEnum::StructValue(sv) = val {
+                        let v = build_wrappers::w_extract_value(&this.ir.builder, sv, 0, "unc_v");
+                        let c = this
+                            .ir
+                            .builder
+                            .build_extract_value(sv, 1, "unc_c")
+                            .ok()?
+                            .into_float_value();
+                        return Some((v, c));
+                    }
+                    None
+                } else {
+                    Some((val, one_conf))
                 }
-                None
-            } else {
-                Some((val, one_conf))
-            }
-        };
+            };
 
         let (l_val, l_conf) = extract(self, lhs, lt_sem)?;
         let (r_val, r_conf) = extract(self, rhs, rt_sem)?;
 
         // min(l_conf, r_conf): select the smaller of the two via OLT compare.
-        let cmp = self.ir
+        let cmp = self
+            .ir
             .builder
             .build_float_compare(FloatPredicate::OLT, l_conf, r_conf, "uconf_lt")
             .ok()?;
-        let new_conf = self.ir
+        let new_conf = self
+            .ir
             .builder
             .build_select(cmp, l_conf, r_conf, "uconf_min")
             .ok()?
@@ -1015,31 +1116,38 @@ impl<'ctx> super::Codegen<'ctx> {
         // matches the inner T; for comparisons/logical it is bool.
         let is_cmp = matches!(
             op,
-            ast::BinOp::Eq | ast::BinOp::NotEq
-                | ast::BinOp::Lt | ast::BinOp::Gt
-                | ast::BinOp::LtEq | ast::BinOp::GtEq
-                | ast::BinOp::And | ast::BinOp::Or
+            ast::BinOp::Eq
+                | ast::BinOp::NotEq
+                | ast::BinOp::Lt
+                | ast::BinOp::Gt
+                | ast::BinOp::LtEq
+                | ast::BinOp::GtEq
+                | ast::BinOp::And
+                | ast::BinOp::Or
         );
         let result_inner_ty = if is_cmp { Type::Bool } else { inner_ty.clone() };
         let result_inner_llvm = self.llvm_type(&result_inner_ty)?;
-        let result_struct_ty = self.ir.context.struct_type(
-            &[result_inner_llvm, f64_ty.into(), i64_ty.into()],
-            false,
-        );
+        let result_struct_ty = self
+            .ir
+            .context
+            .struct_type(&[result_inner_llvm, f64_ty.into(), i64_ty.into()], false);
 
         // Build { value, confidence, source_tag = 0 }.
         let mut sv = result_struct_ty.get_undef();
-        sv = self.ir
+        sv = self
+            .ir
             .builder
             .build_insert_value(sv, op_result, 0, "unc_iv")
             .ok()?
             .into_struct_value();
-        sv = self.ir
+        sv = self
+            .ir
             .builder
             .build_insert_value(sv, new_conf, 1, "unc_ic")
             .ok()?
             .into_struct_value();
-        sv = self.ir
+        sv = self
+            .ir
             .builder
             .build_insert_value(sv, i64_ty.const_zero(), 2, "unc_is")
             .ok()?

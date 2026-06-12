@@ -33,13 +33,31 @@ fn store_log_path(key: &str) -> Option<std::path::PathBuf> {
         .ok()
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".cache"))
+        })?;
     let safe: String = key
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
-    let safe = if safe.is_empty() { "_".to_string() } else { safe };
-    Some(base.join("axon").join("stores").join(format!("{safe}.ndjson")))
+    let safe = if safe.is_empty() {
+        "_".to_string()
+    } else {
+        safe
+    };
+    Some(
+        base.join("axon")
+            .join("stores")
+            .join(format!("{safe}.ndjson")),
+    )
 }
 
 impl<'p> Interp<'p> {
@@ -60,7 +78,11 @@ impl<'p> Interp<'p> {
             };
             let outcome = match self.fns.get(fn_name.as_str()).copied() {
                 Some(f) => {
-                    let fiber_args = if f.params.is_empty() { vec![] } else { vec![Value::Int(arg)] };
+                    let fiber_args = if f.params.is_empty() {
+                        vec![]
+                    } else {
+                        vec![Value::Int(arg)]
+                    };
                     self.call_fn(f, fiber_args)
                 }
                 None => Err(Flow::Panic(format!("fiber fn `{fn_name}` vanished"))),
@@ -71,7 +93,9 @@ impl<'p> Interp<'p> {
                     self.scheduler.borrow_mut().complete(id, r);
                     completed += 1;
                 }
-                Err(Flow::Panic(m)) | Err(Flow::RefineViolation(m)) | Err(Flow::VerifyFailed(m)) => {
+                Err(Flow::Panic(m))
+                | Err(Flow::RefineViolation(m))
+                | Err(Flow::VerifyFailed(m)) => {
                     self.scheduler.borrow_mut().fail(id, m);
                 }
                 Err(other) => return Err(other),
@@ -89,7 +113,10 @@ impl<'p> Interp<'p> {
             if args.len() == n {
                 Ok(())
             } else {
-                Err(Flow::Panic(format!("{name}: expected {n} args, got {}", args.len())))
+                Err(Flow::Panic(format!(
+                    "{name}: expected {n} args, got {}",
+                    args.len()
+                )))
             }
         };
         macro_rules! ok {
@@ -281,7 +308,12 @@ impl<'p> Interp<'p> {
                         }
                         out
                     }
-                    other => return panic(format!("exec: args must be [str], got {}", other.type_name())),
+                    other => {
+                        return panic(format!(
+                            "exec: args must be [str], got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 match crate::host::with_host(|h| h.exec(&cmd, &arg_list)) {
                     Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
@@ -298,10 +330,11 @@ impl<'p> Interp<'p> {
                 // respectively (display() shares fmt_g + "true"/"false").
                 ok!(Value::Str(match &args[0] {
                     Value::Int(_) | Value::Float(_) | Value::Bool(_) => display(&args[0]),
-                    other => return panic(format!(
-                        "to_str: expected a scalar (i64/f64/bool), got {}",
-                        other.type_name()
-                    )),
+                    other =>
+                        return panic(format!(
+                            "to_str: expected a scalar (i64/f64/bool), got {}",
+                            other.type_name()
+                        )),
                 }));
             }
             "to_str_f64" => {
@@ -310,7 +343,9 @@ impl<'p> Interp<'p> {
             }
             "to_str_bool" => {
                 want(1)?;
-                ok!(Value::Str(if as_bool(&args[0])? { "true" } else { "false" }.to_string()));
+                ok!(Value::Str(
+                    if as_bool(&args[0])? { "true" } else { "false" }.to_string()
+                ));
             }
             "i64_to_str" => {
                 want(1)?;
@@ -430,10 +465,12 @@ impl<'p> Interp<'p> {
                     "false" => false,
                     _ => match &args[1] {
                         Value::Bool(b) => *b,
-                        other => return panic(format!(
-                            "parse_bool_or: default must be bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "parse_bool_or: default must be bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     },
                 };
                 ok!(Value::Bool(b));
@@ -453,7 +490,11 @@ impl<'p> Interp<'p> {
                 ok!(match &args[0] {
                     Value::Str(s) => Value::Int(s.len() as i64),
                     Value::Array(a) => Value::Int(a.len() as i64),
-                    other => return panic(format!("len: expected str/array, got {}", other.type_name())),
+                    other =>
+                        return panic(format!(
+                            "len: expected str/array, got {}",
+                            other.type_name()
+                        )),
                 });
             }
 
@@ -477,9 +518,7 @@ impl<'p> Interp<'p> {
                 // mirror `__axon_abs_i32`: overflow exactly at i32::MIN.
                 let n = as_int(&args[0])?;
                 if n == i32::MIN as i64 {
-                    return panic(
-                        "abs_i32 overflow (i32::MIN has no positive)",
-                    );
+                    return panic("abs_i32 overflow (i32::MIN has no positive)");
                 }
                 ok!(Value::Int((n as i32).unsigned_abs() as i64));
             }
@@ -515,10 +554,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let mut xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_push: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_push: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 xs.push(args[1].clone());
                 ok!(Value::Array(xs));
@@ -528,19 +569,23 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_sum_i64: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_sum_i64: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut s: i64 = 0;
                 for v in xs {
                     let n = match v {
                         Value::Int(n) => *n,
-                        other => return panic(format!(
-                            "arr_sum_i64: element must be i64, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_sum_i64: element must be i64, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     s = s.saturating_add(n);
                 }
@@ -554,10 +599,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_map: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_map: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
@@ -574,10 +621,12 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_fold: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_fold: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut acc = args[1].clone();
                 let f = args[2].clone();
@@ -595,10 +644,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_sort_by: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_sort_by: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let cmp = args[1].clone();
                 // Insertion sort. Each comparison hits call_closure;
@@ -614,12 +665,16 @@ impl<'p> Interp<'p> {
                         let r = self.call_closure(cmp.clone(), vec![x.clone(), out[lo].clone()])?;
                         let r = match r {
                             Value::Int(n) => n,
-                            other => return panic(format!(
-                                "arr_sort_by: comparator must return i64, got {}",
-                                other.type_name()
-                            )),
+                            other => {
+                                return panic(format!(
+                                    "arr_sort_by: comparator must return i64, got {}",
+                                    other.type_name()
+                                ))
+                            }
                         };
-                        if r < 0 { break; }
+                        if r < 0 {
+                            break;
+                        }
                         lo += 1;
                     }
                     out.insert(lo, x);
@@ -642,17 +697,21 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let mut out = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_concat: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_concat: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let ys = match &args[1] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_concat: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_concat: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 out.reserve(ys.len());
                 for v in ys {
@@ -667,10 +726,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xss = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_flatten: expected array of arrays, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_flatten: expected array of arrays, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let total: usize = xss
                     .iter()
@@ -687,10 +748,12 @@ impl<'p> Interp<'p> {
                                 out.push(x.clone());
                             }
                         }
-                        other => return panic(format!(
-                            "arr_flatten: inner element must be array, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_flatten: inner element must be array, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Array(out));
@@ -706,11 +769,19 @@ impl<'p> Interp<'p> {
                 let f = match &args[0] {
                     Value::Int(n) => *n as f64,
                     Value::Float(v) => *v,
-                    Value::Bool(b) => if *b { 1.0 } else { 0.0 },
-                    other => return panic(format!(
-                        "as_f64: expected i64/f64/bool, got {}",
-                        other.type_name()
-                    )),
+                    Value::Bool(b) => {
+                        if *b {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    other => {
+                        return panic(format!(
+                            "as_f64: expected i64/f64/bool, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 ok!(Value::Float(f));
             }
@@ -719,11 +790,19 @@ impl<'p> Interp<'p> {
                 let n = match &args[0] {
                     Value::Int(n) => *n,
                     Value::Float(v) => *v as i64,
-                    Value::Bool(b) => if *b { 1 } else { 0 },
-                    other => return panic(format!(
-                        "as_i64: expected i64/f64/bool, got {}",
-                        other.type_name()
-                    )),
+                    Value::Bool(b) => {
+                        if *b {
+                            1
+                        } else {
+                            0
+                        }
+                    }
+                    other => {
+                        return panic(format!(
+                            "as_i64: expected i64/f64/bool, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 ok!(Value::Int(n));
             }
@@ -733,10 +812,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let mut xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_reverse: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_reverse: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 xs.reverse();
                 ok!(Value::Array(xs));
@@ -745,10 +826,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_take: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_take: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let n = as_int(&args[1])?.max(0) as usize;
                 let take = n.min(xs.len());
@@ -758,10 +841,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_drop: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_drop: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let n = as_int(&args[1])?.max(0) as usize;
                 let skip = n.min(xs.len());
@@ -773,20 +858,24 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_sum_f64: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_sum_f64: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut s = 0.0_f64;
                 for v in xs {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
-                        other => return panic(format!(
-                            "arr_sum_f64: element must be numeric, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_sum_f64: element must be numeric, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     s += f;
                 }
@@ -799,20 +888,26 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_mean_i64: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_mean_i64: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
-                if xs.is_empty() { ok!(Value::Float(0.0)); }
+                if xs.is_empty() {
+                    ok!(Value::Float(0.0));
+                }
                 let mut s: i64 = 0;
                 for v in xs {
                     let n = match v {
                         Value::Int(n) => *n,
-                        other => return panic(format!(
-                            "arr_mean_i64: element must be i64, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_mean_i64: element must be i64, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     s = s.saturating_add(n);
                 }
@@ -823,21 +918,27 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_mean_f64: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_mean_f64: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
-                if xs.is_empty() { ok!(Value::Float(0.0)); }
+                if xs.is_empty() {
+                    ok!(Value::Float(0.0));
+                }
                 let mut s = 0.0_f64;
                 for v in xs {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
-                        other => return panic(format!(
-                            "arr_mean_f64: element must be numeric, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_mean_f64: element must be numeric, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     s += f;
                 }
@@ -850,10 +951,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_std_f64: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_std_f64: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 // BUG_HUNT #21: an array of fewer than 2 elements has no spread,
                 // so its standard deviation is 0 — return it rather than PANIC.
@@ -868,10 +971,12 @@ impl<'p> Interp<'p> {
                     let f = match v {
                         Value::Float(f) => *f,
                         Value::Int(n) => *n as f64,
-                        other => return panic(format!(
-                            "arr_std_f64: element must be numeric, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_std_f64: element must be numeric, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     sum += f;
                     fs.push(f);
@@ -891,10 +996,9 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "{name}: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!("{name}: expected array, got {}", other.type_name()))
+                    }
                 };
                 if xs.is_empty() {
                     return panic(format!("{name}: array is empty"));
@@ -925,10 +1029,9 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "{name}: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!("{name}: expected array, got {}", other.type_name()))
+                    }
                 };
                 if xs.is_empty() {
                     return panic(format!("{name}: array is empty"));
@@ -975,20 +1078,24 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "str_join: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "str_join: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let sep = as_str(&args[1])?.to_string();
                 let mut parts = Vec::with_capacity(xs.len());
                 for v in xs {
                     match v {
                         Value::Str(s) => parts.push(s.clone()),
-                        other => return panic(format!(
-                            "str_join: element must be str, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "str_join: element must be str, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Str(parts.join(&sep)));
@@ -1001,17 +1108,21 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_zip: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_zip: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let ys = match &args[1] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_zip: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_zip: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let n = xs.len().min(ys.len());
                 let mut out = Vec::with_capacity(n);
@@ -1027,10 +1138,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_chunk: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_chunk: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let n = as_int(&args[1])?;
                 if n <= 0 {
@@ -1054,10 +1167,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_unique: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_unique: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut out: Vec<Value> = Vec::new();
                 for v in xs {
@@ -1074,10 +1189,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_index_of: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_index_of: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let needle = &args[1];
                 let mut found: Option<i64> = None;
@@ -1100,22 +1217,29 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_any: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_any: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut hit = false;
                 for x in xs {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
-                        Value::Bool(true) => { hit = true; break; }
+                        Value::Bool(true) => {
+                            hit = true;
+                            break;
+                        }
                         Value::Bool(false) => {}
-                        other => return panic(format!(
-                            "arr_any: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_any: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Bool(hit));
@@ -1127,10 +1251,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_all: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_all: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut all = true;
@@ -1138,11 +1264,16 @@ impl<'p> Interp<'p> {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
                         Value::Bool(true) => {}
-                        Value::Bool(false) => { all = false; break; }
-                        other => return panic(format!(
-                            "arr_all: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        Value::Bool(false) => {
+                            all = false;
+                            break;
+                        }
+                        other => {
+                            return panic(format!(
+                                "arr_all: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Bool(all));
@@ -1154,22 +1285,28 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_count_if: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_count_if: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut n: i64 = 0;
                 for x in xs {
                     let r = self.call_closure(pred.clone(), vec![x])?;
                     match r {
-                        Value::Bool(true) => { n += 1; }
+                        Value::Bool(true) => {
+                            n += 1;
+                        }
                         Value::Bool(false) => {}
-                        other => return panic(format!(
-                            "arr_count_if: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_count_if: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Int(n));
@@ -1183,26 +1320,27 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_zip_with: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_zip_with: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let ys = match &args[1] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_zip_with: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_zip_with: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let f = args[2].clone();
                 let n = xs.len().min(ys.len());
                 let mut out = Vec::with_capacity(n);
                 for i in 0..n {
-                    let z = self.call_closure(
-                        f.clone(),
-                        vec![xs[i].clone(), ys[i].clone()],
-                    )?;
+                    let z = self.call_closure(f.clone(), vec![xs[i].clone(), ys[i].clone()])?;
                     out.push(z);
                 }
                 ok!(Value::Array(out));
@@ -1215,22 +1353,29 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_find: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_find: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut hit: Option<Value> = None;
                 for x in xs {
                     let keep = self.call_closure(pred.clone(), vec![x.clone()])?;
                     match keep {
-                        Value::Bool(true) => { hit = Some(x); break; }
+                        Value::Bool(true) => {
+                            hit = Some(x);
+                            break;
+                        }
                         Value::Bool(false) => {}
-                        other => return panic(format!(
-                            "arr_find: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_find: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(match hit {
@@ -1245,10 +1390,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_contains: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_contains: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let needle = &args[1];
                 let mut found = false;
@@ -1267,10 +1414,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_filter: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_filter: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let f = args[1].clone();
                 let mut out = Vec::with_capacity(xs.len());
@@ -1279,10 +1428,12 @@ impl<'p> Interp<'p> {
                     match keep {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => {}
-                        other => return panic(format!(
-                            "arr_filter: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_filter: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Array(out));
@@ -1293,10 +1444,9 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "{name}: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!("{name}: expected array, got {}", other.type_name()))
+                    }
                 };
                 if xs.is_empty() {
                     return panic(format!("{name}: array is empty"));
@@ -1304,18 +1454,22 @@ impl<'p> Interp<'p> {
                 let pick_max = name == "arr_max_i64";
                 let mut best: i64 = match &xs[0] {
                     Value::Int(n) => *n,
-                    other => return panic(format!(
-                        "{name}: element must be i64, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "{name}: element must be i64, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 for v in &xs[1..] {
                     let n = match v {
                         Value::Int(n) => *n,
-                        other => return panic(format!(
-                            "{name}: element must be i64, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "{name}: element must be i64, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     if (pick_max && n > best) || (!pick_max && n < best) {
                         best = n;
@@ -1383,7 +1537,11 @@ impl<'p> Interp<'p> {
             }
             "clamp_f64" => {
                 want(3)?;
-                let (n, lo, hi) = (as_float(&args[0])?, as_float(&args[1])?, as_float(&args[2])?);
+                let (n, lo, hi) = (
+                    as_float(&args[0])?,
+                    as_float(&args[1])?,
+                    as_float(&args[2])?,
+                );
                 ok!(Value::Float(n.max(lo).min(hi)));
             }
             "sign_i64" => {
@@ -1425,7 +1583,9 @@ impl<'p> Interp<'p> {
             "random_f64" => {
                 want(0)?;
                 // 53-bit mantissa → uniform [0.0, 1.0)
-                ok!(Value::Float((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0));
+                ok!(Value::Float(
+                    (next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0
+                ));
             }
             "random_i64" => {
                 want(2)?;
@@ -1475,13 +1635,18 @@ impl<'p> Interp<'p> {
                 let n = as_int(&args[0])?;
                 let base = as_int(&args[1])?;
                 if !(2..=36).contains(&base) {
-                    return panic(format!("i64_to_str_radix: radix must be 2..=36, got {base}"));
+                    return panic(format!(
+                        "i64_to_str_radix: radix must be 2..=36, got {base}"
+                    ));
                 }
                 ok!(Value::Str(i64_to_radix(n, base as u32)));
             }
             "uncertain_new_f64" => {
                 want(2)?;
-                ok!(make_uncertain(Value::Float(as_float(&args[0])?), as_float(&args[1])?));
+                ok!(make_uncertain(
+                    Value::Float(as_float(&args[0])?),
+                    as_float(&args[1])?
+                ));
             }
 
             // ── Bit ops ───────────────────────────────────────────────────────
@@ -1503,11 +1668,15 @@ impl<'p> Interp<'p> {
             }
             "shl" => {
                 want(2)?;
-                ok!(Value::Int(as_int(&args[0])?.wrapping_shl(as_int(&args[1])? as u32)));
+                ok!(Value::Int(
+                    as_int(&args[0])?.wrapping_shl(as_int(&args[1])? as u32)
+                ));
             }
             "shr" => {
                 want(2)?;
-                ok!(Value::Int(as_int(&args[0])?.wrapping_shr(as_int(&args[1])? as u32)));
+                ok!(Value::Int(
+                    as_int(&args[0])?.wrapping_shr(as_int(&args[1])? as u32)
+                ));
             }
 
             // ── String ops ──────────────────────────────────────────────────────
@@ -1517,7 +1686,11 @@ impl<'p> Interp<'p> {
             }
             "str_concat" | "axon_concat" => {
                 want(2)?;
-                ok!(Value::Str(format!("{}{}", as_str(&args[0])?, as_str(&args[1])?)));
+                ok!(Value::Str(format!(
+                    "{}{}",
+                    as_str(&args[0])?,
+                    as_str(&args[1])?
+                )));
             }
             "str_eq" => {
                 want(2)?;
@@ -1529,7 +1702,9 @@ impl<'p> Interp<'p> {
             }
             "str_starts_with" => {
                 want(2)?;
-                ok!(Value::Bool(as_str(&args[0])?.starts_with(as_str(&args[1])?)));
+                ok!(Value::Bool(
+                    as_str(&args[0])?.starts_with(as_str(&args[1])?)
+                ));
             }
             "str_ends_with" => {
                 want(2)?;
@@ -1593,7 +1768,9 @@ impl<'p> Interp<'p> {
             }
             "str_replace" => {
                 want(3)?;
-                ok!(Value::Str(as_str(&args[0])?.replace(as_str(&args[1])?, as_str(&args[2])?)));
+                ok!(Value::Str(
+                    as_str(&args[0])?.replace(as_str(&args[1])?, as_str(&args[2])?)
+                ));
             }
             "str_index_of" => {
                 want(2)?;
@@ -1603,7 +1780,9 @@ impl<'p> Interp<'p> {
             }
             "str_count" => {
                 want(2)?;
-                ok!(Value::Int(as_str(&args[0])?.matches(as_str(&args[1])?).count() as i64));
+                ok!(Value::Int(
+                    as_str(&args[0])?.matches(as_str(&args[1])?).count() as i64
+                ));
             }
             "str_slice" => {
                 want(3)?;
@@ -1617,7 +1796,9 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let s = as_str(&args[0])?;
                 let i = as_int(&args[1])?.max(0) as usize;
-                ok!(Value::Int(s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)));
+                ok!(Value::Int(
+                    s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
+                ));
             }
 
             // ── Assertions ──────────────────────────────────────────────────────
@@ -1699,11 +1880,17 @@ impl<'p> Interp<'p> {
             // `.value` / `.confidence` field access works directly.
             "uncertain_new" | "uncertain_dyn_i64" => {
                 want(2)?;
-                ok!(make_uncertain(Value::Int(as_int(&args[0])?), as_float(&args[1])?));
+                ok!(make_uncertain(
+                    Value::Int(as_int(&args[0])?),
+                    as_float(&args[1])?
+                ));
             }
             "uncertain_dyn_f64" => {
                 want(2)?;
-                ok!(make_uncertain(Value::Float(as_float(&args[0])?), as_float(&args[1])?));
+                ok!(make_uncertain(
+                    Value::Float(as_float(&args[0])?),
+                    as_float(&args[1])?
+                ));
             }
             "uncertain_deterministic" => {
                 want(1)?;
@@ -1735,7 +1922,10 @@ impl<'p> Interp<'p> {
                 match &args[0] {
                     Value::Struct { fields, .. } => {
                         let value = fields.get("value").cloned().unwrap_or(Value::Int(0));
-                        let confidence = fields.get("confidence").and_then(as_float_opt).unwrap_or(1.0);
+                        let confidence = fields
+                            .get("confidence")
+                            .and_then(as_float_opt)
+                            .unwrap_or(1.0);
                         let horizon = fields.get("horizon_ms").and_then(as_int_opt).unwrap_or(0);
                         let decay = fields.get("decay").and_then(as_float_opt).unwrap_or(0.0);
                         let created = fields.get("created_ms").and_then(as_int_opt).unwrap_or(0);
@@ -1751,7 +1941,13 @@ impl<'p> Interp<'p> {
                         } else {
                             confidence
                         };
-                        ok!(make_temporal(value, new_conf, horizon, decay, created + offset));
+                        ok!(make_temporal(
+                            value,
+                            new_conf,
+                            horizon,
+                            decay,
+                            created + offset
+                        ));
                     }
                     _ => panic("temporal_at: expected a Temporal value"),
                 }
@@ -1761,7 +1957,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 match &args[0] {
                     Value::Struct { fields, .. } => {
-                        ok!(Value::Float(fields.get("confidence").and_then(as_float_opt).unwrap_or(1.0)));
+                        ok!(Value::Float(
+                            fields
+                                .get("confidence")
+                                .and_then(as_float_opt)
+                                .unwrap_or(1.0)
+                        ));
                     }
                     _ => panic("temporal_confidence: expected a Temporal value"),
                 }
@@ -1829,9 +2030,9 @@ impl<'p> Interp<'p> {
                 let n_choices = as_int(&args[1])?;
                 let target = as_float(&args[2])?;
                 let max_evals = as_int(&args[3])?;
-                ok!(Value::Float(
-                    self.run_goal_categorical(&name, n_choices, target, max_evals)?
-                ));
+                ok!(Value::Float(self.run_goal_categorical(
+                    &name, n_choices, target, max_evals
+                )?));
             }
 
             // Random-search strategy. Baseline against the hill-climb
@@ -1844,7 +2045,9 @@ impl<'p> Interp<'p> {
                 let n_samples = as_int(&args[2])?;
                 let lo = as_int(&args[3])?;
                 let hi = as_int(&args[4])?;
-                ok!(Value::Float(self.run_goal_random(&name, target, n_samples, lo, hi)?));
+                ok!(Value::Float(
+                    self.run_goal_random(&name, target, n_samples, lo, hi)?
+                ));
             }
 
             // Multi-start hill climb. Random restarts + local refinement —
@@ -1859,7 +2062,12 @@ impl<'p> Interp<'p> {
                 let lo = as_int(&args[4])?;
                 let hi = as_int(&args[5])?;
                 ok!(Value::Float(self.run_goal_multistart(
-                    &name, target, n_starts, evals_per_start, lo, hi
+                    &name,
+                    target,
+                    n_starts,
+                    evals_per_start,
+                    lo,
+                    hi
                 )?));
             }
 
@@ -1931,7 +2139,12 @@ impl<'p> Interp<'p> {
             "goal_count" => {
                 want(1)?;
                 let name = as_str(&args[0])?.to_string();
-                let n = self.provenance.borrow().get(&name).map(|v| v.len()).unwrap_or(0);
+                let n = self
+                    .provenance
+                    .borrow()
+                    .get(&name)
+                    .map(|v| v.len())
+                    .unwrap_or(0);
                 ok!(Value::Int(n as i64));
             }
 
@@ -1963,7 +2176,10 @@ impl<'p> Interp<'p> {
                 let fs_write = as_bool(&args[2])?;
                 let exec = as_bool(&args[3])?;
                 let budget = as_int(&args[4])?;
-                let h = self.principals.borrow_mut().root(name, net, fs_write, exec, budget);
+                let h = self
+                    .principals
+                    .borrow_mut()
+                    .root(name, net, fs_write, exec, budget);
                 ok!(Value::Int(h as i64));
             }
 
@@ -1987,7 +2203,12 @@ impl<'p> Interp<'p> {
                     ));
                 }
                 match self.principals.borrow_mut().mint(
-                    parent as usize, name, net, fs_write, exec, grant,
+                    parent as usize,
+                    name,
+                    net,
+                    fs_write,
+                    exec,
+                    grant,
                 ) {
                     Some(h) => ok!(Value::Int(h as i64)),
                     None => panic(format!(
@@ -2018,7 +2239,11 @@ impl<'p> Interp<'p> {
             "principal_budget_remaining" => {
                 want(1)?;
                 let h = as_int(&args[0])?;
-                let rem = if h >= 0 { self.principals.borrow().budget_remaining(h as usize) } else { 0 };
+                let rem = if h >= 0 {
+                    self.principals.borrow().budget_remaining(h as usize)
+                } else {
+                    0
+                };
                 ok!(Value::Int(rem));
             }
 
@@ -2028,7 +2253,11 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let h = as_int(&args[0])?;
                 let amount = as_int(&args[1])?;
-                let rem = if h >= 0 { self.principals.borrow_mut().spend(h as usize, amount) } else { 0 };
+                let rem = if h >= 0 {
+                    self.principals.borrow_mut().spend(h as usize, amount)
+                } else {
+                    0
+                };
                 ok!(Value::Int(rem));
             }
 
@@ -2093,16 +2322,12 @@ impl<'p> Interp<'p> {
                 {
                     let sbs = self.sandboxes.borrow();
                     if sb_handle < 0 || sb_handle as usize >= sbs.len() {
-                        return panic(format!(
-                            "sandbox_run: unknown sandbox handle {sb_handle}"
-                        ));
+                        return panic(format!("sandbox_run: unknown sandbox handle {sb_handle}"));
                     }
                 }
                 // Validate the function exists.
                 let Some(f) = self.fns.get(&fn_name).copied() else {
-                    return panic(format!(
-                        "sandbox_run: no function `{fn_name}`"
-                    ));
+                    return panic(format!("sandbox_run: no function `{fn_name}`"));
                 };
                 // Set the active sandbox, save the previous value for restore.
                 let prev_sandbox = self.active_sandbox.replace(sb_handle);
@@ -2112,7 +2337,7 @@ impl<'p> Interp<'p> {
                     Ok(Value::Int(n)) => ok!(Value::Int(n)),
                     Ok(Value::Tuple(ref v)) if v.is_empty() => ok!(Value::Int(0)),
                     Ok(v) => ok!(v),
-                    Err(e) => return Err(e),
+                    Err(e) => Err(e),
                 }
             }
 
@@ -2181,7 +2406,11 @@ impl<'p> Interp<'p> {
             "scheduler_result" => {
                 want(1)?;
                 let id = as_int(&args[0])?;
-                let r = if id >= 0 { self.scheduler.borrow().result(id as usize) } else { 0 };
+                let r = if id >= 0 {
+                    self.scheduler.borrow().result(id as usize)
+                } else {
+                    0
+                };
                 ok!(Value::Int(r));
             }
 
@@ -2244,7 +2473,9 @@ impl<'p> Interp<'p> {
                 }
                 let mut sups = self.supervisors.borrow_mut();
                 let Some(s) = sups.get_mut(sup as usize) else {
-                    return panic(format!("[E1602] supervisor_supervise: unknown supervisor {sup}"));
+                    return panic(format!(
+                        "[E1602] supervisor_supervise: unknown supervisor {sup}"
+                    ));
                 };
                 let idx = s.supervise(fiber as usize);
                 ok!(Value::Int(idx as i64));
@@ -2269,7 +2500,11 @@ impl<'p> Interp<'p> {
                     let sups = self.supervisors.borrow();
                     match sups.get(sup as usize) {
                         Some(s) => s.max_restarts.max(0) + 2,
-                        None => return panic(format!("[E1602] supervisor_run: unknown supervisor {sup}")),
+                        None => {
+                            return panic(format!(
+                                "[E1602] supervisor_run: unknown supervisor {sup}"
+                            ))
+                        }
                     }
                 };
                 let mut rounds: i64 = 0;
@@ -2283,7 +2518,11 @@ impl<'p> Interp<'p> {
                         let sched = self.scheduler.borrow();
                         sups.get(sup as usize).and_then(|s| {
                             s.children.iter().enumerate().find_map(|(ci, &fid)| {
-                                if sched.failed(fid) { Some(ci as i64) } else { None }
+                                if sched.failed(fid) {
+                                    Some(ci as i64)
+                                } else {
+                                    None
+                                }
                             })
                         })
                     };
@@ -2346,7 +2585,11 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let sup = as_int(&args[0])?;
                 let n = if sup >= 0 {
-                    self.supervisors.borrow().get(sup as usize).map(|s| s.restarts).unwrap_or(0)
+                    self.supervisors
+                        .borrow()
+                        .get(sup as usize)
+                        .map(|s| s.restarts)
+                        .unwrap_or(0)
                 } else {
                     0
                 };
@@ -2374,7 +2617,8 @@ impl<'p> Interp<'p> {
                         for line in contents.lines() {
                             let mut it = line.split_whitespace();
                             if let (Some(o), Some(d)) = (it.next(), it.next()) {
-                                if let (Ok(op_id), Ok(delta)) = (o.parse::<i64>(), d.parse::<i64>()) {
+                                if let (Ok(op_id), Ok(delta)) = (o.parse::<i64>(), d.parse::<i64>())
+                                {
                                     store.apply(op_id, delta);
                                 }
                             }
@@ -2383,7 +2627,12 @@ impl<'p> Interp<'p> {
                 }
                 let path = match path {
                     Some(p) => p,
-                    None => return panic("[E1603] dstore_open: no cache dir for the durable store log".to_string()),
+                    None => {
+                        return panic(
+                            "[E1603] dstore_open: no cache dir for the durable store log"
+                                .to_string(),
+                        )
+                    }
                 };
                 let mut stores = self.stores.borrow_mut();
                 stores.push((store, path));
@@ -2418,8 +2667,10 @@ impl<'p> Interp<'p> {
                         let _ = std::fs::create_dir_all(dir);
                     }
                     use std::io::Write as _;
-                    if let Ok(mut f) =
-                        std::fs::OpenOptions::new().create(true).append(true).open(&path)
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(&path)
                     {
                         let _ = writeln!(f, "{op_id} {delta}");
                     }
@@ -2432,7 +2683,11 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
-                    self.stores.borrow().get(h as usize).map(|(s, _)| s.value).unwrap_or(0)
+                    self.stores
+                        .borrow()
+                        .get(h as usize)
+                        .map(|(s, _)| s.value)
+                        .unwrap_or(0)
                 } else {
                     0
                 };
@@ -2445,7 +2700,11 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let h = as_int(&args[0])?;
                 let v = if h >= 0 {
-                    self.stores.borrow().get(h as usize).map(|(s, _)| s.version).unwrap_or(0)
+                    self.stores
+                        .borrow()
+                        .get(h as usize)
+                        .map(|(s, _)| s.version)
+                        .unwrap_or(0)
                 } else {
                     0
                 };
@@ -2486,7 +2745,12 @@ impl<'p> Interp<'p> {
                     ));
                 }
                 let mut gws = self.llm_gateways.borrow_mut();
-                gws.push(crate::kernel::LlmGateway::new(model, rate, principal as usize, fallback));
+                gws.push(crate::kernel::LlmGateway::new(
+                    model,
+                    rate,
+                    principal as usize,
+                    fallback,
+                ));
                 ok!(Value::Int((gws.len() - 1) as i64));
             }
 
@@ -2535,7 +2799,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let gw = as_int(&args[0])?;
                 let alive = gw >= 0
-                    && self.llm_gateways.borrow().get(gw as usize).map(|g| !g.halted).unwrap_or(false);
+                    && self
+                        .llm_gateways
+                        .borrow()
+                        .get(gw as usize)
+                        .map(|g| !g.halted)
+                        .unwrap_or(false);
                 ok!(Value::Bool(alive));
             }
 
@@ -2544,7 +2813,11 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let gw = as_int(&args[0])?;
                 let spent = if gw >= 0 {
-                    self.llm_gateways.borrow().get(gw as usize).map(|g| g.spent_micro).unwrap_or(0)
+                    self.llm_gateways
+                        .borrow()
+                        .get(gw as usize)
+                        .map(|g| g.spent_micro)
+                        .unwrap_or(0)
                 } else {
                     0
                 };
@@ -2569,7 +2842,11 @@ impl<'p> Interp<'p> {
                 }
                 let mut goals = self.goals.borrow_mut();
                 let handle = goals.len();
-                goals.push(crate::kernel::KernelGoal::new(principal.max(0) as usize, name, target));
+                goals.push(crate::kernel::KernelGoal::new(
+                    principal.max(0) as usize,
+                    name,
+                    target,
+                ));
                 ok!(Value::Int(handle as i64));
             }
             // `kernel_goal_run(goal, max_evals) -> f64` — run ≤ max_evals optimizer
@@ -2616,21 +2893,35 @@ impl<'p> Interp<'p> {
             "kernel_goal_best_score" => {
                 want(1)?;
                 let g = as_int(&args[0])?;
-                let best = self.goals.borrow().get(g.max(0) as usize).map(|k| k.best_score).unwrap_or(0.0);
+                let best = self
+                    .goals
+                    .borrow()
+                    .get(g.max(0) as usize)
+                    .map(|k| k.best_score)
+                    .unwrap_or(0.0);
                 ok!(Value::Float(best));
             }
             // `kernel_goal_spent(goal) -> i64` — evaluations charged to the principal.
             "kernel_goal_spent" => {
                 want(1)?;
                 let g = as_int(&args[0])?;
-                let spent = self.goals.borrow().get(g.max(0) as usize).map(|k| k.evals_spent).unwrap_or(0);
+                let spent = self
+                    .goals
+                    .borrow()
+                    .get(g.max(0) as usize)
+                    .map(|k| k.evals_spent)
+                    .unwrap_or(0);
                 ok!(Value::Int(spent));
             }
             // `kernel_goal_budget_left(goal) -> i64` — the principal's remaining budget.
             "kernel_goal_budget_left" => {
                 want(1)?;
                 let g = as_int(&args[0])?;
-                let p = self.goals.borrow().get(g.max(0) as usize).map(|k| k.principal);
+                let p = self
+                    .goals
+                    .borrow()
+                    .get(g.max(0) as usize)
+                    .map(|k| k.principal);
                 let left = match p {
                     Some(principal) => self.principals.borrow().budget_remaining(principal).max(0),
                     None => 0,
@@ -2740,16 +3031,20 @@ impl<'p> Interp<'p> {
             // frequency tables, named state.
             "dict_new" => {
                 want(0)?;
-                ok!(Value::Dict(Rc::new(RefCell::new(std::collections::BTreeMap::new()))));
+                ok!(Value::Dict(Rc::new(RefCell::new(
+                    std::collections::BTreeMap::new()
+                ))));
             }
             "dict_get" => {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_get: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_get: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 ok!(match d.borrow().get(&k) {
@@ -2761,10 +3056,12 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_set: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_set: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 d.borrow_mut().insert(k, args[2].clone());
@@ -2774,10 +3071,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_has: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_has: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 ok!(Value::Bool(d.borrow().contains_key(&k)));
@@ -2788,10 +3087,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_remove: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_remove: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 ok!(match d.borrow_mut().remove(&k) {
@@ -2803,10 +3104,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_len: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_len: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 ok!(Value::Int(d.borrow().len() as i64));
             }
@@ -2816,10 +3119,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_keys: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_keys: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let keys: Vec<Value> = d.borrow().keys().map(|k| Value::Str(k.clone())).collect();
                 ok!(Value::Array(keys));
@@ -2831,10 +3136,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_map_values: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_map_values: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let f = args[1].clone();
                 let mut out = std::collections::BTreeMap::new();
@@ -2857,10 +3164,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "arr_enumerate: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_enumerate: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut out = Vec::with_capacity(xs.len());
                 for (i, v) in xs.iter().enumerate() {
@@ -2876,10 +3185,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_partition: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_partition: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut yes = Vec::new();
@@ -2889,10 +3200,12 @@ impl<'p> Interp<'p> {
                     match r {
                         Value::Bool(true) => yes.push(x),
                         Value::Bool(false) => no.push(x),
-                        other => return panic(format!(
-                            "arr_partition: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_partition: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Tuple(vec![Value::Array(yes), Value::Array(no)]));
@@ -2905,10 +3218,12 @@ impl<'p> Interp<'p> {
                 want(3)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_get_or: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_get_or: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 let default = args[2].clone();
@@ -2923,20 +3238,24 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_inc: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_inc: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_str(&args[1])?.to_string();
                 let mut m = d.borrow_mut();
                 let cur = m.get(&k).cloned().unwrap_or(Value::Int(0));
                 let n = match cur {
                     Value::Int(n) => n + 1,
-                    other => return panic(format!(
-                        "dict_inc: existing value at '{k}' is {}, not i64",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_inc: existing value at '{k}' is {}, not i64",
+                            other.type_name()
+                        ))
+                    }
                 };
                 m.insert(k, Value::Int(n));
                 ok!(Value::Int(n));
@@ -2948,10 +3267,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_filter: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_filter: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let pairs: Vec<(String, Value)> = d
@@ -2962,17 +3283,19 @@ impl<'p> Interp<'p> {
                 let mut out: std::collections::BTreeMap<String, Value> =
                     std::collections::BTreeMap::new();
                 for (k, v) in pairs {
-                    let keep = self.call_closure(
-                        pred.clone(),
-                        vec![Value::Str(k.clone()), v.clone()],
-                    )?;
+                    let keep =
+                        self.call_closure(pred.clone(), vec![Value::Str(k.clone()), v.clone()])?;
                     match keep {
-                        Value::Bool(true) => { out.insert(k, v); }
+                        Value::Bool(true) => {
+                            out.insert(k, v);
+                        }
                         Value::Bool(false) => {}
-                        other => return panic(format!(
-                            "dict_filter: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "dict_filter: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Dict(Rc::new(RefCell::new(out))));
@@ -2985,10 +3308,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_to_pairs: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_to_pairs: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pairs: Vec<Value> = d
                     .borrow()
@@ -3004,27 +3329,33 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v,
-                    other => return panic(format!(
-                        "dict_from_pairs: expected array of (str, V) tuples, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_from_pairs: expected array of (str, V) tuples, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut out: std::collections::BTreeMap<String, Value> =
                     std::collections::BTreeMap::new();
                 for v in xs {
                     let pair = match v {
                         Value::Tuple(t) if t.len() == 2 => t,
-                        other => return panic(format!(
-                            "dict_from_pairs: each element must be a 2-tuple (str, V), got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "dict_from_pairs: each element must be a 2-tuple (str, V), got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     let k = match &pair[0] {
                         Value::Str(s) => s.clone(),
-                        other => return panic(format!(
-                            "dict_from_pairs: tuple's first element must be str, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "dict_from_pairs: tuple's first element must be str, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     out.insert(k, pair[1].clone());
                 }
@@ -3041,10 +3372,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_to_str: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_to_str: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let mut out = String::new();
                 for (k, v) in d.borrow().iter() {
@@ -3108,7 +3441,9 @@ impl<'p> Interp<'p> {
                         continue;
                     }
                     match line.split_once('=') {
-                        Some((k, v)) => { out.insert(k.to_string(), Value::Str(v.to_string())); }
+                        Some((k, v)) => {
+                            out.insert(k.to_string(), Value::Str(v.to_string()));
+                        }
                         None => {
                             ok!(Value::Err(Box::new(Value::Str(format!(
                                 "dict_try_from_str: malformed line '{line}' (expected key=value)"
@@ -3126,20 +3461,23 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d1 = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_merge: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_merge: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let d2 = match &args[1] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_merge: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_merge: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
-                let mut out: std::collections::BTreeMap<String, Value> =
-                    d1.borrow().clone();
+                let mut out: std::collections::BTreeMap<String, Value> = d1.borrow().clone();
                 for (k, v) in d2.borrow().iter() {
                     out.insert(k.clone(), v.clone());
                 }
@@ -3155,10 +3493,9 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "{name}: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!("{name}: expected array, got {}", other.type_name()))
+                    }
                 };
                 if xs.is_empty() {
                     return panic(format!("{name}: array is empty"));
@@ -3176,13 +3513,9 @@ impl<'p> Interp<'p> {
                     }
                 };
                 let mut best_idx = 0;
-                let mut best_key = to_f(
-                    self.call_closure(key_fn.clone(), vec![xs[0].clone()])?,
-                )?;
+                let mut best_key = to_f(self.call_closure(key_fn.clone(), vec![xs[0].clone()])?)?;
                 for (i, x) in xs.iter().enumerate().skip(1) {
-                    let k = to_f(
-                        self.call_closure(key_fn.clone(), vec![x.clone()])?,
-                    )?;
+                    let k = to_f(self.call_closure(key_fn.clone(), vec![x.clone()])?)?;
                     if (pick_max && k > best_key) || (!pick_max && k < best_key) {
                         best_key = k;
                         best_idx = i;
@@ -3197,10 +3530,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_take_while: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_take_while: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut out = Vec::new();
@@ -3209,10 +3544,12 @@ impl<'p> Interp<'p> {
                     match r {
                         Value::Bool(true) => out.push(x),
                         Value::Bool(false) => break,
-                        other => return panic(format!(
-                            "arr_take_while: predicate must return bool, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_take_while: predicate must return bool, got {}",
+                                other.type_name()
+                            ))
+                        }
                     }
                 }
                 ok!(Value::Array(out));
@@ -3223,10 +3560,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_drop_while: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_drop_while: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let pred = args[1].clone();
                 let mut still_dropping = true;
@@ -3237,10 +3576,12 @@ impl<'p> Interp<'p> {
                         match r {
                             Value::Bool(true) => continue,
                             Value::Bool(false) => still_dropping = false,
-                            other => return panic(format!(
-                                "arr_drop_while: predicate must return bool, got {}",
-                                other.type_name()
-                            )),
+                            other => {
+                                return panic(format!(
+                                    "arr_drop_while: predicate must return bool, got {}",
+                                    other.type_name()
+                                ))
+                            }
                         }
                     }
                     out.push(x);
@@ -3256,10 +3597,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_each: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_each: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let f = args[1].clone();
                 let pairs: Vec<(String, Value)> = d
@@ -3268,10 +3611,7 @@ impl<'p> Interp<'p> {
                     .map(|(k, v)| (k.clone(), v.clone()))
                     .collect();
                 for (k, v) in pairs {
-                    let _ = self.call_closure(
-                        f.clone(),
-                        vec![Value::Str(k), v],
-                    )?;
+                    let _ = self.call_closure(f.clone(), vec![Value::Str(k), v])?;
                 }
                 ok!(Value::Unit);
             }
@@ -3285,10 +3625,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let xs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!(
-                        "arr_group_by: expected array, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "arr_group_by: expected array, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let key_fn = args[1].clone();
                 let mut out: std::collections::BTreeMap<String, Vec<Value>> =
@@ -3297,17 +3639,16 @@ impl<'p> Interp<'p> {
                     let k = self.call_closure(key_fn.clone(), vec![x.clone()])?;
                     let key = match k {
                         Value::Str(s) => s,
-                        other => return panic(format!(
-                            "arr_group_by: key fn must return str, got {}",
-                            other.type_name()
-                        )),
+                        other => {
+                            return panic(format!(
+                                "arr_group_by: key fn must return str, got {}",
+                                other.type_name()
+                            ))
+                        }
                     };
                     out.entry(key).or_default().push(x);
                 }
-                let map = out
-                    .into_iter()
-                    .map(|(k, v)| (k, Value::Array(v)))
-                    .collect();
+                let map = out.into_iter().map(|(k, v)| (k, Value::Array(v))).collect();
                 ok!(Value::Dict(Rc::new(RefCell::new(map))));
             }
             // `dict_values(d) -> [V]` — values in key-sorted order.
@@ -3315,10 +3656,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let d = match &args[0] {
                     Value::Dict(d) => d.clone(),
-                    other => return panic(format!(
-                        "dict_values: expected dict, got {}",
-                        other.type_name()
-                    )),
+                    other => {
+                        return panic(format!(
+                            "dict_values: expected dict, got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let vals: Vec<Value> = d.borrow().values().cloned().collect();
                 ok!(Value::Array(vals));
@@ -3358,7 +3701,11 @@ impl<'p> Interp<'p> {
                 if let Some(budget) = self.current_ai_budget() {
                     let used = self.ai_calls_this_fn.get();
                     if used >= budget {
-                        let who = if caller.is_empty() { "<main>".to_string() } else { caller.clone() };
+                        let who = if caller.is_empty() {
+                            "<main>".to_string()
+                        } else {
+                            caller.clone()
+                        };
                         return ai_policy_err(format!(
                             "[{}] `{who}` exceeded its AI budget of {budget} call(s) — \
                              raise the budget or reduce ai_complete calls",
@@ -3371,7 +3718,11 @@ impl<'p> Interp<'p> {
                 // but its cost is unmetered and the call un-pinned — warn once so
                 // the audit gap is visible (only meaningful for live/mock calls).
                 if !self.current_fn_has_ai_policy() {
-                    let who = if caller.is_empty() { "<main>".to_string() } else { caller.clone() };
+                    let who = if caller.is_empty() {
+                        "<main>".to_string()
+                    } else {
+                        caller.clone()
+                    };
                     eprintln!(
                         "warning: [{}] AI call in `{who}` has no @[ai(policy)] — cost is unmetered and the call is harder to audit",
                         crate::error::W1310
@@ -3393,8 +3744,18 @@ impl<'p> Interp<'p> {
                     let micro = tier.cost_micro(cached_tokens);
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);
                     append_ai_call_jsonl(
-                        &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "replay", "", micro as f64 / 1_000_000.0, &goal, "AI", &principal,
+                        &caller,
+                        &prompt,
+                        tier_name,
+                        model_id,
+                        model_ver,
+                        params,
+                        "replay",
+                        "",
+                        micro as f64 / 1_000_000.0,
+                        &goal,
+                        "AI",
+                        &principal,
                     );
                     ok!(Value::Ok(Box::new(Value::Str(cached))));
                 }
@@ -3405,11 +3766,13 @@ impl<'p> Interp<'p> {
                     // about what a call costs even under mock. The tier/model are
                     // the RESOLVED routing (the routing is real; only the
                     // response is stubbed), so the cost is the routing's cost.
-                    let stub = "Mock summary: the single most important fact, stated concisely.".to_string();
-                    self.ai_cost_micro.set(self.ai_cost_micro.get() + cost_micro);
+                    let stub = "Mock summary: the single most important fact, stated concisely."
+                        .to_string();
+                    self.ai_cost_micro
+                        .set(self.ai_cost_micro.get() + cost_micro);
                     append_ai_call_jsonl(
-                        &caller, &prompt, tier_name, model_id, model_ver, params,
-                        "mock", "", cost_usd, &goal, "AI", &principal,
+                        &caller, &prompt, tier_name, model_id, model_ver, params, "mock", "",
+                        cost_usd, &goal, "AI", &principal,
                     );
                     // Record so a re-run replays this exact response (under mock the
                     // recorded tokens are the deterministic estimate).
@@ -3429,23 +3792,26 @@ impl<'p> Interp<'p> {
                     // metered cost matches what the provider actually billed. (The
                     // BUDGET gate above still uses the estimate, correctly: it must
                     // decide before the call whether to dispatch at all.)
-                    ok!(match axon_ai::complete_with_model_usage(&prompt, &replay_model) {
-                        Ok((s, real_tokens)) => {
-                            let real_micro = tier.cost_micro(real_tokens);
-                            let real_usd = real_micro as f64 / 1_000_000.0;
-                            self.ai_cost_micro.set(self.ai_cost_micro.get() + real_micro);
-                            append_ai_call_jsonl(
-                                &caller, &prompt, tier_name, model_id, model_ver,
-                                params, "live", "", real_usd, &goal, "AI", &principal,
-                            );
-                            // Record the live (response, real token-count) so a
-                            // re-run with the same AXON_AI_REPLAY file reproduces
-                            // this exact response AND cost — the F2 replay engine.
-                            ai_replay_store(&prompt, &replay_model, &s, real_tokens);
-                            Value::Ok(Box::new(Value::Str(s)))
+                    ok!(
+                        match axon_ai::complete_with_model_usage(&prompt, &replay_model) {
+                            Ok((s, real_tokens)) => {
+                                let real_micro = tier.cost_micro(real_tokens);
+                                let real_usd = real_micro as f64 / 1_000_000.0;
+                                self.ai_cost_micro
+                                    .set(self.ai_cost_micro.get() + real_micro);
+                                append_ai_call_jsonl(
+                                    &caller, &prompt, tier_name, model_id, model_ver, params,
+                                    "live", "", real_usd, &goal, "AI", &principal,
+                                );
+                                // Record the live (response, real token-count) so a
+                                // re-run with the same AXON_AI_REPLAY file reproduces
+                                // this exact response AND cost — the F2 replay engine.
+                                ai_replay_store(&prompt, &replay_model, &s, real_tokens);
+                                Value::Ok(Box::new(Value::Str(s)))
+                            }
+                            Err(e) => Value::Err(Box::new(Value::Str(e))),
                         }
-                        Err(e) => Value::Err(Box::new(Value::Str(e))),
-                    });
+                    );
                 }
                 #[cfg(not(feature = "asi-runtime"))]
                 {
@@ -3461,8 +3827,18 @@ impl<'p> Interp<'p> {
                         // The cost meter only reflects calls that actually
                         // dispatched to a (mock or live) model.
                         append_ai_call_jsonl(
-                            &caller, &prompt, tier_name, "none", "offline", params,
-                            "fallback", "offline: no model reachable", 0.0, &goal, "AI", &principal,
+                            &caller,
+                            &prompt,
+                            tier_name,
+                            "none",
+                            "offline",
+                            params,
+                            "fallback",
+                            "offline: no model reachable",
+                            0.0,
+                            &goal,
+                            "AI",
+                            &principal,
                         );
                         ok!(Value::Ok(Box::new(Value::Str(fallback))));
                     }
@@ -3481,10 +3857,12 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    ok!(match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
-                        Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Int(v), c))),
-                        Err(e) => Value::Err(Box::new(Value::Str(e))),
-                    });
+                    ok!(
+                        match axon_ai::complete_typed_uncertain_i64(as_str(&args[0])?) {
+                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Int(v), c))),
+                            Err(e) => Value::Err(Box::new(Value::Str(e))),
+                        }
+                    );
                 }
                 #[cfg(not(feature = "asi-runtime"))]
                 return panic(
@@ -3498,10 +3876,12 @@ impl<'p> Interp<'p> {
                 }
                 #[cfg(feature = "asi-runtime")]
                 {
-                    ok!(match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
-                        Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Float(v), c))),
-                        Err(e) => Value::Err(Box::new(Value::Str(e))),
-                    });
+                    ok!(
+                        match axon_ai::complete_typed_uncertain_f64(as_str(&args[0])?) {
+                            Ok((v, c)) => Value::Ok(Box::new(make_uncertain(Value::Float(v), c))),
+                            Err(e) => Value::Err(Box::new(Value::Str(e))),
+                        }
+                    );
                 }
                 #[cfg(not(feature = "asi-runtime"))]
                 return panic(
@@ -3513,7 +3893,6 @@ impl<'p> Interp<'p> {
             // Pure helpers (CDF/PDF/moments) — no RNG, no side effects.
             // Impure sampling variants share the same section but carry the
             // "Random" effect row (enforced in builtins.rs is_impure_builtin).
-
             "gaussian_pdf" => {
                 want(3)?;
                 let mu = as_float(&args[0])?;
@@ -3554,7 +3933,9 @@ impl<'p> Interp<'p> {
                 let alpha = as_float(&args[0])?;
                 let beta_b = as_float(&args[1])?;
                 if alpha <= 0.0 || beta_b <= 0.0 {
-                    return panic(format!("beta_mean: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                    return panic(format!(
+                        "beta_mean: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"
+                    ));
                 }
                 ok!(Value::Float(alpha / (alpha + beta_b)));
             }
@@ -3564,7 +3945,9 @@ impl<'p> Interp<'p> {
                 let alpha = as_float(&args[0])?;
                 let beta_b = as_float(&args[1])?;
                 if alpha <= 0.0 || beta_b <= 0.0 {
-                    return panic(format!("beta_variance: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                    return panic(format!(
+                        "beta_variance: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"
+                    ));
                 }
                 let s = alpha + beta_b;
                 ok!(Value::Float((alpha * beta_b) / (s * s * (s + 1.0))));
@@ -3576,7 +3959,9 @@ impl<'p> Interp<'p> {
                 let beta_b = as_float(&args[1])?;
                 let x = as_float(&args[2])?;
                 if alpha <= 0.0 || beta_b <= 0.0 {
-                    return panic(format!("beta_cdf: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                    return panic(format!(
+                        "beta_cdf: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"
+                    ));
                 }
                 ok!(Value::Float(reg_inc_beta(alpha, beta_b, x)));
             }
@@ -3586,27 +3971,47 @@ impl<'p> Interp<'p> {
                 let alpha = as_float(&args[0])?;
                 let beta_b = as_float(&args[1])?;
                 if alpha <= 0.0 || beta_b <= 0.0 {
-                    return panic(format!("beta_sample: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"));
+                    return panic(format!(
+                        "beta_sample: alpha and beta_b must be > 0 (got {alpha}, {beta_b})"
+                    ));
                 }
                 // Beta(alpha, beta_b) = Gamma(alpha) / (Gamma(alpha) + Gamma(beta_b))
                 let ga = gamma_sample(alpha);
                 let gb = gamma_sample(beta_b);
                 let s = ga + gb;
-                ok!(Value::Float(if s > 0.0 { ga / s } else { alpha / (alpha + beta_b) }));
+                ok!(Value::Float(if s > 0.0 {
+                    ga / s
+                } else {
+                    alpha / (alpha + beta_b)
+                }));
             }
 
             "categorical_mean" => {
                 want(1)?;
                 let probs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!("categorical_mean: expected [f64], got {}", other.type_name())),
+                    other => {
+                        return panic(format!(
+                            "categorical_mean: expected [f64], got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 if probs.is_empty() {
                     return panic("categorical_mean: probs must be non-empty".to_string());
                 }
-                let mean: f64 = probs.iter().enumerate().map(|(i, v)| {
-                    i as f64 * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
-                }).sum();
+                let mean: f64 = probs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        i as f64
+                            * match v {
+                                Value::Float(f) => *f,
+                                Value::Int(n) => *n as f64,
+                                _ => 0.0,
+                            }
+                    })
+                    .sum();
                 ok!(Value::Float(mean));
             }
 
@@ -3614,17 +4019,41 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let probs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!("categorical_variance: expected [f64], got {}", other.type_name())),
+                    other => {
+                        return panic(format!(
+                            "categorical_variance: expected [f64], got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 if probs.is_empty() {
                     return panic("categorical_variance: probs must be non-empty".to_string());
                 }
-                let mean: f64 = probs.iter().enumerate().map(|(i, v)| {
-                    i as f64 * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
-                }).sum();
-                let e_x2: f64 = probs.iter().enumerate().map(|(i, v)| {
-                    (i as f64) * (i as f64) * match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
-                }).sum();
+                let mean: f64 = probs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        i as f64
+                            * match v {
+                                Value::Float(f) => *f,
+                                Value::Int(n) => *n as f64,
+                                _ => 0.0,
+                            }
+                    })
+                    .sum();
+                let e_x2: f64 = probs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, v)| {
+                        (i as f64)
+                            * (i as f64)
+                            * match v {
+                                Value::Float(f) => *f,
+                                Value::Int(n) => *n as f64,
+                                _ => 0.0,
+                            }
+                    })
+                    .sum();
                 ok!(Value::Float(e_x2 - mean * mean));
             }
 
@@ -3632,7 +4061,12 @@ impl<'p> Interp<'p> {
                 want(2)?;
                 let probs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!("categorical_cdf: expected [f64], got {}", other.type_name())),
+                    other => {
+                        return panic(format!(
+                            "categorical_cdf: expected [f64], got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 let k = as_int(&args[1])?;
                 if probs.is_empty() {
@@ -3642,9 +4076,16 @@ impl<'p> Interp<'p> {
                     ok!(Value::Float(0.0));
                 }
                 let k_usize = k as usize;
-                let cdf: f64 = probs.iter().take(k_usize + 1).map(|v| {
-                    match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 }
-                }).sum::<f64>().min(1.0);
+                let cdf: f64 = probs
+                    .iter()
+                    .take(k_usize + 1)
+                    .map(|v| match v {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        _ => 0.0,
+                    })
+                    .sum::<f64>()
+                    .min(1.0);
                 ok!(Value::Float(cdf));
             }
 
@@ -3652,7 +4093,12 @@ impl<'p> Interp<'p> {
                 want(1)?;
                 let probs = match &args[0] {
                     Value::Array(v) => v.clone(),
-                    other => return panic(format!("categorical_sample: expected [f64], got {}", other.type_name())),
+                    other => {
+                        return panic(format!(
+                            "categorical_sample: expected [f64], got {}",
+                            other.type_name()
+                        ))
+                    }
                 };
                 if probs.is_empty() {
                     return panic("categorical_sample: probs must be non-empty".to_string());
@@ -3661,7 +4107,11 @@ impl<'p> Interp<'p> {
                 let mut cum = 0.0;
                 let mut result = probs.len() as i64 - 1;
                 for (i, v) in probs.iter().enumerate() {
-                    let p = match v { Value::Float(f) => *f, Value::Int(n) => *n as f64, _ => 0.0 };
+                    let p = match v {
+                        Value::Float(f) => *f,
+                        Value::Int(n) => *n as f64,
+                        _ => 0.0,
+                    };
                     cum += p;
                     if u < cum {
                         result = i as i64;
@@ -3683,8 +4133,9 @@ fn erf_approx(x: f64) -> f64 {
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     let ax = x.abs();
     let t = 1.0 / (1.0 + 0.3275911 * ax);
-    let poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t
-        - 0.284496736) * t + 0.254829592) * t;
+    let poly = ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t
+        + 0.254829592)
+        * t;
     sign * (1.0 - poly * (-ax * ax).exp())
 }
 
@@ -3707,7 +4158,9 @@ fn gamma_sample(k: f64) -> f64 {
     loop {
         let x = std_normal_sample();
         let v_inner = 1.0 + c * x;
-        if v_inner <= 0.0 { continue; }
+        if v_inner <= 0.0 {
+            continue;
+        }
         let v = v_inner * v_inner * v_inner;
         let u = ((next_rand_u64() >> 11) as f64 / 9_007_199_254_740_992.0).max(1e-300);
         let x2 = x * x;
@@ -3723,8 +4176,12 @@ fn gamma_sample(k: f64) -> f64 {
 /// Regularized incomplete beta I_x(a, b) via Lentz continued fraction.
 /// Returns P(X ≤ x) for X ~ Beta(a, b). Clamped to [0, 1].
 fn reg_inc_beta(a: f64, b: f64, x: f64) -> f64 {
-    if x <= 0.0 { return 0.0; }
-    if x >= 1.0 { return 1.0; }
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
     // Use symmetry for numerical stability when x > (a+1)/(a+b+2)
     let sym = (a + 1.0) / (a + b + 2.0);
     if x > sym {
@@ -3740,11 +4197,11 @@ fn reg_inc_beta(a: f64, b: f64, x: f64) -> f64 {
 fn log_gamma(z: f64) -> f64 {
     const G: f64 = 7.0;
     const C: [f64; 9] = [
-        0.999_999_999_999_809_93,
-        676.520_368_121_885_10,
+        0.999_999_999_999_809_9,
+        676.520_368_121_885_1,
         -1_259.139_216_722_402_8,
-        771.323_428_777_653_13,
-        -176.615_029_162_140_60,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
         12.507_343_278_686_905,
         -0.138_571_095_265_720_12,
         9.984_369_578_019_572e-6,
@@ -3755,7 +4212,12 @@ fn log_gamma(z: f64) -> f64 {
         std::f64::consts::PI.ln() - (std::f64::consts::PI * z).sin().ln() - log_gamma(1.0 - z)
     } else {
         let z = z - 1.0;
-        let x = C[0] + C[1..].iter().enumerate().map(|(i, &c)| c / (z + i as f64 + 1.0)).sum::<f64>();
+        let x = C[0]
+            + C[1..]
+                .iter()
+                .enumerate()
+                .map(|(i, &c)| c / (z + i as f64 + 1.0))
+                .sum::<f64>();
         let t = z + G + 0.5;
         (2.0 * std::f64::consts::PI).sqrt().ln() + x.ln() + (z + 0.5) * t.ln() - t
     }
@@ -3790,7 +4252,9 @@ fn beta_cf(a: f64, b: f64, x: f64) -> f64 {
         d = 1.0 / d;
         let delta = d * c;
         h *= delta;
-        if (delta - 1.0).abs() < EPS { break; }
+        if (delta - 1.0).abs() < EPS {
+            break;
+        }
     }
     h
 }

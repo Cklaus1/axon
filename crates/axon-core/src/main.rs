@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
-use clap::{Parser, Subcommand};
 use axon_core::parse_source;
+use clap::{Parser, Subcommand};
 
 /// A compiled Layer-3 RewriteSpec pass: AST → rewritten AST. Boxed so a spec
 /// compiled from `--spec` outlives the match arm that built it (`axon improve
@@ -27,12 +27,7 @@ type DslPass = Box<dyn Fn(&axon_core::ast::Program) -> axon_core::ast::Program>;
 /// Version string with build identity: `<semver> (<git-sha>)`, e.g.
 /// `0.1.0 (02cd617)`. `AXON_GIT_SHA` is captured by build.rs (BUG_HUNT #30) and
 /// is "unknown" when git isn't available at build time.
-const VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("AXON_GIT_SHA"),
-    ")"
-);
+const VERSION: &str = concat!(env!("CARGO_PKG_VERSION"), " (", env!("AXON_GIT_SHA"), ")");
 
 #[derive(Parser)]
 #[command(
@@ -250,7 +245,11 @@ enum Command {
         filter: Option<String>,
 
         /// Number of parallel workers (0 = auto-detect CPU count, default 1).
-        #[arg(long, default_value = "1", help = "Parallel worker count (0 = num_cpus)")]
+        #[arg(
+            long,
+            default_value = "1",
+            help = "Parallel worker count (0 = num_cpus)"
+        )]
         jobs: usize,
 
         /// Emit results as newline-delimited JSON (NDJSON).
@@ -284,7 +283,11 @@ enum Command {
         /// Replay the run with this run-id: re-execute the source file with the
         /// same RNG seed that was used in the original run (Phase 9 / F2).
         /// The run-id is printed to stderr by `axon run` / `axon goal`.
-        #[arg(long, value_name = "RUN_ID", help = "Replay a prior run by its run-id (see axon run stderr)")]
+        #[arg(
+            long,
+            value_name = "RUN_ID",
+            help = "Replay a prior run by its run-id (see axon run stderr)"
+        )]
         replay: Option<String>,
     },
 
@@ -305,7 +308,6 @@ enum Command {
     },
 
     // ── Phase 10 CLI verbs ────────────────────────────────────────────────────
-
     /// Compile a structured-prose intent file (*.md) to a typed .ax skeleton.
     ///
     /// Phase-10 step 1 of the Hello-Goal flow: turns a goal description into
@@ -338,15 +340,21 @@ enum Command {
         file: PathBuf,
 
         /// Block deploy if any @[verify] bound would fail (treats exit 3 as fatal).
-        #[arg(long, value_name = "GATE",
-              help = "Safety gate to enforce (\"verify\" blocks on @[verify] failure)")]
+        #[arg(
+            long,
+            value_name = "GATE",
+            help = "Safety gate to enforce (\"verify\" blocks on @[verify] failure)"
+        )]
         gate: Option<String>,
 
         /// Declare or raise the risk level (low|medium|high|critical).
         /// Risk is derived from effect rows; this flag may only raise it, not lower it.
         /// Risk >= High triggers the full simulate→stress→redteam→verify→deploy pipeline.
-        #[arg(long, value_name = "LEVEL",
-              help = "Risk level override: low|medium|high|critical (derived from effect rows if omitted)")]
+        #[arg(
+            long,
+            value_name = "LEVEL",
+            help = "Risk level override: low|medium|high|critical (derived from effect rows if omitted)"
+        )]
         risk: Option<String>,
 
         /// Emit the deploy report as stable JSON (`axon-deploy/1`).
@@ -449,7 +457,10 @@ enum ImproveAction {
         /// Use AI-driven discovery: an AI selects which pre-verified templates
         /// apply (from the closed registry — it never authors code). Deterministic
         /// under AXON_AI_MOCK=1. Without this flag, runs the static detector.
-        #[arg(long, help = "AI-driven discovery (selects templates from the closed registry; mockable)")]
+        #[arg(
+            long,
+            help = "AI-driven discovery (selects templates from the closed registry; mockable)"
+        )]
         ai: bool,
     },
 
@@ -470,7 +481,11 @@ enum ImproveAction {
         /// The candidate pass to verify. `identity` (default) is the baseline;
         /// any name in the closed template registry (`fold-arith-identities`,
         /// `constant-fold`, …) is a discovered optimization.
-        #[arg(long, value_name = "PASS", help = "Pass to verify: identity | <registry template, e.g. constant-fold>")]
+        #[arg(
+            long,
+            value_name = "PASS",
+            help = "Pass to verify: identity | <registry template, e.g. constant-fold>"
+        )]
         pass: Option<String>,
 
         /// Verify a RewriteSpec DSL pass instead of a registry template: a path to
@@ -478,7 +493,12 @@ enum ImproveAction {
         /// DATA" path — the AI emits the spec, never code). The spec is validated
         /// (E15xx, fail-closed) and compiled by the REVIEWED evaluator, then runs
         /// the same four gates. Mutually exclusive with `--pass`.
-        #[arg(long, value_name = "FILE", conflicts_with = "pass", help = "Verify a RewriteSpec DSL pass from a file (one rule name per line)")]
+        #[arg(
+            long,
+            value_name = "FILE",
+            conflicts_with = "pass",
+            help = "Verify a RewriteSpec DSL pass from a file (one rule name per line)"
+        )]
         spec: Option<PathBuf>,
     },
 
@@ -491,7 +511,11 @@ enum ImproveAction {
         name: String,
 
         /// A root-Principal signature. Pass at least twice with distinct values.
-        #[arg(long = "sign", value_name = "PRINCIPAL", help = "Root-Principal signature (≥2 distinct required)")]
+        #[arg(
+            long = "sign",
+            value_name = "PRINCIPAL",
+            help = "Root-Principal signature (≥2 distinct required)"
+        )]
         signers: Vec<String>,
 
         /// Corpus the pass was verified against — pins its `axc1:` hash into the
@@ -506,7 +530,11 @@ enum ImproveAction {
 
         /// Discovery origin to record (audit): `static` (default), `mock`, or
         /// `ai:<model>`. Lets a reviewer see whether an AI proposed this pass.
-        #[arg(long = "proposed-by", value_name = "ORIGIN", help = "Discovery origin for the audit trail (e.g. ai:claude-opus-4-8)")]
+        #[arg(
+            long = "proposed-by",
+            value_name = "ORIGIN",
+            help = "Discovery origin for the audit trail (e.g. ai:claude-opus-4-8)"
+        )]
         proposed_by: Option<String>,
     },
 
@@ -575,14 +603,32 @@ fn main() {
 fn dispatch(command: Command) {
     match command {
         Command::Parse { file } => cmd_parse(file),
-        Command::Check { file, json, locked, effects_strict } => cmd_check(file, json, locked, effects_strict),
+        Command::Check {
+            file,
+            json,
+            locked,
+            effects_strict,
+        } => cmd_check(file, json, locked, effects_strict),
         Command::Lock { file } => cmd_lock(file),
         Command::VerifyLock { file } => cmd_verify_lock(file),
-        Command::Build { files, out, release, target, no_cache, cache_dir } => {
-            cmd_build(files, out, release, target, no_cache, cache_dir)
-        }
-        Command::Goal { file, emit, iterate } => cmd_goal(file, emit, iterate),
-        Command::Run { file, release, args } => cmd_run(file, release, args),
+        Command::Build {
+            files,
+            out,
+            release,
+            target,
+            no_cache,
+            cache_dir,
+        } => cmd_build(files, out, release, target, no_cache, cache_dir),
+        Command::Goal {
+            file,
+            emit,
+            iterate,
+        } => cmd_goal(file, emit, iterate),
+        Command::Run {
+            file,
+            release,
+            args,
+        } => cmd_run(file, release, args),
         Command::Fmt { files, check } => cmd_fmt(files, check),
         Command::Doc { files, out } => cmd_doc(files, out),
         Command::Lsp => cmd_lsp(),
@@ -591,8 +637,19 @@ fn dispatch(command: Command) {
         Command::Ai { action } => cmd_ai(action),
         Command::Verify { file } => cmd_verify(file),
         Command::Target { action } => cmd_target(action),
-        Command::Test { files, filter, jobs, json } => cmd_test(files, filter, jobs, json),
-        Command::Trace { func, path, json, ai, replay } => {
+        Command::Test {
+            files,
+            filter,
+            jobs,
+            json,
+        } => cmd_test(files, filter, jobs, json),
+        Command::Trace {
+            func,
+            path,
+            json,
+            ai,
+            replay,
+        } => {
             if let Some(run_id) = replay {
                 cmd_trace_replay(run_id, path)
             } else if ai {
@@ -604,7 +661,12 @@ fn dispatch(command: Command) {
         Command::Complexity { file, json } => cmd_complexity(file, json),
         Command::Intent { action } => cmd_intent(action),
         Command::Ast { action } => cmd_ast(action),
-        Command::Deploy { file, gate, risk, json } => cmd_deploy(file, gate, risk, json),
+        Command::Deploy {
+            file,
+            gate,
+            risk,
+            json,
+        } => cmd_deploy(file, gate, risk, json),
         Command::Redteam { file, json } => cmd_redteam(file, json),
     }
 }
@@ -681,7 +743,10 @@ fn cmd_complexity(file: PathBuf, json: bool) {
             }
             out.push_str(&format!(
                 "{{\"name\":\"{}\",\"bits\":{},\"nodes\":{},\"depth\":{}}}",
-                esc(name), c.bits, c.nodes, c.depth
+                esc(name),
+                c.bits,
+                c.nodes,
+                c.depth
             ));
         }
         out.push_str("],\"by_kind\":{");
@@ -698,7 +763,10 @@ fn cmd_complexity(file: PathBuf, json: bool) {
 
     // Human table.
     println!("{path}");
-    println!("  {:<28} {:>10} {:>8} {:>6}", "function", "bits", "nodes", "depth");
+    println!(
+        "  {:<28} {:>10} {:>8} {:>6}",
+        "function", "bits", "nodes", "depth"
+    );
     println!("  {:-<28} {:->10} {:->8} {:->6}", "", "", "", "");
     for (name, c) in &pc.functions {
         let shown = if name.chars().count() > 28 {
@@ -706,7 +774,10 @@ fn cmd_complexity(file: PathBuf, json: bool) {
         } else {
             name.clone()
         };
-        println!("  {:<28} {:>10} {:>8} {:>6}", shown, c.bits, c.nodes, c.depth);
+        println!(
+            "  {:<28} {:>10} {:>8} {:>6}",
+            shown, c.bits, c.nodes, c.depth
+        );
     }
     println!("  {:-<28} {:->10} {:->8} {:->6}", "", "", "", "");
     println!(
@@ -775,12 +846,15 @@ fn cmd_check(file: PathBuf, json_flag: bool, locked: bool, effects_strict: bool)
     // Transitive: the import-edge cap check + --locked verification cover the
     // whole `use` closure, so a deeply-nested import can't slip a capability or
     // a tampered byte past the gate (R6).
-    let (resolved_imports, _unresolved) = axon_core::resolve_use_files_transitive(&program, &search_dirs);
+    let (resolved_imports, _unresolved) =
+        axon_core::resolve_use_files_transitive(&program, &search_dirs);
     let mut import_cap_errors: Vec<String> = Vec::new();
     for m in &resolved_imports {
         if let Ok(src) = std::str::from_utf8(&m.bytes) {
             if let Ok(imported) = parse_source(src) {
-                for e in axon_core::capabilities::check_import_capabilities(&program, &m.name, &imported) {
+                for e in
+                    axon_core::capabilities::check_import_capabilities(&program, &m.name, &imported)
+                {
                     import_cap_errors.push(format!("[{}] {}", e.code, e.message));
                 }
             }
@@ -1014,7 +1088,11 @@ fn cmd_verify_lock(file: PathBuf) {
     if failed {
         process::exit(2);
     }
-    println!("axon: lock verified ({} module{})", resolved.len(), if resolved.len() == 1 { "" } else { "s" });
+    println!(
+        "axon: lock verified ({} module{})",
+        resolved.len(),
+        if resolved.len() == 1 { "" } else { "s" }
+    );
     process::exit(0);
 }
 
@@ -1039,7 +1117,10 @@ fn check_locked_imports(
     if resolved.is_empty() {
         return Vec::new();
     }
-    let lock_path = file.parent().unwrap_or_else(|| Path::new(".")).join("axon.lock");
+    let lock_path = file
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("axon.lock");
     let parsed = match std::fs::read_to_string(&lock_path) {
         Ok(text) => match parse_lock(&text) {
             Ok(p) => Some(p),
@@ -1048,7 +1129,13 @@ fn check_locked_imports(
                 if locked {
                     return vec![format!("[{code}] {msg}")];
                 }
-                emit_error(&format!("[{}] {msg} (lockfile ignored in dev mode)", axon_core::error::W1210), use_json);
+                emit_error(
+                    &format!(
+                        "[{}] {msg} (lockfile ignored in dev mode)",
+                        axon_core::error::W1210
+                    ),
+                    use_json,
+                );
                 None
             }
         },
@@ -1058,7 +1145,9 @@ fn check_locked_imports(
     let mut errors: Vec<String> = Vec::new();
     for m in resolved {
         let found = module_hash(&m.bytes);
-        let entry = parsed.as_ref().and_then(|p| p.modules.iter().find(|e| e.name == m.name));
+        let entry = parsed
+            .as_ref()
+            .and_then(|p| p.modules.iter().find(|e| e.name == m.name));
         match entry {
             Some(e) if e.hash == found => {
                 // R6 §4.3: hash matches; re-validate the pinned audit verdict by
@@ -1133,20 +1222,28 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
             .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("ax"))
             .collect(),
         Err(e) => {
-            eprintln!("axon improve: cannot read corpus dir {}: {e}", dir.display());
+            eprintln!(
+                "axon improve: cannot read corpus dir {}: {e}",
+                dir.display()
+            );
             process::exit(2);
         }
     };
     files.sort();
     let mut corpus = Vec::new();
     for f in files {
-        let Ok(bytes) = std::fs::read(&f) else { continue };
-        let Ok(src) = std::str::from_utf8(&bytes) else { continue };
+        let Ok(bytes) = std::fs::read(&f) else {
+            continue;
+        };
+        let Ok(src) = std::str::from_utf8(&bytes) else {
+            continue;
+        };
         if let Ok(program) = parse_source(src) {
             // Only keep programs with a `main` (runnable by the G1 oracle).
-            let has_main = program.items.iter().any(|it| {
-                matches!(it, axon_core::ast::Item::FnDef(fd) if fd.name == "main")
-            });
+            let has_main = program
+                .items
+                .iter()
+                .any(|it| matches!(it, axon_core::ast::Item::FnDef(fd) if fd.name == "main"));
             // The G1 oracle proves a pass is behavior-preserving by comparing
             // program OUTPUT — which is only meaningful for DETERMINISTIC, pure-
             // compute programs. Exclude any member that does I/O (fs/net/exec: its
@@ -1156,11 +1253,21 @@ fn load_corpus(dir: &Path) -> Vec<(String, Vec<u8>, axon_core::ast::Program)> {
             // builtin (clock/RNG/host input). This is the "pure-compute" contract
             // this fn's doc-comment already promises, now enforced.
             let pure = axon_core::capabilities::program_capabilities(&program).is_empty()
-                && !["now_ms", "random_i64", "random_f64", "host_await", "read_line"]
-                    .iter()
-                    .any(|b| src.contains(b));
+                && ![
+                    "now_ms",
+                    "random_i64",
+                    "random_f64",
+                    "host_await",
+                    "read_line",
+                ]
+                .iter()
+                .any(|b| src.contains(b));
             if has_main && pure {
-                let name = f.file_name().and_then(|n| n.to_str()).unwrap_or("?").to_string();
+                let name = f
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("?")
+                    .to_string();
                 corpus.push((name, bytes, program));
             }
         }
@@ -1200,12 +1307,17 @@ fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
         {
             let model = axon_core::ai_routing::Tier::Balanced.api_model();
             (
-                DiscoveryMode::Ai { model: model.clone() },
+                DiscoveryMode::Ai {
+                    model: model.clone(),
+                },
                 Box::new(move |prompt: &str| {
                     match axon_ai::complete_with_model(prompt, &model) {
                         Ok(reply) => reply,
                         // A failed call proposes nothing (empty reply → no candidates).
-                        Err(e) => { eprintln!("axon improve discover --ai: model call failed: {e}"); String::new() }
+                        Err(e) => {
+                            eprintln!("axon improve discover --ai: model call failed: {e}");
+                            String::new()
+                        }
                     }
                 }),
             )
@@ -1260,17 +1372,24 @@ fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
              # multi-sig `axon improve graduate {} --proposed-by {}:{}` adds it.\n",
             prop.template,
             axon_core::improve_templates::get_template(&prop.template)
-                .map(|t| t.description).unwrap_or(""),
+                .map(|t| t.description)
+                .unwrap_or(""),
             prop.opportunities,
             prop.members_affected,
             dir.display(),
-            prop.mode.mode_str(), prop.mode.model_str(),
+            prop.mode.mode_str(),
+            prop.mode.model_str(),
             prop.reasoning,
             prop.template,
-            prop.template, prop.mode.mode_str(), prop.mode.model_str(),
+            prop.template,
+            prop.mode.mode_str(),
+            prop.mode.model_str(),
         );
         if let Err(e) = std::fs::write(&ppath, &body) {
-            eprintln!("axon improve discover --ai: cannot write {}: {e}", ppath.display());
+            eprintln!(
+                "axon improve discover --ai: cannot write {}: {e}",
+                ppath.display()
+            );
             process::exit(1);
         }
         println!(
@@ -1278,7 +1397,11 @@ fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
             prop.template, prop.opportunities, prop.members_affected,
             prop.mode.mode_str(), prop.mode.model_str(),
         );
-        println!("  wrote {} — a proposal grants nothing; run `axon improve verify --pass {}` next", ppath.display(), prop.template);
+        println!(
+            "  wrote {} — a proposal grants nothing; run `axon improve verify --pass {}` next",
+            ppath.display(),
+            prop.template
+        );
     }
     process::exit(0);
 }
@@ -1286,7 +1409,7 @@ fn cmd_improve_discover_ai(programs: &[axon_core::ast::Program], dir: &Path) {
 fn cmd_improve(action: ImproveAction) {
     use axon_core::improve::{verify_pass_with, PerfStatus, VerifyOptions};
     use axon_core::manifest::{
-        corpus_hash, graduate, pass_hash, parse_manifest, verify_hash, write_manifest, Manifest,
+        corpus_hash, graduate, parse_manifest, pass_hash, verify_hash, write_manifest, Manifest,
         PassEntry, PerfClaim,
     };
 
@@ -1300,7 +1423,10 @@ fn cmd_improve(action: ImproveAction) {
             let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
             let members = load_corpus(&dir);
             if members.is_empty() {
-                eprintln!("axon improve discover: no runnable .ax programs in {}", dir.display());
+                eprintln!(
+                    "axon improve discover: no runnable .ax programs in {}",
+                    dir.display()
+                );
                 process::exit(2);
             }
             let programs: Vec<axon_core::ast::Program> =
@@ -1331,18 +1457,27 @@ fn cmd_improve(action: ImproveAction) {
                          corpus = {}\n\
                          # Next: `axon improve verify` runs the four gates; only a\n\
                          # multi-sig `axon improve graduate` adds it to the manifest.\n",
-                        prop.name, prop.description, prop.opportunities,
-                        prop.members_affected, dir.display(),
+                        prop.name,
+                        prop.description,
+                        prop.opportunities,
+                        prop.members_affected,
+                        dir.display(),
                     );
                     if let Err(e) = std::fs::write(&ppath, &body) {
-                        eprintln!("axon improve discover: cannot write {}: {e}", ppath.display());
+                        eprintln!(
+                            "axon improve discover: cannot write {}: {e}",
+                            ppath.display()
+                        );
                         process::exit(1);
                     }
                     println!(
                         "axon improve discover: proposed `{}` — {} ({} site(s) across {} member(s))",
                         prop.name, prop.description, prop.opportunities, prop.members_affected
                     );
-                    println!("  wrote {} (a proposal grants nothing — run `axon improve verify` next)", ppath.display());
+                    println!(
+                        "  wrote {} (a proposal grants nothing — run `axon improve verify` next)",
+                        ppath.display()
+                    );
                     process::exit(0);
                 }
                 None => {
@@ -1355,39 +1490,52 @@ fn cmd_improve(action: ImproveAction) {
             }
         }
 
-        ImproveAction::Verify { corpus, perf, pass, spec } => {
+        ImproveAction::Verify {
+            corpus,
+            perf,
+            pass,
+            spec,
+        } => {
             // The RewriteSpec DSL path ("passes as DATA"): the proposer emits a
             // spec (one rule name per line); we VALIDATE it (E15xx, fail-closed:
             // unknown rule / empty / over-budget), COMPILE it with the reviewed
             // evaluator, and run the SAME four gates. The AI never authors Rust —
             // it composes the closed, reviewed rule vocabulary as data. Compiled
             // into an owned closure (so it outlives the match) when `--spec` is set.
-            let dsl_pass: Option<DslPass> =
-                if let Some(spec_path) = &spec {
-                    let text = match std::fs::read_to_string(spec_path) {
-                        Ok(t) => t,
-                        Err(e) => {
-                            eprintln!("axon improve verify: cannot read spec {}: {e}", spec_path.display());
-                            process::exit(2);
-                        }
-                    };
-                    let rs = match axon_core::rewrite_dsl::RewriteSpec::parse(&text) {
-                        Ok(rs) => rs,
-                        Err(e) => {
-                            eprintln!("axon improve verify: [{}] invalid RewriteSpec: {}", e.code, e.message);
-                            process::exit(2);
-                        }
-                    };
-                    if let Err(e) = rs.validate() {
-                        eprintln!("axon improve verify: [{}] RewriteSpec rejected: {}", e.code, e.message);
+            let dsl_pass: Option<DslPass> = if let Some(spec_path) = &spec {
+                let text = match std::fs::read_to_string(spec_path) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        eprintln!(
+                            "axon improve verify: cannot read spec {}: {e}",
+                            spec_path.display()
+                        );
                         process::exit(2);
                     }
-                    let names: Vec<&str> = rs.rules.iter().map(|r| r.name()).collect();
-                    println!("axon improve verify — spec (DSL): [{}]", names.join(", "));
-                    Some(Box::new(axon_core::rewrite_dsl::compile(&rs)))
-                } else {
-                    None
                 };
+                let rs = match axon_core::rewrite_dsl::RewriteSpec::parse(&text) {
+                    Ok(rs) => rs,
+                    Err(e) => {
+                        eprintln!(
+                            "axon improve verify: [{}] invalid RewriteSpec: {}",
+                            e.code, e.message
+                        );
+                        process::exit(2);
+                    }
+                };
+                if let Err(e) = rs.validate() {
+                    eprintln!(
+                        "axon improve verify: [{}] RewriteSpec rejected: {}",
+                        e.code, e.message
+                    );
+                    process::exit(2);
+                }
+                let names: Vec<&str> = rs.rules.iter().map(|r| r.name()).collect();
+                println!("axon improve verify — spec (DSL): [{}]", names.join(", "));
+                Some(Box::new(axon_core::rewrite_dsl::compile(&rs)))
+            } else {
+                None
+            };
 
             // Validate the pass name against the closed registry FIRST — before
             // any corpus I/O. `identity` (default) is the G1/G3 baseline; every
@@ -1415,13 +1563,19 @@ fn cmd_improve(action: ImproveAction) {
                 }
             };
             // The DSL spec (if any) takes precedence over the template pass.
-            let the_pass: &axon_core::improve::Pass =
-                if let Some(p) = &dsl_pass { p.as_ref() } else { template_pass };
+            let the_pass: &axon_core::improve::Pass = if let Some(p) = &dsl_pass {
+                p.as_ref()
+            } else {
+                template_pass
+            };
 
             let dir = corpus.unwrap_or_else(|| PathBuf::from("examples"));
             let members = load_corpus(&dir);
             if members.is_empty() {
-                eprintln!("axon improve verify: no runnable .ax programs in {}", dir.display());
+                eprintln!(
+                    "axon improve verify: no runnable .ax programs in {}",
+                    dir.display()
+                );
                 process::exit(2);
             }
             let programs: Vec<axon_core::ast::Program> =
@@ -1429,7 +1583,10 @@ fn cmd_improve(action: ImproveAction) {
             if dsl_pass.is_none() {
                 println!("axon improve verify — pass: {pass_name}");
             }
-            let opts = VerifyOptions { measure_perf: perf, perf_trials: 5 };
+            let opts = VerifyOptions {
+                measure_perf: perf,
+                perf_trials: 5,
+            };
             let rec = verify_pass_with(the_pass, &programs, &opts);
 
             let g = |r: &Result<(), axon_core::improve::VerifyError>| -> String {
@@ -1438,7 +1595,11 @@ fn cmd_improve(action: ImproveAction) {
                     Err(e) => format!("FAIL [{}] {}", e.code, e.message),
                 }
             };
-            println!("axon improve verify — corpus: {} member(s) from {}", rec.members, dir.display());
+            println!(
+                "axon improve verify — corpus: {} member(s) from {}",
+                rec.members,
+                dir.display()
+            );
             println!("  G1 correctness : {}", g(&rec.g1_correctness));
             println!("  G2 safety      : {}", g(&rec.g2_safety));
             println!("  G3 regression  : {}", g(&rec.g3_regression));
@@ -1447,7 +1608,10 @@ fn cmd_improve(action: ImproveAction) {
                 PerfStatus::Faster { improved, members } => {
                     format!("faster on {improved}/{members}")
                 }
-                PerfStatus::NotFaster { regressed, improved } => {
+                PerfStatus::NotFaster {
+                    regressed,
+                    improved,
+                } => {
                     format!("not faster (improved {improved}, regressed {regressed})")
                 }
             };
@@ -1456,12 +1620,21 @@ fn cmd_improve(action: ImproveAction) {
                 println!("axon improve verify: PASSED (correct + safe + non-regressing)");
                 process::exit(0);
             } else {
-                eprintln!("axon improve verify: REJECTED — {}", rec.rejection().unwrap().message);
+                eprintln!(
+                    "axon improve verify: REJECTED — {}",
+                    rec.rejection().unwrap().message
+                );
                 process::exit(2);
             }
         }
 
-        ImproveAction::Graduate { name, signers, corpus, manifest, proposed_by } => {
+        ImproveAction::Graduate {
+            name,
+            signers,
+            corpus,
+            manifest,
+            proposed_by,
+        } => {
             // BUG_HUNT / red-team must-fix #4: a graduated pass name MUST resolve
             // in the closed template registry (or be the `identity` baseline) —
             // a name absent from the registry is E1408 (manifest tampering /
@@ -1487,7 +1660,8 @@ fn cmd_improve(action: ImproveAction) {
             let ch = match corpus {
                 Some(dir) => {
                     let members = load_corpus(&dir);
-                    let corpus_bytes: Vec<Vec<u8>> = members.iter().map(|(_, b, _)| b.clone()).collect();
+                    let corpus_bytes: Vec<Vec<u8>> =
+                        members.iter().map(|(_, b, _)| b.clone()).collect();
                     corpus_hash(&corpus_bytes)
                 }
                 None => corpus_hash(&[]),
@@ -1525,7 +1699,10 @@ fn cmd_improve(action: ImproveAction) {
             let pass_id = entry.id.clone();
             m.insert(entry);
             if let Err(e) = std::fs::write(&mpath, write_manifest(&m)) {
-                eprintln!("axon improve graduate: cannot write {}: {e}", mpath.display());
+                eprintln!(
+                    "axon improve graduate: cannot write {}: {e}",
+                    mpath.display()
+                );
                 process::exit(1);
             }
             println!(
@@ -1547,7 +1724,10 @@ fn cmd_improve(action: ImproveAction) {
                     }
                 },
                 Err(_) => {
-                    println!("axon improve list: no manifest at {} (0 graduated passes)", mpath.display());
+                    println!(
+                        "axon improve list: no manifest at {} (0 graduated passes)",
+                        mpath.display()
+                    );
                     process::exit(0);
                 }
             };
@@ -1637,7 +1817,9 @@ fn cmd_ai(action: AiAction) {
         }
     };
     for item in &program.items {
-        let axon_core::ast::Item::FnDef(f) = item else { continue };
+        let axon_core::ast::Item::FnDef(f) = item else {
+            continue;
+        };
         if !f.attrs.iter().any(|a| a.name == "ai") {
             continue;
         }
@@ -1650,7 +1832,9 @@ fn cmd_ai(action: AiAction) {
                     emit_error(
                         &format!(
                             "[{}] unknown AI tier `{name}` on `{}` — configured tiers: {}",
-                            axon_core::error::E1302, f.name, Tier::configured()
+                            axon_core::error::E1302,
+                            f.name,
+                            Tier::configured()
                         ),
                         !std::io::stderr().is_terminal(),
                     );
@@ -1726,7 +1910,11 @@ fn cmd_verify(file: PathBuf) {
             ProofResult::Proven { function } => {
                 println!("  ✓ proven: `{function}` satisfies its @[verify] bound for all inputs");
             }
-            ProofResult::Counterexample { function, inputs, predicate } => {
+            ProofResult::Counterexample {
+                function,
+                inputs,
+                predicate,
+            } => {
                 any_violation = true;
                 let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
                 emit_error(
@@ -1756,9 +1944,14 @@ fn cmd_verify(file: PathBuf) {
                 ProofResult::Proven { function } => {
                     println!("  ✓ proven: `{function}` returns a value satisfying its refinement for all inputs");
                 }
-                ProofResult::Counterexample { function, inputs, predicate } => {
+                ProofResult::Counterexample {
+                    function,
+                    inputs,
+                    predicate,
+                } => {
                     any_violation = true;
-                    let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
+                    let args: Vec<String> =
+                        inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
                     emit_error(
                         &format!(
                             "[{}] `{function}`'s {predicate} is violated at {} (SMT counterexample)",
@@ -1786,9 +1979,14 @@ fn cmd_verify(file: PathBuf) {
                 ProofResult::Proven { function } => {
                     println!("  ✓ proven: `{function}` forwards an argument that satisfies the callee's refinement");
                 }
-                ProofResult::Counterexample { function, inputs, predicate } => {
+                ProofResult::Counterexample {
+                    function,
+                    inputs,
+                    predicate,
+                } => {
                     any_violation = true;
-                    let args: Vec<String> = inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
+                    let args: Vec<String> =
+                        inputs.iter().map(|(n, v)| format!("{n}={v}")).collect();
                     emit_error(
                         &format!(
                             "[{}] at `{function}` the {predicate}, but the caller's refinement admits {} (SMT counterexample)",
@@ -1798,7 +1996,8 @@ fn cmd_verify(file: PathBuf) {
                         !std::io::stderr().is_terminal(),
                     );
                 }
-                ProofResult::Unsupported { .. } => { /* forwarding outside the fragment: runtime gate applies */ }
+                ProofResult::Unsupported { .. } => { /* forwarding outside the fragment: runtime gate applies */
+                }
             }
         }
     }
@@ -1832,7 +2031,11 @@ fn cmd_target(action: TargetAction) {
             }
             process::exit(0);
         }
-        TargetAction::Build { engine, target, file } => {
+        TargetAction::Build {
+            engine,
+            target,
+            file,
+        } => {
             validate_ax_extension(&file);
             let triple = target.as_deref().unwrap_or("native");
             let interp = engine.as_deref() == Some("interp");
@@ -1893,7 +2096,11 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
 fn build_wasm_object_cli(file: &Path, triple: &str) {
     validate_ax_extension(file);
     // Normalise the alias `wasm32` to a concrete LLVM triple.
-    let llvm_triple = if triple == "wasm32" { "wasm32-unknown-unknown" } else { triple };
+    let llvm_triple = if triple == "wasm32" {
+        "wasm32-unknown-unknown"
+    } else {
+        triple
+    };
 
     let src = read_source(&file.to_path_buf());
     let mut program = match parse_source(&src) {
@@ -1917,7 +2124,9 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
     let instantiations = infer_ctx.drain_instantiations();
     let mono = axon_core::mono::monomorphise(&program, instantiations);
     let concrete = axon_core::ast::Program {
-        items: mono.other_items.into_iter()
+        items: mono
+            .other_items
+            .into_iter()
             .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
             .collect(),
     };
@@ -1938,7 +2147,10 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
         for e in cg.codegen_errors() {
             eprintln!("{e}");
         }
-        eprintln!("error: {} codegen error(s); wasm build aborted", cg.codegen_errors().len());
+        eprintln!(
+            "error: {} codegen error(s); wasm build aborted",
+            cg.codegen_errors().len()
+        );
         process::exit(2);
     }
 
@@ -1951,7 +2163,10 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
                 .map(|b| b.len() >= 4 && &b[0..4] == b"\0asm")
                 .unwrap_or(false);
             if !magic_ok {
-                eprintln!("error: emitted {} is not a valid wasm object (bad magic)", out.display());
+                eprintln!(
+                    "error: emitted {} is not a valid wasm object (bad magic)",
+                    out.display()
+                );
                 process::exit(2);
             }
             // R7: try to LINK the object into a runnable `.wasm`. After
@@ -1965,7 +2180,8 @@ fn build_wasm_object_cli(file: &Path, triple: &str) {
                 Some(linked) => eprintln!(
                     "wasm: {} (target {llvm_triple}) — IR→wasm emitted, linked, RUNNABLE.\n  \
                      run:  wasmtime --invoke main {}",
-                    linked.display(), linked.display()
+                    linked.display(),
+                    linked.display()
                 ),
                 None => eprintln!(
                     "wasm object: {} (target {llvm_triple}) — IR→wasm emitted + magic-verified. \
@@ -2043,14 +2259,17 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
                 // rust-lld lives under lib/rustlib/<host>/bin/
                 base.join("lib/rustlib")
             } else {
-                base.join("lib/rustlib/wasm32-wasip1/lib/self-contained").join(needle)
+                base.join("lib/rustlib/wasm32-wasip1/lib/self-contained")
+                    .join(needle)
             };
             if host_seg {
                 // walk the host dir for rust-lld
                 if let Ok(rd) = std::fs::read_dir(&cand) {
                     for h in rd.flatten() {
                         let lld = h.path().join("bin/rust-lld");
-                        if lld.exists() { return Some(lld); }
+                        if lld.exists() {
+                            return Some(lld);
+                        }
                     }
                 }
             } else if cand.exists() {
@@ -2097,12 +2316,7 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
     if let Some(rt) = &rt_lib {
         cmd.arg(rt);
     }
-    let status = cmd
-        .arg(obj)
-        .arg("-o")
-        .arg(&linked)
-        .output()
-        .ok()?;
+    let status = cmd.arg(obj).arg("-o").arg(&linked).output().ok()?;
     // rust-lld can succeed-with-warnings; treat a produced + non-empty file as
     // the success signal, but reject if there were signature mismatches (the
     // wasm would trap), so we only claim "runnable" when it genuinely is.
@@ -2111,7 +2325,11 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
         let _ = std::fs::remove_file(&linked);
         return None;
     }
-    if linked.exists() && std::fs::metadata(&linked).map(|m| m.len() > 0).unwrap_or(false) {
+    if linked.exists()
+        && std::fs::metadata(&linked)
+            .map(|m| m.len() > 0)
+            .unwrap_or(false)
+    {
         Some(linked)
     } else {
         None
@@ -2132,9 +2350,13 @@ fn cmd_build(
     _no_cache: bool,
     _cache_dir: Option<PathBuf>,
 ) {
-    eprintln!("error: `axon build` (native codegen) requires building axon with the `codegen` feature.");
+    eprintln!(
+        "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
+    );
     eprintln!("note: the native codegen build is currently very slow (see BUILD_DIAGNOSIS.md).");
-    eprintln!("hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed.");
+    eprintln!(
+        "hint: use `axon run <file.ax>` — it executes via the interpreter, no codegen needed."
+    );
     process::exit(1);
 }
 
@@ -2205,7 +2427,9 @@ fn cmd_build(
             // Cross-compiling: check for cross.toml
             let home = std::env::var_os("HOME").unwrap_or_default();
             let cross_toml = std::path::PathBuf::from(home)
-                .join(".config").join("axon").join("cross.toml");
+                .join(".config")
+                .join("axon")
+                .join("cross.toml");
             if !cross_toml.exists() {
                 eprintln!(
                     "warning[E0905]: cross-compiling to '{}' but ~/.config/axon/cross.toml \
@@ -2329,12 +2553,15 @@ fn cmd_goal(file: PathBuf, emit_only: bool, iterate: Option<usize>) {
     // achieved it (the actual result of an optimization, otherwise only visible
     // via `axon trace`). Scoped to entries written during this iterate run.
     if let Some(recs) = axon_core::interp::read_provenance(None) {
-        if let Some(best) = recs
-            .iter()
-            .filter(|r| r.ts_ms >= start_ts)
-            .max_by(|a, b| a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal))
-        {
-            let at = best.input.map(|i| format!(" at input {i}")).unwrap_or_default();
+        if let Some(best) = recs.iter().filter(|r| r.ts_ms >= start_ts).max_by(|a, b| {
+            a.score
+                .partial_cmp(&b.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }) {
+            let at = best
+                .input
+                .map(|i| format!(" at input {i}"))
+                .unwrap_or_default();
             eprintln!("# best: score {}{at}", best.score);
         }
     }
@@ -2434,7 +2661,10 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
         .iter()
         .map(|key| {
             let g = &groups[key];
-            let best = g.iter().copied().fold(g[0], |a, r| if r.score > a.score { r } else { a });
+            let best = g
+                .iter()
+                .copied()
+                .fold(g[0], |a, r| if r.score > a.score { r } else { a });
             TraceStat {
                 func: key.0.clone(),
                 src: key.1.clone(),
@@ -2474,10 +2704,20 @@ fn cmd_trace(func: Option<String>, path: Option<PathBuf>, json: bool) {
         println!("# provenance: 0 matching records");
         return;
     }
-    println!("# provenance: {total} record(s) across {} (fn, source) group(s)", order.len());
+    println!(
+        "# provenance: {total} record(s) across {} (fn, source) group(s)",
+        order.len()
+    );
     for s in &stats {
-        let at = s.best_input.map(|i| format!(" at input {i}")).unwrap_or_default();
-        let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
+        let at = s
+            .best_input
+            .map(|i| format!(" at input {i}"))
+            .unwrap_or_default();
+        let from = if s.src.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", s.src)
+        };
         println!(
             "  {}{from}: {} eval(s)  range [{}, {}{at}]  first {} → last {}  [{}]",
             s.func, s.evals, s.min, s.max, s.first, s.last, s.trend,
@@ -2558,10 +2798,22 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
             g.principal = r.principal.clone();
         }
         match r.mode.as_str() {
-            "live" => { g.live += 1; t_live += 1; }
-            "mock" => { g.mock += 1; t_mock += 1; }
-            "replay" => { g.replay += 1; t_replay += 1; }
-            "fallback" => { g.fallback += 1; t_fallback += 1; }
+            "live" => {
+                g.live += 1;
+                t_live += 1;
+            }
+            "mock" => {
+                g.mock += 1;
+                t_mock += 1;
+            }
+            "replay" => {
+                g.replay += 1;
+                t_replay += 1;
+            }
+            "fallback" => {
+                g.fallback += 1;
+                t_fallback += 1;
+            }
             _ => {}
         }
         total += 1;
@@ -2595,9 +2847,21 @@ fn cmd_trace_ai(func: Option<String>, path: Option<PathBuf>, json: bool) {
     );
     for k in &order {
         let s = &groups[k];
-        let from = if s.src.is_empty() { String::new() } else { format!(" ({})", s.src) };
-        let goal = if s.goal.is_empty() { String::new() } else { format!("  → goal `{}`", s.goal) };
-        let principal = if s.principal == "root" { String::new() } else { format!("  principal:{}", s.principal) };
+        let from = if s.src.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", s.src)
+        };
+        let goal = if s.goal.is_empty() {
+            String::new()
+        } else {
+            format!("  → goal `{}`", s.goal)
+        };
+        let principal = if s.principal == "root" {
+            String::new()
+        } else {
+            format!("  principal:{}", s.principal)
+        };
         println!(
             "  {}{from}: {} call(s)  ${:.6}  [{} {}]  live:{} mock:{} replay:{} fallback:{}{goal}{principal}",
             s.func, s.calls, s.cost_usd, s.tier, s.model, s.live, s.mock, s.replay, s.fallback,
@@ -2885,13 +3149,22 @@ fn cmd_lsp() {
 
 fn cmd_cache(action: CacheAction) {
     match action {
-        CacheAction::Clean { older_than, cache_dir } => {
+        CacheAction::Clean {
+            older_than,
+            cache_dir,
+        } => {
             let dir = cache_dir.unwrap_or_else(axon_core::default_cache_dir);
             let older_than_secs = older_than.map(|days| days * 86400);
             let (removed, errors) = axon_core::clean_cache(&dir, older_than_secs);
-            eprintln!("removed {removed} cache entr{}", if removed == 1 { "y" } else { "ies" });
+            eprintln!(
+                "removed {removed} cache entr{}",
+                if removed == 1 { "y" } else { "ies" }
+            );
             if errors > 0 {
-                eprintln!("warning: {errors} entr{} could not be removed", if errors == 1 { "y" } else { "ies" });
+                eprintln!(
+                    "warning: {errors} entr{} could not be removed",
+                    if errors == 1 { "y" } else { "ies" }
+                );
                 process::exit(1);
             }
         }
@@ -2917,7 +3190,9 @@ fn cmd_doc(files: Vec<PathBuf>, out: Option<PathBuf>) {
     let file_programs = match axon_core::parse_source_files(&files) {
         Ok(ps) => ps,
         Err(errs) => {
-            for e in &errs { eprintln!("error: {e}"); }
+            for e in &errs {
+                eprintln!("error: {e}");
+            }
             process::exit(2);
         }
     };
@@ -2951,7 +3226,11 @@ fn cmd_doc(files: Vec<PathBuf>, out: Option<PathBuf>) {
             let per_file = axon_core::generate_docs(program, &src, filename);
             // Drop the per-file H1 line (`# <filename>`); the project H1 is above.
             // Keep the body, under an H2 file heading.
-            let body = per_file.split_once('\n').map(|(_, rest)| rest).unwrap_or("").trim();
+            let body = per_file
+                .split_once('\n')
+                .map(|(_, rest)| rest)
+                .unwrap_or("")
+                .trim();
             combined.push_str(&format!("\n## {filename}\n\n{body}\n"));
         }
         emit_doc_output(combined, out.as_deref());
@@ -2994,13 +3273,17 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     let file_programs = match axon_core::parse_source_files(&files) {
         Ok(ps) => ps,
         Err(errs) => {
-            for e in &errs { eprintln!("error: {e}"); }
+            for e in &errs {
+                eprintln!("error: {e}");
+            }
             process::exit(2);
         }
     };
     let (mut program, merge_errors) = axon_core::merge_programs(file_programs);
     if !merge_errors.is_empty() {
-        for e in &merge_errors { eprintln!("error[{}]: {}", e.code, e.message); }
+        for e in &merge_errors {
+            eprintln!("error[{}]: {}", e.code, e.message);
+        }
         process::exit(2);
     }
 
@@ -3008,7 +3291,9 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
     let primary_file = &files[0];
     let (type_errors, _infer_ctx) = run_check_pipeline(&mut program, primary_file);
     if !type_errors.is_empty() {
-        for err in &type_errors { eprintln!("error: {err}"); }
+        for err in &type_errors {
+            eprintln!("error: {err}");
+        }
         eprintln!("error: {} type error(s); tests aborted", type_errors.len());
         process::exit(2);
     }
@@ -3116,7 +3401,11 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
             .unwrap_or(false);
 
         total_ms += r.duration_ms;
-        if r.passed { passed += 1; } else { failed += 1; }
+        if r.passed {
+            passed += 1;
+        } else {
+            failed += 1;
+        }
 
         if json {
             if r.passed {
@@ -3150,9 +3439,7 @@ fn cmd_test(files: Vec<PathBuf>, filter: Option<String>, jobs: usize, json: bool
         );
     } else {
         let outcome = if failed == 0 { "ok" } else { "FAILED" };
-        println!(
-            "\ntest result: {outcome}. {passed} passed, {failed} failed ({total_ms}ms total)"
-        );
+        println!("\ntest result: {outcome}. {passed} passed, {failed} failed ({total_ms}ms total)");
     }
 
     process::exit(if failed == 0 { 0 } else { 3 });
@@ -3196,7 +3483,10 @@ fn run_check_pipeline_located(
     program: &mut axon_core::ast::Program,
     src: &str,
     source_path: &Path,
-) -> (Vec<axon_core::PipelineDiagnostic>, axon_core::infer::InferCtx) {
+) -> (
+    Vec<axon_core::PipelineDiagnostic>,
+    axon_core::infer::InferCtx,
+) {
     use axon_core::PipelineDiagnostic;
     let file = source_path.display().to_string();
     let source_map = axon_core::span::SourceMap::new(src.to_string());
@@ -3264,7 +3554,14 @@ fn run_check_pipeline_located(
     // MergeErrors carry no span (they're file-level), so line/col stay 0.
     let search_dirs = axon_core::axon_search_dirs(std::env::current_exe().ok().as_deref());
     for e in axon_core::load_use_decls(program, &search_dirs) {
-        push(&mut diags, e.code.to_string(), e.message.clone(), "error", 0, 0);
+        push(
+            &mut diags,
+            e.code.to_string(),
+            e.message.clone(),
+            "error",
+            0,
+            0,
+        );
     }
 
     // Step 1: name resolution
@@ -3276,8 +3573,16 @@ fn run_check_pipeline_located(
         // field instead of dropping it — historically `push` discarded `fix`, so
         // infer.rs re-emitted an E0101 "cannot find value … did you mean" purely
         // to resurface the lost hint, double-reporting every undefined name.
-        push_typed(&mut diags, diag.code.to_string(), diag.message.clone(),
-            line, col, None, None, diag.fix.clone());
+        push_typed(
+            &mut diags,
+            diag.code.to_string(),
+            diag.message.clone(),
+            line,
+            col,
+            None,
+            None,
+            diag.fix.clone(),
+        );
     }
     for warn in &resolve_result.warnings {
         eprintln!("warning: [{}] {}", warn.code, warn.message);
@@ -3299,23 +3604,34 @@ fn run_check_pipeline_located(
         }
         let (line, col) = loc(&err.span);
         // R8: also expose expected/found as discrete fields (InferError has no fix).
-        push_typed(&mut diags, err.code.to_string(), msg, line, col,
-            err.expected.clone(), err.found.clone(), None);
+        push_typed(
+            &mut diags,
+            err.code.to_string(),
+            msg,
+            line,
+            col,
+            err.expected.clone(),
+            err.found.clone(),
+            None,
+        );
     }
 
     // Step 3: type checking (uses infer results)
-    let fn_sigs: std::collections::HashMap<String, axon_core::checker::FnSig> =
-        infer_ctx.fn_sigs.iter()
-            .map(|(k, v)| (k.clone(), axon_core::checker::FnSig {
-                params: v.params.clone(),
-                ret: v.ret.clone(),
-            }))
-            .collect();
-    let mut check_ctx = axon_core::checker::CheckCtx::new(
-        &file,
-        fn_sigs,
-        infer_ctx.struct_fields.clone(),
-    );
+    let fn_sigs: std::collections::HashMap<String, axon_core::checker::FnSig> = infer_ctx
+        .fn_sigs
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                axon_core::checker::FnSig {
+                    params: v.params.clone(),
+                    ret: v.ret.clone(),
+                },
+            )
+        })
+        .collect();
+    let mut check_ctx =
+        axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields.clone());
     let check_errors = check_ctx.check_program(program, std::collections::HashMap::new());
     for err in &check_errors {
         let mut msg = err.message.clone();
@@ -3341,8 +3657,16 @@ fn run_check_pipeline_located(
             (err.line, err.col)
         };
         // R8: expose expected/found/fix(help) as discrete structured fields.
-        push_typed(&mut diags, err.code.to_string(), msg, line, col,
-            err.expected.clone(), err.found.clone(), err.fix.clone());
+        push_typed(
+            &mut diags,
+            err.code.to_string(),
+            msg,
+            line,
+            col,
+            err.expected.clone(),
+            err.found.clone(),
+            err.fix.clone(),
+        );
     }
 
     // Step 4: borrow checking — enforce move semantics within function bodies.
@@ -3351,7 +3675,9 @@ fn run_check_pipeline_located(
             axon_core::ast::Item::FnDef(fndef) => {
                 let param_types: std::collections::HashMap<String, axon_core::types::Type> =
                     if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
-                        fndef.params.iter()
+                        fndef
+                            .params
+                            .iter()
                             .zip(sig.params.iter())
                             .map(|(p, t)| (p.name.clone(), t.clone()))
                             .collect()
@@ -3361,11 +3687,24 @@ fn run_check_pipeline_located(
                 for err in axon_core::borrow::check_fn(fndef, param_types) {
                     let (line, col) = loc(&err.span());
                     let code = match &err {
-                        axon_core::borrow::BorrowError::UseAfterMove { .. } => axon_core::error::E0601,
-                        axon_core::borrow::BorrowError::MoveBorrowed { .. } => axon_core::error::E0602,
-                        axon_core::borrow::BorrowError::BorrowConflict { .. } => axon_core::error::E0603,
+                        axon_core::borrow::BorrowError::UseAfterMove { .. } => {
+                            axon_core::error::E0601
+                        }
+                        axon_core::borrow::BorrowError::MoveBorrowed { .. } => {
+                            axon_core::error::E0602
+                        }
+                        axon_core::borrow::BorrowError::BorrowConflict { .. } => {
+                            axon_core::error::E0603
+                        }
                     };
-                    push(&mut diags, code.to_string(), err.to_string(), "error", line, col);
+                    push(
+                        &mut diags,
+                        code.to_string(),
+                        err.to_string(),
+                        "error",
+                        line,
+                        col,
+                    );
                 }
             }
             axon_core::ast::Item::ImplBlock(blk) => {
@@ -3378,7 +3717,9 @@ fn run_check_pipeline_located(
                     let key = format!("{type_name}__{}", method.name);
                     let param_types: std::collections::HashMap<String, axon_core::types::Type> =
                         if let Some(sig) = infer_ctx.fn_sigs.get(&key) {
-                            method.params.iter()
+                            method
+                                .params
+                                .iter()
                                 .zip(sig.params.iter())
                                 .map(|(p, t)| (p.name.clone(), t.clone()))
                                 .collect()
@@ -3388,11 +3729,24 @@ fn run_check_pipeline_located(
                     for err in axon_core::borrow::check_fn(method, param_types) {
                         let (line, col) = loc(&err.span());
                         let code = match &err {
-                            axon_core::borrow::BorrowError::UseAfterMove { .. } => axon_core::error::E0601,
-                            axon_core::borrow::BorrowError::MoveBorrowed { .. } => axon_core::error::E0602,
-                            axon_core::borrow::BorrowError::BorrowConflict { .. } => axon_core::error::E0603,
+                            axon_core::borrow::BorrowError::UseAfterMove { .. } => {
+                                axon_core::error::E0601
+                            }
+                            axon_core::borrow::BorrowError::MoveBorrowed { .. } => {
+                                axon_core::error::E0602
+                            }
+                            axon_core::borrow::BorrowError::BorrowConflict { .. } => {
+                                axon_core::error::E0603
+                            }
                         };
-                        push(&mut diags, code.to_string(), err.to_string(), "error", line, col);
+                        push(
+                            &mut diags,
+                            code.to_string(),
+                            err.to_string(),
+                            "error",
+                            line,
+                            col,
+                        );
                     }
                 }
             }
@@ -3405,7 +3759,14 @@ fn run_check_pipeline_located(
     // reject containment violations; wire it in so `axon check`/`run` enforce it.
     for err in axon_core::capabilities::check_capabilities(program) {
         let (line, col) = loc(&err.span);
-        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
+        push(
+            &mut diags,
+            err.code.to_string(),
+            err.message.clone(),
+            "error",
+            line,
+            col,
+        );
     }
 
     // Step 5b: Phase 6 effect-row subsumption (E1310) — a call performs an
@@ -3413,7 +3774,14 @@ fn run_check_pipeline_located(
     // the top-level escape hatch, so existing programs are unaffected.
     for err in axon_core::effects::check_effects(program) {
         let (line, col) = loc(&err.span);
-        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
+        push(
+            &mut diags,
+            err.code.to_string(),
+            err.message.clone(),
+            "error",
+            line,
+            col,
+        );
     }
 
     // Step 6: static `@[verify(...)]` checking — E1101 when a verify postcondition
@@ -3422,7 +3790,14 @@ fn run_check_pipeline_located(
     // are skipped, so runtime-gated verifies are unaffected.)
     for err in axon_core::verify::check_verify(program) {
         let (line, col) = loc(&err.span);
-        push(&mut diags, err.code.to_string(), err.message.clone(), "error", line, col);
+        push(
+            &mut diags,
+            err.code.to_string(),
+            err.message.clone(),
+            "error",
+            line,
+            col,
+        );
     }
 
     // Collapse byte-identical diagnostics. Some checks fire per-operand: `"a" +
@@ -3488,9 +3863,7 @@ fn run_build_pipeline(
         // Hash all source files to form the cache key.
         let mut hasher_input = Vec::new();
         // Include the source path stem as a namespace separator.
-        hasher_input.extend_from_slice(
-            source_path.to_string_lossy().as_bytes(),
-        );
+        hasher_input.extend_from_slice(source_path.to_string_lossy().as_bytes());
         if let Ok(bytes) = std::fs::read(source_path) {
             hasher_input.extend_from_slice(&bytes);
         }
@@ -3555,14 +3928,18 @@ fn build_ir_and_link(
     // Monomorphize: expand generic functions into concrete instances.
     let mono = axon_core::mono::monomorphise(program, instantiations);
     let concrete_program = axon_core::ast::Program {
-        items: mono.other_items.into_iter()
+        items: mono
+            .other_items
+            .into_iter()
             .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
             .collect(),
     };
 
     let ctx = inkwell::context::Context::create();
-    let module_name = source_path.file_stem()
-        .unwrap_or_default().to_string_lossy();
+    let module_name = source_path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy();
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
     // R4: stamp the source path into native @[adaptive] provenance (`"src"`).
     cg.set_source_path(source_path.display().to_string());
@@ -3588,7 +3965,10 @@ fn build_ir_and_link(
         for e in cg.codegen_errors() {
             eprintln!("{e}");
         }
-        return Err(format!("{} codegen error(s); build aborted", cg.codegen_errors().len()));
+        return Err(format!(
+            "{} codegen error(s); build aborted",
+            cg.codegen_errors().len()
+        ));
     }
 
     // Write bitcode to cache before linking (so a link failure doesn't
@@ -3715,7 +4095,8 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
     if json_flag {
         // axon-intent-compile/1 schema (extended with `generated` + `stubs` fields)
         let sections: Vec<String> = goal.sections.keys().map(|k| format!("{k:?}")).collect();
-        let sections_joined = sections.iter()
+        let sections_joined = sections
+            .iter()
             .map(|s| format!("\"{}\"", s.trim_matches('"')))
             .collect::<Vec<_>>()
             .join(",");
@@ -3733,14 +4114,31 @@ fn cmd_intent_compile(file: PathBuf, out: Option<PathBuf>, json_flag: bool) {
         eprintln!("error writing {}: {e}", out_path.display());
         process::exit(1);
     });
-    let gen_note = if llm_generated { " (LLM-generated)" } else { "" };
-    println!("compiled {} → {} ({} bytes){gen_note}", file.display(), out_path.display(), ax_src.len());
+    let gen_note = if llm_generated {
+        " (LLM-generated)"
+    } else {
+        ""
+    };
+    println!(
+        "compiled {} → {} ({} bytes){gen_note}",
+        file.display(),
+        out_path.display(),
+        ax_src.len()
+    );
 }
 
 /// Build a prose context string for the LLM body-generation prompt from a parsed GoalFile.
 fn intent_compile_prose_context(goal: &axon_surface::parser::GoalFile) -> String {
     let mut ctx = format!("Goal: {}\n\n", goal.title);
-    for name in &["Intent", "Inputs", "Outputs", "Score", "Constraints", "Budget", "Verify"] {
+    for name in &[
+        "Intent",
+        "Inputs",
+        "Outputs",
+        "Score",
+        "Constraints",
+        "Budget",
+        "Verify",
+    ] {
         if let Some(sec) = goal.section(name) {
             ctx.push_str(&format!("## {name}\n{}\n\n", sec.body.trim()));
         }
@@ -3792,12 +4190,21 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     let (errors, _ctx) = run_check_pipeline(&mut program, &file);
 
     // Collect top-level function items for the review report.
-    let fns: Vec<_> = program.items.iter().filter_map(|item| {
-        if let axon_core::ast::Item::FnDef(f) = item { Some(f) } else { None }
-    }).collect();
+    let fns: Vec<_> = program
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let axon_core::ast::Item::FnDef(f) = item {
+                Some(f)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     if json_flag {
-        let errors_json = errors.iter()
+        let errors_json = errors
+            .iter()
             .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
             .collect::<Vec<_>>()
             .join(",");
@@ -3839,15 +4246,23 @@ fn cmd_ast_review(file: PathBuf, json_flag: bool) {
     println!("AST review: {}", file.display());
     println!("  {} function(s)", fns.len());
     for f in &fns {
-        let params: String = f.params.iter()
+        let params: String = f
+            .params
+            .iter()
             .map(|p| format!("{}: {}", p.name, fmt_type(&p.ty)))
             .collect::<Vec<_>>()
             .join(", ");
-        let ret = f.return_type.as_ref()
+        let ret = f
+            .return_type
+            .as_ref()
             .map(|t| format!(" -> {}", fmt_type(t)))
             .unwrap_or_default();
         let attrs: Vec<String> = f.attrs.iter().map(|a| format!("@[{}]", a.name)).collect();
-        let attr_str = if attrs.is_empty() { String::new() } else { format!("  {}", attrs.join(" ")) };
+        let attr_str = if attrs.is_empty() {
+            String::new()
+        } else {
+            format!("  {}", attrs.join(" "))
+        };
         println!("  fn {}({}){}{}", f.name, params, ret, attr_str);
         if let Some(v) = &f.verify {
             println!("    @[verify]: {}", fmt_verify(v));
@@ -3949,19 +4364,30 @@ fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
                 if attr.name == "contained" {
                     for arg in &attr.args {
                         let a = arg.to_lowercase();
-                        if a.contains("exec") { has_exec = true; }
-                        if a.contains("net") { has_net = true; }
-                        if a.contains("write") { has_fs_write = true; }
+                        if a.contains("exec") {
+                            has_exec = true;
+                        }
+                        if a.contains("net") {
+                            has_net = true;
+                        }
+                        if a.contains("write") {
+                            has_fs_write = true;
+                        }
                     }
                 }
             }
         }
     }
 
-    if has_exec { 3 }
-    else if has_net && has_fs_write { 2 }
-    else if has_net || has_fs_write { 1 }
-    else { 0 }
+    if has_exec {
+        3
+    } else if has_net && has_fs_write {
+        2
+    } else if has_net || has_fs_write {
+        1
+    } else {
+        0
+    }
 }
 
 /// `axon deploy` — run a .ax program through the risk-gated safety pipeline.
@@ -3994,7 +4420,8 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     let (errors, _ctx) = run_check_pipeline(&mut program, &file);
     if !errors.is_empty() {
         if json_flag {
-            let errs = errors.iter()
+            let errs = errors
+                .iter()
                 .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
@@ -4015,8 +4442,10 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     let derived_risk = derive_risk_from_ast(&program);
     let declared_risk = risk_flag.as_deref().and_then(parse_risk_level).unwrap_or(0);
     if risk_flag.is_some() && declared_risk == -1 {
-        eprintln!("error: invalid --risk level '{}' — expected low|medium|high|critical",
-                  risk_flag.as_deref().unwrap_or(""));
+        eprintln!(
+            "error: invalid --risk level '{}' — expected low|medium|high|critical",
+            risk_flag.as_deref().unwrap_or("")
+        );
         process::exit(2);
     }
     let risk = std::cmp::max(derived_risk, declared_risk);
@@ -4032,14 +4461,20 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     // A gate function that is absent is treated as "passed" (open gate).
     // A gate function that returns false / non-zero halts the deploy.
     const HIGH_RISK_GATES: &[&str] = &["simulate", "stress", "redteam_check", "assert_deployable"];
-    const LOW_RISK_GATES:  &[&str] = &["redteam_check", "assert_deployable"];
-    let gates = if requires_full_pipeline { HIGH_RISK_GATES } else { LOW_RISK_GATES };
+    const LOW_RISK_GATES: &[&str] = &["redteam_check", "assert_deployable"];
+    let gates = if requires_full_pipeline {
+        HIGH_RISK_GATES
+    } else {
+        LOW_RISK_GATES
+    };
 
     let mut stages_run: Vec<String> = Vec::new();
     let mut failed_gate: Option<(String, i32)> = None;
 
     for &gate_fn in gates {
-        if failed_gate.is_some() { break; }
+        if failed_gate.is_some() {
+            break;
+        }
         match axon_core::interp::run_named_fn_as_bool(&program, gate_fn) {
             None => {} // function not present — gate is open
             Some(0) => {
@@ -4055,9 +4490,11 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     let risk_name = risk_level_name(risk);
 
     if let Some((failed, code)) = failed_gate {
-        let stages_json = stages_run.iter()
+        let stages_json = stages_run
+            .iter()
             .map(|s| format!("\"{}\"", s))
-            .collect::<Vec<_>>().join(",");
+            .collect::<Vec<_>>()
+            .join(",");
         if json_flag {
             println!(
                 "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"blocked_gate\",\
@@ -4066,7 +4503,10 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
                 json_str(&file.display().to_string()),
             );
         } else {
-            eprintln!("deploy: {} — BLOCKED at gate '{failed}' (exit {code})", file.display());
+            eprintln!(
+                "deploy: {} — BLOCKED at gate '{failed}' (exit {code})",
+                file.display()
+            );
             if !stages_run.is_empty() {
                 eprintln!("  stages run: {}", stages_run.join(" → "));
             }
@@ -4091,9 +4531,11 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
         "error"
     };
 
-    let stages_json = stages_run.iter()
+    let stages_json = stages_run
+        .iter()
         .map(|s| format!("\"{}\"", s))
-        .collect::<Vec<_>>().join(",");
+        .collect::<Vec<_>>()
+        .join(",");
 
     if json_flag {
         println!(
@@ -4105,16 +4547,17 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     } else {
         println!("deploy: {} — {status} (risk: {risk_name})", file.display());
         if !is_approved {
-            eprintln!("warning: no .approved file found — run `axon ast approve {}` first", file.display());
+            eprintln!(
+                "warning: no .approved file found — run `axon ast approve {}` first",
+                file.display()
+            );
         }
         if requires_full_pipeline && !stages_run.is_empty() {
             println!("  pipeline stages: {}", stages_run.join(" → "));
         }
     }
 
-    if blocked {
-        process::exit(exit_code);
-    } else if exit_code != 0 {
+    if blocked || exit_code != 0 {
         process::exit(exit_code);
     }
 }
@@ -4144,7 +4587,8 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
     let (errors, _ctx) = run_check_pipeline(&mut program, &file);
     if !errors.is_empty() {
         if json_flag {
-            let errs = errors.iter()
+            let errs = errors
+                .iter()
                 .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
                 .collect::<Vec<_>>()
                 .join(",");
@@ -4162,9 +4606,10 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
     }
 
     // Check if a redteam_check function exists.
-    let has_redteam = program.items.iter().any(|item| {
-        matches!(item, axon_core::ast::Item::FnDef(f) if f.name == "redteam_check")
-    });
+    let has_redteam = program
+        .items
+        .iter()
+        .any(|item| matches!(item, axon_core::ast::Item::FnDef(f) if f.name == "redteam_check"));
 
     if !has_redteam {
         if json_flag {
@@ -4173,7 +4618,10 @@ fn cmd_redteam(file: PathBuf, json_flag: bool) {
                 json_str(&file.display().to_string()),
             );
         } else {
-            println!("redteam: {} — no redteam_check function found (pass)", file.display());
+            println!(
+                "redteam: {} — no redteam_check function found (pass)",
+                file.display()
+            );
         }
         return;
     }
@@ -4235,7 +4683,10 @@ fn fmt_type(ty: &axon_core::ast::AxonType) -> String {
 
 /// Format a [`VerifySpec`] predicate for display.
 fn fmt_verify(v: &axon_core::ast::VerifySpec) -> String {
-    format!("{:?}", v.predicate).chars().take(60).collect::<String>()
+    format!("{:?}", v.predicate)
+        .chars()
+        .take(60)
+        .collect::<String>()
 }
 
 /// Format an [`EffectRow`] for display.

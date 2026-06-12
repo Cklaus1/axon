@@ -43,14 +43,17 @@ impl<'ctx> super::Codegen<'ctx> {
         let mut last_test_bb: Option<inkwell::basic_block::BasicBlock<'ctx>> = None;
 
         for (i, arm) in arms.iter().enumerate() {
-            let test_bb = self.ir
+            let test_bb = self
+                .ir
                 .context
                 .append_basic_block(fn_val, &format!("arm{i}_test"));
-            let body_bb = self.ir
+            let body_bb = self
+                .ir
                 .context
                 .append_basic_block(fn_val, &format!("arm{i}_body"));
             let next_bb = if i + 1 < arms.len() {
-                self.ir.context
+                self.ir
+                    .context
                     .append_basic_block(fn_val, &format!("arm{i}_next"))
             } else {
                 // Last arm: false branch goes to merge_bb. Track this test_bb.
@@ -67,10 +70,8 @@ impl<'ctx> super::Codegen<'ctx> {
             // Apply guard if present.
             let final_cond = if let Some(guard_expr) = &arm.guard {
                 if let Some(guard_val) = self.emit_expr(guard_expr, fn_val) {
-                    if let (
-                        BasicValueEnum::IntValue(m),
-                        BasicValueEnum::IntValue(g),
-                    ) = (matches, guard_val)
+                    if let (BasicValueEnum::IntValue(m), BasicValueEnum::IntValue(g)) =
+                        (matches, guard_val)
                     {
                         build_wrappers::w_and(&self.ir.builder, m, g, "guarded").into()
                     } else {
@@ -150,12 +151,14 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Pattern::Literal(lit) => {
                 let lit_val = self.emit_literal(lit);
                 match (subject, lit_val) {
-                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => self.ir
+                    (BasicValueEnum::IntValue(s), BasicValueEnum::IntValue(l)) => self
+                        .ir
                         .builder
                         .build_int_compare(IntPredicate::EQ, s, l, "patlit")
                         .unwrap()
                         .into(),
-                    (BasicValueEnum::FloatValue(s), BasicValueEnum::FloatValue(l)) => self.ir
+                    (BasicValueEnum::FloatValue(s), BasicValueEnum::FloatValue(l)) => self
+                        .ir
                         .builder
                         .build_float_compare(FloatPredicate::OEQ, s, l, "patflit")
                         .unwrap()
@@ -163,19 +166,48 @@ impl<'ctx> super::Codegen<'ctx> {
                     // String literal match: use strcmp.
                     (BasicValueEnum::StructValue(subj_sv), BasicValueEnum::StructValue(lit_sv)) => {
                         // Both are { i64, ptr } str structs. Extract data pointers and call strcmp.
-                        let strcmp_fn = self.ir.module.get_function("strcmp").unwrap_or_else(|| {
-                            let i8_ptr = self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default());
-                            let strcmp_ty = self.ir.context.i32_type().fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
-                            self.ir.module.add_function("strcmp", strcmp_ty, None)
-                        });
-                        let subj_ptr = build_wrappers::w_extract_value(&self.ir.builder, subj_sv, 1, "subj_ptr")
-                            .into_pointer_value();
-                        let lit_ptr = build_wrappers::w_extract_value(&self.ir.builder, lit_sv, 1, "lit_ptr")
-                            .into_pointer_value();
-                        let cmp_result = build_wrappers::w_call(&self.ir.builder, strcmp_fn, &[subj_ptr.into(), lit_ptr.into()], "strcmp_res")
-                            .try_as_basic_value().left().unwrap().into_int_value();
-                        self.ir.builder
-                            .build_int_compare(IntPredicate::EQ, cmp_result, self.ir.context.i32_type().const_zero(), "streq")
+                        let strcmp_fn =
+                            self.ir.module.get_function("strcmp").unwrap_or_else(|| {
+                                let i8_ptr = self
+                                    .ir
+                                    .context
+                                    .i8_type()
+                                    .ptr_type(inkwell::AddressSpace::default());
+                                let strcmp_ty = self
+                                    .ir
+                                    .context
+                                    .i32_type()
+                                    .fn_type(&[i8_ptr.into(), i8_ptr.into()], false);
+                                self.ir.module.add_function("strcmp", strcmp_ty, None)
+                            });
+                        let subj_ptr = build_wrappers::w_extract_value(
+                            &self.ir.builder,
+                            subj_sv,
+                            1,
+                            "subj_ptr",
+                        )
+                        .into_pointer_value();
+                        let lit_ptr =
+                            build_wrappers::w_extract_value(&self.ir.builder, lit_sv, 1, "lit_ptr")
+                                .into_pointer_value();
+                        let cmp_result = build_wrappers::w_call(
+                            &self.ir.builder,
+                            strcmp_fn,
+                            &[subj_ptr.into(), lit_ptr.into()],
+                            "strcmp_res",
+                        )
+                        .try_as_basic_value()
+                        .left()
+                        .unwrap()
+                        .into_int_value();
+                        self.ir
+                            .builder
+                            .build_int_compare(
+                                IntPredicate::EQ,
+                                cmp_result,
+                                self.ir.context.i32_type().const_zero(),
+                                "streq",
+                            )
                             .unwrap()
                             .into()
                     }
@@ -189,7 +221,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let BasicValueEnum::IntValue(tag) =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "opttag")
                     {
-                        return self.ir
+                        return self
+                            .ir
                             .builder
                             .build_int_compare(
                                 IntPredicate::EQ,
@@ -210,7 +243,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let BasicValueEnum::IntValue(tag) =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "opttag")
                     {
-                        let is_some = self.ir
+                        let is_some = self
+                            .ir
                             .builder
                             .build_int_compare(
                                 IntPredicate::EQ,
@@ -221,13 +255,15 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
 
                         // Also recurse on the inner value.
-                        let inner_val = self.ir
+                        let inner_val = self
+                            .ir
                             .builder
                             .build_extract_value(sv, 1, "optval")
                             .unwrap();
                         let inner_match = self.emit_pattern_test(inner_pat, inner_val);
                         if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self.ir
+                            return self
+                                .ir
                                 .builder
                                 .build_and(is_some, im, "somematch")
                                 .unwrap()
@@ -244,7 +280,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let BasicValueEnum::IntValue(tag) =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "restag")
                     {
-                        let is_ok = self.ir
+                        let is_ok = self
+                            .ir
                             .builder
                             .build_int_compare(
                                 IntPredicate::EQ,
@@ -253,13 +290,15 @@ impl<'ctx> super::Codegen<'ctx> {
                                 "isok",
                             )
                             .unwrap();
-                        let inner = self.ir
+                        let inner = self
+                            .ir
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
                         let inner_match = self.emit_pattern_test(inner_pat, inner);
                         if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self.ir
+                            return self
+                                .ir
                                 .builder
                                 .build_and(is_ok, im, "okmatch")
                                 .unwrap()
@@ -276,7 +315,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     if let BasicValueEnum::IntValue(tag) =
                         build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "restag")
                     {
-                        let is_err = self.ir
+                        let is_err = self
+                            .ir
                             .builder
                             .build_int_compare(
                                 IntPredicate::EQ,
@@ -285,13 +325,15 @@ impl<'ctx> super::Codegen<'ctx> {
                                 "iserr",
                             )
                             .unwrap();
-                        let inner = self.ir
+                        let inner = self
+                            .ir
                             .builder
                             .build_extract_value(sv, 1, "resval")
                             .unwrap();
                         let inner_match = self.emit_pattern_test(inner_pat, inner);
                         if let BasicValueEnum::IntValue(im) = inner_match {
-                            return self.ir
+                            return self
+                                .ir
                                 .builder
                                 .build_and(is_err, im, "errmatch")
                                 .unwrap()
@@ -306,11 +348,10 @@ impl<'ctx> super::Codegen<'ctx> {
             // Enum variant struct pattern: "EnumName::Variant { ... }" — check tag.
             ast::Pattern::Struct { name, .. } if name.contains("::") => {
                 let (enum_name, variant_name) = name.split_once("::").unwrap();
-                
-                
 
                 // Find the tag for this variant.
-                let tag_int = self.enum_variants
+                let tag_int = self
+                    .enum_variants
                     .get(enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == variant_name))
                     .map(|(_, tag, _)| *tag);
@@ -324,7 +365,8 @@ impl<'ctx> super::Codegen<'ctx> {
                             build_wrappers::w_extract_value(&self.ir.builder, sv, 0, "enumtag")
                         {
                             let expected = tag_val.get_type().const_int(tag_int as u64, false);
-                            return self.ir
+                            return self
+                                .ir
                                 .builder
                                 .build_int_compare(IntPredicate::EQ, tag_val, expected, "tagcmp")
                                 .unwrap()
@@ -349,10 +391,7 @@ impl<'ctx> super::Codegen<'ctx> {
         match pattern {
             ast::Pattern::Ident(name) => {
                 let subject_ty = subject.get_type();
-                let alloca = self.ir
-                    .builder
-                    .build_alloca(subject_ty, name)
-                    .unwrap();
+                let alloca = build_wrappers::w_alloca(&self.ir.builder, subject_ty, name);
                 build_wrappers::w_store(&self.ir.builder, alloca, subject);
                 self.locals.insert(name.clone(), (alloca, subject_ty));
             }
@@ -362,7 +401,8 @@ impl<'ctx> super::Codegen<'ctx> {
                     // Result/Option it is an `[N x i8]` array). Bind whatever
                     // value is extracted, matching the original `if let Ok(_)`
                     // (the wrapper returns the value directly, no Result).
-                    let inner_val = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "patinner");
+                    let inner_val =
+                        build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "patinner");
                     self.emit_pattern_bindings(inner, inner_val);
                 }
             }
@@ -370,7 +410,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 if let BasicValueEnum::StructValue(sv) = subject {
                     // Payload (field 1) is the `[N x i8]` array, not a struct —
                     // bind it unconditionally (matches the original `if let Ok`).
-                    let payload = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "okpayload");
+                    let payload =
+                        build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "okpayload");
                     let typed = if let Some((ok_ty, _)) = self.current_result_types.clone() {
                         self.extract_result_payload(payload, &ok_ty)
                     } else {
@@ -383,7 +424,8 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             ast::Pattern::Err(inner) => {
                 if let BasicValueEnum::StructValue(sv) = subject {
-                    let payload = build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "errpayload");
+                    let payload =
+                        build_wrappers::w_extract_value(&self.ir.builder, sv, 1, "errpayload");
                     let typed = if let Some((_, err_ty)) = self.current_result_types.clone() {
                         self.extract_result_payload(payload, &err_ty)
                     } else {
@@ -405,7 +447,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 let enum_name = parts.next().unwrap().to_string();
                 let variant_name = parts.next().unwrap().to_string();
 
-                let field_types = self.enum_variants
+                let field_types = self
+                    .enum_variants
                     .get(&enum_name)
                     .and_then(|vs| vs.iter().find(|(vn, _, _)| vn == &variant_name))
                     .map(|(_, _, fts)| fts.clone());
@@ -422,11 +465,17 @@ impl<'ctx> super::Codegen<'ctx> {
                         Some(ty) => ty,
                         None => return,
                     };
-                    let alloca = build_wrappers::w_alloca(&self.ir.builder, enum_struct_ty.into(), "enumtmp");
+                    let alloca = build_wrappers::w_alloca(
+                        &self.ir.builder,
+                        enum_struct_ty.into(),
+                        "enumtmp",
+                    );
                     build_wrappers::w_store(&self.ir.builder, alloca, sv.into());
 
                     // GEP to payload field (index 1).
-                    let pay_ptr = self.ir.builder
+                    let pay_ptr = self
+                        .ir
+                        .builder
                         .build_struct_gep(enum_struct_ty, alloca, 1, "pay")
                         .unwrap();
 
@@ -434,7 +483,9 @@ impl<'ctx> super::Codegen<'ctx> {
                     let i32_ty = self.ir.context.i32_type();
                     let ptr_ty = i8_ty.ptr_type(AddressSpace::default());
 
-                    let pay_i8ptr = self.ir.builder
+                    let pay_i8ptr = self
+                        .ir
+                        .builder
                         .build_pointer_cast(pay_ptr, ptr_ty, "payi8ptr")
                         .unwrap();
 
@@ -447,14 +498,19 @@ impl<'ctx> super::Codegen<'ctx> {
                         if let Some(llvm_fty) = self.llvm_type(&fty) {
                             let offset_val = i32_ty.const_int(byte_offset, false);
                             let field_ptr = unsafe {
-                                self.ir.builder
+                                self.ir
+                                    .builder
                                     .build_gep(i8_ty, pay_i8ptr, &[offset_val], "fieldptr")
                                     .unwrap()
                             };
-                            let typed_ptr = self.ir.builder
+                            let typed_ptr = self
+                                .ir
+                                .builder
                                 .build_pointer_cast(field_ptr, ptr_ty, "tfptr")
                                 .unwrap();
-                            let field_val = self.ir.builder
+                            let field_val = self
+                                .ir
+                                .builder
                                 .build_load(llvm_fty, typed_ptr, "fieldval")
                                 .unwrap();
                             self.emit_pattern_bindings(pat, field_val);
@@ -470,7 +526,12 @@ impl<'ctx> super::Codegen<'ctx> {
                         // A struct field can be any value type (int/float/ptr/
                         // struct), not only int — bind whatever is extracted,
                         // matching the original `if let Ok(field_val)`.
-                        let field_val = build_wrappers::w_extract_value(&self.ir.builder, sv, i as u32, "sfield");
+                        let field_val = build_wrappers::w_extract_value(
+                            &self.ir.builder,
+                            sv,
+                            i as u32,
+                            "sfield",
+                        );
                         self.emit_pattern_bindings(pat, field_val);
                     }
                 }
@@ -478,7 +539,12 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Pattern::Tuple(pats) => {
                 if let BasicValueEnum::StructValue(sv) = subject {
                     for (i, pat) in pats.iter().enumerate() {
-                        let elem_val = build_wrappers::w_extract_value(&self.ir.builder, sv, i as u32, "telem");
+                        let elem_val = build_wrappers::w_extract_value(
+                            &self.ir.builder,
+                            sv,
+                            i as u32,
+                            "telem",
+                        );
                         self.emit_pattern_bindings(pat, elem_val);
                     }
                 }
@@ -486,5 +552,4 @@ impl<'ctx> super::Codegen<'ctx> {
             _ => {} // Wildcard, Literal, None — no bindings
         }
     }
-
 }

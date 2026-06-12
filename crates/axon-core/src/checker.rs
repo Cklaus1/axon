@@ -18,9 +18,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::{
-    AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt,
-};
+use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505};
 use crate::types::Type;
 
@@ -158,9 +156,7 @@ fn type_contains_unresolved(ty: &Type) -> bool {
         Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner) => {
             type_contains_unresolved(inner)
         }
-        Type::Result(ok, err) => {
-            type_contains_unresolved(ok) || type_contains_unresolved(err)
-        }
+        Type::Result(ok, err) => type_contains_unresolved(ok) || type_contains_unresolved(err),
         Type::Tuple(elems) => elems.iter().any(type_contains_unresolved),
         _ => false,
     }
@@ -168,11 +164,11 @@ fn type_contains_unresolved(ty: &Type) -> bool {
 
 fn is_integer_widening(from: &Type, to: &Type) -> bool {
     let rank = |t: &Type| match t {
-        Type::I8  => Some(0u8),
+        Type::I8 => Some(0u8),
         Type::I16 => Some(1),
         Type::I32 => Some(2),
         Type::I64 => Some(3),
-        _         => None,
+        _ => None,
     };
     matches!((rank(from), rank(to)), (Some(f), Some(t)) if f < t)
 }
@@ -180,10 +176,7 @@ fn is_integer_widening(from: &Type, to: &Type) -> bool {
 // ── Known primitives (for R08) ────────────────────────────────────────────────
 
 const PRIMITIVE_NAMES: &[&str] = &[
-    "i8", "i16", "i32", "i64",
-    "u8", "u16", "u32", "u64",
-    "f32", "f64",
-    "bool", "str", "String",
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "str", "String",
     "()", "unit",
 ];
 
@@ -446,7 +439,8 @@ impl CheckCtx {
                     }
                 }
                 Item::FnDef(f) if !f.generic_bounds.is_empty() => {
-                    self.fn_bounds.insert(f.name.clone(), f.generic_bounds.clone());
+                    self.fn_bounds
+                        .insert(f.name.clone(), f.generic_bounds.clone());
                 }
                 _ => {}
             }
@@ -478,7 +472,8 @@ impl CheckCtx {
                     self.pure_fns.insert(f.name.clone());
                     // Record (params, body) for inlining into a predicate.
                     let pnames: Vec<String> = f.params.iter().map(|p| p.name.clone()).collect();
-                    self.pure_fn_defs.insert(f.name.clone(), (pnames, f.body.clone()));
+                    self.pure_fn_defs
+                        .insert(f.name.clone(), (pnames, f.body.clone()));
                 }
                 // Phase 5 §3: collect @[total] fn names + bodies (pre-pass, so a
                 // total fn calling a forward-declared total fn is accepted, and
@@ -490,8 +485,10 @@ impl CheckCtx {
             }
             // Phase 5: register named refinements → erased base + predicate.
             if let Item::RefineDef(r) = item {
-                self.refinement_base.insert(r.name.clone(), axon_type_to_type(&r.base));
-                self.refinement_pred.insert(r.name.clone(), (*r.predicate).clone());
+                self.refinement_base
+                    .insert(r.name.clone(), axon_type_to_type(&r.base));
+                self.refinement_pred
+                    .insert(r.name.clone(), (*r.predicate).clone());
                 // A refinement predicate is a STATIC, deterministic contract: it
                 // must be pure. An impure builtin in it (now_ms/random_i64/IO/AI…)
                 // makes the "type" non-deterministic and meaningless. Reject it.
@@ -508,9 +505,10 @@ impl CheckCtx {
         // param isn't a refinement) so a call site can find proof obligations.
         // Enter this pass if there's ANY refinement — named, or a whole-struct
         // predicate (which needs no named refinement).
-        let has_struct_refine = program.items.iter().any(|i| {
-            matches!(i, Item::TypeDef(td) if td.refinement.is_some())
-        });
+        let has_struct_refine = program
+            .items
+            .iter()
+            .any(|i| matches!(i, Item::TypeDef(td) if td.refinement.is_some()));
         if !self.refinement_pred.is_empty() || has_struct_refine {
             for item in &program.items {
                 if let Item::FnDef(f) = item {
@@ -545,7 +543,8 @@ impl CheckCtx {
                     }
                     // Whole-struct refinement predicate (`{…} where _.lo <= _.hi`).
                     if let Some(pred) = &td.refinement {
-                        self.struct_refinements.insert(td.name.clone(), (**pred).clone());
+                        self.struct_refinements
+                            .insert(td.name.clone(), (**pred).clone());
                     }
                 }
             }
@@ -622,7 +621,11 @@ impl CheckCtx {
         for item in &program.items {
             if let Item::TypeDef(t) = item {
                 if let Some(a) = t.attrs.iter().find(|a| a.name == "sensitive") {
-                    let category = a.args.first().cloned().unwrap_or_else(|| "sensitive".into());
+                    let category = a
+                        .args
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "sensitive".into());
                     self.sensitive_types.insert(t.name.clone(), category);
                 }
             }
@@ -830,7 +833,10 @@ impl CheckCtx {
             // registers the form; predicate well-formedness + proof obligations
             // (R01-R05, constant-arg comptime / SMT) are later sub-slices.
             Item::RefineDef(_) => {}
-            Item::EnumDef(_) | Item::ModDecl(_) | Item::UseDecl(_) | Item::TraitDef(_)
+            Item::EnumDef(_)
+            | Item::ModDecl(_)
+            | Item::UseDecl(_)
+            | Item::TraitDef(_)
             | Item::LetDef { .. } => {}
         }
     }
@@ -886,7 +892,9 @@ impl CheckCtx {
                     let v = v.trim();
                     match k.as_str() {
                         "metric" => metric_name = Some(v.to_string()),
-                        "target" | "max_evals" | "holdout" | "lo" | "hi" if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() => {
+                        "target" | "max_evals" | "holdout" | "lo" | "hi"
+                            if v.parse::<f64>().is_err() && v.parse::<i64>().is_err() =>
+                        {
                             all_numbers = false;
                         }
                         // R5: `test_set: [a, b, c]` (rendered `"a,b,c"`) — every
@@ -899,7 +907,12 @@ impl CheckCtx {
                         "strategy" => {
                             let known = matches!(
                                 v.to_lowercase().as_str(),
-                                "hill_climb" | "hillclimb" | "random" | "multistart" | "tournament" | "bayesian"
+                                "hill_climb"
+                                    | "hillclimb"
+                                    | "random"
+                                    | "multistart"
+                                    | "tournament"
+                                    | "bayesian"
                             );
                             if !known {
                                 bad_strategy = Some(v.to_string());
@@ -1025,10 +1038,16 @@ impl CheckCtx {
     /// argument can't be discharged here — that needs the SMT backend (§4) — so
     /// it's silently left for the runtime/solver (no E1202 noise yet). No Z3.
     fn check_refinement_args(&mut self, fn_name: &str, args: &[Expr], node_path: &str) {
-        let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else { return };
+        let Some(slots) = self.fn_param_refinements.get(fn_name).cloned() else {
+            return;
+        };
         for (i, arg) in args.iter().enumerate() {
-            let Some(Some(rname)) = slots.get(i) else { continue };
-            let Some(pred) = self.refinement_pred.get(rname).cloned() else { continue };
+            let Some(Some(rname)) = slots.get(i) else {
+                continue;
+            };
+            let Some(pred) = self.refinement_pred.get(rname).cloned() else {
+                continue;
+            };
             // The binder value: an i64 constant, or a string literal's length
             // (for `str_len(_)` predicates). Anything else is non-constant and
             // deferred (no obligation discharged here).
@@ -1075,8 +1094,12 @@ impl CheckCtx {
     /// constant, the predicate must hold for it (else E1209). Same soundness as
     /// the argument obligation: only a provably-false constant errors.
     fn check_return_refinement(&mut self, ret_expr: &Expr, node_path: &str) {
-        let Some(rname) = self.current_ret_refinement.clone() else { return };
-        let Some(pred) = self.refinement_pred.get(&rname).cloned() else { return };
+        let Some(rname) = self.current_ret_refinement.clone() else {
+            return;
+        };
+        let Some(pred) = self.refinement_pred.get(&rname).cloned() else {
+            return;
+        };
         let bound = if let Some(v) = const_eval_int(ret_expr) {
             RefineVal::Int(v)
         } else if let Expr::Literal(crate::ast::Literal::Str(s)) = ret_expr {
@@ -1116,9 +1139,19 @@ impl CheckCtx {
     /// the predicate (else E1209). Mirrors `check_return_refinement`; a
     /// non-constant value defers to the runtime check. Only a provably-false
     /// constant errors (sound). No-op when the annotation isn't a refinement.
-    fn check_let_refinement(&mut self, annot: &Option<AxonType>, name: &str, value: &Expr, node_path: &str) {
-        let Some(AxonType::Named(rname)) = annot else { return };
-        let Some(pred) = self.refinement_pred.get(rname).cloned() else { return };
+    fn check_let_refinement(
+        &mut self,
+        annot: &Option<AxonType>,
+        name: &str,
+        value: &Expr,
+        node_path: &str,
+    ) {
+        let Some(AxonType::Named(rname)) = annot else {
+            return;
+        };
+        let Some(pred) = self.refinement_pred.get(rname).cloned() else {
+            return;
+        };
         let bound = if let Some(v) = const_eval_int(value) {
             RefineVal::Int(v)
         } else if let Expr::Literal(crate::ast::Literal::Str(s)) = value {
@@ -1163,7 +1196,9 @@ impl CheckCtx {
         fexpr: &Expr,
         node_path: &str,
     ) {
-        let Some(pred) = self.refinement_pred.get(rname).cloned() else { return };
+        let Some(pred) = self.refinement_pred.get(rname).cloned() else {
+            return;
+        };
         let bound = if let Some(v) = const_eval_int(fexpr) {
             RefineVal::Int(v)
         } else if let Expr::Literal(crate::ast::Literal::Str(s)) = fexpr {
@@ -1210,13 +1245,19 @@ impl CheckCtx {
         self.eval_pred_bool(pred, &env, 0)
     }
 
-    fn eval_pred_bool(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<bool> {
+    fn eval_pred_bool(
+        &self,
+        e: &Expr,
+        env: &HashMap<String, RefineVal>,
+        depth: u32,
+    ) -> Option<bool> {
         use crate::ast::BinOp;
         match e {
             Expr::Literal(crate::ast::Literal::Bool(v)) => Some(*v),
-            Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
-                Some(!self.eval_pred_bool(operand, env, depth)?)
-            }
+            Expr::UnaryOp {
+                op: crate::ast::UnaryOp::Not,
+                operand,
+            } => Some(!self.eval_pred_bool(operand, env, depth)?),
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
                     // `str_eq(x, "lit")` — equality of a bound string vs a literal.
@@ -1237,12 +1278,21 @@ impl CheckCtx {
                 None
             }
             Expr::BinOp { op, left, right } => match op {
-                BinOp::And => Some(self.eval_pred_bool(left, env, depth)? && self.eval_pred_bool(right, env, depth)?),
-                BinOp::Or => Some(self.eval_pred_bool(left, env, depth)? || self.eval_pred_bool(right, env, depth)?),
+                BinOp::And => Some(
+                    self.eval_pred_bool(left, env, depth)?
+                        && self.eval_pred_bool(right, env, depth)?,
+                ),
+                BinOp::Or => Some(
+                    self.eval_pred_bool(left, env, depth)?
+                        || self.eval_pred_bool(right, env, depth)?,
+                ),
                 BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
                     // Try integer comparison first; fall back to float (Phase 13
                     // distribution moment predicates produce f64 values).
-                    if let (Some(l), Some(r)) = (self.eval_pred_int(left, env, depth), self.eval_pred_int(right, env, depth)) {
+                    if let (Some(l), Some(r)) = (
+                        self.eval_pred_int(left, env, depth),
+                        self.eval_pred_int(right, env, depth),
+                    ) {
                         return Some(match op {
                             BinOp::Eq => l == r,
                             BinOp::NotEq => l != r,
@@ -1253,7 +1303,10 @@ impl CheckCtx {
                             _ => unreachable!(),
                         });
                     }
-                    if let (Some(l), Some(r)) = (self.eval_pred_f64(left, env, depth), self.eval_pred_f64(right, env, depth)) {
+                    if let (Some(l), Some(r)) = (
+                        self.eval_pred_f64(left, env, depth),
+                        self.eval_pred_f64(right, env, depth),
+                    ) {
                         return Some(match op {
                             BinOp::Eq => (l - r).abs() < f64::EPSILON,
                             BinOp::NotEq => (l - r).abs() >= f64::EPSILON,
@@ -1364,7 +1417,10 @@ impl CheckCtx {
                 None
             }
             Expr::Literal(Literal::Int(n)) => Some(*n),
-            Expr::UnaryOp { op: UnaryOp::Neg, operand } => self.eval_pred_int(operand, env, depth)?.checked_neg(),
+            Expr::UnaryOp {
+                op: UnaryOp::Neg,
+                operand,
+            } => self.eval_pred_int(operand, env, depth)?.checked_neg(),
             Expr::If { cond, then, else_ } => {
                 if self.eval_pred_bool(cond, env, depth)? {
                     self.eval_pred_int(then, env, depth)
@@ -1466,9 +1522,10 @@ impl CheckCtx {
                     _ => None,
                 }
             }
-            Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
-                Some(-self.eval_pred_f64(operand, env, depth)?)
-            }
+            Expr::UnaryOp {
+                op: crate::ast::UnaryOp::Neg,
+                operand,
+            } => Some(-self.eval_pred_f64(operand, env, depth)?),
             _ => None,
         }
     }
@@ -1476,7 +1533,12 @@ impl CheckCtx {
     /// Evaluate a distribution-valued sub-expression in a predicate context.
     /// Returns a struct-like map of field name → RefineVal suitable for
     /// `checker_dist_moment` / `checker_dist_cdf`.
-    fn eval_pred_dist(&self, e: &Expr, env: &HashMap<String, RefineVal>, depth: u32) -> Option<HashMap<String, f64>> {
+    fn eval_pred_dist(
+        &self,
+        e: &Expr,
+        env: &HashMap<String, RefineVal>,
+        depth: u32,
+    ) -> Option<HashMap<String, f64>> {
         match e {
             Expr::Ident(n) => {
                 if let RefineVal::Struct(fields) = env.get(n)? {
@@ -1499,12 +1561,15 @@ impl CheckCtx {
                         out.insert(k.clone(), f);
                     }
                 }
-                if out.is_empty() { None } else { Some(out) }
+                if out.is_empty() {
+                    None
+                } else {
+                    Some(out)
+                }
             }
             _ => None,
         }
     }
-
 
     /// Phase 5: replace any named-refinement type with its erased base,
     /// recursively (a refinement resolves to `Struct(name)` via
@@ -1724,7 +1789,9 @@ impl CheckCtx {
                 }
             }
             Expr::Return(Some(inner)) => Self::collect_purity_violations(inner, pure_fns, out),
-            Expr::FieldAccess { receiver, .. } => Self::collect_purity_violations(receiver, pure_fns, out),
+            Expr::FieldAccess { receiver, .. } => {
+                Self::collect_purity_violations(receiver, pure_fns, out)
+            }
             Expr::Index { receiver, index } => {
                 Self::collect_purity_violations(receiver, pure_fns, out);
                 Self::collect_purity_violations(index, pure_fns, out);
@@ -1759,7 +1826,9 @@ impl CheckCtx {
                 Self::collect_purity_violations(place, pure_fns, out);
                 Self::collect_purity_violations(value, pure_fns, out);
             }
-            Expr::For { start, end, body, .. } => {
+            Expr::For {
+                start, end, body, ..
+            } => {
                 Self::collect_purity_violations(start, pure_fns, out);
                 Self::collect_purity_violations(end, pure_fns, out);
                 for s in body {
@@ -1774,8 +1843,13 @@ impl CheckCtx {
                 }
             }
             // Leaves / no child exprs to walk.
-            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
-            | Expr::Return(None) | Expr::Lambda { .. } => {}
+            Expr::Ident(_)
+            | Expr::Literal(_)
+            | Expr::None
+            | Expr::Break
+            | Expr::Continue
+            | Expr::Return(None)
+            | Expr::Lambda { .. } => {}
         }
     }
 
@@ -1813,8 +1887,11 @@ impl CheckCtx {
                 )
                 .at(&file, 0, 0)
                 .with_span(f.span)
-                .fix("replace the `while` loop with a bounded `for i in a..b { … }` loop, or \
-                      drop the `@[total]` attribute".to_string()),
+                .fix(
+                    "replace the `while` loop with a bounded `for i in a..b { … }` loop, or \
+                      drop the `@[total]` attribute"
+                        .to_string(),
+                ),
             );
         }
         // A `@[total]` fn may only call other `@[total]` fns (and always-
@@ -1964,7 +2041,9 @@ impl CheckCtx {
                 }
             }
         }
-        Self::for_each_child(expr, &mut |c| Self::collect_total_callees(c, total_fns, out));
+        Self::for_each_child(expr, &mut |c| {
+            Self::collect_total_callees(c, total_fns, out)
+        });
     }
 
     /// Collect the names of called USER functions that are NOT `@[total]` (and
@@ -2030,11 +2109,12 @@ impl CheckCtx {
             Expr::BinOp { op, left, right } => {
                 let left_is_param = matches!(left.as_ref(), Expr::Ident(n) if n == pname);
                 match op {
-                    crate::ast::BinOp::Sub => {
-                        left_is_param && Self::is_positive_int_literal(right)
-                    }
+                    crate::ast::BinOp::Sub => left_is_param && Self::is_positive_int_literal(right),
                     crate::ast::BinOp::Div => {
-                        left_is_param && Self::int_literal_value(right).map(|v| v > 1).unwrap_or(false)
+                        left_is_param
+                            && Self::int_literal_value(right)
+                                .map(|v| v > 1)
+                                .unwrap_or(false)
                     }
                     _ => false,
                 }
@@ -2042,10 +2122,16 @@ impl CheckCtx {
             // tail(pname) / arr_tail(pname) / arr_drop(pname, _)
             Expr::Call { callee, args, .. } => {
                 if let Expr::Ident(fname) = callee.as_ref() {
-                    let shortens = matches!(fname.as_str(), "tail" | "arr_tail" | "arr_drop" | "arr_skip");
+                    let shortens = matches!(
+                        fname.as_str(),
+                        "tail" | "arr_tail" | "arr_drop" | "arr_skip"
+                    );
                     let first_is_param = args.first().is_some_and(|a| {
                         let inner = match a {
-                            Expr::UnaryOp { op: crate::ast::UnaryOp::Ref, operand } => operand.as_ref(),
+                            Expr::UnaryOp {
+                                op: crate::ast::UnaryOp::Ref,
+                                operand,
+                            } => operand.as_ref(),
                             other => other,
                         };
                         matches!(inner, Expr::Ident(n) if n == pname)
@@ -2076,17 +2162,25 @@ impl CheckCtx {
     fn for_each_child(expr: &Expr, g: &mut dyn FnMut(&Expr)) {
         match expr {
             Expr::Block(stmts) => stmts.iter().for_each(|s| g(&s.expr)),
-            Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. }
-            | Expr::Question(value) | Expr::Comptime(value) | Expr::Spawn(value)
+            Expr::Let { value, .. }
+            | Expr::Own { value, .. }
+            | Expr::RefBind { value, .. }
+            | Expr::Question(value)
+            | Expr::Comptime(value)
+            | Expr::Spawn(value)
             | Expr::Assign { value, .. } => g(value),
             Expr::UnaryOp { operand, .. } => g(operand),
             Expr::Call { callee, args, .. } => {
                 g(callee);
-                for a in args { g(a); }
+                for a in args {
+                    g(a);
+                }
             }
             Expr::MethodCall { receiver, args, .. } => {
                 g(receiver);
-                for a in args { g(a); }
+                for a in args {
+                    g(a);
+                }
             }
             Expr::BinOp { left, right, .. } => {
                 g(left);
@@ -2103,13 +2197,19 @@ impl CheckCtx {
                     g(e);
                 }
             }
-            Expr::Return(Some(inner)) | Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => g(inner),
+            Expr::Return(Some(inner)) | Expr::Ok(inner) | Expr::Err(inner) | Expr::Some(inner) => {
+                g(inner)
+            }
             Expr::FieldAccess { receiver, .. } => g(receiver),
             Expr::Index { receiver, index } => {
                 g(receiver);
                 g(index);
             }
-            Expr::Tuple(es) | Expr::Array(es) => { for e in es { g(e); } }
+            Expr::Tuple(es) | Expr::Array(es) => {
+                for e in es {
+                    g(e);
+                }
+            }
             Expr::StructLit { fields, .. } => fields.iter().for_each(|(_, fe)| g(fe)),
             Expr::While { cond, body, .. } => {
                 g(cond);
@@ -2119,7 +2219,9 @@ impl CheckCtx {
                 g(expr);
                 body.iter().for_each(|s| g(&s.expr));
             }
-            Expr::For { start, end, body, .. } => {
+            Expr::For {
+                start, end, body, ..
+            } => {
                 g(start);
                 g(end);
                 body.iter().for_each(|s| g(&s.expr));
@@ -2152,7 +2254,11 @@ impl CheckCtx {
             // inside a closure. Previously skipped, which let a `while` in a
             // lambda escape the @[total] termination check.
             Expr::Lambda { body, .. } => g(body),
-            Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue
+            Expr::Ident(_)
+            | Expr::Literal(_)
+            | Expr::None
+            | Expr::Break
+            | Expr::Continue
             | Expr::Return(None) => {}
         }
     }
@@ -2217,7 +2323,9 @@ impl CheckCtx {
                     Self::collect_confidence_observed(&s.expr, out);
                 }
             }
-            Expr::For { start, end, body, .. } => {
+            Expr::For {
+                start, end, body, ..
+            } => {
                 Self::collect_confidence_observed(start, out);
                 Self::collect_confidence_observed(end, out);
                 for s in body {
@@ -2275,12 +2383,7 @@ impl CheckCtx {
     // Statement
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_stmt(
-        &mut self,
-        stmt: &Stmt,
-        node_path: &str,
-        scope: &mut HashMap<String, Type>,
-    ) {
+    fn check_stmt(&mut self, stmt: &Stmt, node_path: &str, scope: &mut HashMap<String, Type>) {
         // Track the statement span so deeply-nested errors can attach a
         // useful source location (rustc-style `file:line:col`).
         if !stmt.span.is_dummy() {
@@ -2293,12 +2396,7 @@ impl CheckCtx {
     // Expression
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_expr(
-        &mut self,
-        expr: &Expr,
-        node_path: &str,
-        scope: &mut HashMap<String, Type>,
-    ) {
+    fn check_expr(&mut self, expr: &Expr, node_path: &str, scope: &mut HashMap<String, Type>) {
         match expr {
             // ── Block ────────────────────────────────────────────────────────
             Expr::Block(stmts) => {
@@ -2336,8 +2434,7 @@ impl CheckCtx {
                         // match-arm bodies (`…arm_N.body`), which would compare an
                         // arm's tail against the fn return type and false-flag.
                         if node_path == self.fn_body_path {
-                            let expr_ty =
-                                self.resolve_expr_type(&stmt.expr, &stmt_path, scope);
+                            let expr_ty = self.resolve_expr_type(&stmt.expr, &stmt_path, scope);
                             self.check_return_type_match(&expr_ty, node_path, &stmt_path);
                             // R03: the body-tail (implicit return) into a
                             // refinement return type must satisfy the predicate.
@@ -2365,9 +2462,21 @@ impl CheckCtx {
 
             // ── Binding forms ────────────────────────────────────────────────
             // The RHS is "used" (stored), so R02 does not apply.
-            Expr::Let { name, value, ty: annot }
-            | Expr::Own { name, value, ty: annot }
-            | Expr::RefBind { name, value, ty: annot } => {
+            Expr::Let {
+                name,
+                value,
+                ty: annot,
+            }
+            | Expr::Own {
+                name,
+                value,
+                ty: annot,
+            }
+            | Expr::RefBind {
+                name,
+                value,
+                ty: annot,
+            } => {
                 let val_path = format!("{node_path}.value");
                 self.check_expr(value, &val_path, scope);
                 // Phase 5: a `let p: T where P = <const>` annotation carries a
@@ -2450,7 +2559,8 @@ impl CheckCtx {
                                     // For a builtin the boundary names the sink
                                     // kind; for a user fn it's an indirect leak
                                     // (the fn forwards this arg to a sink).
-                                    let boundary = builtin_boundary.unwrap_or("exfiltrating function");
+                                    let boundary =
+                                        builtin_boundary.unwrap_or("exfiltrating function");
                                     let detail = if builtin_boundary.is_some() {
                                         format!(
                                             "the {boundary} `{name}` — sensitive data must never leave \
@@ -2487,7 +2597,10 @@ impl CheckCtx {
                 if let Expr::Ident(name) = callee.as_ref() {
                     // Fix #3: detect calling a local variable that is not a function.
                     if let Some(ty) = scope.get(name.as_str()) {
-                        if !matches!(ty, Type::Fn(_, _) | Type::Unknown | Type::Deferred(_) | Type::Var(_)) {
+                        if !matches!(
+                            ty,
+                            Type::Fn(_, _) | Type::Unknown | Type::Deferred(_) | Type::Var(_)
+                        ) {
                             let file = self.file.clone();
                             self.errors.push(
                                 CheckError::new(
@@ -2496,7 +2609,10 @@ impl CheckCtx {
                                 )
                                 .node(node_path)
                                 .at(&file, 0, 0)
-                                .fix(format!("'{name}' is a local variable of type {}, not a function", ty.display())),
+                                .fix(format!(
+                                    "'{name}' is a local variable of type {}, not a function",
+                                    ty.display()
+                                )),
                             );
                         }
                     }
@@ -2506,7 +2622,11 @@ impl CheckCtx {
             }
 
             // ── MethodCall ───────────────────────────────────────────────────
-            Expr::MethodCall { receiver, method, args } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
                 let rpath = format!("{node_path}.receiver");
                 self.check_expr(receiver, &rpath, scope);
                 for (i, arg) in args.iter().enumerate() {
@@ -2567,8 +2687,7 @@ impl CheckCtx {
                                 .at(&file, 0, 0)
                                 .fix(hint),
                         );
-                    } else if let Some(sig) =
-                        self.fn_sigs.get(&format!("{key}__{method}")).cloned()
+                    } else if let Some(sig) = self.fn_sigs.get(&format!("{key}__{method}")).cloned()
                     {
                         // ARITY check for the impl method (was MISSING — a wrong
                         // arg count passed both infer and the checker, then panicked
@@ -2609,8 +2728,10 @@ impl CheckCtx {
                     // Call-site check (was missing entirely). Method param idx `p`
                     // includes `self` at 0, so the explicit arg is at `p - 1`.
                     if has_method && !self.sensitive_types.is_empty() {
-                        if let Some(positions) =
-                            self.exfiltrating_params.get(&format!("{key}__{method}")).cloned()
+                        if let Some(positions) = self
+                            .exfiltrating_params
+                            .get(&format!("{key}__{method}"))
+                            .cloned()
                         {
                             for p in positions {
                                 if p == 0 {
@@ -2660,7 +2781,10 @@ impl CheckCtx {
                 self.check_not_option_used_as_value(&rty, &rpath);
                 // Fix #4: arithmetic operands must be numeric types.
                 use crate::ast::BinOp;
-                if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem) {
+                if matches!(
+                    op,
+                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
+                ) {
                     self.check_numeric_operand(&lty, &lpath);
                     self.check_numeric_operand(&rty, &rpath);
                 }
@@ -2674,7 +2798,11 @@ impl CheckCtx {
                     && const_eval_int(right.as_ref()) == Some(0)
                 {
                     let file = self.file.clone();
-                    let verb = if matches!(op, BinOp::Div) { "division" } else { "remainder" };
+                    let verb = if matches!(op, BinOp::Div) {
+                        "division"
+                    } else {
+                        "remainder"
+                    };
                     self.errors.push(
                         CheckError::new(
                             E0407,
@@ -2682,7 +2810,10 @@ impl CheckCtx {
                         )
                         .node(node_path)
                         .at(&file, 0, 0)
-                        .fix("guard the divisor (`if d != 0 { … }`) or use a non-zero constant".to_string()),
+                        .fix(
+                            "guard the divisor (`if d != 0 { … }`) or use a non-zero constant"
+                                .to_string(),
+                        ),
                     );
                 }
             }
@@ -2733,10 +2864,10 @@ impl CheckCtx {
                                 E0303,
                                 "the `?` operator was used outside of a function",
                             )
-                                .node(node_path)
-                                .at(&file, 0, 0)
-                                .with_span(span)
-                                .fix("only use `?` inside a function that returns `Result<T, E>`"),
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            .with_span(span)
+                            .fix("only use `?` inside a function that returns `Result<T, E>`"),
                         );
                     }
                 }
@@ -2754,11 +2885,7 @@ impl CheckCtx {
 
                 for (i, arm) in arms.iter().enumerate() {
                     if let Option::Some(guard) = &arm.guard {
-                        self.check_expr(
-                            guard,
-                            &format!("{node_path}.arm_{i}.guard"),
-                            scope,
-                        );
+                        self.check_expr(guard, &format!("{node_path}.arm_{i}.guard"), scope);
                     }
                     self.check_expr(&arm.body, &format!("{node_path}.arm_{i}.body"), scope);
                 }
@@ -2877,7 +3004,11 @@ impl CheckCtx {
             // ── Lambda ───────────────────────────────────────────────────────
             // Introduce a fresh return-type context so `?` / return checks
             // inside the lambda do not bleed into the outer function.
-            Expr::Lambda { params: _, body, captures: _ } => {
+            Expr::Lambda {
+                params: _,
+                body,
+                captures: _,
+            } => {
                 let prev = self.current_ret_ty.take();
                 self.check_expr(body, &format!("{node_path}.body"), scope);
                 self.current_ret_ty = prev;
@@ -2901,7 +3032,13 @@ impl CheckCtx {
                     self.check_stmt(stmt, &format!("{node_path}.while_let_body_{i}"), scope);
                 }
             }
-            Expr::For { var, start, end, body, .. } => {
+            Expr::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
                 self.check_expr(start, &format!("{node_path}.start"), scope);
                 self.check_expr(end, &format!("{node_path}.end"), scope);
                 let mut inner = scope.clone();
@@ -2954,9 +3091,15 @@ impl CheckCtx {
                 // refinement must satisfy the predicate.
                 if let Some(field_refs) = self.struct_field_refinements.get(name).cloned() {
                     for (i, (fname, fexpr)) in fields.iter().enumerate() {
-                        let Some(rname) = field_refs.get(fname) else { continue };
+                        let Some(rname) = field_refs.get(fname) else {
+                            continue;
+                        };
                         self.check_field_refinement(
-                            rname, fname, name, fexpr, &format!("{node_path}.field_{i}"),
+                            rname,
+                            fname,
+                            name,
+                            fexpr,
+                            &format!("{node_path}.field_{i}"),
                         );
                     }
                 }
@@ -2993,7 +3136,9 @@ impl CheckCtx {
                             .node(node_path)
                             .at(&file, 0, 0)
                             .with_span(span)
-                            .fix(format!("set the fields so `{name}`'s `where` predicate holds")),
+                            .fix(format!(
+                                "set the fields so `{name}`'s `where` predicate holds"
+                            )),
                         );
                     }
                 }
@@ -3086,8 +3231,10 @@ impl CheckCtx {
                         .at(&file, 0, 0)
                         .with_span(span)
                         .found(ty_disp)
-                        .fix("add `?` to propagate the error, or wrap the call in \
-                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`"),
+                        .fix(
+                            "add `?` to propagate the error, or wrap the call in \
+                              `match call() { Ok(v) => v, Err(e) => /* handle */ }`",
+                        ),
                     );
                 }
             }
@@ -3118,15 +3265,15 @@ impl CheckCtx {
                          the `Some`/`None` cases must be handled first",
                     ),
                 )
-                    .node(node_path)
-                    .at(&file, 0, 0)
-                    .with_span(span)
-                    .expected(inner.clone())
-                    .found(format!("Option<{inner}>"))
-                    .fix(format!(
-                        "use `x.unwrap_or(default)` or `match x {{ Some(v) => v, None => default }}` \
+                .node(node_path)
+                .at(&file, 0, 0)
+                .with_span(span)
+                .expected(inner.clone())
+                .found(format!("Option<{inner}>"))
+                .fix(format!(
+                    "use `x.unwrap_or(default)` or `match x {{ Some(v) => v, None => default }}` \
                          to obtain a `{inner}`"
-                    )),
+                )),
             );
         }
     }
@@ -3145,10 +3292,7 @@ impl CheckCtx {
             self.errors.push(
                 CheckError::new(
                     E0102,
-                    format!(
-                        "arithmetic operand has non-numeric type {}",
-                        ty.display()
-                    ),
+                    format!("arithmetic operand has non-numeric type {}", ty.display()),
                 )
                 .node(node_path)
                 .at(&file, 0, 0)
@@ -3184,8 +3328,7 @@ impl CheckCtx {
             let sig_render = if expected_n == 0 {
                 format!("`{name}()`")
             } else {
-                let params: Vec<String> =
-                    sig.params.iter().map(|p| p.display()).collect();
+                let params: Vec<String> = sig.params.iter().map(|p| p.display()).collect();
                 format!("`{name}({})`", params.join(", "))
             };
             let hint = if got_n < expected_n {
@@ -3242,10 +3385,8 @@ impl CheckCtx {
             // Option/Result/Unit). A generic *value* slot (`dict_set`'s `v: T`)
             // is `Type::TypeParam`, NOT deferred — so legitimately storing an
             // `Option` as a dict value is unaffected.
-            let arg_is_concrete_wrapper = matches!(
-                arg_ty,
-                Type::Unit | Type::Option(_) | Type::Result(_, _)
-            );
+            let arg_is_concrete_wrapper =
+                matches!(arg_ty, Type::Unit | Type::Option(_) | Type::Result(_, _));
             // Only an *opaque* deferred param (Dict/Uncertain/Temporal/Goal)
             // rejects these wrappers. A bare generic type-param also resolves to
             // `Type::Deferred` (e.g. `dict_set`'s value `v: T` → `Deferred("T")`),
@@ -3363,12 +3504,14 @@ impl CheckCtx {
                     Type::Struct(n) | Type::Enum(n) => Some(n.as_str()),
                     _ => None,
                 };
-                concrete_name.map(|n| {
-                    self.impl_table
-                        .get(n)
-                        .map(|set| set.contains(trait_name.as_str()))
-                        .unwrap_or(false)
-                }).unwrap_or(false)
+                concrete_name
+                    .map(|n| {
+                        self.impl_table
+                            .get(n)
+                            .map(|set| set.contains(trait_name.as_str()))
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false)
             } else {
                 false
             };
@@ -3457,15 +3600,15 @@ impl CheckCtx {
                     Type::I64 => "i64".into(),
                     Type::I32 => "i32".into(),
                     Type::I16 => "i16".into(),
-                    Type::I8  => "i8".into(),
+                    Type::I8 => "i8".into(),
                     Type::U64 => "u64".into(),
                     Type::U32 => "u32".into(),
                     Type::U16 => "u16".into(),
-                    Type::U8  => "u8".into(),
+                    Type::U8 => "u8".into(),
                     Type::F64 => "f64".into(),
                     Type::F32 => "f32".into(),
                     Type::Bool => "bool".into(),
-                    Type::Str  => "str".into(),
+                    Type::Str => "str".into(),
                     _ => continue,
                 };
 
@@ -3693,12 +3836,7 @@ impl CheckCtx {
     // R07 — return type agreement
     // ─────────────────────────────────────────────────────────────────────────
 
-    fn check_return_type_match(
-        &mut self,
-        val_ty: &Type,
-        node_path: &str,
-        _val_path: &str,
-    ) {
+    fn check_return_type_match(&mut self, val_ty: &Type, node_path: &str, _val_path: &str) {
         // R12: deferred types are always compatible.
         if val_ty.is_deferred() {
             return;
@@ -3738,10 +3876,9 @@ impl CheckCtx {
                 (Type::Option(inner), v) if &**inner == v => {
                     format!("wrap the value with `Some(...)` to return `{expected}`")
                 }
-                (Type::Unit, _) => {
-                    "the function returns `()`; remove the trailing expression \
-                     or end the block with `;`".to_string()
-                }
+                (Type::Unit, _) => "the function returns `()`; remove the trailing expression \
+                     or end the block with `;`"
+                    .to_string(),
                 _ => format!(
                     "the function declares `-> {expected}`, but the body produces `{found}` — \
                      adjust the final expression (or change the declared return type)"
@@ -3979,10 +4116,7 @@ impl CheckCtx {
             }
             AxonType::Generic { base, args } => {
                 // Validate the base name (deferred prefixes are always OK).
-                self.check_axon_type(
-                    &AxonType::Named(base.clone()),
-                    &format!("{node_path}.base"),
-                );
+                self.check_axon_type(&AxonType::Named(base.clone()), &format!("{node_path}.base"));
                 for (i, arg) in args.iter().enumerate() {
                     self.check_axon_type(arg, &format!("{node_path}.arg_{i}"));
                 }
@@ -4024,17 +4158,14 @@ impl CheckCtx {
                 if !matches!(field, "value" | "confidence" | "source_tag") {
                     let file = self.file.clone();
                     self.errors.push(
-                        CheckError::new(
-                            E0401,
-                            format!("Uncertain<T> has no field '{field}'"),
-                        )
-                        .node(node_path)
-                        .at(&file, 0, 0)
-                        // No `.found(field)`: the driver appends ", found {found}"
-                        // and the field name isn't a type — it would render the
-                        // nonsensical "has no field 'x', found x" (cf. 2bcee30).
-                        // The valid field set rides `fix` (→ help).
-                        .fix("Uncertain<T> fields: value, confidence, source_tag"),
+                        CheckError::new(E0401, format!("Uncertain<T> has no field '{field}'"))
+                            .node(node_path)
+                            .at(&file, 0, 0)
+                            // No `.found(field)`: the driver appends ", found {found}"
+                            // and the field name isn't a type — it would render the
+                            // nonsensical "has no field 'x', found x" (cf. 2bcee30).
+                            // The valid field set rides `fix` (→ help).
+                            .fix("Uncertain<T> fields: value, confidence, source_tag"),
                     );
                 }
                 return;
@@ -4070,10 +4201,7 @@ impl CheckCtx {
                     self.errors.push(
                         CheckError::new(
                             E0401,
-                            format!(
-                                "tuple index {i} out of bounds (length {})",
-                                elems.len()
-                            ),
+                            format!("tuple index {i} out of bounds (length {})", elems.len()),
                         )
                         .node(node_path)
                         .at(&file, 0, 0),
@@ -4104,7 +4232,8 @@ impl CheckCtx {
                 match self.struct_fields.get(struct_name).cloned() {
                     Option::Some(fields) => {
                         if !fields.iter().any(|(n, _)| n == field) {
-                            let field_names: Vec<String> = fields.iter().map(|(n, _)| n.clone()).collect();
+                            let field_names: Vec<String> =
+                                fields.iter().map(|(n, _)| n.clone()).collect();
                             let file = self.file.clone();
                             self.errors.push(
                                 CheckError::new(
@@ -4118,7 +4247,10 @@ impl CheckCtx {
                                 // existence error reads as the nonsensical
                                 // "has no field 'z', found z". The known-fields
                                 // list already rides in `fix` (→ help).
-                                .fix(format!("'{struct_name}' fields: {}", field_names.join(", "))),
+                                .fix(format!(
+                                    "'{struct_name}' fields: {}",
+                                    field_names.join(", ")
+                                )),
                             );
                         }
                     }
@@ -4144,12 +4276,9 @@ impl CheckCtx {
             other => {
                 let file = self.file.clone();
                 self.errors.push(
-                    CheckError::new(
-                        E0401,
-                        format!("{} has no field '{field}'", other.display()),
-                    )
-                    .node(node_path)
-                    .at(&file, 0, 0),
+                    CheckError::new(E0401, format!("{} has no field '{field}'", other.display()))
+                        .node(node_path)
+                        .at(&file, 0, 0),
                     // No `.found(field)`: the field name is already named in the
                     // message, and it's not a type — the driver's ", found
                     // {found}" suffix would render "i64 has no field 'foo', found
@@ -4195,8 +4324,7 @@ impl CheckCtx {
         if let Expr::FieldAccess { receiver, .. } | Expr::Index { receiver, .. } = arg {
             // Walk to the root identifier.
             let mut root = receiver.as_ref();
-            while let Expr::FieldAccess { receiver: r, .. } | Expr::Index { receiver: r, .. } =
-                root
+            while let Expr::FieldAccess { receiver: r, .. } | Expr::Index { receiver: r, .. } = root
             {
                 root = r.as_ref();
             }
@@ -4250,7 +4378,9 @@ impl CheckCtx {
                 // resolve_expr_type doesn't resolve nested field types, so look
                 // the field's type up directly in the struct field map.
                 if let Some(fields) = self.struct_fields.get(&rstruct) {
-                    if let Some((_, Type::Struct(fstruct))) = fields.iter().find(|(n, _)| n == field) {
+                    if let Some((_, Type::Struct(fstruct))) =
+                        fields.iter().find(|(n, _)| n == field)
+                    {
                         if let Some(cat) = self.sensitive_types.get(fstruct) {
                             return Some((fstruct.clone(), cat.clone()));
                         }
@@ -4265,21 +4395,27 @@ impl CheckCtx {
         match arg {
             Expr::Array(elems) => {
                 for (i, e) in elems.iter().enumerate() {
-                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope) {
+                    if let Some(found) =
+                        self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope)
+                    {
                         return Some(found);
                     }
                 }
             }
             Expr::StructLit { fields, .. } => {
                 for (fname, e) in fields {
-                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.{fname}"), scope) {
+                    if let Some(found) =
+                        self.sensitive_flow_in(e, &format!("{apath}.{fname}"), scope)
+                    {
                         return Some(found);
                     }
                 }
             }
             Expr::Tuple(elems) => {
                 for (i, e) in elems.iter().enumerate() {
-                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope) {
+                    if let Some(found) =
+                        self.sensitive_flow_in(e, &format!("{apath}.elem_{i}"), scope)
+                    {
                         return Some(found);
                     }
                 }
@@ -4325,12 +4461,15 @@ impl CheckCtx {
                 if let Some(found) = self.sensitive_flow_in(left, &format!("{apath}.left"), scope) {
                     return Some(found);
                 }
-                if let Some(found) = self.sensitive_flow_in(right, &format!("{apath}.right"), scope) {
+                if let Some(found) = self.sensitive_flow_in(right, &format!("{apath}.right"), scope)
+                {
                     return Some(found);
                 }
             }
             Expr::UnaryOp { operand, .. } => {
-                if let Some(found) = self.sensitive_flow_in(operand, &format!("{apath}.operand"), scope) {
+                if let Some(found) =
+                    self.sensitive_flow_in(operand, &format!("{apath}.operand"), scope)
+                {
                     return Some(found);
                 }
             }
@@ -4346,7 +4485,8 @@ impl CheckCtx {
                     return Some(found);
                 }
                 if let Some(e) = else_ {
-                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.else"), scope) {
+                    if let Some(found) = self.sensitive_flow_in(e, &format!("{apath}.else"), scope)
+                    {
                         return Some(found);
                     }
                 }
@@ -4363,7 +4503,9 @@ impl CheckCtx {
             // (h) A block — the value is its tail expression.
             Expr::Block(stmts) => {
                 if let Some(tail) = stmts.last() {
-                    if let Some(found) = self.sensitive_flow_in(&tail.expr, &format!("{apath}.tail"), scope) {
+                    if let Some(found) =
+                        self.sensitive_flow_in(&tail.expr, &format!("{apath}.tail"), scope)
+                    {
                         return Some(found);
                     }
                 }
@@ -4394,18 +4536,15 @@ impl CheckCtx {
             },
             Expr::None => Type::Option(Box::new(Type::Unknown)),
             Expr::Some(inner) => {
-                let inner_ty =
-                    self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
                 Type::Option(Box::new(inner_ty))
             }
             Expr::Ok(inner) => {
-                let inner_ty =
-                    self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
                 Type::Result(Box::new(inner_ty), Box::new(Type::Unknown))
             }
             Expr::Err(inner) => {
-                let inner_ty =
-                    self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
                 Type::Result(Box::new(Type::Unknown), Box::new(inner_ty))
             }
             Expr::Ident(name) => scope.get(name.as_str()).cloned().unwrap_or(Type::Unknown),
@@ -4438,10 +4577,9 @@ impl CheckCtx {
                             // payload as unresolved everywhere else.
                             return match &sig.ret {
                                 Type::Option(_) => Type::Option(Box::new(Type::Unknown)),
-                                Type::Result(_, _) => Type::Result(
-                                    Box::new(Type::Unknown),
-                                    Box::new(Type::Unknown),
-                                ),
+                                Type::Result(_, _) => {
+                                    Type::Result(Box::new(Type::Unknown), Box::new(Type::Unknown))
+                                }
                                 _ => Type::Unknown,
                             };
                         }
@@ -4488,7 +4626,10 @@ impl CheckCtx {
                         .struct_fields
                         .get(&sname)
                         .and_then(|fields| {
-                            fields.iter().find(|(n, _)| n == field).map(|(_, t)| t.clone())
+                            fields
+                                .iter()
+                                .find(|(n, _)| n == field)
+                                .map(|(_, t)| t.clone())
                         })
                         // Unknown field name: leave Unknown so the R11 field-
                         // existence check (which owns that error + the known-
@@ -4525,7 +4666,11 @@ impl CheckCtx {
             // inference own it. (This is now safe to feed downstream: the E0307
             // body-tail check is gated on the exact fn-body path, so a match-arm
             // if-expr no longer leaks into the return-type comparison.)
-            Expr::If { then, else_: Some(e), .. } => {
+            Expr::If {
+                then,
+                else_: Some(e),
+                ..
+            } => {
                 let then_ty = self.resolve_expr_type(then, &format!("{node_path}.then"), scope);
                 let else_ty = self.resolve_expr_type(e, &format!("{node_path}.else"), scope);
                 if then_ty == else_ty && !matches!(then_ty, Type::Unknown) {
@@ -4540,8 +4685,7 @@ impl CheckCtx {
             // `get()?.foo` (field access on the unwrapped scalar) can be checked
             // instead of slipping to a runtime panic.
             Expr::Question(inner) => {
-                let inner_ty =
-                    self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
+                let inner_ty = self.resolve_expr_type(inner, &format!("{node_path}.inner"), scope);
                 match inner_ty {
                     Type::Result(ok, _) => *ok,
                     Type::Option(t) => *t,
@@ -4657,9 +4801,10 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
                 }
             }
         },
-        AxonType::Result { ok, err } => {
-            Type::Result(Box::new(axon_type_to_type(ok)), Box::new(axon_type_to_type(err)))
-        }
+        AxonType::Result { ok, err } => Type::Result(
+            Box::new(axon_type_to_type(ok)),
+            Box::new(axon_type_to_type(err)),
+        ),
         AxonType::Option(inner) => Type::Option(Box::new(axon_type_to_type(inner))),
         AxonType::Chan(inner) => Type::Chan(Box::new(axon_type_to_type(inner))),
         AxonType::Slice(inner) => Type::Slice(Box::new(axon_type_to_type(inner))),
@@ -4783,7 +4928,10 @@ fn const_eval_int(e: &Expr) -> Option<i64> {
     use crate::ast::{BinOp, Literal, UnaryOp};
     match e {
         Expr::Literal(Literal::Int(n)) => Some(*n),
-        Expr::UnaryOp { op: UnaryOp::Neg, operand } => const_eval_int(operand)?.checked_neg(),
+        Expr::UnaryOp {
+            op: UnaryOp::Neg,
+            operand,
+        } => const_eval_int(operand)?.checked_neg(),
         Expr::BinOp { op, left, right } => {
             let l = const_eval_int(left)?;
             let r = const_eval_int(right)?;
@@ -4807,13 +4955,19 @@ fn const_eval_int(e: &Expr) -> Option<i64> {
         // panic, never a wrong fold). Keeps the SMT / comptime / checker constant
         // folders consistent on these builtins.
         Expr::Call { callee, args, .. } => {
-            let Expr::Ident(name) = callee.as_ref() else { return None };
+            let Expr::Ident(name) = callee.as_ref() else {
+                return None;
+            };
             match (name.as_str(), args.as_slice()) {
                 ("min_i64", [a, b]) => Some(const_eval_int(a)?.min(const_eval_int(b)?)),
                 ("max_i64", [a, b]) => Some(const_eval_int(a)?.max(const_eval_int(b)?)),
                 ("abs_i64", [x]) => {
                     let v = const_eval_int(x)?;
-                    if v < 0 { v.checked_neg() } else { Some(v) }
+                    if v < 0 {
+                        v.checked_neg()
+                    } else {
+                        Some(v)
+                    }
                 }
                 _ => None,
             }
@@ -4943,7 +5097,9 @@ fn collect_explicit_returns<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
             }
             collect_explicit_returns(body, out);
         }
-        E::For { start, end, body, .. } => {
+        E::For {
+            start, end, body, ..
+        } => {
             collect_explicit_returns(start, out);
             collect_explicit_returns(end, out);
             for s in body {
@@ -5135,7 +5291,9 @@ fn each_subexpr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             f(place);
             f(value);
         }
-        E::For { start, end, body, .. } => {
+        E::For {
+            start, end, body, ..
+        } => {
             f(start);
             f(end);
             for s in body {
@@ -5186,7 +5344,10 @@ fn axon_types_compatible(a: &AxonType, b: &AxonType) -> bool {
         (AxonType::Generic { base: ba, args: aa }, AxonType::Generic { base: bb, args: ab }) => {
             ba == bb
                 && aa.len() == ab.len()
-                && aa.iter().zip(ab.iter()).all(|(x, y)| axon_types_compatible(x, y))
+                && aa
+                    .iter()
+                    .zip(ab.iter())
+                    .all(|(x, y)| axon_types_compatible(x, y))
         }
         (AxonType::Result { ok: oa, err: ea }, AxonType::Result { ok: ob, err: eb }) => {
             axon_types_compatible(oa, ob) && axon_types_compatible(ea, eb)
@@ -5197,11 +5358,20 @@ fn axon_types_compatible(a: &AxonType, b: &AxonType) -> bool {
         (AxonType::Ref(ia), AxonType::Ref(ib)) => axon_types_compatible(ia, ib),
         (AxonType::DynTrait(na), AxonType::DynTrait(nb)) => na == nb,
         (
-            AxonType::Fn { params: pa, ret: ra },
-            AxonType::Fn { params: pb, ret: rb },
+            AxonType::Fn {
+                params: pa,
+                ret: ra,
+            },
+            AxonType::Fn {
+                params: pb,
+                ret: rb,
+            },
         ) => {
             pa.len() == pb.len()
-                && pa.iter().zip(pb.iter()).all(|(x, y)| axon_types_compatible(x, y))
+                && pa
+                    .iter()
+                    .zip(pb.iter())
+                    .all(|(x, y)| axon_types_compatible(x, y))
                 && axon_types_compatible(ra, rb)
         }
         _ => false,
@@ -5215,7 +5385,11 @@ fn closest_name<'a>(name: &str, candidates: &'a [String]) -> Option<&'a str> {
         .iter()
         .filter_map(|c| {
             let d = levenshtein(name, c);
-            if d <= 3 { Option::Some((d, c.as_str())) } else { Option::None }
+            if d <= 3 {
+                Option::Some((d, c.as_str()))
+            } else {
+                Option::None
+            }
         })
         .min_by_key(|(d, _)| *d)
         .map(|(_, s)| s)
@@ -5269,8 +5443,12 @@ fn checker_dist_cdf(fields: &HashMap<String, f64>, k: f64) -> Option<f64> {
             // for the checker-side (constant fold only): use the closed-form from
             // the spec §4.2 for constant parameters.
             // For k outside [0,1] the Beta CDF is 0 or 1:
-            if k <= 0.0 { return Some(0.0); }
-            if k >= 1.0 { return Some(1.0); }
+            if k <= 0.0 {
+                return Some(0.0);
+            }
+            if k >= 1.0 {
+                return Some(1.0);
+            }
             // Use regularized incomplete beta (Lentz CF), same algo as interp side
             return Some(checker_beta_cdf(alpha, beta_b, k));
         }
@@ -5280,7 +5458,9 @@ fn checker_dist_cdf(fields: &HashMap<String, f64>, k: f64) -> Option<f64> {
 
 fn checker_erf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.3275911 * x.abs());
-    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let poly = t
+        * (0.254829592
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     sign * (1.0 - poly * (-x * x).exp())
 }
@@ -5289,7 +5469,8 @@ fn checker_beta_cdf(alpha: f64, beta_b: f64, x: f64) -> f64 {
     if x > (alpha + 1.0) / (alpha + beta_b + 2.0) {
         return 1.0 - checker_beta_cdf(beta_b, alpha, 1.0 - x);
     }
-    let ln_beta = checker_ln_gamma(alpha) + checker_ln_gamma(beta_b) - checker_ln_gamma(alpha + beta_b);
+    let ln_beta =
+        checker_ln_gamma(alpha) + checker_ln_gamma(beta_b) - checker_ln_gamma(alpha + beta_b);
     let front = (alpha * x.ln() + beta_b * (1.0 - x).ln() - ln_beta).exp() / alpha;
     front * checker_beta_cf(alpha, beta_b, x)
 }
@@ -5299,34 +5480,67 @@ fn checker_beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
     let eps = 1e-10;
     let mut c = 1.0_f64;
     let mut d = 1.0 - (alpha + beta_b) * x / (alpha + 1.0);
-    d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+    d = 1.0
+        / if d.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            d
+        };
     let mut f = d;
     for m in 1..=max_iter {
         let m = m as f64;
         let num = m * (beta_b - m) * x / ((alpha + 2.0 * m - 1.0) * (alpha + 2.0 * m));
         d = 1.0 + num * d;
         c = 1.0 + num / c;
-        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
-        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        d = 1.0
+            / if d.abs() < f64::MIN_POSITIVE {
+                f64::MIN_POSITIVE
+            } else {
+                d
+            };
+        c = if c.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            c
+        };
         f *= d * c;
-        let num = -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
+        let num =
+            -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
         d = 1.0 + num * d;
         c = 1.0 + num / c;
-        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
-        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        d = 1.0
+            / if d.abs() < f64::MIN_POSITIVE {
+                f64::MIN_POSITIVE
+            } else {
+                d
+            };
+        c = if c.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            c
+        };
         let delta = d * c;
         f *= delta;
-        if (delta - 1.0).abs() < eps { break; }
+        if (delta - 1.0).abs() < eps {
+            break;
+        }
     }
     f
 }
 
 fn checker_ln_gamma(x: f64) -> f64 {
-    let p = [676.5203681218851_f64, -1259.1392167224028, 771.32342877765313,
-        -176.61502916214059, 12.507343278686905, -0.13857109526572012,
-        9.9843695780195716e-6, 1.5056327351493116e-7];
+    let p = [
+        676.5203681218851_f64,
+        -1259.1392167224028,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.984_369_578_019_572e-6,
+        1.5056327351493116e-7,
+    ];
     let x = x - 1.0;
-    let mut a = 0.99999999999980993_f64;
+    let mut a = 0.999_999_999_999_809_9_f64;
     for (i, &p_i) in p.iter().enumerate() {
         a += p_i / (x + i as f64 + 1.0);
     }
@@ -5373,7 +5587,11 @@ mod tests {
     }
 
     fn param(name: &str, ty: AxonType) -> crate::ast::Param {
-        crate::ast::Param { name: name.to_string(), ty, span: crate::span::Span::dummy() }
+        crate::ast::Param {
+            name: name.to_string(),
+            ty,
+            span: crate::span::Span::dummy(),
+        }
     }
 
     fn lit_int(n: i64) -> Expr {
@@ -5417,14 +5635,20 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "add_one".to_string(),
-            FnSig { params: vec![Type::I32], ret: Type::I32 },
+            FnSig {
+                params: vec![Type::I32],
+                ret: Type::I32,
+            },
         );
 
         let mut ctx = mk_ctx(sigs);
 
         let program = make_program(vec![simple_fn(
             "caller",
-            vec![param("opt_val", AxonType::Option(Box::new(AxonType::Named("i32".into()))))],
+            vec![param(
+                "opt_val",
+                AxonType::Option(Box::new(AxonType::Named("i32".into()))),
+            )],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![Expr::Call {
                 callee: Box::new(ident("add_one")),
@@ -5472,7 +5696,11 @@ mod tests {
             Option::Some(AxonType::Named("()".into())),
             // Block: stmt 0 (non-final) = may_fail(); stmt 1 (final) = 0
             block(vec![
-                Expr::Call { callee: Box::new(ident("may_fail")), args: vec![], tier: None },
+                Expr::Call {
+                    callee: Box::new(ident("may_fail")),
+                    args: vec![],
+                    tier: None,
+                },
                 lit_int(0),
             ]),
         )]);
@@ -5516,7 +5744,10 @@ mod tests {
         // }
         let program = make_program(vec![simple_fn(
             "f",
-            vec![param("x", AxonType::Option(Box::new(AxonType::Named("i32".into()))))],
+            vec![param(
+                "x",
+                AxonType::Option(Box::new(AxonType::Named("i32".into()))),
+            )],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![Expr::Match {
                 subject: Box::new(ident("x")),
@@ -5538,7 +5769,9 @@ mod tests {
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
         assert!(
-            errors.iter().any(|e| e.code == E0304 && e.message.contains("None")),
+            errors
+                .iter()
+                .any(|e| e.code == E0304 && e.message.contains("None")),
             "expected E0304 (missing None), got: {errors:?}"
         );
     }
@@ -5583,7 +5816,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "wants_bool".to_string(),
-            FnSig { params: vec![Type::Bool], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::Bool],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -5671,8 +5907,15 @@ mod tests {
             vec![],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![
-                Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(42)) },
-                Expr::FieldAccess { receiver: Box::new(ident("x")), field: "foo".into() },
+                Expr::Let {
+                    ty: None,
+                    name: "x".into(),
+                    value: Box::new(lit_int(42)),
+                },
+                Expr::FieldAccess {
+                    receiver: Box::new(ident("x")),
+                    field: "foo".into(),
+                },
             ]),
         )]);
 
@@ -5696,7 +5939,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "takes_i32".to_string(),
-            FnSig { params: vec![Type::I32], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::I32],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -5771,7 +6017,9 @@ mod tests {
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
         assert!(
-            errors.iter().any(|e| e.code == E0304 && e.message.contains("Err")),
+            errors
+                .iter()
+                .any(|e| e.code == E0304 && e.message.contains("Err")),
             "expected E0304 (missing Err), got: {errors:?}"
         );
     }
@@ -5826,7 +6074,8 @@ mod tests {
             "f",
             vec![],
             Option::Some(AxonType::Named("()".into())),
-            block(vec![Expr::Let { ty: None,
+            block(vec![Expr::Let {
+                ty: None,
                 name: "r".into(),
                 value: Box::new(Expr::Call {
                     callee: Box::new(ident("may_fail")),
@@ -5853,7 +6102,10 @@ mod tests {
         // fn f(x: Option<i32>) -> i32 { x + 1 }
         let program = make_program(vec![simple_fn(
             "f",
-            vec![param("x", AxonType::Option(Box::new(AxonType::Named("i32".into()))))],
+            vec![param(
+                "x",
+                AxonType::Option(Box::new(AxonType::Named("i32".into()))),
+            )],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![Expr::BinOp {
                 op: BinOp::Add,
@@ -5971,7 +6223,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "wants_i64".to_string(),
-            FnSig { params: vec![Type::I64], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::I64],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -6009,7 +6264,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "wants_i64".to_string(),
-            FnSig { params: vec![Type::I64], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::I64],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -6065,7 +6323,10 @@ mod tests {
         let mut ctx = mk_ctx(HashMap::new());
         let errors = run_with_types(&mut ctx, &program, HashMap::new());
         let r08: Vec<_> = errors.iter().filter(|e| e.code == E0308).collect();
-        assert!(r08.is_empty(), "generic param T should not produce E0308: {r08:?}");
+        assert!(
+            r08.is_empty(),
+            "generic param T should not produce E0308: {r08:?}"
+        );
     }
 
     // ── Trait validation (E0501 / E0502 / E0503) ─────────────────────────────
@@ -6092,11 +6353,7 @@ mod tests {
         }
     }
 
-    fn make_impl_block(
-        trait_name: &str,
-        for_type: AxonType,
-        methods: Vec<FnDef>,
-    ) -> Item {
+    fn make_impl_block(trait_name: &str, for_type: AxonType, methods: Vec<FnDef>) -> Item {
         Item::ImplBlock(crate::ast::ImplBlock {
             trait_name: trait_name.to_string(),
             for_type,
@@ -6136,12 +6393,16 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "show".to_string(),
-            FnSig { params: vec![Type::TypeParam("T".into())], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::TypeParam("T".into())],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
         // Register the bound on "show".
-        ctx.fn_bounds.insert("show".into(), vec![("T".into(), vec!["Display".into()])]);
+        ctx.fn_bounds
+            .insert("show".into(), vec![("T".into(), vec!["Display".into()])]);
         // Qux does NOT implement Display (no impl entry).
 
         // fn caller() { show(qux_val) } where qux_val: Qux
@@ -6161,7 +6422,10 @@ mod tests {
 
         // Inject arg type into expr_types so resolve_expr_type returns Struct("Qux").
         let mut expr_types = HashMap::new();
-        expr_types.insert("#fn_caller.body.stmt_0.arg_0".to_string(), Type::Struct("Qux".into()));
+        expr_types.insert(
+            "#fn_caller.body.stmt_0.arg_0".to_string(),
+            Type::Struct("Qux".into()),
+        );
         expr_types.insert("#fn_caller.body.stmt_0".to_string(), Type::Unit);
         expr_types.insert("#fn_caller.body.stmt_1".to_string(), Type::I64);
 
@@ -6180,12 +6444,19 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "show".to_string(),
-            FnSig { params: vec![Type::TypeParam("T".into())], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::TypeParam("T".into())],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
-        ctx.fn_bounds.insert("show".into(), vec![("T".into(), vec!["Display".into()])]);
+        ctx.fn_bounds
+            .insert("show".into(), vec![("T".into(), vec!["Display".into()])]);
         // Register Qux as implementing Display.
-        ctx.impl_table.entry("Qux".into()).or_default().insert("Display".into());
+        ctx.impl_table
+            .entry("Qux".into())
+            .or_default()
+            .insert("Display".into());
 
         let program = make_program(vec![simple_fn(
             "caller",
@@ -6202,25 +6473,29 @@ mod tests {
         )]);
 
         let mut expr_types = HashMap::new();
-        expr_types.insert("#fn_caller.body.stmt_0.arg_0".to_string(), Type::Struct("Qux".into()));
+        expr_types.insert(
+            "#fn_caller.body.stmt_0.arg_0".to_string(),
+            Type::Struct("Qux".into()),
+        );
         expr_types.insert("#fn_caller.body.stmt_0".to_string(), Type::Unit);
         expr_types.insert("#fn_caller.body.stmt_1".to_string(), Type::I64);
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
         let e504: Vec<_> = errors.iter().filter(|e| e.code == E0504).collect();
-        assert!(e504.is_empty(), "Qux implements Display, should not produce E0504: {e504:?}");
+        assert!(
+            e504.is_empty(),
+            "Qux implements Display, should not produce E0504: {e504:?}"
+        );
     }
 
     #[test]
     fn e0501_unknown_trait() {
         // impl of a trait that doesn't exist in the program.
-        let program = make_program(vec![
-            make_impl_block(
-                "NonExistent",
-                AxonType::Named("Foo".into()),
-                vec![make_fndef("hello", vec![], None)],
-            ),
-        ]);
+        let program = make_program(vec![make_impl_block(
+            "NonExistent",
+            AxonType::Named("Foo".into()),
+            vec![make_fndef("hello", vec![], None)],
+        )]);
         let mut ctx = mk_ctx(HashMap::new());
         let errors = run_with_types(&mut ctx, &program, HashMap::new());
         assert!(
@@ -6232,10 +6507,17 @@ mod tests {
     #[test]
     fn e0502_missing_method() {
         // impl block omits `farewell` which the trait requires.
-        let trait_def = make_trait_def("Greet", vec![
-            make_trait_method("hello", vec![param("name", AxonType::Named("str".into()))], Some(AxonType::Named("str".into()))),
-            make_trait_method("farewell", vec![], Some(AxonType::Named("str".into()))),
-        ]);
+        let trait_def = make_trait_def(
+            "Greet",
+            vec![
+                make_trait_method(
+                    "hello",
+                    vec![param("name", AxonType::Named("str".into()))],
+                    Some(AxonType::Named("str".into())),
+                ),
+                make_trait_method("farewell", vec![], Some(AxonType::Named("str".into()))),
+            ],
+        );
         let impl_block = make_impl_block(
             "Greet",
             AxonType::Named("Bar".into()),
@@ -6249,7 +6531,9 @@ mod tests {
         let mut ctx = mk_ctx(HashMap::new());
         let errors = run_with_types(&mut ctx, &program, HashMap::new());
         assert!(
-            errors.iter().any(|e| e.code == E0502 && e.message.contains("farewell")),
+            errors
+                .iter()
+                .any(|e| e.code == E0502 && e.message.contains("farewell")),
             "expected E0502 for missing 'farewell', got: {errors:?}"
         );
     }
@@ -6257,13 +6541,22 @@ mod tests {
     #[test]
     fn e0503_param_count_mismatch() {
         // impl method has 0 params; trait declares 1 param.
-        let trait_def = make_trait_def("Greet", vec![
-            make_trait_method("hello", vec![param("name", AxonType::Named("str".into()))], Some(AxonType::Named("str".into()))),
-        ]);
+        let trait_def = make_trait_def(
+            "Greet",
+            vec![make_trait_method(
+                "hello",
+                vec![param("name", AxonType::Named("str".into()))],
+                Some(AxonType::Named("str".into())),
+            )],
+        );
         let impl_block = make_impl_block(
             "Greet",
             AxonType::Named("Baz".into()),
-            vec![make_fndef("hello", vec![], Some(AxonType::Named("str".into())))],
+            vec![make_fndef(
+                "hello",
+                vec![],
+                Some(AxonType::Named("str".into())),
+            )],
         );
         let program = make_program(vec![trait_def, impl_block]);
         let mut ctx = mk_ctx(HashMap::new());
@@ -6277,9 +6570,14 @@ mod tests {
     #[test]
     fn valid_impl_produces_no_trait_errors() {
         // A complete, correct impl produces no E0501/E0502/E0503.
-        let trait_def = make_trait_def("Greet", vec![
-            make_trait_method("hello", vec![param("name", AxonType::Named("str".into()))], Some(AxonType::Named("str".into()))),
-        ]);
+        let trait_def = make_trait_def(
+            "Greet",
+            vec![make_trait_method(
+                "hello",
+                vec![param("name", AxonType::Named("str".into()))],
+                Some(AxonType::Named("str".into())),
+            )],
+        );
         let impl_block = make_impl_block(
             "Greet",
             AxonType::Named("Qux".into()),
@@ -6292,10 +6590,14 @@ mod tests {
         let program = make_program(vec![trait_def, impl_block]);
         let mut ctx = mk_ctx(HashMap::new());
         let errors = run_with_types(&mut ctx, &program, HashMap::new());
-        let trait_errors: Vec<_> = errors.iter()
+        let trait_errors: Vec<_> = errors
+            .iter()
             .filter(|e| e.code == E0501 || e.code == E0502 || e.code == E0503)
             .collect();
-        assert!(trait_errors.is_empty(), "valid impl should not produce trait errors, got: {trait_errors:?}");
+        assert!(
+            trait_errors.is_empty(),
+            "valid impl should not produce trait errors, got: {trait_errors:?}"
+        );
     }
 
     // ── Diagnostic-quality tests (improved messages) ─────────────────────────
@@ -6314,7 +6616,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "two_arg".to_string(),
-            FnSig { params: vec![Type::I32, Type::Bool], ret: Type::I32 },
+            FnSig {
+                params: vec![Type::I32, Type::Bool],
+                ret: Type::I32,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -6330,19 +6635,32 @@ mod tests {
         )]);
 
         let errors = run(&mut ctx, &program);
-        let e0305 = errors.iter().find(|e| e.code == E0305)
+        let e0305 = errors
+            .iter()
+            .find(|e| e.code == E0305)
             .expect("expected E0305");
         // New message: "function `two_arg` takes 2 arguments but 1 was supplied"
-        assert!(e0305.message.contains("`two_arg`"),
-            "E0305 message should name the function: {}", e0305.message);
-        assert!(e0305.message.contains("2 arguments"),
-            "E0305 message should state expected arity: {}", e0305.message);
-        assert!(e0305.message.contains("1 was supplied"),
-            "E0305 message should state observed arity: {}", e0305.message);
+        assert!(
+            e0305.message.contains("`two_arg`"),
+            "E0305 message should name the function: {}",
+            e0305.message
+        );
+        assert!(
+            e0305.message.contains("2 arguments"),
+            "E0305 message should state expected arity: {}",
+            e0305.message
+        );
+        assert!(
+            e0305.message.contains("1 was supplied"),
+            "E0305 message should state observed arity: {}",
+            e0305.message
+        );
         // Fix should spell out the signature.
         let fix = e0305.fix.as_deref().unwrap_or("");
-        assert!(fix.contains("two_arg") && fix.contains("i32") && fix.contains("bool"),
-            "E0305 fix should render the expected signature: {fix}");
+        assert!(
+            fix.contains("two_arg") && fix.contains("i32") && fix.contains("bool"),
+            "E0305 fix should render the expected signature: {fix}"
+        );
     }
 
     #[test]
@@ -6350,7 +6668,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "wants_bool".to_string(),
-            FnSig { params: vec![Type::Bool], ret: Type::Unit },
+            FnSig {
+                params: vec![Type::Bool],
+                ret: Type::Unit,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -6373,21 +6694,38 @@ mod tests {
         expr_types.insert("#fn_caller.body.stmt_1".to_string(), Type::Unit);
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
-        let e0306 = errors.iter().find(|e| e.code == E0306)
+        let e0306 = errors
+            .iter()
+            .find(|e| e.code == E0306)
             .expect("expected E0306");
-        assert!(e0306.message.contains("argument 0"),
-            "E0306 message should pinpoint argument index: {}", e0306.message);
-        assert!(e0306.message.contains("`wants_bool`"),
-            "E0306 message should name the function: {}", e0306.message);
+        assert!(
+            e0306.message.contains("argument 0"),
+            "E0306 message should pinpoint argument index: {}",
+            e0306.message
+        );
+        assert!(
+            e0306.message.contains("`wants_bool`"),
+            "E0306 message should name the function: {}",
+            e0306.message
+        );
         // Expected/found ride the structured fields, not the message text —
         // the driver re-appends them, so embedding them too would double-print
         // (cf. E0307). Assert the fields carry the pair.
-        assert_eq!(e0306.expected.as_deref(), Option::Some("bool"),
-            "E0306 should carry expected in its structured field");
-        assert_eq!(e0306.found.as_deref(), Option::Some("i64"),
-            "E0306 should carry found in its structured field");
-        assert!(!e0306.message.contains("expected `bool`"),
-            "E0306 message must NOT embed expected/found (driver appends it): {}", e0306.message);
+        assert_eq!(
+            e0306.expected.as_deref(),
+            Option::Some("bool"),
+            "E0306 should carry expected in its structured field"
+        );
+        assert_eq!(
+            e0306.found.as_deref(),
+            Option::Some("i64"),
+            "E0306 should carry found in its structured field"
+        );
+        assert!(
+            !e0306.message.contains("expected `bool`"),
+            "E0306 message must NOT embed expected/found (driver appends it): {}",
+            e0306.message
+        );
     }
 
     #[test]
@@ -6409,13 +6747,20 @@ mod tests {
         expr_types.insert("#fn_f.body.stmt_0".to_string(), Type::I32);
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
-        let e0307 = errors.iter().find(|e| e.code == E0307)
+        let e0307 = errors
+            .iter()
+            .find(|e| e.code == E0307)
             .expect("expected E0307");
-        assert!(e0307.message.contains("return type mismatch"),
-            "E0307 should phrase the message clearly: {}", e0307.message);
+        assert!(
+            e0307.message.contains("return type mismatch"),
+            "E0307 should phrase the message clearly: {}",
+            e0307.message
+        );
         let fix = e0307.fix.as_deref().unwrap_or("");
-        assert!(fix.contains("Ok("),
-            "E0307 fix should suggest `Ok(...)` wrapping: {fix}");
+        assert!(
+            fix.contains("Ok("),
+            "E0307 fix should suggest `Ok(...)` wrapping: {fix}"
+        );
     }
 
     #[test]
@@ -6431,15 +6776,25 @@ mod tests {
         )]);
 
         let errors = run(&mut ctx, &program);
-        let e0303 = errors.iter().find(|e| e.code == E0303)
+        let e0303 = errors
+            .iter()
+            .find(|e| e.code == E0303)
             .expect("expected E0303");
-        assert!(e0303.message.contains("`?`"),
-            "E0303 should mention the `?` operator: {}", e0303.message);
-        assert!(e0303.message.contains("Result"),
-            "E0303 should mention Result: {}", e0303.message);
+        assert!(
+            e0303.message.contains("`?`"),
+            "E0303 should mention the `?` operator: {}",
+            e0303.message
+        );
+        assert!(
+            e0303.message.contains("Result"),
+            "E0303 should mention Result: {}",
+            e0303.message
+        );
         let fix = e0303.fix.as_deref().unwrap_or("");
-        assert!(fix.contains("Result") || fix.contains("match"),
-            "E0303 fix should guide the user: {fix}");
+        assert!(
+            fix.contains("Result") || fix.contains("match"),
+            "E0303 fix should guide the user: {fix}"
+        );
     }
 
     #[test]
@@ -6450,7 +6805,10 @@ mod tests {
 
         let program = make_program(vec![simple_fn(
             "f",
-            vec![param("x", AxonType::Option(Box::new(AxonType::Named("i32".into()))))],
+            vec![param(
+                "x",
+                AxonType::Option(Box::new(AxonType::Named("i32".into()))),
+            )],
             Option::Some(AxonType::Named("i32".into())),
             block(vec![Expr::BinOp {
                 op: BinOp::Add,
@@ -6460,18 +6818,27 @@ mod tests {
         )]);
 
         let mut expr_types = HashMap::new();
-        expr_types.insert("#fn_f.body.stmt_0.left".to_string(),
-            Type::Option(Box::new(Type::I32)));
+        expr_types.insert(
+            "#fn_f.body.stmt_0.left".to_string(),
+            Type::Option(Box::new(Type::I32)),
+        );
         expr_types.insert("#fn_f.body.stmt_0".to_string(), Type::I32);
 
         let errors = run_with_types(&mut ctx, &program, expr_types);
-        let e0301 = errors.iter().find(|e| e.code == E0301)
+        let e0301 = errors
+            .iter()
+            .find(|e| e.code == E0301)
             .expect("expected E0301");
-        assert!(e0301.message.contains("Option<i32>"),
-            "E0301 should spell out Option<inner>: {}", e0301.message);
+        assert!(
+            e0301.message.contains("Option<i32>"),
+            "E0301 should spell out Option<inner>: {}",
+            e0301.message
+        );
         let fix = e0301.fix.as_deref().unwrap_or("");
-        assert!(fix.contains("unwrap_or") || fix.contains("match"),
-            "E0301 fix should suggest unwrap or match: {fix}");
+        assert!(
+            fix.contains("unwrap_or") || fix.contains("match"),
+            "E0301 fix should suggest unwrap or match: {fix}"
+        );
     }
 
     #[test]
@@ -6481,7 +6848,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "two_arg".to_string(),
-            FnSig { params: vec![Type::I32, Type::I32], ret: Type::I32 },
+            FnSig {
+                params: vec![Type::I32, Type::I32],
+                ret: Type::I32,
+            },
         );
         let mut ctx = mk_ctx(sigs);
 
@@ -6491,7 +6861,10 @@ mod tests {
             args: vec![lit_int(1)],
             tier: None,
         };
-        let body = Expr::Block(vec![stmt_with_span(call_expr, crate::span::Span::new(15, 28))]);
+        let body = Expr::Block(vec![stmt_with_span(
+            call_expr,
+            crate::span::Span::new(15, 28),
+        )]);
 
         let program = make_program(vec![simple_fn(
             "caller",
@@ -6501,12 +6874,18 @@ mod tests {
         )]);
 
         let errors = run(&mut ctx, &program);
-        let e0305 = errors.iter().find(|e| e.code == E0305)
+        let e0305 = errors
+            .iter()
+            .find(|e| e.code == E0305)
             .expect("expected E0305");
-        assert!(!e0305.span.is_dummy(),
-            "E0305 should carry the statement's span (was dummy)");
-        assert_eq!(e0305.span.start, 15,
-            "E0305 span should match the surrounding statement's start");
+        assert!(
+            !e0305.span.is_dummy(),
+            "E0305 should carry the statement's span (was dummy)"
+        );
+        assert_eq!(
+            e0305.span.start, 15,
+            "E0305 span should match the surrounding statement's start"
+        );
     }
 
     // ── R06: enum variant struct literal passed to enum-typed param → no E0306 ─
@@ -6524,7 +6903,10 @@ mod tests {
         let mut sigs = HashMap::new();
         sigs.insert(
             "eval".to_string(),
-            FnSig { params: vec![Type::Enum("Expr".into())], ret: Type::I64 },
+            FnSig {
+                params: vec![Type::Enum("Expr".into())],
+                ret: Type::I64,
+            },
         );
         // CheckCtx needs no struct_fields for this test (Expr is an enum).
         let mut ctx = mk_ctx(sigs); // mut needed by run_with_types

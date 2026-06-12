@@ -110,7 +110,9 @@ fn parse_dotenv(contents: &str) -> Vec<(String, String)> {
             continue;
         }
         let line = line.strip_prefix("export ").unwrap_or(line);
-        let Some((k, v)) = line.split_once('=') else { continue };
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
         let key = k.trim();
         if key.is_empty() {
             continue;
@@ -147,8 +149,12 @@ pub fn provider() -> Provider {
 /// the legacy `ANTHROPIC_BASE_URL` (back-compat); then the provider default.
 fn base_url(p: Provider) -> String {
     load_dotenv_once();
-    let neutral = std::env::var("AXON_AI_BASE_URL").ok().filter(|s| !s.is_empty());
-    let legacy = std::env::var("ANTHROPIC_BASE_URL").ok().filter(|s| !s.is_empty());
+    let neutral = std::env::var("AXON_AI_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
+    let legacy = std::env::var("ANTHROPIC_BASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty());
     let default = match p {
         Provider::Anthropic => "https://api.anthropic.com",
         Provider::OpenAi => "https://api.openai.com",
@@ -172,7 +178,11 @@ fn api_key(p: Provider) -> Result<String, String> {
     std::env::var("AXON_AI_API_KEY")
         .ok()
         .filter(|s| !s.is_empty())
-        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok().filter(|s| !s.is_empty()))
+        .or_else(|| {
+            std::env::var("ANTHROPIC_API_KEY")
+                .ok()
+                .filter(|s| !s.is_empty())
+        })
         .ok_or_else(|| match p {
             Provider::Anthropic => "ANTHROPIC_API_KEY (or AXON_AI_API_KEY) is not set".to_string(),
             Provider::OpenAi => "AXON_AI_API_KEY (or ANTHROPIC_API_KEY) is not set".to_string(),
@@ -180,9 +190,11 @@ fn api_key(p: Provider) -> Result<String, String> {
 }
 
 /// Apply the provider's auth + content headers to a request builder.
-fn auth_headers(p: Provider, req: reqwest::blocking::RequestBuilder, key: &str)
-    -> reqwest::blocking::RequestBuilder
-{
+fn auth_headers(
+    p: Provider,
+    req: reqwest::blocking::RequestBuilder,
+    key: &str,
+) -> reqwest::blocking::RequestBuilder {
     match p {
         Provider::Anthropic => req
             .header("x-api-key", key)
@@ -248,7 +260,7 @@ pub extern "C" fn __axon_ai_complete(
 
     match ai_complete_inner(prompt) {
         Ok(reply) => unsafe { write_str_out(&reply, out_len, out_ptr) },
-        Err(e)    => unsafe { write_err_out(&e,     out_len, out_ptr) },
+        Err(e) => unsafe { write_err_out(&e, out_len, out_ptr) },
     }
 }
 
@@ -260,7 +272,9 @@ pub extern "C" fn __axon_ai_complete(
 /// (closes the R1 parity gap for the AI examples; the native path previously
 /// ignored AXON_AI_MOCK and errored on a missing API key).
 fn ai_mock_enabled() -> bool {
-    std::env::var("AXON_AI_MOCK").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+    std::env::var("AXON_AI_MOCK")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
 }
 
 /// The interpreter's canonical mock `ai_complete` response — must stay
@@ -326,7 +340,10 @@ fn ai_complete_inner_model_usage(prompt: &str, model: &str) -> Result<(String, i
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     if !status.is_success() {
-        let label = match p { Provider::Anthropic => "Anthropic", Provider::OpenAi => "OpenAI" };
+        let label = match p {
+            Provider::Anthropic => "Anthropic",
+            Provider::OpenAi => "OpenAI",
+        };
         return Err(format!("{label} API error {}: {}", status.as_u16(), text));
     }
 
@@ -439,13 +456,13 @@ pub fn build_typed_uncertain_body(prompt: &str, value_type: &str) -> serde_json:
 /// Extract the `answer` tool_use block from a Messages API response and
 /// return its `input` object.  Returns Err if no matching tool_use is found.
 fn parse_tool_use_input(json: &serde_json::Value) -> Result<&serde_json::Value, String> {
-    let content = json["content"].as_array()
+    let content = json["content"]
+        .as_array()
         .ok_or_else(|| format!("Unexpected API response shape (no content array): {}", json))?;
     for item in content {
-        if item["type"].as_str() == Some("tool_use")
-            && item["name"].as_str() == Some("answer")
-        {
-            return item.get("input")
+        if item["type"].as_str() == Some("tool_use") && item["name"].as_str() == Some("answer") {
+            return item
+                .get("input")
                 .ok_or_else(|| format!("tool_use block missing `input`: {}", item));
         }
     }
@@ -456,7 +473,10 @@ fn parse_tool_use_input(json: &serde_json::Value) -> Result<&serde_json::Value, 
 /// shared by both providers. With confidence → `{value, confidence}`; without →
 /// `{value}`. This is the single source of the schema so the two provider body
 /// shapes can't drift on the field set.
-fn answer_schema(value_type: &str, with_confidence: bool) -> (serde_json::Value, serde_json::Value) {
+fn answer_schema(
+    value_type: &str,
+    with_confidence: bool,
+) -> (serde_json::Value, serde_json::Value) {
     if with_confidence {
         (
             serde_json::json!({
@@ -528,7 +548,10 @@ fn parse_openai_tool_args(json: &serde_json::Value) -> Result<serde_json::Value,
                 .map_err(|e| format!("tool call arguments are not valid JSON ({e}): {args}"));
         }
     }
-    Err(format!("No `answer` tool call in OpenAI response: {}", json))
+    Err(format!(
+        "No `answer` tool call in OpenAI response: {}",
+        json
+    ))
 }
 
 /// POST a typed-uncertain request to Anthropic and parse the result.
@@ -582,7 +605,10 @@ fn complete_structured_inner(
         .map_err(|e| format!("Failed to read response body: {}", e))?;
 
     if !status.is_success() {
-        let label = match p { Provider::Anthropic => "Anthropic", Provider::OpenAi => "OpenAI" };
+        let label = match p {
+            Provider::Anthropic => "Anthropic",
+            Provider::OpenAi => "OpenAI",
+        };
         return Err(format!("{label} API error {}: {}", status.as_u16(), text));
     }
 
@@ -601,11 +627,13 @@ fn complete_typed_uncertain_inner(
 ) -> Result<(serde_json::Value, f64), String> {
     let input = complete_structured_inner(prompt, value_type, true)?;
 
-    let value = input.get("value")
+    let value = input
+        .get("value")
         .ok_or_else(|| format!("structured output missing `value`: {}", input))?
         .clone();
 
-    let confidence = input["confidence"].as_f64()
+    let confidence = input["confidence"]
+        .as_f64()
         .ok_or_else(|| format!("structured output `confidence` is not a number: {}", input))?;
 
     if !(0.0..=1.0).contains(&confidence) {
@@ -620,7 +648,8 @@ fn complete_typed_uncertain_inner(
 /// `(value, confidence)` on success.
 pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64), String> {
     let (value, confidence) = complete_typed_uncertain_inner(prompt, "integer")?;
-    let v = value.as_i64()
+    let v = value
+        .as_i64()
         .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))?;
     Ok((v, confidence))
 }
@@ -630,7 +659,8 @@ pub fn complete_typed_uncertain_i64(prompt: &str) -> Result<(i64, f64), String> 
 /// `(value, confidence)` on success.
 pub fn complete_typed_uncertain_f64(prompt: &str) -> Result<(f64, f64), String> {
     let (value, confidence) = complete_typed_uncertain_inner(prompt, "number")?;
-    let v = value.as_f64()
+    let v = value
+        .as_f64()
         .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))?;
     Ok((v, confidence))
 }
@@ -671,12 +701,10 @@ pub fn build_typed_flat_body(prompt: &str, value_type: &str) -> serde_json::Valu
 
 /// POST a flat-T structured-output request and return the parsed `value` as
 /// raw `serde_json::Value`.  The caller projects to the expected scalar type.
-fn complete_typed_flat_inner(
-    prompt: &str,
-    value_type: &str,
-) -> Result<serde_json::Value, String> {
+fn complete_typed_flat_inner(prompt: &str, value_type: &str) -> Result<serde_json::Value, String> {
     let input = complete_structured_inner(prompt, value_type, false)?;
-    input.get("value")
+    input
+        .get("value")
         .ok_or_else(|| format!("structured output missing `value`: {}", input))
         .cloned()
 }
@@ -685,7 +713,8 @@ fn complete_typed_flat_inner(
 /// `{value: integer}`; rejection (no integer) becomes `Err`.
 pub fn complete_typed_i64(prompt: &str) -> Result<i64, String> {
     let value = complete_typed_flat_inner(prompt, "integer")?;
-    value.as_i64()
+    value
+        .as_i64()
         .ok_or_else(|| format!("tool_use input `value` is not an integer: {}", value))
 }
 
@@ -693,7 +722,8 @@ pub fn complete_typed_i64(prompt: &str) -> Result<i64, String> {
 /// `{value: number}`.  Integers are accepted (JSON numbers).
 pub fn complete_typed_f64(prompt: &str) -> Result<f64, String> {
     let value = complete_typed_flat_inner(prompt, "number")?;
-    value.as_f64()
+    value
+        .as_f64()
         .ok_or_else(|| format!("tool_use input `value` is not a number: {}", value))
 }
 
@@ -701,7 +731,8 @@ pub fn complete_typed_f64(prompt: &str) -> Result<f64, String> {
 /// `{value: boolean}`.
 pub fn complete_typed_bool(prompt: &str) -> Result<bool, String> {
     let value = complete_typed_flat_inner(prompt, "boolean")?;
-    value.as_bool()
+    value
+        .as_bool()
         .ok_or_else(|| format!("tool_use input `value` is not a boolean: {}", value))
 }
 
@@ -724,11 +755,7 @@ pub fn complete_typed_bool(prompt: &str) -> Result<bool, String> {
 // an alloca, but is not a normal path — Axon codegen always passes valid
 // stack slots.
 
-unsafe fn write_typed_err(
-    msg: &str,
-    out_err_len: *mut i64,
-    out_err_ptr: *mut *mut u8,
-) {
+unsafe fn write_typed_err(msg: &str, out_err_len: *mut i64, out_err_ptr: *mut *mut u8) {
     if out_err_len.is_null() || out_err_ptr.is_null() {
         return;
     }
@@ -755,7 +782,11 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
 ) -> i32 {
     if prompt_ptr.is_null() || prompt_len < 0 {
         unsafe {
-            write_typed_err("ai_extract_uncertain_i64: invalid prompt pointer/length", out_err_len, out_err_ptr);
+            write_typed_err(
+                "ai_extract_uncertain_i64: invalid prompt pointer/length",
+                out_err_len,
+                out_err_ptr,
+            );
         }
         return 1;
     }
@@ -766,14 +797,22 @@ pub extern "C" fn __axon_ai_extract_uncertain_i64(
     match complete_typed_uncertain_i64(prompt) {
         Ok((v, c)) => {
             unsafe {
-                if !out_value.is_null()      { *out_value = v; }
-                if !out_confidence.is_null() { *out_confidence = c; }
-                if !out_err_len.is_null()    { *out_err_len = 0; }
+                if !out_value.is_null() {
+                    *out_value = v;
+                }
+                if !out_confidence.is_null() {
+                    *out_confidence = c;
+                }
+                if !out_err_len.is_null() {
+                    *out_err_len = 0;
+                }
             }
             0
         }
         Err(e) => {
-            unsafe { write_typed_err(&e, out_err_len, out_err_ptr); }
+            unsafe {
+                write_typed_err(&e, out_err_len, out_err_ptr);
+            }
             1
         }
     }
@@ -793,7 +832,11 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
 ) -> i32 {
     if prompt_ptr.is_null() || prompt_len < 0 {
         unsafe {
-            write_typed_err("ai_extract_uncertain_f64: invalid prompt pointer/length", out_err_len, out_err_ptr);
+            write_typed_err(
+                "ai_extract_uncertain_f64: invalid prompt pointer/length",
+                out_err_len,
+                out_err_ptr,
+            );
         }
         return 1;
     }
@@ -804,14 +847,22 @@ pub extern "C" fn __axon_ai_extract_uncertain_f64(
     match complete_typed_uncertain_f64(prompt) {
         Ok((v, c)) => {
             unsafe {
-                if !out_value.is_null()      { *out_value = v; }
-                if !out_confidence.is_null() { *out_confidence = c; }
-                if !out_err_len.is_null()    { *out_err_len = 0; }
+                if !out_value.is_null() {
+                    *out_value = v;
+                }
+                if !out_confidence.is_null() {
+                    *out_confidence = c;
+                }
+                if !out_err_len.is_null() {
+                    *out_err_len = 0;
+                }
             }
             0
         }
         Err(e) => {
-            unsafe { write_typed_err(&e, out_err_len, out_err_ptr); }
+            unsafe {
+                write_typed_err(&e, out_err_len, out_err_ptr);
+            }
             1
         }
     }
@@ -838,7 +889,11 @@ pub extern "C" fn __axon_ai_extract_i64(
 ) -> i32 {
     if prompt_ptr.is_null() || prompt_len < 0 {
         unsafe {
-            write_typed_err("ai_extract_i64: invalid prompt pointer/length", out_err_len, out_err_ptr);
+            write_typed_err(
+                "ai_extract_i64: invalid prompt pointer/length",
+                out_err_len,
+                out_err_ptr,
+            );
         }
         return 1;
     }
@@ -849,13 +904,19 @@ pub extern "C" fn __axon_ai_extract_i64(
     match complete_typed_i64(prompt) {
         Ok(v) => {
             unsafe {
-                if !out_value.is_null()   { *out_value = v; }
-                if !out_err_len.is_null() { *out_err_len = 0; }
+                if !out_value.is_null() {
+                    *out_value = v;
+                }
+                if !out_err_len.is_null() {
+                    *out_err_len = 0;
+                }
             }
             0
         }
         Err(e) => {
-            unsafe { write_typed_err(&e, out_err_len, out_err_ptr); }
+            unsafe {
+                write_typed_err(&e, out_err_len, out_err_ptr);
+            }
             1
         }
     }
@@ -872,7 +933,11 @@ pub extern "C" fn __axon_ai_extract_f64(
 ) -> i32 {
     if prompt_ptr.is_null() || prompt_len < 0 {
         unsafe {
-            write_typed_err("ai_extract_f64: invalid prompt pointer/length", out_err_len, out_err_ptr);
+            write_typed_err(
+                "ai_extract_f64: invalid prompt pointer/length",
+                out_err_len,
+                out_err_ptr,
+            );
         }
         return 1;
     }
@@ -883,13 +948,19 @@ pub extern "C" fn __axon_ai_extract_f64(
     match complete_typed_f64(prompt) {
         Ok(v) => {
             unsafe {
-                if !out_value.is_null()   { *out_value = v; }
-                if !out_err_len.is_null() { *out_err_len = 0; }
+                if !out_value.is_null() {
+                    *out_value = v;
+                }
+                if !out_err_len.is_null() {
+                    *out_err_len = 0;
+                }
             }
             0
         }
         Err(e) => {
-            unsafe { write_typed_err(&e, out_err_len, out_err_ptr); }
+            unsafe {
+                write_typed_err(&e, out_err_len, out_err_ptr);
+            }
             1
         }
     }
@@ -911,7 +982,11 @@ pub extern "C" fn __axon_ai_extract_bool(
 ) -> i32 {
     if prompt_ptr.is_null() || prompt_len < 0 {
         unsafe {
-            write_typed_err("ai_extract_bool: invalid prompt pointer/length", out_err_len, out_err_ptr);
+            write_typed_err(
+                "ai_extract_bool: invalid prompt pointer/length",
+                out_err_len,
+                out_err_ptr,
+            );
         }
         return 1;
     }
@@ -922,13 +997,19 @@ pub extern "C" fn __axon_ai_extract_bool(
     match complete_typed_bool(prompt) {
         Ok(v) => {
             unsafe {
-                if !out_value.is_null()   { *out_value = v; }
-                if !out_err_len.is_null() { *out_err_len = 0; }
+                if !out_value.is_null() {
+                    *out_value = v;
+                }
+                if !out_err_len.is_null() {
+                    *out_err_len = 0;
+                }
             }
             0
         }
         Err(e) => {
-            unsafe { write_typed_err(&e, out_err_len, out_err_ptr); }
+            unsafe {
+                write_typed_err(&e, out_err_len, out_err_ptr);
+            }
             1
         }
     }
@@ -1060,7 +1141,10 @@ mod tests {
             let slice = std::slice::from_raw_parts(err_ptr, err_len as usize);
             std::str::from_utf8_unchecked(slice)
         };
-        assert!(msg.contains("ANTHROPIC_API_KEY"), "expected key-error message, got: {msg}");
+        assert!(
+            msg.contains("ANTHROPIC_API_KEY"),
+            "expected key-error message, got: {msg}"
+        );
 
         // ── f64 bridge ──
         let mut value_f: f64 = f64::NAN;
@@ -1092,7 +1176,9 @@ mod tests {
         assert_eq!(rc, 1);
 
         // Restore env var.
-        if let Some(v) = prev { std::env::set_var("ANTHROPIC_API_KEY", v); }
+        if let Some(v) = prev {
+            std::env::set_var("ANTHROPIC_API_KEY", v);
+        }
     }
 
     /// Null prompt pointer is rejected before any network attempt.
@@ -1138,10 +1224,16 @@ mod tests {
         assert_eq!(schema["properties"]["value"]["type"], "integer");
         // Crucially: NO confidence field — that would conflict with the
         // schema for the Uncertain<T> variants and could confuse the LLM.
-        assert!(schema["properties"].get("confidence").is_none(),
-            "flat-T schema must not include a confidence field");
-        let required: Vec<&str> = schema["required"].as_array().expect("required")
-            .iter().filter_map(|v| v.as_str()).collect();
+        assert!(
+            schema["properties"].get("confidence").is_none(),
+            "flat-T schema must not include a confidence field"
+        );
+        let required: Vec<&str> = schema["required"]
+            .as_array()
+            .expect("required")
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
         assert_eq!(required, vec!["value"]);
         assert_eq!(body["tool_choice"]["type"], "tool");
         assert_eq!(body["tool_choice"]["name"], "answer");
@@ -1150,13 +1242,19 @@ mod tests {
     #[test]
     fn typed_flat_body_f64_uses_number() {
         let body = build_typed_flat_body("Speed of light?", "number");
-        assert_eq!(body["tools"][0]["input_schema"]["properties"]["value"]["type"], "number");
+        assert_eq!(
+            body["tools"][0]["input_schema"]["properties"]["value"]["type"],
+            "number"
+        );
     }
 
     #[test]
     fn typed_flat_body_bool_uses_boolean() {
         let body = build_typed_flat_body("Is the sky blue?", "boolean");
-        assert_eq!(body["tools"][0]["input_schema"]["properties"]["value"]["type"], "boolean");
+        assert_eq!(
+            body["tools"][0]["input_schema"]["properties"]["value"]["type"],
+            "boolean"
+        );
     }
 
     /// Reuse `parse_tool_use_input` (already covered) to extract the value
@@ -1233,14 +1331,19 @@ mod tests {
         let mut elen: i64 = 0;
         let mut eptr: *mut u8 = std::ptr::null_mut();
         let rc = __axon_ai_extract_i64(
-            prompt.as_ptr(), prompt.len() as i64,
-            &mut v_i, &mut elen, &mut eptr,
+            prompt.as_ptr(),
+            prompt.len() as i64,
+            &mut v_i,
+            &mut elen,
+            &mut eptr,
         );
         assert_eq!(rc, 1);
         assert!(elen > 0);
         assert!(!eptr.is_null());
         assert_eq!(v_i, i64::MIN, "out_value must be untouched on error");
-        let msg = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(eptr, elen as usize)) };
+        let msg = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(eptr, elen as usize))
+        };
         assert!(msg.contains("ANTHROPIC_API_KEY"), "got: {msg}");
 
         // ── f64 bridge ──
@@ -1248,8 +1351,11 @@ mod tests {
         let mut elen2: i64 = 0;
         let mut eptr2: *mut u8 = std::ptr::null_mut();
         let rc = __axon_ai_extract_f64(
-            prompt.as_ptr(), prompt.len() as i64,
-            &mut v_f, &mut elen2, &mut eptr2,
+            prompt.as_ptr(),
+            prompt.len() as i64,
+            &mut v_f,
+            &mut elen2,
+            &mut eptr2,
         );
         assert_eq!(rc, 1);
         assert!(elen2 > 0);
@@ -1260,8 +1366,11 @@ mod tests {
         let mut elen3: i64 = 0;
         let mut eptr3: *mut u8 = std::ptr::null_mut();
         let rc = __axon_ai_extract_bool(
-            prompt.as_ptr(), prompt.len() as i64,
-            &mut v_b, &mut elen3, &mut eptr3,
+            prompt.as_ptr(),
+            prompt.len() as i64,
+            &mut v_b,
+            &mut elen3,
+            &mut eptr3,
         );
         assert_eq!(rc, 1);
         assert!(elen3 > 0);
@@ -1270,8 +1379,11 @@ mod tests {
 
         // ── null out-params defensive path (i64 bridge as representative) ──
         let rc = __axon_ai_extract_i64(
-            prompt.as_ptr(), prompt.len() as i64,
-            std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(),
+            prompt.as_ptr(),
+            prompt.len() as i64,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
         );
         assert_eq!(rc, 1);
 
@@ -1279,15 +1391,19 @@ mod tests {
         let mut v_i2: i64 = 0;
         let mut elen4: i64 = 0;
         let mut eptr4: *mut u8 = std::ptr::null_mut();
-        let rc = __axon_ai_extract_i64(
-            std::ptr::null(), 0,
-            &mut v_i2, &mut elen4, &mut eptr4,
-        );
+        let rc = __axon_ai_extract_i64(std::ptr::null(), 0, &mut v_i2, &mut elen4, &mut eptr4);
         assert_eq!(rc, 1);
-        let msg2 = unsafe { std::str::from_utf8_unchecked(std::slice::from_raw_parts(eptr4, elen4 as usize)) };
-        assert!(msg2.contains("invalid prompt pointer/length"), "got: {msg2}");
+        let msg2 = unsafe {
+            std::str::from_utf8_unchecked(std::slice::from_raw_parts(eptr4, elen4 as usize))
+        };
+        assert!(
+            msg2.contains("invalid prompt pointer/length"),
+            "got: {msg2}"
+        );
 
-        if let Some(v) = prev { std::env::set_var("ANTHROPIC_API_KEY", v); }
+        if let Some(v) = prev {
+            std::env::set_var("ANTHROPIC_API_KEY", v);
+        }
     }
 
     /// R1 parity: with AXON_AI_MOCK set, the native AI path returns the
@@ -1304,14 +1420,25 @@ mod tests {
         std::env::set_var("AXON_AI_MOCK", "1");
 
         let got = ai_complete_inner("summarize this").expect("mock must succeed without a key");
-        assert_eq!(got, MOCK_AI_COMPLETE, "native mock must equal the interpreter's stub");
+        assert_eq!(
+            got, MOCK_AI_COMPLETE,
+            "native mock must equal the interpreter's stub"
+        );
 
         // AXON_AI_MOCK=0 must NOT mock (falls through to the key check → error).
         std::env::set_var("AXON_AI_MOCK", "0");
-        assert!(ai_complete_inner("x").is_err(), "AXON_AI_MOCK=0 must not mock");
+        assert!(
+            ai_complete_inner("x").is_err(),
+            "AXON_AI_MOCK=0 must not mock"
+        );
 
-        match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
-        if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
+        match prev_mock {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
+        if let Some(v) = prev_key {
+            std::env::set_var("ANTHROPIC_API_KEY", v);
+        }
     }
 
     #[test]
@@ -1330,13 +1457,21 @@ mod tests {
         let (reply, tokens) = complete_with_model_usage("sixteen char p..", "claude-opus-4-8")
             .expect("mock succeeds with no key");
         assert_eq!(reply, MOCK_AI_COMPLETE);
-        assert_eq!(tokens, 5, "mock token count is the deterministic prompt-length estimate");
+        assert_eq!(
+            tokens, 5,
+            "mock token count is the deterministic prompt-length estimate"
+        );
         // Determinism: same prompt → same count.
         let (_r2, t2) = complete_with_model_usage("sixteen char p..", "claude-opus-4-8").unwrap();
         assert_eq!(tokens, t2);
 
-        match prev_mock { Some(v) => std::env::set_var("AXON_AI_MOCK", v), None => std::env::remove_var("AXON_AI_MOCK") }
-        if let Some(v) = prev_key { std::env::set_var("ANTHROPIC_API_KEY", v); }
+        match prev_mock {
+            Some(v) => std::env::set_var("AXON_AI_MOCK", v),
+            None => std::env::remove_var("AXON_AI_MOCK"),
+        }
+        if let Some(v) = prev_key {
+            std::env::set_var("ANTHROPIC_API_KEY", v);
+        }
     }
 
     // ── Provider codec (OpenAI-compatible: NIM / OpenRouter / vLLM / …) ──────
@@ -1366,8 +1501,12 @@ mod tests {
         assert_eq!(params["type"], "object");
         assert_eq!(params["properties"]["value"]["type"], "integer");
         assert_eq!(params["properties"]["confidence"]["type"], "number");
-        let required: Vec<&str> = params["required"].as_array().unwrap()
-            .iter().filter_map(|v| v.as_str()).collect();
+        let required: Vec<&str> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
         assert!(required.contains(&"value") && required.contains(&"confidence"));
         assert_eq!(body["tool_choice"]["type"], "function");
         assert_eq!(body["tool_choice"]["function"]["name"], "answer");
@@ -1378,7 +1517,10 @@ mod tests {
         let body = build_openai_tool_body("gpt-4o", "x", "number", false);
         let props = &body["tools"][0]["function"]["parameters"]["properties"];
         assert_eq!(props["value"]["type"], "number");
-        assert!(props.get("confidence").is_none(), "flat schema must not carry confidence");
+        assert!(
+            props.get("confidence").is_none(),
+            "flat schema must not carry confidence"
+        );
     }
 
     #[test]
@@ -1418,8 +1560,15 @@ mod tests {
         std::env::set_var("AXON_AI_PROVIDER", "openai");
         assert_eq!(provider(), Provider::OpenAi);
         std::env::set_var("AXON_AI_PROVIDER", "nonsense");
-        assert_eq!(provider(), Provider::Anthropic, "unknown falls back to Anthropic");
-        match prev { Some(v) => std::env::set_var("AXON_AI_PROVIDER", v), None => std::env::remove_var("AXON_AI_PROVIDER") }
+        assert_eq!(
+            provider(),
+            Provider::Anthropic,
+            "unknown falls back to Anthropic"
+        );
+        match prev {
+            Some(v) => std::env::set_var("AXON_AI_PROVIDER", v),
+            None => std::env::remove_var("AXON_AI_PROVIDER"),
+        }
     }
 
     #[test]
@@ -1430,17 +1579,35 @@ mod tests {
         std::env::remove_var("AXON_AI_BASE_URL");
         std::env::remove_var("ANTHROPIC_BASE_URL");
         // Defaults.
-        assert_eq!(endpoint_url(Provider::Anthropic), "https://api.anthropic.com/v1/messages");
-        assert_eq!(endpoint_url(Provider::OpenAi), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            endpoint_url(Provider::Anthropic),
+            "https://api.anthropic.com/v1/messages"
+        );
+        assert_eq!(
+            endpoint_url(Provider::OpenAi),
+            "https://api.openai.com/v1/chat/completions"
+        );
         // Neutral override wins, trailing slash tolerated, path appended per provider.
         std::env::set_var("AXON_AI_BASE_URL", "https://integrate.api.nvidia.com/");
-        assert_eq!(endpoint_url(Provider::OpenAi), "https://integrate.api.nvidia.com/v1/chat/completions");
+        assert_eq!(
+            endpoint_url(Provider::OpenAi),
+            "https://integrate.api.nvidia.com/v1/chat/completions"
+        );
         // Legacy ANTHROPIC_BASE_URL still works (a trainloop gateway uses this).
         std::env::remove_var("AXON_AI_BASE_URL");
         std::env::set_var("ANTHROPIC_BASE_URL", "https://gateway.internal");
-        assert_eq!(endpoint_url(Provider::Anthropic), "https://gateway.internal/v1/messages");
-        match prev_base { Some(v) => std::env::set_var("AXON_AI_BASE_URL", v), None => std::env::remove_var("AXON_AI_BASE_URL") }
-        match prev_abase { Some(v) => std::env::set_var("ANTHROPIC_BASE_URL", v), None => std::env::remove_var("ANTHROPIC_BASE_URL") }
+        assert_eq!(
+            endpoint_url(Provider::Anthropic),
+            "https://gateway.internal/v1/messages"
+        );
+        match prev_base {
+            Some(v) => std::env::set_var("AXON_AI_BASE_URL", v),
+            None => std::env::remove_var("AXON_AI_BASE_URL"),
+        }
+        match prev_abase {
+            Some(v) => std::env::set_var("ANTHROPIC_BASE_URL", v),
+            None => std::env::remove_var("ANTHROPIC_BASE_URL"),
+        }
     }
 
     // ── .env loading ────────────────────────────────────────────────────────
@@ -1457,13 +1624,29 @@ AXON_AI_BASE_URL='https://x.example/'\n\
 NOEQUALS\n\
 =novalue\n";
         let pairs = parse_dotenv(src);
-        let get = |k: &str| pairs.iter().find(|(kk, _)| kk == k).map(|(_, v)| v.as_str());
+        let get = |k: &str| {
+            pairs
+                .iter()
+                .find(|(kk, _)| kk == k)
+                .map(|(_, v)| v.as_str())
+        };
         assert_eq!(get("ANTHROPIC_API_KEY"), Some("sk-plain"));
-        assert_eq!(get("AXON_AI_PROVIDER"), Some("openai"), "double quotes stripped");
-        assert_eq!(get("AXON_AI_BASE_URL"), Some("https://x.example/"), "single quotes stripped");
+        assert_eq!(
+            get("AXON_AI_PROVIDER"),
+            Some("openai"),
+            "double quotes stripped"
+        );
+        assert_eq!(
+            get("AXON_AI_BASE_URL"),
+            Some("https://x.example/"),
+            "single quotes stripped"
+        );
         assert_eq!(get("SPACED"), Some("value"), "key/value trimmed");
         assert!(get("NOEQUALS").is_none(), "no `=` line skipped");
-        assert!(pairs.iter().all(|(k, _)| !k.is_empty()), "empty key skipped");
+        assert!(
+            pairs.iter().all(|(k, _)| !k.is_empty()),
+            "empty key skipped"
+        );
     }
 
     #[test]
@@ -1472,8 +1655,14 @@ NOEQUALS\n\
         std::env::set_var("AXON_TEST_DOTENV_VAR", "from-shell");
         apply_dotenv("AXON_TEST_DOTENV_VAR=from-file\nAXON_TEST_DOTENV_NEW=from-file");
         // The real environment wins; a new key is set.
-        assert_eq!(std::env::var("AXON_TEST_DOTENV_VAR").as_deref(), Ok("from-shell"));
-        assert_eq!(std::env::var("AXON_TEST_DOTENV_NEW").as_deref(), Ok("from-file"));
+        assert_eq!(
+            std::env::var("AXON_TEST_DOTENV_VAR").as_deref(),
+            Ok("from-shell")
+        );
+        assert_eq!(
+            std::env::var("AXON_TEST_DOTENV_NEW").as_deref(),
+            Ok("from-file")
+        );
         std::env::remove_var("AXON_TEST_DOTENV_VAR");
         std::env::remove_var("AXON_TEST_DOTENV_NEW");
     }

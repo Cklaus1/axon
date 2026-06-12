@@ -89,10 +89,12 @@ impl<'p> Interp<'p> {
             Expr::AssignTo { place, value } => {
                 let v = self.eval(value, env)?;
                 let (base, steps) = self.flatten_place(place, env)?;
-                let mut slot = env
-                    .get_mut(&base)
-                    .ok_or_else(|| Flow::Panic(format!("assignment to undefined variable `{base}`")))?;
-                let (last, prefix) = steps.split_last().ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
+                let mut slot = env.get_mut(&base).ok_or_else(|| {
+                    Flow::Panic(format!("assignment to undefined variable `{base}`"))
+                })?;
+                let (last, prefix) = steps
+                    .split_last()
+                    .ok_or_else(|| Flow::Panic("invalid assignment target".into()))?;
                 for step in prefix {
                     slot = match (step, slot) {
                         (PlaceStep::Field(f), Value::Struct { fields, .. }) => fields
@@ -100,12 +102,15 @@ impl<'p> Interp<'p> {
                             .ok_or_else(|| Flow::Panic(format!("no field `{f}`")))?,
                         (PlaceStep::Index(i), Value::Array(items)) => {
                             let n = items.len();
-                            items
-                                .get_mut(*i)
-                                .ok_or_else(|| Flow::Panic(format!("index {i} out of bounds (len {n})")))?
+                            items.get_mut(*i).ok_or_else(|| {
+                                Flow::Panic(format!("index {i} out of bounds (len {n})"))
+                            })?
                         }
                         (_, other) => {
-                            return panic(format!("cannot index/field-assign into {}", other.type_name()));
+                            return panic(format!(
+                                "cannot index/field-assign into {}",
+                                other.type_name()
+                            ));
                         }
                     };
                 }
@@ -120,7 +125,10 @@ impl<'p> Interp<'p> {
                         items[*i] = v;
                     }
                     (_, other) => {
-                        return panic(format!("cannot index/field-assign into {}", other.type_name()));
+                        return panic(format!(
+                            "cannot index/field-assign into {}",
+                            other.type_name()
+                        ));
                     }
                 }
                 Ok(Value::Unit)
@@ -149,7 +157,10 @@ impl<'p> Interp<'p> {
                         Some(e) => self.eval(e, env),
                         None => Ok(Value::Unit),
                     },
-                    other => panic(format!("if condition must be bool, got {}", other.type_name())),
+                    other => panic(format!(
+                        "if condition must be bool, got {}",
+                        other.type_name()
+                    )),
                 }
             }
 
@@ -201,7 +212,11 @@ impl<'p> Interp<'p> {
                 Ok(Value::Unit)
             }
 
-            Expr::WhileLet { pattern, expr, body } => {
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
                 loop {
                     let v = self.eval(expr, env)?;
                     env.push();
@@ -220,7 +235,13 @@ impl<'p> Interp<'p> {
                 Ok(Value::Unit)
             }
 
-            Expr::For { var, start, end, inclusive, body } => {
+            Expr::For {
+                var,
+                start,
+                end,
+                inclusive,
+                body,
+            } => {
                 let s = self.eval_int(start, env)?;
                 let e = self.eval_int(end, env)?;
                 let mut i = s;
@@ -257,7 +278,10 @@ impl<'p> Interp<'p> {
                 Value::Some(x) => Ok(*x),
                 Value::Err(e) => Err(Flow::Return(Value::Err(e))),
                 Value::None => Err(Flow::Return(Value::None)),
-                other => panic(format!("`?` applied to non-Result/Option ({})", other.type_name())),
+                other => panic(format!(
+                    "`?` applied to non-Result/Option ({})",
+                    other.type_name()
+                )),
             },
 
             Expr::Call { callee, args, tier } => {
@@ -270,7 +294,11 @@ impl<'p> Interp<'p> {
                 self.eval_call(callee, args, tier.as_deref(), env)
             }
 
-            Expr::MethodCall { receiver, method, args } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
                 let recv = self.eval(receiver, env)?;
                 // Channel methods (cooperative, single-threaded): send pushes to
                 // the shared queue, recv pops from it, clone shares the handle.
@@ -330,13 +358,21 @@ impl<'p> Interp<'p> {
                         // `t.0`, `t.1`, … : the parser stores the digit as the
                         // field name, and the interpreter reads it as the index.
                         let i: usize = field.parse().map_err(|_| {
-                            Flow::Panic(format!("tuple access expects a numeric index, got `.{field}`"))
+                            Flow::Panic(format!(
+                                "tuple access expects a numeric index, got `.{field}`"
+                            ))
                         })?;
                         items.get(i).cloned().ok_or_else(|| {
-                            Flow::Panic(format!("tuple index {i} out of bounds (len {})", items.len()))
+                            Flow::Panic(format!(
+                                "tuple index {i} out of bounds (len {})",
+                                items.len()
+                            ))
                         })
                     }
-                    other => panic(format!("field access on non-struct ({})", other.type_name())),
+                    other => panic(format!(
+                        "field access on non-struct ({})",
+                        other.type_name()
+                    )),
                 }
             }
 
@@ -362,10 +398,9 @@ impl<'p> Interp<'p> {
                 let arr = self.eval(receiver, env)?;
                 let idx = self.eval_int(index, env)?;
                 match arr {
-                    Value::Array(items) => items
-                        .get(idx as usize)
-                        .cloned()
-                        .ok_or_else(|| Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()))),
+                    Value::Array(items) => items.get(idx as usize).cloned().ok_or_else(|| {
+                        Flow::Panic(format!("index {idx} out of bounds (len {})", items.len()))
+                    }),
                     other => panic(format!("indexing non-array ({})", other.type_name())),
                 }
             }
@@ -404,7 +439,8 @@ impl<'p> Interp<'p> {
                             // type is a refinement must satisfy that predicate.
                             for tf in &td.fields {
                                 if let crate::ast::AxonType::Named(rn) = &tf.ty {
-                                    if let Some(pred) = self.refine_preds.get(rn.as_str()).copied() {
+                                    if let Some(pred) = self.refine_preds.get(rn.as_str()).copied()
+                                    {
                                         if let Some(fv) = fmap.get(&tf.name) {
                                             let mut pe = Env::new();
                                             pe.define("_".into(), fv.clone());
@@ -425,7 +461,10 @@ impl<'p> Interp<'p> {
                             // (2) WHOLE-STRUCT refinement: `_` binds to the whole
                             // instance and `_.field` projects, so build it first.
                             if let Some(pred) = &td.refinement {
-                                let sv = Value::Struct { name: name.clone(), fields: fmap };
+                                let sv = Value::Struct {
+                                    name: name.clone(),
+                                    fields: fmap,
+                                };
                                 let mut pe = Env::new();
                                 pe.define("_".into(), sv.clone());
                                 if let Value::Bool(false) = self.eval(pred, &mut pe)? {
@@ -436,10 +475,16 @@ impl<'p> Interp<'p> {
                                 }
                                 return Ok(sv);
                             }
-                            return Ok(Value::Struct { name: name.clone(), fields: fmap });
+                            return Ok(Value::Struct {
+                                name: name.clone(),
+                                fields: fmap,
+                            });
                         }
                     }
-                    Ok(Value::Struct { name: name.clone(), fields: fmap })
+                    Ok(Value::Struct {
+                        name: name.clone(),
+                        fields: fmap,
+                    })
                 }
             }
 
@@ -483,7 +528,10 @@ impl<'p> Interp<'p> {
             // are pre-filled, so this is deterministic (first ready arm wins).
             Expr::Select(arms) => {
                 for arm in arms {
-                    let Expr::MethodCall { receiver, method, .. } = &arm.recv else {
+                    let Expr::MethodCall {
+                        receiver, method, ..
+                    } = &arm.recv
+                    else {
                         return panic("select arms must be channel `recv()` operations");
                     };
                     if method != "recv" {
@@ -543,7 +591,13 @@ impl<'p> Interp<'p> {
         Ok(LoopStep::Continue)
     }
 
-    pub(super) fn eval_call(&self, callee: &Expr, args: &[Expr], tier: Option<&str>, env: &mut Env) -> R {
+    pub(super) fn eval_call(
+        &self,
+        callee: &Expr,
+        args: &[Expr],
+        tier: Option<&str>,
+        env: &mut Env,
+    ) -> R {
         // Phase 13 Slice 2: P(dist op k) probability predicate.
         // The argument is a comparison expression, not a plain value — intercept
         // before normal arg evaluation to avoid evaluating "dist <= k" literally.
@@ -822,7 +876,9 @@ impl<'p> Interp<'p> {
                 if let Value::Bool(true) = lv {
                     return match self.eval(right, env)? {
                         Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
+                        other if uncertain_parts(&other).is_some() => {
+                            eval_binop_vals(op, lv, other)
+                        }
                         other => panic(format!("`&&` rhs must be bool, got {}", other.type_name())),
                     };
                 }
@@ -838,7 +894,9 @@ impl<'p> Interp<'p> {
                 if let Value::Bool(false) = lv {
                     return match self.eval(right, env)? {
                         Value::Bool(b) => Ok(Value::Bool(b)),
-                        other if uncertain_parts(&other).is_some() => eval_binop_vals(op, lv, other),
+                        other if uncertain_parts(&other).is_some() => {
+                            eval_binop_vals(op, lv, other)
+                        }
                         other => panic(format!("`||` rhs must be bool, got {}", other.type_name())),
                     };
                 }
@@ -864,7 +922,12 @@ impl<'p> Interp<'p> {
 
     /// Try to match `val` against `pat`, binding identifiers into the current
     /// scope of `env`. Returns whether it matched.
-    pub(super) fn match_pattern(&self, pat: &Pattern, val: &Value, env: &mut Env) -> Result<bool, Flow> {
+    pub(super) fn match_pattern(
+        &self,
+        pat: &Pattern,
+        val: &Value,
+        env: &mut Env,
+    ) -> Result<bool, Flow> {
         match pat {
             Pattern::Wildcard => Ok(true),
             Pattern::Ident(name) => {
@@ -889,11 +952,11 @@ impl<'p> Interp<'p> {
                 // Enum-variant pattern when the name is qualified (`Enum::Variant`).
                 let field_map = if let Some((enum_name, variant)) = name.split_once("::") {
                     match val {
-                        Value::Enum { enum_name: en, variant: v, fields }
-                            if en == enum_name && v == variant =>
-                        {
-                            fields
-                        }
+                        Value::Enum {
+                            enum_name: en,
+                            variant: v,
+                            fields,
+                        } if en == enum_name && v == variant => fields,
                         _ => return Ok(false),
                     }
                 } else {
@@ -914,7 +977,9 @@ impl<'p> Interp<'p> {
                 Ok(true)
             }
             Pattern::Tuple(pats) => {
-                let Value::Tuple(items) = val else { return Ok(false) };
+                let Value::Tuple(items) = val else {
+                    return Ok(false);
+                };
                 if items.len() != pats.len() {
                     return Ok(false);
                 }
@@ -936,13 +1001,15 @@ impl<'p> Interp<'p> {
     /// Returns `None` when the pattern isn't recognized (falls through to error).
     fn eval_prob_pred(&self, arg: &Expr, env: &mut Env) -> Option<f64> {
         use crate::ast::BinOp;
-        let Expr::BinOp { op, left, right } = arg else { return None };
+        let Expr::BinOp { op, left, right } = arg else {
+            return None;
+        };
         let dist_val = self.eval(left, env).ok()?;
         let k = self.eval_f64_val(right, env)?;
         let cdf = eval_dist_cdf(&dist_val, k)?;
         Some(match op {
             BinOp::LtEq => cdf,
-            BinOp::Lt => cdf,       // continuous: P(X < k) == P(X <= k)
+            BinOp::Lt => cdf, // continuous: P(X < k) == P(X <= k)
             BinOp::Gt => 1.0 - cdf,
             BinOp::GtEq => 1.0 - cdf,
             BinOp::Eq => {
@@ -973,7 +1040,6 @@ impl<'p> Interp<'p> {
             _ => None,
         }
     }
-
 }
 
 // ── Phase 13: distribution moment + CDF evaluation (free fns) ────────────────
@@ -981,7 +1047,9 @@ impl<'p> Interp<'p> {
 /// Compute E[dist] or Var[dist] from a runtime distribution struct value.
 /// Returns None for unrecognized distributions.
 pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
-    let Value::Struct { name, fields } = dist else { return None };
+    let Value::Struct { name, fields } = dist else {
+        return None;
+    };
     match name.as_str() {
         "Gaussian" => {
             let mu = get_f64_field(fields, "mu")?;
@@ -1004,12 +1072,18 @@ pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
         }
         "Categorical" => {
             let probs = get_f64_array_field(fields, "probs")?;
-            if probs.is_empty() { return None; }
+            if probs.is_empty() {
+                return None;
+            }
             let mean: f64 = probs.iter().enumerate().map(|(i, p)| i as f64 * p).sum();
             match tag {
                 "E" => Some(mean),
                 "Var" => {
-                    let e2: f64 = probs.iter().enumerate().map(|(i, p)| i as f64 * i as f64 * p).sum();
+                    let e2: f64 = probs
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| i as f64 * i as f64 * p)
+                        .sum();
                     Some(e2 - mean * mean)
                 }
                 _ => None,
@@ -1021,24 +1095,32 @@ pub(super) fn eval_dist_moment(tag: &str, dist: &Value) -> Option<f64> {
 
 /// Compute CDF P(X <= k) for a distribution struct value.
 fn eval_dist_cdf(dist: &Value, k: f64) -> Option<f64> {
-    let Value::Struct { name, fields } = dist else { return None };
+    let Value::Struct { name, fields } = dist else {
+        return None;
+    };
     match name.as_str() {
         "Gaussian" => {
             let mu = get_f64_field(fields, "mu")?;
             let sigma = get_f64_field(fields, "sigma")?;
-            if sigma <= 0.0 { return None; }
+            if sigma <= 0.0 {
+                return None;
+            }
             Some(gaussian_cdf(mu, sigma, k))
         }
         "Beta" => {
             let alpha = get_f64_field(fields, "alpha")?;
             let beta_b = get_f64_field(fields, "beta_b")?;
-            if alpha <= 0.0 || beta_b <= 0.0 { return None; }
+            if alpha <= 0.0 || beta_b <= 0.0 {
+                return None;
+            }
             Some(beta_cdf(alpha, beta_b, k))
         }
         "Categorical" => {
             let probs = get_f64_array_field(fields, "probs")?;
             let ki = k as i64;
-            if ki < 0 { return Some(0.0); }
+            if ki < 0 {
+                return Some(0.0);
+            }
             let limit = (ki as usize + 1).min(probs.len());
             Some(probs[..limit].iter().sum())
         }
@@ -1079,15 +1161,21 @@ fn gaussian_cdf(mu: f64, sigma: f64, x: f64) -> f64 {
 
 fn erf(x: f64) -> f64 {
     let t = 1.0 / (1.0 + 0.3275911 * x.abs());
-    let poly = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+    let poly = t
+        * (0.254829592
+            + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
     let sign = if x < 0.0 { -1.0 } else { 1.0 };
     sign * (1.0 - poly * (-x * x).exp())
 }
 
 // Beta CDF via Lentz continued-fraction algorithm for regularized incomplete beta
 fn beta_cdf(alpha: f64, beta_b: f64, x: f64) -> f64 {
-    if x <= 0.0 { return 0.0; }
-    if x >= 1.0 { return 1.0; }
+    if x <= 0.0 {
+        return 0.0;
+    }
+    if x >= 1.0 {
+        return 1.0;
+    }
     // Use symmetry relation for numerical stability
     if x > (alpha + 1.0) / (alpha + beta_b + 2.0) {
         return 1.0 - beta_cdf(beta_b, alpha, 1.0 - x);
@@ -1102,7 +1190,12 @@ fn beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
     let eps = 1e-10;
     let mut c = 1.0;
     let mut d = 1.0 - (alpha + beta_b) * x / (alpha + 1.0);
-    d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
+    d = 1.0
+        / if d.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            d
+        };
     let mut f = d;
     for m in 1..=max_iter {
         let m = m as f64;
@@ -1110,18 +1203,39 @@ fn beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
         let num = m * (beta_b - m) * x / ((alpha + 2.0 * m - 1.0) * (alpha + 2.0 * m));
         d = 1.0 + num * d;
         c = 1.0 + num / c;
-        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
-        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        d = 1.0
+            / if d.abs() < f64::MIN_POSITIVE {
+                f64::MIN_POSITIVE
+            } else {
+                d
+            };
+        c = if c.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            c
+        };
         f *= d * c;
         // Odd step
-        let num = -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
+        let num =
+            -(alpha + m) * (alpha + beta_b + m) * x / ((alpha + 2.0 * m) * (alpha + 2.0 * m + 1.0));
         d = 1.0 + num * d;
         c = 1.0 + num / c;
-        d = 1.0 / if d.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { d };
-        c = if c.abs() < f64::MIN_POSITIVE { f64::MIN_POSITIVE } else { c };
+        d = 1.0
+            / if d.abs() < f64::MIN_POSITIVE {
+                f64::MIN_POSITIVE
+            } else {
+                d
+            };
+        c = if c.abs() < f64::MIN_POSITIVE {
+            f64::MIN_POSITIVE
+        } else {
+            c
+        };
         let delta = d * c;
         f *= delta;
-        if (delta - 1.0).abs() < eps { break; }
+        if (delta - 1.0).abs() < eps {
+            break;
+        }
     }
     f
 }
@@ -1129,12 +1243,17 @@ fn beta_cf(alpha: f64, beta_b: f64, x: f64) -> f64 {
 fn ln_gamma(x: f64) -> f64 {
     // Lanczos approximation
     let p = [
-        676.5203681218851_f64, -1259.1392167224028, 771.32342877765313,
-        -176.61502916214059, 12.507343278686905, -0.13857109526572012,
-        9.9843695780195716e-6, 1.5056327351493116e-7,
+        676.5203681218851_f64,
+        -1259.1392167224028,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507343278686905,
+        -0.13857109526572012,
+        9.984_369_578_019_572e-6,
+        1.5056327351493116e-7,
     ];
     let x = x - 1.0;
-    let mut a = 0.99999999999980993_f64;
+    let mut a = 0.999_999_999_999_809_9_f64;
     for (i, &p_i) in p.iter().enumerate() {
         a += p_i / (x + i as f64 + 1.0);
     }
