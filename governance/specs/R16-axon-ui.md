@@ -231,8 +231,10 @@ New block **E16xx / W16xx** (next free range; E13xx=AI-policy, E15xx=goal-strate
   parity is undefined for pixels. The reference oracle is restated as: *the interpreter is authoritative for
   the `View`/`Scene3D` tree and its computed layout box-model; pixel rasterization is validated by
   golden-image snapshot at the wgpu layer.* Codegen is interp-only for UI in v1 (E0910), so interp↔codegen
-  pixel divergence cannot arise yet. **This amendment must be ratified per `ARCHITECTURE_INVARIANTS.md`'s
-  invariant-change process before Slice 2 lands.**
+  pixel divergence cannot arise yet. **This amendment is formally proposed + ratified-as-standing-decision in
+  `R16a-i2-pixel-parity-amendment.md`** (steps 1–2 of the `ARCHITECTURE_INVARIANTS.md` process: proposal +
+  blast-radius enumeration, existing-test impact shown to be zero). Per step 3, the actual edit to the I-2
+  line lands **in the same commit as Slice-2 rendering code** — not before.
 
 ### 8. Test plan (maps 1:1 to §4)
 
@@ -317,8 +319,11 @@ the flag gates all of it.
    review.*
 4. **(§5/§7, blocks Slice 2)** `Msg` type discovery: inferred from `update`'s signature vs. a declared
    `@[ui(msg: Msg)]`. *Default: inferred from `update`; error E1601 if ambiguous.*
-5. **(§7, blocks Slice 2 ratification)** I-2 amendment for pixel output must be ratified through the
-   `ARCHITECTURE_INVARIANTS.md` change process before any rasterizing slice merges. **This is a hard gate.**
+5. **(§7 — RESOLVED as standing decision; APPLICATION gated to Slice 2)** I-2 amendment for pixel output:
+   formally proposed + blast-radius-enumerated in `R16a-i2-pixel-parity-amendment.md` (existing-test impact =
+   zero; the amendment is additive). The standing decision is ratified; per process step 3 the I-2 line edit
+   lands *in the Slice-2 commit*, linking R16a. **Hard gate on Slice 2 merging** = that commit must carry the
+   invariant edit; nothing earlier is blocked.
 6. **(§3, Phase 4)** 3D scope: how much of the PRD's Three.js/Bevy-scale API (skeletal animation blend trees,
    SSAO, instancing, octree culling, full Rapier joints) is v1 vs. deferred. *Default: a Three.js-*subset* —
    camera/lights/PBR-mesh/GLB/basic-physics — and explicitly defer blend trees, advanced post-FX, and spatial
