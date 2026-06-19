@@ -51,25 +51,37 @@ and get a typed, sourced answer.* v1 acceptance is the **coding-agent beachhead*
 > alongside the language, R16 (UI), and R17 (bare-metal). The scarce resource is **focus**, not vision. R18 is
 > only worth opening past Slice 0 if it is chosen as *the* wedge (§12 Q1).
 
-### 3. The substrate already exists (the mapping onto shipped Axon primitives)
+### 3. What the substrate actually provides (and what's derived/greenfield)
 
-The differentiator is that **Axon models decisions, not just events.** What's already built, and what each
-becomes in the company-ledger framing:
+> **Correction (post-review, code-verified 2026-06-19):** an earlier draft claimed the ledger "builds on the
+> same schema the runtime already emits." That is **overstated**. The shipped provenance record
+> (`axon-rt::Record`: `fn_name`/`score`/`ts_ms`/`input`) carries **no causal-parent edge and no per-event
+> hash-chain**; `principal`/`effect_row` exist on `ai_call`/`agent_action` records **only**, not on the core
+> adaptive record. So the *event log* is shipped, but the **causal graph + tamper-evident chain the ledger
+> actually sells are DERIVED / greenfield.** The conceptual head start is real but thinner than first
+> stated — which materially changes the cost-to-signal math used to rank R18 ahead of R16/R17 (§12 Q1).
+
+The differentiator is that **Axon models decisions, not just events.** What is *shipped* vs what must be
+*derived/built*:
 
 | Company-ledger need | Shipped Axon primitive | Gap to productize |
 |---|---|---|
-| single append-only decision timeline | provenance log (I-13): `run_start`, `ai_call` (prompt-hash/tier/model/cost/mode), `agent_action` (who/effect/caps/**principal**), `adaptive_return` (score/input/src) | NDJSON file → a real append-only, content-addressed, time-indexed store |
-| reconstruct the exact knowledge-state of a past decision | deterministic **replay** (`axon trace --replay`, run-id + seed → byte-identical re-execution; F2) | replay is per-Axon-run; generalize the "as-of" reconstruction to ingested external events |
-| typed effect/audit records, attributed | **`AuditEvent`** + `Trace` stdlib (§6); F3 principal + effect_row on every record | schema unification across external sources |
-| "what if we'd chosen Y" | **`Counterfactual<T>`** + `CfSet` value types (Phase 14+) | counterfactual over *ledger* state, not just a fn input |
-| who did what, with what authority | **`Principal`** + capability minting (R11) | map external actors (humans, agents, services) to Principals |
-| durable typed state with consistency + lifetime | **`Store<T, Consistency, Lifetime>`** (§6) | the ledger *is* a Store; needs a scalable backing |
-| immutable, tamper-evident, diffable history | content-addressing (`axh1:` SHA-256 lockfile + content-addressed TCB manifest) | extend from modules to arbitrary events ("git for company state") |
-| the decision → outcome → learning loop | **`Goal` / `Feedback` / `Plan` / `Schedule`** stdlib | these are the *typed decision objects* incumbents lack |
+| Company-ledger need | Shipped? | Reality |
+|---|---|---|
+| single append-only event timeline | ✅ shipped (log), ❌ causal | provenance log exists (`run_start`/`ai_call`/`agent_action`/`adaptive_return`), but **the core record has NO causal-parent edge** — the timeline's *causal* structure is **derived**, not emitted |
+| reconstruct knowledge-state of a past decision | ⚠️ partial | `replay` (run-id + seed) is byte-identical re-execution of an **Axon run** — it is **NOT** `as-of` time-travel over ingested external facts. `as-of` is **greenfield** and shares zero code with replay; do not conflate them |
+| typed effect/audit records, attributed | ⚠️ subset only | `principal` + `effect_row` (F3) are on `ai_call`/`agent_action` records **ONLY** — not the core adaptive record. Uniform attribution across all event types is **greenfield** |
+| "what if we'd chosen Y" | ⚠️ scalar | `Counterfactual<T>` exists but over a fn input / recorded **scalar**, not over *ledger graph state* — the ledger counterfactual is **derived** |
+| who did what, with what authority | ✅ value type | `Principal` + minting (R11) ship; mapping external actors to Principals is adapter work |
+| durable typed state | ⚠️ value type only | `Store<T,C,L>` is a *value-type model*, not a scalable backing store — that store is **greenfield** (§5.1) |
+| immutable, tamper-evident history | ❌ greenfield | `axh1:` SHA-256 hashes **modules / prompts**, NOT a **per-event hash-chain** — tamper-evidence over the event log is **Slice-2 greenfield**, not reuse |
+| decision → outcome → learning loop | ✅ value types | `Goal`/`Feedback`/`Plan`/`Schedule` ship as the *typed decision objects* — the genuine differentiator vs event-only incumbents |
 
-**Mental model: Datomic + provenance.** Immutable time-indexed facts, "as-of" queries, retrievable history —
-plus Axon's causal/decision typing and replay. Axon's `trace` + content-addressing is **proto-Datomic**; the
-missing pieces are the store, ingestion, and query layers (§5), none of which are compiler work.
+**Mental model: Datomic + provenance — but mostly the Datomic half is unbuilt.** The honest read: Axon ships
+the *decision-typing value types* (the real differentiator) and an *event log*; the **causal-parent graph, the
+per-event hash-chain, and `as-of` time-travel — the things that make it a "ledger" — are derived/greenfield**,
+sharing little code with the shipped `replay`. `trace` is *proto*-proto-Datomic. The reused asset is the
+decision *schema vocabulary*, not a working ledger.
 
 ### 4. Surface (what the user/operator interacts with)
 
@@ -87,8 +99,22 @@ axon ledger rollback-trace <change-id>  # the causal chain a rollback touched
 axon ledger whatif <decision-id> --alt <counterfactual>   # Counterfactual<T> over ledger state
 ```
 
-Every record is a typed event keyed by `(principal, effect, causal-parent, content-hash, ts)` — the same
-schema the Axon runtime already emits, with ingestion adapters mapping external events into it.
+Every record is a typed event keyed by `(principal, effect, causal-parent, content-hash, ts)`. **NB (per §3):
+the runtime does *not* emit this shape today** — `causal-parent` and `content-hash` are added by the ingestion
+layer; this is the target schema, not a reused one.
+
+**The `<decision-id>` identity scheme (must be pinned before queries mean anything).** The headline queries key
+on a "decision," but the product's whole claim is "model *decisions*, not events." Two options, decide
+explicitly:
+- **v1 cheap:** a *decision* ≡ a commit or an agent-session. Honest consequence: the differentiator vs `git`
+  narrows sharply — `why <commit>` is close to `git show` + the transcript. The spike's H2 non-triviality bar
+  (§ spike) must then be carried by `as-of`/counterfactual, not `why`.
+- **v1 real:** a *decision* is a first-class object (an intent + the alternatives considered + the chosen
+  option + its rationale + the principal), distinct from the commit that implements it — this is the actual
+  "decisions not events" differentiator, and it is **greenfield** (the runtime has no such object). The spike
+  should test whether such an object is even *recoverable* from a real source, not assume it.
+*Default: state v1 = commit/session for the spike, but pre-register that a pass on `why` alone does NOT
+validate the "decisions not events" thesis — only `as-of`/counterfactual or a recovered decision-object does.*
 
 ### 5. The real gap (what is NOT compiler work)
 
@@ -98,9 +124,13 @@ Honest enumeration so the "conceptual vs product" distinction stays visible:
 2. **Ingestion adapters** — typed connectors for Datadog/PostHog/Drive/Slack/git/Claude-Code/Codex, each mapping a source event into the `(principal, effect, causal-parent, hash, ts)` schema.
 3. **Query / as-of / causal layer** — today there's replay + counterfactual, not general query. Needs "as-of" time-travel + causal-graph traversal.
 4. **UI** — the timeline / decision-inspector (overlaps R16, but webview is fine here; this is not the GPU-UI use case).
-5. **The unglamorous 99%** — multi-tenancy, access control (maps to Principal/capability — an *asset*), compliance/retention, encryption, dedup, cost.
+5. **The unglamorous 99%** — multi-tenancy, access control (maps to Principal/capability — an *asset*), encryption, dedup, cost.
+6. **Compliance & data-governance (a potential *fatal* blocker, not just work).** An **append-only, tamper-evident, "not opt-out-able" (I-13)** ledger collides head-on with **GDPR/CCPA right-to-erasure, retention limits, and legal-hold purges** — immutability and subject-deletion are in direct tension and need a designed mechanism (crypto-shredding / tombstoning / a PII side-store) that erases without breaking the hash-chain. Ingesting Slack/Drive/transcripts also **centralizes PII, secrets, and source code** in one high-value place → demands **classify-and-redact-on-ingest** (a Slice-1 acceptance criterion, not an afterthought) and a DPA/SOC2 story. **This can make a *technically validated* wedge unsellable to the exact enterprise beachhead** — so it is a gating input to the §12 Q1 wedge decision, not a later detail.
 
-**Only items 3 and the schema are close to Axon's existing strengths. 1, 2, 4, 5 are greenfield product.**
+**Honest reuse accounting:** only the **decision-typing value-type vocabulary** is genuinely close to Axon's
+existing strengths. The causal graph, hash-chain, `as-of` query, store, ingestion, UI, and compliance (items
+1–6) are **greenfield product** — and §12 Q2 (buy storage) would *discard* the shipped NDLog, leaving the
+reused asset = the schema vocabulary alone.
 
 ### 6. Error codes
 
@@ -129,9 +159,16 @@ Beachhead-scoped (the coding-agent timeline):
 
 ### 9. Acceptance criteria (per slice)
 
-**Slice 0 (spike — prove the substrate generalizes):**
-- [ ] `ledger_ingests_external_events_into_typed_timeline` — a non-Axon event source (a coding-agent
-      transcript + git log) maps into the existing provenance schema and is queryable by `asof`.
+**Slice 0 (spike — prove the substrate generalizes AND the answer is worth paying for):**
+> **The Slice-0 bar is defined by `R18-slice0-spike.md` (H1 + H2), NOT by this checklist alone.** An earlier
+> version of this criterion said only "queryable by `asof`," which is *looser* than the spike's value bar (H2,
+> the why/as-of/counterfactual answer + external willingness-to-pay) — and the looser bar must not be cited as
+> a pass. Both documents name the **same** Slice-0 bar: the spike's H1 *and* H2 both hold.
+- [ ] `ledger_ingests_external_events_into_typed_timeline` — a **genuinely external, not-pre-linked** source
+      (see spike §3) maps into the target schema with a *measured* causal-edge precision/recall, not just "no
+      schema violence." (H1)
+- [ ] The spike's **H2** passes its external-jury willingness-to-pay + non-CI-outcome bars (spike §2/§5), or
+      the spike's **KILL leaf** (spike §7) fires. A green H1 with an unproven/failed H2 is **not** a Slice-0 pass.
 
 **Slice 1 (the coding-agent beachhead — the real v1 gate):**
 - [ ] `ledger_why_links_agent_session_to_outcome` — `why <change-id>` returns rationale + causal chain +
@@ -164,11 +201,22 @@ cheap and reversible:
    prior recommended value wedge — `examples/flagship/`), (c) R16 GPU UI / "Axon platform", (d) R17 bare-metal
    "Axon OS". R18 and (b) are *the same bet from two faces* — "Axon as the trustworthy substrate **under** AI
    agents" (b = sandbox the agent's *actions*; R18 = remember the agent's *decisions*). They may compose into
-   one wedge. *Recommendation: do NOT open Slices 1–4 until one wedge is chosen; land Slice 0 as a cheap spike
-   to test whether the substrate generalizes, and decide with that data.*
+   one wedge. *Recommendation: do NOT open Slices 1–4 until one wedge is chosen.* The wedge decision must
+   weigh **three** inputs, not just the spike's technical pass: (i) the spike's H1+H2 evidence; (ii)
+   **compliance-deployability** (§5.6 — the immutability-vs-erasure + PII-aggregation problem can veto the
+   product in enterprise procurement regardless of technical merit); (iii) **opportunity cost vs the
+   sandbox-wedge (b)**, which is *prevention* (a painkiller bought *before* incidents) where R18 is *recall* (a
+   tool wanted *after*, often unbudgeted). *A green spike authorizes running this Q1 comparison — not writing
+   the PRD.* The "R18 and (b) are two faces of one bet" claim is itself an **untested hypothesis**: the spike
+   (or buyer interviews) must test it, not assume it as decision rationale.
 2. **(§5)** Build the store, or sit on an existing event-sourcing engine (Datomic/XTDB/Kafka/embedded)?
-   *Default: sit on an existing engine for the beachhead; the differentiator is the decision-typing + replay +
-   counterfactual layer on top, not the storage.*
+   *Default: sit on an existing engine.* **Honest consequence (do not skip):** buying storage means the
+   shipped NDJSON provenance log is **discarded** and the decision-typing + counterfactual layer is
+   re-implemented on a foreign engine — so the "builds on shipped substrate, cheaper than R16/R17" ranking
+   premise (§12 Q1) **largely evaporates**; the only surviving reused asset is the schema *vocabulary*.
+   Separately stress-test **defensibility**: a thin decision-typing + counterfactual layer over someone else's
+   storage may be **"a feature, not a company"** — what stops a fast-follower with distribution from copying it
+   once the category is proven? This is unresolved and load-bearing for the wedge decision.
 3. **(§4)** Replace vs augment incumbents. *Default: augment — ingest, never replace; "rebuild" is the
    graveyard framing. The product is the causal decision LAYER across existing systems.*
 4. **(relationship to R16/R17)** If R18 is the wedge, R16 (UI) downgrades to "a webview inspector is fine"
