@@ -2492,7 +2492,28 @@ impl CheckCtx {
                 // (E1209), mirroring the param/return/field constant checks. A
                 // non-constant value defers to the runtime check (interp/codegen).
                 self.check_let_refinement(annot, name, value, &val_path);
-                let ty = self.resolve_expr_type(value, &val_path, scope);
+                // R19 Slice B: when the annotation names a non-i64 fixed-width
+                // integer type (u8, u16, u32, u64, i8, i16, i32), use the ANNOTATION
+                // type for the scope binding rather than resolving the value's
+                // inferred type. Without this, `let a: u8 = 60` would bind `a: I64`
+                // in the checker's scope (because the literal resolves to I64), and a
+                // later `fn_taking_u8(a)` would emit a spurious E0306.
+                let ty = if let Some(annot_type) = annot.as_ref().and_then(|a| {
+                    if let crate::ast::AxonType::Named(n) = a {
+                        match n.as_str() {
+                            "u8" | "u16" | "u32" | "u64" | "i8" | "i16" | "i32" => {
+                                Type::from_name(n)
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                }) {
+                    annot_type
+                } else {
+                    self.resolve_expr_type(value, &val_path, scope)
+                };
                 scope.insert(name.clone(), ty);
                 // R6 local taint: if this binds a sensitive value (a sensitive
                 // struct, or a field of one — `let e = u.email`), remember that

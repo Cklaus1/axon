@@ -8,6 +8,44 @@
 
 use super::*;
 
+// ── R19 Slice B — coercion helpers ────────────────────────────────────────────
+
+/// Map an `AxonType` annotation to the semantic `Type` it represents, but only
+/// for non-i64 fixed-width integer types. Returns `None` for i64 (no coercion
+/// needed — `Int(i64)` is already the correct representation) and for all
+/// non-integer types.
+fn axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
+    use crate::ast::AxonType::Named;
+    use crate::types::Type;
+    match ty {
+        Named(n) => match n.as_str() {
+            "u8" => Some(Type::U8),
+            "u16" => Some(Type::U16),
+            "u32" => Some(Type::U32),
+            "u64" => Some(Type::U64),
+            "i8" => Some(Type::I8),
+            "i16" => Some(Type::I16),
+            "i32" => Some(Type::I32),
+            _ => None, // i64 and non-integer names: no coercion
+        },
+        _ => None,
+    }
+}
+
+/// Coerce a runtime value to a `SizedInt` when the target type is a non-i64
+/// integer. `Int(n)` → `SizedInt{n, ty}`. Any other value is returned as-is
+/// (the type-checker has already validated the types match; this is a
+/// representation upgrade only). `SizedInt` with a different width is
+/// re-tagged to the new width (preserves the stored bit-pattern; the checker
+/// ensures same-width ops only).
+fn coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
+    match v {
+        Value::Int(n) => Value::SizedInt { val: n, ty: width },
+        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
+        other => other,
+    }
+}
+
 impl<'p> Interp<'p> {
     // ── Core evaluator ───────────────────────────────────────────────────────
 
@@ -68,6 +106,16 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+                // R19 Slice B: if the annotation names a non-i64 integer type, coerce
+                // the stored value to SizedInt so downstream arithmetic is width-correct.
+                // Completeness requirement: EVERY static-type-introduction site must
+                // coerce so no SizedInt value is left as a bare Int at any missed site,
+                // which would silently compute in i64 (I-9).
+                let v = if let Some(width) = ty.as_ref().and_then(axon_type_to_width) {
+                    coerce_to_sized(v, width)
+                } else {
+                    v
+                };
                 env.define(name.clone(), v);
                 Ok(Value::Unit)
             }
@@ -416,7 +464,23 @@ impl<'p> Interp<'p> {
             Expr::StructLit { name, fields } => {
                 let mut fmap = HashMap::with_capacity(fields.len());
                 for (fname, fexpr) in fields {
-                    fmap.insert(fname.clone(), self.eval(fexpr, env)?);
+                    let fval = self.eval(fexpr, env)?;
+                    // R19 Slice B: coerce field values to SizedInt when the struct's
+                    // declared field type is a non-i64 integer width.
+                    let fval = if let Some(td) = self.structs.get(name.as_str()) {
+                        if let Some(tf) = td.fields.iter().find(|f| &f.name == fname) {
+                            if let Some(width) = axon_type_to_width(&tf.ty) {
+                                coerce_to_sized(fval, width)
+                            } else {
+                                fval
+                            }
+                        } else {
+                            fval
+                        }
+                    } else {
+                        fval
+                    };
+                    fmap.insert(fname.clone(), fval);
                 }
                 if let Some((enum_name, variant)) = name.split_once("::") {
                     Ok(Value::Enum {

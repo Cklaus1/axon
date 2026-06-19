@@ -328,8 +328,11 @@ impl<'p> Interp<'p> {
                 // runtime value so to_str(i64|f64|bool) all work. Int/Float/Bool
                 // render identically to to_str / to_str_f64 / to_str_bool
                 // respectively (display() shares fmt_g + "true"/"false").
+                // R19 Slice B: SizedInt also renders via display().
                 ok!(Value::Str(match &args[0] {
-                    Value::Int(_) | Value::Float(_) | Value::Bool(_) => display(&args[0]),
+                    Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::SizedInt { .. } => {
+                        display(&args[0])
+                    }
                     other =>
                         return panic(format!(
                             "to_str: expected a scalar (i64/f64/bool), got {}",

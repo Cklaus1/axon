@@ -690,9 +690,51 @@ impl InferCtx {
                         _ => None,
                     }
                 };
+                // R19 Slice B helpers for the BinOp arm.
+                // True when the type is a non-i64 fixed-width integer (signed or unsigned).
+                let is_sized_int = |t: &Type| {
+                    matches!(
+                        t,
+                        Type::I8
+                            | Type::I16
+                            | Type::I32
+                            | Type::U8
+                            | Type::U16
+                            | Type::U32
+                            | Type::U64
+                    )
+                };
+                // True when the sub-expression is a plain integer literal (I64 from the
+                // literal arm above). Such a literal coerces to the adjacent operand's
+                // width at runtime, so we allow it without a type-mismatch constraint.
+                let is_int_lit = |e: &Expr| matches!(e, Expr::Literal(AstLiteral::Int(_)));
+                // Choose the "dominant" type for a sized-int binop: the concrete
+                // sized width from whichever side provides one (or lt if both do —
+                // they must agree; the constrain below handles mismatches).
+                let dominant_sized = |l: &Type, r: &Type| -> Option<Type> {
+                    if is_sized_int(l) {
+                        Some(l.clone())
+                    } else if is_sized_int(r) {
+                        Some(r.clone())
+                    } else {
+                        None
+                    }
+                };
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
-                        self.constrain(lt.clone(), rt.clone(), "arithmetic operands");
+                        // R19 Slice B: if either operand is a sized-int type, allow
+                        // the other to be a plain I64 integer literal (it coerces
+                        // at runtime). For two sized-int operands that agree, the
+                        // constrain below produces no error. Different widths (e.g.
+                        // U8 op U32) still emit E0102 — require `as`.
+                        let sized = dominant_sized(&lt, &rt);
+                        let skip_constrain = sized.is_some()
+                            && ((is_sized_int(&lt) && lt == rt)
+                                || (is_sized_int(&lt) && is_int_lit(right))
+                                || (is_sized_int(&rt) && is_int_lit(left)));
+                        if !skip_constrain {
+                            self.constrain(lt.clone(), rt.clone(), "arithmetic operands");
+                        }
                         // Fix #4: also constrain both operands to be numeric.
                         // We emit a constraint to I64 which will unify cleanly
                         // with I64/F64/other numeric vars, but produce a
@@ -704,12 +746,22 @@ impl InferCtx {
                                 .or_else(|| unc_inner(&rt))
                                 .unwrap_or(Type::I64);
                             Type::Uncertain(Box::new(inner))
+                        } else if let Some(ty) = sized {
+                            ty // result type is the sized-int width
                         } else {
                             lt
                         }
                     }
                     BinOp::Eq | BinOp::NotEq => {
-                        self.constrain(lt.clone(), rt.clone(), "equality operands");
+                        // R19: sized-int == sized-int or sized-int == literal: ok.
+                        let sized = dominant_sized(&lt, &rt);
+                        let skip_constrain = sized.is_some()
+                            && ((is_sized_int(&lt) && lt == rt)
+                                || (is_sized_int(&lt) && is_int_lit(right))
+                                || (is_sized_int(&rt) && is_int_lit(left)));
+                        if !skip_constrain {
+                            self.constrain(lt.clone(), rt.clone(), "equality operands");
+                        }
                         if is_unc(&lt) || is_unc(&rt) {
                             Type::Uncertain(Box::new(Type::Bool))
                         } else {
@@ -717,7 +769,15 @@ impl InferCtx {
                         }
                     }
                     BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => {
-                        self.constrain(lt.clone(), rt.clone(), "comparison operands");
+                        // R19: sized-int comparisons allowed.
+                        let sized = dominant_sized(&lt, &rt);
+                        let skip_constrain = sized.is_some()
+                            && ((is_sized_int(&lt) && lt == rt)
+                                || (is_sized_int(&lt) && is_int_lit(right))
+                                || (is_sized_int(&rt) && is_int_lit(left)));
+                        if !skip_constrain {
+                            self.constrain(lt.clone(), rt.clone(), "comparison operands");
+                        }
                         if is_unc(&lt) || is_unc(&rt) {
                             Type::Uncertain(Box::new(Type::Bool))
                         } else {
@@ -740,9 +800,17 @@ impl InferCtx {
                         }
                     }
                     BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
-                        self.constrain(lt.clone(), Type::I64, "bitwise operand");
-                        self.constrain(rt, Type::I64, "bitwise operand");
-                        Type::I64
+                        // R19: allow sized-int bitwise ops; otherwise constrain to I64.
+                        let sized = dominant_sized(&lt, &rt);
+                        if let Some(ty) = sized {
+                            // Both sides must be same-width sized-int or one side a literal.
+                            // No cross-width constraint needed; runtime handles the masking.
+                            ty
+                        } else {
+                            self.constrain(lt.clone(), Type::I64, "bitwise operand");
+                            self.constrain(rt, Type::I64, "bitwise operand");
+                            Type::I64
+                        }
                     }
                 }
             }

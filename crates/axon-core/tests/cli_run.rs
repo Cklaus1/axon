@@ -26,20 +26,32 @@ fn host_await_runs_identically_on_wasm_wasip1() {
     // host_await_yield reads stdin directly — no thread). Pipes the same input to
     // both for greet / EOF / guess-loop / approval-loop and asserts identical
     // stdout+exit. Skips if the wasm target or wasmtime is unavailable.
-    let script = format!("{}/../../scripts/wasm_host_await_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_host_await_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_host_await_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_host_await_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_host_await_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("wasm/wasmtime unavailable — host_await wasm parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "host_await must run identically on wasm:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_host_await_parity: PASS"), "expected PASS:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "host_await must run identically on wasm:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_host_await_parity: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -50,20 +62,32 @@ fn wasm_browser_host_await_round_trips_r7c() {
     // synchronous precursor to the Asyncify async binding (B3). host_await_yield is
     // cfg-split three ways: native=worker-thread channel, wasip1=stdin,
     // unknown-unknown=JS import. Skips if the target or node is absent.
-    let script = format!("{}/../../scripts/wasm_browser_host_await.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_browser_host_await.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_browser_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_host_await.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_browser_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("wasm/node unavailable — browser host_await skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "host_await must round-trip through the browser JS host:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_browser_host_await: PASS"), "expected PASS:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "host_await must round-trip through the browser JS host:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_browser_host_await: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -75,20 +99,34 @@ fn wasm_asyncify_host_await_suspends_across_async_r7c() {
     // that gates all interactive browser targets. Asserts the async round-trip for a
     // 2-turn program, a multi-turn while-loop, and host_await_opt. Skips if the
     // wasm target, wasm-opt (binaryen), or node is absent.
-    let script = format!("{}/../../scripts/wasm_asyncify_host_await.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_asyncify_host_await.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_asyncify_host_await.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_asyncify_host_await.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_asyncify_host_await.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
-        eprintln!("wasm/wasm-opt/node unavailable — asyncify host_await skipped:\n{stdout}{stderr}");
+        eprintln!(
+            "wasm/wasm-opt/node unavailable — asyncify host_await skipped:\n{stdout}{stderr}"
+        );
         return;
     }
-    assert!(out.status.success(), "host_await must suspend across async JS work via Asyncify:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_asyncify_host_await: PASS"), "expected PASS:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "host_await must suspend across async JS work via Asyncify:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_asyncify_host_await: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -100,20 +138,32 @@ fn wasm_interpreter_evals_identically_to_native_r7c() {
     // entry-point foundation for the R15 browser host_await binding. This runs
     // compute programs through the wasm interp (under Node) and the native interp
     // and asserts identical stdout+exit. Skips if the target or node is absent.
-    let script = format!("{}/../../scripts/wasm_browser_interp_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_browser_interp_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_browser_interp_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_interp_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_browser_interp_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("wasm/node unavailable — wasm interp parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "the wasm interpreter must eval identically to native:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_browser_interp_parity: PASS"), "expected PASS:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "the wasm interpreter must eval identically to native:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_browser_interp_parity: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -124,20 +174,32 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
     // (native worker thread vs wasm direct run) so no unconditional std::thread
     // reaches the wasm build. Guarded by a cargo check; skips if the target or
     // cargo is unavailable.
-    let script = format!("{}/../../scripts/wasm_unknown_interp_builds.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_unknown_interp_builds.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_unknown_interp_builds.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_unknown_interp_builds.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_unknown_interp_builds.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("wasm32-unknown-unknown unavailable — skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "interp must compile for wasm32-unknown-unknown:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_unknown_interp_builds: PASS"), "expected PASS:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "interp must compile for wasm32-unknown-unknown:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_unknown_interp_builds: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -170,9 +232,20 @@ fn r15_host_await_interactive_via_axon_run_reads_stdin() {
     let out = child.wait_with_output().unwrap();
     let _ = std::fs::remove_file(&f);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("name> "), "the host_await request must be written as a prompt: {stdout}");
-    assert!(stdout.contains("Hello, Ada!"), "the stdin reply must flow into the program: {stdout}");
-    assert_eq!(out.status.code(), Some(3), "exit = str_len(\"Ada\") = 3, got {:?}", out.status.code());
+    assert!(
+        stdout.contains("name> "),
+        "the host_await request must be written as a prompt: {stdout}"
+    );
+    assert!(
+        stdout.contains("Hello, Ada!"),
+        "the stdin reply must flow into the program: {stdout}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "exit = str_len(\"Ada\") = 3, got {:?}",
+        out.status.code()
+    );
 }
 
 #[test]
@@ -195,11 +268,22 @@ fn r15_human_in_the_loop_agent_gates_actions_on_approval() {
     child.stdin.take().unwrap().write_all(b"y\nn\ny\n").unwrap();
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("executed: summarize the inbox"), "action 1 approved: {stdout}");
+    assert!(
+        stdout.contains("executed: summarize the inbox"),
+        "action 1 approved: {stdout}"
+    );
     assert!(stdout.contains("declined."), "action 2 declined: {stdout}");
-    assert!(stdout.contains("executed: send the weekly report"), "action 3 approved: {stdout}");
+    assert!(
+        stdout.contains("executed: send the weekly report"),
+        "action 3 approved: {stdout}"
+    );
     assert!(stdout.contains("approved 2 of 3"), "tally: {stdout}");
-    assert_eq!(out.status.code(), Some(2), "2 actions approved, got {:?}", out.status.code());
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "2 actions approved, got {:?}",
+        out.status.code()
+    );
 }
 
 #[test]
@@ -224,8 +308,16 @@ fn r15_stateful_guessing_game_keeps_state_across_suspends() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Higher."), "5 < 7 ⇒ Higher: {stdout}");
     assert!(stdout.contains("Lower."), "9 > 7 ⇒ Lower: {stdout}");
-    assert!(stdout.contains("Correct — 3 tries!"), "7 found in 3: {stdout}");
-    assert_eq!(out.status.code(), Some(3), "3 tries, got {:?}", out.status.code());
+    assert!(
+        stdout.contains("Correct — 3 tries!"),
+        "7 found in 3: {stdout}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "3 tries, got {:?}",
+        out.status.code()
+    );
 }
 
 #[test]
@@ -248,7 +340,12 @@ fn r15_guessing_game_terminates_on_eof_not_spins() {
     let out = child.wait_with_output().unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Bye."), "EOF ⇒ graceful quit: {stdout}");
-    assert_eq!(out.status.code(), Some(1), "1 guess before EOF, got {:?}", out.status.code());
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "1 guess before EOF, got {:?}",
+        out.status.code()
+    );
 }
 
 #[test]
@@ -260,12 +357,28 @@ fn phase6_with_handler_runs_and_intercepts_io() {
     // while `risky(10)` under the unresolved named handler `retry` is inert and
     // prints normally. Both functions still return their values (risky resumes
     // with the payload, so safe(5) = risky(5) = 6; r = risky(10) = 11).
-    let out = axon().args(["run", &fixture("with_handler.ax")]).output().unwrap();
-    assert!(out.status.success(), "with-handler program should run: {:?}", out);
+    let out = axon()
+        .args(["run", &fixture("with_handler.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "with-handler program should run: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("risky 10"), "unhandled (named) print still appears: {stdout}");
-    assert!(stdout.contains("done 11"), "values still computed: {stdout}");
-    assert!(stdout.contains("safe 6"), "handled fn still returns its value: {stdout}");
+    assert!(
+        stdout.contains("risky 10"),
+        "unhandled (named) print still appears: {stdout}"
+    );
+    assert!(
+        stdout.contains("done 11"),
+        "values still computed: {stdout}"
+    );
+    assert!(
+        stdout.contains("safe 6"),
+        "handled fn still returns its value: {stdout}"
+    );
     assert!(
         !stdout.contains("risky 5"),
         "the IO handler must INTERCEPT risky(5)'s print: {stdout}"
@@ -289,24 +402,53 @@ fn ai_replay_reproduces_a_recorded_run_without_the_live_model_f2() {
     let _ = std::fs::remove_file(&cache);
 
     // 1. RECORD under mock (populates the cache).
-    let rec = axon().args(["run", f.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").env("AXON_AI_REPLAY", &cache).output().unwrap();
-    assert_eq!(rec.status.code(), Some(0), "record run must succeed: {rec:?}");
+    let rec = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_AI_REPLAY", &cache)
+        .output()
+        .unwrap();
+    assert_eq!(
+        rec.status.code(),
+        Some(0),
+        "record run must succeed: {rec:?}"
+    );
     let rec_out = String::from_utf8_lossy(&rec.stdout).to_string();
-    assert!(rec_out.contains("Mock summary"), "record output: {rec_out:?}");
+    assert!(
+        rec_out.contains("Mock summary"),
+        "record output: {rec_out:?}"
+    );
 
     // 2. REPLAY: the cache file ONLY (no mock) must reproduce the run byte-for-byte.
-    let rep = axon().args(["run", f.to_str().unwrap()])
-        .env("AXON_AI_REPLAY", &cache).env_remove("AXON_AI_MOCK").output().unwrap();
-    assert_eq!(rep.status.code(), Some(0), "replay must reproduce WITHOUT mock/live: {rep:?}");
-    assert_eq!(String::from_utf8_lossy(&rep.stdout), rec_out,
-        "replay output must match the recorded run byte-for-byte");
+    let rep = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_REPLAY", &cache)
+        .env_remove("AXON_AI_MOCK")
+        .output()
+        .unwrap();
+    assert_eq!(
+        rep.status.code(),
+        Some(0),
+        "replay must reproduce WITHOUT mock/live: {rep:?}"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&rep.stdout),
+        rec_out,
+        "replay output must match the recorded run byte-for-byte"
+    );
 
     // 3. CONTROL: neither replay nor mock → ai_complete has no model → must fail.
-    let ctl = axon().args(["run", f.to_str().unwrap()])
-        .env_remove("AXON_AI_MOCK").env_remove("AXON_AI_REPLAY").output().unwrap();
-    assert_ne!(ctl.status.code(), Some(0),
-        "control run (no cache, no mock) must NOT run — proves the cache was load-bearing: {ctl:?}");
+    let ctl = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env_remove("AXON_AI_MOCK")
+        .env_remove("AXON_AI_REPLAY")
+        .output()
+        .unwrap();
+    assert_ne!(
+        ctl.status.code(),
+        Some(0),
+        "control run (no cache, no mock) must NOT run — proves the cache was load-bearing: {ctl:?}"
+    );
 
     let _ = std::fs::remove_file(&f);
     let _ = std::fs::remove_file(&cache);
@@ -328,13 +470,24 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
         .env_remove("AXON_AI_MOCK")
         .output()
         .unwrap();
-    assert_eq!(run1.status.code(), Some(0), "first run must succeed: {run1:?}");
+    assert_eq!(
+        run1.status.code(),
+        Some(0),
+        "first run must succeed: {run1:?}"
+    );
     let stderr1 = String::from_utf8_lossy(&run1.stderr).to_string();
     let run_id = stderr1
         .lines()
-        .find_map(|l| l.strip_prefix("axon: run-id ").map(str::trim).map(str::to_string))
+        .find_map(|l| {
+            l.strip_prefix("axon: run-id ")
+                .map(str::trim)
+                .map(str::to_string)
+        })
         .expect("run-id must appear on stderr");
-    assert!(!run_id.is_empty(), "run-id must be non-empty, stderr: {stderr1}");
+    assert!(
+        !run_id.is_empty(),
+        "run-id must be non-empty, stderr: {stderr1}"
+    );
     let out1 = String::from_utf8_lossy(&run1.stdout).to_string();
 
     // 2. Replay: `axon trace --replay <run-id>` must produce the same random value.
@@ -342,9 +495,16 @@ fn phase9_run_id_stamped_and_trace_replay_reproduces_run() {
         .args(["trace", "--replay", &run_id])
         .output()
         .unwrap();
-    assert_eq!(replay.status.code(), Some(0), "replay must succeed: {replay:?}");
+    assert_eq!(
+        replay.status.code(),
+        Some(0),
+        "replay must succeed: {replay:?}"
+    );
     let out2 = String::from_utf8_lossy(&replay.stdout).to_string();
-    assert_eq!(out1, out2, "replay output must match the original (same seed)");
+    assert_eq!(
+        out1, out2,
+        "replay output must match the original (same seed)"
+    );
 
     let _ = std::fs::remove_file(&f);
 }
@@ -354,29 +514,52 @@ fn phase6_handler_resume_semantics() {
     // Tail-resumptive, single-shot effect-handler discharge in the interpreter.
     // `run` returns main's i64; we assert on (exit code, stdout).
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_resume_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_resume_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // 1. Tail-resume suppresses a print and continues; block value preserved.
-    let (code, out) = run("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"NOPE\")\n 1 } }");
+    let (code, out) = run(
+        "fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"NOPE\")\n 1 } }",
+    );
     assert_eq!(code, 1, "block value preserved after resume");
-    assert!(!out.contains("NOPE"), "the intercepted print must be suppressed: {out:?}");
+    assert!(
+        !out.contains("NOPE"),
+        "the intercepted print must be suppressed: {out:?}"
+    );
 
     // 2. resume(v) replaces a value-returning builtin's result.
-    let (code, _) = run("fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }");
+    let (code, _) = run(
+        "fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }",
+    );
     assert_eq!(code, 42, "resume value replaces the random_i64 result");
 
     // 3. A non-resuming arm replaces the whole `with` block (handle-and-abort).
-    let (code, out) = run("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"NOPE\")\n 7 } }");
+    let (code, out) =
+        run("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"NOPE\")\n 7 } }");
     assert_eq!(code, 99, "non-resuming arm replaces the block value");
-    assert!(!out.contains("NOPE"), "abort handler also suppresses the op: {out:?}");
+    assert!(
+        !out.contains("NOPE"),
+        "abort handler also suppresses the op: {out:?}"
+    );
 
     // 4. Handler erases when no matching effect is raised (pure body).
-    let (code, _) = run("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+    let (code, _) =
+        run("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
     assert_eq!(code, 5, "no matching effect → body runs unchanged");
 
     // 5. An inline `return(v) => e` arm rewrites the body's final value.
@@ -386,7 +569,10 @@ fn phase6_handler_resume_semantics() {
     // 6. `resume` outside a handler arm is rejected at check time (resolver),
     //    so it never reaches runtime — exit 2 (static error), not a silent pass.
     let (code, _) = run("fn main() -> i64 { resume(0) }");
-    assert_eq!(code, 2, "resume outside a handler is a static (resolve) error");
+    assert_eq!(
+        code, 2,
+        "resume outside a handler is a static (resolve) error"
+    );
 
     // 7. A handler arm that itself performs the SAME effect it handles must NOT
     //    self-intercept into an infinite loop — shallow semantics run the arm
@@ -396,18 +582,28 @@ fn phase6_handler_resume_semantics() {
         "fn main() -> i64 { with handler { on IO(p) => { println(\"ARM\")\n resume(0) } } \
          { println(\"BODY\")\n 1 } }",
     );
-    assert_eq!(code, 1, "self-effecting arm must terminate, not loop: {out:?}");
-    assert!(out.contains("ARM"), "the arm's own IO runs (outside its handler): {out:?}");
-    assert!(!out.contains("BODY"), "the body's IO is still intercepted: {out:?}");
+    assert_eq!(
+        code, 1,
+        "self-effecting arm must terminate, not loop: {out:?}"
+    );
+    assert!(
+        out.contains("ARM"),
+        "the arm's own IO runs (outside its handler): {out:?}"
+    );
+    assert!(
+        !out.contains("BODY"),
+        "the body's IO is still intercepted: {out:?}"
+    );
 
     // 8. Nested handlers for the same effect: the INNER handler intercepts; the
     //    body's effect is caught once (no double-handling, no leak past inner).
-    let (code, out) = run(
-        "fn main() -> i64 { with handler { on IO(p) => resume(0) } \
-         { with handler { on IO(p) => resume(0) } { println(\"X\")\n 1 } } }",
-    );
+    let (code, out) = run("fn main() -> i64 { with handler { on IO(p) => resume(0) } \
+         { with handler { on IO(p) => resume(0) } { println(\"X\")\n 1 } } }");
     assert_eq!(code, 1, "nested same-effect handlers terminate: {out:?}");
-    assert!(!out.contains("X"), "nested handler intercepts the body print: {out:?}");
+    assert!(
+        !out.contains("X"),
+        "nested handler intercepts the body print: {out:?}"
+    );
 }
 
 #[test]
@@ -417,11 +613,19 @@ fn phase6_multishot_resume() {
     // performs exactly one effect and is otherwise pure. Each `resume(v)` reifies
     // the continuation by replaying the body with `v` fed at the intercepted op.
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_ms_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_ms_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // 1. Single non-tail resume: bind the result, then return it. The body
@@ -439,7 +643,10 @@ fn phase6_multishot_resume() {
         "fn main() -> i64 { with handler { on Random(p) => { let a = resume(2)\n let b = resume(5)\n a + b } } \
          { random_i64(0, 9) + 100 } }",
     );
-    assert_eq!(code, 207, "both resumes contribute (multi-shot), not just the first");
+    assert_eq!(
+        code, 207,
+        "both resumes contribute (multi-shot), not just the first"
+    );
 
     // 3. Backtracking: try two continuations, keep the max — a real multi-shot
     //    use. body = c*10+3; resume(0)→3, resume(1)→13; max = 13.
@@ -447,7 +654,10 @@ fn phase6_multishot_resume() {
         "fn main() -> i64 { with handler { on Random(p) => { let lo = resume(0)\n let hi = resume(1)\n if lo > hi { lo } else { hi } } } \
          { let c = random_i64(0, 1)\n c * 10 + 3 } }",
     );
-    assert_eq!(code, 13, "multi-shot backtracking picks the better continuation");
+    assert_eq!(
+        code, 13,
+        "multi-shot backtracking picks the better continuation"
+    );
 
     // 4. UNSOUND case rejected (E1314): a body that performs another effect AFTER
     //    the intercepted op cannot be replayed (the side effect would re-fire).
@@ -457,16 +667,28 @@ fn phase6_multishot_resume() {
                    { let r = random_i64(0, 9)\n println(\"side\")\n r + 100 } }";
         let f = std::env::temp_dir().join(format!("axon_ms_unsound_{}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
     };
-    assert_eq!(code, 101, "effect-after-resume multi-shot is refused (E1314), not silently wrong");
+    assert_eq!(
+        code, 101,
+        "effect-after-resume multi-shot is refused (E1314), not silently wrong"
+    );
     assert!(err.contains("E1314"), "the refusal names E1314: {err:?}");
 
     // 5. The bare tail-resume FAST PATH is unchanged (single-shot, byte-identical):
     //    resume(42) replaces the random result directly.
-    let (code, _) = run("fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }");
+    let (code, _) = run(
+        "fn main() -> i64 { with handler { on Random(p) => resume(42) } { random_i64(0, 100) } }",
+    );
     assert_eq!(code, 42, "bare tail-resume fast path still single-shot");
 }
 
@@ -478,16 +700,19 @@ fn phase7_kernel_principal_authority() {
     // semantics are byte-identical to the userland oracle
     // (examples/stdlib/principal_mint.ax) — I-2. main returns 0 on all-pass.
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_kp_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_kp_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // Subset mint + carved budget (oracle test_mint_subset_works + carve).
-    let (code, _) = run(
-        "fn main() -> i64 { \
+    let (code, _) = run("fn main() -> i64 { \
            let r = principal_root(\"root\", true, true, true, 100)\n\
            let c = principal_mint(r, \"child\", true, false, true, 40)\n\
            assert(principal_holds(c, \"net\"))\n\
@@ -495,44 +720,49 @@ fn phase7_kernel_principal_authority() {
            assert(principal_holds(c, \"exec\"))\n\
            assert_eq(principal_budget_remaining(c), 40)\n\
            assert_eq(principal_budget_remaining(r), 60)\n\
-           0 }",
-    );
+           0 }");
     assert_eq!(code, 0, "kernel mint attenuates caps + carves budget");
 
     // Escalation is structurally impossible (oracle test_mint_cannot_escalate).
-    let (code, _) = run(
-        "fn main() -> i64 { \
+    let (code, _) = run("fn main() -> i64 { \
            let s = principal_root(\"sandbox\", false, true, false, 50)\n\
            let c = principal_mint(s, \"c\", true, true, true, 20)\n\
            assert(!principal_holds(c, \"net\"))\n\
            assert(!principal_holds(c, \"exec\"))\n\
            assert(principal_holds(c, \"fs_write\"))\n\
-           0 }",
-    );
+           0 }");
     assert_eq!(code, 0, "a child cannot gain a cap the parent lacks");
 
     // Over-grant clamps to the parent's remaining (oracle test_overgrant).
-    let (code, _) = run(
-        "fn main() -> i64 { \
+    let (code, _) = run("fn main() -> i64 { \
            let r = principal_root(\"root\", true, true, true, 50)\n\
            let c = principal_mint(r, \"greedy\", true, true, true, 200)\n\
            assert_eq(principal_budget_remaining(c), 50)\n\
            assert_eq(principal_budget_remaining(r), 0)\n\
-           0 }",
+           0 }");
+    assert_eq!(
+        code, 0,
+        "an over-grant is clamped — authority can't be conjured"
     );
-    assert_eq!(code, 0, "an over-grant is clamped — authority can't be conjured");
 
     // An invalid parent handle is refused (E1601 defense-in-depth), not a silent
     // grant. -1 is never a valid handle.
     let (code, err) = {
-        let src = "fn main() -> i64 { let c = principal_mint(0 - 1, \"x\", true, true, true, 10)\n c }";
+        let src =
+            "fn main() -> i64 { let c = principal_mint(0 - 1, \"x\", true, true, true, 10)\n c }";
         let f = std::env::temp_dir().join(format!("axon_kp_bad_{}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stderr).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
     };
-    assert_eq!(code, 101, "an invalid parent handle is refused, not granted");
+    assert_eq!(
+        code, 101,
+        "an invalid parent handle is refused, not granted"
+    );
     assert!(err.contains("E1601"), "the refusal names E1601: {err:?}");
 }
 
@@ -542,11 +772,22 @@ fn phase7_kernel_scheduler() {
     // runs them in a seed-deterministic round-robin, and CATCHES a panicking
     // fiber (recorded failed, not a process abort) — the gate for Slice 2.
     let run_seed = |src: &str, seed: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_sched_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_sched_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", seed).output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", seed)
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // Fan out 4 workers; worker(2) panics. The run completes 3, catches 1, and
@@ -564,7 +805,10 @@ fn phase7_kernel_scheduler() {
                  assert_eq(scheduler_failed_count(), 1)\n\
                  0 }";
     let (code, _) = run_seed(src, "1");
-    assert_eq!(code, 0, "a panicking fiber is caught, not fatal; others complete");
+    assert_eq!(
+        code, 0,
+        "a panicking fiber is caught, not fatal; others complete"
+    );
 
     // Determinism: the same program + same AXON_SEED yields identical stdout.
     let demo = "fn w(n: i64) -> i64 { n }\n\
@@ -576,8 +820,14 @@ fn phase7_kernel_scheduler() {
                   0 }";
     let (_, out1) = run_seed(demo, "42");
     let (_, out2) = run_seed(demo, "42");
-    assert_eq!(out1, out2, "same seed ⇒ identical scheduler output (determinism)");
-    assert!(out1.contains("10,20"), "fibers collected their results: {out1:?}");
+    assert_eq!(
+        out1, out2,
+        "same seed ⇒ identical scheduler output (determinism)"
+    );
+    assert!(
+        out1.contains("10,20"),
+        "fibers collected their results: {out1:?}"
+    );
 
     // Supervisor hook: a failed fiber re-queued by scheduler_restart runs again on
     // the next scheduler_run (the Slice-3 substrate).
@@ -602,9 +852,14 @@ fn phase7_kernel_supervisor() {
     // subtree (Flow::Halted, exit 4) after the max-restart intensity is exceeded
     // — not a process crash, not an infinite loop. A healthy set never restarts.
     let run = |src: &str| -> (i32, String, String) {
-        let f = std::env::temp_dir().join(format!("axon_sup_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_sup_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
@@ -623,7 +878,10 @@ fn phase7_kernel_supervisor() {
                   let _ = supervisor_run(sup)\n\
                   0 }";
     let (code, _, err) = run(halt);
-    assert_eq!(code, 4, "a supervised crash loop halts the subtree (exit 4), not the process");
+    assert_eq!(
+        code, 4,
+        "a supervised crash loop halts the subtree (exit 4), not the process"
+    );
     assert!(err.contains("E1602"), "the halt names E1602: {err:?}");
 
     // Healthy set: workers that succeed → 0 restart rounds, supervisor alive,
@@ -642,7 +900,10 @@ fn phase7_kernel_supervisor() {
                 assert_eq(scheduler_result(b), 20)\n\
                 0 }";
     let (code, _, _) = run(ok);
-    assert_eq!(code, 0, "a healthy supervised set never restarts and stays alive");
+    assert_eq!(
+        code, 0,
+        "a healthy supervised set never restarts and stays alive"
+    );
 }
 
 #[test]
@@ -663,32 +924,34 @@ fn phase7_kernel_durable_store() {
             .env("XDG_CACHE_HOME", &cache)
             .output()
             .unwrap();
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // Process 1: linearizable; ops 1,2 + a deduped retry of 2 → value 150, ver 2.
-    let (code, out1) = run(
-        "fn main() -> i64 { \
+    let (code, out1) = run("fn main() -> i64 { \
            let s = dstore_open(\"k\", 1)\n\
            let _ = dstore_apply(s, 1, 100)\n\
            let _ = dstore_apply(s, 2, 50)\n\
            let _ = dstore_apply(s, 2, 50)\n\
            println(\"{to_str(dstore_value(s))},{to_str(dstore_version(s))}\")\n\
-           0 }",
-    );
+           0 }");
     assert_eq!(code, 0);
-    assert!(out1.contains("150,2"), "linearizable dedups the retry in-process: {out1:?}");
+    assert!(
+        out1.contains("150,2"),
+        "linearizable dedups the retry in-process: {out1:?}"
+    );
 
     // Process 2 (FRESH process, same cache): replay → 150,2; retrying op 2 still
     // dedups (cross-process `seen` reconstructed); a new op applies.
-    let (code, out2) = run(
-        "fn main() -> i64 { \
+    let (code, out2) = run("fn main() -> i64 { \
            let s = dstore_open(\"k\", 1)\n\
            let _ = dstore_apply(s, 2, 50)\n\
            let _ = dstore_apply(s, 3, 7)\n\
            println(\"{to_str(dstore_value(s))},{to_str(dstore_version(s))}\")\n\
-           0 }",
-    );
+           0 }");
     assert_eq!(code, 0);
     assert!(
         out2.contains("157,3"),
@@ -696,19 +959,23 @@ fn phase7_kernel_durable_store() {
     );
 
     // at_least_once double-counts a retry, and that double-count persists.
-    let (_, out3) = run(
-        "fn main() -> i64 { \
+    let (_, out3) = run("fn main() -> i64 { \
            let s = dstore_open(\"alo\", 0)\n\
            let _ = dstore_apply(s, 1, 100)\n\
            let _ = dstore_apply(s, 1, 100)\n\
            println(\"{to_str(dstore_value(s))}\")\n\
-           0 }",
+           0 }");
+    assert!(
+        out3.contains("200"),
+        "at_least_once re-applies a retry: {out3:?}"
     );
-    assert!(out3.contains("200"), "at_least_once re-applies a retry: {out3:?}");
     let (_, out4) = run(
         "fn main() -> i64 { let s = dstore_open(\"alo\", 0)\n println(\"{to_str(dstore_value(s))}\")\n 0 }",
     );
-    assert!(out4.contains("200"), "the at_least_once double-count persists: {out4:?}");
+    assert!(
+        out4.contains("200"),
+        "the at_least_once double-count persists: {out4:?}"
+    );
 
     let _ = std::fs::remove_dir_all(&cache);
 }
@@ -721,17 +988,24 @@ fn phase7_kernel_llm_gateway() {
     // not crash). The R12 gate: a call charges the real token count and the
     // gateway refuses to exceed the principal's budget.
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_llm_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_llm_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // Two affordable calls debit the principal; the third overruns → fallback +
     // latch; the principal's budget is the authoritative cap.
-    let (code, _) = run(
-        "fn main() -> i64 { \
+    let (code, _) = run("fn main() -> i64 { \
            let p = principal_root(\"agent\", true, false, false, 50000)\n\
            let gw = llm_open(\"haiku\", 5000, p, \"[fb]\")\n\
            assert_eq(llm_complete(gw, \"a\", 2000), 10000)\n\
@@ -742,28 +1016,33 @@ fn phase7_kernel_llm_gateway() {
            assert(!llm_alive(gw))\n\
            assert_eq(llm_spent(gw), 20000)\n\
            assert_eq(principal_budget_remaining(p), 30000)\n\
-           0 }",
+           0 }");
+    assert_eq!(
+        code, 0,
+        "real per-token cost debits the principal; overrun latches"
     );
-    assert_eq!(code, 0, "real per-token cost debits the principal; overrun latches");
 
     // Once latched, every later call falls back — even one that would have fit.
-    let (code, _) = run(
-        "fn main() -> i64 { \
+    let (code, _) = run("fn main() -> i64 { \
            let p = principal_root(\"agent\", true, false, false, 5000)\n\
            let gw = llm_open(\"opus\", 60000, p, \"[fb]\")\n\
            assert_eq(llm_complete(gw, \"big\", 1000), 0 - 1)\n\
            assert(!llm_alive(gw))\n\
            assert_eq(llm_complete(gw, \"tiny\", 1), 0 - 1)\n\
            assert_eq(llm_spent(gw), 0)\n\
-           0 }",
+           0 }");
+    assert_eq!(
+        code, 0,
+        "an overrun latches; later affordable calls still fall back"
     );
-    assert_eq!(code, 0, "an overrun latches; later affordable calls still fall back");
 
     // An LLM gateway must be scoped to a real principal (E1604).
-    let (code, _) = run(
-        "fn main() -> i64 { let gw = llm_open(\"m\", 1000, 0 - 1, \"[fb]\")\n gw }",
+    let (code, _) =
+        run("fn main() -> i64 { let gw = llm_open(\"m\", 1000, 0 - 1, \"[fb]\")\n gw }");
+    assert_eq!(
+        code, 101,
+        "an LLM gateway on an unknown principal is refused (E1604)"
     );
-    assert_eq!(code, 101, "an LLM gateway on an unknown principal is refused (E1604)");
 }
 
 #[test]
@@ -774,44 +1053,49 @@ fn phase8_surface_search_keywords() {
     // so they type-check and run; this asserts they parse + optimize a real
     // @[adaptive] metric to its peak.
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_p8_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_p8_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), String::from_utf8_lossy(&out.stdout).to_string())
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+        )
     };
 
     // `for!<HillClimb> maximize` optimizes the metric to its peak (100 at x=7).
-    let (code, out) = run(
-        "@[adaptive]\n\
+    let (code, out) = run("@[adaptive]\n\
          fn score(x: i64) -> i64 { 0 - (x - 7) * (x - 7) + 100 }\n\
          fn main() -> i64 { \
            let best = for!<HillClimb> maximize \"score\" to 100.0 in 50\n\
            println(\"{to_str_f64(best)}\")\n\
-           goal_best_input(\"score\", 100.0) }",
-    );
+           goal_best_input(\"score\", 100.0) }");
     assert_eq!(code, 7, "for! optimized to the peak input x=7");
     assert!(out.contains("100"), "for! reached the peak score: {out:?}");
 
     // The default strategy (no `<...>`) also works.
-    let (code, _) = run(
-        "@[adaptive]\n\
+    let (code, _) = run("@[adaptive]\n\
          fn s(x: i64) -> i64 { 0 - x + 100 }\n\
-         fn main() -> i64 { let _ = for! maximize \"s\" to 100.0 in 10\n 0 }",
-    );
+         fn main() -> i64 { let _ = for! maximize \"s\" to 100.0 in 10\n 0 }");
     assert_eq!(code, 0, "for! with the default strategy parses + runs");
 
     // `goal { … }` block desugars to the same optimizer.
-    let (code, out) = run(
-        "@[adaptive]\n\
+    let (code, out) = run("@[adaptive]\n\
          fn score(x: i64) -> i64 { 0 - (x - 5) * (x - 5) + 80 }\n\
          fn main() -> i64 { \
            let best = goal { metric: \"score\", target: 80.0, budget: 40 }\n\
            println(\"{to_str_f64(best)}\")\n\
-           0 }",
-    );
+           0 }");
     assert_eq!(code, 0);
-    assert!(out.contains("80"), "goal block reached the peak score: {out:?}");
+    assert!(
+        out.contains("80"),
+        "goal block reached the peak score: {out:?}"
+    );
 
     // `goal { … subject_to: … }` desugars to the CONSTRAINED optimizer
     // (goal_run_constrained): `revenue` races to the target unconstrained, but the
@@ -824,19 +1108,23 @@ fn phase8_surface_search_keywords() {
            let capped = goal { metric: \"revenue\", subject_to: \"cap\", target: 100.0, budget: 200 }\n\
            if capped <= 50.0 { 0 } else { 1 } }",
     );
-    assert_eq!(code, 0, "goal-block subject_to must desugar to constrained search (held at the cap): {out:?}");
+    assert_eq!(
+        code, 0,
+        "goal-block subject_to must desugar to constrained search (held at the cap): {out:?}"
+    );
 
     // `goal { … choices: N }` desugars to the CATEGORICAL optimizer
     // (goal_run_categorical): exhaustive over the 6 unordered choices finds the
     // isolated best (#3, score 100) a hill-climb would miss.
-    let (code, out) = run(
-        "@[adaptive]\n\
+    let (code, out) = run("@[adaptive]\n\
          fn pick(choice: i64) -> i64 { if choice == 3 { 100 } else { 10 } }\n\
          fn main() -> i64 { \
            let best = goal { metric: \"pick\", choices: 6, target: 100.0, budget: 0 }\n\
-           if best == 100.0 { 0 } else { 1 } }",
+           if best == 100.0 { 0 } else { 1 } }");
+    assert_eq!(
+        code, 0,
+        "goal-block choices must desugar to categorical search (finds #3): {out:?}"
     );
-    assert_eq!(code, 0, "goal-block choices must desugar to categorical search (finds #3): {out:?}");
 
     // `choices:` and `subject_to:` are mutually exclusive — a parse error, not a
     // silent precedence.
@@ -846,7 +1134,10 @@ fn phase8_surface_search_keywords() {
          fn ok(c: i64) -> bool { true }\n\
          fn main() -> i64 { let _ = goal { metric: \"p\", choices: 4, subject_to: \"ok\", target: 1.0, budget: 4 }\n 0 }",
     );
-    assert_ne!(code, 0, "combining choices and subject_to must be a parse error");
+    assert_ne!(
+        code, 0,
+        "combining choices and subject_to must be a parse error"
+    );
 
     // Regression: a plain `for` loop and a `goal_run(...)` call are unaffected by
     // the new surface forms (the `!` / `goal {` triggers are narrow).
@@ -865,9 +1156,13 @@ fn phase6_handler_arm_bodies_are_name_resolved() {
     // Now arm bodies resolve, each in a scope where the arm's payload binding and
     // `resume` (the handler continuation form) are defined.
     let write = |src: &str| -> std::process::Output {
-        let f = std::env::temp_dir().join(format!("axon_arm_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_arm_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         out
     };
@@ -877,31 +1172,50 @@ fn phase6_handler_arm_bodies_are_name_resolved() {
         "fn fetch() -> i64 | {Net} { 0 }\n\
          fn f() -> i64 | {} { with handler { on Net(e) => totally_undefined_xyz(0) } { fetch() } }",
     );
-    assert_eq!(bad.status.code(), Some(2), "undefined name in an arm body must be rejected");
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "undefined name in an arm body must be rejected"
+    );
     let bmsg = format!(
         "{}{}",
         String::from_utf8_lossy(&bad.stdout),
         String::from_utf8_lossy(&bad.stderr)
     );
-    assert!(bmsg.contains("E0001"), "should report the unknown name as E0001: {bmsg}");
+    assert!(
+        bmsg.contains("E0001"),
+        "should report the unknown name as E0001: {bmsg}"
+    );
 
     // `resume` resolves inside an arm body (it is bound as the continuation form).
     let resume_ok = write(
         "fn fetch() -> i64 | {Net} { 0 }\n\
          fn f() -> i64 | {} { with handler { on Net(e) => resume(0) } { fetch() } }",
     );
-    assert_eq!(resume_ok.status.code(), Some(0), "resume must resolve inside an arm: {resume_ok:?}");
+    assert_eq!(
+        resume_ok.status.code(),
+        Some(0),
+        "resume must resolve inside an arm: {resume_ok:?}"
+    );
 
     // The arm's payload binding is in scope inside the arm body.
     let bind_ok = write(
         "fn fetch() -> i64 | {Net} { 0 }\n\
          fn f() -> i64 | {} { with handler { on Net(e) => e } { fetch() } }",
     );
-    assert_eq!(bind_ok.status.code(), Some(0), "arm payload binding must resolve: {bind_ok:?}");
+    assert_eq!(
+        bind_ok.status.code(),
+        Some(0),
+        "arm payload binding must resolve: {bind_ok:?}"
+    );
 
     // `resume` is NOT bound outside a handler arm — it stays an unknown name.
     let resume_outside = write("fn g() -> i64 { resume(0) }");
-    assert_eq!(resume_outside.status.code(), Some(2), "resume outside an arm must be unknown");
+    assert_eq!(
+        resume_outside.status.code(),
+        Some(2),
+        "resume outside an arm must be unknown"
+    );
 }
 
 #[test]
@@ -912,16 +1226,33 @@ fn phase6_verification_checklist() {
     // overhead — are covered by the parity harnesses; this is the interp/check
     // surface.)
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_p6ck_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_p6ck_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     let run = |src: &str| -> i32 {
-        let f = std::env::temp_dir().join(format!("axon_p6rn_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_p6rn_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").env("AXON_SEED", "42").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .env("AXON_SEED", "42")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         out.status.code().unwrap_or(-1)
     };
@@ -968,8 +1299,17 @@ fn phase6_verification_checklist() {
 
     // 7. @[pure] + a non-empty row, and @[contained]-cap + a too-small row, are
     //    both contradictions (consistency between purity/capability and rows).
-    assert_eq!(check("@[pure]\nfn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }").0, 2, "@[pure]+row contradiction");
-    assert_eq!(check("@[contained(net: [\"x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }").0, 2, "@[contained]+empty-row contradiction");
+    assert_eq!(
+        check("@[pure]\nfn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }").0,
+        2,
+        "@[pure]+row contradiction"
+    );
+    assert_eq!(
+        check("@[contained(net: [\"x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }")
+            .0,
+        2,
+        "@[contained]+empty-row contradiction"
+    );
 }
 
 #[test]
@@ -980,18 +1320,34 @@ fn phase6_effect_row_subsumption_is_enforced_by_check() {
     // row `| {}` that calls an IO builtin is rejected; the `| {IO}` variant is
     // clean. (This is the exact gap where the pass was added to one pipeline but
     // not the one `axon check` invokes.)
-    let bad = axon().args(["check", &fixture("effect_row_leak.ax")]).output().unwrap();
-    assert_eq!(bad.status.code(), Some(2), "effect-row leak must be rejected");
+    let bad = axon()
+        .args(["check", &fixture("effect_row_leak.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "effect-row leak must be rejected"
+    );
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&bad.stdout),
         String::from_utf8_lossy(&bad.stderr)
     );
     assert!(msg.contains("E1310"), "expected E1310, got: {msg}");
-    assert!(msg.contains("IO"), "message should name the IO effect: {msg}");
+    assert!(
+        msg.contains("IO"),
+        "message should name the IO effect: {msg}"
+    );
 
-    let ok = axon().args(["check", &fixture("effect_row_ok.ax")]).output().unwrap();
-    assert!(ok.status.success(), "a fn that declares `| {{IO}}` should check clean");
+    let ok = axon()
+        .args(["check", &fixture("effect_row_ok.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "a fn that declares `| {{IO}}` should check clean"
+    );
 }
 
 #[test]
@@ -999,8 +1355,15 @@ fn contained_capability_sandbox_is_enforced_by_check() {
     // Regression: `@[contained(...)]` I/O sandboxing must be enforced by the CLI
     // check pipeline, not only the library path. A write outside the fs allowlist
     // is rejected; a compliant contained fn checks clean.
-    let bad = axon().args(["check", &fixture("contained_fail_fs.ax")]).output().unwrap();
-    assert_eq!(bad.status.code(), Some(2), "containment violation must be rejected");
+    let bad = axon()
+        .args(["check", &fixture("contained_fail_fs.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "containment violation must be rejected"
+    );
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&bad.stdout),
@@ -1008,8 +1371,14 @@ fn contained_capability_sandbox_is_enforced_by_check() {
     );
     assert!(msg.contains("E1001"), "expected E1001, got: {msg}");
 
-    let ok = axon().args(["check", &fixture("contained_pass.ax")]).output().unwrap();
-    assert!(ok.status.success(), "compliant @[contained] fn should check clean");
+    let ok = axon()
+        .args(["check", &fixture("contained_pass.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "compliant @[contained] fn should check clean"
+    );
 }
 
 #[test]
@@ -1021,11 +1390,22 @@ fn contained_sandbox_rejects_path_traversal_e1001() {
     // allowlist, so it must be rejected (E1001). Legitimate paths (incl.
     // filenames with literal dots) are unaffected.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_trav_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_trav_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // `..` traversal out of the allowed prefix → rejected.
@@ -1053,11 +1433,22 @@ fn contained_sandbox_rejects_dynamic_path_fails_closed_e1001() {
     // or building it via interpolation. It now fails CLOSED (E1001): an
     // unverifiable target can escape the allowlist and nothing enforces it later.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_dynp_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_dynp_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // Path as a parameter → unverifiable → rejected.
@@ -1126,12 +1517,27 @@ fn contained_sandbox_is_enforced_transitively_through_helpers() {
         ),
     ];
     for (label, src) in cases {
-        let f = std::env::temp_dir().join(format!("axon_captrans_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_captrans_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "{label}: a laundered I/O must be rejected: {msg}");
+        let msg = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: a laundered I/O must be rejected: {msg}"
+        );
         assert!(msg.contains("E1001"), "{label}: expected E1001: {msg}");
     }
 
@@ -1145,10 +1551,21 @@ fn contained_sandbox_is_enforced_transitively_through_helpers() {
         fn main() -> i64 { scorer() }\n";
     let f = std::env::temp_dir().join(format!("axon_capsafe_{}.ax", std::process::id()));
     std::fs::write(&f, safe).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "allowed transitive I/O + recursion must check clean: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "allowed transitive I/O + recursion must check clean: {msg}"
+    );
 }
 
 #[test]
@@ -1160,9 +1577,20 @@ fn no_main_function_is_a_clean_error_exit_2() {
     std::fs::write(&f, "fn helper() -> i64 { 5 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(2), "no main must be a compile error (exit 2): {msg}");
-    assert!(msg.contains("no `main`"), "the error must name the missing main: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "no main must be a compile error (exit 2): {msg}"
+    );
+    assert!(
+        msg.contains("no `main`"),
+        "the error must name the missing main: {msg}"
+    );
     assert!(!msg.contains("panic"), "must NOT be a panic: {msg}");
 }
 
@@ -1179,26 +1607,57 @@ fn exec_builtin_runs_and_is_capability_gated() {
     let runf = dir.join("run.ax");
     std::fs::write(&runf,
         "fn main() -> i64 { match exec(\"echo\", [\"hi\"]) { Ok(s) => { print(s)  0 } Err(_) => 1 } }\n").unwrap();
-    let run = axon().args(["run", runf.to_str().unwrap()]).output().unwrap();
+    let run = axon()
+        .args(["run", runf.to_str().unwrap()])
+        .output()
+        .unwrap();
     let run_out = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(run.status.code(), Some(0), "exec(echo) should succeed: {run_out}");
-    assert!(run_out.contains("hi"), "exec must return the process stdout: {run_out}");
+    assert_eq!(
+        run.status.code(),
+        Some(0),
+        "exec(echo) should succeed: {run_out}"
+    );
+    assert!(
+        run_out.contains("hi"),
+        "exec must return the process stdout: {run_out}"
+    );
 
     // (2) exec: none → E1001 at check (the dormant exec axis is now live).
     let denyf = dir.join("deny.ax");
     std::fs::write(&denyf,
         "@[contained(exec: none)]\nfn r() -> i64 { match exec(\"ls\", []) { Ok(_) => 0  Err(_) => 1 } }\nfn main() -> i64 { r() }\n").unwrap();
-    let deny = axon().args(["check", denyf.to_str().unwrap()]).output().unwrap();
-    let deny_msg = format!("{}{}", String::from_utf8_lossy(&deny.stdout), String::from_utf8_lossy(&deny.stderr));
-    assert_eq!(deny.status.code(), Some(2), "exec: none must reject exec: {deny_msg}");
-    assert!(deny_msg.contains("E1001"), "exec denial is E1001: {deny_msg}");
+    let deny = axon()
+        .args(["check", denyf.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let deny_msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&deny.stdout),
+        String::from_utf8_lossy(&deny.stderr)
+    );
+    assert_eq!(
+        deny.status.code(),
+        Some(2),
+        "exec: none must reject exec: {deny_msg}"
+    );
+    assert!(
+        deny_msg.contains("E1001"),
+        "exec denial is E1001: {deny_msg}"
+    );
 
     // (3) exec: any → clean check.
     let allowf = dir.join("allow.ax");
     std::fs::write(&allowf,
         "@[contained(exec: any)]\nfn r() -> i64 { match exec(\"true\", []) { Ok(_) => 0  Err(_) => 1 } }\nfn main() -> i64 { r() }\n").unwrap();
-    let allow = axon().args(["check", allowf.to_str().unwrap()]).output().unwrap();
-    assert!(allow.status.success(), "exec: any must allow exec: {:?}", allow);
+    let allow = axon()
+        .args(["check", allowf.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        allow.status.success(),
+        "exec: any must allow exec: {:?}",
+        allow
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -1207,14 +1666,25 @@ fn exec_builtin_runs_and_is_capability_gated() {
 fn typed_let_bindings_enforce_the_annotation() {
     // `let x: T = e` parses and enforces the annotation.
     let f = std::env::temp_dir().join(format!("axon_tlet_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  y }\n").unwrap();
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { let x: i64 = 5  let y: i64 = x * 2  y }\n",
+    )
+    .unwrap();
     let ok = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     assert_eq!(ok.status.code(), Some(10), "typed let should run: y = 10");
 
     std::fs::write(&f, "fn main() -> i64 { let x: str = 5  0 }\n").unwrap();
-    let bad = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let bad = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(bad.status.code(), Some(2), "a type-mismatched annotation must be rejected");
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "a type-mismatched annotation must be rejected"
+    );
 }
 
 #[test]
@@ -1235,9 +1705,17 @@ fn to_str_is_polymorphic_over_scalars() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "polymorphic to_str should check + run clean: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "polymorphic to_str should check + run clean: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(stdout, "42\n3.14\ntrue\nfalse\n", "to_str output must match specialized builtins: {stdout:?}");
+    assert_eq!(
+        stdout, "42\n3.14\ntrue\nfalse\n",
+        "to_str output must match specialized builtins: {stdout:?}"
+    );
 }
 
 #[test]
@@ -1256,7 +1734,12 @@ fn to_str_polymorphic_matches_specialized_in_interpolation() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "to_str in interpolation should run: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "to_str in interpolation should run: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout), "pi=3.5 ok=true\n");
 }
 
@@ -1268,8 +1751,16 @@ fn invalid_radix_fails_fast() {
     std::fs::write(&f, "fn main() { println(i64_to_str_radix(255, 0)) }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(101), "invalid radix should panic, not return \"\"");
-    assert!(String::from_utf8_lossy(&out.stderr).contains("radix must be"), "stderr: {:?}", out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(101),
+        "invalid radix should panic, not return \"\""
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("radix must be"),
+        "stderr: {:?}",
+        out.stderr
+    );
 }
 
 #[test]
@@ -1286,7 +1777,10 @@ fn verify_failure_and_crash_have_distinct_exit_codes() {
          fn main() -> i64 { let x = low()  0 }\n",
     )
     .unwrap();
-    let v = axon().args(["run", vfail.to_str().unwrap()]).output().unwrap();
+    let v = axon()
+        .args(["run", vfail.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&vfail);
     assert_eq!(
         v.status.code(),
@@ -1304,7 +1798,10 @@ fn verify_failure_and_crash_have_distinct_exit_codes() {
     // A genuine crash on the same `run` path must remain 101, NOT be reclassified.
     let crash = std::env::temp_dir().join(format!("axon_crash_{}.ax", std::process::id()));
     std::fs::write(&crash, "fn main() -> i64 { let a = [1, 2]  a[99] }\n").unwrap();
-    let c = axon().args(["run", crash.to_str().unwrap()]).output().unwrap();
+    let c = axon()
+        .args(["run", crash.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&crash);
     assert_eq!(
         c.status.code(),
@@ -1319,11 +1816,22 @@ fn deeply_nested_input_fails_gracefully_not_aborts() {
     // Adversarially deep nesting must be a clean parse error (exit 2), not a
     // parser stack overflow (exit 134 / SIGABRT).
     let f = std::env::temp_dir().join(format!("axon_nest_{}.ax", std::process::id()));
-    let src = format!("fn main() -> i64 {{ {}1{} }}\n", "(".repeat(50000), ")".repeat(50000));
+    let src = format!(
+        "fn main() -> i64 {{ {}1{} }}\n",
+        "(".repeat(50000),
+        ")".repeat(50000)
+    );
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "deep nesting should be a clean parse error, not abort");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "deep nesting should be a clean parse error, not abort"
+    );
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("nesting too deep")
             || String::from_utf8_lossy(&out.stderr).contains("nesting too deep"),
@@ -1344,7 +1852,11 @@ fn deep_recursion_fails_gracefully_not_aborts() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(101), "deep recursion should panic gracefully, not abort");
+    assert_eq!(
+        out.status.code(),
+        Some(101),
+        "deep recursion should panic gracefully, not abort"
+    );
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("recursion limit"),
         "stderr: {}",
@@ -1401,7 +1913,11 @@ fn moderate_recursion_works() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "5000-deep recursion should run (5000 % 100 = 0)");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "5000-deep recursion should run (5000 % 100 = 0)"
+    );
 }
 
 #[test]
@@ -1434,12 +1950,21 @@ fn all_examples_typecheck_clean() {
     );
     let mut files = Vec::new();
     collect(std::path::Path::new(&root), &mut files);
-    assert!(files.len() >= 20, "expected many examples, found {}", files.len());
+    assert!(
+        files.len() >= 20,
+        "expected many examples, found {}",
+        files.len()
+    );
     // Deny-case examples are DESIGNED to fail `check` (they demonstrate the
     // compiler rejecting a violation). They are guarded by their own tests
     // (e.g. `contained_violation_demo_is_rejected_by_check`), so exclude them
     // from the "must check clean" sweep.
-    const DENY_CASE_EXAMPLES: &[&str] = &["contained_violation.ax", "agent_task_evil.ax", "agent_task_subtle.ax", "agent_task_secrets.ax"];
+    const DENY_CASE_EXAMPLES: &[&str] = &[
+        "contained_violation.ax",
+        "agent_task_evil.ax",
+        "agent_task_subtle.ax",
+        "agent_task_secrets.ax",
+    ];
     for f in &files {
         if f.file_name()
             .and_then(|n| n.to_str())
@@ -1474,7 +1999,11 @@ fn chan_type_as_function_parameter() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(81), "worker(c, 9) sends 81 over the channel");
+    assert_eq!(
+        out.status.code(),
+        Some(81),
+        "worker(c, 9) sends 81 over the channel"
+    );
 }
 
 #[test]
@@ -1491,7 +2020,11 @@ fn select_fires_first_ready_channel() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "the ready (b) arm should fire → result 2");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "the ready (b) arm should fire → result 2"
+    );
 }
 
 #[test]
@@ -1506,13 +2039,33 @@ fn ad_optimizer_flagship_demo_runs_the_full_stack() {
         .env("AXON_SEED", "42")
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(0), "flagship should run clean: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "flagship should run clean: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("searched 80 variants"), "tournament searches the budget: {stdout}");
-    assert!(stdout.contains("best variant #35"), "converges on the best variant: {stdout}");
-    assert!(stdout.contains("confidence 0.92"), "ROAS carries Uncertain confidence: {stdout}");
-    assert!(stdout.contains("compiler-capped at 500"), "spend is @[verify]-bounded: {stdout}");
-    assert!(stdout.contains("creative refresh"), "Temporal fatigue triggers a refresh: {stdout}");
+    assert!(
+        stdout.contains("searched 80 variants"),
+        "tournament searches the budget: {stdout}"
+    );
+    assert!(
+        stdout.contains("best variant #35"),
+        "converges on the best variant: {stdout}"
+    );
+    assert!(
+        stdout.contains("confidence 0.92"),
+        "ROAS carries Uncertain confidence: {stdout}"
+    );
+    assert!(
+        stdout.contains("compiler-capped at 500"),
+        "spend is @[verify]-bounded: {stdout}"
+    );
+    assert!(
+        stdout.contains("creative refresh"),
+        "Temporal fatigue triggers a refresh: {stdout}"
+    );
 }
 
 #[test]
@@ -1520,16 +2073,34 @@ fn spawn_channel_fanout_collects_results() {
     // Cooperative concurrency: spawn one worker per candidate to send its score
     // to a channel, then collect — the fan-out/collect pattern runs and the best
     // score (88) is found.
-    let out = axon().args(["run", &ex("asi/parallel_score.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(88), "best fan-out score should be 88");
+    let out = axon()
+        .args(["run", &ex("asi/parallel_score.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(88),
+        "best fan-out score should be 88"
+    );
 }
 
 #[test]
 fn contained_scorer_demo_runs_and_blocks_exfiltration() {
     // The sandboxed scorer demo runs clean...
-    let out = axon().args(["run", &ex("asi/contained.ax")]).output().unwrap();
-    assert!(out.status.success(), "contained demo exited {:?}", out.status.code());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("score = 70"), "stdout: {:?}", out.stdout);
+    let out = axon()
+        .args(["run", &ex("asi/contained.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "contained demo exited {:?}",
+        out.status.code()
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("score = 70"),
+        "stdout: {:?}",
+        out.stdout
+    );
     // ...and adding a network (LLM) call under the same @[contained] spec is rejected.
     let bad = std::env::temp_dir().join(format!("axon_cexfil_{}.ax", std::process::id()));
     std::fs::write(
@@ -1538,14 +2109,30 @@ fn contained_scorer_demo_runs_and_blocks_exfiltration() {
          fn main() -> i64 { s() }\n",
     )
     .unwrap();
-    let r = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let r = axon()
+        .args(["check", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
-    assert_eq!(r.status.code(), Some(2), "exfiltration via net must be rejected");
-    let msg = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
+    assert_eq!(
+        r.status.code(),
+        Some(2),
+        "exfiltration via net must be rejected"
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&r.stdout),
+        String::from_utf8_lossy(&r.stderr)
+    );
     assert!(msg.contains("E1001"), "expected E1001, got: {msg}");
     // Bug #8: error messages must suggest the fix.
-    assert!(msg.contains("Add") || msg.contains("try") || msg.contains("use") || msg.contains("specify"),
-        "expected fix suggestion in error message, got: {msg}");
+    assert!(
+        msg.contains("Add")
+            || msg.contains("try")
+            || msg.contains("use")
+            || msg.contains("specify"),
+        "expected fix suggestion in error message, got: {msg}"
+    );
 }
 
 #[test]
@@ -1554,10 +2141,25 @@ fn contained_violation_demo_is_rejected_by_check() {
     // capability gate's enforcement is visible (not just provable in a unit
     // test). `axon check examples/asi/contained_violation.ax` must FAIL with
     // E1001, demonstrating the compiler refusing to build an exfiltrating fn.
-    let out = axon().args(["check", &ex("asi/contained_violation.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(2), "violation demo must be rejected by check: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("E1001"), "expected E1001 for the violation demo, got: {msg}");
+    let out = axon()
+        .args(["check", &ex("asi/contained_violation.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "violation demo must be rejected by check: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("E1001"),
+        "expected E1001 for the violation demo, got: {msg}"
+    );
 }
 
 #[test]
@@ -1567,13 +2169,31 @@ fn flagship_evil_agent_is_refused_on_all_three_vectors() {
     // arg), and exec (curl) — are each refused at compile time. This guards the
     // demo's narration AND the dynamic-arg fail-closed fix in capabilities.rs:
     // the interpolated net call must NOT launder past `net: []`.
-    let out = axon().args(["check", &ex("flagship/agent_task_evil.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(2), "evil agent must be refused: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let out = axon()
+        .args(["check", &ex("flagship/agent_task_evil.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "evil agent must be refused: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let n = msg.matches("E1001").count();
-    assert_eq!(n, 3, "expected 3 E1001 (fs-read, net, exec), got {n}: {msg}");
+    assert_eq!(
+        n, 3,
+        "expected 3 E1001 (fs-read, net, exec), got {n}: {msg}"
+    );
     assert!(msg.contains("read_file"), "missing fs-read denial: {msg}");
-    assert!(msg.contains("ai_complete"), "missing net denial (interpolation laundering?): {msg}");
+    assert!(
+        msg.contains("ai_complete"),
+        "missing net denial (interpolation laundering?): {msg}"
+    );
     assert!(msg.contains("exec"), "missing exec denial: {msg}");
 }
 
@@ -1584,12 +2204,33 @@ fn flagship_subtle_agent_cannot_abuse_a_granted_capability() {
     // literal-only sandbox would wave the dynamic write through; Axon fails closed
     // (E1001). Guards the capabilities.rs dynamic-path fix end-to-end AND the demo
     // narration. The literal `./out/report.txt` write must NOT be flagged.
-    let out = axon().args(["check", &ex("flagship/agent_task_subtle.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(2), "subtle agent must be refused: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("E1001"), "out-of-lane dynamic write must be E1001: {msg}");
-    assert!(msg.contains("dynamic path"), "denial should name the dynamic-path reason: {msg}");
-    assert!(!msg.contains("report.txt"), "the literal in-lane write must NOT be flagged: {msg}");
+    let out = axon()
+        .args(["check", &ex("flagship/agent_task_subtle.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "subtle agent must be refused: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("E1001"),
+        "out-of-lane dynamic write must be E1001: {msg}"
+    );
+    assert!(
+        msg.contains("dynamic path"),
+        "denial should name the dynamic-path reason: {msg}"
+    );
+    assert!(
+        !msg.contains("report.txt"),
+        "the literal in-lane write must NOT be flagged: {msg}"
+    );
 }
 
 #[test]
@@ -1601,26 +2242,59 @@ fn flagship_secrets_agent_cannot_read_env_via_granted_net() {
     // ungrantable ambient secret channel. Guards the env-deny fix end-to-end AND
     // the demo narration: exactly ONE E1001 (the env read), and the granted
     // ai_complete calls must NOT be flagged.
-    let out = axon().args(["check", &ex("flagship/agent_task_secrets.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(2), "credential-thief agent must be refused: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let out = axon()
+        .args(["check", &ex("flagship/agent_task_secrets.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "credential-thief agent must be refused: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let n = msg.matches("E1001").count();
-    assert_eq!(n, 1, "expected exactly 1 E1001 (the env read), got {n}: {msg}");
-    assert!(msg.contains("env_var") && msg.contains("environment"),
-        "denial must name the env read as the violation: {msg}");
-    assert!(!msg.contains("ai_complete"),
-        "the granted-host ai_complete calls must NOT be flagged (net lane is open): {msg}");
+    assert_eq!(
+        n, 1,
+        "expected exactly 1 E1001 (the env read), got {n}: {msg}"
+    );
+    assert!(
+        msg.contains("env_var") && msg.contains("environment"),
+        "denial must name the env read as the violation: {msg}"
+    );
+    assert!(
+        !msg.contains("ai_complete"),
+        "the granted-host ai_complete calls must NOT be flagged (net lane is open): {msg}"
+    );
 }
 
 #[test]
 fn flagship_good_agent_checks_clean_and_runs() {
     // The companion allow-case: the good agent compiles clean and runs.
-    let chk = axon().args(["check", &ex("flagship/agent_task.ax")]).output().unwrap();
-    assert_eq!(chk.status.code(), Some(0), "good agent must check clean: {:?}", chk);
-    let run = axon().args(["run", &ex("flagship/agent_task.ax")]).output().unwrap();
+    let chk = axon()
+        .args(["check", &ex("flagship/agent_task.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        chk.status.code(),
+        Some(0),
+        "good agent must check clean: {:?}",
+        chk
+    );
+    let run = axon()
+        .args(["run", &ex("flagship/agent_task.ax")])
+        .output()
+        .unwrap();
     assert_eq!(run.status.code(), Some(0), "good agent must run: {:?}", run);
     let out = String::from_utf8_lossy(&run.stdout);
-    assert!(out.contains("scores:"), "expected scores output, got: {out}");
+    assert!(
+        out.contains("scores:"),
+        "expected scores output, got: {out}"
+    );
 }
 
 #[test]
@@ -1630,41 +2304,82 @@ fn contained_error_messages_suggest_fix() {
 
     // Net denial (no net: clause) — should suggest adding one.
     let bad = std::env::temp_dir().join(format!("axon_cmsg_{}.ax", std::process::id()));
-    std::fs::write(&bad,
+    std::fs::write(
+        &bad,
         "@[contained(fs: [write(\"./out/\")], exec: none)]\n\
          fn s() -> i64 { let _ = write_file(\"/etc/passwd\", \"x\")  0 }\n\
          fn main() -> i64 { s() }\n",
-    ).unwrap();
-    let r = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    )
+    .unwrap();
+    let r = axon()
+        .args(["check", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
-    let msg = format!("{}{}", String::from_utf8_lossy(&r.stdout), String::from_utf8_lossy(&r.stderr));
-    assert!(msg.contains("E1001"), "expected E1001 for write denial, got: {msg}");
-    assert!(msg.contains("Add") || msg.contains("try") || msg.contains("use") || msg.contains("specify"),
-        "expected fix suggestion for write denial, got: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&r.stdout),
+        String::from_utf8_lossy(&r.stderr)
+    );
+    assert!(
+        msg.contains("E1001"),
+        "expected E1001 for write denial, got: {msg}"
+    );
+    assert!(
+        msg.contains("Add")
+            || msg.contains("try")
+            || msg.contains("use")
+            || msg.contains("specify"),
+        "expected fix suggestion for write denial, got: {msg}"
+    );
 
     // never: read denial — should suggest removing the never clause or the call.
     let bad2 = std::env::temp_dir().join(format!("axon_cmsg2_{}.ax", std::process::id()));
-    std::fs::write(&bad2,
+    std::fs::write(
+        &bad2,
         "@[contained(fs: [read(\"/etc/\")], never: [read(\"/etc/shadow\")])]\n\
          fn s() -> i64 {\n  \
              match read_file(\"/etc/shadow\") { Ok(_) => 1  Err(_) => 0 }\n\
          }\n\
          fn main() -> i64 { s() }\n",
-    ).unwrap();
-    let r2 = axon().args(["check", bad2.to_str().unwrap()]).output().unwrap();
+    )
+    .unwrap();
+    let r2 = axon()
+        .args(["check", bad2.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad2);
-    let msg2 = format!("{}{}", String::from_utf8_lossy(&r2.stdout), String::from_utf8_lossy(&r2.stderr));
-    assert!(msg2.contains("E1004"), "expected E1004 for never clause, got: {msg2}");
-    assert!(msg2.contains("Add") || msg2.contains("try") || msg2.contains("use") || msg2.contains("specify")
-        || msg2.contains("remove"),
-        "expected fix suggestion for never clause, got: {msg2}");
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&r2.stdout),
+        String::from_utf8_lossy(&r2.stderr)
+    );
+    assert!(
+        msg2.contains("E1004"),
+        "expected E1004 for never clause, got: {msg2}"
+    );
+    assert!(
+        msg2.contains("Add")
+            || msg2.contains("try")
+            || msg2.contains("use")
+            || msg2.contains("specify")
+            || msg2.contains("remove"),
+        "expected fix suggestion for never clause, got: {msg2}"
+    );
 }
 
 #[test]
 fn borrow_violation_rejected_by_check() {
     // Borrow checking (E0601 use-after-move etc.) must run in the CLI pipeline.
-    let out = axon().args(["check", &fixture("borrow_errors.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(2), "borrow violation must be rejected");
+    let out = axon()
+        .args(["check", &fixture("borrow_errors.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "borrow violation must be rejected"
+    );
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -1677,8 +2392,15 @@ fn borrow_violation_rejected_by_check() {
 fn verify_unsatisfiable_postcondition_rejected_by_check() {
     // Static @[verify] checking (E1101) must run in the CLI: a postcondition the
     // function's confidence bound can never meet is rejected; a met one is clean.
-    let bad = axon().args(["check", &fixture("verify_fail.ax")]).output().unwrap();
-    assert_eq!(bad.status.code(), Some(2), "unsatisfiable @[verify] must be rejected");
+    let bad = axon()
+        .args(["check", &fixture("verify_fail.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        bad.status.code(),
+        Some(2),
+        "unsatisfiable @[verify] must be rejected"
+    );
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&bad.stdout),
@@ -1686,8 +2408,14 @@ fn verify_unsatisfiable_postcondition_rejected_by_check() {
     );
     assert!(msg.contains("E1101"), "expected E1101, got: {msg}");
 
-    let ok = axon().args(["check", &fixture("verify_pass.ax")]).output().unwrap();
-    assert!(ok.status.success(), "a satisfiable @[verify] should check clean");
+    let ok = axon()
+        .args(["check", &fixture("verify_pass.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "a satisfiable @[verify] should check clean"
+    );
 }
 
 #[test]
@@ -1703,11 +2431,25 @@ fn verify_confidence_on_a_temporal_return_is_not_falsely_rejected() {
         fn main() -> i64 { let t = gate(5)\n  t.value }\n";
     let f = std::env::temp_dir().join(format!("axon_tverify_{}.ax", std::process::id()));
     std::fs::write(&f, fresh).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "a fresh-Temporal confidence verify must check clean: {msg}");
-    assert!(!msg.contains("E1101"), "must NOT falsely reject the Temporal confidence: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a fresh-Temporal confidence verify must check clean: {msg}"
+    );
+    assert!(
+        !msg.contains("E1101"),
+        "must NOT falsely reject the Temporal confidence: {msg}"
+    );
 
     // A temporal_at result decays by a runtime offset → defers to the runtime
     // gate (no static reject), like the other runtime sources.
@@ -1716,31 +2458,55 @@ fn verify_confidence_on_a_temporal_return_is_not_falsely_rejected() {
         fn main() -> i64 { let t = gate(5)\n  t.value }\n";
     let f2 = std::env::temp_dir().join(format!("axon_tverify2_{}.ax", std::process::id()));
     std::fs::write(&f2, decayed).unwrap();
-    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let out2 = axon()
+        .args(["check", f2.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f2);
-    let msg2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
-    assert_eq!(out2.status.code(), Some(0), "a temporal_at result must defer to the runtime gate (not static reject): {msg2}");
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(
+        out2.status.code(),
+        Some(0),
+        "a temporal_at result must defer to the runtime gate (not static reject): {msg2}"
+    );
 }
 
 #[test]
 fn run_hello_prints_greeting() {
     let out = axon().args(["run", &ex("hello.ax")]).output().unwrap();
-    assert!(out.status.success(), "hello.ax exited {:?}", out.status.code());
+    assert!(
+        out.status.success(),
+        "hello.ax exited {:?}",
+        out.status.code()
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Hello, Axon!"), "stdout was: {stdout:?}");
 }
 
 #[test]
 fn run_comprehensive_computes_sum_to_100() {
-    let out = axon().args(["run", &ex("comprehensive.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("comprehensive.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("5050"), "expected sum_to(100)=5050 in: {stdout:?}");
+    assert!(
+        stdout.contains("5050"),
+        "expected sum_to(100)=5050 in: {stdout:?}"
+    );
 }
 
 #[test]
 fn run_error_handling_propagates_results() {
-    let out = axon().args(["run", &ex("error_handling.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("error_handling.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     // sqrt_of_string("144") => Ok(12); division by zero is reported.
@@ -1769,8 +2535,12 @@ fn goal_run_optimizes_a_mixed_i64_f64_metric_f1() {
     std::fs::write(&f, prog).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0),
-        "mixed i64/f64 metric must be live-optimized to near its optimum: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "mixed i64/f64 metric must be live-optimized to near its optimum: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -1794,8 +2564,12 @@ fn goal_run_constrained_holds_the_search_inside_the_feasible_region() {
     std::fs::write(&f, prog).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0),
-        "constrained search must stay <=50 while the free search exceeds it: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "constrained search must stay <=50 while the free search exceeds it: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -1813,9 +2587,15 @@ fn goal_run_constrained_rejects_an_undefined_constraint() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_ne!(out.status.code(), Some(0), "must not succeed with an undefined constraint: {out:?}");
-    assert!(err.contains("not defined") && err.contains("nope"),
-        "must name the undefined constraint fn: {err}");
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "must not succeed with an undefined constraint: {out:?}"
+    );
+    assert!(
+        err.contains("not defined") && err.contains("nope"),
+        "must name the undefined constraint fn: {err}"
+    );
 }
 
 #[test]
@@ -1835,10 +2615,17 @@ fn goal_run_categorical_exhaustively_finds_the_best_unordered_choice() {
                 }\n";
     let f = std::env::temp_dir().join(format!("axon_catgoal_{}.ax", std::process::id()));
     std::fs::write(&f, prog).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0),
-        "exhaustive categorical search must find the isolated best choice (#3): {out:?}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "exhaustive categorical search must find the isolated best choice (#3): {out:?}"
+    );
 }
 
 #[test]
@@ -1852,9 +2639,15 @@ fn goal_run_categorical_rejects_a_nonpositive_choice_count() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let err = String::from_utf8_lossy(&out.stderr);
-    assert_ne!(out.status.code(), Some(0), "n_choices=0 must not succeed: {out:?}");
-    assert!(err.contains("n_choices") && err.contains("must be positive"),
-        "must explain the empty domain: {err}");
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "n_choices=0 must not succeed: {out:?}"
+    );
+    assert!(
+        err.contains("n_choices") && err.contains("must be positive"),
+        "must explain the empty domain: {err}"
+    );
 }
 
 #[test]
@@ -1863,12 +2656,24 @@ fn asi_constrained_goal_demo_holds_the_feasible_boundary() {
     // goal_run_constrained: the unconstrained search races to the target (100)
     // while the constrained one is held at the spend cap (50). Gating the demo
     // file keeps the language-identity example honest (ROADMAP §2.7).
-    let out = axon().args(["run", &ex("asi/constrained_goal.ax")])
-        .env("AXON_AI_MOCK", "1").output().unwrap();
-    assert!(out.status.success(), "constrained_goal demo must run: {out:?}");
+    let out = axon()
+        .args(["run", &ex("asi/constrained_goal.ax")])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "constrained_goal demo must run: {out:?}"
+    );
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("unconstrained best: 100"), "free search reaches the target: {s}");
-    assert!(s.contains("constrained best:   50"), "constrained search held at the cap: {s}");
+    assert!(
+        s.contains("unconstrained best: 100"),
+        "free search reaches the target: {s}"
+    );
+    assert!(
+        s.contains("constrained best:   50"),
+        "constrained search held at the cap: {s}"
+    );
 }
 
 #[test]
@@ -1877,11 +2682,18 @@ fn asi_categorical_goal_demo_finds_the_best_strategy() {
     // exhaustive search over 6 UNORDERED strategies finds the isolated best
     // (#4, score 98) that a gradient hill-climb would step past. Gates the
     // public-face demo (ROADMAP §2.7).
-    let out = axon().args(["run", &ex("asi/categorical_goal.ax")])
-        .env("AXON_AI_MOCK", "1").env("AXON_SEED", "1").output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/categorical_goal.ax")])
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_SEED", "1")
+        .output()
+        .unwrap();
     assert!(out.status.success(), "categorical demo must run: {out:?}");
     let s = String::from_utf8_lossy(&out.stdout);
-    assert!(s.contains("strategy #4"), "must find the isolated best strategy (#4): {s}");
+    assert!(
+        s.contains("strategy #4"),
+        "must find the isolated best strategy (#4): {s}"
+    );
 }
 
 #[test]
@@ -1906,15 +2718,27 @@ fn prose_effect_surface_enforcement_refuses_an_over_reaching_loop() {
         ## Provenance\n- log.\n";
     let f = std::env::temp_dir().join(format!("axon_sandbox_violate_{}.md", std::process::id()));
     std::fs::write(&f, md).unwrap();
-    let out = axon().args(["goal", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["goal", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}",
-        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(2),
-        "a loop exceeding its declared effect surface must be refused at compile time: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "a loop exceeding its declared effect surface must be refused at compile time: {all}"
+    );
     assert!(
-        all.contains("E1001") || all.contains("E1004")
-            || all.to_lowercase().contains("capab") || all.contains("contained")
+        all.contains("E1001")
+            || all.contains("E1004")
+            || all.to_lowercase().contains("capab")
+            || all.contains("contained")
             || all.to_lowercase().contains("network"),
         "the refusal must cite the capability/effect-surface violation: {all}"
     );
@@ -1922,8 +2746,15 @@ fn prose_effect_surface_enforcement_refuses_an_over_reaching_loop() {
 
 #[test]
 fn goal_optimize_deploys() {
-    let out = axon().args(["goal", &ex("goals/optimize-goal.md")]).output().unwrap();
-    assert!(out.status.success(), "optimize-goal exited {:?}", out.status.code());
+    let out = axon()
+        .args(["goal", &ex("goals/optimize-goal.md")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "optimize-goal exited {:?}",
+        out.status.code()
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("best score: 100"), "stdout: {stdout:?}");
     assert!(stdout.contains("deploy gate: passed"), "stdout: {stdout:?}");
@@ -1999,7 +2830,10 @@ fn every_goal_example_compiles_and_runs() {
         // reject, 5 = ai-policy); reject crashes and surface-compile failures.
         let healthy = matches!(code, Some(0) | Some(3) | Some(5)) && !crashed && !compile_failed;
         if !healthy {
-            broken.push(format!("{name}: exit {code:?} — {}", msg.lines().next().unwrap_or("")));
+            broken.push(format!(
+                "{name}: exit {code:?} — {}",
+                msg.lines().next().unwrap_or("")
+            ));
         }
     }
     assert!(
@@ -2015,13 +2849,35 @@ fn agent_goal_runs_within_its_grant() {
     // grant, so it compiles and the goal loop runs to a deploy. Guards the
     // ai_complete-host fix (the agent's net call must NOT be denied by the prompt
     // being checked against the host allowlist).
-    let f = format!("{}/../../examples/goals/agent-goal.md", env!("CARGO_MANIFEST_DIR"));
-    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").env("AXON_SEED", "42").output().unwrap();
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "agent goal must run within its grant and deploy: {msg}");
-    assert!(msg.contains("deploy gate: passed"), "expected a passed deploy gate: {msg}");
+    let f = format!(
+        "{}/../../examples/goals/agent-goal.md",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = axon()
+        .args(["goal", &f])
+        .env("AXON_AI_MOCK", "1")
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "agent goal must run within its grant and deploy: {msg}"
+    );
+    assert!(
+        msg.contains("deploy gate: passed"),
+        "expected a passed deploy gate: {msg}"
+    );
     // The granted ai_complete + read_file must NOT be flagged.
-    assert!(!msg.contains("E1001"), "granted tools must not be refused: {msg}");
+    assert!(
+        !msg.contains("E1001"),
+        "granted tools must not be refused: {msg}"
+    );
 }
 
 #[test]
@@ -2030,13 +2886,34 @@ fn agent_evil_goal_is_refused() {
     // spawns curl) must FAIL to compile — `axon goal` runs `axon check`, which
     // rejects both escapes with E1001 before the agent runs. This is the wedge
     // payoff: a narrow grant the compiler proves can't be widened.
-    let f = format!("{}/../../examples/goals/agent-goal-evil.md", env!("CARGO_MANIFEST_DIR"));
-    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").output().unwrap();
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(2), "evil agent goal must be refused at check time: {msg}");
-    assert!(msg.contains("E1001"), "expected E1001 capability refusals: {msg}");
+    let f = format!(
+        "{}/../../examples/goals/agent-goal-evil.md",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = axon()
+        .args(["goal", &f])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "evil agent goal must be refused at check time: {msg}"
+    );
+    assert!(
+        msg.contains("E1001"),
+        "expected E1001 capability refusals: {msg}"
+    );
     // Specifically: the ungranted fs-read and the exec are the two violations.
-    assert!(msg.contains("passwd") || msg.contains("read_file"), "fs-escape must be named: {msg}");
+    assert!(
+        msg.contains("passwd") || msg.contains("read_file"),
+        "fs-escape must be named: {msg}"
+    );
     assert!(msg.contains("exec"), "exec violation must be named: {msg}");
 }
 
@@ -2049,14 +2926,34 @@ fn prose_sandboxed_evil_goal_is_refused() {
     // caught TRANSITIVELY at compile time — `axon goal` refuses it (E1001, exit 2)
     // before the agent runs. This is the value wedge on the prose→code path: an
     // AI-authored-from-prose agent that the compiler proves cannot widen its grant.
-    let f = format!("{}/../../examples/goals/sandboxed-goal-evil.md", env!("CARGO_MANIFEST_DIR"));
-    let out = axon().args(["goal", &f]).env("AXON_AI_MOCK", "1").output().unwrap();
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(2), "evil prose goal must be refused at check time: {msg}");
-    assert!(msg.contains("E1001"), "expected an E1001 capability refusal: {msg}");
+    let f = format!(
+        "{}/../../examples/goals/sandboxed-goal-evil.md",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let out = axon()
+        .args(["goal", &f])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "evil prose goal must be refused at check time: {msg}"
+    );
+    assert!(
+        msg.contains("E1001"),
+        "expected an E1001 capability refusal: {msg}"
+    );
     // Specifically: the ungranted file write is the violation.
-    assert!(msg.contains("write_file") || msg.contains("fs:"),
-        "the exfiltration (fs write) must be named: {msg}");
+    assert!(
+        msg.contains("write_file") || msg.contains("fs:"),
+        "the exfiltration (fs write) must be named: {msg}"
+    );
 }
 
 #[test]
@@ -2068,8 +2965,17 @@ fn goal_with_missing_sections_lists_them_all() {
     std::fs::write(&f, "# Goal: incomplete\n\n## Intent\n\nDo a thing.\n").unwrap();
     let out = axon().args(["goal", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "incomplete goal must be rejected: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "incomplete goal must be rejected: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     // First and last required sections (minus Intent) both present in one message.
     assert!(msg.contains("Inputs"), "should list Inputs: {msg}");
     assert!(msg.contains("Provenance"), "should list Provenance: {msg}");
@@ -2081,7 +2987,10 @@ fn run_typechecks_before_interpreting() {
     // not surface as a runtime panic.
     let bad = std::env::temp_dir().join("axon_cli_run_typecheck.ax");
     std::fs::write(&bad, "fn main() -> i64 { undefined_helper(1) }\n").unwrap();
-    let out = axon().args(["run", bad.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["run", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
     assert_eq!(out.status.code(), Some(2), "expected type-error exit 2");
 }
@@ -2092,13 +3001,33 @@ fn missing_module_error_hints_axon_path_when_unset() {
     // E0901 listing install-dir search paths the user never created. When
     // AXON_PATH is unset, the error must point at that lever.
     let f = std::env::temp_dir().join(format!("axon_modmiss_{}.ax", std::process::id()));
-    std::fs::write(&f, "mod bandit\nuse bandit.{Bandit}\nfn main() -> i64 { 0 }\n").unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).env_remove("AXON_PATH").output().unwrap();
+    std::fs::write(
+        &f,
+        "mod bandit\nuse bandit.{Bandit}\nfn main() -> i64 { 0 }\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .env_remove("AXON_PATH")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "missing module must be rejected: {:?}", out);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "missing module must be rejected: {:?}",
+        out
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(msg.contains("E0901"), "expected E0901, got: {msg}");
-    assert!(msg.contains("AXON_PATH"), "expected AXON_PATH hint, got: {msg}");
+    assert!(
+        msg.contains("AXON_PATH"),
+        "expected AXON_PATH hint, got: {msg}"
+    );
 }
 
 #[test]
@@ -2108,12 +3037,25 @@ fn parse_error_prefix_is_not_doubled() {
     // Display and the outer AxonError::Parse wrapper. Must appear exactly once.
     let bad = std::env::temp_dir().join(format!("axon_pp_{}.ax", std::process::id()));
     std::fs::write(&bad, "fn main() { println(\"hello {name\") }\n").unwrap();
-    let out = axon().args(["run", bad.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["run", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
     assert_eq!(out.status.code(), Some(2), "parse error should exit 2");
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("parse error:"), "should still have one prefix: {msg}");
-    assert!(!msg.contains("parse error: parse error:"), "prefix must not be doubled: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("parse error:"),
+        "should still have one prefix: {msg}"
+    );
+    assert!(
+        !msg.contains("parse error: parse error:"),
+        "prefix must not be doubled: {msg}"
+    );
 }
 
 #[test]
@@ -2143,7 +3085,10 @@ fn undefined_name_reports_one_diagnostic_with_suggestion() {
         "fn calculate(x: i64) -> i64 { x }\nfn main() { println(to_str(calculat)) }\n",
     )
     .unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
@@ -2168,8 +3113,15 @@ fn undefined_name_reports_one_diagnostic_with_suggestion() {
     // Guard against over-correction: a real non-scalar arg to the scalar-only
     // polymorphic `to_str` must STILL be rejected as a type error (E0102).
     let f2 = std::env::temp_dir().join(format!("axon_undef2_{}.ax", std::process::id()));
-    std::fs::write(&f2, "fn main() { let a = [1, 2, 3]\n  println(to_str(a)) }\n").unwrap();
-    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &f2,
+        "fn main() { let a = [1, 2, 3]\n  println(to_str(a)) }\n",
+    )
+    .unwrap();
+    let out2 = axon()
+        .args(["check", f2.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f2);
     let msg2 = format!(
         "{}{}",
@@ -2198,7 +3150,10 @@ fn unknown_struct_field_access_reports_one_clean_e0401() {
         "type P = { x: i64, y: i64 }\nfn main() { let p = P { x: 1, y: 2 }\n  let z = p.zzz }\n",
     )
     .unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
@@ -2216,7 +3171,9 @@ fn unknown_struct_field_access_reports_one_clean_e0401() {
         "infer must not also report a field-access error as E0101: {msg}"
     );
     assert!(
-        !msg.contains("found 'zzz'") && !msg.contains("found zzz") && !msg.contains("found\":\"zzz"),
+        !msg.contains("found 'zzz'")
+            && !msg.contains("found zzz")
+            && !msg.contains("found\":\"zzz"),
         "E0401 must not carry the nonsensical 'found zzz' for a field-existence error: {msg}"
     );
     assert!(
@@ -2227,8 +3184,15 @@ fn unknown_struct_field_access_reports_one_clean_e0401() {
     // The struct-LITERAL field cases are NOT covered by the checker, so infer
     // must STILL report them (an unknown field in a literal must not go silent).
     let f2 = std::env::temp_dir().join(format!("axon_fieldlit_{}.ax", std::process::id()));
-    std::fs::write(&f2, "type P = { x: i64 }\nfn main() { let p = P { x: 1, z: 9 } }\n").unwrap();
-    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &f2,
+        "type P = { x: i64 }\nfn main() { let p = P { x: 1, z: 9 } }\n",
+    )
+    .unwrap();
+    let out2 = axon()
+        .args(["check", f2.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f2);
     let msg2 = format!(
         "{}{}",
@@ -2268,7 +3232,10 @@ fn non_struct_field_access_e0401_has_no_found_wart() {
     for (i, (src, want, wart)) in cases.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_fldwart_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
@@ -2299,14 +3266,21 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  let q = p.x.y\n  println(to_str(q))\n}\n",
     )
     .unwrap();
-    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(2), "p.x.y must fail check (exit 2): {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "p.x.y must fail check (exit 2): {msg}"
+    );
     assert!(
         msg.contains("E0401") && msg.contains("i64 has no field 'y'"),
         "expected E0401 for field access on the i64 field: {msg}"
@@ -2319,25 +3293,50 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         "type Inner = { v: i64 }\ntype Outer = { inner: Inner }\nfn main() -> i64 {\n  let o = Outer { inner: Inner { v: 5 } }\n  o.inner.v\n}\n",
     )
     .unwrap();
-    let outc = axon().args(["check", good.to_str().unwrap()]).output().unwrap();
-    let outr = axon().args(["run", good.to_str().unwrap()]).output().unwrap();
+    let outc = axon()
+        .args(["check", good.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let outr = axon()
+        .args(["run", good.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&good);
-    assert_eq!(outc.status.code(), Some(0), "valid nested access must check clean");
-    assert_eq!(outr.status.code(), Some(5), "valid nested access must run (o.inner.v == 5)");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "valid nested access must check clean"
+    );
+    assert_eq!(
+        outr.status.code(),
+        Some(5),
+        "valid nested access must run (o.inner.v == 5)"
+    );
 
     // Same class via an INDEX result: `a[0].foo` where the element is a scalar
     // also slipped to a runtime panic (the Array/Index arms lost the element
     // type). Must now be E0401 at check time.
     let idx = std::env::temp_dir().join(format!("axon_idxfield_{}.ax", std::process::id()));
-    std::fs::write(&idx, "fn main() {\n  let a = [1, 2, 3]\n  let x = a[0].foo\n}\n").unwrap();
-    let outi = axon().args(["check", idx.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &idx,
+        "fn main() {\n  let a = [1, 2, 3]\n  let x = a[0].foo\n}\n",
+    )
+    .unwrap();
+    let outi = axon()
+        .args(["check", idx.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&idx);
     let msgi = format!(
         "{}{}",
         String::from_utf8_lossy(&outi.stdout),
         String::from_utf8_lossy(&outi.stderr)
     );
-    assert_eq!(outi.status.code(), Some(2), "a[0].foo must fail check (exit 2): {msgi}");
+    assert_eq!(
+        outi.status.code(),
+        Some(2),
+        "a[0].foo must fail check (exit 2): {msgi}"
+    );
     assert!(
         msgi.contains("E0401") && msgi.contains("i64 has no field 'foo'"),
         "expected E0401 for field access on the i64 array element: {msgi}"
@@ -2350,26 +3349,51 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         "type P = { x: i64 }\nfn main() -> i64 {\n  let ps = [P { x: 7 }, P { x: 2 }]\n  ps[0].x\n}\n",
     )
     .unwrap();
-    let outsc = axon().args(["check", sidx.to_str().unwrap()]).output().unwrap();
-    let outsr = axon().args(["run", sidx.to_str().unwrap()]).output().unwrap();
+    let outsc = axon()
+        .args(["check", sidx.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let outsr = axon()
+        .args(["run", sidx.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&sidx);
-    assert_eq!(outsc.status.code(), Some(0), "struct-array element field access must check clean");
-    assert_eq!(outsr.status.code(), Some(7), "struct-array element field access must run (ps[0].x == 7)");
+    assert_eq!(
+        outsc.status.code(),
+        Some(0),
+        "struct-array element field access must check clean"
+    );
+    assert_eq!(
+        outsr.status.code(),
+        Some(7),
+        "struct-array element field access must run (ps[0].x == 7)"
+    );
 
     // And via an if-EXPRESSION result: `(if c {5} else {6}).foo` where both
     // branches are i64. Resolving the if-expr type also required tightening the
     // E0307 body-tail check to the exact fn-body path (see the dedicated test
     // below) so a match-arm if-expr no longer leaks into the return comparison.
     let iff = std::env::temp_dir().join(format!("axon_iffield_{}.ax", std::process::id()));
-    std::fs::write(&iff, "fn main() {\n  let x = (if true { 5 } else { 6 }).foo\n}\n").unwrap();
-    let outf = axon().args(["check", iff.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &iff,
+        "fn main() {\n  let x = (if true { 5 } else { 6 }).foo\n}\n",
+    )
+    .unwrap();
+    let outf = axon()
+        .args(["check", iff.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&iff);
     let msgf = format!(
         "{}{}",
         String::from_utf8_lossy(&outf.stdout),
         String::from_utf8_lossy(&outf.stderr)
     );
-    assert_eq!(outf.status.code(), Some(2), "(if..).foo must fail check (exit 2): {msgf}");
+    assert_eq!(
+        outf.status.code(),
+        Some(2),
+        "(if..).foo must fail check (exit 2): {msgf}"
+    );
     assert!(
         msgf.contains("E0401") && msgf.contains("i64 has no field 'foo'"),
         "expected E0401 for field access on the i64 if-expr result: {msgf}"
@@ -2411,11 +3435,25 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         "type S = A | B\nfn classify(s: S) -> i64 {\n  let r = match s { S::A => 1\n    S::B => 2 }\n  r\n}\nfn main() -> i64 { classify(S::B) }\n",
     )
     .unwrap();
-    let outmc = axon().args(["check", mok.to_str().unwrap()]).output().unwrap();
-    let outmr = axon().args(["run", mok.to_str().unwrap()]).output().unwrap();
+    let outmc = axon()
+        .args(["check", mok.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let outmr = axon()
+        .args(["run", mok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&mok);
-    assert_eq!(outmc.status.code(), Some(0), "valid match-result use must check clean");
-    assert_eq!(outmr.status.code(), Some(2), "valid match-result use must run (classify(B) == 2)");
+    assert_eq!(
+        outmc.status.code(),
+        Some(0),
+        "valid match-result use must check clean"
+    );
+    assert_eq!(
+        outmr.status.code(),
+        Some(2),
+        "valid match-result use must run (classify(B) == 2)"
+    );
 
     // And via the `?` operator: `get()?.foo` unwraps Result<i64,_> to i64, so a
     // field access on it is a non-struct access (was a runtime panic).
@@ -2425,14 +3463,21 @@ fn nested_field_access_on_non_struct_is_caught_at_check_time() {
         "fn get() -> Result<i64, str> { Ok(5) }\nfn run_it() -> Result<i64, str> {\n  let x = get()?.foo\n  Ok(x)\n}\nfn main() -> i64 { match run_it() { Ok(n) => n\n    Err(e) => 99 } }\n",
     )
     .unwrap();
-    let outq = axon().args(["check", q.to_str().unwrap()]).output().unwrap();
+    let outq = axon()
+        .args(["check", q.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&q);
     let msgq = format!(
         "{}{}",
         String::from_utf8_lossy(&outq.stdout),
         String::from_utf8_lossy(&outq.stderr)
     );
-    assert_eq!(outq.status.code(), Some(2), "get()?.foo must fail check (exit 2): {msgq}");
+    assert_eq!(
+        outq.status.code(),
+        Some(2),
+        "get()?.foo must fail check (exit 2): {msgq}"
+    );
     assert!(
         msgq.contains("E0401") && msgq.contains("i64 has no field 'foo'"),
         "expected E0401 for field access on the `?`-unwrapped i64: {msgq}"
@@ -2450,14 +3495,21 @@ fn calling_a_data_field_as_a_method_is_e0403() {
         "type P = { x: i64 }\nfn main() {\n  let p = P { x: 1 }\n  p.x()\n}\n",
     )
     .unwrap();
-    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(2), "p.x() must fail check (exit 2): {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "p.x() must fail check (exit 2): {msg}"
+    );
     assert!(
         msg.contains("E0403") && msg.contains("is a data field of `P`"),
         "expected E0403 naming the field+struct: {msg}"
@@ -2474,29 +3526,58 @@ fn calling_a_data_field_as_a_method_is_e0403() {
          fn main() -> i64 {\n  let sq = Square { side: 4 }\n  sq.area()\n}\n",
     )
     .unwrap();
-    let outc = axon().args(["check", good.to_str().unwrap()]).output().unwrap();
-    let outr = axon().args(["run", good.to_str().unwrap()]).output().unwrap();
+    let outc = axon()
+        .args(["check", good.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let outr = axon()
+        .args(["run", good.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&good);
-    assert_eq!(outc.status.code(), Some(0), "a real trait-method call must check clean");
-    assert_eq!(outr.status.code(), Some(16), "the method call must run (4*4 == 16)");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "a real trait-method call must check clean"
+    );
+    assert_eq!(
+        outr.status.code(),
+        Some(16),
+        "the method call must run (4*4 == 16)"
+    );
 
     // A method call on an Option/Result (Rust reflex — Axon has no `.unwrap()`,
     // you pattern-match) was check-clean→runtime panic. Must be E0403 with a
     // match-instead hint.
     for (label, src, tn) in [
-        ("option", "fn main() {\n  let o = Some(5)\n  let x = o.unwrap()\n}\n", "Option"),
-        ("result", "fn main() {\n  let r = Ok(5)\n  let x = r.unwrap()\n}\n", "Result"),
+        (
+            "option",
+            "fn main() {\n  let o = Some(5)\n  let x = o.unwrap()\n}\n",
+            "Option",
+        ),
+        (
+            "result",
+            "fn main() {\n  let r = Ok(5)\n  let x = r.unwrap()\n}\n",
+            "Result",
+        ),
     ] {
         let f = std::env::temp_dir().join(format!("axon_optm_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: method on {tn} must fail check: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: method on {tn} must fail check: {msg}"
+        );
         assert!(
             msg.contains("E0403") && msg.contains(&format!("`{tn}` has no method")),
             "{label}: expected E0403 explaining {tn} has no methods: {msg}"
@@ -2506,21 +3587,37 @@ fn calling_a_data_field_as_a_method_is_e0403() {
     // A method call on any bare builtin type with no impl (`[1].push()`,
     // `"s".upper()`, `n.foo()`, `t.bar()`) is also E0403 ("no method on type T").
     for (label, src) in [
-        ("array", "fn main() {\n  let a = [1, 2]\n  let x = a.push(3)\n}\n"),
-        ("str", "fn main() {\n  let s = \"hi\"\n  let x = s.upper()\n}\n"),
+        (
+            "array",
+            "fn main() {\n  let a = [1, 2]\n  let x = a.push(3)\n}\n",
+        ),
+        (
+            "str",
+            "fn main() {\n  let s = \"hi\"\n  let x = s.upper()\n}\n",
+        ),
         ("i64", "fn main() {\n  let n = 5\n  let x = n.foo()\n}\n"),
-        ("bool", "fn main() {\n  let b = true\n  let x = b.toggle()\n}\n"),
+        (
+            "bool",
+            "fn main() {\n  let b = true\n  let x = b.toggle()\n}\n",
+        ),
     ] {
         let f = std::env::temp_dir().join(format!("axon_nometh_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: method on builtin must fail check: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: method on builtin must fail check: {msg}"
+        );
         assert!(
             msg.contains("E0403") && msg.contains("no method"),
             "{label}: expected E0403 'no method on type': {msg}"
@@ -2537,11 +3634,25 @@ fn calling_a_data_field_as_a_method_is_e0403() {
          fn main() -> i64 {\n  let n = 5\n  n.double()\n}\n",
     )
     .unwrap();
-    let outpc = axon().args(["check", prim.to_str().unwrap()]).output().unwrap();
-    let outpr = axon().args(["run", prim.to_str().unwrap()]).output().unwrap();
+    let outpc = axon()
+        .args(["check", prim.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let outpr = axon()
+        .args(["run", prim.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&prim);
-    assert_eq!(outpc.status.code(), Some(0), "a user trait-impl on a primitive must check clean");
-    assert_eq!(outpr.status.code(), Some(10), "the primitive method must run (5*2 == 10)");
+    assert_eq!(
+        outpc.status.code(),
+        Some(0),
+        "a user trait-impl on a primitive must check clean"
+    );
+    assert_eq!(
+        outpr.status.code(),
+        Some(10),
+        "the primitive method must run (5*2 == 10)"
+    );
 }
 
 #[test]
@@ -2549,14 +3660,21 @@ fn unused_local_binding_warns_w0006() {
     // A `let` binding never read is dead → W0006 warning (printed, check passes).
     let unused = std::env::temp_dir().join(format!("axon_unused_{}.ax", std::process::id()));
     std::fs::write(&unused, "fn main() {\n  let x = 5\n}\n").unwrap();
-    let out = axon().args(["check", unused.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", unused.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&unused);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(0), "an unused local is a WARNING, check must pass: {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "an unused local is a WARNING, check must pass: {msg}"
+    );
     assert!(
         msg.contains("W0006") && msg.contains("unused variable `x`"),
         "expected a W0006 unused-variable warning: {msg}"
@@ -2594,14 +3712,21 @@ fn unreachable_code_after_return_warns_w0005() {
         "fn f() -> i64 {\n  return 1\n  let x = 2\n  x\n}\nfn main() -> i64 { f() }\n",
     )
     .unwrap();
-    let out = axon().args(["check", dead.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", dead.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&dead);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(0), "dead code is a WARNING, check must pass: {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "dead code is a WARNING, check must pass: {msg}"
+    );
     assert!(
         msg.contains("W0005") && msg.contains("unreachable code"),
         "expected a W0005 unreachable-code warning: {msg}"
@@ -2616,15 +3741,25 @@ fn unreachable_code_after_return_warns_w0005() {
         "fn f(n: i64) -> i64 {\n  if n > 0 { return 1 }\n  0\n}\nfn main() {}\n",
     )
     .unwrap();
-    let outo = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let outo = axon()
+        .args(["check", ok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&ok);
     let msgo = format!(
         "{}{}",
         String::from_utf8_lossy(&outo.stdout),
         String::from_utf8_lossy(&outo.stderr)
     );
-    assert_eq!(outo.status.code(), Some(0), "conditional return must check clean");
-    assert!(!msgo.contains("W0005"), "a conditional return must NOT trigger W0005: {msgo}");
+    assert_eq!(
+        outo.status.code(),
+        Some(0),
+        "conditional return must check clean"
+    );
+    assert!(
+        !msgo.contains("W0005"),
+        "a conditional return must NOT trigger W0005: {msgo}"
+    );
 }
 
 #[test]
@@ -2634,14 +3769,21 @@ fn integer_division_by_literal_zero_is_e0407() {
     for (label, body) in [("div", "10 / 0"), ("rem", "10 % 0")] {
         let f = std::env::temp_dir().join(format!("axon_divz_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, format!("fn main() -> i64 {{ {body} }}\n")).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: /0 must fail check (exit 2): {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: /0 must fail check (exit 2): {msg}"
+        );
         assert!(
             msg.contains("E0407") && msg.contains("by zero"),
             "{label}: expected E0407 division-by-zero: {msg}"
@@ -2651,16 +3793,27 @@ fn integer_division_by_literal_zero_is_e0407() {
     // Constant-folding: a divisor that folds to zero through arithmetic is also
     // caught (`10 / (2 - 2)`, `10 % (0 * 5)`).
     for (label, body) in [("fold sub", "10 / (2 - 2)"), ("fold mul", "10 % (0 * 5)")] {
-        let f = std::env::temp_dir().join(format!("axon_divfold_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_divfold_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, format!("fn main() -> i64 {{ {body} }}\n")).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: divisor folding to 0 must fail: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: divisor folding to 0 must fail: {msg}"
+        );
         assert!(msg.contains("E0407"), "{label}: expected E0407: {msg}");
     }
 
@@ -2671,18 +3824,28 @@ fn integer_division_by_literal_zero_is_e0407() {
         ("nonzero", "fn main() -> i64 { 10 / 2 }\n"),
         ("nonzero fold", "fn main() -> i64 { 10 / (2 + 2) }\n"),
         ("variable", "fn main() -> i64 { let d = 2 - 2\n  10 / d }\n"),
-        ("float", "fn main() -> i64 { let x = 10.0 / 0.0\n  f64_to_i64(x) }\n"),
+        (
+            "float",
+            "fn main() -> i64 { let x = 10.0 / 0.0\n  f64_to_i64(x) }\n",
+        ),
     ] {
         let f = std::env::temp_dir().join(format!("axon_divok_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "{label}: must check clean (E0407 is literal-0 only): {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{label}: must check clean (E0407 is literal-0 only): {msg}"
+        );
     }
 }
 
@@ -2715,16 +3878,27 @@ fn duplicate_names_in_definitions_are_rejected() {
         ),
     ];
     for (label, src, code) in cases {
-        let f = std::env::temp_dir().join(format!("axon_dupdef_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_dupdef_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: must fail check (exit 2): {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: must fail check (exit 2): {msg}"
+        );
         assert!(msg.contains(code), "{label}: expected {code}: {msg}");
         assert!(
             msg.contains("more than once"),
@@ -2739,9 +3913,16 @@ fn duplicate_names_in_definitions_are_rejected() {
         "fn f(x: i64, y: i64) -> i64 { x + y }\ntype P = { a: i64, b: i64 }\ntype S = A | B | C\nfn main() {}\n",
     )
     .unwrap();
-    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let outc = axon()
+        .args(["check", ok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&ok);
-    assert_eq!(outc.status.code(), Some(0), "distinct names in definitions must check clean");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "distinct names in definitions must check clean"
+    );
 
     // A pattern that binds the same name twice (`(a, a)`) is also E0002 — the
     // second binding silently shadowed the first (last-wins).
@@ -2751,14 +3932,21 @@ fn duplicate_names_in_definitions_are_rejected() {
         "fn f(t: (i64, i64)) -> i64 { match t { (a, a) => a } }\nfn main() {}\n",
     )
     .unwrap();
-    let outb = axon().args(["check", dupbind.to_str().unwrap()]).output().unwrap();
+    let outb = axon()
+        .args(["check", dupbind.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&dupbind);
     let msgb = format!(
         "{}{}",
         String::from_utf8_lossy(&outb.stdout),
         String::from_utf8_lossy(&outb.stderr)
     );
-    assert_eq!(outb.status.code(), Some(2), "a duplicate pattern binding must fail check: {msgb}");
+    assert_eq!(
+        outb.status.code(),
+        Some(2),
+        "a duplicate pattern binding must fail check: {msgb}"
+    );
     assert!(
         msgb.contains("E0002") && msgb.contains("binding `a` appears more than once"),
         "expected E0002 for the duplicate pattern binding: {msgb}"
@@ -2771,9 +3959,16 @@ fn duplicate_names_in_definitions_are_rejected() {
         "fn f(t: (i64, i64)) -> i64 { match t { (a, b) => a + b } }\nfn g(t: (i64, i64)) -> i64 { match t { (_, _) => 0 } }\nfn main() {}\n",
     )
     .unwrap();
-    let outbc = axon().args(["check", bindok.to_str().unwrap()]).output().unwrap();
+    let outbc = axon()
+        .args(["check", bindok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bindok);
-    assert_eq!(outbc.status.code(), Some(0), "distinct bindings + repeated wildcards must check clean");
+    assert_eq!(
+        outbc.status.code(),
+        Some(0),
+        "distinct bindings + repeated wildcards must check clean"
+    );
 }
 
 #[test]
@@ -2782,20 +3977,43 @@ fn literal_pattern_typed_against_wrong_subject_is_e0405() {
     // silently fell through to a catch-all (`match n /*i64*/ { "x" => … }`
     // returns the wildcard branch). Now a clean E0405.
     for (label, decl, body) in [
-        ("str pat on int", "n: i64", "match n { \"x\" => 1\n    _ => 0 }"),
+        (
+            "str pat on int",
+            "n: i64",
+            "match n { \"x\" => 1\n    _ => 0 }",
+        ),
         ("int pat on str", "s: str", "match s { 5 => 1\n    _ => 0 }"),
-        ("str pat on bool", "b: bool", "match b { \"x\" => 1\n    _ => 0 }"),
+        (
+            "str pat on bool",
+            "b: bool",
+            "match b { \"x\" => 1\n    _ => 0 }",
+        ),
     ] {
-        let f = std::env::temp_dir().join(format!("axon_patty_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
-        std::fs::write(&f, format!("fn g({decl}) -> i64 {{ {body} }}\nfn main() {{}}\n")).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let f = std::env::temp_dir().join(format!(
+            "axon_patty_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
+        std::fs::write(
+            &f,
+            format!("fn g({decl}) -> i64 {{ {body} }}\nfn main() {{}}\n"),
+        )
+        .unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: must fail check (exit 2): {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: must fail check (exit 2): {msg}"
+        );
         assert!(
             msg.contains("E0405") && msg.contains("can never match"),
             "{label}: expected E0405 always-dead pattern: {msg}"
@@ -2832,14 +4050,21 @@ fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
         "type S = A | B\nfn f(s: S) -> i64 { match s { S::A => 1\n  S::A => 2\n  S::B => 3 } }\nfn main() {}\n",
     )
     .unwrap();
-    let out = axon().args(["check", dup.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", dup.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&dup);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(0), "a duplicate arm is a WARNING, check must still pass (exit 0): {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a duplicate arm is a WARNING, check must still pass (exit 0): {msg}"
+    );
     assert!(
         msg.contains("W0004") && msg.contains("unreachable match arm"),
         "expected a W0004 unreachable-arm warning: {msg}"
@@ -2853,15 +4078,25 @@ fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
         "fn f(o: Option<i64>) -> i64 { match o { Some(1) => 1\n  Some(2) => 2\n  Some(n) => n\n  None => 0 } }\nfn main() {}\n",
     )
     .unwrap();
-    let outo = axon().args(["check", okm.to_str().unwrap()]).output().unwrap();
+    let outo = axon()
+        .args(["check", okm.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&okm);
     let msgo = format!(
         "{}{}",
         String::from_utf8_lossy(&outo.stdout),
         String::from_utf8_lossy(&outo.stderr)
     );
-    assert_eq!(outo.status.code(), Some(0), "a valid match must check clean");
-    assert!(!msgo.contains("W0004"), "distinct sub-patterns must NOT trigger W0004: {msgo}");
+    assert_eq!(
+        outo.status.code(),
+        Some(0),
+        "a valid match must check clean"
+    );
+    assert!(
+        !msgo.contains("W0004"),
+        "distinct sub-patterns must NOT trigger W0004: {msgo}"
+    );
 
     // An arm AFTER an unguarded catch-all (`_`) is also unreachable → W0004.
     let aw = std::env::temp_dir().join(format!("axon_afterwild_{}.ax", std::process::id()));
@@ -2870,14 +4105,21 @@ fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
         "type S = A | B\nfn f(s: S) -> i64 { match s { _ => 0\n  S::A => 1 } }\nfn main() {}\n",
     )
     .unwrap();
-    let outa = axon().args(["check", aw.to_str().unwrap()]).output().unwrap();
+    let outa = axon()
+        .args(["check", aw.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&aw);
     let msga = format!(
         "{}{}",
         String::from_utf8_lossy(&outa.stdout),
         String::from_utf8_lossy(&outa.stderr)
     );
-    assert_eq!(outa.status.code(), Some(0), "arm-after-wildcard is a warning, check passes: {msga}");
+    assert_eq!(
+        outa.status.code(),
+        Some(0),
+        "arm-after-wildcard is a warning, check passes: {msga}"
+    );
     assert!(
         msga.contains("W0004") && msga.contains("already covers every value"),
         "expected W0004 for an arm after a catch-all: {msga}"
@@ -2890,14 +4132,20 @@ fn duplicate_match_arm_warns_but_does_not_fail_check_w0004() {
         "fn f(n: i64) -> i64 { match n { x if x > 0 => 1\n  _ => 0 } }\nfn main() {}\n",
     )
     .unwrap();
-    let outg = axon().args(["check", g.to_str().unwrap()]).output().unwrap();
+    let outg = axon()
+        .args(["check", g.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&g);
     let msgg = format!(
         "{}{}",
         String::from_utf8_lossy(&outg.stdout),
         String::from_utf8_lossy(&outg.stderr)
     );
-    assert!(!msgg.contains("W0004"), "an arm after a GUARDED catch-all must NOT warn: {msgg}");
+    assert!(
+        !msgg.contains("W0004"),
+        "an arm after a GUARDED catch-all must NOT warn: {msgg}"
+    );
 }
 
 #[test]
@@ -2906,19 +4154,22 @@ fn unknown_enum_variant_literal_is_e0404() {
     // a bogus enum value), then panicked at runtime when matched ("no match arm
     // matched"). It must now be a clean E0404 naming the real variants.
     let bad = std::env::temp_dir().join(format!("axon_badvar_{}.ax", std::process::id()));
-    std::fs::write(
-        &bad,
-        "type S = A | B\nfn main() {\n  let s = S::C\n}\n",
-    )
-    .unwrap();
-    let out = axon().args(["check", bad.to_str().unwrap()]).output().unwrap();
+    std::fs::write(&bad, "type S = A | B\nfn main() {\n  let s = S::C\n}\n").unwrap();
+    let out = axon()
+        .args(["check", bad.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&bad);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(2), "S::C must fail check (exit 2): {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "S::C must fail check (exit 2): {msg}"
+    );
     assert!(
         msg.contains("E0404") && msg.contains("has no variant `C`"),
         "expected E0404 naming the missing variant: {msg}"
@@ -2935,11 +4186,22 @@ fn unknown_enum_variant_literal_is_e0404() {
         "type S = A | B\nfn main() -> i64 {\n  let s = S::A\n  match s { S::A => 1\n    S::B => 2 }\n}\n",
     )
     .unwrap();
-    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    let outc = axon()
+        .args(["check", ok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let outr = axon().args(["run", ok.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&ok);
-    assert_eq!(outc.status.code(), Some(0), "a valid variant literal must check clean");
-    assert_eq!(outr.status.code(), Some(1), "the valid variant must run (S::A => 1)");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "a valid variant literal must check clean"
+    );
+    assert_eq!(
+        outr.status.code(),
+        Some(1),
+        "the valid variant must run (S::A => 1)"
+    );
 
     // Bonus: an error INSIDE a struct/enum literal field value is now caught
     // (the StructLit arm previously did not recurse into field expressions).
@@ -2949,28 +4211,49 @@ fn unknown_enum_variant_literal_is_e0404() {
         "type P = { x: i64 }\nfn main() {\n  let o = Some(5)\n  let p = P { x: o.unwrap() }\n}\n",
     )
     .unwrap();
-    let outf = axon().args(["check", fv.to_str().unwrap()]).output().unwrap();
+    let outf = axon()
+        .args(["check", fv.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&fv);
     let msgf = format!(
         "{}{}",
         String::from_utf8_lossy(&outf.stdout),
         String::from_utf8_lossy(&outf.stderr)
     );
-    assert_eq!(outf.status.code(), Some(2), "error in a struct-literal field value must be caught: {msgf}");
-    assert!(msgf.contains("E0403"), "the field-value method error must surface: {msgf}");
+    assert_eq!(
+        outf.status.code(),
+        Some(2),
+        "error in a struct-literal field value must be caught: {msgf}"
+    );
+    assert!(
+        msgf.contains("E0403"),
+        "the field-value method error must surface: {msgf}"
+    );
 
     // A wrong FIELD NAME on a valid variant (`S::A { y }` when A's field is x)
     // is also E0404 (infer side, which has the per-variant field data).
     let wf = std::env::temp_dir().join(format!("axon_wfield_{}.ax", std::process::id()));
-    std::fs::write(&wf, "type S = A { x: i64 }\nfn main() {\n  let s = S::A { y: 1 }\n}\n").unwrap();
-    let outw = axon().args(["check", wf.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &wf,
+        "type S = A { x: i64 }\nfn main() {\n  let s = S::A { y: 1 }\n}\n",
+    )
+    .unwrap();
+    let outw = axon()
+        .args(["check", wf.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&wf);
     let msgw = format!(
         "{}{}",
         String::from_utf8_lossy(&outw.stdout),
         String::from_utf8_lossy(&outw.stderr)
     );
-    assert_eq!(outw.status.code(), Some(2), "wrong variant field must fail check: {msgw}");
+    assert_eq!(
+        outw.status.code(),
+        Some(2),
+        "wrong variant field must fail check: {msgw}"
+    );
     assert!(
         msgw.contains("E0404") && msgw.contains("has no field `y`"),
         "expected E0404 naming the bad variant field: {msgw}"
@@ -2983,11 +4266,22 @@ fn unknown_enum_variant_literal_is_e0404() {
         "type S = A { x: i64 }\nfn main() -> i64 {\n  let s = S::A { x: 5 }\n  match s { S::A { x } => x }\n}\n",
     )
     .unwrap();
-    let outcc = axon().args(["check", cf.to_str().unwrap()]).output().unwrap();
+    let outcc = axon()
+        .args(["check", cf.to_str().unwrap()])
+        .output()
+        .unwrap();
     let outcr = axon().args(["run", cf.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&cf);
-    assert_eq!(outcc.status.code(), Some(0), "a correct variant+field must check clean");
-    assert_eq!(outcr.status.code(), Some(5), "the correct variant+field must run (x == 5)");
+    assert_eq!(
+        outcc.status.code(),
+        Some(0),
+        "a correct variant+field must check clean"
+    );
+    assert_eq!(
+        outcr.status.code(),
+        Some(5),
+        "the correct variant+field must run (x == 5)"
+    );
 }
 
 #[test]
@@ -2997,20 +4291,39 @@ fn indexing_a_non_array_is_a_clean_compile_error_e0402() {
     // clean E0402 compile error (exit 2), for scalar and str receivers alike
     // (the interpreter does not support str indexing either).
     for (label, src, ty) in [
-        ("i64", "fn main() {\n  let n = 5\n  let x = n[0]\n}\n", "i64"),
-        ("bool", "fn main() {\n  let b = true\n  let x = b[0]\n}\n", "bool"),
-        ("str", "fn main() {\n  let s = \"hi\"\n  let x = s[0]\n}\n", "str"),
+        (
+            "i64",
+            "fn main() {\n  let n = 5\n  let x = n[0]\n}\n",
+            "i64",
+        ),
+        (
+            "bool",
+            "fn main() {\n  let b = true\n  let x = b[0]\n}\n",
+            "bool",
+        ),
+        (
+            "str",
+            "fn main() {\n  let s = \"hi\"\n  let x = s[0]\n}\n",
+            "str",
+        ),
     ] {
         let f = std::env::temp_dir().join(format!("axon_idxty_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let msg = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "{label}: indexing must fail check: {msg}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: indexing must fail check: {msg}"
+        );
         assert!(
             msg.contains("E0402") && msg.contains(&format!("cannot index a value of type {ty}")),
             "{label}: expected E0402 naming the type: {msg}"
@@ -3019,12 +4332,27 @@ fn indexing_a_non_array_is_a_clean_compile_error_e0402() {
 
     // A real array/slice index must still check clean AND run.
     let ok = std::env::temp_dir().join(format!("axon_idxok_{}.ax", std::process::id()));
-    std::fs::write(&ok, "fn main() -> i64 {\n  let a = [10, 20, 30]\n  a[1]\n}\n").unwrap();
-    let outc = axon().args(["check", ok.to_str().unwrap()]).output().unwrap();
+    std::fs::write(
+        &ok,
+        "fn main() -> i64 {\n  let a = [10, 20, 30]\n  a[1]\n}\n",
+    )
+    .unwrap();
+    let outc = axon()
+        .args(["check", ok.to_str().unwrap()])
+        .output()
+        .unwrap();
     let outr = axon().args(["run", ok.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&ok);
-    assert_eq!(outc.status.code(), Some(0), "valid array index must check clean");
-    assert_eq!(outr.status.code(), Some(20), "valid array index must run (a[1] == 20)");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "valid array index must check clean"
+    );
+    assert_eq!(
+        outr.status.code(),
+        Some(20),
+        "valid array index must run (a[1] == 20)"
+    );
 }
 
 #[test]
@@ -3053,7 +4381,10 @@ fn match_arm_tail_is_not_compared_to_fn_return_type_e0307() {
          fn main() -> i64 { step(S::A, 5) }\n",
     )
     .unwrap();
-    let outc = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let outc = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let outr = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
@@ -3061,8 +4392,16 @@ fn match_arm_tail_is_not_compared_to_fn_return_type_e0307() {
         String::from_utf8_lossy(&outc.stdout),
         String::from_utf8_lossy(&outc.stderr)
     );
-    assert_eq!(outc.status.code(), Some(0), "match-arm if-tail must NOT trip E0307: {msg}");
-    assert_eq!(outr.status.code(), Some(1), "step(S::A, 5) should compute acc == 1");
+    assert_eq!(
+        outc.status.code(),
+        Some(0),
+        "match-arm if-tail must NOT trip E0307: {msg}"
+    );
+    assert_eq!(
+        outr.status.code(),
+        Some(1),
+        "step(S::A, 5) should compute acc == 1"
+    );
 }
 
 #[test]
@@ -3079,7 +4418,10 @@ fn wrong_arg_type_e0306_message_is_not_double_printed() {
         "fn f(a: i64) -> i64 { a }\nfn main() { let x = f(\"hi\") }\n",
     )
     .unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
@@ -3118,7 +4460,10 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
     // saw the identical line twice. The pipeline now drops exact duplicates.
     let f = std::env::temp_dir().join(format!("axon_dupdiag_{}.ax", std::process::id()));
     std::fs::write(&f, "fn main() { let x = \"a\" + \"b\" }\n").unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
@@ -3135,7 +4480,10 @@ fn byte_identical_diagnostics_are_collapsed_to_one() {
     // `"a" + true` differs in the operand type (str vs bool), so both survive.
     let f2 = std::env::temp_dir().join(format!("axon_dupdiag2_{}.ax", std::process::id()));
     std::fs::write(&f2, "fn main() { let x = \"a\" + true }\n").unwrap();
-    let out2 = axon().args(["check", f2.to_str().unwrap()]).output().unwrap();
+    let out2 = axon()
+        .args(["check", f2.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f2);
     let msg2 = format!(
         "{}{}",
@@ -3154,7 +4502,11 @@ fn run_exits_with_main_return_value() {
     std::fs::write(&f, "fn main() -> i64 { 7 }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(7), "main's i64 return should be the exit code");
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "main's i64 return should be the exit code"
+    );
 }
 
 #[test]
@@ -3171,9 +4523,20 @@ fn verify_is_enforced_on_a_scalar_return_at_runtime() {
     std::fs::write(&f, breach).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(3), "a scalar @[verify] breach must exit 3 (policy rejection): {msg}");
-    assert!(msg.contains("verify failed"), "breach must report a verify failure: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "a scalar @[verify] breach must exit 3 (policy rejection): {msg}"
+    );
+    assert!(
+        msg.contains("verify failed"),
+        "breach must report a verify failure: {msg}"
+    );
 
     // A satisfied bound (i64 and f64) runs clean and returns normally.
     for (label, src, want) in [
@@ -3202,9 +4565,20 @@ fn verify_is_enforced_on_a_temporal_return_at_runtime() {
     std::fs::write(&f, breach).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(3), "a Temporal @[verify(value)] breach must exit 3: {msg}");
-    assert!(msg.contains("verify failed"), "breach must report a verify failure: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(3),
+        "a Temporal @[verify(value)] breach must exit 3: {msg}"
+    );
+    assert!(
+        msg.contains("verify failed"),
+        "breach must report a verify failure: {msg}"
+    );
 
     // A satisfied bound runs clean (returns the value).
     let ok = "@[verify(value <= 500)]\n\
@@ -3214,16 +4588,27 @@ fn verify_is_enforced_on_a_temporal_return_at_runtime() {
     std::fs::write(&f2, ok).unwrap();
     let out2 = axon().args(["run", f2.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f2);
-    assert_eq!(out2.status.code(), Some(100), "a satisfied Temporal @[verify] must run clean (value 100)");
+    assert_eq!(
+        out2.status.code(),
+        Some(100),
+        "a satisfied Temporal @[verify] must run clean (value 100)"
+    );
 }
 
 /// Parse the integer from a "best score: N (target …)" line.
 fn best_score(stdout: &str) -> i64 {
     let key = "best score: ";
-    let i = stdout.find(key).unwrap_or_else(|| panic!("no 'best score:' in: {stdout:?}")) + key.len();
+    let i = stdout
+        .find(key)
+        .unwrap_or_else(|| panic!("no 'best score:' in: {stdout:?}"))
+        + key.len();
     let rest = &stdout[i..];
-    let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
-    rest[..end].parse().unwrap_or_else(|_| panic!("unparseable score in: {stdout:?}"))
+    let end = rest
+        .find(|c: char| !c.is_ascii_digit() && c != '-')
+        .unwrap_or(rest.len());
+    rest[..end]
+        .parse()
+        .unwrap_or_else(|_| panic!("unparseable score in: {stdout:?}"))
 }
 
 #[test]
@@ -3252,7 +4637,10 @@ fn cross_run_improves_with_continuation() {
     let s2 = best_score(&String::from_utf8_lossy(&r2.stdout));
 
     let _ = std::fs::remove_dir_all(&cache);
-    assert!(s2 > s1, "continuation should improve the best score: run1={s1}, run2={s2}");
+    assert!(
+        s2 > s1,
+        "continuation should improve the best score: run1={s1}, run2={s2}"
+    );
 }
 
 #[test]
@@ -3278,7 +4666,9 @@ fn goal_iterate_converges() {
         .match_indices(key)
         .map(|(i, _)| {
             let rest = &stdout[i + key.len()..];
-            let end = rest.find(|c: char| !c.is_ascii_digit() && c != '-').unwrap_or(rest.len());
+            let end = rest
+                .find(|c: char| !c.is_ascii_digit() && c != '-')
+                .unwrap_or(rest.len());
             rest[..end].parse().unwrap()
         })
         .collect();
@@ -3288,14 +4678,30 @@ fn goal_iterate_converges() {
     // (the algorithm's seed step changes how fast it lands) while pinning the
     // structural contract: more than one run is needed, it stops short of the
     // cap, the trace is non-decreasing, and it reaches 200.
-    assert!(scores.len() >= 2, "single-run budget can't reach the peak alone: {scores:?}");
-    assert!(scores.len() < 12, "should stop early on convergence, not run the full cap: {scores:?}");
-    assert!(scores.windows(2).all(|w| w[1] >= w[0]), "best score is non-decreasing: {scores:?}");
-    assert_eq!(*scores.last().unwrap(), 200, "should converge to the optimum: {scores:?}");
+    assert!(
+        scores.len() >= 2,
+        "single-run budget can't reach the peak alone: {scores:?}"
+    );
+    assert!(
+        scores.len() < 12,
+        "should stop early on convergence, not run the full cap: {scores:?}"
+    );
+    assert!(
+        scores.windows(2).all(|w| w[1] >= w[0]),
+        "best score is non-decreasing: {scores:?}"
+    );
+    assert_eq!(
+        *scores.last().unwrap(),
+        200,
+        "should converge to the optimum: {scores:?}"
+    );
 
     // It should also report the solution (best score + the input that achieved it).
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("# best: score 200 at input 12"), "should report the solution: {stderr:?}");
+    assert!(
+        stderr.contains("# best: score 200 at input 12"),
+        "should report the solution: {stderr:?}"
+    );
 }
 
 #[test]
@@ -3312,13 +4718,23 @@ fn trace_summarizes_provenance() {
         .output()
         .unwrap();
 
-    let out = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let out = axon()
+        .args(["trace"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     assert!(out.status.success(), "trace exited {:?}", out.status.code());
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("try_variant"), "stdout: {stdout:?}");
-    assert!(stdout.contains("at input 12"), "best score is at the optimum input: {stdout:?}");
-    assert!(stdout.contains("improving"), "trajectory should be improving: {stdout:?}");
+    assert!(
+        stdout.contains("at input 12"),
+        "best score is at the optimum input: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("improving"),
+        "trajectory should be improving: {stdout:?}"
+    );
 }
 
 #[test]
@@ -3332,14 +4748,27 @@ fn trace_json_is_machine_readable() {
         .output()
         .unwrap();
 
-    let out = axon().args(["trace", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let out = axon()
+        .args(["trace", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.trim_start().starts_with('['), "should be a JSON array: {stdout:?}");
-    assert!(stdout.contains("\"fn\":\"try_variant\""), "stdout: {stdout:?}");
+    assert!(
+        stdout.trim_start().starts_with('['),
+        "should be a JSON array: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("\"fn\":\"try_variant\""),
+        "stdout: {stdout:?}"
+    );
     assert!(stdout.contains("\"best_input\":12"), "stdout: {stdout:?}");
-    assert!(stdout.contains("\"trend\":\"improving\""), "stdout: {stdout:?}");
+    assert!(
+        stdout.contains("\"trend\":\"improving\""),
+        "stdout: {stdout:?}"
+    );
 }
 
 #[test]
@@ -3359,27 +4788,55 @@ fn trace_ai_summarizes_the_ai_call_audit_trail() {
     let cache = std::env::temp_dir().join(format!("axon_aiaudit_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
 
-    let run = axon().args(["run", f.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let run = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
 
     // Human view.
-    let human = axon().args(["trace", "--ai"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let human = axon()
+        .args(["trace", "--ai"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let h = String::from_utf8_lossy(&human.stdout);
-    assert!(human.status.success(), "trace --ai exited {:?}", human.status.code());
-    assert!(h.contains("3 ai_complete call(s)"), "must count all 3 calls: {h:?}");
-    assert!(h.contains("analyze") && h.contains("label"), "must list both fns: {h:?}");
+    assert!(
+        human.status.success(),
+        "trace --ai exited {:?}",
+        human.status.code()
+    );
+    assert!(
+        h.contains("3 ai_complete call(s)"),
+        "must count all 3 calls: {h:?}"
+    );
+    assert!(
+        h.contains("analyze") && h.contains("label"),
+        "must list both fns: {h:?}"
+    );
     assert!(h.contains("mock 3"), "all 3 calls were mock mode: {h:?}");
 
     // JSON view (stable schema).
-    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let jout = axon()
+        .args(["trace", "--ai", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     let _ = std::fs::remove_file(&f);
     let j = String::from_utf8_lossy(&jout.stdout);
-    assert!(j.contains("\"schema\":\"axon-ai-audit/2\""), "stable schema id (F3 adds principal+effect_row): {j:?}");
+    assert!(
+        j.contains("\"schema\":\"axon-ai-audit/2\""),
+        "stable schema id (F3 adds principal+effect_row): {j:?}"
+    );
     assert!(j.contains("\"calls\":3"), "total calls: {j:?}");
     assert!(j.contains("\"mock\":3"), "mode breakdown: {j:?}");
-    assert!(j.contains("\"tier\":\"strong\"") && j.contains("\"tier\":\"cheap\""), "per-fn tiers: {j:?}");
+    assert!(
+        j.contains("\"tier\":\"strong\"") && j.contains("\"tier\":\"cheap\""),
+        "per-fn tiers: {j:?}"
+    );
 }
 
 #[test]
@@ -3400,17 +4857,30 @@ fn trace_ai_attributes_calls_to_the_triggering_goal_f3() {
     let cache = std::env::temp_dir().join(format!("axon_goalai_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
 
-    let run = axon().args(["run", f.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let run = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
 
-    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let jout = axon()
+        .args(["trace", "--ai", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     let _ = std::fs::remove_file(&f);
     let j = String::from_utf8_lossy(&jout.stdout);
-    assert!(j.contains("\"fn\":\"quality\""), "the metric fn must appear: {j:?}");
-    assert!(j.contains("\"goal\":\"quality\""),
-        "AI calls inside goal_run must be attributed to the goal `quality`: {j:?}");
+    assert!(
+        j.contains("\"fn\":\"quality\""),
+        "the metric fn must appear: {j:?}"
+    );
+    assert!(
+        j.contains("\"goal\":\"quality\""),
+        "AI calls inside goal_run must be attributed to the goal `quality`: {j:?}"
+    );
 }
 
 #[test]
@@ -3428,7 +4898,10 @@ fn f3_principal_activate_sets_audit_context_and_principal_current_name_reads_it(
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let code = out.status.code().unwrap_or(-1);
-    assert_eq!(code, 0, "principal_activate should set the name; principal_current_name returns it: {out:?}");
+    assert_eq!(
+        code, 0,
+        "principal_activate should set the name; principal_current_name returns it: {out:?}"
+    );
 }
 
 #[test]
@@ -3447,19 +4920,33 @@ fn f3_ai_call_audit_record_carries_principal_and_effect_row() {
     let cache = std::env::temp_dir().join(format!("axon_f3ef_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
 
-    let run = axon().args(["run", f.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let run = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     assert_eq!(run.status.code(), Some(0), "run must succeed: {run:?}");
 
-    let jout = axon().args(["trace", "--ai", "--json"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let jout = axon()
+        .args(["trace", "--ai", "--json"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     let _ = std::fs::remove_file(&f);
     let j = String::from_utf8_lossy(&jout.stdout);
 
     // Schema v2 is stamped when F3 fields are present.
-    assert!(j.contains("\"schema\":\"axon-ai-audit/2\""), "schema must be v2 with F3 fields: {j:?}");
+    assert!(
+        j.contains("\"schema\":\"axon-ai-audit/2\""),
+        "schema must be v2 with F3 fields: {j:?}"
+    );
     // principal defaults to "root" when no principal_activate has been called.
-    assert!(j.contains("\"principal\":\"root\""), "default principal must be root: {j:?}");
+    assert!(
+        j.contains("\"principal\":\"root\""),
+        "default principal must be root: {j:?}"
+    );
 }
 
 #[test]
@@ -3475,18 +4962,37 @@ fn asi_hello_goal_acid_test_loop_runs_end_to_end() {
         eprintln!("asi/run.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash").arg(&script).arg("hello-goal")
-        .env("AXON_AI_MOCK", "1").output().expect("run run.sh hello-goal");
-    let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("hello-goal")
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .expect("run run.sh hello-goal");
+    let m = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     if m.contains("axon binary not found") {
         eprintln!("run.sh could not locate the axon binary — skipping");
         return;
     }
-    assert!(out.status.success(), "the hello-goal loop must complete cleanly:\n{m}");
-    assert!(m.contains("DEPLOY GATE FIRED") && m.contains("SAFETY CATCH"),
-        "the @[verify] deploy gate must fire as the safety catch:\n{m}");
-    assert!(m.contains("reproducible"), "the run must be replay-reproducible:\n{m}");
-    assert!(m.contains("Engineering-v1 loop complete"), "the full loop must complete:\n{m}");
+    assert!(
+        out.status.success(),
+        "the hello-goal loop must complete cleanly:\n{m}"
+    );
+    assert!(
+        m.contains("DEPLOY GATE FIRED") && m.contains("SAFETY CATCH"),
+        "the @[verify] deploy gate must fire as the safety catch:\n{m}"
+    );
+    assert!(
+        m.contains("reproducible"),
+        "the run must be replay-reproducible:\n{m}"
+    );
+    assert!(
+        m.contains("Engineering-v1 loop complete"),
+        "the full loop must complete:\n{m}"
+    );
 }
 
 #[test]
@@ -3502,27 +5008,48 @@ fn asi_demo_replay_and_audit_commands_work_end_to_end() {
         return;
     }
     // replay: record → replay → "reproducible".
-    let rep = std::process::Command::new("bash").arg(&script).arg("replay")
-        .env("AXON_AI_MOCK", "1").output().expect("run run.sh replay");
-    let r = format!("{}{}", String::from_utf8_lossy(&rep.stdout), String::from_utf8_lossy(&rep.stderr));
+    let rep = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("replay")
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .expect("run run.sh replay");
+    let r = format!(
+        "{}{}",
+        String::from_utf8_lossy(&rep.stdout),
+        String::from_utf8_lossy(&rep.stderr)
+    );
     if r.contains("axon binary not found") {
         eprintln!("run.sh could not locate the axon binary — skipping");
         return;
     }
-    assert!(rep.status.success() && r.contains("reproducible"),
-        "run.sh replay must report byte-for-byte reproducibility:\n{r}");
+    assert!(
+        rep.status.success() && r.contains("reproducible"),
+        "run.sh replay must report byte-for-byte reproducibility:\n{r}"
+    );
 
     // audit: the AI-call trail (run once to populate the log, then audit).
     let cache = std::env::temp_dir().join(format!("axon_asiaudit_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cache);
-    let _ = std::process::Command::new("bash").arg(&script).arg("run")
-        .env("AXON_AI_MOCK", "1").env("XDG_CACHE_HOME", &cache).output().unwrap();
-    let aud = std::process::Command::new("bash").arg(&script).arg("audit")
-        .env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let _ = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("run")
+        .env("AXON_AI_MOCK", "1")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    let aud = std::process::Command::new("bash")
+        .arg(&script)
+        .arg("audit")
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let a = String::from_utf8_lossy(&aud.stdout);
     let _ = std::fs::remove_dir_all(&cache);
-    assert!(a.contains("ai_complete call(s)") && a.contains("goal `try_variant`"),
-        "run.sh audit must show the AI-call trail attributed to the goal:\n{a}");
+    assert!(
+        a.contains("ai_complete call(s)") && a.contains("goal `try_variant`"),
+        "run.sh audit must show the AI-call trail attributed to the goal:\n{a}"
+    );
 }
 
 #[test]
@@ -3541,11 +5068,20 @@ fn supervised_agent_halts_on_unsafe_actions() {
     // Capability under control: the agent banks value from safe actions, then a
     // two-strike kill-switch latches on unsafe proposals and the final safe
     // action is refused.
-    let out = axon().args(["run", &ex("asi/supervised_agent.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/supervised_agent.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("HALTED: banked 50 value safely"), "stdout: {stdout:?}");
-    assert!(stdout.contains("SKIP   finish-job"), "latched halt must refuse the safe action: {stdout:?}");
+    assert!(
+        stdout.contains("HALTED: banked 50 value safely"),
+        "stdout: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("SKIP   finish-job"),
+        "latched halt must refuse the safe action: {stdout:?}"
+    );
 }
 
 #[test]
@@ -3619,7 +5155,10 @@ fn for_in_nested_over_same_collection() {
 #[test]
 fn local_search_reaches_optimum() {
     // Pure-Axon black-box hill-climbing converges a bit-vector to the optimum.
-    let out = axon().args(["run", &ex("asi/local_search.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/local_search.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("score 2 -> 6 (optimum 6)"),
@@ -3634,13 +5173,19 @@ fn rank_orders_actions_by_score() {
     let out = axon().args(["run", &ex("asi/rank.ax")]).output().unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("#1  exploit (score 88)"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("#1  exploit (score 88)"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("#4  wait (score 17)"), "stdout: {stdout}");
 }
 
 #[test]
 fn allocate_knapsack_maximizes_within_budget() {
-    let out = axon().args(["run", &ex("asi/allocate.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/allocate.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("best achievable value = 220"),
@@ -3677,13 +5222,20 @@ fn function_can_return_an_enum() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(7), "make() returns Step{{7}} → val = 7");
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "make() returns Step{{7}} → val = 7"
+    );
 }
 
 #[test]
 fn planner_prunes_unsafe_path() {
     // Multi-step planning with safety lookahead (recursive-enum decision tree).
-    let out = axon().args(["run", &ex("asi/planner.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/planner.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("safe path worth 40"),
@@ -3697,11 +5249,19 @@ fn interpolation_allows_nested_braces() {
     // Regression: an `if`/`match`/struct expression (which contains `{ }`) inside
     // a `{ … }` interpolation used to truncate at the first inner `}`.
     let f = std::env::temp_dir().join(format!("axon_interp_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() { println(\"v={to_str(if true { 7 } else { 0 })}\") }\n").unwrap();
+    std::fs::write(
+        &f,
+        "fn main() { println(\"v={to_str(if true { 7 } else { 0 })}\") }\n",
+    )
+    .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert!(out.status.success(), "exited {:?}", out.status.code());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("v=7"), "stdout: {:?}", out.stdout);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("v=7"),
+        "stdout: {:?}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -3717,24 +5277,51 @@ fn forall_property_test_passes_and_shrinks() {
     )
     .unwrap();
     // Seeded for determinism: the shrinker must reach the exact boundary a=50.
-    let out = axon().args(["test", f.to_str().unwrap()]).env("AXON_SEED", "7").output().unwrap();
+    let out = axon()
+        .args(["test", f.to_str().unwrap()])
+        .env("AXON_SEED", "7")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let so = String::from_utf8_lossy(&out.stdout);
     let se = String::from_utf8_lossy(&out.stderr);
     let all = format!("{so}{se}");
-    assert!(all.contains("commutes ... ok"), "commutative property should pass: {all}");
-    assert!(all.contains("boundary ... FAILED"), "boundary property should fail: {all}");
+    assert!(
+        all.contains("commutes ... ok"),
+        "commutative property should pass: {all}"
+    );
+    assert!(
+        all.contains("boundary ... FAILED"),
+        "boundary property should fail: {all}"
+    );
     // Shrunk to the exact minimal failing input + a reproduce seed.
-    assert!(all.contains("a=50"), "should shrink to the minimal counterexample a=50: {all}");
-    assert!(all.contains("AXON_SEED="), "failure must report a reproduce seed: {all}");
+    assert!(
+        all.contains("a=50"),
+        "should shrink to the minimal counterexample a=50: {all}"
+    );
+    assert!(
+        all.contains("AXON_SEED="),
+        "failure must report a reproduce seed: {all}"
+    );
 }
 
 #[test]
 fn feature_tour_tests_pass() {
     // The feature tour's @[test]s exercise the session's language fixes together.
-    let out = axon().args(["test", &ex("feature_tour.ax")]).output().unwrap();
-    assert!(out.status.success(), "feature_tour tests failed: {:?}", out.status.code());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("6 passed"), "stdout: {}", String::from_utf8_lossy(&out.stdout));
+    let out = axon()
+        .args(["test", &ex("feature_tour.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "feature_tour tests failed: {:?}",
+        out.status.code()
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("6 passed"),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
 }
 
 #[test]
@@ -3743,7 +5330,11 @@ fn logical_and_binds_tighter_than_or() {
     // `true || true && false` parsed as `(true || true) && false` = false. With
     // standard precedence it is `true || (true && false)` = true.
     let f = std::env::temp_dir().join(format!("axon_prec_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() -> i64 { if true || true && false { 1 } else { 0 } }\n").unwrap();
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { if true || true && false { 1 } else { 0 } }\n",
+    )
+    .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(1), "a || b && c == a || (b && c)");
@@ -3819,10 +5410,16 @@ fn struct_and_array_equality() {
 fn deliberative_agent_picks_best_permitted() {
     // Constrained optimization: the agent takes the best action it is *permitted*
     // to take, declining a higher-value unsafe option and an over-budget one.
-    let out = axon().args(["run", &ex("asi/deliberative_agent.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/deliberative_agent.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "exited {:?}", out.status.code());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("take 'deep-analysis'"), "should pick the best permitted: {stdout:?}");
+    assert!(
+        stdout.contains("take 'deep-analysis'"),
+        "should pick the best permitted: {stdout:?}"
+    );
 }
 
 #[test]
@@ -3839,15 +5436,26 @@ fn len_works_on_arrays() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(60), "len-driven array loop should sum to 60");
+    assert_eq!(
+        out.status.code(),
+        Some(60),
+        "len-driven array loop should sum to 60"
+    );
 }
 
 #[test]
 fn run_trait_methods_dispatch() {
     // trait + impl methods + value.method() dispatch (the interpreter picks the
     // impl from the receiver's runtime type).
-    let out = axon().args(["run", &ex("traits_methods.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(49), "sq.area()+r.area() should be 49");
+    let out = axon()
+        .args(["run", &ex("traits_methods.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(49),
+        "sq.area()+r.area() should be 49"
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("Square area = 25"), "stdout: {stdout:?}");
     assert!(stdout.contains("Rect area = 24"), "stdout: {stdout:?}");
@@ -3859,15 +5467,35 @@ fn tuples_literal_access_destructure_and_match() {
     // destructuring (parser desugars to a stmt-level expansion so the bindings
     // live in the enclosing scope), and `(a, b)` patterns in `match`.
     let out = axon().args(["run", &ex("tuples.ax")]).output().unwrap();
-    assert!(out.status.success(), "tuples.ax should run cleanly: {:?}", out);
+    assert!(
+        out.status.success(),
+        "tuples.ax should run cleanly: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     let lines: Vec<&str> = stdout.lines().collect();
-    assert_eq!(lines.first().copied(), Some("7"), "p.0 + p.1 = 7, got: {stdout:?}");
-    assert!(stdout.contains("answer = 42 (true)"), "heterogeneous tuple, got: {stdout:?}");
-    assert!(stdout.contains("17/5 = 3 rem 2"), "let (q, r) = divmod(...), got: {stdout:?}");
-    assert!(lines.contains(&"6"), "nest.0.0 + nest.0.1 + nest.1 = 6, got: {stdout:?}");
+    assert_eq!(
+        lines.first().copied(),
+        Some("7"),
+        "p.0 + p.1 = 7, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("answer = 42 (true)"),
+        "heterogeneous tuple, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("17/5 = 3 rem 2"),
+        "let (q, r) = divmod(...), got: {stdout:?}"
+    );
+    assert!(
+        lines.contains(&"6"),
+        "nest.0.0 + nest.0.1 + nest.1 = 6, got: {stdout:?}"
+    );
     assert!(lines.contains(&"21"), "sum of pairs = 21, got: {stdout:?}");
-    assert!(lines.contains(&"30"), "match (a, b) => a + b, got: {stdout:?}");
+    assert!(
+        lines.contains(&"30"),
+        "match (a, b) => a + b, got: {stdout:?}"
+    );
 }
 
 #[test]
@@ -3875,7 +5503,10 @@ fn tuple_index_out_of_bounds_is_a_static_error() {
     // Tuple OOB is caught statically by the checker (E0401), not at runtime.
     let f = std::env::temp_dir().join(format!("axon_tup_oob_{}.ax", std::process::id()));
     std::fs::write(&f, "fn main() -> i64 { let t = (1, 2)   t.5 }\n").unwrap();
-    let bad = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let bad = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(bad.status.code(), Some(2), "tuple OOB must fail check");
     let msg = format!(
@@ -3883,8 +5514,14 @@ fn tuple_index_out_of_bounds_is_a_static_error() {
         String::from_utf8_lossy(&bad.stdout),
         String::from_utf8_lossy(&bad.stderr)
     );
-    assert!(msg.contains("E0401"), "expected E0401 for tuple OOB, got: {msg}");
-    assert!(msg.contains("tuple index"), "expected tuple-aware message, got: {msg}");
+    assert!(
+        msg.contains("E0401"),
+        "expected E0401 for tuple OOB, got: {msg}"
+    );
+    assert!(
+        msg.contains("tuple index"),
+        "expected tuple-aware message, got: {msg}"
+    );
 }
 
 #[test]
@@ -3905,9 +5542,18 @@ fn verify_runtime_panic_includes_returned_value_and_input() {
     assert!(!out.status.success(), "verify breach should panic");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("verify failed in `weak`"), "msg: {stderr}");
-    assert!(stderr.contains("value 84"), "must include rejected value: {stderr}");
-    assert!(stderr.contains("confidence 0.5"), "must include observed confidence: {stderr}");
-    assert!(stderr.contains("input 42"), "must include search input: {stderr}");
+    assert!(
+        stderr.contains("value 84"),
+        "must include rejected value: {stderr}"
+    );
+    assert!(
+        stderr.contains("confidence 0.5"),
+        "must include observed confidence: {stderr}"
+    );
+    assert!(
+        stderr.contains("input 42"),
+        "must include search input: {stderr}"
+    );
 }
 
 #[test]
@@ -3926,7 +5572,12 @@ fn goal_best_input_returns_the_winning_probe() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(37), "best input should be the peak at x=37: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(37),
+        "best input should be the peak at x=37: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -3991,13 +5642,21 @@ fn hill_climb_finds_diverse_peaks_in_a_small_budget() {
                 goal_best_input(\"p\", 1000.0)\n\
              }}\n"
         );
-        let f = std::env::temp_dir().join(format!("axon_peak_{}_{}.ax", std::process::id(), peak.unsigned_abs()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_peak_{}_{}.ax",
+            std::process::id(),
+            peak.unsigned_abs()
+        ));
         std::fs::write(&f, &src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         // Exit code is `i64 -> u8`; just check the program ran cleanly and
         // we landed within 1 unit of the peak by reading provenance back.
-        assert!(out.status.success() || out.status.code().is_some(), "peak={peak}: {:?}", out);
+        assert!(
+            out.status.success() || out.status.code().is_some(),
+            "peak={peak}: {:?}",
+            out
+        );
     }
 }
 
@@ -4009,8 +5668,15 @@ fn self_improve_demo_completes_the_full_cycle() {
     // gate. If any of these regresses, the demo trips. Pinning the contract:
     // the deploy gate passes, the verified value is the peak (137), and the
     // confidence is exactly 1.0.
-    let out = axon().args(["run", &ex("asi/self_improve.ax")]).output().unwrap();
-    assert!(out.status.success(), "self_improve demo should run cleanly: {:?}", out);
+    let out = axon()
+        .args(["run", &ex("asi/self_improve.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "self_improve demo should run cleanly: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("best score:     1000"), "stdout: {stdout}");
     assert!(stdout.contains("best input:     137"), "stdout: {stdout}");
@@ -4028,8 +5694,16 @@ fn r10_ai_discovery_flow_proposes_verifies_graduates_with_provenance() {
     let dir = std::env::temp_dir().join(format!("axon_r10ai_{}", std::process::id()));
     let corpus = dir.join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
-    std::fs::write(corpus.join("a.ax"), "fn main() -> i64 { let x = 5  x + 0 }\n").unwrap();
-    std::fs::write(corpus.join("b.ax"), "fn f(y: i64) -> i64 { y * 1 }\nfn main() -> i64 { f(3) }\n").unwrap();
+    std::fs::write(
+        corpus.join("a.ax"),
+        "fn main() -> i64 { let x = 5  x + 0 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        corpus.join("b.ax"),
+        "fn f(y: i64) -> i64 { y * 1 }\nfn main() -> i64 { f(3) }\n",
+    )
+    .unwrap();
 
     // 1. discover --ai (mock) writes a proposal stamped with its origin.
     let out = axon()
@@ -4039,31 +5713,54 @@ fn r10_ai_discovery_flow_proposes_verifies_graduates_with_provenance() {
         .output()
         .unwrap();
     assert!(out.status.success(), "discover --ai: {:?}", out);
-    let prop = std::fs::read_to_string(dir.join("proposals/fold-arith-identities.proposal")).unwrap();
-    assert!(prop.contains("proposed_by = mock:mock"), "proposal records AI origin: {prop}");
+    let prop =
+        std::fs::read_to_string(dir.join("proposals/fold-arith-identities.proposal")).unwrap();
+    assert!(
+        prop.contains("proposed_by = mock:mock"),
+        "proposal records AI origin: {prop}"
+    );
 
     // 2. verify the SELECTED template — runs the real pass through G1/G2.
     let out = axon()
-        .args(["improve", "verify", "corpus", "--pass", "fold-arith-identities"])
+        .args([
+            "improve",
+            "verify",
+            "corpus",
+            "--pass",
+            "fold-arith-identities",
+        ])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(out.status.success(), "verify: {:?}", out);
-    assert!(String::from_utf8_lossy(&out.stdout).contains("PASSED"), "{:?}", out);
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("PASSED"),
+        "{:?}",
+        out
+    );
 
     // 3. graduate with multi-sig + the AI provenance → manifest.
     let out = axon()
         .args([
-            "improve", "graduate", "fold-arith-identities",
-            "--sign", "principal:root-a", "--sign", "principal:root-b",
-            "--proposed-by", "ai:claude-opus-4-8",
+            "improve",
+            "graduate",
+            "fold-arith-identities",
+            "--sign",
+            "principal:root-a",
+            "--sign",
+            "principal:root-b",
+            "--proposed-by",
+            "ai:claude-opus-4-8",
         ])
         .current_dir(&dir)
         .output()
         .unwrap();
     assert!(out.status.success(), "graduate: {:?}", out);
     let manifest = std::fs::read_to_string(dir.join("passes.manifest")).unwrap();
-    assert!(manifest.contains("proposed_by = \"ai:claude-opus-4-8\""), "manifest records origin: {manifest}");
+    assert!(
+        manifest.contains("proposed_by = \"ai:claude-opus-4-8\""),
+        "manifest records origin: {manifest}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4080,16 +5777,42 @@ fn r10_ai_discovery_rejects_unknown_template_and_tampered_graduate() {
         .args(["improve", "verify", "examples", "--pass", "evil-template"])
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(2), "unknown verify pass must exit 2: {:?}", out);
-    assert!(String::from_utf8_lossy(&out.stderr).contains("E1407"), "{:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "unknown verify pass must exit 2: {:?}",
+        out
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("E1407"),
+        "{:?}",
+        out
+    );
 
     let out = axon()
-        .args(["improve", "graduate", "not-a-real-pass", "--sign", "a", "--sign", "b"])
+        .args([
+            "improve",
+            "graduate",
+            "not-a-real-pass",
+            "--sign",
+            "a",
+            "--sign",
+            "b",
+        ])
         .current_dir(&dir)
         .output()
         .unwrap();
-    assert_eq!(out.status.code(), Some(2), "graduating an unregistered name must exit 2: {:?}", out);
-    assert!(String::from_utf8_lossy(&out.stderr).contains("E1408"), "{:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "graduating an unregistered name must exit 2: {:?}",
+        out
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("E1408"),
+        "{:?}",
+        out
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4105,13 +5828,30 @@ fn safe_self_improve_demo_composes_full_stack() {
     //   - a safe action AFTER halt is still refused (latching)
     let mut cmd = axon();
     cmd.args(["run", &ex("asi/safe_self_improve.ax")]);
-    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    cmd.env(
+        "AXON_PATH",
+        format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
+    );
     let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "flagship demo should report all properties: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "flagship demo should report all properties: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("chosen action: medium-strong"), "optimizer must pick best safe action: {stdout}");
-    assert!(stdout.contains("step 1: approved"), "first step approved: {stdout}");
-    assert!(stdout.contains("halted=true"), "kill-switch must latch: {stdout}");
+    assert!(
+        stdout.contains("chosen action: medium-strong"),
+        "optimizer must pick best safe action: {stdout}"
+    );
+    assert!(
+        stdout.contains("step 1: approved"),
+        "first step approved: {stdout}"
+    );
+    assert!(
+        stdout.contains("halted=true"),
+        "kill-switch must latch: {stdout}"
+    );
     assert!(stdout.contains("step 4: halted"), "halt latches: {stdout}");
 }
 
@@ -4125,8 +5865,15 @@ fn effect_stdlib_module_tests_pass() {
     // admission rule (a tool runs iff its effects ⊆ the granted ceiling). 6
     // @[test]s, headed by test_subset_is_the_admission_rule +
     // test_tool_compose_inherits_both_effects.
-    let out = axon().args(["test", &ex("stdlib/effect.ax")]).output().unwrap();
-    assert!(out.status.success(), "effect.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/effect.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "effect.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4140,8 +5887,15 @@ fn source_stdlib_module_tests_pass() {
     // checkable via `src_trusted_enough` (a min-trust floor) + `src_needs_validation`
     // (AI/Net can be confidently wrong). 6 @[test]s, headed by
     // test_join_takes_the_least_trusted.
-    let out = axon().args(["test", &ex("stdlib/source.ax")]).output().unwrap();
-    assert!(out.status.success(), "source.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/source.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "source.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4155,8 +5909,15 @@ fn audit_event_stdlib_module_tests_pass() {
     // denied — a recorded policy breach), `audit_count_effect`,
     // `audit_actor_effect_breadth` (how many effect kinds an actor touched — its
     // footprint). 6 @[test]s, headed by test_any_denied_catches_a_breach.
-    let out = axon().args(["test", &ex("stdlib/audit_event.ax")]).output().unwrap();
-    assert!(out.status.success(), "audit_event.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/audit_event.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "audit_event.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4170,8 +5931,15 @@ fn trace_stdlib_module_tests_pass() {
     // bisection point for a non-determinism bug). 6 @[test]s, headed by
     // test_divergent_result_is_caught (same actions, a drifted result → caught at
     // the exact step) — the determinism-audit the replay engine exists for.
-    let out = axon().args(["test", &ex("stdlib/trace.ax")]).output().unwrap();
-    assert!(out.status.success(), "trace.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/trace.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "trace.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4185,8 +5953,15 @@ fn budget_stdlib_module_tests_pass() {
     // contract — no trading a token surplus for a call deficit). 10 @[test]s
     // (5 single-resource + 5 multi-resource), headed by the any-axis-overrun and
     // conjunctive-ok cases that distinguish it from the single-resource budget.
-    let out = axon().args(["test", &ex("stdlib/budget.ax")]).output().unwrap();
-    assert!(out.status.success(), "budget.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/budget.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "budget.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("10 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4199,8 +5974,15 @@ fn agent_stdlib_module_tests_pass() {
     // quartet and returns (Agent, decision_str). 7 @[test] cases cover
     // approval, unauthorized strike, over-budget strike, kill-switch
     // latching, history counters, exact-budget fit.
-    let out = axon().args(["test", &ex("stdlib/agent.ax")]).output().unwrap();
-    assert!(out.status.success(), "agent.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/agent.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "agent.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4213,7 +5995,10 @@ fn goal_stdlib_module_tests_pass() {
     // Constraint. 6 @[test] cases cover: starts un-met; met when target reached
     // AND guard holds; NOT met when the guard is violated (disqualified → 0);
     // below-target un-met; keeps the best score; budget runs out.
-    let out = axon().args(["test", &ex("stdlib/goal.ax")]).output().unwrap();
+    let out = axon()
+        .args(["test", &ex("stdlib/goal.ax")])
+        .output()
+        .unwrap();
     assert!(out.status.success(), "goal.ax tests should pass: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("6 passed, 0 failed"), "stdout: {stdout}");
@@ -4230,8 +6015,15 @@ fn principal_mint_stdlib_module_tests_pass() {
     // escalation is impossible; budget carved from parent; over-grant clamped;
     // a root→child→grandchild chain stays attenuated; a no-cap root mints only
     // no-cap children; the can_mint gate; the authorize action gate.
-    let out = axon().args(["test", &ex("stdlib/principal_mint.ax")]).output().unwrap();
-    assert!(out.status.success(), "principal_mint.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/principal_mint.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "principal_mint.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4243,8 +6035,15 @@ fn supervisor_stdlib_module_tests_pass() {
     // strikes on unsafe/unaffordable ones, and LATCHES a kill-switch at
     // max_strikes (a halted supervisor refuses everything, even safe actions).
     // 5 @[test]s. (Backfilled gate — the module shipped ungated.)
-    let out = axon().args(["test", &ex("stdlib/supervisor.ax")]).output().unwrap();
-    assert!(out.status.success(), "supervisor.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/supervisor.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "supervisor.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4258,8 +6057,15 @@ fn supervisor_tree_stdlib_module_tests_pass() {
     // intensity backoff that latches the supervisor halted on a crash loop.
     // 8 @[test]s cover each strategy's restart set, the rest_for_one boundaries,
     // out-of-range no-op, the restart counter, and the intensity halt+latch.
-    let out = axon().args(["test", &ex("stdlib/supervisor_tree.ax")]).output().unwrap();
-    assert!(out.status.success(), "supervisor_tree.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/supervisor_tree.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "supervisor_tree.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4272,8 +6078,15 @@ fn causal_stdlib_module_tests_pass() {
     // association (correlation) OVERSTATES the true CAUSAL effect (the lever a
     // #[goal] should optimize). 5 @[test]s, headed by
     // test_do_and_observe_disagree_under_confounding.
-    let out = axon().args(["test", &ex("stdlib/causal.ax")]).output().unwrap();
-    assert!(out.status.success(), "causal.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/causal.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "causal.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4288,8 +6101,15 @@ fn store_stdlib_module_tests_pass() {
     // order). 7 @[test]s, headed by test_retry_diverges_by_consistency (the same
     // retried op produces different state under the two variants — the reason the
     // axis exists).
-    let out = axon().args(["test", &ex("stdlib/store.ax")]).output().unwrap();
-    assert!(out.status.success(), "store.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/store.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "store.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4304,8 +6124,15 @@ fn llm_gateway_stdlib_module_tests_pass() {
     // GRACEFULLY on overrun (latching, not crashing). 7 @[test]s cover token-cost
     // debit, cost-scales-with-tokens, graceful overrun→fallback, latch, exact-fit,
     // meter-on-every-call, and the affords predicate.
-    let out = axon().args(["test", &ex("stdlib/llm_gateway.ax")]).output().unwrap();
-    assert!(out.status.success(), "llm_gateway.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/llm_gateway.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "llm_gateway.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("7 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -4332,7 +6159,11 @@ fn adaptive_returning_an_uncertain_or_temporal_is_optimized() {
         );
         let f = std::env::temp_dir().join(format!("axon_wadapt_{}_{label}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let stdout = String::from_utf8_lossy(&out.stdout);
         let best: f64 = stdout
@@ -4376,9 +6207,18 @@ fn goal_run_multistart_nails_the_global_optimum() {
     // bare `cargo test` ran it unseeded → occasional restart-unlucky failure.
     // The run is deterministic given a seed; 42 reliably lands a start in the
     // tall-peak basin and local descent walks to the exact optimum.
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "multi-start should nail the tall peak: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "multi-start should nail the tall peak: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -4403,11 +6243,18 @@ fn goal_eval_held_out_does_not_pollute_provenance() {
         }\n";
     let f = std::env::temp_dir().join(format!("axon_geval_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1),
+    assert_eq!(
+        out.status.code(),
+        Some(1),
         "goal_eval should give held-out=100 at x=7 and not pollute provenance: {:?}",
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -4434,9 +6281,18 @@ fn goal_run_random_finds_global_optimum_on_multimodal() {
     // Pin the RNG seed so random-search is DETERMINISTIC regardless of ambient
     // env (same robustness fix as goal_run_multistart_nails_the_global_optimum:
     // a bare `cargo test` ran this unseeded → occasional sample-unlucky fail).
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "random search should find tall peak: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "random search should find tall peak: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -4476,10 +6332,21 @@ fn parse_int_error_message_is_specific() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "should hit the Err arm: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "should hit the Err arm: {:?}",
+        out
+    );
     let err = String::from_utf8_lossy(&out.stderr);
-    assert!(err.contains("0x1F"), "error should echo the offending input: {err:?}");
-    assert!(err.contains("base-10") || err.contains("base 10"), "error should mention base-10: {err:?}");
+    assert!(
+        err.contains("0x1F"),
+        "error should echo the offending input: {err:?}"
+    );
+    assert!(
+        err.contains("base-10") || err.contains("base 10"),
+        "error should mention base-10: {err:?}"
+    );
 }
 
 #[test]
@@ -4504,7 +6371,10 @@ fn parse_int_radix_parses_and_errs_recoverably() {
     assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     // 0x1F=31, -2A=-42, 0b1010=10, bad digit → Err (999), bad base → Err (999).
-    assert!(stdout.contains("31 -42 10 999 999"), "parse_int_radix results: {stdout:?}");
+    assert!(
+        stdout.contains("31 -42 10 999 999"),
+        "parse_int_radix results: {stdout:?}"
+    );
 }
 
 #[test]
@@ -4514,12 +6384,18 @@ fn codegen_parse_int_radix_matches_interp() {
     // harness builds the same program both ways and asserts byte-identical
     // stdout across the prefix/sign/bad-digit/bad-base cases. Skips when codegen
     // can't build (LLVM absent).
-    let script = format!("{}/../../scripts/parse_int_radix_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/parse_int_radix_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("parse_int_radix_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run parse_int_radix_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run parse_int_radix_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4543,12 +6419,18 @@ fn codegen_parse_float_bool_matches_interp() {
     // "12abc"; parse_float Err was empty; parse_bool didn't trim and said
     // "invalid bool"). Both now delegate to axon-rt (__axon_parse_float /
     // __axon_parse_bool). Skips when codegen can't build (LLVM absent).
-    let script = format!("{}/../../scripts/parse_float_bool_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/parse_float_bool_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("parse_float_bool_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run parse_float_bool_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run parse_float_bool_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4571,12 +6453,18 @@ fn codegen_i64_to_str_radix_bad_base_panics_like_interp() {
     // 101, same message) on both engines. Native (axon-rt __axon_i64_to_str_radix)
     // used to return an empty string + exit 0 — silently accepting an invalid
     // base. Skips when codegen can't build (LLVM absent).
-    let script = format!("{}/../../scripts/i64_radix_panic_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/i64_radix_panic_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("i64_radix_panic_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run i64_radix_panic_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run i64_radix_panic_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4600,12 +6488,18 @@ fn codegen_assert_failure_messages_match_interp() {
     // ("assertion failed: values not equal"); the interp prints "axon: panic:
     // assertion failed: <a> != <b>" (with values) to STDERR. Now routed through
     // __axon_msg_panic / __axon_assert_eq_*_panic. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/assert_msg_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/assert_msg_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("assert_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run assert_msg_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run assert_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4628,20 +6522,32 @@ fn codegen_str_count_matches_interp() {
     // returned 0 for an empty needle; the interp returns char_count+1 (one match
     // per char boundary, e.g. str_count("héllo","")=6). Codegen now delegates to
     // axon-rt __axon_str_count. Skips when codegen can't build (LLVM absent).
-    let script = format!("{}/../../scripts/str_count_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/str_count_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("str_count_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run str_count_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run str_count_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — str_count parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native str_count must match the interpreter:\n{stdout}{stderr}");
-    assert!(stdout.contains("str_count_parity: OK"), "expected the OK line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native str_count must match the interpreter:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("str_count_parity: OK"),
+        "expected the OK line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -4650,12 +6556,18 @@ fn codegen_arr_panic_messages_match_interp() {
     // (arr_chunk(_,0), arr_max_by([]), arr_min_by([])) used to exit(101) with NO
     // message; native now routes through __axon_msg_panic / __axon_msg_panic_i64
     // so the panic line matches the interpreter. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/arr_panic_msg_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/arr_panic_msg_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("arr_panic_msg_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run arr_panic_msg_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run arr_panic_msg_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4680,12 +6592,18 @@ fn codegen_fuzz_parity_finds_no_divergence() {
     // + exit code. Slice 1 = abs_i64 / min_i64 / `+` over the non-overflowing
     // ±1e9 domain (the i64-overflow boundary, a KNOWN divergence, is a slice-2
     // target). Skips when codegen can't build (LLVM absent).
-    let script = format!("{}/../../scripts/fuzz_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/fuzz_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("fuzz_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run fuzz_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run fuzz_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -4710,20 +6628,32 @@ fn codegen_parse_int_or_and_float_or_match_interp() {
     // INLINE in emit_call (its i1 default can't cross a hand-built fn boundary).
     // Harness asserts native==interp across success + default(parse-fail) cases
     // for all three. Skips when codegen can't build (LLVM absent).
-    let script = format!("{}/../../scripts/parse_or_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/parse_or_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("parse_or_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run parse_or_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run parse_or_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — parse_or parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native parse_int_or/parse_float_or must match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("parse_or_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native parse_int_or/parse_float_or must match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("parse_or_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -4732,20 +6662,32 @@ fn codegen_bitwise_and_casts_match_interp() {
     // as_i64/as_f64 had NO codegen lowering — native silently returned 0 (real
     // native↔interp divergence on simple, common builtins). Now lowered inline
     // in emit_call. Harness asserts native==interp. Skips when codegen absent.
-    let script = format!("{}/../../scripts/bitwise_cast_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/bitwise_cast_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("bitwise_cast_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run bitwise_cast_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run bitwise_cast_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — bitwise/cast parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native bitwise/cast builtins must match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("bitwise_cast_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native bitwise/cast builtins must match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("bitwise_cast_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -4754,20 +6696,32 @@ fn codegen_arr_sum_and_contains_match_interp() {
     // the i64 slice (pure IR → native + wasm). They had no codegen (silent 0).
     // Harness asserts native==interp (incl. negative sum, first-element match).
     // Skips when codegen absent.
-    let script = format!("{}/../../scripts/arr_reduce_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/arr_reduce_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("arr_reduce_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run arr_reduce_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run arr_reduce_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — arr reduce parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native arr_sum_i64/arr_contains must match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("arr_reduce_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native arr_sum_i64/arr_contains must match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("arr_reduce_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -4777,20 +6731,32 @@ fn codegen_dict_core_matches_interp() {
     // __axon_dict_* runtime in axon-rt (tagged-value HashMap), like channels.
     // Harness asserts native==interp for int-valued dicts incl. a counter
     // pattern and a string-interpolated key. Skips when codegen absent.
-    let script = format!("{}/../../scripts/dict_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/dict_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("dict_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run dict_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run dict_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — dict parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native dict_* must match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("dict_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native dict_* must match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("dict_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -4800,14 +6766,22 @@ fn build_prints_the_actual_check_error_not_just_a_count() {
     // to re-run `axon check`. It must now print each diagnostic too.
     let f = std::env::temp_dir().join(format!("axon_builderr_{}.ax", std::process::id()));
     // `dict_insert` is not a real builtin (it's `dict_set`) → an E0001 check error.
-    std::fs::write(&f, "fn main() -> i64 { let d = dict_new()\n let _ = dict_insert(d, \"k\", 7)\n 0 }\n").unwrap();
+    std::fs::write(
+        &f,
+        "fn main() -> i64 { let d = dict_new()\n let _ = dict_insert(d, \"k\", 7)\n 0 }\n",
+    )
+    .unwrap();
     let out = axon()
         .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_builderr_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
     if !codegen_present {
         eprintln!("codegen absent — build-error-detail test skipped");
@@ -4831,12 +6805,17 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
     // arr_group_by is a known builtin that is NOT yet codegen-lowered (the
     // nested-slice ops flatten/chunk now are; group_by/partition are not).
     std::fs::write(&f, "fn main() -> i64 { let a = [1, 2, 3, 4]\n let b = arr_group_by(&a, |x| x % 2)\n len(b) }\n").unwrap();
-    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_e0910_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     // Either codegen is present and we get the honest E0910 abort, or codegen is
     // absent (interp-only test binary) and `axon build` is unavailable.
     let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
@@ -4845,7 +6824,10 @@ fn build_aborts_on_codegen_unsupported_builtin_e0910() {
             msg.contains("E0910") && msg.contains("arr_group_by"),
             "an unsupported builtin must abort with E0910 naming it, got:\n{msg}"
         );
-        assert!(!out.status.success(), "build must FAIL (not exit 0) on E0910:\n{msg}");
+        assert!(
+            !out.status.success(),
+            "build must FAIL (not exit 0) on E0910:\n{msg}"
+        );
     } else {
         eprintln!("codegen feature absent — E0910 build-abort test skipped");
     }
@@ -4868,17 +6850,25 @@ fn build_refuses_non_balanced_ai_tier_e0910_r3() {
         "@[ai(policy(tier: strong, budget: 2))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
     )
     .unwrap();
-    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_aitier_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     if codegen_absent(&msg) {
         eprintln!("codegen feature absent — AI-tier refusal test skipped");
         return;
     }
-    assert!(!out.status.success(), "a strong-tier ai_complete native build must FAIL:\n{msg}");
+    assert!(
+        !out.status.success(),
+        "a strong-tier ai_complete native build must FAIL:\n{msg}"
+    );
     assert!(
         msg.contains("E0910") && msg.contains("balanced") && msg.contains("summ"),
         "must refuse with E0910 naming the fn and steering to `balanced`/interp, got:\n{msg}"
@@ -4891,12 +6881,17 @@ fn build_refuses_non_balanced_ai_tier_e0910_r3() {
         "@[ai(policy(tier: balanced, budget: 2))]\nfn summ() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(e) => e } }\nfn main() -> i64 { let _ = summ()  0 }\n",
     )
     .unwrap();
-    let out2 = axon().args(["build", g.to_str().unwrap(), "-o"])
+    let out2 = axon()
+        .args(["build", g.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_aibal_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&g);
-    let msg2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
+    let msg2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
     assert!(
         !msg2.contains("cannot honor a non-`balanced` AI tier"),
         "a balanced-tier ai_complete must NOT hit the tier refusal (it matches the interpreter), got:\n{msg2}"
@@ -4912,18 +6907,30 @@ fn build_aborts_with_e0910_on_result_interpolation_not_ir_crash() {
     // erased inner value (the interpreter prints `Ok(…)`); it must now refuse
     // with a clean, actionable E0910 — NOT crash. Scalars/str still interpolate.
     let f = std::env::temp_dir().join(format!("axon_rinterp_{}.ax", std::process::id()));
-    std::fs::write(&f, "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n").unwrap();
-    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+    std::fs::write(
+        &f,
+        "fn main() {\n  let r = parse_int(\"42\")\n  println(\"r={r}\")\n}\n",
+    )
+    .unwrap();
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_rinterp_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     if msg.contains("requires building axon with the `codegen` feature") {
         eprintln!("codegen feature absent — Result-interpolation E0910 test skipped");
         return;
     }
-    assert!(!out.status.success(), "interpolating a Result must FAIL the build:\n{msg}");
+    assert!(
+        !out.status.success(),
+        "interpolating a Result must FAIL the build:\n{msg}"
+    );
     assert!(
         msg.contains("E0910") && msg.contains("interpolate"),
         "must abort with a clear E0910 about interpolating a Result/Option, got:\n{msg}"
@@ -4944,11 +6951,19 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     // the body performs a handled builtin effect) is genuinely equivalent to its
     // body and must still build cleanly.
     let build = |src: &str| -> std::process::Output {
-        let f = std::env::temp_dir().join(format!("axon_he0910_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_he0910_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon()
             .args(["build", f.to_str().unwrap(), "-o"])
-            .arg(std::env::temp_dir().join(format!("axon_he0910_{}_{}.bin", std::process::id(), src.len())))
+            .arg(std::env::temp_dir().join(format!(
+                "axon_he0910_{}_{}.bin",
+                std::process::id(),
+                src.len()
+            )))
             .output()
             .unwrap();
         let _ = std::fs::remove_file(&f);
@@ -4959,8 +6974,13 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     // refused) — it builds natively. The byte-parity of that lowering is
     // asserted in codegen_handler_tail_resume_matches_interp; here we only check
     // it is NOT E0910-refused.
-    let lowered = build("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"x\")\n 1 } }");
-    let lmsg = format!("{}{}", String::from_utf8_lossy(&lowered.stdout), String::from_utf8_lossy(&lowered.stderr));
+    let lowered =
+        build("fn main() -> i64 { with handler { on IO(p) => resume(0) } { println(\"x\")\n 1 } }");
+    let lmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&lowered.stdout),
+        String::from_utf8_lossy(&lowered.stderr)
+    );
     let codegen_present = !lmsg.contains("requires building axon with the `codegen` feature");
     if !codegen_present {
         eprintln!("codegen feature absent — handler E0910 test skipped");
@@ -4976,8 +6996,13 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
     // program. We assert it is not E0910-refused rather than that the final link
     // succeeds (the test-spawn environment's runtime-lib discovery is flaky and
     // unrelated to handler lowering; the refusal decision is what this guards).
-    let ok = build("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
-    let omsg = format!("{}{}", String::from_utf8_lossy(&ok.stdout), String::from_utf8_lossy(&ok.stderr));
+    let ok =
+        build("fn main() -> i64 { with handler { on Net(p) => resume(0) } { let x = 2 + 3\n x } }");
+    let omsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
     assert!(
         !omsg.contains("E0910"),
         "an inert handler must NOT be E0910-refused (it is equivalent to its body):\n{omsg}"
@@ -4992,9 +7017,19 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
         "fn helper() -> i64 | {IO} { println(\"LEAK\")  5 }\n\
          fn main() -> i64 { with handler { on IO(p) => resume(0) } { helper() } }",
     );
-    let imsg = format!("{}{}", String::from_utf8_lossy(&indirect.stdout), String::from_utf8_lossy(&indirect.stderr));
-    assert!(imsg.contains("E0910"), "indirect interception must be refused, not silently erased:\n{imsg}");
-    assert!(!indirect.status.success(), "indirect-interception build must FAIL:\n{imsg}");
+    let imsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&indirect.stdout),
+        String::from_utf8_lossy(&indirect.stderr)
+    );
+    assert!(
+        imsg.contains("E0910"),
+        "indirect interception must be refused, not silently erased:\n{imsg}"
+    );
+    assert!(
+        !indirect.status.success(),
+        "indirect-interception build must FAIL:\n{imsg}"
+    );
 
     // But a user fn doing IO under a NON-matching handler (Net) is not
     // intercepted → must still build (no over-refusal).
@@ -5002,8 +7037,15 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
         "fn helper() -> i64 | {IO} { println(\"ok\")  5 }\n\
          fn main() -> i64 { with handler { on Net(p) => resume(0) } { helper() } }",
     );
-    let umsg = format!("{}{}", String::from_utf8_lossy(&unmatched.stdout), String::from_utf8_lossy(&unmatched.stderr));
-    assert!(!umsg.contains("E0910"), "a non-matching handler must not refuse an IO-doing helper:\n{umsg}");
+    let umsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&unmatched.stdout),
+        String::from_utf8_lossy(&unmatched.stderr)
+    );
+    assert!(
+        !umsg.contains("E0910"),
+        "a non-matching handler must not refuse an IO-doing helper:\n{umsg}"
+    );
 
     // CLOSURE interception: the handler body calls a LOCAL closure that does IO.
     // The closure's effects aren't statically tracked, so codegen conservatively
@@ -5013,19 +7055,41 @@ fn build_aborts_on_handler_that_intercepts_a_builtin_e0910() {
         "fn main() -> i64 { let f = || { println(\"LEAK\")  3 }\n\
          with handler { on IO(p) => resume(0) } { f() } }",
     );
-    let cmsg = format!("{}{}", String::from_utf8_lossy(&closure.stdout), String::from_utf8_lossy(&closure.stderr));
-    assert!(cmsg.contains("E0910"), "a closure call under a handler must be refused (opaque effects):\n{cmsg}");
+    let cmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&closure.stdout),
+        String::from_utf8_lossy(&closure.stderr)
+    );
+    assert!(
+        cmsg.contains("E0910"),
+        "a closure call under a handler must be refused (opaque effects):\n{cmsg}"
+    );
 
     // A NON-tail-resumptive arm (abort: returns a value without `resume`) is
     // outside the lowered subset → still refused.
-    let abort = build("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"x\")\n 7 } }");
-    let amsg = format!("{}{}", String::from_utf8_lossy(&abort.stdout), String::from_utf8_lossy(&abort.stderr));
-    assert!(amsg.contains("E0910"), "a non-tail-resumptive (abort) arm must still be refused:\n{amsg}");
+    let abort =
+        build("fn main() -> i64 { with handler { on IO(p) => 99 } { println(\"x\")\n 7 } }");
+    let amsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&abort.stdout),
+        String::from_utf8_lossy(&abort.stderr)
+    );
+    assert!(
+        amsg.contains("E0910"),
+        "a non-tail-resumptive (abort) arm must still be refused:\n{amsg}"
+    );
 
     // A `return(v)` rewrite arm is also outside the lowered subset → refused.
     let ret = build("fn main() -> i64 { with handler { on IO(p) => resume(0)  return(v) => v } { println(\"x\")\n 7 } }");
-    let rmsg = format!("{}{}", String::from_utf8_lossy(&ret.stdout), String::from_utf8_lossy(&ret.stderr));
-    assert!(rmsg.contains("E0910"), "a return-arm handler must still be refused:\n{rmsg}");
+    let rmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&ret.stdout),
+        String::from_utf8_lossy(&ret.stderr)
+    );
+    assert!(
+        rmsg.contains("E0910"),
+        "a return-arm handler must still be refused:\n{rmsg}"
+    );
 }
 
 #[test]
@@ -5036,20 +7100,32 @@ fn codegen_handler_tail_resume_lowers_via_parity_harness() {
     // root where the axon-rt runtime links cleanly (the test-spawn environment's
     // runtime-lib discovery is flaky for the final link, unrelated to lowering).
     // Skips (exit 0 + a skip line) when codegen can't build.
-    let script = format!("{}/../../scripts/handler_resume_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/handler_resume_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("handler_resume_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash").arg(&script).output().expect("run handler_resume_parity.sh");
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run handler_resume_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen unavailable — handler-resume parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "lowered handlers must match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("handler_resume_parity: PASS"), "expected PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "lowered handlers must match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("handler_resume_parity: PASS"),
+        "expected PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -5073,8 +7149,16 @@ fn str_param_lambda_builds_and_runs_native() {
     )
     .unwrap();
     let bin = std::env::temp_dir().join(format!("axon_lamstr_{}.bin", std::process::id()));
-    let build = axon().args(["build", f.to_str().unwrap(), "-o"]).arg(&bin).output().unwrap();
-    let bmsg = format!("{}{}", String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+    let build = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    let bmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
     if bmsg.contains("requires building axon with the `codegen` feature") {
         let _ = std::fs::remove_file(&f);
         eprintln!("codegen feature absent — str-param-lambda native test skipped");
@@ -5101,7 +7185,10 @@ fn str_param_lambda_builds_and_runs_native() {
     let _ = std::fs::remove_file(&f);
     let _ = std::fs::remove_file(&bin);
     let out = String::from_utf8_lossy(&run.stdout);
-    assert_eq!(out, "5\n1\n", "str-param lambda body must compute correctly, got: {out:?}");
+    assert_eq!(
+        out, "5\n1\n",
+        "str-param lambda body must compute correctly, got: {out:?}"
+    );
 }
 
 #[test]
@@ -5115,20 +7202,32 @@ fn native_deep_recursion_panics_gracefully_not_segfault() {
     // root, where the axon-rt runtime links cleanly — the test-spawn environment's
     // final-link discovery is flaky, same as handler_resume_parity). Skips when
     // codegen/link is unavailable.
-    let script = format!("{}/../../scripts/recursion_guard_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/recursion_guard_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("recursion_guard_parity.sh not found — skipping");
         return;
     }
-    let out = std::process::Command::new("bash").arg(&script).output().expect("run recursion_guard_parity.sh");
+    let out = std::process::Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run recursion_guard_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/unix unavailable — recursion-guard parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "native deep recursion must fail gracefully (exit 101), not segfault:\n{stdout}{stderr}");
-    assert!(stdout.contains("recursion_guard_parity: OK"), "expected OK line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "native deep recursion must fail gracefully (exit 101), not segfault:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("recursion_guard_parity: OK"),
+        "expected OK line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -5152,8 +7251,16 @@ fn native_str_valued_dict_get_aborts_loudly_not_silently_wrong() {
     )
     .unwrap();
     let bin = std::env::temp_dir().join(format!("axon_dstr_{}.bin", std::process::id()));
-    let build = axon().args(["build", f.to_str().unwrap(), "-o"]).arg(&bin).output().unwrap();
-    let bmsg = format!("{}{}", String::from_utf8_lossy(&build.stdout), String::from_utf8_lossy(&build.stderr));
+    let build = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
+        .arg(&bin)
+        .output()
+        .unwrap();
+    let bmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&build.stdout),
+        String::from_utf8_lossy(&build.stderr)
+    );
     if !build.status.success() {
         // Skip when native is unavailable: codegen feature absent, OR this host's
         // test harness can't link axon-rt (an environment issue — `undefined
@@ -5167,7 +7274,11 @@ fn native_str_valued_dict_get_aborts_loudly_not_silently_wrong() {
     let run = std::process::Command::new(&bin).output().unwrap();
     let _ = std::fs::remove_file(&f);
     let _ = std::fs::remove_file(&bin);
-    assert_eq!(run.status.code(), Some(101), "str-valued dict_get must abort, not return a garbage int");
+    assert_eq!(
+        run.status.code(),
+        Some(101),
+        "str-valued dict_get must abort, not return a garbage int"
+    );
     let err = String::from_utf8_lossy(&run.stderr);
     assert!(
         err.contains("non-int-valued dicts"),
@@ -5175,7 +7286,10 @@ fn native_str_valued_dict_get_aborts_loudly_not_silently_wrong() {
     );
     // And it must NOT have printed a garbage integer to stdout first.
     let out = String::from_utf8_lossy(&run.stdout);
-    assert!(!out.contains("k="), "must abort BEFORE printing a wrong value, got stdout: {out:?}");
+    assert!(
+        !out.contains("k="),
+        "must abort BEFORE printing a wrong value, got stdout: {out:?}"
+    );
 }
 
 #[test]
@@ -5190,19 +7304,27 @@ fn str_returning_lambda_aborts_with_e0910_not_ir_crash() {
         "fn main() -> i64 { let g = |x: i64| if x > 0 { \"pos\" } else { \"neg\" }\n str_len(g(1)) }\n",
     )
     .unwrap();
-    let out = axon().args(["build", f.to_str().unwrap(), "-o"])
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o"])
         .arg(std::env::temp_dir().join(format!("axon_lamret_{}.bin", std::process::id())))
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     let codegen_present = !msg.contains("requires building axon with the `codegen` feature");
     if codegen_present {
         assert!(
             msg.contains("E0910") && msg.contains("returns a str"),
             "a str-returning lambda must abort with a clean E0910, got:\n{msg}"
         );
-        assert!(!msg.contains("IR verification"), "must not surface a raw IR crash:\n{msg}");
+        assert!(
+            !msg.contains("IR verification"),
+            "must not surface a raw IR crash:\n{msg}"
+        );
         assert!(!out.status.success(), "build must FAIL:\n{msg}");
     } else {
         eprintln!("codegen feature absent — str-return-lambda E0910 test skipped");
@@ -5275,13 +7397,20 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
     ];
     for (label, body, found) in cases {
         let src = format!("fn main() {{\n  {body}}}\n");
-        let f = std::env::temp_dir()
-            .join(format!("axon_wraparg_{label}_{}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_wraparg_{label}_{}.ax", std::process::id()));
         std::fs::write(&f, &src).unwrap();
 
         // `check` rejects with E0306 (exit 2), not a panic (101).
-        let chk = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
-        assert_eq!(chk.status.code(), Some(2), "[{label}] check should reject: {chk:?}");
+        let chk = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert_eq!(
+            chk.status.code(),
+            Some(2),
+            "[{label}] check should reject: {chk:?}"
+        );
         let chk_err = format!(
             "{}{}",
             String::from_utf8_lossy(&chk.stderr),
@@ -5295,7 +7424,11 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
         // `run` reaches the same gate — exit 2, NOT the old runtime panic.
         let run = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(run.status.code(), Some(2), "[{label}] run should gate at checker: {run:?}");
+        assert_eq!(
+            run.status.code(),
+            Some(2),
+            "[{label}] run should gate at checker: {run:?}"
+        );
         let run_err = String::from_utf8_lossy(&run.stderr);
         assert!(
             !run_err.contains("expected dict, got"),
@@ -5315,7 +7448,10 @@ fn concrete_wrapper_arg_to_opaque_deferred_param_is_a_clean_type_error_not_a_pan
     }\n";
     let f = std::env::temp_dir().join(format!("axon_wrapok_{}.ax", std::process::id()));
     std::fs::write(&f, ok).unwrap();
-    let chk = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let chk = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(
         chk.status.code(),
@@ -5365,8 +7501,7 @@ fn checked_integer_arithmetic_panics_gracefully_not_silently() {
     ];
     for (i, (body, must_panic, needle)) in cases.iter().enumerate() {
         let src = format!("fn main() {{\n  {body}\n}}\n");
-        let f = std::env::temp_dir()
-            .join(format!("axon_ckarith_{}_{i}.ax", std::process::id()));
+        let f = std::env::temp_dir().join(format!("axon_ckarith_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, &src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
@@ -5413,7 +7548,10 @@ fn abs_and_pow_overflow_panic_gracefully_with_a_clean_message() {
             "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(abs_i64(mm)))",
             "abs_i64 overflow",
         ),
-        ("let e = 0 - 1\n  println(to_str(pow_i64(2, e)))", "pow_i64: negative exponent"),
+        (
+            "let e = 0 - 1\n  println(to_str(pow_i64(2, e)))",
+            "pow_i64: negative exponent",
+        ),
     ];
     for (i, (body, needle)) in cases.iter().enumerate() {
         let src = format!("fn main() {{\n  {body}\n}}\n");
@@ -5454,9 +7592,21 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
     // interpreter (the reference) in the standard gate. Index via a variable so
     // the value isn't const-folded into a static check.
     let cases = [
-        ("let a = [10, 20, 30]\n  let i = 5\n  println(to_str(a[i]))", true, "out of bounds (len 3)"),
-        ("let a = [10, 20, 30]\n  let i = 0 - 1\n  println(to_str(a[i]))", true, "out of bounds (len 3)"),
-        ("let a = [10, 20, 30]\n  let i = 2\n  println(to_str(a[i]))", false, "30"),
+        (
+            "let a = [10, 20, 30]\n  let i = 5\n  println(to_str(a[i]))",
+            true,
+            "out of bounds (len 3)",
+        ),
+        (
+            "let a = [10, 20, 30]\n  let i = 0 - 1\n  println(to_str(a[i]))",
+            true,
+            "out of bounds (len 3)",
+        ),
+        (
+            "let a = [10, 20, 30]\n  let i = 2\n  println(to_str(a[i]))",
+            false,
+            "30",
+        ),
     ];
     for (i, (body, must_panic, needle)) in cases.iter().enumerate() {
         let src = format!("fn main() {{\n  {body}\n}}\n");
@@ -5480,8 +7630,15 @@ fn array_out_of_bounds_index_panics_gracefully_not_garbage() {
                 "[case {i}] expected a bounds panic mentioning `{needle}`, got: {combined}"
             );
         } else {
-            assert_eq!(out.status.code(), Some(0), "[case {i}] valid index must not panic: {out:?}");
-            assert!(combined.contains(needle), "[case {i}] expected `{needle}`, got: {combined}");
+            assert_eq!(
+                out.status.code(),
+                Some(0),
+                "[case {i}] valid index must not panic: {out:?}"
+            );
+            assert!(
+                combined.contains(needle),
+                "[case {i}] expected `{needle}`, got: {combined}"
+            );
         }
     }
 }
@@ -5495,25 +7652,53 @@ fn refinement_predicate_with_impure_builtin_is_rejected_e1209() {
     // had silently slipped through — `type T = i64 where now_ms() > 0` was
     // accepted.)
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_refimp_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_refimp_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // now_ms() in a named refinement → E1209.
-    let (c, m) = check("type T = i64 where now_ms() > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }");
+    let (c, m) = check(
+        "type T = i64 where now_ms() > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }",
+    );
     assert_eq!(c, 2, "now_ms() refinement must be rejected: {m}");
-    assert!(m.contains("E1209") && m.contains("now_ms"), "expected E1209 naming now_ms: {m}");
+    assert!(
+        m.contains("E1209") && m.contains("now_ms"),
+        "expected E1209 naming now_ms: {m}"
+    );
 
     // random_i64() in a refinement → also rejected.
     let (c, m) = check("type T = i64 where _ > random_i64(0, 10)\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }");
     assert_eq!(c, 2, "random_i64 refinement must be rejected: {m}");
 
     // A PURE refinement (only the value `_` + pure ops/builtins) is accepted.
-    assert_eq!(check("type T = i64 where _ > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }").0, 0, "pure refinement must be accepted");
-    assert_eq!(check("type S = str where str_len(_) > 0\nfn f(x: S) -> i64 { 0 }\nfn main() -> i64 { 0 }").0, 0, "pure-builtin refinement must be accepted");
+    assert_eq!(
+        check("type T = i64 where _ > 0\nfn f(x: T) -> i64 { x }\nfn main() -> i64 { f(5) }").0,
+        0,
+        "pure refinement must be accepted"
+    );
+    assert_eq!(
+        check("type S = str where str_len(_) > 0\nfn f(x: S) -> i64 { 0 }\nfn main() -> i64 { 0 }")
+            .0,
+        0,
+        "pure-builtin refinement must be accepted"
+    );
 }
 
 #[test]
@@ -5528,17 +7713,28 @@ fn refinement_predicate_calls_a_pure_function() {
         "@[pure]\nfn my_abs(n: i64) -> i64 { if n < 0 { 0 - n } else { n } }\ntype Big = i64 where my_abs(_) > 10\nfn f(n: Big) -> i64 { n }\nfn main() { println(to_str(f(5))) }",
     ];
     for (i, src) in reject.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_purepred_bad_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_purepred_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] pure-pred violation must catch: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] pure-pred violation must catch: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         ("@[pure]\nfn is_even(n: i64) -> bool { n % 2 == 0 }\ntype Even = i64 where is_even(_)\nfn f(n: Even) -> i64 { n }\nfn main() { println(to_str(f(4))) }", "4"),
@@ -5547,12 +7743,21 @@ fn refinement_predicate_calls_a_pure_function() {
         ("@[pure]\nfn dbl(n: i64) -> i64 { n * 2 }\n@[pure]\nfn quad(n: i64) -> i64 { dbl(dbl(n)) }\ntype Q = i64 where quad(_) == 8\nfn f(n: Q) -> i64 { n }\nfn main() { println(to_str(f(2))) }", "2"),
     ];
     for (i, (src, expected)) in accept.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_purepred_ok_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_purepred_ok_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] pure-fn predicate");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[accept {i}] pure-fn predicate"
+        );
     }
 }
 
@@ -5571,10 +7776,21 @@ fn refinement_constant_via_bound_builtin_caught_statically() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_cbb_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] constant bound-builtin violation must be static: {m}");
+        let m = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] constant bound-builtin violation must be static: {m}"
+        );
         assert!(m.contains("E1209"), "[reject {i}] expected E1209: {m}");
     }
     // ACCEPT (valid constant → builds + runs clean, no false positive):
@@ -5587,7 +7803,11 @@ fn refinement_constant_via_bound_builtin_caught_statically() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(*code), "[accept {i}] valid constant must run clean: {out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(*code),
+            "[accept {i}] valid constant must run clean: {out:?}"
+        );
     }
 }
 
@@ -5605,13 +7825,21 @@ fn refinement_precondition_enforced_at_runtime_on_nonconstant_args() {
     // (REFINE_VIOLATION_EXIT_CODE) — distinct from a @[verify] postcondition (3)
     // and from a bug-panic (101).
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_refrt_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_refrt_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
-            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
         )
     };
 
@@ -5622,26 +7850,28 @@ fn refinement_precondition_enforced_at_runtime_on_nonconstant_args() {
          fn bad(x: i64) -> i64 { factorial(x) }\n\
          fn main() -> i64 { bad(-1) }\n",
     );
-    assert_eq!(c, 6, "factorial(-1) must be a refinement violation (exit 6): {m}");
+    assert_eq!(
+        c, 6,
+        "factorial(-1) must be a refinement violation (exit 6): {m}"
+    );
     assert!(m.contains("refinement"), "message names the violation: {m}");
     assert!(m.contains("factorial"), "message names the function: {m}");
 
     // 2. Refinement precondition must fire BEFORE the arithmetic it guards: a
     //    `d != 0` divisor caught as a refinement breach (exit 6), not a raw
     //    div-by-zero panic (101).
-    let (c, m) = run(
-        "fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\n\
-         fn main() -> i64 { let z = 0\n divide(10, z) }\n",
+    let (c, m) = run("fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\n\
+         fn main() -> i64 { let z = 0\n divide(10, z) }\n");
+    assert_eq!(
+        c, 6,
+        "divide(_, 0) must be a refinement violation, not a div0 panic: {m}"
     );
-    assert_eq!(c, 6, "divide(_, 0) must be a refinement violation, not a div0 panic: {m}");
 
     // 3. A `str` NonEmpty refinement violated by a runtime "".
-    let (c, m) = run(
-        "type NonEmpty = str where str_len(_) > 0\n\
+    let (c, m) = run("type NonEmpty = str where str_len(_) > 0\n\
          fn greet(name: NonEmpty) -> i64 { str_len(name) }\n\
          fn caller(s: str) -> i64 { greet(s) }\n\
-         fn main() -> i64 { caller(\"\") }\n",
-    );
+         fn main() -> i64 { caller(\"\") }\n");
     assert_eq!(c, 6, "greet(\"\") must violate NonEmpty (exit 6): {m}");
 
     // 4. No false positive: a satisfied non-constant arg runs clean. main returns
@@ -5651,7 +7881,10 @@ fn refinement_precondition_enforced_at_runtime_on_nonconstant_args() {
          fn ok(x: i64) -> i64 { factorial(x) }\n\
          fn main() -> i64 { ok(5) }\n",
     );
-    assert_eq!(c, 120, "satisfied refined arg must run clean (no false positive): {m}");
+    assert_eq!(
+        c, 120,
+        "satisfied refined arg must run clean (no false positive): {m}"
+    );
 }
 
 #[test]
@@ -5659,7 +7892,10 @@ fn refinements_example_still_runs_clean_under_interp() {
     // I-2 baseline guard: examples/refinements.ax must keep running exit-0 with
     // unchanged output after the runtime refinement check lands. Every refined
     // PARAMETER there receives a satisfying value, so no entry check fires.
-    let out = axon().args(["run", &ex("refinements.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("refinements.ax")])
+        .output()
+        .unwrap();
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -5681,41 +7917,43 @@ fn refinement_return_postcondition_enforced_at_runtime() {
     // REFINE_VIOLATION_EXIT_CODE as a precondition breach — both are runtime
     // refinement-contract violations), enforced in interp AND codegen (I-2).
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_refret_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_refret_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
-            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
         )
     };
 
     // 1. Non-constant return violating `_ > 0`. f(5) = -95. Today: exit 161.
-    let (c, m) = run(
-        "type Positive = i64 where _ > 0\n\
+    let (c, m) = run("type Positive = i64 where _ > 0\n\
          fn f(x: i64) -> Positive { x - 100 }\n\
-         fn main() -> i64 { f(5) }\n",
-    );
+         fn main() -> i64 { f(5) }\n");
     assert_eq!(c, 6, "a refinement RETURN violation must exit 6: {m}");
     assert!(m.contains("refinement"), "message names the violation: {m}");
     assert!(m.contains('f'), "message names the function: {m}");
 
     // 2. No false positive: a satisfied non-constant return runs clean. f(5) =
     //    105, so main returns 105.
-    let (c, m) = run(
-        "type Positive = i64 where _ > 0\n\
+    let (c, m) = run("type Positive = i64 where _ > 0\n\
          fn f(x: i64) -> Positive { x + 100 }\n\
-         fn main() -> i64 { f(5) }\n",
-    );
+         fn main() -> i64 { f(5) }\n");
     assert_eq!(c, 105, "a satisfied refined return must run clean: {m}");
 
     // 3. A `str` NonEmpty return violated by a runtime-derived "".
-    let (c, m) = run(
-        "type NonEmpty = str where str_len(_) > 0\n\
+    let (c, m) = run("type NonEmpty = str where str_len(_) > 0\n\
          fn pick(b: bool) -> NonEmpty { if b { \"ok\" } else { \"\" } }\n\
-         fn main() -> i64 { let s = pick(false)\n str_len(s) }\n",
-    );
+         fn main() -> i64 { let s = pick(false)\n str_len(s) }\n");
     assert_eq!(c, 6, "an empty NonEmpty return must violate (exit 6): {m}");
 }
 
@@ -5727,47 +7965,47 @@ fn refinement_struct_field_and_whole_struct_enforced_at_runtime() {
     // field's refinement (and any whole-struct `where` predicate) is evaluated at
     // construction, exiting 6 on violation — interp AND codegen.
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_refstruct_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_refstruct_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
-            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
         )
     };
 
     // 1. Struct FIELD refinement violated by a non-constant value. (today: 251)
-    let (c, m) = run(
-        "type Pos = i64 where _ > 0\n\
+    let (c, m) = run("type Pos = i64 where _ > 0\n\
          type Box = { v: Pos }\n\
          fn mk(x: i64) -> Box { Box { v: x } }\n\
-         fn main() -> i64 { let b = mk(0 - 5)\n b.v }\n",
-    );
+         fn main() -> i64 { let b = mk(0 - 5)\n b.v }\n");
     assert_eq!(c, 6, "a struct-field refinement violation must exit 6: {m}");
     assert!(m.contains("refinement"), "message names the violation: {m}");
 
     // 2. WHOLE-STRUCT refinement (`_.lo <= _.hi`) violated by non-constant. (today: 2)
-    let (c, m) = run(
-        "type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
+    let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(10, 2)\n r.hi }\n",
-    );
+         fn main() -> i64 { let r = mk(10, 2)\n r.hi }\n");
     assert_eq!(c, 6, "a whole-struct refinement violation must exit 6: {m}");
 
     // 3 + 4. No false positives: satisfying field + whole-struct values run clean.
-    let (c, m) = run(
-        "type Pos = i64 where _ > 0\n\
+    let (c, m) = run("type Pos = i64 where _ > 0\n\
          type Box = { v: Pos }\n\
          fn mk(x: i64) -> Box { Box { v: x } }\n\
-         fn main() -> i64 { let b = mk(5)\n b.v }\n",
-    );
+         fn main() -> i64 { let b = mk(5)\n b.v }\n");
     assert_eq!(c, 5, "a satisfying struct field must run clean: {m}");
-    let (c, m) = run(
-        "type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
+    let (c, m) = run("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\n\
          fn mk(a: i64, b: i64) -> Range { Range { lo: a, hi: b } }\n\
-         fn main() -> i64 { let r = mk(2, 10)\n r.hi }\n",
-    );
+         fn main() -> i64 { let r = mk(2, 10)\n r.hi }\n");
     assert_eq!(c, 10, "a satisfying whole-struct must run clean: {m}");
 }
 
@@ -5778,32 +8016,49 @@ fn refinement_let_binding_enforced_at_runtime_and_statically() {
     // are closed here: a provably-bad constant is E1209 at check time, a
     // non-constant violation exits 6 at run time (interp AND codegen).
     let run = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_reflet_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_reflet_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
-            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
         )
     };
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_refletc_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_refletc_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         (
             out.status.code().unwrap_or(-1),
-            format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
         )
     };
 
     // Runtime: a non-constant value violating the let annotation. (today: 251)
-    let (c, m) = run(
-        "type Pos = i64 where _ > 0\n\
+    let (c, m) = run("type Pos = i64 where _ > 0\n\
          fn neg(x: i64) -> i64 { 0 - x }\n\
-         fn main() -> i64 { let p: Pos = neg(5)\n p }\n",
-    );
+         fn main() -> i64 { let p: Pos = neg(5)\n p }\n");
     assert_eq!(c, 6, "a let-binding refinement violation must exit 6: {m}");
     assert!(m.contains("refinement"), "message names the violation: {m}");
 
@@ -5812,15 +8067,19 @@ fn refinement_let_binding_enforced_at_runtime_and_statically() {
         "type Pos = i64 where _ > 0\n\
          fn main() -> i64 { let p: Pos = 0 - 5\n p }\n",
     );
-    assert_eq!(c, 2, "a constant let-refinement violation must be a static error: {m}");
-    assert!(m.contains("E1209"), "expected E1209 for the bad constant let: {m}");
+    assert_eq!(
+        c, 2,
+        "a constant let-refinement violation must be a static error: {m}"
+    );
+    assert!(
+        m.contains("E1209"),
+        "expected E1209 for the bad constant let: {m}"
+    );
 
     // No false positives: satisfying constant + non-constant.
-    let (c, m) = run(
-        "type Pos = i64 where _ > 0\n\
+    let (c, m) = run("type Pos = i64 where _ > 0\n\
          fn neg(x: i64) -> i64 { 0 - x }\n\
-         fn main() -> i64 { let p: Pos = neg(0 - 3)\n p }\n",
-    );
+         fn main() -> i64 { let p: Pos = neg(0 - 3)\n p }\n");
     assert_eq!(c, 3, "a satisfying non-constant let must run clean: {m}");
     assert_eq!(
         check("type Pos = i64 where _ > 0\nfn main() -> i64 { let p: Pos = 7\n p }\n").0,
@@ -5836,8 +8095,8 @@ fn complexity_command_reports_mdl_metric() {
     // deterministic, format-invariant (AST-based, not text), monotone (more code
     // ⇒ more bits), and emit stable JSON for tools. (No type-check needed.)
     let complexity = |args: &[&str], src: &str| -> (i32, String) {
-        let f = std::env::temp_dir()
-            .join(format!("axon_cx_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_cx_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
         let mut full = vec!["complexity"];
         full.extend_from_slice(args);
@@ -5854,12 +8113,18 @@ fn complexity_command_reports_mdl_metric() {
     // Human table: names the function, has a TOTAL row and a bits column.
     let (c, o) = complexity(&[], "fn f() -> i64 { 1 + 2 }");
     assert_eq!(c, 0, "complexity must succeed: {o}");
-    assert!(o.contains('f') && o.contains("TOTAL") && o.contains("bits"), "table shape: {o}");
+    assert!(
+        o.contains('f') && o.contains("TOTAL") && o.contains("bits"),
+        "table shape: {o}"
+    );
 
     // JSON: stable schema + a positive total bit count.
     let (c, o) = complexity(&["--json"], "fn f() -> i64 { 1 + 2 }");
     assert_eq!(c, 0);
-    assert!(o.contains("\"schema\":\"axon-complexity/1\""), "schema: {o}");
+    assert!(
+        o.contains("\"schema\":\"axon-complexity/1\""),
+        "schema: {o}"
+    );
     assert!(o.contains("\"bits\":"), "has bits: {o}");
 
     // Helper: extract total bits from --json.
@@ -5878,10 +8143,16 @@ fn complexity_command_reports_mdl_metric() {
     // Monotone: a strictly larger program scores more bits.
     let small = total_bits("fn f() -> i64 { 0 }");
     let big = total_bits("fn f() -> i64 { 0 + 1 + 2 + 3 }");
-    assert!(big > small && small > 0, "monotone: small={small} big={big}");
+    assert!(
+        big > small && small > 0,
+        "monotone: small={small} big={big}"
+    );
 
     // Deterministic: same source → same score.
-    assert_eq!(total_bits("fn f() -> i64 { 1 }"), total_bits("fn f() -> i64 { 1 }"));
+    assert_eq!(
+        total_bits("fn f() -> i64 { 1 }"),
+        total_bits("fn f() -> i64 { 1 }")
+    );
 
     // Format-invariant: same AST, different whitespace/comments → same score.
     let a = total_bits("fn f() -> i64 { 1 + 2 }");
@@ -5911,7 +8182,10 @@ fn self_improving_compiler_verifies_a_new_constant_fold_pass() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "constant-fold must pass the gates: {combined}");
+    assert!(
+        out.status.success(),
+        "constant-fold must pass the gates: {combined}"
+    );
     assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
     assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
     assert!(combined.contains("PASSED"), "overall: {combined}");
@@ -5922,7 +8196,10 @@ fn self_improving_compiler_verifies_a_new_constant_fold_pass() {
         .args(["improve", "verify", &ex(""), "--pass", "evil-pass"])
         .output()
         .unwrap();
-    assert!(!bad.status.success(), "an unregistered pass must be rejected");
+    assert!(
+        !bad.status.success(),
+        "an unregistered pass must be rejected"
+    );
 }
 
 #[test]
@@ -5942,7 +8219,10 @@ fn self_improving_compiler_verifies_a_third_bool_simplify_pass() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "bool-simplify must pass the gates: {combined}");
+    assert!(
+        out.status.success(),
+        "bool-simplify must pass the gates: {combined}"
+    );
     assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
     assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
     assert!(combined.contains("PASSED"), "overall: {combined}");
@@ -5957,7 +8237,13 @@ fn self_improving_compiler_verifies_a_fourth_redundant_branch_pass() {
     // the taken branch (the literal condition + dead branch are behavior-free to
     // remove; the taken branch is preserved verbatim).
     let out = axon()
-        .args(["improve", "verify", &ex(""), "--pass", "redundant-branch-fold"])
+        .args([
+            "improve",
+            "verify",
+            &ex(""),
+            "--pass",
+            "redundant-branch-fold",
+        ])
         .env("AXON_AI_MOCK", "1")
         .output()
         .unwrap();
@@ -5966,7 +8252,10 @@ fn self_improving_compiler_verifies_a_fourth_redundant_branch_pass() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(out.status.success(), "redundant-branch-fold must pass the gates: {combined}");
+    assert!(
+        out.status.success(),
+        "redundant-branch-fold must pass the gates: {combined}"
+    );
     assert!(combined.contains("G1 correctness : pass"), "G1: {combined}");
     assert!(combined.contains("G2 safety      : pass"), "G2: {combined}");
     assert!(combined.contains("PASSED"), "overall: {combined}");
@@ -5979,16 +8268,21 @@ fn constant_fold_reduces_complexity_with_identical_behavior() {
     // observable behavior. `2 + 3 * 4 + 100 - 50` and its folded form `64` both
     // evaluate to 64, but the folded program scores far fewer bits.
     let run_val = |src: &str| -> i32 {
-        let f = std::env::temp_dir().join(format!("axon_cfb_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_cfb_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         out.status.code().unwrap_or(-1)
     };
     let bits = |src: &str| -> i64 {
-        let f = std::env::temp_dir().join(format!("axon_cfx_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_cfx_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["complexity", f.to_str().unwrap(), "--json"]).output().unwrap();
+        let out = axon()
+            .args(["complexity", f.to_str().unwrap(), "--json"])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let o = String::from_utf8_lossy(&out.stdout);
         let after = o.split("\"total\":").nth(1).unwrap_or("");
@@ -6007,7 +8301,10 @@ fn constant_fold_reduces_complexity_with_identical_behavior() {
     assert_eq!(run_val(folded), 64);
     // Strictly simpler after folding.
     let (bu, bf) = (bits(unfolded), bits(folded));
-    assert!(bf > 0 && bf < bu, "folded must be simpler: unfolded={bu} folded={bf}");
+    assert!(
+        bf > 0 && bf < bu,
+        "folded must be simpler: unfolded={bu} folded={bf}"
+    );
 }
 
 #[test]
@@ -6023,15 +8320,31 @@ fn world_model_loop_learns_a_fitting_model_and_compresses() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "world model must find a perfect fit (exit 0): {out:?}");
-    assert!(stdout.contains("learned: a=3 b=0"), "learns the ground-truth slope: {stdout}");
-    assert!(stdout.contains("fit error:   0"), "achieves a perfect fit: {stdout}");
-    assert!(stdout.contains("verified fit"), "the result fits as a refinement type: {stdout}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "world model must find a perfect fit (exit 0): {out:?}"
+    );
+    assert!(
+        stdout.contains("learned: a=3 b=0"),
+        "learns the ground-truth slope: {stdout}"
+    );
+    assert!(
+        stdout.contains("fit error:   0"),
+        "achieves a perfect fit: {stdout}"
+    );
+    assert!(
+        stdout.contains("verified fit"),
+        "the result fits as a refinement type: {stdout}"
+    );
 
     // The stdlib World module's @[test]s all pass (fit math, MDL ordering, the
     // FittedWorld refinement). Covered by the glob acceptance gate too; asserted
     // here explicitly as the prototype's unit layer.
-    let t = axon().args(["test", &ex("stdlib/world.ax")]).output().unwrap();
+    let t = axon()
+        .args(["test", &ex("stdlib/world.ax")])
+        .output()
+        .unwrap();
     assert!(t.status.success(), "world.ax @[test]s must pass: {t:?}");
     assert!(
         String::from_utf8_lossy(&t.stdout).contains("5 passed, 0 failed"),
@@ -6053,7 +8366,11 @@ fn phase5_features_compose_pure_total_refinement_verify() {
     std::fs::write(&f, fact).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "pure+total+refinement fact must run: {out:?}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "pure+total+refinement fact must run: {out:?}"
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "120");
 
     // (2) A fn that violates BOTH @[total] (non-decreasing recursion) AND a
@@ -6061,16 +8378,29 @@ fn phase5_features_compose_pure_total_refinement_verify() {
     let both = "@[total]\nfn bad(n: i64 where _ > 0) -> i64 { bad(n) }\nfn main() { println(to_str(bad(0 - 1))) }\n";
     let f = std::env::temp_dir().join(format!("axon_p5both_{}.ax", std::process::id()));
     std::fs::write(&f, both).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let combined = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert_eq!(out.status.code(), Some(2), "both-violations must fail check: {combined}");
-    assert!(combined.contains("E1208"), "expected E1208 (total): {combined}");
-    assert!(combined.contains("E1209"), "expected E1209 (refinement): {combined}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "both-violations must fail check: {combined}"
+    );
+    assert!(
+        combined.contains("E1208"),
+        "expected E1208 (total): {combined}"
+    );
+    assert!(
+        combined.contains("E1209"),
+        "expected E1209 (refinement): {combined}"
+    );
 }
 
 #[test]
@@ -6086,15 +8416,25 @@ fn refinement_string_predicates_str_eq_and_str_len() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_streq_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] string predicate must catch: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] string predicate must catch: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         "type Yes = str where str_eq(_, \"yes\")\nfn f(s: Yes) -> i64 { str_len(s) }\nfn main() { println(to_str(f(\"yes\"))) }",
@@ -6105,7 +8445,11 @@ fn refinement_string_predicates_str_eq_and_str_len() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] satisfying string must run: {out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] satisfying string must run: {out:?}"
+        );
     }
 }
 
@@ -6121,17 +8465,28 @@ fn parenthesized_inline_refinement_on_return_and_param() {
         "fn g(n: (i64 where _ > 0)) -> i64 { n }\nfn main() { println(to_str(g(0 - 2))) }",
     ];
     for (i, src) in reject.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_pinline_bad_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_pinline_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] paren-inline violation must be caught: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] paren-inline violation must be caught: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     // Valid refinement returns + plain grouping/tuple (must NOT be disturbed).
     let accept = [
@@ -6144,8 +8499,16 @@ fn parenthesized_inline_refinement_on_return_and_param() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] paren inline");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[accept {i}] paren inline"
+        );
     }
 }
 
@@ -6163,15 +8526,25 @@ fn whole_struct_refinement_with_field_projection() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_swr_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] struct-refinement violation must catch: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] struct-refinement violation must catch: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         ("type Range = { lo: i64, hi: i64 } where _.lo <= _.hi\nfn main() { let r = Range { lo: 1, hi: 5 }\n println(to_str(r.lo + r.hi)) }", "6"),
@@ -6183,8 +8556,16 @@ fn whole_struct_refinement_with_field_projection() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] struct refinement");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[accept {i}] struct refinement"
+        );
     }
 }
 
@@ -6209,8 +8590,16 @@ fn refinements_compose_with_asi_annotations_and_subtyping() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] refinement+ASI must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] refinement composes");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] refinement+ASI must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] refinement composes"
+        );
     }
 }
 
@@ -6225,17 +8614,28 @@ fn inline_refinement_on_a_struct_field() {
         "type Range = { lo: i64 where _ >= 0, hi: i64 where _ <= 100 }\nfn main() { let r = Range { lo: 5, hi: 150 }\n println(to_str(r.lo + r.hi)) }",
     ];
     for (i, src) in reject.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_finline_bad_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_finline_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] field-refinement violation must catch: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] field-refinement violation must catch: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         ("type Box = { v: i64 where _ > 0 }\nfn main() { let b = Box { v: 5 }\n println(to_str(b.v)) }", "5"),
@@ -6246,8 +8646,16 @@ fn inline_refinement_on_a_struct_field() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] field inline refine");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[accept {i}] field inline refine"
+        );
     }
 }
 
@@ -6266,15 +8674,25 @@ fn inline_anonymous_refinement_on_a_parameter() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_inline_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] inline-refinement violation must be caught: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] inline-refinement violation must be caught: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         ("fn divide(n: i64, d: i64 where _ != 0) -> i64 { n / d }\nfn main() { println(to_str(divide(10, 2))) }", "5"),
@@ -6287,8 +8705,16 @@ fn inline_anonymous_refinement_on_a_parameter() {
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[accept {i}] inline refinement");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[accept {i}] inline refinement"
+        );
     }
 }
 
@@ -6303,24 +8729,36 @@ fn refinement_struct_field_proof_obligation_e1209() {
         "type NonEmpty = str where str_len(_) > 0\ntype Name = { s: NonEmpty }\nfn main() { let n = Name { s: \"\" }\n println(n.s) }",
     ];
     for (i, src) in reject.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_reffield_bad_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_reffield_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] bad field must be caught: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] bad field must be caught: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         "type Positive = i64 where _ > 0\ntype Box = { v: Positive }\nfn main() { let b = Box { v: 7 }\n println(to_str(b.v)) }",
         "type Positive = i64 where _ > 0\ntype Box = { v: Positive }\nfn id(n: i64) -> i64 { n }\nfn main() { let b = Box { v: id(3) }\n println(to_str(b.v)) }",
     ];
     for (i, src) in accept.iter().enumerate() {
-        let f = std::env::temp_dir().join(format!("axon_reffield_ok_{}_{i}.ax", std::process::id()));
+        let f =
+            std::env::temp_dir().join(format!("axon_reffield_ok_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
@@ -6329,8 +8767,15 @@ fn refinement_struct_field_proof_obligation_e1209() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] valid field must run: {combined}");
-        assert!(!combined.contains("E1209"), "[accept {i}] no E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] valid field must run: {combined}"
+        );
+        assert!(
+            !combined.contains("E1209"),
+            "[accept {i}] no E1209: {combined}"
+        );
     }
 }
 
@@ -6349,15 +8794,25 @@ fn refinement_return_site_proof_obligation_e1209() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_refret_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] bad return must be caught: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] bad return must be caught: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     let accept = [
         "type Positive = i64 where _ > 0\nfn good() -> Positive { 7 }\nfn main() { println(to_str(good())) }",
@@ -6376,8 +8831,15 @@ fn refinement_return_site_proof_obligation_e1209() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] valid return must run: {combined}");
-        assert!(!combined.contains("E1209") && !combined.contains("E0307"), "[accept {i}] no error: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] valid return must run: {combined}"
+        );
+        assert!(
+            !combined.contains("E1209") && !combined.contains("E0307"),
+            "[accept {i}] no error: {combined}"
+        );
     }
 }
 
@@ -6398,15 +8860,25 @@ fn refinement_constant_argument_proof_obligation_e1209() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_refobl_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] constant must be caught: {combined}");
-        assert!(combined.contains("E1209"), "[reject {i}] expected E1209: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] constant must be caught: {combined}"
+        );
+        assert!(
+            combined.contains("E1209"),
+            "[reject {i}] expected E1209: {combined}"
+        );
     }
     // Satisfying constants + non-constant (deferred) arguments must NOT error.
     let accept = [
@@ -6426,8 +8898,15 @@ fn refinement_constant_argument_proof_obligation_e1209() {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] satisfying/deferred must run: {combined}");
-        assert!(!combined.contains("E1209"), "[accept {i}] no E1209 expected: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] satisfying/deferred must run: {combined}"
+        );
+        assert!(
+            !combined.contains("E1209"),
+            "[accept {i}] no E1209 expected: {combined}"
+        );
     }
 }
 
@@ -6450,8 +8929,16 @@ fn named_refinement_type_is_usable_and_erases_to_its_base() {
         std::fs::write(&f, prog).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] refinement-typed program must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] refinement erases to base");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] refinement-typed program must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] refinement erases to base"
+        );
     }
 }
 
@@ -6473,16 +8960,29 @@ fn total_attribute_requires_a_decreasing_measure_e1208() {
     for (i, src) in accept.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_total_ok_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] @[total] must check clean: {combined}");
-        assert!(!combined.contains("E1208"), "[accept {i}] no E1208 expected: {combined}");
-        assert!(!combined.contains("W0001"), "[accept {i}] @[total] must be a known attr: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] @[total] must check clean: {combined}"
+        );
+        assert!(
+            !combined.contains("E1208"),
+            "[accept {i}] no E1208 expected: {combined}"
+        );
+        assert!(
+            !combined.contains("W0001"),
+            "[accept {i}] @[total] must be a known attr: {combined}"
+        );
     }
 
     let reject = [
@@ -6494,15 +8994,25 @@ fn total_attribute_requires_a_decreasing_measure_e1208() {
     for (i, src) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_total_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] non-decreasing @[total] must fail: {combined}");
-        assert!(combined.contains("E1208"), "[reject {i}] expected E1208: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] non-decreasing @[total] must fail: {combined}"
+        );
+        assert!(
+            combined.contains("E1208"),
+            "[reject {i}] expected E1208: {combined}"
+        );
     }
 }
 
@@ -6514,17 +9024,34 @@ fn total_callee_must_be_total_no_termination_launder_e1208() {
     // returns. Now a @[total] fn may only call other @[total] fns + builtins; and
     // a mutual-recursion cycle (no per-fn measure) is refused. Both are E1208.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_totcallee_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_totcallee_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // REJECT: launder non-termination through a non-total helper.
     let (c, m) = check("fn loops(x: i64) -> i64 { loops(x) }\n@[total]\nfn f(x: i64) -> i64 { loops(x) }\nfn main() -> i64 { f(5) }");
     assert_eq!(c, 2, "calling a non-total helper must fail: {m}");
-    assert!(m.contains("E1208"), "expected E1208 for non-total callee: {m}");
+    assert!(
+        m.contains("E1208"),
+        "expected E1208 for non-total callee: {m}"
+    );
 
     // REJECT: mutual recursion (a→b→a) — no per-fn decreasing measure.
     assert_eq!(check("@[total]\nfn a(n: i64) -> i64 { b(n) }\n@[total]\nfn b(n: i64) -> i64 { a(n) }\nfn main() -> i64 { a(1) }").0, 2, "mutual recursion must be rejected");
@@ -6534,7 +9061,12 @@ fn total_callee_must_be_total_no_termination_launder_e1208() {
     // ACCEPT (no false positives): a @[total] fn calling a TOTAL helper, calling
     // a total BUILTIN, and a DAG where a→b with b self-recursing (terminates).
     assert_eq!(check("@[total]\nfn fact(n: i64) -> i64 { if n == 0 { 1 } else { n * fact(n - 1) } }\n@[total]\nfn g(n: i64) -> i64 { fact(n) + 1 }\nfn main() -> i64 { g(5) }").0, 0, "total fn calling a total helper must pass");
-    assert_eq!(check("@[total]\nfn f(n: i64) -> str { to_str(n) }\nfn main() -> i64 { let _ = f(5)\n 0 }").0, 0, "total fn calling a total builtin must pass");
+    assert_eq!(
+        check("@[total]\nfn f(n: i64) -> str { to_str(n) }\nfn main() -> i64 { let _ = f(5)\n 0 }")
+            .0,
+        0,
+        "total fn calling a total builtin must pass"
+    );
     assert_eq!(check("@[total]\nfn b(n: i64) -> i64 { if n == 0 { 0 } else { b(n - 1) } }\n@[total]\nfn a(n: i64) -> i64 { b(n) + 1 }\nfn main() -> i64 { a(5) }").0, 0, "DAG composition (a→self-recursive-b) must pass");
 }
 
@@ -6545,11 +9077,25 @@ fn pure_total_attributes_enforced_on_impl_methods_e1207_e1208() {
     // impl-block METHOD was silently unenforced — a @[total] method could loop
     // forever, a @[pure] method could do I/O. Both are now checked (E1208/E1207).
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_implattr_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_implattr_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     let hdr = "type C = { n: i64 }\ntrait T { fn m(self) -> i64 }\n";
 
@@ -6575,11 +9121,25 @@ fn pure_fn_calling_an_impure_method_is_e1207() {
     // does I/O) slipped through. Now the checker computes impure-method names and
     // flags such calls. A PURE getter method stays callable (no false positive).
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_purem_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_purem_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     // REJECT: @[pure] fn calls a method whose body does I/O.
     let impure = "type C = { n: i64 }\ntrait L { fn log(self) -> i64 }\nimpl L for C { fn log(self: C) -> i64 { println(\"fx\")  self.n } }\n@[pure]\nfn p(c: C) -> i64 { c.log() }\nfn main() -> i64 { let c = C { n: 1 }  p(c) }";
@@ -6599,22 +9159,39 @@ fn kernel_goal_is_principal_budget_scoped_r12b() {
     let metric = "@[adaptive]\nfn metric(x: i64) -> i64 { 0 - (x - 7) * (x - 7) }\n";
     let run = |body: &str| -> (i32, String) {
         let src = format!("{metric}fn main() -> i64 {{ {body} }}\n");
-        let f = std::env::temp_dir().join(format!("axon_kgoal_{}_{}.ax", std::process::id(), body.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_kgoal_{}_{}.ax",
+            std::process::id(),
+            body.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // B3: budget 10, run 5 → spent 5, budget_left 5, exit 0.
     let (c, m) = run("let r = principal_root(\"r\", true, false, false, 10)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 5)\n println(\"spent {to_str(kernel_goal_spent(g))} left {to_str(kernel_goal_budget_left(g))}\")\n 0");
     assert_eq!(c, 0, "B3 sufficient budget must exit 0: {m}");
-    assert!(m.contains("spent 5 left 5"), "B3: 5 evals charged, 5 left: {m}");
+    assert!(
+        m.contains("spent 5 left 5"),
+        "B3: 5 evals charged, 5 left: {m}"
+    );
 
     // B4 (load-bearing): budget 3, run 100 → exhausted, exit 7, body after stops.
     let (c, m) = run("let r = principal_root(\"r\", true, false, false, 3)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 100)\n println(\"UNREACHABLE\")\n 0");
     assert_eq!(c, 7, "B4 budget exhaust must exit 7 (E1604): {m}");
-    assert!(m.contains("goal budget exhausted") && !m.contains("UNREACHABLE"), "B4 stops at the ceiling: {m}");
+    assert!(
+        m.contains("goal budget exhausted") && !m.contains("UNREACHABLE"),
+        "B4 stops at the ceiling: {m}"
+    );
 
     // B2: unknown metric name → typo-guard panic (exit 101).
     let (c, _) = run("let r = principal_root(\"r\", true, false, false, 5)\n let g = kernel_goal_create(r, \"nope\", 0.0)\n 0");
@@ -6623,7 +9200,10 @@ fn kernel_goal_is_principal_budget_scoped_r12b() {
     // B6/B7: queries don't spend; a second run accumulates and stays bounded.
     let (c, m) = run("let r = principal_root(\"r\", true, false, false, 8)\n let g = kernel_goal_create(r, \"metric\", 0.0)\n let _ = kernel_goal_run(g, 3)\n let s1 = kernel_goal_spent(g)\n let _q = kernel_goal_best_score(g)\n let s2 = kernel_goal_spent(g)\n let _ = kernel_goal_run(g, 3)\n println(\"s1 {to_str(s1)} s2 {to_str(s2)} total {to_str(kernel_goal_spent(g))} left {to_str(kernel_goal_budget_left(g))}\")\n 0");
     assert_eq!(c, 0, "B6/B7 must exit 0: {m}");
-    assert!(m.contains("s1 3 s2 3 total 6 left 2"), "B6 query no-spend + B7 accumulate: {m}");
+    assert!(
+        m.contains("s1 3 s2 3 total 6 left 2"),
+        "B6 query no-spend + B7 accumulate: {m}"
+    );
 }
 
 #[test]
@@ -6633,17 +9213,28 @@ fn kernel_goal_builtins_are_codegen_refused_e0910() {
     let f = std::env::temp_dir().join(format!("axon_kgcg_{}.ax", std::process::id()));
     std::fs::write(&f, "@[adaptive]\nfn m(x: i64) -> i64 { x }\nfn main() -> i64 { let r = principal_root(\"r\", true, false, false, 5)\n let g = kernel_goal_create(r, \"m\", 0.0)\n let _ = kernel_goal_run(g, 2)\n 0 }\n").unwrap();
     let bin = std::env::temp_dir().join(format!("axon_kgcg_{}.bin", std::process::id()));
-    let out = axon().args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["build", f.to_str().unwrap(), "-o", bin.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     if msg.contains("LLVM") && msg.contains("not") && msg.contains("available") {
-        eprintln!("codegen unavailable — skipping"); return;
+        eprintln!("codegen unavailable — skipping");
+        return;
     }
     // codegen-less (interp-only) axon binary prints a use-`axon run` hint; either
     // that or an explicit E0910 is an acceptable refusal (never a built binary).
     let refused = msg.contains("E0910") || msg.contains("use `axon run`") || !bin.exists();
     let _ = std::fs::remove_file(&bin);
-    assert!(refused, "codegen must refuse kernel_goal_*, not build it: {msg}");
+    assert!(
+        refused,
+        "codegen must refuse kernel_goal_*, not build it: {msg}"
+    );
 }
 
 #[test]
@@ -6658,11 +9249,25 @@ fn goal_optimizer_builtins_are_impure_e1207() {
         let src = format!(
             "@[adaptive]\nfn metric(x: i64) -> i64 {{ 0 - (x - 7) * (x - 7) }}\n@[pure]\nfn p() -> i64 {{ {body} }}\nfn main() -> i64 {{ p() }}\n"
         );
-        let f = std::env::temp_dir().join(format!("axon_goalpure_{}_{}.ax", std::process::id(), body.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_goalpure_{}_{}.ax",
+            std::process::id(),
+            body.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     for body in [
         "goal_count(\"metric\")",
@@ -6683,11 +9288,25 @@ fn reassignment_does_not_erase_declared_type_for_later_checks() {
     // (field access, arity, option-as-value) SKIP the variable after a
     // reassignment like `x = x + 1`. Now the prior known type is preserved.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_reassign_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_reassign_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     // field access on an i64 is E0401 — and must STILL be caught after a BinOp
     // reassignment (the Unknown-erasure used to drop it).
@@ -6695,7 +9314,11 @@ fn reassignment_does_not_erase_declared_type_for_later_checks() {
     assert_eq!(c, 2, "post-reassign field access must still be caught: {m}");
     assert!(m.contains("E0401"), "expected E0401: {m}");
     // a plain reassignment chain must remain valid (no false positive).
-    assert_eq!(check("fn main() -> i64 { let x = 5\n x = x + 1\n x = x * 2\n x }").0, 0, "valid reassignment must pass");
+    assert_eq!(
+        check("fn main() -> i64 { let x = 5\n x = x + 1\n x = x * 2\n x }").0,
+        0,
+        "valid reassignment must pass"
+    );
 }
 
 #[test]
@@ -6705,24 +9328,61 @@ fn impl_method_call_arity_is_checked_statically_e0305() {
     // checker and panicked at runtime. Now E0305 fires. Method sigs include `self`
     // as param 0; explicit args map to params[1..].
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_marity_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_marity_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     let rect = "type Rect = { w: i64, h: i64 }\ntrait Area { fn area(self) -> i64 }\nimpl Area for Rect { fn area(self: Rect) -> i64 { self.w * self.h } }\n";
     // REJECT: too many args (method takes 0 besides self).
-    let (c, m) = check(&format!("{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area(99, 200) }}"));
+    let (c, m) = check(&format!(
+        "{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area(99, 200) }}"
+    ));
     assert_eq!(c, 2, "wrong method arity must fail check: {m}");
     assert!(m.contains("E0305"), "expected E0305: {m}");
     // ACCEPT: correct arity (0 explicit args).
-    assert_eq!(check(&format!("{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area() }}")).0, 0, "correct method call must pass");
+    assert_eq!(
+        check(&format!(
+            "{rect}fn main() -> i64 {{ let r = Rect {{ w: 3, h: 4 }}\n r.area() }}"
+        ))
+        .0,
+        0,
+        "correct method call must pass"
+    );
 
     // A method that takes self + 1 explicit arg: both directions.
     let add = "type C = { n: i64 }\ntrait A { fn add(self, x: i64) -> i64 }\nimpl A for C { fn add(self: C, x: i64) -> i64 { self.n + x } }\n";
-    assert_eq!(check(&format!("{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add(5) }}")).0, 0, "self+1arg correct call must pass");
-    assert_eq!(check(&format!("{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add() }}")).0, 2, "self+1arg missing arg must fail");
+    assert_eq!(
+        check(&format!(
+            "{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add(5) }}"
+        ))
+        .0,
+        0,
+        "self+1arg correct call must pass"
+    );
+    assert_eq!(
+        check(&format!(
+            "{add}fn main() -> i64 {{ let c = C {{ n: 1 }}\n c.add() }}"
+        ))
+        .0,
+        2,
+        "self+1arg missing arg must fail"
+    );
 }
 
 #[test]
@@ -6733,11 +9393,22 @@ fn sensitive_laundered_through_a_method_is_e1206() {
     // escaped. The fixpoint now computes exfiltrating params for impl methods
     // (mangled key) and the MethodCall arm checks them (self-offset). E1206.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_sm_{}_{}.ax", std::process::id(), src.len()));
+        let f =
+            std::env::temp_dir().join(format!("axon_sm_{}_{}.ax", std::process::id(), src.len()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
     let base = "@[sensitive(pii)]\ntype User = { name: str, email: str }\ntype L = { id: i64 }\ntrait S { fn ship(self, payload: str) -> str }\nimpl S for L { fn ship(self: L, payload: str) -> str { match ai_complete(payload) { Ok(s) => s  Err(e) => e } } }\n";
     // REJECT: sensitive field laundered through the exfiltrating method.
@@ -6745,7 +9416,14 @@ fn sensitive_laundered_through_a_method_is_e1206() {
     assert_eq!(c, 2, "sensitive→method-exfiltration must be E1206: {m}");
     assert!(m.contains("E1206"), "expected E1206: {m}");
     // ACCEPT: a non-sensitive arg to the same method.
-    assert_eq!(check(&format!("{base}fn main() -> i64 {{ let l = L {{ id: 1 }}\n let _ = l.ship(\"public\")\n 0 }}")).0, 0, "non-sensitive arg must pass");
+    assert_eq!(
+        check(&format!(
+            "{base}fn main() -> i64 {{ let l = L {{ id: 1 }}\n let _ = l.ship(\"public\")\n 0 }}"
+        ))
+        .0,
+        0,
+        "non-sensitive arg must pass"
+    );
 }
 
 #[test]
@@ -6757,24 +9435,44 @@ fn total_attribute_rejects_while_loops_e1208() {
     //  while n < 10 { } n }` was accepted yet hangs forever.) Bounded `for`
     // loops and structural recursion remain accepted.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_totwhile_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_totwhile_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // while under @[total] → E1208 (even one that would progress — undecidable).
     let (c, m) = check("@[total]\nfn f() -> i64 { let n = 0\n while n < 10 { n = n + 1 }\n n }\nfn main() -> i64 { 0 }");
     assert_eq!(c, 2, "@[total] + while must be rejected: {m}");
-    assert!(m.contains("E1208"), "expected E1208 for @[total]+while: {m}");
+    assert!(
+        m.contains("E1208"),
+        "expected E1208 for @[total]+while: {m}"
+    );
 
     // A `while` HIDDEN inside a lambda body must also be caught — the totality
     // walk must descend into closures (the shared for_each_child used to skip
     // lambda bodies, letting this escape).
     let (c, m) = check("@[total]\nfn f() -> i64 { let g = || { let n = 0\n while n < 10 { }\n n }\n g() }\nfn main() -> i64 { 0 }");
     assert_eq!(c, 2, "@[total] + while-in-lambda must be rejected: {m}");
-    assert!(m.contains("E1208"), "expected E1208 for while-in-lambda: {m}");
+    assert!(
+        m.contains("E1208"),
+        "expected E1208 for while-in-lambda: {m}"
+    );
 
     // bounded for loop under @[total] → accepted (always terminates).
     assert_eq!(
@@ -6805,16 +9503,29 @@ fn pure_attribute_enforces_purity_e1207() {
     for (i, src) in accept.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_pure_ok_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(0), "[accept {i}] pure fn must check clean: {combined}");
-        assert!(!combined.contains("E1207"), "[accept {i}] no E1207 expected: {combined}");
-        assert!(!combined.contains("W0001"), "[accept {i}] @[pure] must be a known attr: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[accept {i}] pure fn must check clean: {combined}"
+        );
+        assert!(
+            !combined.contains("E1207"),
+            "[accept {i}] no E1207 expected: {combined}"
+        );
+        assert!(
+            !combined.contains("W0001"),
+            "[accept {i}] @[pure] must be a known attr: {combined}"
+        );
     }
 
     // (program, the impure callee the diagnostic should name)
@@ -6827,14 +9538,21 @@ fn pure_attribute_enforces_purity_e1207() {
     for (i, (src, callee)) in reject.iter().enumerate() {
         let f = std::env::temp_dir().join(format!("axon_pure_bad_{}_{i}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let combined = format!(
             "{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
-        assert_eq!(out.status.code(), Some(2), "[reject {i}] impure pure-fn must fail check: {combined}");
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "[reject {i}] impure pure-fn must fail check: {combined}"
+        );
         assert!(
             combined.contains("E1207") && combined.contains(callee),
             "[reject {i}] expected E1207 naming `{callee}`: {combined}"
@@ -6849,18 +9567,38 @@ fn pure_attribute_contradicting_a_nonempty_effect_row_is_e1207() {
     // attribute promises no effects while the row claims some. Must be E1207, so
     // the two annotations can't silently disagree.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_purerow_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_purerow_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // Contradiction → E1207.
     let (code, msg) = check("@[pure]\nfn p() -> i64 | {Net} { 0 }\nfn main() -> i64 { p() }");
     assert_eq!(code, 2, "pure + nonempty row must fail: {msg}");
-    assert!(msg.contains("E1207"), "expected E1207 for pure/row contradiction: {msg}");
-    assert!(msg.contains("EMPTY effect row"), "message should explain pure == empty row: {msg}");
+    assert!(
+        msg.contains("E1207"),
+        "expected E1207 for pure/row contradiction: {msg}"
+    );
+    assert!(
+        msg.contains("EMPTY effect row"),
+        "message should explain pure == empty row: {msg}"
+    );
 
     // `@[pure]` with an EXPLICIT empty row `| {}` is consistent → clean.
     let (code, msg) = check("@[pure]\nfn p() -> i64 | {} { 0 }\nfn main() -> i64 { p() }");
@@ -6879,29 +9617,56 @@ fn contained_capability_contradicting_a_too_small_row_is_e1310() {
     // Net while the row claims no Net. Must be flagged (E1310), so the
     // capability sandbox and the effect row can't silently disagree.
     let check = |src: &str| -> (i32, String) {
-        let f = std::env::temp_dir().join(format!("axon_caprow_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_caprow_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        (out.status.code().unwrap_or(-1), format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr)))
+        (
+            out.status.code().unwrap_or(-1),
+            format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            ),
+        )
     };
 
     // net capability but `| {}` row → contradiction.
-    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }");
+    let (code, msg) = check(
+        "@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }",
+    );
     assert_eq!(code, 2, "net cap + empty row must fail: {msg}");
-    assert!(msg.contains("E1310"), "expected E1310 for cap/row contradiction: {msg}");
+    assert!(
+        msg.contains("E1310"),
+        "expected E1310 for cap/row contradiction: {msg}"
+    );
 
     // fs-write capability implies IO; `| {}` omits it → contradiction.
-    let (code, msg) = check("@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }");
+    let (code, msg) = check(
+        "@[contained(fs: [write(\"./out/\")])]\nfn f() -> i64 | {} { 0 }\nfn main() -> i64 { f() }",
+    );
     assert_eq!(code, 2, "fs-write cap + empty row must fail (fs→IO): {msg}");
 
     // Consistent: net cap WITH `| {Net}` → clean.
-    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {Net} { 0 }\nfn main() -> i64 { f() }");
+    let (code, msg) = check(
+        "@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 | {Net} { 0 }\nfn main() -> i64 { f() }",
+    );
     assert_eq!(code, 0, "net cap + matching row is consistent: {msg}");
 
     // `@[contained]` with NO row clause is unconstrained → not checked here.
-    let (code, msg) = check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 { 0 }\nfn main() -> i64 { f() }");
-    assert_eq!(code, 0, "contained without a row must still be accepted: {msg}");
+    let (code, msg) =
+        check("@[contained(net: [\"api.x.com\"])]\nfn f() -> i64 { 0 }\nfn main() -> i64 { f() }");
+    assert_eq!(
+        code, 0,
+        "contained without a row must still be accepted: {msg}"
+    );
 }
 
 #[test]
@@ -6924,8 +9689,16 @@ fn generic_fn_returning_sum_type_resolves_concrete_layout() {
         std::fs::write(&f, prog).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] generic sum-type return");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] generic sum-type return"
+        );
     }
 }
 
@@ -6950,8 +9723,16 @@ fn sum_type_in_struct_field_and_array_element_sized_from_declared_type() {
         std::fs::write(&f, prog).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] sum-type field/element");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] sum-type field/element"
+        );
     }
 }
 
@@ -6974,8 +9755,16 @@ fn bare_sum_type_argument_sized_from_declared_param_type() {
         std::fs::write(&f, prog).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] bare sum-type arg");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] bare sum-type arg"
+        );
     }
 }
 
@@ -7000,8 +9789,16 @@ fn annotated_option_local_compiles_and_matches_on_both_engines() {
         std::fs::write(&f, &src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
-        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), *expected, "[case {i}] annotated Option");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] must run clean: {out:?}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).trim(),
+            *expected,
+            "[case {i}] annotated Option"
+        );
     }
 }
 
@@ -7029,24 +9826,51 @@ fn invariant_i9_no_silent_success_on_degenerate_input() {
     use Exp::*;
     let cases: &[(&str, Exp)] = &[
         // Overflow → graceful panic (not a wrapped value).
-        ("let m = 9223372036854775807\n  println(to_str(m + m))", Panic("integer overflow")),
+        (
+            "let m = 9223372036854775807\n  println(to_str(m + m))",
+            Panic("integer overflow"),
+        ),
         // Division by zero → graceful panic (not SIGFPE / garbage).
-        ("let z = 0\n  println(to_str(7 / z))", Panic("division by zero")),
+        (
+            "let z = 0\n  println(to_str(7 / z))",
+            Panic("division by zero"),
+        ),
         // Out-of-bounds index → graceful panic (not garbage / arbitrary memory).
-        ("let a = [1, 2, 3]\n  let i = 7\n  println(to_str(a[i]))", Panic("out of bounds")),
+        (
+            "let a = [1, 2, 3]\n  let i = 7\n  println(to_str(a[i]))",
+            Panic("out of bounds"),
+        ),
         // abs(i64::MIN) → graceful panic (not a raw overflow leak).
-        ("let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(abs_i64(mm)))", Panic("abs_i64 overflow")),
+        (
+            "let m = 0 - 9223372036854775807\n  let mm = m - 1\n  println(to_str(abs_i64(mm)))",
+            Panic("abs_i64 overflow"),
+        ),
         // arr_max on empty → graceful panic WITH a message.
-        ("let a: [i64] = []\n  println(to_str(arr_max_i64(a)))", Panic("array is empty")),
+        (
+            "let a: [i64] = []\n  println(to_str(arr_max_i64(a)))",
+            Panic("array is empty"),
+        ),
         // ── Documented intentional sentinels (NOT silent-wrong) ──────────────
         // Inverted str_slice → empty string (documented total function).
-        ("let a = 4\n  let b = 1\n  println(str_slice(\"hello\", a, b))", Out("")),
+        (
+            "let a = 4\n  let b = 1\n  println(str_slice(\"hello\", a, b))",
+            Out(""),
+        ),
         // f64→i64 out of range → saturates to i64::MAX (documented).
-        ("let f = 1.0e30\n  println(to_str(f64_to_i64(f)))", Out("9223372036854775807")),
+        (
+            "let f = 1.0e30\n  println(to_str(f64_to_i64(f)))",
+            Out("9223372036854775807"),
+        ),
         // Bad parse → Err, not a silent 0.
-        ("match parse_int(\"nope\") { Ok(n) => println(to_str(n))  Err(e) => println(e) }", Out("could not parse `nope` as a base-10 integer")),
+        (
+            "match parse_int(\"nope\") { Ok(n) => println(to_str(n))  Err(e) => println(e) }",
+            Out("could not parse `nope` as a base-10 integer"),
+        ),
         // arr_sum overflow → saturates (documented), not a wrapped negative.
-        ("let a = [9223372036854775807, 1]\n  println(to_str(arr_sum_i64(a)))", Out("9223372036854775807")),
+        (
+            "let a = [9223372036854775807, 1]\n  println(to_str(arr_sum_i64(a)))",
+            Out("9223372036854775807"),
+        ),
     ];
     for (i, (body, exp)) in cases.iter().enumerate() {
         let src = format!("fn main() {{\n  {body}\n}}\n");
@@ -7117,7 +9941,11 @@ fn annotated_result_local_compiles_and_matches_on_both_engines() {
         std::fs::write(&f, &src).unwrap();
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] must run clean: {out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] must run clean: {out:?}"
+        );
         assert_eq!(
             String::from_utf8_lossy(&out.stdout).trim(),
             *expected,
@@ -7136,7 +9964,11 @@ fn annotated_result_local_compiles_and_matches_on_both_engines() {
     std::fs::write(&f, nested).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "passing an annotated Result to a fn must run clean: {out:?}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "passing an annotated Result to a fn must run clean: {out:?}"
+    );
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "3");
 }
 
@@ -7149,10 +9981,22 @@ fn f64_to_i64_saturates_on_overflow_and_nan() {
     // parity is pinned by scripts/float_to_int_parity.sh; this guards the
     // interpreter (the reference) in the standard gate.
     let cases = [
-        ("let f = 1.0e30\n  println(to_str(f64_to_i64(f)))", "9223372036854775807"),
-        ("let f = 0.0 - 1.0e30\n  println(to_str(f64_to_i64(f)))", "-9223372036854775808"),
-        ("let a = 0.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))", "0"),
-        ("let a = 1.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))", "9223372036854775807"),
+        (
+            "let f = 1.0e30\n  println(to_str(f64_to_i64(f)))",
+            "9223372036854775807",
+        ),
+        (
+            "let f = 0.0 - 1.0e30\n  println(to_str(f64_to_i64(f)))",
+            "-9223372036854775808",
+        ),
+        (
+            "let a = 0.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))",
+            "0",
+        ),
+        (
+            "let a = 1.0\n  let b = 0.0\n  println(to_str(f64_to_i64(a / b)))",
+            "9223372036854775807",
+        ),
         ("let f = 3.7\n  println(to_str(f64_to_i64(f)))", "3"),
     ];
     for (i, (body, expected)) in cases.iter().enumerate() {
@@ -7162,7 +10006,11 @@ fn f64_to_i64_saturates_on_overflow_and_nan() {
         let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
         let _ = std::fs::remove_file(&f);
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(out.status.code(), Some(0), "[case {i}] conversion must not fault: {out:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "[case {i}] conversion must not fault: {out:?}"
+        );
         assert_eq!(
             stdout.trim(),
             *expected,
@@ -7196,7 +10044,12 @@ fn dict_filter_to_pairs_from_pairs() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "dict_filter/to_pairs/from_pairs: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "dict_filter/to_pairs/from_pairs: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7221,7 +10074,12 @@ fn dict_to_str_round_trips() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "dict_to_str/from_str round trip: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "dict_to_str/from_str round trip: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7239,7 +10097,12 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     // dict_from_str is lenient: 2 well-formed lines kept, the bad one skipped, no panic.
-    assert_eq!(out.status.code(), Some(2), "lenient parse keeps 2 entries, no panic: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "lenient parse keeps 2 entries, no panic: {:?}",
+        out
+    );
 
     // (2) strict: dict_try_from_str returns Err on the malformed line.
     let strict = "fn main() -> i64 {\n  \
@@ -7253,7 +10116,12 @@ fn dict_from_str_malformed_is_recoverable_not_a_panic() {
     let out2 = axon().args(["run", f2.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f2);
     // Err arm → 7; crucially exit is NOT 101 (panic) — it's a recoverable Result.
-    assert_eq!(out2.status.code(), Some(7), "strict parse returns Err recoverably (not panic 101): {:?}", out2);
+    assert_eq!(
+        out2.status.code(),
+        Some(7),
+        "strict parse returns Err recoverably (not panic 101): {:?}",
+        out2
+    );
 }
 
 #[test]
@@ -7267,23 +10135,44 @@ fn persistent_bandit_demo_accumulates_across_runs() {
 
     let mut cmd = axon();
     cmd.args(["run", &ex("asi/persistent_bandit.ax")]);
-    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    cmd.env(
+        "AXON_PATH",
+        format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
+    );
     let run1 = cmd.output().unwrap();
     assert!(run1.status.success(), "run 1: {:?}", run1);
     let out1 = String::from_utf8_lossy(&run1.stdout);
-    assert!(out1.contains("prior pulls (loaded): 0"), "run 1 should be fresh: {out1}");
-    assert!(out1.contains("total now:            40"), "run 1 totals 40: {out1}");
+    assert!(
+        out1.contains("prior pulls (loaded): 0"),
+        "run 1 should be fresh: {out1}"
+    );
+    assert!(
+        out1.contains("total now:            40"),
+        "run 1 totals 40: {out1}"
+    );
 
     let mut cmd2 = axon();
     cmd2.args(["run", &ex("asi/persistent_bandit.ax")]);
-    cmd2.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    cmd2.env(
+        "AXON_PATH",
+        format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
+    );
     let run2 = cmd2.output().unwrap();
     let _ = std::fs::remove_file(state_file);
     assert!(run2.status.success(), "run 2: {:?}", run2);
     let out2 = String::from_utf8_lossy(&run2.stdout);
-    assert!(out2.contains("prior pulls (loaded): 40"), "run 2 should load prior: {out2}");
-    assert!(out2.contains("total now:            80"), "run 2 totals 80: {out2}");
-    assert!(out2.contains("preferred: arm-2"), "arm-2 should win: {out2}");
+    assert!(
+        out2.contains("prior pulls (loaded): 40"),
+        "run 2 should load prior: {out2}"
+    );
+    assert!(
+        out2.contains("total now:            80"),
+        "run 2 totals 80: {out2}"
+    );
+    assert!(
+        out2.contains("preferred: arm-2"),
+        "arm-2 should win: {out2}"
+    );
 }
 
 #[test]
@@ -7296,7 +10185,12 @@ fn llm_cache_demo_memoizes_repeated_prompts() {
     cmd.args(["run", &ex("asi/llm_cache.ax")]);
     cmd.env("AXON_AI_MOCK", "1");
     let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "cache should deliver 4 hits: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "cache should deliver 4 hits: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("cache misses:      4"), "stdout: {stdout}");
     assert!(stdout.contains("cache hits:        4"), "stdout: {stdout}");
@@ -7313,7 +10207,10 @@ fn safe_bandit_demo_picks_safe_high_reward_arm() {
     // among safe arms (0, 2, 5), arm-2 has the highest true reward.
     let mut cmd = axon();
     cmd.args(["run", &ex("asi/safe_bandit.ax")]);
-    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    cmd.env(
+        "AXON_PATH",
+        format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
+    );
     let out = cmd.output().unwrap();
     assert_eq!(out.status.code(), Some(1), "should pick arm-2: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
@@ -7356,7 +10253,12 @@ fn arr_enumerate_partition_dict_merge() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "enumerate/partition/merge: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "enumerate/partition/merge: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7367,9 +10269,17 @@ fn bandit_ucb_demo_converges_to_best_arm() {
     // UCB converges to arm-2 (true_mean=0.78, the actual best).
     let mut cmd = axon();
     cmd.args(["run", &ex("asi/bandit_ucb.ax")]);
-    cmd.env("AXON_PATH", format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")));
+    cmd.env(
+        "AXON_PATH",
+        format!("{}/../../examples/stdlib", env!("CARGO_MANIFEST_DIR")),
+    );
     let out = cmd.output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "UCB should pick arm-2: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "UCB should pick arm-2: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("preferred arm: arm-2"), "stdout: {stdout}");
 }
@@ -7380,8 +10290,15 @@ fn bandit_stdlib_module_tests_pass() {
     // demo #20 imports. 5 @[test]s cover fresh state, update math,
     // round-robin sweep of unpulled arms, best-arm-by-pulls, and the
     // Rc<RefCell> sharing semantics of the inner Dicts.
-    let out = axon().args(["test", &ex("stdlib/bandit.ax")]).output().unwrap();
-    assert!(out.status.success(), "bandit.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/bandit.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "bandit.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("5 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -7422,7 +10339,12 @@ fn arr_max_by_min_by_take_drop_while_dict_each() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "max_by/min_by/take_while/drop_while/dict_each: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "max_by/min_by/take_while/drop_while/dict_each: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7430,7 +10352,10 @@ fn word_freq_demo_uses_dict_and_group_by() {
     // Demo #19. First demo to use the Dict primitive: count word
     // frequencies in a 14-word corpus, rank by count, print top-3.
     // "the" wins with 4 occurrences; "dog"/"fox" tied at 2.
-    let out = axon().args(["run", &ex("asi/word_freq.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/word_freq.ax")])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "word_freq demo: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("vocab size: 10"), "stdout: {stdout}");
@@ -7495,7 +10420,12 @@ fn array_any_all_count_zip_with_close_the_functional_gap() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "any/all/count_if/zip_with: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "any/all/count_if/zip_with: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7527,7 +10457,12 @@ fn array_chunk_unique_index_of_find() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "chunk/unique/index_of/find: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "chunk/unique/index_of/find: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7555,7 +10490,12 @@ fn goal_best_score_and_goal_count_are_pure_reads() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "goal_best_score / goal_count are pure: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "goal_best_score / goal_count are pure: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7588,7 +10528,12 @@ fn array_numeric_stats_mean_std_argmax_argmin() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "numeric stats should compose: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "numeric stats should compose: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7607,7 +10552,12 @@ fn arr_std_f64_on_small_arrays_is_zero_not_a_panic() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     // exit 1 = the program returned 1 (all checks passed); crucially NOT 101 (panic).
-    assert_eq!(out.status.code(), Some(1), "std of <2 samples is 0, not a panic: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "std of <2 samples is 0, not a panic: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7635,7 +10585,12 @@ fn f64_multi_arg_no_single_dim_monopolizes_budget() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "fair per-dim rotation should move both dims: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "fair per-dim rotation should move both dims: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7661,7 +10616,12 @@ fn goal_continue_warm_starts_from_in_memory_best() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "goal_continue should converge: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "goal_continue should converge: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7681,7 +10641,12 @@ fn verify_composite_predicates_with_and_or_evaluate_at_runtime() {
     std::fs::write(&f, pass_and).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(75), "AND predicate should pass: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(75),
+        "AND predicate should pass: {:?}",
+        out
+    );
 
     let fail_and = "@[verify(value >= 50 && confidence >= 0.8)]\n\
         fn gate(n: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(n, c) }\n\
@@ -7692,9 +10657,18 @@ fn verify_composite_predicates_with_and_or_evaluate_at_runtime() {
     let _ = std::fs::remove_file(&f);
     assert!(!out.status.success(), "AND breach on value should panic");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("composite predicate did not hold"), "msg: {stderr}");
-    assert!(stderr.contains("value 30"), "must name rejected value: {stderr}");
-    assert!(stderr.contains("confidence 0.9"), "must name confidence: {stderr}");
+    assert!(
+        stderr.contains("composite predicate did not hold"),
+        "msg: {stderr}"
+    );
+    assert!(
+        stderr.contains("value 30"),
+        "must name rejected value: {stderr}"
+    );
+    assert!(
+        stderr.contains("confidence 0.9"),
+        "must name confidence: {stderr}"
+    );
 
     let or_passes = "@[verify(value >= 90 || confidence >= 0.99)]\n\
         fn gate(n: i64, c: f64) -> Uncertain<i64> { uncertain_dyn_i64(n, c) }\n\
@@ -7707,7 +10681,11 @@ fn verify_composite_predicates_with_and_or_evaluate_at_runtime() {
     std::fs::write(&f, or_passes).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(out.status.success(), "OR passes via either branch: {:?}", out);
+    assert!(
+        out.status.success(),
+        "OR passes via either branch: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7717,11 +10695,20 @@ fn multi_objective_demo_picks_pareto_optimal_policy() {
     // five-policy catalog; at cost_weight=0.3 the Pareto sweet spot is
     // `large` (id=3): blended score 0.805 beats `xl`'s 0.65 (xl wins on
     // accuracy but pays a huge cost penalty).
-    let out = axon().args(["run", &ex("asi/multi_objective.ax")]).output().unwrap();
+    let out = axon()
+        .args(["run", &ex("asi/multi_objective.ax")])
+        .output()
+        .unwrap();
     assert_eq!(out.status.code(), Some(1), "should pick large: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("best policy: large (id=3)"), "stdout: {stdout}");
-    assert!(stdout.contains("large: acc=88 cost=25 blended=0.805"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("best policy: large (id=3)"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        stdout.contains("large: acc=88 cost=25 blended=0.805"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -7729,8 +10716,15 @@ fn reward_stdlib_module_tests_pass() {
     // examples/stdlib/reward.ax provides a composable metric algebra
     // (closes ROADMAP §9.5 F10 for the userland surface). 8 @[test]
     // functions cover unit/blend/scale/penalize/min/max combinators.
-    let out = axon().args(["test", &ex("stdlib/reward.ax")]).output().unwrap();
-    assert!(out.status.success(), "reward.ax tests should pass: {:?}", out);
+    let out = axon()
+        .args(["test", &ex("stdlib/reward.ax")])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "reward.ax tests should pass: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("8 passed, 0 failed"), "stdout: {stdout}");
 }
@@ -7771,9 +10765,17 @@ fn channel_try_recv_and_len_enable_drain_patterns() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "try_recv drain pattern: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "try_recv drain pattern: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("queued=5 total=55 after=0"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("queued=5 total=55 after=0"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -7784,8 +10786,16 @@ fn learn_linear_f64_demo_recovers_weights() {
     // With a few-thousand-eval budget the weights land within 0.05 of
     // ground truth (0.5, 1.25) — wider tolerance than the i64 demo since
     // cyclic coordinate descent converges slowly on correlated dims.
-    let out = axon().args(["run", &ex("asi/learn_linear_f64.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "f64 linear regression should converge: {:?}", out);
+    let out = axon()
+        .args(["run", &ex("asi/learn_linear_f64.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "f64 linear regression should converge: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("learned:   y = "), "stdout: {stdout}");
     assert!(stdout.contains("budget:    3000"), "stdout: {stdout}");
@@ -7813,7 +10823,12 @@ fn f64_adaptive_finds_continuous_peak() {
     std::fs::write(&f, src1d).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "f64 1D peak should land near 3.14: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "f64 1D peak should land near 3.14: {:?}",
+        out
+    );
 
     // 2D: peak at (1.5, -2.7), score = 100. Coordinate descent across two
     // f64 dims must locate the joint optimum.
@@ -7836,7 +10851,12 @@ fn f64_adaptive_finds_continuous_peak() {
     std::fs::write(&f, src2d).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "f64 2D peak should land near (1.5, -2.7): {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "f64 2D peak should land near (1.5, -2.7): {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7861,7 +10881,12 @@ fn as_cast_operator_lowers_to_polymorphic_builtins() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "as cast should compose: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "as cast should compose: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7894,7 +10919,12 @@ fn array_repeat_concat_flatten_compose() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "repeat+concat+flatten+casts: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "repeat+concat+flatten+casts: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7909,21 +10939,36 @@ fn persistent_learner_demo_carries_state_across_invocations() {
     let state_file = "/tmp/axon_persistent_learner.txt";
     let _ = std::fs::remove_file(state_file);
 
-    let run1 = axon().args(["run", &ex("asi/persistent_learner.ax")]).output().unwrap();
+    let run1 = axon()
+        .args(["run", &ex("asi/persistent_learner.ax")])
+        .output()
+        .unwrap();
     assert!(run1.status.success(), "run 1 should succeed: {:?}", run1);
     let out1 = String::from_utf8_lossy(&run1.stdout);
     assert!(
         out1.contains("status:  IMPROVED") || out1.contains("status:  FIRST_RUN"),
         "run 1 should record baseline / improvement: {out1}"
     );
-    assert!(out1.contains("new:     x=200  score=1000"), "run 1 should find peak: {out1}");
+    assert!(
+        out1.contains("new:     x=200  score=1000"),
+        "run 1 should find peak: {out1}"
+    );
 
-    let run2 = axon().args(["run", &ex("asi/persistent_learner.ax")]).output().unwrap();
+    let run2 = axon()
+        .args(["run", &ex("asi/persistent_learner.ax")])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(state_file);
     assert!(run2.status.success(), "run 2 should succeed: {:?}", run2);
     let out2 = String::from_utf8_lossy(&run2.stdout);
-    assert!(out2.contains("loaded:  x=200  score=1000"), "run 2 should load prior best: {out2}");
-    assert!(out2.contains("status:  STABLE"), "run 2 should be STABLE: {out2}");
+    assert!(
+        out2.contains("loaded:  x=200  score=1000"),
+        "run 2 should load prior best: {out2}"
+    );
+    assert!(
+        out2.contains("status:  STABLE"),
+        "run 2 should be STABLE: {out2}"
+    );
 }
 
 #[test]
@@ -7950,7 +10995,12 @@ fn array_reverse_take_drop_polymorphic() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "reverse/take/drop polymorphic: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "reverse/take/drop polymorphic: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -7986,9 +11036,17 @@ fn str_split_and_join_roundtrip() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "split/join roundtrip: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "split/join roundtrip: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("n=3 joined=alpha,beta,gamma"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("n=3 joined=alpha,beta,gamma"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -8023,7 +11081,12 @@ fn array_higher_order_ops_accept_heterogeneous_element_types() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "heterogeneous array ops should pass: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "heterogeneous array ops should pass: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8063,9 +11126,17 @@ fn array_stdlib_fold_sort_zip_contains_compose() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(1), "fold + sort + zip + contains should compose: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "fold + sort + zip + contains should compose: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("prod=120 mn=1 mx=9 dot=300 yes=true no=false"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("prod=120 mn=1 mx=9 dot=300 yes=true no=false"),
+        "stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -8087,7 +11158,12 @@ fn array_functional_pipeline_filter_then_map_then_sum() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(220), "filter→map→sum should compose to 220: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(220),
+        "filter→map→sum should compose to 220: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8110,7 +11186,12 @@ fn array_helpers_range_push_sum_max_min() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(254), "array helpers should compose: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(254),
+        "array helpers should compose: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("sum=154 max=99 min=1"), "stdout: {stdout}");
 }
@@ -8134,7 +11215,12 @@ fn closure_accepts_explicit_return_type_annotation() {
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
     // 7+5 + 10+5 = 27
-    assert_eq!(out.status.code(), Some(27), "closure should run with explicit return type: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(27),
+        "closure should run with explicit return type: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8143,10 +11229,21 @@ fn learn_linear_demo_fits_y_equals_3x_plus_1() {
     // realistic fitting task: minimize sum-of-absolute-errors of a linear
     // model on 8 data points. The optimizer must land on `(a, b) = (3, 1)`
     // with zero loss; the program returns 1 iff that holds.
-    let out = axon().args(["run", &ex("asi/learn_linear.ax")]).output().unwrap();
-    assert_eq!(out.status.code(), Some(1), "linear regression should fit exactly: {:?}", out);
+    let out = axon()
+        .args(["run", &ex("asi/learn_linear.ax")])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "linear regression should fit exactly: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("learned:   y = 3*x + 1"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("learned:   y = 3*x + 1"),
+        "stdout: {stdout}"
+    );
     assert!(stdout.contains("loss:      0 "), "stdout: {stdout}");
 }
 
@@ -8170,7 +11267,12 @@ fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
     std::fs::write(&f, src2).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(10), "2-arg peak: x* + y* should be 3 + 7 = 10: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "2-arg peak: x* + y* should be 3 + 7 = 10: {:?}",
+        out
+    );
 
     // Three-dim: peak at (3, 7, 11). Bigger budget — coordinate descent
     // costs n_dims sweeps before convergence settles.
@@ -8187,7 +11289,12 @@ fn multi_arg_adaptive_coordinate_descent_finds_2d_and_3d_peaks() {
     std::fs::write(&f, src3).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(21), "3-arg peak: sum of dims should be 3+7+11=21: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(21),
+        "3-arg peak: sum of dims should be 3+7+11=21: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8209,11 +11316,24 @@ fn raw_string_literal_disables_interpolation_and_escapes() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(out.status.success(), "raw strings should run cleanly: {:?}", out);
+    assert!(
+        out.status.success(),
+        "raw strings should run cleanly: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains(r"\d+\.\d+"), "backslashes pass through, got: {stdout:?}");
-    assert!(stdout.contains("hello {name} world"), "no interpolation, got: {stdout:?}");
-    assert!(stdout.contains(r"C:\Users\me"), "path passes through, got: {stdout:?}");
+    assert!(
+        stdout.contains(r"\d+\.\d+"),
+        "backslashes pass through, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("hello {name} world"),
+        "no interpolation, got: {stdout:?}"
+    );
+    assert!(
+        stdout.contains(r"C:\Users\me"),
+        "path passes through, got: {stdout:?}"
+    );
 }
 
 #[test]
@@ -8231,7 +11351,12 @@ fn verify_value_predicate_gates_on_uncertain_value() {
     std::fs::write(&f, pass).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(75), "passing value should run cleanly: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(75),
+        "passing value should run cleanly: {:?}",
+        out
+    );
 
     let fail = "@[verify(value >= 50)]\n\
         fn gate(n: i64) -> Uncertain<i64> { uncertain_dyn_i64(n, 0.9) }\n\
@@ -8243,8 +11368,14 @@ fn verify_value_predicate_gates_on_uncertain_value() {
     assert!(!out.status.success(), "value-gate breach should panic");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("verify failed in `gate`"), "msg: {stderr}");
-    assert!(stderr.contains("value 42 >= 50 is false"), "must name the breaching ident: {stderr}");
-    assert!(stderr.contains("input 42"), "must include search input: {stderr}");
+    assert!(
+        stderr.contains("value 42 >= 50 is false"),
+        "must name the breaching ident: {stderr}"
+    );
+    assert!(
+        stderr.contains("input 42"),
+        "must include search input: {stderr}"
+    );
 }
 
 #[test]
@@ -8267,8 +11398,14 @@ fn temporal_at_decays_confidence_over_time() {
     assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
     // confidence now = 1, after 30d ≈ 0.5454…, value still 1000.
-    assert!(stdout.starts_with("1 0.545"), "confidence decays 1 → ~0.545 over 30d: {stdout:?}");
-    assert!(stdout.contains("1000"), "the value is unchanged by decay: {stdout:?}");
+    assert!(
+        stdout.starts_with("1 0.545"),
+        "confidence decays 1 → ~0.545 over 30d: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("1000"),
+        "the value is unchanged by decay: {stdout:?}"
+    );
 }
 
 #[test]
@@ -8294,17 +11431,33 @@ fn agent_metacognition_reads_its_own_trace() {
         }\n";
     let f = std::env::temp_dir().join(format!("axon_meta_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(0), "should run clean: {:?}", out);
     let lines: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
     // Stalled fn: nonzero steps, uncertainty 0, stuck=true.
-    assert!(lines[0].parse::<i64>().unwrap_or(0) >= 3, "stalled fn has a trace: {lines:?}");
-    assert_eq!(lines[1], "0", "a flat trace has zero spread → uncertainty 0: {lines:?}");
-    assert_eq!(lines[2], "true", "a flat trace is a detected loop: {lines:?}");
+    assert!(
+        lines[0].parse::<i64>().unwrap_or(0) >= 3,
+        "stalled fn has a trace: {lines:?}"
+    );
+    assert_eq!(
+        lines[1], "0",
+        "a flat trace has zero spread → uncertainty 0: {lines:?}"
+    );
+    assert_eq!(
+        lines[2], "true",
+        "a flat trace is a detected loop: {lines:?}"
+    );
     // No trace: 0 steps, uncertainty 1.0, not stuck.
     assert_eq!(lines[3], "0", "no trace → 0 steps: {lines:?}");
-    assert_eq!(lines[4], "1", "no trace → maximally uncertain (1.0): {lines:?}");
+    assert_eq!(
+        lines[4], "1",
+        "no trace → maximally uncertain (1.0): {lines:?}"
+    );
     assert_eq!(lines[5], "false", "no trace → not a loop: {lines:?}");
 }
 
@@ -8318,11 +11471,21 @@ fn sensitive_type_into_ai_call_is_e1206() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sens_{}.ax", std::process::id()));
     std::fs::write(&f, leak).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(all.contains("E1206"), "sensitive→AI must be E1206: {all}");
-    assert!(all.contains("pii") && all.contains("User"), "message names the category + type: {all}");
+    assert!(
+        all.contains("pii") && all.contains("User"),
+        "message names the category + type: {all}"
+    );
 }
 
 #[test]
@@ -8335,11 +11498,24 @@ fn sensitive_field_into_ai_call_is_e1206() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sensfld_{}.ax", std::process::id()));
     std::fs::write(&f, leak).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("E1206"), "sensitive field → AI must be E1206: {all}");
-    assert!(all.contains("User.email"), "message names the field source: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("E1206"),
+        "sensitive field → AI must be E1206: {all}"
+    );
+    assert!(
+        all.contains("User.email"),
+        "message names the field source: {all}"
+    );
 }
 
 #[test]
@@ -8352,11 +11528,24 @@ fn sensitive_value_into_write_file_is_e1206() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_senswf_{}.ax", std::process::id()));
     std::fs::write(&f, leak).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("E1206"), "sensitive → write_file must be E1206: {all}");
-    assert!(all.contains("file write"), "message names the file-write boundary: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("E1206"),
+        "sensitive → write_file must be E1206: {all}"
+    );
+    assert!(
+        all.contains("file write"),
+        "message names the file-write boundary: {all}"
+    );
 }
 
 #[test]
@@ -8369,10 +11558,20 @@ fn sensitive_value_in_array_arg_is_e1206() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sensarr_{}.ax", std::process::id()));
     std::fs::write(&f, leak).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("E1206"), "sensitive value in an array → exec must be E1206: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("E1206"),
+        "sensitive value in an array → exec must be E1206: {all}"
+    );
 }
 
 #[test]
@@ -8381,10 +11580,20 @@ fn non_sensitive_write_file_is_allowed() {
     let ok = "fn main() -> i64 { let _ = write_file(\"/tmp/x.txt\", \"plain note\")  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_wfok_{}.ax", std::process::id()));
     std::fs::write(&f, ok).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "a plain write_file must be allowed: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "a plain write_file must be allowed: {all}"
+    );
 }
 
 #[test]
@@ -8399,10 +11608,20 @@ fn sensitive_typed_field_into_ai_call_is_e1206() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sensnest_{}.ax", std::process::id()));
     std::fs::write(&f, leak).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("E1206"), "a field of sensitive type → AI must be E1206: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("E1206"),
+        "a field of sensitive type → AI must be E1206: {all}"
+    );
 }
 
 #[test]
@@ -8414,10 +11633,20 @@ fn sensitive_type_used_locally_is_allowed() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sens_ok_{}.ax", std::process::id()));
     std::fs::write(&f, ok).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "local use of a sensitive value must be allowed: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "local use of a sensitive value must be allowed: {all}"
+    );
 }
 
 #[test]
@@ -8429,10 +11658,20 @@ fn non_sensitive_type_into_ai_call_is_allowed() {
         fn main() -> i64 { 0 }\n";
     let f = std::env::temp_dir().join(format!("axon_sens_plain_{}.ax", std::process::id()));
     std::fs::write(&f, ok).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "a non-sensitive type must be allowed: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "a non-sensitive type must be allowed: {all}"
+    );
 }
 
 #[test]
@@ -8451,14 +11690,35 @@ fn sensitive_value_laundered_through_a_helper_is_e1206() {
         fn outer(s: str) -> Result<str, str> { inner(s) }\n\
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = outer(u.email) }\n";
     for (label, src) in [("one hop", one_hop), ("two hop", two_hop)] {
-        let f = std::env::temp_dir().join(format!("axon_taint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_taint_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "{label}: laundered sensitive data must fail check: {all}");
-        assert!(all.contains("E1206"), "{label}: expected E1206 for the laundered flow: {all}");
-        assert!(all.contains("forwards argument"), "{label}: message should explain the indirect leak: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: laundered sensitive data must fail check: {all}"
+        );
+        assert!(
+            all.contains("E1206"),
+            "{label}: expected E1206 for the laundered flow: {all}"
+        );
+        assert!(
+            all.contains("forwards argument"),
+            "{label}: message should explain the indirect leak: {all}"
+        );
     }
 
     // No false positive: a NON-sensitive value through the same helper, and a
@@ -8470,10 +11730,20 @@ fn sensitive_value_laundered_through_a_helper_is_e1206() {
         fn main() { let _ = relay(\"public\")\n  let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = local(u) }\n";
     let f = std::env::temp_dir().join(format!("axon_taint_safe_{}.ax", std::process::id()));
     std::fs::write(&f, safe).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "a non-sensitive arg + local use must NOT trip transitive taint: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "a non-sensitive arg + local use must NOT trip transitive taint: {all}"
+    );
 }
 
 #[test]
@@ -8489,12 +11759,27 @@ fn sensitive_value_stored_in_a_container_then_extracted_is_e1206() {
         type User = { email: str, name: str }\n\
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let t = (u.email, \"x\")\n  let _ = ai_complete(t.0) }\n";
     for (label, src) in [("struct store", struct_store), ("tuple store", tuple_store)] {
-        let f = std::env::temp_dir().join(format!("axon_store_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_store_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "{label}: stored-then-extracted sensitive data must fail: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: stored-then-extracted sensitive data must fail: {all}"
+        );
         assert!(all.contains("E1206"), "{label}: expected E1206: {all}");
     }
 
@@ -8505,10 +11790,20 @@ fn sensitive_value_stored_in_a_container_then_extracted_is_e1206() {
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let _ = ai_complete(u.email) }\n";
     let f = std::env::temp_dir().join(format!("axon_precise_{}.ax", std::process::id()));
     std::fs::write(&f, direct).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("User.email"), "the precise field source must be preserved: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("User.email"),
+        "the precise field source must be preserved: {all}"
+    );
 }
 
 #[test]
@@ -8535,13 +11830,33 @@ fn sensitive_value_returned_from_a_helper_then_leaked_is_e1206() {
         fn extract(u: User) -> str { u.email }\n\
         fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = extract(u)\n  let _ = relay(e) }\n";
-    for (label, src) in [("direct", direct), ("let-bound", let_bound), ("two-hop", two_hop), ("compound", compound)] {
-        let f = std::env::temp_dir().join(format!("axon_rettaint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+    for (label, src) in [
+        ("direct", direct),
+        ("let-bound", let_bound),
+        ("two-hop", two_hop),
+        ("compound", compound),
+    ] {
+        let f = std::env::temp_dir().join(format!(
+            "axon_rettaint_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "{label}: returned-then-leaked sensitive data must fail: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: returned-then-leaked sensitive data must fail: {all}"
+        );
         assert!(all.contains("E1206"), "{label}: expected E1206: {all}");
     }
 
@@ -8553,10 +11868,20 @@ fn sensitive_value_returned_from_a_helper_then_leaked_is_e1206() {
         fn main() { let _ = ai_complete(echo_str(\"public\")) }\n";
     let f = std::env::temp_dir().join(format!("axon_retsafe_{}.ax", std::process::id()));
     std::fs::write(&f, safe).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "a non-sensitive arg through a returner must NOT trip taint: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "a non-sensitive arg through a returner must NOT trip taint: {all}"
+    );
 }
 
 #[test]
@@ -8572,13 +11897,31 @@ fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
         fn relay(s: str) -> Result<str, str> { ai_complete(s) }\n\
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = u.email\n  let _ = relay(e) }\n";
     for (label, src) in [("direct", direct), ("via helper", via_helper)] {
-        let f = std::env::temp_dir().join(format!("axon_loctaint_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_loctaint_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert_eq!(out.status.code(), Some(2), "{label}: a leaked tainted local must fail check: {all}");
-        assert!(all.contains("E1206"), "{label}: expected E1206 for the tainted local: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(2),
+            "{label}: a leaked tainted local must fail check: {all}"
+        );
+        assert!(
+            all.contains("E1206"),
+            "{label}: expected E1206 for the tainted local: {all}"
+        );
     }
 
     // No false positives: a sensitive field copied to a local used PURELY
@@ -8590,13 +11933,30 @@ fn sensitive_field_copied_to_a_local_then_leaked_is_e1206() {
     let rebound = "@[sensitive(pii)]\n\
         type User = { email: str, name: str }\n\
         fn main() { let u = User { email: \"a@b.com\", name: \"bob\" }\n  let e = u.email\n  let e = \"public\"\n  let _ = ai_complete(e) }\n";
-    for (label, src) in [("local only", local_only), ("rebound clears taint", rebound)] {
-        let f = std::env::temp_dir().join(format!("axon_locok_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+    for (label, src) in [
+        ("local only", local_only),
+        ("rebound clears taint", rebound),
+    ] {
+        let f = std::env::temp_dir().join(format!(
+            "axon_locok_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert!(!all.contains("E1206"), "{label}: must NOT trip local taint: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            !all.contains("E1206"),
+            "{label}: must NOT trip local taint: {all}"
+        );
     }
 }
 
@@ -8620,17 +11980,34 @@ fn sensitive_value_laundered_through_a_transform_is_e1206() {
         ("str builtin", mk("let e = str_to_upper(u.email)")),
         ("interpolation", mk("let e = \"addr: {u.email}\"")),
         ("str trim builtin", mk("let e = str_trim(u.email)")),
-        ("if branch", mk("let e = if str_len(u.name) > 0 { u.email } else { \"\" }")),
+        (
+            "if branch",
+            mk("let e = if str_len(u.name) > 0 { u.email } else { \"\" }"),
+        ),
         ("match arm", mk("let e = match u.name { _ => u.email }")),
         ("block tail", mk("let e = { let tmp = u.email  tmp }")),
     ];
     for (label, src) in cases {
-        let f = std::env::temp_dir().join(format!("axon_xform_{}_{}.ax", std::process::id(), label.replace(' ', "_")));
+        let f = std::env::temp_dir().join(format!(
+            "axon_xform_{}_{}.ax",
+            std::process::id(),
+            label.replace(' ', "_")
+        ));
         std::fs::write(&f, &src).unwrap();
-        let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+        let out = axon()
+            .args(["check", f.to_str().unwrap()])
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
-        let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert!(all.contains("E1206"), "{label}: laundered-through-transform leak must be E1206: {all}");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(
+            all.contains("E1206"),
+            "{label}: laundered-through-transform leak must be E1206: {all}"
+        );
     }
 
     // No false positive: NON-sensitive data through the same transforms is fine,
@@ -8643,10 +12020,20 @@ fn sensitive_value_laundered_through_a_transform_is_e1206() {
     );
     let f = std::env::temp_dir().join(format!("axon_xform_clean_{}.ax", std::process::id()));
     std::fs::write(&f, &clean).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!all.contains("E1206"), "transform of non-sensitive / local-only use must be clean: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !all.contains("E1206"),
+        "transform of non-sensitive / local-only use must be clean: {all}"
+    );
 }
 
 #[test]
@@ -8665,9 +12052,20 @@ fn uncertain_source_tag_field_is_accessible() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "u.source_tag must return 0 (user-constructed), not panic");
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!msg.contains("no field"), "must not panic on the source_tag field: {msg}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "u.source_tag must return 0 (user-constructed), not panic"
+    );
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !msg.contains("no field"),
+        "must not panic on the source_tag field: {msg}"
+    );
 }
 
 #[test]
@@ -8685,9 +12083,20 @@ fn temporal_valid_until_ms_field_is_accessible() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(!msg.contains("no field"), "must not panic on the valid_until_ms field: {msg}");
-    assert_eq!(out.status.code(), Some(1), "valid_until_ms must be >= the horizon (created_ms + horizon_ms)");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !msg.contains("no field"),
+        "must not panic on the valid_until_ms field: {msg}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "valid_until_ms must be >= the horizon (created_ms + horizon_ms)"
+    );
 }
 
 #[test]
@@ -8737,7 +12146,11 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
     .unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(7), "an Uncertain<T> param must preserve the Uncertain (not be unwrapped)");
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "an Uncertain<T> param must preserve the Uncertain (not be unwrapped)"
+    );
 
     // Same rule at the RETURN boundary: a fn declared `-> i64` whose body
     // produces an Uncertain unwraps to the inner value (else the struct leaks and
@@ -8748,9 +12161,16 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
         "fn make() -> i64 { let a = uncertain_new(9, 0.9)\n  a }\nfn main() -> i64 { let r = make()\n  r + 1 }\n",
     )
     .unwrap();
-    let out = axon().args(["run", ret.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["run", ret.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&ret);
-    assert_eq!(out.status.code(), Some(10), "an Uncertain body returned as i64 must unwrap (make()==9, +1==10)");
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "an Uncertain body returned as i64 must unwrap (make()==9, +1==10)"
+    );
 
     let keep = std::env::temp_dir().join(format!("axon_uncretkeep_{}.ax", std::process::id()));
     std::fs::write(
@@ -8758,9 +12178,16 @@ fn uncertain_arg_unwraps_to_a_plain_scalar_param() {
         "fn mk() -> Uncertain<i64> { uncertain_new(5, 0.9) }\nfn main() -> i64 { let u = mk()\n  u.value }\n",
     )
     .unwrap();
-    let out = axon().args(["run", keep.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["run", keep.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&keep);
-    assert_eq!(out.status.code(), Some(5), "an Uncertain<T>-declared return must keep the Uncertain");
+    assert_eq!(
+        out.status.code(),
+        Some(5),
+        "an Uncertain<T>-declared return must keep the Uncertain"
+    );
 
     // The SAME soft-typing applies to `Temporal<T>` at the boundary: it unwraps
     // to its present `value` when flowing into a plain-T param or scalar return.
@@ -8803,9 +12230,18 @@ fn uncertain_binops_propagate_minimum_confidence() {
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(0), "should run cleanly: {:?}", out);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("15 0.8"), "sum: value=15, conf=min(0.9,0.8)=0.8: {stdout}");
-    assert!(stdout.contains("13 0.9"), "a+3: 3 is certain so conf stays 0.9: {stdout}");
-    assert!(stdout.contains("true 0.8"), "a>b is Uncertain<bool> true at conf 0.8: {stdout}");
+    assert!(
+        stdout.contains("15 0.8"),
+        "sum: value=15, conf=min(0.9,0.8)=0.8: {stdout}"
+    );
+    assert!(
+        stdout.contains("13 0.9"),
+        "a+3: 3 is certain so conf stays 0.9: {stdout}"
+    );
+    assert!(
+        stdout.contains("true 0.8"),
+        "a>b is Uncertain<bool> true at conf 0.8: {stdout}"
+    );
 }
 
 #[test]
@@ -8825,9 +12261,17 @@ fn str_digits_only_strips_non_digits() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(10), "stripped digits should be 10 chars: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(10),
+        "stripped digits should be 10 chars: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("4155550142"), "expected stripped digits in stdout: {stdout}");
+    assert!(
+        stdout.contains("4155550142"),
+        "expected stripped digits in stdout: {stdout}"
+    );
 }
 
 #[test]
@@ -8887,9 +12331,16 @@ fn integer_overflow_panics_not_silently_wraps() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(!out.status.success(), "overflow must exit non-zero, got: {:?}", out);
+    assert!(
+        !out.status.success(),
+        "overflow must exit non-zero, got: {:?}",
+        out
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("integer overflow"), "should name the overflow: {stderr}");
+    assert!(
+        stderr.contains("integer overflow"),
+        "should name the overflow: {stderr}"
+    );
 }
 
 #[test]
@@ -8900,7 +12351,12 @@ fn normal_arithmetic_unaffected_by_overflow_check() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(13), "2+3*4-1 should be 13: {:?}", out);
+    assert_eq!(
+        out.status.code(),
+        Some(13),
+        "2+3*4-1 should be 13: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8910,7 +12366,11 @@ fn multiplication_overflow_also_panics() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(!out.status.success(), "mul overflow must exit non-zero: {:?}", out);
+    assert!(
+        !out.status.success(),
+        "mul overflow must exit non-zero: {:?}",
+        out
+    );
 }
 
 #[test]
@@ -8923,9 +12383,16 @@ fn goal_run_typod_name_errors_not_silent_success() {
     std::fs::write(&f, src).unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(!out.status.success(), "typo'd goal name must exit non-zero: {:?}", out);
+    assert!(
+        !out.status.success(),
+        "typo'd goal name must exit non-zero: {:?}",
+        out
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("typo_xyz"), "error should name the unknown fn: {stderr}");
+    assert!(
+        stderr.contains("typo_xyz"),
+        "error should name the unknown fn: {stderr}"
+    );
 }
 
 #[test]
@@ -8940,7 +12407,13 @@ fn rng_is_reproducible_under_seed() {
     let r1 = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let r2 = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(r1.status.code(), r2.status.code(), "srand should make runs identical: {:?} vs {:?}", r1, r2);
+    assert_eq!(
+        r1.status.code(),
+        r2.status.code(),
+        "srand should make runs identical: {:?} vs {:?}",
+        r1,
+        r2
+    );
     assert!(r1.status.code().is_some());
 }
 
@@ -8951,10 +12424,24 @@ fn axon_seed_env_var_makes_runs_reproducible() {
     let src = "fn main() -> i64 { random_i64(0, 1000000) }\n";
     let f = std::env::temp_dir().join(format!("axon_envseed_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let r1 = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "777").output().unwrap();
-    let r2 = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "777").output().unwrap();
+    let r1 = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "777")
+        .output()
+        .unwrap();
+    let r2 = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "777")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(r1.status.code(), r2.status.code(), "AXON_SEED should make runs identical: {:?} vs {:?}", r1, r2);
+    assert_eq!(
+        r1.status.code(),
+        r2.status.code(),
+        "AXON_SEED should make runs identical: {:?} vs {:?}",
+        r1,
+        r2
+    );
 }
 
 #[test]
@@ -8967,8 +12454,14 @@ fn version_reports_build_identity() {
     assert_eq!(out.status.code(), Some(0), "--version should exit 0");
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Name + semver present.
-    assert!(stdout.contains("axon "), "version should name the tool: {stdout:?}");
-    assert!(stdout.contains("0.1.0"), "version should include the semver: {stdout:?}");
+    assert!(
+        stdout.contains("axon "),
+        "version should name the tool: {stdout:?}"
+    );
+    assert!(
+        stdout.contains("0.1.0"),
+        "version should include the semver: {stdout:?}"
+    );
     // Build identity present: a parenthesized git tag (short SHA or "unknown").
     assert!(
         stdout.contains('(') && stdout.contains(')'),
@@ -9013,7 +12506,12 @@ fn random_i64_empty_range_returns_lo() {
     std::fs::write(&f, "fn main() -> i64 { random_i64(7, 7) }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(7), "random_i64(7,7) should return 7, not panic: {:?}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(7),
+        "random_i64(7,7) should return 7, not panic: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 #[test]
@@ -9032,18 +12530,39 @@ fn trace_separates_same_named_metrics_from_different_programs() {
     let fb = std::env::temp_dir().join(format!("axon_4b_{}.ax", std::process::id()));
     std::fs::write(&fa, prog_a).unwrap();
     std::fs::write(&fb, prog_b).unwrap();
-    axon().args(["run", fa.to_str().unwrap()]).env("XDG_CACHE_HOME", &cache).output().unwrap();
-    axon().args(["run", fb.to_str().unwrap()]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    axon()
+        .args(["run", fa.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
+    axon()
+        .args(["run", fb.to_str().unwrap()])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
 
-    let out = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let out = axon()
+        .args(["trace"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&cache);
     let _ = std::fs::remove_file(&fa);
     let _ = std::fs::remove_file(&fb);
     let stdout = String::from_utf8_lossy(&out.stdout);
     // Two distinct (fn, source) groups, not one blended row.
-    assert!(stdout.contains("2 (fn, source) group(s)"), "should be 2 groups: {stdout}");
-    assert!(stdout.contains("axon_4a"), "should tag program A's source: {stdout}");
-    assert!(stdout.contains("axon_4b"), "should tag program B's source: {stdout}");
+    assert!(
+        stdout.contains("2 (fn, source) group(s)"),
+        "should be 2 groups: {stdout}"
+    );
+    assert!(
+        stdout.contains("axon_4a"),
+        "should tag program A's source: {stdout}"
+    );
+    assert!(
+        stdout.contains("axon_4b"),
+        "should tag program B's source: {stdout}"
+    );
 }
 
 #[test]
@@ -9082,7 +12601,8 @@ fn main() -> i64 {
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(), Some(1),
+        out.status.code(),
+        Some(1),
         "latch must read true and freeze the corrigible body at counter=1: {stderr}"
     );
 }
@@ -9110,7 +12630,8 @@ fn main() -> i64 {
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(), Some(4),
+        out.status.code(),
+        Some(4),
         "post-halt corrigible call must fail closed with exit 4: {stderr}"
     );
     assert!(
@@ -9139,7 +12660,8 @@ fn main() -> i64 {
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(), Some(50),
+        out.status.code(),
+        Some(50),
         "a non-corrigible fn must still run after halt (targeted latch): {stderr}"
     );
 }
@@ -9189,15 +12711,20 @@ fn main() -> i64 {
     let stderr = String::from_utf8_lossy(&out.stderr);
     // Property (best): adaptive included (3), experiment excluded (0) => 30.
     assert_eq!(
-        out.status.code(), Some(30),
+        out.status.code(),
+        Some(30),
         "adaptive must count 3 (included), experiment 0 (excluded from goal best): {stderr}"
     );
     // Property (I-13): the experiment fn still logged, tagged zone:experiment.
     let log = cache.join("axon").join("provenance.jsonl");
     let body = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
-    let exp_lines = body.lines().filter(|l| l.contains("\"zone\":\"experiment\"")).count();
-    let exp_labeled = body.lines()
+    let exp_lines = body
+        .lines()
+        .filter(|l| l.contains("\"zone\":\"experiment\""))
+        .count();
+    let exp_labeled = body
+        .lines()
         .filter(|l| l.contains("\"zone\":\"experiment\"") && l.contains("\"label\":\"baseline\""))
         .count();
     assert_eq!(
@@ -9245,14 +12772,22 @@ fn main() -> i64 {
         .unwrap();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(), Some(42),
+        out.status.code(),
+        Some(42),
         "goal_run on an experiment fn must not optimize it (returns target 42): {stderr}"
     );
     // `axon trace` reads the same log without error and sees the function.
-    let tr = axon().args(["trace"]).env("XDG_CACHE_HOME", &cache).output().unwrap();
+    let tr = axon()
+        .args(["trace"])
+        .env("XDG_CACHE_HOME", &cache)
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let _ = std::fs::remove_dir_all(&cache);
-    assert!(tr.status.success(), "axon trace must parse the new provenance format");
+    assert!(
+        tr.status.success(),
+        "axon trace must parse the new provenance format"
+    );
     let tout = String::from_utf8_lossy(&tr.stdout);
     assert!(
         tout.contains("baseline"),
@@ -9294,7 +12829,11 @@ fn main() -> i64 {
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(0), "mock ai_complete program should run clean");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "mock ai_complete program should run clean"
+    );
 
     let log = cache.join("axon").join("provenance.jsonl");
     let body = std::fs::read_to_string(&log).unwrap_or_default();
@@ -9304,18 +12843,31 @@ fn main() -> i64 {
         .filter(|l| l.contains("\"event\":\"ai_call\""))
         .collect();
     assert_eq!(
-        ai_calls.len(), 2,
+        ai_calls.len(),
+        2,
         "two ai_complete calls => two ai_call records, got {}. Log:\n{body}",
         ai_calls.len()
     );
     let rec = ai_calls[0];
-    assert!(rec.contains("\"mode\":\"mock\""), "mock mode must be stamped: {rec}");
-    assert!(rec.contains("\"prompt_hash\":\""), "prompt_hash (SHA-256) required: {rec}");
+    assert!(
+        rec.contains("\"mode\":\"mock\""),
+        "mock mode must be stamped: {rec}"
+    );
+    assert!(
+        rec.contains("\"prompt_hash\":\""),
+        "prompt_hash (SHA-256) required: {rec}"
+    );
     // Phase-7 cost_meter / F4: the record now carries the REAL per-token cost
     // (was hardcoded 0). The prompt is 21 chars → ~6 tokens at the default
     // balanced tier (3000 µ$/1k) → 18 µ$ = 0.000018 USD.
-    assert!(rec.contains("\"cost_usd\":0.000018"), "real per-token cost must be stamped: {rec}");
-    assert!(rec.contains("\"fn\":\"ask\""), "calling fn attributed: {rec}");
+    assert!(
+        rec.contains("\"cost_usd\":0.000018"),
+        "real per-token cost must be stamped: {rec}"
+    );
+    assert!(
+        rec.contains("\"fn\":\"ask\""),
+        "calling fn attributed: {rec}"
+    );
     // The prompt_hash must be the SHA-256 of the exact prompt sent — stable,
     // and NOT the prompt verbatim (no PII leak).
     assert!(
@@ -9348,10 +12900,18 @@ fn main() -> i64 {
 "#;
     let f = std::env::temp_dir().join(format!("axon_cost_{}.ax", std::process::id()));
     std::fs::write(&f, prog).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "strong must cost more than cheap (b>a): {stdout}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "strong must cost more than cheap (b>a): {stdout}"
+    );
     // The cheap total is nonzero (real cost, not the old hardcoded 0).
     assert!(
         stdout.contains("cheap_total=") && !stdout.contains("cheap_total=0\n"),
@@ -9386,17 +12946,37 @@ fn main() -> i64 { let _ = over()  0 }
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_ne!(out.status.code(), Some(0), "over-budget run must fail: {msg}");
-    assert!(msg.contains("E1301"), "the 3rd AI call must halt with E1301: {msg}");
-    assert!(msg.contains("budget of 2"), "the message names the budget: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "over-budget run must fail: {msg}"
+    );
+    assert!(
+        msg.contains("E1301"),
+        "the 3rd AI call must halt with E1301: {msg}"
+    );
+    assert!(
+        msg.contains("budget of 2"),
+        "the message names the budget: {msg}"
+    );
 
     // The first two calls executed (their provenance was written before the halt).
     let log = cache.join("axon").join("provenance.jsonl");
     let body = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
-    let ai_calls = body.lines().filter(|l| l.contains("\"event\":\"ai_call\"")).count();
-    assert_eq!(ai_calls, 2, "exactly 2 calls executed before the budget halt; log:\n{body}");
+    let ai_calls = body
+        .lines()
+        .filter(|l| l.contains("\"event\":\"ai_call\""))
+        .count();
+    assert_eq!(
+        ai_calls, 2,
+        "exactly 2 calls executed before the budget halt; log:\n{body}"
+    );
 }
 
 #[test]
@@ -9416,9 +12996,20 @@ fn main() -> i64 { let _ = zero()  0 }
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_ne!(out.status.code(), Some(0), "budget 0 must block the first call: {msg}");
-    assert!(msg.contains("E1301"), "budget 0 → E1301 on the first call: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "budget 0 must block the first call: {msg}"
+    );
+    assert!(
+        msg.contains("E1301"),
+        "budget 0 → E1301 on the first call: {msg}"
+    );
 }
 
 #[test]
@@ -9445,8 +13036,16 @@ fn main() -> i64 { let _ = many()  0 }
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "an unmetered fn must run unbounded: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "an unmetered fn must run unbounded: {msg}"
+    );
     assert!(!msg.contains("E1301"), "no budget → no E1301: {msg}");
 }
 
@@ -9471,10 +13070,24 @@ fn main() -> i64 { let _ = bad()  0 }
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "a malformed budget must run unmetered, not crash: {msg}");
-    assert!(msg.contains("W1311"), "malformed budget must warn W1311: {msg}");
-    assert!(!msg.contains("E1301"), "malformed budget must NOT enforce a wrong number: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a malformed budget must run unmetered, not crash: {msg}"
+    );
+    assert!(
+        msg.contains("W1311"),
+        "malformed budget must warn W1311: {msg}"
+    );
+    assert!(
+        !msg.contains("E1301"),
+        "malformed budget must NOT enforce a wrong number: {msg}"
+    );
 }
 
 #[test]
@@ -9518,9 +13131,20 @@ fn main() -> i64 { let _ = a()  let _ = b()  0 }
     let h1 = run_once();
     let h2 = run_once();
     assert_eq!(h1.len(), 2, "expected two prompt_hash values, got {h1:?}");
-    assert_ne!(h1[0], h1[1], "distinct prompts must hash differently: {h1:?}");
-    assert_eq!(h1, h2, "the same prompts must hash identically across runs (replay key)");
-    assert_eq!(h1[0].len(), 64, "prompt_hash must be a full hex SHA-256: {}", h1[0]);
+    assert_ne!(
+        h1[0], h1[1],
+        "distinct prompts must hash differently: {h1:?}"
+    );
+    assert_eq!(
+        h1, h2,
+        "the same prompts must hash identically across runs (replay key)"
+    );
+    assert_eq!(
+        h1[0].len(),
+        64,
+        "prompt_hash must be a full hex SHA-256: {}",
+        h1[0]
+    );
 }
 
 #[test]
@@ -9557,7 +13181,8 @@ fn main() -> i64 {
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(
-        out.status.code(), Some(0),
+        out.status.code(),
+        Some(0),
         "offline ai_complete with a declared fallback must return Ok(fallback): {stderr}"
     );
     // The fallback is honestly recorded as such.
@@ -9565,7 +13190,8 @@ fn main() -> i64 {
     let body = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
     assert!(
-        body.lines().any(|l| l.contains("\"event\":\"ai_call\"") && l.contains("\"mode\":\"fallback\"")),
+        body.lines()
+            .any(|l| l.contains("\"event\":\"ai_call\"") && l.contains("\"mode\":\"fallback\"")),
         "the fallback must be stamped mode:\"fallback\" in provenance: {body}"
     );
 }
@@ -9597,7 +13223,10 @@ fn main() -> i64 { let _ = ask()  0 }
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(msg.contains("E1300"), "offline call with no fallback must emit E1300: {msg}");
+    assert!(
+        msg.contains("E1300"),
+        "offline call with no fallback must emit E1300: {msg}"
+    );
     // E1300 is an AI-POLICY stop, not a crash: it gets the dedicated exit code 5
     // (AI_POLICY_EXIT_CODE), carved out of the generic panic (101) just as
     // @[verify]->3 and @[corrigible]->4 are. A supervisor must be able to branch
@@ -9617,8 +13246,11 @@ fn ai_policy_conditions_exit_5_not_101() {
     // (101: overflow/div0/OOB/assert). This lets CI / a supervisor branch on a
     // user-actionable policy/environment mismatch instead of a bug.
     let run = |src: &str, mock: bool| -> i32 {
-        let f = std::env::temp_dir()
-            .join(format!("axon_aipol_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_aipol_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
         let mut cmd = axon();
         cmd.args(["run", f.to_str().unwrap()]);
@@ -9649,7 +13281,11 @@ fn ai_policy_conditions_exit_5_not_101() {
     // A genuine runtime crash must STILL be 101 — the carve-out must not have
     // swallowed real bugs into the policy code.
     let div0 = "fn main() -> i64 { let z = 0  10 / z }\n";
-    assert_eq!(run(div0, false), 101, "a real div-by-zero must still exit 101");
+    assert_eq!(
+        run(div0, false),
+        101,
+        "a real div-by-zero must still exit 101"
+    );
 }
 
 #[test]
@@ -9710,7 +13346,8 @@ fn steal() -> i64 {
         "imported module's never: violation must be caught as E1004: {msg}"
     );
     assert_ne!(
-        out.status.code(), Some(0),
+        out.status.code(),
+        Some(0),
         "a capability-violating import must fail check, not pass silently: {msg}"
     );
 }
@@ -9728,7 +13365,10 @@ fn user_fn_shadowing_a_builtin_warns_w0003() {
         "fn exp(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { exp(1) }\n",
     )
     .unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
@@ -9755,15 +13395,25 @@ fn ordinary_user_fn_name_does_not_warn_w0003() {
         "fn my_helper(x: i64) -> i64 { x + 2 }\nfn main() -> i64 { my_helper(1) }\n",
     )
     .unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let msg = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(!msg.contains("W0003"), "a non-colliding fn name must not warn W0003: {msg}");
-    assert_eq!(out.status.code(), Some(0), "clean program should check clean: {msg}");
+    assert!(
+        !msg.contains("W0003"),
+        "a non-colliding fn name must not warn W0003: {msg}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "clean program should check clean: {msg}"
+    );
 }
 
 #[test]
@@ -9776,7 +13426,11 @@ fn tampered_module_is_rejected_under_locked() {
     // The importable module (real `mod`+`use NAME.{}` idiom), in AXON_PATH.
     std::fs::write(tmp.join("metric.ax"), "fn score(x: i64) -> i64 { x * 2 }\n").expect("mod");
     let prog = tmp.join("prog.ax");
-    std::fs::write(&prog, "mod metric\nuse metric.{score}\nfn main() -> i64 { score(5) }\n").expect("prog");
+    std::fs::write(
+        &prog,
+        "mod metric\nuse metric.{score}\nfn main() -> i64 { score(5) }\n",
+    )
+    .expect("prog");
 
     // 1. Lock — writes axon.lock next to prog.ax.
     let lock_out = axon()
@@ -9817,8 +13471,15 @@ fn tampered_module_is_rejected_under_locked() {
         String::from_utf8_lossy(&bad.stdout),
         String::from_utf8_lossy(&bad.stderr)
     );
-    assert!(msg.contains("E1201"), "tampered module must be rejected with E1201: {msg}");
-    assert_ne!(bad.status.code(), Some(0), "tamper must fail verify-lock: {msg}");
+    assert!(
+        msg.contains("E1201"),
+        "tampered module must be rejected with E1201: {msg}"
+    );
+    assert_ne!(
+        bad.status.code(),
+        Some(0),
+        "tamper must fail verify-lock: {msg}"
+    );
 }
 
 #[test]
@@ -9857,8 +13518,15 @@ fn verify_lock_flags_a_module_missing_from_the_lock() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(msg.contains("E1202"), "an unlocked import must be flagged E1202: {msg}");
-    assert_ne!(out.status.code(), Some(0), "missing lock entry must fail verify: {msg}");
+    assert!(
+        msg.contains("E1202"),
+        "an unlocked import must be flagged E1202: {msg}"
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "missing lock entry must fail verify: {msg}"
+    );
 }
 
 #[test]
@@ -9872,14 +13540,20 @@ fn wasm_interp_matches_native_on_pure_compute() {
     // wasm toolchain is absent, so this test stays green in environments
     // without wasmtime / the wasm32 target — it asserts "no parity DIFF", not
     // "wasm is installed".
-    let script = format!("{}/../../scripts/wasm_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_parity.sh not found — skipping");
         return;
     }
     // Make a user-local wasmtime install discoverable.
     let home = std::env::var("HOME").unwrap_or_default();
-    let path = format!("{home}/.wasmtime/bin:{}", std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{home}/.wasmtime/bin:{}",
+        std::env::var("PATH").unwrap_or_default()
+    );
     let out = Command::new("bash")
         .arg(&script)
         .env("PATH", path)
@@ -9911,20 +13585,32 @@ fn wasm_aot_runs_and_matches_interp_on_pure_int() {
     // interpreter (fib(10)=55, etc.). End-to-end AOT-wasm EXECUTION, not just
     // object emission. scripts/wasm_aot_run_parity.sh; skips when codegen/wasm
     // toolchain absent.
-    let script = format!("{}/../../scripts/wasm_aot_run_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_aot_run_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_aot_run_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_run_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_aot_run_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — AOT run parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "AOT wasm must run identically to interp on pure-int:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_aot_run_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "AOT wasm must run identically to interp on pure-int:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_aot_run_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -9935,20 +13621,34 @@ fn wasm_browser_examples_run_identically_via_js_host() {
     // /time-dependent examples; a linked example that DIFFERS or imports wasi fails;
     // a FLOOR guards a mass-skip regression. scripts/wasm_browser_examples_parity.sh;
     // skips cleanly without node / the wasm toolchain.
-    let script = format!("{}/../../scripts/wasm_browser_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_browser_examples_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_browser_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_examples_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_browser_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
-        eprintln!("node/codegen/wasm unavailable — browser example sweep skipped:\n{stdout}{stderr}");
+        eprintln!(
+            "node/codegen/wasm unavailable — browser example sweep skipped:\n{stdout}{stderr}"
+        );
         return;
     }
-    assert!(out.status.success(), "real examples must run identically on the browser target:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_browser_examples_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "real examples must run identically on the browser target:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_browser_examples_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -9960,20 +13660,32 @@ fn wasm_browser_println_matches_interp_via_js_host() {
     // import). Driven by a minimal Node host, println programs must produce
     // byte-identical stdout to the interpreter. scripts/wasm_browser_io_parity.sh;
     // skips cleanly without node / the wasm toolchain.
-    let script = format!("{}/../../scripts/wasm_browser_io_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_browser_io_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_browser_io_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_io_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_browser_io_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("node/codegen/wasm unavailable — browser I/O parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "browser println must match interp via the JS host:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_browser_io_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "browser println must match interp via the JS host:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_browser_io_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -9984,20 +13696,32 @@ fn wasm_browser_target_is_wasi_free_and_matches_interp() {
     // unknown-unknown axon-rt + NO wasi libc for this triple. Compute/str/dict
     // programs (no I/O) link wasi-free and run; printing ones honestly fall back
     // to object-only (browser stdout needs JS glue). scripts/wasm_browser_parity.sh.
-    let script = format!("{}/../../scripts/wasm_browser_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_browser_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_browser_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_browser_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_browser_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — browser-target parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "browser-target wasm must be wasi-free and match interp:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_browser_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "browser-target wasm must be wasi-free and match interp:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_browser_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10009,20 +13733,32 @@ fn wasm_examples_run_identically_on_aot_wasm() {
     // skips host/non-deterministic examples and enforces a floor so a mass link
     // regression can't vacuously pass. scripts/wasm_examples_parity.sh; skips
     // cleanly when the codegen/wasm toolchain is absent.
-    let script = format!("{}/../../scripts/wasm_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_examples_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_examples_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — AOT-wasm example sweep skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "real examples must run identically on AOT-wasm:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_examples_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "real examples must run identically on AOT-wasm:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_examples_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10033,20 +13769,32 @@ fn wasm_str_abi_bridge_runs_str_builtins() {
     // and runs. A program through 7 distinct str builtins must yield the same
     // value on interp, native, and AOT-wasm. scripts/wasm_str_abi_parity.sh;
     // skips when codegen/wasm toolchain absent.
-    let script = format!("{}/../../scripts/wasm_str_abi_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_str_abi_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_str_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_str_abi_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_str_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — str ABI parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "str builtins must run identically across engines on wasm:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_str_abi_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "str builtins must run identically across engines on wasm:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_str_abi_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10057,20 +13805,32 @@ fn wasm_malloc_abi_bridge_runs_array_and_to_str() {
     // literal (malloc) and to_str (snprintf) link clean and run with the same
     // value on interp, native, and AOT-wasm. scripts/wasm_malloc_abi_parity.sh;
     // skips when codegen/wasm toolchain absent.
-    let script = format!("{}/../../scripts/wasm_malloc_abi_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_malloc_abi_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_malloc_abi_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_malloc_abi_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_malloc_abi_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — malloc ABI parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "array + to_str must run identically across engines on wasm:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_malloc_abi_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "array + to_str must run identically across engines on wasm:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_malloc_abi_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10081,20 +13841,32 @@ fn wasm_aot_stdout_matches_interp_across_corpus() {
     // size_t ABI bridge (malloc/snprintf/memcpy/write) + the void-`fn main()`
     // wasm entry fix (i64 return so the wasi C-main convention doesn't bind our
     // `main`). scripts/wasm_aot_stdout_parity.sh; skips when toolchain absent.
-    let script = format!("{}/../../scripts/wasm_aot_stdout_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_aot_stdout_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_aot_stdout_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_stdout_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_aot_stdout_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — AOT stdout parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "AOT-wasm stdout must match the interpreter across the corpus:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_aot_stdout_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "AOT-wasm stdout must match the interpreter across the corpus:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_aot_stdout_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10104,20 +13876,32 @@ fn wasm_aot_env_var_runs_on_wasm() {
     // and zero-extends the result to the i64 AxonStr len, so an env_var program
     // links and runs under `wasmtime --env` with the same value as the interp.
     // scripts/wasm_aot_env_parity.sh; skips when codegen/wasm toolchain absent.
-    let script = format!("{}/../../scripts/wasm_aot_env_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_aot_env_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_aot_env_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_aot_env_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_aot_env_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — AOT env parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "env_var must run identically across engines on wasm:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_aot_env_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "env_var must run identically across engines on wasm:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_aot_env_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10129,20 +13913,32 @@ fn wasm_object_prunes_dead_externs_and_links_clean() {
     // i64-ABI str/array helpers were the clash). The remaining wasm gap is only
     // the wasi entry-point ABI. scripts/wasm_object_prune.sh proves it; skips
     // when codegen/the wasm toolchain is absent.
-    let script = format!("{}/../../scripts/wasm_object_prune.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_object_prune.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_object_prune.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_object_prune.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_object_prune.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("codegen/wasm unavailable — prune test skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "pruning must leave 0 externs + 0 link mismatches:\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_object_prune: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "pruning must leave 0 externs + 0 link mismatches:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_object_prune: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10153,20 +13949,32 @@ fn wasm_host_io_matches_native_via_wasi() {
     // which WASI provides under capability grants (--dir / --env), so both are
     // byte-identical on native and wasm32-wasip1. scripts/wasm_fs_parity.sh
     // proves it; skips when the wasm toolchain is absent.
-    let script = format!("{}/../../scripts/wasm_fs_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/wasm_fs_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("wasm_fs_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run wasm_fs_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run wasm_fs_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
         eprintln!("wasm toolchain absent — fs parity skipped:\n{stdout}{stderr}");
         return;
     }
-    assert!(out.status.success(), "wasm file I/O must match native (R7 AxonHost+WASI):\n{stdout}{stderr}");
-    assert!(stdout.contains("wasm_fs_parity: PASS"), "expected the PASS line:\n{stdout}{stderr}");
+    assert!(
+        out.status.success(),
+        "wasm file I/O must match native (R7 AxonHost+WASI):\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("wasm_fs_parity: PASS"),
+        "expected the PASS line:\n{stdout}{stderr}"
+    );
 }
 
 #[test]
@@ -10177,12 +13985,18 @@ fn codegen_random_i64_degenerate_bounds_match_interp() {
     // is fast (~5s), scripts/random_i64_parity.sh builds each degenerate case
     // NATIVELY and asserts the fixed behavior. Skips (exit 0) when codegen can't
     // build (LLVM absent), so it stays green in interpreter-only CI.
-    let script = format!("{}/../../scripts/random_i64_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/random_i64_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("random_i64_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run random_i64_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run random_i64_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10208,12 +14022,18 @@ fn codegen_exit_codes_match_interp() {
     // to scripts/exit_code_parity.sh, which builds crash/clean/return programs
     // both ways and asserts interp==native on the exit code. Skips when codegen
     // can't build (LLVM absent), so it stays green in interpreter-only CI.
-    let script = format!("{}/../../scripts/exit_code_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/exit_code_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("exit_code_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run exit_code_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run exit_code_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10239,12 +14059,18 @@ fn all_examples_native_match_interp_under_mock() {
     // examples used to differ only because native ignored AXON_AI_MOCK; that
     // gap is now closed (axon-ai honors the env var). Skips when codegen can't
     // build (LLVM absent).
-    let script = format!("{}/../../scripts/all_examples_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/all_examples_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("all_examples_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run all_examples_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run all_examples_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10270,12 +14096,18 @@ fn codegen_goal_run_unknown_name_matches_interp() {
     // `target`. scripts/goal_unknown_name_parity.sh builds the typo case BOTH
     // ways and asserts they now agree (same panic message + exit 101), and that
     // the happy path still succeeds identically. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/goal_unknown_name_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/goal_unknown_name_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("goal_unknown_name_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run goal_unknown_name_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run goal_unknown_name_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10299,12 +14131,18 @@ fn codegen_agent_action_log_matches_interp() {
     // on the world (fs/net/exec) un-audited. scripts/agent_action_parity.sh
     // builds an @[agent] program both ways and asserts the agent_action records
     // (fn|action|caps) match. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/agent_action_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/agent_action_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("agent_action_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run agent_action_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run agent_action_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10329,12 +14167,18 @@ fn codegen_exec_matches_interp() {
     // Ok (stdout) and Err (message) paths. scripts/exec_parity.sh builds an
     // exec program both ways and asserts identical output. Skips when codegen
     // can't build.
-    let script = format!("{}/../../scripts/exec_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/exec_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("exec_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run exec_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run exec_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10358,12 +14202,18 @@ fn codegen_parse_int_err_message_matches_interp() {
     // codegen delegates to axon-rt's __axon_parse_int_err, so native == interp.
     // scripts/parse_int_err_parity.sh builds a failing-parse program both ways
     // and asserts identical output. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/parse_int_err_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/parse_int_err_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("parse_int_err_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run parse_int_err_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run parse_int_err_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10388,12 +14238,18 @@ fn codegen_adaptive_provenance_carries_input_f11() {
     // the adaptive fn's leading i64 param into __axon_provenance_log_ret_i64_in.
     // scripts/goal_input_parity.sh builds a native @[adaptive] fn(i64)->i64 and
     // asserts its provenance now carries the input. Skips when codegen can't build.
-    let script = format!("{}/../../scripts/goal_input_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/goal_input_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("goal_input_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run goal_input_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run goal_input_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10417,12 +14273,18 @@ fn codegen_to_str_scalar_dispatch_matches_interp() {
     // silently truncated to int (to_str(3.14) → "3"). scripts/to_str_parity.sh
     // builds a mixed-type to_str program both ways and asserts identical stdout.
     // Skips (exit 0) when codegen can't build.
-    let script = format!("{}/../../scripts/to_str_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/to_str_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("to_str_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run to_str_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run to_str_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10446,12 +14308,18 @@ fn codegen_str_reverse_replace_match_interp_on_utf8() {
     // delegate to char-correct axon-rt functions. scripts/str_utf8_parity.sh
     // builds a multibyte + empty-from program both ways and asserts identical
     // stdout. Skips (exit 0) when codegen can't build.
-    let script = format!("{}/../../scripts/str_utf8_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/str_utf8_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("str_utf8_parity.sh not found — skipping");
         return;
     }
-    let out = Command::new("bash").arg(&script).output().expect("run str_utf8_parity.sh");
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run str_utf8_parity.sh");
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
     if stdout.contains("skipping") || stderr.contains("skipping") {
@@ -10477,9 +14345,20 @@ fn interp_random_i64_inverted_bounds_fails_loudly() {
     std::fs::write(&f, "fn main() -> i64 { random_i64(20, 10) }\n").unwrap();
     let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_ne!(out.status.code(), Some(0), "inverted bounds must fail, not silently succeed: {msg}");
-    assert!(msg.contains("inverted bounds"), "the failure must name inverted bounds: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "inverted bounds must fail, not silently succeed: {msg}"
+    );
+    assert!(
+        msg.contains("inverted bounds"),
+        "the failure must name inverted bounds: {msg}"
+    );
 }
 
 #[test]
@@ -10499,7 +14378,10 @@ fn codegen_provenance_matches_interp_on_adaptive_returns() {
     // interpreter writes. The harness SKIPS (exit 0 with a notice) when codegen
     // can't build (LLVM/inkwell absent), so this test stays green in
     // interpreter-only CI — it asserts "no parity DIFF", not "LLVM is present".
-    let script = format!("{}/../../scripts/provenance_parity.sh", env!("CARGO_MANIFEST_DIR"));
+    let script = format!(
+        "{}/../../scripts/provenance_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
     if !std::path::Path::new(&script).exists() {
         eprintln!("provenance_parity.sh not found — skipping");
         return;
@@ -10534,13 +14416,25 @@ fn improve_verify_passes_over_a_pure_compute_corpus() {
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::write(tmp.join("a.ax"), "fn main() -> i64 { 21 + 21 }\n").unwrap();
     std::fs::write(tmp.join("b.ax"), "fn main() -> i64 { let x = 5  x * 2 }\n").unwrap();
-    let out = axon().args(["improve", "verify", tmp.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["improve", "verify", tmp.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "verify should pass: {stdout}");
-    assert!(stdout.contains("G1 correctness : pass"), "G1 reported: {stdout}");
-    assert!(stdout.contains("G2 safety      : pass"), "G2 reported: {stdout}");
-    assert!(stdout.contains("G3 regression  : pass"), "G3 reported: {stdout}");
+    assert!(
+        stdout.contains("G1 correctness : pass"),
+        "G1 reported: {stdout}"
+    );
+    assert!(
+        stdout.contains("G2 safety      : pass"),
+        "G2 reported: {stdout}"
+    );
+    assert!(
+        stdout.contains("G3 regression  : pass"),
+        "G3 reported: {stdout}"
+    );
     assert!(stdout.contains("PASSED"), "overall verdict: {stdout}");
 }
 
@@ -10556,28 +14450,74 @@ fn improve_verify_spec_runs_a_rewrite_spec_dsl_pass_through_the_firewall() {
     let dir = std::env::temp_dir().join(format!("axon_specv_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join("p.ax"), "fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }\n").unwrap();
+    std::fs::write(
+        dir.join("p.ax"),
+        "fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }\n",
+    )
+    .unwrap();
 
     // VALID: the constant-fold chain (arith → comparison → branch) — behavior-
     // preserving, so it clears G1/G2/G3.
     let spec = std::env::temp_dir().join(format!("axon_spec_{}.txt", std::process::id()));
-    std::fs::write(&spec, "fold-int-literal\nfold-comparison-literal\nfold-const-branch\n").unwrap();
+    std::fs::write(
+        &spec,
+        "fold-int-literal\nfold-comparison-literal\nfold-const-branch\n",
+    )
+    .unwrap();
     let out = axon()
-        .args(["improve", "verify", dir.to_str().unwrap(), "--spec", spec.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").output().unwrap();
-    let m = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(0), "a valid DSL spec must clear the gates: {m}");
-    assert!(m.contains("spec (DSL)") && m.contains("PASSED"), "DSL spec output: {m}");
+        .args([
+            "improve",
+            "verify",
+            dir.to_str().unwrap(),
+            "--spec",
+            spec.to_str().unwrap(),
+        ])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let m = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "a valid DSL spec must clear the gates: {m}"
+    );
+    assert!(
+        m.contains("spec (DSL)") && m.contains("PASSED"),
+        "DSL spec output: {m}"
+    );
 
     // FAIL-CLOSED: an unknown rule can't be authored — E1411, exit 2.
     let bad = std::env::temp_dir().join(format!("axon_badspec_{}.txt", std::process::id()));
     std::fs::write(&bad, "fold-int-literal\nexec-shell\n").unwrap();
     let out2 = axon()
-        .args(["improve", "verify", dir.to_str().unwrap(), "--spec", bad.to_str().unwrap()])
-        .env("AXON_AI_MOCK", "1").output().unwrap();
-    let m2 = format!("{}{}", String::from_utf8_lossy(&out2.stdout), String::from_utf8_lossy(&out2.stderr));
-    assert_eq!(out2.status.code(), Some(2), "an unknown rule must be fail-closed: {m2}");
-    assert!(m2.contains("E1411") && m2.contains("exec-shell"), "fail-closed error: {m2}");
+        .args([
+            "improve",
+            "verify",
+            dir.to_str().unwrap(),
+            "--spec",
+            bad.to_str().unwrap(),
+        ])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
+    let m2 = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out2.stdout),
+        String::from_utf8_lossy(&out2.stderr)
+    );
+    assert_eq!(
+        out2.status.code(),
+        Some(2),
+        "an unknown rule must be fail-closed: {m2}"
+    );
+    assert!(
+        m2.contains("E1411") && m2.contains("exec-shell"),
+        "fail-closed error: {m2}"
+    );
 
     let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_file(&spec);
@@ -10596,15 +14536,38 @@ fn improve_verify_runs_the_real_fold_pass_through_the_gates() {
     std::fs::write(tmp.join("a.ax"), "fn main() -> i64 { let x = 5  x + 0 }\n").unwrap();
     std::fs::write(tmp.join("b.ax"), "fn main() -> i64 { let y = 3  1 * y }\n").unwrap();
     let out = axon()
-        .args(["improve", "verify", tmp.to_str().unwrap(), "--pass", "fold-arith-identities"])
-        .output().unwrap();
+        .args([
+            "improve",
+            "verify",
+            tmp.to_str().unwrap(),
+            "--pass",
+            "fold-arith-identities",
+        ])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "the real fold pass must verify clean: {stdout}");
-    assert!(stdout.contains("pass: fold-arith-identities"), "names the pass: {stdout}");
-    assert!(stdout.contains("G1 correctness : pass"), "G1 (behavior preserved): {stdout}");
-    assert!(stdout.contains("G2 safety      : pass"), "G2 (no new cap): {stdout}");
-    assert!(stdout.contains("PASSED"), "the real optimization passes: {stdout}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "the real fold pass must verify clean: {stdout}"
+    );
+    assert!(
+        stdout.contains("pass: fold-arith-identities"),
+        "names the pass: {stdout}"
+    );
+    assert!(
+        stdout.contains("G1 correctness : pass"),
+        "G1 (behavior preserved): {stdout}"
+    );
+    assert!(
+        stdout.contains("G2 safety      : pass"),
+        "G2 (no new cap): {stdout}"
+    );
+    assert!(
+        stdout.contains("PASSED"),
+        "the real optimization passes: {stdout}"
+    );
 }
 
 #[test]
@@ -10627,16 +14590,36 @@ fn improve_discover_proposes_arith_identities() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "discover should succeed: {stdout}");
-    assert!(stdout.contains("proposed `fold-arith-identities`"), "proposal announced: {stdout}");
-    assert!(stdout.contains("2 site(s)"), "found 2 identity sites (x+0, y*1): {stdout}");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "discover should succeed: {stdout}"
+    );
+    assert!(
+        stdout.contains("proposed `fold-arith-identities`"),
+        "proposal announced: {stdout}"
+    );
+    assert!(
+        stdout.contains("2 site(s)"),
+        "found 2 identity sites (x+0, y*1): {stdout}"
+    );
     // A proposal must have been WRITTEN (the unprivileged staging area), and it
     // must explicitly grant nothing.
     let ppath = tmp.join("proposals").join("fold-arith-identities.proposal");
-    assert!(ppath.exists(), "the proposal file must be written: {}", ppath.display());
+    assert!(
+        ppath.exists(),
+        "the proposal file must be written: {}",
+        ppath.display()
+    );
     let body = std::fs::read_to_string(&ppath).unwrap();
-    assert!(body.contains("grants nothing"), "the proposal must state it grants nothing: {body}");
-    assert!(body.contains("opportunities = 2"), "proposal records the site count: {body}");
+    assert!(
+        body.contains("grants nothing"),
+        "the proposal must state it grants nothing: {body}"
+    );
+    assert!(
+        body.contains("opportunities = 2"),
+        "proposal records the site count: {body}"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -10653,9 +14636,21 @@ fn improve_discover_proposes_nothing_on_clean_corpus() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "clean discover still exits 0: {stdout}");
-    assert!(stdout.contains("nothing to propose"), "clean corpus proposes nothing: {stdout}");
-    assert!(!tmp.join("proposals").join("fold-arith-identities.proposal").exists(), "no proposal file on a clean corpus");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "clean discover still exits 0: {stdout}"
+    );
+    assert!(
+        stdout.contains("nothing to propose"),
+        "clean corpus proposes nothing: {stdout}"
+    );
+    assert!(
+        !tmp.join("proposals")
+            .join("fold-arith-identities.proposal")
+            .exists(),
+        "no proposal file on a clean corpus"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -10671,7 +14666,13 @@ fn improve_graduate_requires_multisig_e1404() {
     // can graduate); the multi-sig gate (E1404) is what we exercise here.
     // Zero signers → E1404.
     let none = axon()
-        .args(["improve", "graduate", "fold-arith-identities", "--manifest", manifest.to_str().unwrap()])
+        .args([
+            "improve",
+            "graduate",
+            "fold-arith-identities",
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     let msg = String::from_utf8_lossy(&none.stderr);
@@ -10681,20 +14682,37 @@ fn improve_graduate_requires_multisig_e1404() {
     // One signer → still E1404 (no quorum).
     let one = axon()
         .args([
-            "improve", "graduate", "fold-arith-identities", "--sign", "principal:root-a",
-            "--manifest", manifest.to_str().unwrap(),
+            "improve",
+            "graduate",
+            "fold-arith-identities",
+            "--sign",
+            "principal:root-a",
+            "--manifest",
+            manifest.to_str().unwrap(),
         ])
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&one.stderr).contains("E1404"), "one signer must be E1404");
-    assert!(!manifest.exists(), "a refused graduation must not write the manifest");
+    assert!(
+        String::from_utf8_lossy(&one.stderr).contains("E1404"),
+        "one signer must be E1404"
+    );
+    assert!(
+        !manifest.exists(),
+        "a refused graduation must not write the manifest"
+    );
 
     // Two DISTINCT signers → graduates; manifest gains the entry.
     let two = axon()
         .args([
-            "improve", "graduate", "fold-arith-identities",
-            "--sign", "principal:root-a", "--sign", "principal:root-b",
-            "--manifest", manifest.to_str().unwrap(),
+            "improve",
+            "graduate",
+            "fold-arith-identities",
+            "--sign",
+            "principal:root-a",
+            "--sign",
+            "principal:root-b",
+            "--manifest",
+            manifest.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -10704,9 +14722,15 @@ fn improve_graduate_requires_multisig_e1404() {
         String::from_utf8_lossy(&two.stderr)
     );
     let body = std::fs::read_to_string(&manifest).unwrap_or_default();
-    assert!(body.contains("name = \"fold-arith-identities\""), "manifest records the pass: {body}");
+    assert!(
+        body.contains("name = \"fold-arith-identities\""),
+        "manifest records the pass: {body}"
+    );
     assert!(body.contains("axp1:"), "pass is content-addressed: {body}");
-    assert!(body.contains("principal:root-a") && body.contains("principal:root-b"), "multi-sig recorded");
+    assert!(
+        body.contains("principal:root-a") && body.contains("principal:root-b"),
+        "multi-sig recorded"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -10719,9 +14743,15 @@ fn improve_list_and_revert_roundtrip() {
     let manifest = tmp.join("passes.manifest");
     axon()
         .args([
-            "improve", "graduate", "fold-arith-identities",
-            "--sign", "p:a", "--sign", "p:b",
-            "--manifest", manifest.to_str().unwrap(),
+            "improve",
+            "graduate",
+            "fold-arith-identities",
+            "--sign",
+            "p:a",
+            "--sign",
+            "p:b",
+            "--manifest",
+            manifest.to_str().unwrap(),
         ])
         .output()
         .unwrap();
@@ -10731,28 +14761,58 @@ fn improve_list_and_revert_roundtrip() {
         .output()
         .unwrap();
     let lstdout = String::from_utf8_lossy(&listed.stdout);
-    assert!(lstdout.contains("fold-arith-identities"), "list shows the graduated pass: {lstdout}");
+    assert!(
+        lstdout.contains("fold-arith-identities"),
+        "list shows the graduated pass: {lstdout}"
+    );
     // Extract the axp1: id from the manifest.
     let body = std::fs::read_to_string(&manifest).unwrap();
     let id = body
         .lines()
-        .find_map(|l| l.trim().strip_prefix("id = \"").map(|s| s.trim_end_matches('"').to_string()))
+        .find_map(|l| {
+            l.trim()
+                .strip_prefix("id = \"")
+                .map(|s| s.trim_end_matches('"').to_string())
+        })
         .expect("an id line");
 
     let rev = axon()
-        .args(["improve", "revert", &id, "--manifest", manifest.to_str().unwrap()])
+        .args([
+            "improve",
+            "revert",
+            &id,
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
-    assert!(rev.status.success(), "revert should succeed: {}", String::from_utf8_lossy(&rev.stderr));
+    assert!(
+        rev.status.success(),
+        "revert should succeed: {}",
+        String::from_utf8_lossy(&rev.stderr)
+    );
     let after = std::fs::read_to_string(&manifest).unwrap();
-    assert!(!after.contains("fold-arith-identities"), "reverted pass is gone: {after}");
+    assert!(
+        !after.contains("fold-arith-identities"),
+        "reverted pass is gone: {after}"
+    );
 
     // Reverting again (absent) errors.
     let rev2 = axon()
-        .args(["improve", "revert", &id, "--manifest", manifest.to_str().unwrap()])
+        .args([
+            "improve",
+            "revert",
+            &id,
+            "--manifest",
+            manifest.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
-    assert_ne!(rev2.status.code(), Some(0), "reverting an absent pass must error");
+    assert_ne!(
+        rev2.status.code(),
+        Some(0),
+        "reverting an absent pass must error"
+    );
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
@@ -10766,7 +14826,10 @@ fn check_json_emits_versioned_schema() {
     // A type-mismatched annotation → a real diagnostic with a code.
     std::fs::write(&f, "fn main() -> i64 { let x: str = 5  0 }\n").unwrap();
 
-    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let json = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let jstderr = String::from_utf8_lossy(&json.stderr);
     assert!(
@@ -10805,7 +14868,10 @@ fn check_json_includes_source_location() {
     )
     .unwrap();
 
-    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let json = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let jstderr = String::from_utf8_lossy(&json.stderr);
 
@@ -10838,14 +14904,33 @@ fn check_json_parse_error_carries_line_col() {
     let f = std::env::temp_dir().join(format!("axon_r8parse_{}.ax", std::process::id()));
     // An unexpected token `@` on line 2.
     std::fs::write(&f, "fn main() -> i64 {\n    @\n}\n").unwrap();
-    let out = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let jstderr = String::from_utf8_lossy(&out.stderr);
-    assert_eq!(out.status.code(), Some(2), "parse error must exit 2: {jstderr}");
-    assert!(jstderr.contains("\"schema\":\"axon-diag/1\""), "schema tag: {jstderr}");
-    assert!(jstderr.contains("\"line\":2"), "parse error must carry its line (2): {jstderr}");
-    assert!(jstderr.contains("\"col\":"), "parse error must carry a column: {jstderr}");
-    assert!(jstderr.contains("unexpected token"), "the parse message survives: {jstderr}");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "parse error must exit 2: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"schema\":\"axon-diag/1\""),
+        "schema tag: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"line\":2"),
+        "parse error must carry its line (2): {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"col\":"),
+        "parse error must carry a column: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("unexpected token"),
+        "the parse message survives: {jstderr}"
+    );
 }
 
 #[test]
@@ -10858,14 +14943,29 @@ fn check_json_splits_expected_found_into_typed_fields() {
     let f = std::env::temp_dir().join(format!("axon_r8ef_{}.ax", std::process::id()));
     // `let x: str = 5` → expected str, found i64.
     std::fs::write(&f, "fn main() -> i64 {\n    let x: str = 5\n    0\n}\n").unwrap();
-    let json = axon().args(["check", "--json", f.to_str().unwrap()]).output().unwrap();
+    let json = axon()
+        .args(["check", "--json", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let jstderr = String::from_utf8_lossy(&json.stderr);
-    assert!(jstderr.contains("\"schema\":\"axon-diag/1\""), "schema tag preserved: {jstderr}");
-    assert!(jstderr.contains("\"expected\":\"str\""), "discrete expected field: {jstderr}");
-    assert!(jstderr.contains("\"found\":\"i64\""), "discrete found field: {jstderr}");
+    assert!(
+        jstderr.contains("\"schema\":\"axon-diag/1\""),
+        "schema tag preserved: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"expected\":\"str\""),
+        "discrete expected field: {jstderr}"
+    );
+    assert!(
+        jstderr.contains("\"found\":\"i64\""),
+        "discrete found field: {jstderr}"
+    );
     // The message still carries the human form (back-compat for text consumers).
-    assert!(jstderr.contains("\"message\":"), "message field still present: {jstderr}");
+    assert!(
+        jstderr.contains("\"message\":"),
+        "message field still present: {jstderr}"
+    );
 }
 
 #[test]
@@ -10903,9 +15003,16 @@ fn import_widening_capabilities_is_rejected_e1203() {
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr)
     );
-    assert!(msg.contains("E1203"), "import widening must be E1203: {msg}");
+    assert!(
+        msg.contains("E1203"),
+        "import widening must be E1203: {msg}"
+    );
     assert!(msg.contains("net"), "names the widened capability: {msg}");
-    assert_ne!(out.status.code(), Some(0), "a widening import must fail check");
+    assert_ne!(
+        out.status.code(),
+        Some(0),
+        "a widening import must fail check"
+    );
 
     // ALLOW: same importer, import only reads a file (within the fs:read grant).
     std::fs::write(
@@ -10932,7 +15039,10 @@ fn import_widening_capabilities_is_rejected_e1203() {
         String::from_utf8_lossy(&ok.stderr)
     );
     let _ = std::fs::remove_dir_all(&tmp);
-    assert!(!okmsg.contains("E1203"), "an import within grant must NOT be E1203: {okmsg}");
+    assert!(
+        !okmsg.contains("E1203"),
+        "an import within grant must NOT be E1203: {okmsg}"
+    );
 }
 
 #[test]
@@ -10943,7 +15053,11 @@ fn locked_mode_enforces_axon_lock() {
     std::fs::create_dir_all(&tmp).unwrap();
     std::fs::write(tmp.join("util.ax"), "fn helper(n: i64) -> i64 { n + 1 }\n").unwrap();
     let prog = tmp.join("prog.ax");
-    std::fs::write(&prog, "mod util\nuse util.{helper}\nfn main() -> i64 { helper(5) }\n").unwrap();
+    std::fs::write(
+        &prog,
+        "mod util\nuse util.{helper}\nfn main() -> i64 { helper(5) }\n",
+    )
+    .unwrap();
 
     // 1. Dev mode, no lockfile → W1210 warning, but NOT fatal (check still runs).
     let dev = axon()
@@ -10951,9 +15065,20 @@ fn locked_mode_enforces_axon_lock() {
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
-    let devmsg = format!("{}{}", String::from_utf8_lossy(&dev.stdout), String::from_utf8_lossy(&dev.stderr));
-    assert!(devmsg.contains("W1210"), "dev mode must warn W1210: {devmsg}");
-    assert_eq!(dev.status.code(), Some(0), "dev-mode unlocked import is non-fatal: {devmsg}");
+    let devmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&dev.stdout),
+        String::from_utf8_lossy(&dev.stderr)
+    );
+    assert!(
+        devmsg.contains("W1210"),
+        "dev mode must warn W1210: {devmsg}"
+    );
+    assert_eq!(
+        dev.status.code(),
+        Some(0),
+        "dev-mode unlocked import is non-fatal: {devmsg}"
+    );
 
     // 2. --locked, no lockfile → E1202 fatal.
     let locked_missing = axon()
@@ -10961,9 +15086,20 @@ fn locked_mode_enforces_axon_lock() {
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
-    let lmsg = format!("{}{}", String::from_utf8_lossy(&locked_missing.stdout), String::from_utf8_lossy(&locked_missing.stderr));
-    assert!(lmsg.contains("E1202"), "--locked with no lock entry must be E1202: {lmsg}");
-    assert_ne!(locked_missing.status.code(), Some(0), "--locked missing entry is fatal");
+    let lmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&locked_missing.stdout),
+        String::from_utf8_lossy(&locked_missing.stderr)
+    );
+    assert!(
+        lmsg.contains("E1202"),
+        "--locked with no lock entry must be E1202: {lmsg}"
+    );
+    assert_ne!(
+        locked_missing.status.code(),
+        Some(0),
+        "--locked missing entry is fatal"
+    );
 
     // 3. Write the lock; --locked now passes.
     let lock_out = axon()
@@ -10978,22 +15114,38 @@ fn locked_mode_enforces_axon_lock() {
         .output()
         .unwrap();
     assert_eq!(
-        locked_ok.status.code(), Some(0),
+        locked_ok.status.code(),
+        Some(0),
         "--locked with a matching lock must pass: {}",
         String::from_utf8_lossy(&locked_ok.stderr)
     );
 
     // 4. Tamper the module; --locked → E1201.
-    std::fs::write(tmp.join("util.ax"), "fn helper(n: i64) -> i64 { n + 999 }\n").unwrap();
+    std::fs::write(
+        tmp.join("util.ax"),
+        "fn helper(n: i64) -> i64 { n + 999 }\n",
+    )
+    .unwrap();
     let tampered = axon()
         .args(["check", prog.to_str().unwrap(), "--locked"])
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
-    let tmsg = format!("{}{}", String::from_utf8_lossy(&tampered.stdout), String::from_utf8_lossy(&tampered.stderr));
-    assert!(tmsg.contains("E1201"), "--locked with tampered bytes must be E1201: {tmsg}");
-    assert_ne!(tampered.status.code(), Some(0), "tampered import is fatal under --locked");
+    let tmsg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&tampered.stdout),
+        String::from_utf8_lossy(&tampered.stderr)
+    );
+    assert!(
+        tmsg.contains("E1201"),
+        "--locked with tampered bytes must be E1201: {tmsg}"
+    );
+    assert_ne!(
+        tampered.status.code(),
+        Some(0),
+        "tampered import is fatal under --locked"
+    );
 }
 
 #[test]
@@ -11049,8 +15201,15 @@ fn denied_audit_blocks_import_e1204() {
         String::from_utf8_lossy(&checked.stdout),
         String::from_utf8_lossy(&checked.stderr)
     );
-    assert!(cmsg.contains("E1204"), "denied audit must block the import with E1204: {cmsg}");
-    assert_ne!(checked.status.code(), Some(0), "a denied import must fail the build");
+    assert!(
+        cmsg.contains("E1204"),
+        "denied audit must block the import with E1204: {cmsg}"
+    );
+    assert_ne!(
+        checked.status.code(),
+        Some(0),
+        "a denied import must fail the build"
+    );
 
     // CONTROL: a pure module audits `clear` and builds fine.
     std::fs::write(tmp.join("phone.ax"), "fn home() -> i64 { 42 }\n").unwrap();
@@ -11059,7 +15218,10 @@ fn denied_audit_blocks_import_e1204() {
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
-    assert!(relocked.status.success(), "re-lock of the now-pure module should succeed");
+    assert!(
+        relocked.status.success(),
+        "re-lock of the now-pure module should succeed"
+    );
     // prog calls home() expecting a value; with home()->i64 it still type-checks.
     std::fs::write(
         &prog,
@@ -11071,7 +15233,10 @@ fn denied_audit_blocks_import_e1204() {
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
-    assert!(relock2.status.success(), "re-lock after editing prog should succeed");
+    assert!(
+        relock2.status.success(),
+        "re-lock after editing prog should succeed"
+    );
     let clear_check = axon()
         .args(["check", prog.to_str().unwrap()])
         .env("AXON_PATH", tmp.to_str().unwrap())
@@ -11083,8 +15248,15 @@ fn denied_audit_blocks_import_e1204() {
         String::from_utf8_lossy(&clear_check.stdout),
         String::from_utf8_lossy(&clear_check.stderr)
     );
-    assert!(!clearmsg.contains("E1204"), "a clear module must not be blocked: {clearmsg}");
-    assert_eq!(clear_check.status.code(), Some(0), "a clear import must build: {clearmsg}");
+    assert!(
+        !clearmsg.contains("E1204"),
+        "a clear module must not be blocked: {clearmsg}"
+    );
+    assert_eq!(
+        clear_check.status.code(),
+        Some(0),
+        "a clear import must build: {clearmsg}"
+    );
 }
 
 #[test]
@@ -11124,17 +15296,33 @@ fn main() -> i64 {
     let log = cache.join("axon").join("provenance.jsonl");
     let body = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
-    let actions: Vec<&str> = body.lines().filter(|l| l.contains("\"event\":\"agent_action\"")).collect();
+    let actions: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("\"event\":\"agent_action\""))
+        .collect();
     assert_eq!(
-        actions.len(), 1,
+        actions.len(),
+        1,
         "exactly one agent_action (from planner, not plain), got {}. Log:\n{body}",
         actions.len()
     );
     let rec = actions[0];
-    assert!(rec.contains("\"fn\":\"planner\""), "attributed to the agent fn: {rec}");
-    assert!(rec.contains("\"action\":\"ai_complete\""), "names the tool: {rec}");
-    assert!(rec.contains("\"caps_used\":\"net\""), "records the capability: {rec}");
-    assert!(rec.contains("\"zone\":\"agent\""), "tagged zone agent: {rec}");
+    assert!(
+        rec.contains("\"fn\":\"planner\""),
+        "attributed to the agent fn: {rec}"
+    );
+    assert!(
+        rec.contains("\"action\":\"ai_complete\""),
+        "names the tool: {rec}"
+    );
+    assert!(
+        rec.contains("\"caps_used\":\"net\""),
+        "records the capability: {rec}"
+    );
+    assert!(
+        rec.contains("\"zone\":\"agent\""),
+        "tagged zone agent: {rec}"
+    );
 }
 
 #[test]
@@ -11173,7 +15361,10 @@ fn main() -> i64 {
     let log = cache.join("axon").join("provenance.jsonl");
     let body = std::fs::read_to_string(&log).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
-    let actions: Vec<&str> = body.lines().filter(|l| l.contains("\"event\":\"agent_action\"")).collect();
+    let actions: Vec<&str> = body
+        .lines()
+        .filter(|l| l.contains("\"event\":\"agent_action\""))
+        .collect();
     // Exactly one — the helper call made FROM the agent. The same helper called
     // from `plain` (non-agent) must NOT be logged.
     assert_eq!(
@@ -11211,15 +15402,31 @@ fn main() -> i64 { let _ = cheapfn("a")  let _ = defaultfn("b")  0 }
         .unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(0));
-    let body = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let body =
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
     // cheapfn → tier:cheap + a cheap-tier model (distinct from balanced).
-    let cheap = body.lines().find(|l| l.contains("\"fn\":\"cheapfn\"")).unwrap_or("");
-    assert!(cheap.contains("\"tier\":\"cheap\""), "cheap tier recorded: {cheap}");
-    assert!(cheap.contains("\"model\":\"anthropic:claude-haiku\""), "cheap model pinned: {cheap}");
+    let cheap = body
+        .lines()
+        .find(|l| l.contains("\"fn\":\"cheapfn\""))
+        .unwrap_or("");
+    assert!(
+        cheap.contains("\"tier\":\"cheap\""),
+        "cheap tier recorded: {cheap}"
+    );
+    assert!(
+        cheap.contains("\"model\":\"anthropic:claude-haiku\""),
+        "cheap model pinned: {cheap}"
+    );
     // defaultfn (policy, no tier) → balanced.
-    let dflt = body.lines().find(|l| l.contains("\"fn\":\"defaultfn\"")).unwrap_or("");
-    assert!(dflt.contains("\"tier\":\"balanced\""), "default tier balanced: {dflt}");
+    let dflt = body
+        .lines()
+        .find(|l| l.contains("\"fn\":\"defaultfn\""))
+        .unwrap_or("");
+    assert!(
+        dflt.contains("\"tier\":\"balanced\""),
+        "default tier balanced: {dflt}"
+    );
 }
 
 #[test]
@@ -11233,9 +15440,17 @@ fn unknown_ai_tier_is_e1302() {
          fn main() -> i64 { let _ = g(\"a\")  0 }\n",
     )
     .unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     assert!(msg.contains("E1302"), "unknown tier must be E1302: {msg}");
     assert!(msg.contains("turbo"), "names the bad tier: {msg}");
 }
@@ -11251,11 +15466,22 @@ fn ai_call_without_policy_warns_w1310() {
          fn main() -> i64 { let _ = nopolicy(\"a\")  0 }\n",
     )
     .unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("W1310"), "no-policy AI call must warn W1310: {stderr}");
-    assert_eq!(out.status.code(), Some(0), "W1310 is a warning, not fatal: {stderr}");
+    assert!(
+        stderr.contains("W1310"),
+        "no-policy AI call must warn W1310: {stderr}"
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "W1310 is a warning, not fatal: {stderr}"
+    );
 }
 
 // ── R5 #[goal] attribute tests ──────────────────────────────────────────────────
@@ -11271,7 +15497,12 @@ fn goal_attribute_trains_and_gates_on_holdout() {
         .output()
         .unwrap();
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(1), "goal_met=1, exit 1: stdout={stdout:?} stderr={:?}", out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "goal_met=1, exit 1: stdout={stdout:?} stderr={:?}",
+        out.stderr
+    );
     assert!(stdout.contains("1"), "goal_met should be 1: {stdout}");
 }
 
@@ -11293,13 +15524,19 @@ fn main() -> i64 {
 "#;
     let f = std::env::temp_dir().join(format!("goal_holdout_miss_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()])
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
         .env("AXON_SEED", "42")
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(out.status.code(), Some(0), "goal_met=0, exit 0: stdout={stdout:?} stderr={:?}", out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "goal_met=0, exit 0: stdout={stdout:?} stderr={:?}",
+        out.stderr
+    );
     assert!(stdout.contains("0"), "goal_met should be 0: {stdout}");
 }
 
@@ -11320,11 +15557,18 @@ fn main() -> i64 { println(to_str(opt()))  0 }
 "#;
     let f = std::env::temp_dir().join(format!("goal_ts_met_{}.ax", std::process::id()));
     std::fs::write(&f, met).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "run clean: {stdout}");
-    assert!(stdout.trim() == "1", "all points clear target → goal_met=1: {stdout:?}");
+    assert!(
+        stdout.trim() == "1",
+        "all points clear target → goal_met=1: {stdout:?}"
+    );
 
     let missed = r#"
 @[adaptive]
@@ -11335,10 +15579,17 @@ fn main() -> i64 { println(to_str(opt()))  0 }
 "#;
     let f2 = std::env::temp_dir().join(format!("goal_ts_miss_{}.ax", std::process::id()));
     std::fs::write(&f2, missed).unwrap();
-    let out2 = axon().args(["run", f2.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+    let out2 = axon()
+        .args(["run", f2.to_str().unwrap()])
+        .env("AXON_SEED", "42")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f2);
     let stdout2 = String::from_utf8_lossy(&out2.stdout);
-    assert!(stdout2.trim() == "0", "a failing held-out point → goal_met=0 (no overfit): {stdout2:?}");
+    assert!(
+        stdout2.trim() == "0",
+        "a failing held-out point → goal_met=0 (no overfit): {stdout2:?}"
+    );
 }
 
 #[test]
@@ -11346,7 +15597,13 @@ fn goal_strategy_attribute_dispatches_all_five() {
     // R5 (PRD L889-899): `#[goal(strategy: …)]` selects the search strategy.
     // All five (hill_climb default, random, multistart, tournament, bayesian)
     // optimize the same metric (peak 100 at x=7) and reach the target → met=1.
-    for strat in ["hill_climb", "random", "multistart", "tournament", "bayesian"] {
+    for strat in [
+        "hill_climb",
+        "random",
+        "multistart",
+        "tournament",
+        "bayesian",
+    ] {
         let src = format!(
             "@[adaptive]\n\
              fn score(x: i64) -> i64 {{ 100 - (x - 7) * (x - 7) }}\n\
@@ -11356,11 +15613,24 @@ fn goal_strategy_attribute_dispatches_all_five() {
         );
         let f = std::env::temp_dir().join(format!("goal_strat_{strat}_{}.ax", std::process::id()));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_SEED", "42").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_SEED", "42")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         let stdout = String::from_utf8_lossy(&out.stdout);
-        assert_eq!(out.status.code(), Some(0), "{strat} should run clean: {:?}", out);
-        assert_eq!(stdout.trim(), "1", "strategy `{strat}` must reach the target (goal_met=1): {stdout:?}");
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{strat} should run clean: {:?}",
+            out
+        );
+        assert_eq!(
+            stdout.trim(),
+            "1",
+            "strategy `{strat}` must reach the target (goal_met=1): {stdout:?}"
+        );
     }
 }
 
@@ -11374,11 +15644,24 @@ fn goal_unknown_strategy_is_e1505() {
         fn main() -> i64 { optimize() }\n";
     let f = std::env::temp_dir().join(format!("goal_strat_bad_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let all = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(all.contains("E1505"), "unknown strategy must be E1505: {all}");
-    assert!(all.contains("quantum"), "the error should name the bad strategy: {all}");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        all.contains("E1505"),
+        "unknown strategy must be E1505: {all}"
+    );
+    assert!(
+        all.contains("quantum"),
+        "the error should name the bad strategy: {all}"
+    );
 }
 
 #[test]
@@ -11387,11 +15670,25 @@ fn goal_test_set_non_integer_element_is_e1503() {
     let src = "@[adaptive]\nfn q(x: i64) -> i64 { x }\n@[goal(metric: q, target: 5, test_set: [3, foo])]\nfn opt() -> i64 { goal_met }\nfn main() -> i64 { opt() }\n";
     let f = std::env::temp_dir().join(format!("goal_ts_bad_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert_eq!(out.status.code(), Some(2), "malformed test_set must fail check: {msg}");
-    assert!(msg.contains("E1503"), "non-integer test_set element is E1503: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "malformed test_set must fail check: {msg}"
+    );
+    assert!(
+        msg.contains("E1503"),
+        "non-integer test_set element is E1503: {msg}"
+    );
 }
 
 #[test]
@@ -11406,11 +15703,17 @@ fn notadaptive(x: i64) -> i64 { x }
 "#;
     let f = std::env::temp_dir().join(format!("goal_e1500_{}.ax", std::process::id()));
     std::fs::write(&f, src).unwrap();
-    let out = axon().args(["check", f.to_str().unwrap()])
+    let out = axon()
+        .args(["check", f.to_str().unwrap()])
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "check must fail: stderr={}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "check must fail: stderr={}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("E1500"), "expected E1500: {stderr}");
 }
@@ -11428,14 +15731,29 @@ fn ai_policy_prints_resolved_policy_json() {
          fn main() -> i64 { 0 }\n",
     )
     .unwrap();
-    let out = axon().args(["ai", "policy", f.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["ai", "policy", f.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert_eq!(out.status.code(), Some(0), "ai policy should exit 0");
-    assert!(stdout.contains("\"fn\":\"classify\""), "names the @[ai] fn: {stdout}");
-    assert!(stdout.contains("\"tier\":\"cheap\""), "resolved tier: {stdout}");
-    assert!(stdout.contains("anthropic:claude-haiku"), "the cheap-tier model: {stdout}");
-    assert!(!stdout.contains("plain"), "a non-@[ai] fn must be skipped: {stdout}");
+    assert!(
+        stdout.contains("\"fn\":\"classify\""),
+        "names the @[ai] fn: {stdout}"
+    );
+    assert!(
+        stdout.contains("\"tier\":\"cheap\""),
+        "resolved tier: {stdout}"
+    );
+    assert!(
+        stdout.contains("anthropic:claude-haiku"),
+        "the cheap-tier model: {stdout}"
+    );
+    assert!(
+        !stdout.contains("plain"),
+        "a non-@[ai] fn must be skipped: {stdout}"
+    );
 }
 
 #[test]
@@ -11464,7 +15782,11 @@ fn target_build_aot_wasm_object_or_e0907() {
         .args(["target", "build", "--target", "wasm32", f.to_str().unwrap()])
         .output()
         .unwrap();
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
     if out.status.code() == Some(0) {
         // Codegen build: a real wasm object must have been emitted. Since the
         // str/array i64→i32 ABI bridge landed (R7), the CLI goes further and
@@ -11487,16 +15809,31 @@ fn target_build_aot_wasm_object_or_e0907() {
         let _ = std::fs::remove_file(f.with_extension("linked.wasm"));
     } else {
         // Interp-only build: honest E0907.
-        assert!(msg.contains("E0907"), "without codegen, AOT wasm must be E0907: {msg}");
+        assert!(
+            msg.contains("E0907"),
+            "without codegen, AOT wasm must be E0907: {msg}"
+        );
     }
 
     // --engine interp on the same target always succeeds (the interpreter path).
     let ok = axon()
-        .args(["target", "build", "--engine", "interp", "--target", "wasm32", f.to_str().unwrap()])
+        .args([
+            "target",
+            "build",
+            "--engine",
+            "interp",
+            "--target",
+            "wasm32",
+            f.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(ok.status.code(), Some(0), "interp engine on wasm32 must succeed");
+    assert_eq!(
+        ok.status.code(),
+        Some(0),
+        "interp engine on wasm32 must succeed"
+    );
 }
 
 #[test]
@@ -11516,8 +15853,15 @@ fn host_seam_routes_file_io_through_axonhost() {
     let fpath = std::env::temp_dir().join(format!("axon_e2e_{}.ax", std::process::id()));
     std::fs::write(&fpath, &f).unwrap();
 
-    let out = axon().args(["run", fpath.to_str().unwrap()]).output().unwrap();
-    assert!(out.status.success(), "write_file + read_file round-trip should succeed: {:?}", out);
+    let out = axon()
+        .args(["run", fpath.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "write_file + read_file round-trip should succeed: {:?}",
+        out
+    );
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(
         stdout.contains("hello host seam"),
@@ -11536,14 +15880,22 @@ fn transitive_imports_are_locked_and_tamper_checked() {
     // attack can't hide one hop deeper.
     let tmp = std::env::temp_dir().join(format!("axon_r6trans_{}", std::process::id()));
     std::fs::create_dir_all(&tmp).unwrap();
-    std::fs::write(tmp.join("leaf.ax"), "fn leaf_fn(n: i64) -> i64 { n + 100 }\n").unwrap();
+    std::fs::write(
+        tmp.join("leaf.ax"),
+        "fn leaf_fn(n: i64) -> i64 { n + 100 }\n",
+    )
+    .unwrap();
     std::fs::write(
         tmp.join("mid.ax"),
         "mod leaf\nuse leaf.{leaf_fn}\nfn mid_fn(n: i64) -> i64 { leaf_fn(n) + 10 }\n",
     )
     .unwrap();
     let prog = tmp.join("prog.ax");
-    std::fs::write(&prog, "mod mid\nuse mid.{mid_fn}\nfn main() -> i64 { mid_fn(5) }\n").unwrap();
+    std::fs::write(
+        &prog,
+        "mod mid\nuse mid.{mid_fn}\nfn main() -> i64 { mid_fn(5) }\n",
+    )
+    .unwrap();
 
     // Lock: must pin BOTH mid (direct) and leaf (transitive).
     let lock = axon()
@@ -11551,21 +15903,42 @@ fn transitive_imports_are_locked_and_tamper_checked() {
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
-    assert!(lock.status.success(), "lock should succeed: {}", String::from_utf8_lossy(&lock.stderr));
+    assert!(
+        lock.status.success(),
+        "lock should succeed: {}",
+        String::from_utf8_lossy(&lock.stderr)
+    );
     let lockfile = std::fs::read_to_string(tmp.join("axon.lock")).unwrap();
-    assert!(lockfile.contains("name = \"mid\""), "direct import pinned: {lockfile}");
-    assert!(lockfile.contains("name = \"leaf\""), "TRANSITIVE import pinned: {lockfile}");
+    assert!(
+        lockfile.contains("name = \"mid\""),
+        "direct import pinned: {lockfile}"
+    );
+    assert!(
+        lockfile.contains("name = \"leaf\""),
+        "TRANSITIVE import pinned: {lockfile}"
+    );
 
     // Tamper the transitive leaf → verify-lock catches it with E1201.
-    std::fs::write(tmp.join("leaf.ax"), "fn leaf_fn(n: i64) -> i64 { n + 999 }\n").unwrap();
+    std::fs::write(
+        tmp.join("leaf.ax"),
+        "fn leaf_fn(n: i64) -> i64 { n + 999 }\n",
+    )
+    .unwrap();
     let bad = axon()
         .args(["verify-lock", prog.to_str().unwrap()])
         .env("AXON_PATH", tmp.to_str().unwrap())
         .output()
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
-    let msg = format!("{}{}", String::from_utf8_lossy(&bad.stdout), String::from_utf8_lossy(&bad.stderr));
-    assert!(msg.contains("E1201"), "tampered transitive module must be E1201: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&bad.stdout),
+        String::from_utf8_lossy(&bad.stderr)
+    );
+    assert!(
+        msg.contains("E1201"),
+        "tampered transitive module must be E1201: {msg}"
+    );
     assert!(msg.contains("leaf"), "names the deep module: {msg}");
     assert_ne!(bad.status.code(), Some(0), "tamper is fatal");
 }
@@ -11593,7 +15966,12 @@ fn parse_int_rejects_trailing_garbage_reference_for_codegen_37() {
     let _ = std::fs::remove_file(&f);
     // 0x1F → Err(-1), 12abc → Err(-2), 42 → Ok(42); sum = 39. If trailing
     // garbage were accepted (the old codegen bug), the sum would differ.
-    assert_eq!(out.status.code(), Some(39), "trailing garbage must be rejected: {}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(
+        out.status.code(),
+        Some(39),
+        "trailing garbage must be rejected: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // The Err carries a non-empty, base-10-explaining message (#37 divergence 1).
     let g = std::env::temp_dir().join(format!("axon_pi37m_{}.ax", std::process::id()));
@@ -11634,7 +16012,8 @@ fn main() -> i64 { let _ = summarize("hi")  0 }
         .unwrap();
     let _ = std::fs::remove_file(&f);
     assert_eq!(out.status.code(), Some(0));
-    let body = std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
+    let body =
+        std::fs::read_to_string(cache.join("axon").join("provenance.jsonl")).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&cache);
     // The two ai_call records: one cheap (per-call), one balanced (policy).
     assert!(
@@ -11658,10 +16037,21 @@ fn unknown_per_call_tier_is_e1302() {
          fn main() -> i64 { let _ = f(\"a\")  0 }\n",
     )
     .unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("E1302"), "unknown per-call tier must be E1302: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("E1302"),
+        "unknown per-call tier must be E1302: {msg}"
+    );
 }
 
 #[test]
@@ -11670,28 +16060,55 @@ fn per_call_tier_accepts_a_string_literal_value() {
     // (`tier: strong`) OR a string literal (`tier: "strong"`) — the form a user
     // naturally reaches for. Both must parse, run identically, and reject an
     // unknown name with E1302.
-    let ident = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: strong)\n  ai_cost_spent() }\n";
-    let string = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: \"strong\")\n  ai_cost_spent() }\n";
+    let ident =
+        "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: strong)\n  ai_cost_spent() }\n";
+    let string =
+        "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: \"strong\")\n  ai_cost_spent() }\n";
     let run = |src: &str| -> i32 {
-        let f = std::env::temp_dir().join(format!("axon_tierstr_{}_{}.ax", std::process::id(), src.len()));
+        let f = std::env::temp_dir().join(format!(
+            "axon_tierstr_{}_{}.ax",
+            std::process::id(),
+            src.len()
+        ));
         std::fs::write(&f, src).unwrap();
-        let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+        let out = axon()
+            .args(["run", f.to_str().unwrap()])
+            .env("AXON_AI_MOCK", "1")
+            .output()
+            .unwrap();
         let _ = std::fs::remove_file(&f);
         out.status.code().unwrap_or(-1)
     };
     let i = run(ident);
     let s = run(string);
-    assert!(i > 0, "the identifier tier form must run and meter (got exit {i})");
-    assert_eq!(i, s, "the string tier form must behave identically to the identifier form");
+    assert!(
+        i > 0,
+        "the identifier tier form must run and meter (got exit {i})"
+    );
+    assert_eq!(
+        i, s,
+        "the string tier form must behave identically to the identifier form"
+    );
 
     // A bad string tier is still the clean closed-enum rejection.
     let bad = "fn main() -> i64 { let _ = ai_complete(\"hi\", tier: \"bogus\")\n  0 }\n";
     let f = std::env::temp_dir().join(format!("axon_tierbad_{}.ax", std::process::id()));
     std::fs::write(&f, bad).unwrap();
-    let out = axon().args(["run", f.to_str().unwrap()]).env("AXON_AI_MOCK", "1").output().unwrap();
+    let out = axon()
+        .args(["run", f.to_str().unwrap()])
+        .env("AXON_AI_MOCK", "1")
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&f);
-    let msg = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-    assert!(msg.contains("E1302"), "a bad string tier must still be E1302: {msg}");
+    let msg = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        msg.contains("E1302"),
+        "a bad string tier must still be E1302: {msg}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -11794,12 +16211,19 @@ fn fmt_refuses_to_delete_comments() {
     let out = axon().args(["fmt", f.to_str().unwrap()]).output().unwrap();
     let after = std::fs::read_to_string(&f).unwrap();
     let _ = std::fs::remove_file(&f);
-    assert_eq!(out.status.code(), Some(2), "fmt must exit 2 on a commented file");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "fmt must exit 2 on a commented file"
+    );
     assert!(
         String::from_utf8_lossy(&out.stderr).contains("refusing to format"),
         "fmt must explain it refused to delete comments"
     );
-    assert_eq!(after, original, "fmt must NOT modify a file it refused to format");
+    assert_eq!(
+        after, original,
+        "fmt must NOT modify a file it refused to format"
+    );
 }
 
 #[test]
@@ -11811,9 +16235,18 @@ fn fmt_still_formats_comment_free_files() {
     let out = axon().args(["fmt", f.to_str().unwrap()]).output().unwrap();
     let after = std::fs::read_to_string(&f).unwrap();
     let _ = std::fs::remove_file(&f);
-    assert!(out.status.success(), "fmt must succeed on a comment-free file: {out:?}");
-    assert!(after.contains("\"http://x\""), "the URL string must survive (not seen as a comment)");
-    assert!(after.contains("    "), "the file must actually be reformatted (indented)");
+    assert!(
+        out.status.success(),
+        "fmt must succeed on a comment-free file: {out:?}"
+    );
+    assert!(
+        after.contains("\"http://x\""),
+        "the URL string must survive (not seen as a comment)"
+    );
+    assert!(
+        after.contains("    "),
+        "the file must actually be reformatted (indented)"
+    );
 }
 
 #[test]
@@ -11830,7 +16263,12 @@ fn fmt_processes_all_files_not_just_until_first_error() {
     std::fs::write(&b, "// keep\nfn b()->i64{2}\n").unwrap();
     std::fs::write(&c, "fn c()->i64{3}\n").unwrap();
     let out = axon()
-        .args(["fmt", a.to_str().unwrap(), b.to_str().unwrap(), c.to_str().unwrap()])
+        .args([
+            "fmt",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+            c.to_str().unwrap(),
+        ])
         .output()
         .unwrap();
     let a_after = std::fs::read_to_string(&a).unwrap();
@@ -11839,10 +16277,23 @@ fn fmt_processes_all_files_not_just_until_first_error() {
     let _ = std::fs::remove_file(&a);
     let _ = std::fs::remove_file(&b);
     let _ = std::fs::remove_file(&c);
-    assert_eq!(out.status.code(), Some(2), "must exit 2 (a file was refused)");
-    assert!(a_after.contains("    "), "the file BEFORE the refused one must be formatted");
-    assert!(c_after.contains("    "), "the file AFTER the refused one must STILL be formatted");
-    assert!(b_after.starts_with("// keep"), "the commented file must be left unchanged");
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "must exit 2 (a file was refused)"
+    );
+    assert!(
+        a_after.contains("    "),
+        "the file BEFORE the refused one must be formatted"
+    );
+    assert!(
+        c_after.contains("    "),
+        "the file AFTER the refused one must STILL be formatted"
+    );
+    assert!(
+        b_after.starts_with("// keep"),
+        "the commented file must be left unchanged"
+    );
 }
 
 #[test]
@@ -11857,15 +16308,30 @@ fn doc_multifile_preserves_doc_comments() {
     let b = dir.join(format!("axon_docmf_b_{pid}.ax"));
     std::fs::write(&a, "/// Alpha function.\nfn alpha() -> i64 { 1 }\n").unwrap();
     std::fs::write(&b, "/// Beta function.\nfn beta() -> i64 { 2 }\n").unwrap();
-    let out = axon().args(["doc", a.to_str().unwrap(), b.to_str().unwrap()]).output().unwrap();
+    let out = axon()
+        .args(["doc", a.to_str().unwrap(), b.to_str().unwrap()])
+        .output()
+        .unwrap();
     let _ = std::fs::remove_file(&a);
     let _ = std::fs::remove_file(&b);
     let md = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "multi-file doc must succeed: {out:?}");
-    assert!(md.contains("Alpha function."), "file A's doc comment must appear:\n{md}");
-    assert!(md.contains("Beta function."), "file B's doc comment must appear:\n{md}");
-    assert!(md.contains("fn alpha") && md.contains("fn beta"), "both signatures present:\n{md}");
-    assert!(!md.contains("No documented items"), "must NOT drop all docs:\n{md}");
+    assert!(
+        md.contains("Alpha function."),
+        "file A's doc comment must appear:\n{md}"
+    );
+    assert!(
+        md.contains("Beta function."),
+        "file B's doc comment must appear:\n{md}"
+    );
+    assert!(
+        md.contains("fn alpha") && md.contains("fn beta"),
+        "both signatures present:\n{md}"
+    );
+    assert!(
+        !md.contains("No documented items"),
+        "must NOT drop all docs:\n{md}"
+    );
 }
 
 #[test]
@@ -11910,7 +16376,10 @@ fn every_emitted_error_code_is_registered() {
                 .map(|c| c.to_string())
         })
         .collect();
-    assert!(!registered.is_empty(), "failed to parse the error.rs registry");
+    assert!(
+        !registered.is_empty(),
+        "failed to parse the error.rs registry"
+    );
 
     // Walk every .rs under src/ (including codegen/) and collect emitted codes.
     fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -11941,7 +16410,10 @@ fn every_emitted_error_code_is_registered() {
         let src = std::fs::read_to_string(file).unwrap();
         for code in code_re(&src) {
             if !registered.contains(&code) && !unregistered.contains(&code) {
-                unregistered.push(format!("{code} (in {})", file.file_name().unwrap().to_string_lossy()));
+                unregistered.push(format!(
+                    "{code} (in {})",
+                    file.file_name().unwrap().to_string_lossy()
+                ));
             }
         }
     }
@@ -12024,10 +16496,18 @@ fn asi_demo_set_runs_without_crashing() {
         .unwrap()
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| p.extension().map(|x| x == "ax").unwrap_or(false))
-        .filter(|p| p.file_name().map(|n| n != "contained_violation.ax").unwrap_or(true))
+        .filter(|p| {
+            p.file_name()
+                .map(|n| n != "contained_violation.ax")
+                .unwrap_or(true)
+        })
         .collect();
     files.sort();
-    assert!(files.len() > 20, "expected the full ASI demo set, found {}", files.len());
+    assert!(
+        files.len() > 20,
+        "expected the full ASI demo set, found {}",
+        files.len()
+    );
 
     let mut crashes = Vec::new();
     for f in &files {
@@ -12049,12 +16529,299 @@ fn asi_demo_set_runs_without_crashing() {
             || stderr.contains("type mismatch")
             || stderr.contains("IR verification");
         if panicked || compile_err {
-            let why = if panicked { "PANIC (exit 101)" } else { "compile error" };
-            crashes.push(format!("{name}: {why} — {}", stderr.lines().next().unwrap_or("")));
+            let why = if panicked {
+                "PANIC (exit 101)"
+            } else {
+                "compile error"
+            };
+            crashes.push(format!(
+                "{name}: {why} — {}",
+                stderr.lines().next().unwrap_or("")
+            ));
         }
     }
     assert!(
         crashes.is_empty(),
         "ASI demos (the documented public face) must run without crashing: {crashes:#?}"
     );
+}
+
+// ── R19 Slice B — unsigned/fixed-width integer arithmetic test suite ──────────
+// These are the DEDICATED tests that the existing 1004-test suite does NOT
+// exercise. Per the spec (R19 §11 soundness finding): a green existing suite
+// does NOT imply soundness for unsigned arithmetic; only these tests do.
+
+/// Helper: write `prog` to a tmpfile, run `axon run`, return (stdout, stderr, exit).
+fn run_inline_prog(prog: &str, tag: &str) -> (String, String, Option<i32>) {
+    let f = std::env::temp_dir().join(format!("axon_r19_{tag}_{}.ax", std::process::id()));
+    std::fs::write(&f, prog).unwrap();
+    let out = axon().args(["run", f.to_str().unwrap()]).output().unwrap();
+    let _ = std::fs::remove_file(&f);
+    (
+        String::from_utf8_lossy(&out.stdout).to_string(),
+        String::from_utf8_lossy(&out.stderr).to_string(),
+        out.status.code(),
+    )
+}
+
+/// Helper: run and assert exit 0 + stdout contains expected string.
+fn assert_run_ok(prog: &str, tag: &str, expected: &str) {
+    let (stdout, stderr, code) = run_inline_prog(prog, tag);
+    assert_eq!(
+        code,
+        Some(0),
+        "R19/{tag}: expected exit 0; stderr: {stderr}\nstdout: {stdout}"
+    );
+    assert!(
+        stdout.contains(expected),
+        "R19/{tag}: expected stdout to contain {expected:?}; got: {stdout:?}\nstderr: {stderr}"
+    );
+}
+
+/// Helper: run and assert non-zero exit (error expected).
+fn assert_run_fails(prog: &str, tag: &str) {
+    let (stdout, stderr, code) = run_inline_prog(prog, tag);
+    assert_ne!(
+        code,
+        Some(0),
+        "R19/{tag}: expected non-zero exit; stdout: {stdout}\nstderr: {stderr}"
+    );
+}
+
+// ── u8 arithmetic tests ───────────────────────────────────────────────────────
+
+#[test]
+fn r19b_u8_addition_stays_in_range() {
+    // 100 + 50 = 150 (within u8 range 0..=255)
+    let prog = "fn main() -> i64 {\n  let a: u8 = 100\n  let b: u8 = 50\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_add_inrange", "150");
+}
+
+#[test]
+fn r19b_u8_addition_overflow_panics() {
+    // 200 + 100 = 300, overflows u8 (max 255); must panic, not silently wrap to 44
+    let prog =
+        "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 100\n  let c = a + b\n  0\n}\n";
+    assert_run_fails(prog, "u8_add_overflow");
+    let (_, stderr, _) = run_inline_prog(prog, "u8_add_overflow_msg");
+    assert!(
+        stderr.contains("overflow"),
+        "R19/u8_add_overflow: expected overflow panic in stderr, got: {stderr}"
+    );
+}
+
+#[test]
+fn r19b_u8_subtraction_underflow_panics() {
+    // 10 - 20 underflows for u8 (no negative unsigned values)
+    let prog = "fn main() -> i64 {\n  let a: u8 = 10\n  let b: u8 = 20\n  let c = a - b\n  0\n}\n";
+    assert_run_fails(prog, "u8_sub_underflow");
+    let (_, stderr, _) = run_inline_prog(prog, "u8_sub_underflow_msg");
+    assert!(
+        stderr.contains("overflow") || stderr.contains("underflow"),
+        "R19/u8_sub_underflow: expected overflow/underflow panic, got: {stderr}"
+    );
+}
+
+#[test]
+fn r19b_u8_multiplication_overflow_panics() {
+    // 20 * 20 = 400, overflows u8
+    let prog = "fn main() -> i64 {\n  let a: u8 = 20\n  let b: u8 = 20\n  let c = a * b\n  0\n}\n";
+    assert_run_fails(prog, "u8_mul_overflow");
+}
+
+#[test]
+fn r19b_u8_division_is_unsigned_div() {
+    // u8: 200 / 10 = 20
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 10\n  let c = a / b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_div", "20");
+}
+
+#[test]
+fn r19b_u8_remainder() {
+    // u8: 200 % 7 = 4 (200 = 28 * 7 + 4)
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 7\n  let c = a % b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_rem", "4");
+}
+
+#[test]
+fn r19b_u8_comparison_uses_unsigned_ordering() {
+    // 200u8 > 100u8: true; 200u8 < 100u8: false
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 100\n  if a > b { println(\"yes\") } else { println(\"no\") }\n  0\n}\n";
+    assert_run_ok(prog, "u8_cmp_gt", "yes");
+}
+
+#[test]
+fn r19b_u8_left_shift_masks_to_width() {
+    // 1u8 << 7 = 128 (stays in u8 range); 1u8 << 8 would be 0 (wrapping)
+    let prog = "fn main() -> i64 {\n  let a: u8 = 1\n  let b: u8 = 7\n  let c = a << b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_shl", "128");
+}
+
+#[test]
+fn r19b_u8_right_shift_is_logical() {
+    // 200u8 >> 4 = 12 (logical shift: 200 = 0b11001000, >> 4 = 0b00001100 = 12)
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 4\n  let c = a >> b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_shr", "12");
+}
+
+// ── u32 arithmetic tests ──────────────────────────────────────────────────────
+
+#[test]
+fn r19b_u32_large_value_add() {
+    // 4000000000u32 + 294967295u32 = 4294967295 (= u32::MAX)
+    let prog = "fn main() -> i64 {\n  let a: u32 = 4000000000\n  let b: u32 = 294967295\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u32_max_add", "4294967295");
+}
+
+#[test]
+fn r19b_u32_overflow_panics() {
+    // u32::MAX + 1 overflows
+    let prog = "fn main() -> i64 {\n  let a: u32 = 4294967295\n  let b: u32 = 1\n  let c = a + b\n  0\n}\n";
+    assert_run_fails(prog, "u32_overflow");
+}
+
+#[test]
+fn r19b_u32_div_unsigned_large() {
+    // 4000000000u32 / 1000 = 4000000
+    let prog = "fn main() -> i64 {\n  let a: u32 = 4000000000\n  let b: u32 = 1000\n  let c = a / b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u32_div_large", "4000000");
+}
+
+#[test]
+fn r19b_u32_div_by_zero_panics() {
+    let prog = "fn main() -> i64 {\n  let a: u32 = 10\n  let b: u32 = 0\n  let c = a / b\n  0\n}\n";
+    assert_run_fails(prog, "u32_div_zero");
+}
+
+// ── u64 tests ─────────────────────────────────────────────────────────────────
+
+#[test]
+fn r19b_u64_large_value_prints_correctly() {
+    // A value larger than i64::MAX — 9223372036854775808 = i64::MAX + 1 as u64
+    // We can't express this as a literal (out of i64 range), but we can test
+    // a known large u64 value that fits in the literal range (>= 0).
+    let prog = "fn main() -> i64 {\n  let a: u64 = 9000000000000000000\n  let b: u64 = 1000000000000000000\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u64_large_add", "10000000000000000000");
+}
+
+// ── Value-flow tests: let → struct → param → return ──────────────────────────
+
+#[test]
+fn r19b_u8_flows_through_let_binding() {
+    // Value flows: let → re-bind → arithmetic
+    let prog = "fn main() -> i64 {\n  let a: u8 = 42\n  let b: u8 = 8\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_let_flow", "50");
+}
+
+#[test]
+fn r19b_u8_flows_through_struct_field() {
+    // SizedInt stored in a struct field, then extracted and used in arithmetic.
+    let prog = "\
+type Byte = { val: u8 }\n\
+fn main() -> i64 {\n\
+  let b = Byte { val: 100 }\n\
+  let x: u8 = 50\n\
+  let c = b.val + x\n\
+  println(to_str(c))\n\
+  0\n\
+}\n";
+    assert_run_ok(prog, "u8_struct_field", "150");
+}
+
+#[test]
+fn r19b_u8_flows_through_function_param() {
+    // u8 value passed to a function taking u8 param, arithmetic done inside.
+    let prog = "\
+fn double_u8(x: u8) -> u8 { x + x }\n\
+fn main() -> i64 {\n\
+  let a: u8 = 60\n\
+  let b = double_u8(a)\n\
+  println(to_str(b))\n\
+  0\n\
+}\n";
+    assert_run_ok(prog, "u8_param_flow", "120");
+}
+
+#[test]
+fn r19b_u32_flows_through_function_and_returns() {
+    // u32 value flows through a function and returns.
+    let prog = "\
+fn add_u32(a: u32, b: u32) -> u32 { a + b }\n\
+fn main() -> i64 {\n\
+  let result = add_u32(2000000000, 2000000000)\n\
+  println(to_str(result))\n\
+  0\n\
+}\n";
+    assert_run_ok(prog, "u32_fn_return", "4000000000");
+}
+
+// ── Slice A regression: let binding still type-checks ─────────────────────────
+
+#[test]
+fn r19b_u8_let_binding_type_checks() {
+    // `let a: u8 = 200` must work (Slice A already landed; regression guard).
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  println(to_str(a))\n  0\n}\n";
+    assert_run_ok(prog, "u8_let_check", "200");
+}
+
+#[test]
+fn r19b_u8_out_of_range_literal_is_compile_error() {
+    // `let a: u8 = 256` must be a compile error (E1900), not a silent truncation.
+    let prog = "fn main() -> i64 {\n  let a: u8 = 256\n  println(to_str(a))\n  0\n}\n";
+    let (_, stderr, code) = run_inline_prog(prog, "u8_oob_literal");
+    assert_ne!(
+        code,
+        Some(0),
+        "R19/u8_oob_literal: expected non-zero exit; stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("E1900") || stderr.contains("out of range"),
+        "R19/u8_oob_literal: expected E1900 or 'out of range'; stderr: {stderr}"
+    );
+}
+
+// ── i32 signed narrow-width tests ────────────────────────────────────────────
+
+#[test]
+fn r19b_i32_addition_works() {
+    let prog = "fn main() -> i64 {\n  let a: i32 = 1000000\n  let b: i32 = 2000000\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "i32_add", "3000000");
+}
+
+#[test]
+fn r19b_i32_overflow_panics() {
+    // i32::MAX + 1 overflows
+    let prog = "fn main() -> i64 {\n  let a: i32 = 2147483647\n  let b: i32 = 1\n  let c = a + b\n  0\n}\n";
+    assert_run_fails(prog, "i32_overflow");
+}
+
+// ── Adversarial: ensure i64 paths not broken ──────────────────────────────────
+
+#[test]
+fn r19b_i64_arithmetic_still_works() {
+    // Regression: plain i64 arithmetic must be unaffected.
+    let prog = "fn main() -> i64 {\n  let a = 1000000000\n  let b = 2000000000\n  let c = a + b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "i64_regression", "3000000000");
+}
+
+#[test]
+fn r19b_u8_bitwise_and() {
+    // 0b11001000 & 0b11110000 = 0b11000000 = 192
+    let prog = "fn main() -> i64 {\n  let a: u8 = 200\n  let b: u8 = 240\n  let c = a & b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_bitand", "192");
+}
+
+#[test]
+fn r19b_u8_bitwise_or() {
+    // 0b10000000 | 0b00000001 = 0b10000001 = 129
+    let prog = "fn main() -> i64 {\n  let a: u8 = 128\n  let b: u8 = 1\n  let c = a | b\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_bitor", "129");
+}
+
+#[test]
+fn r19b_u8_mixed_with_int_literal_in_arithmetic() {
+    // Mixed: SizedInt op bare Int literal — the literal should coerce to u8's range.
+    let prog =
+        "fn main() -> i64 {\n  let a: u8 = 10\n  let c = a + 5\n  println(to_str(c))\n  0\n}\n";
+    assert_run_ok(prog, "u8_mixed_literal", "15");
 }

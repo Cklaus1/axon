@@ -25,30 +25,53 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Write as _;
 use std::rc::Rc;
 
-use crate::ast::{BinOp, EnumDef, Expr, FnDef, ImplBlock, Item, Literal, Pattern, Program, Stmt,
-                 TypeDef, UnaryOp};
+use crate::ast::{
+    BinOp, EnumDef, Expr, FnDef, ImplBlock, Item, Literal, Pattern, Program, Stmt, TypeDef, UnaryOp,
+};
 
 // ── Runtime values ────────────────────────────────────────────────────────────
 
 /// A runtime value produced by evaluating an expression.
 #[derive(Debug, Clone)]
 pub enum Value {
+    /// Default i64 integer (I-7: integers default to `i64`).
     Int(i64),
+    /// R19 Slice B — a width-aware integer value for non-i64 fixed-width types.
+    /// Stores the value as i64 internally but carries its declared type so ops
+    /// can apply width-correct masks (u8=0xFF, u16=0xFFFF, …). Only non-i64
+    /// integer widths use this variant; `Int(i64)` remains the default, keeping
+    /// the ~102 builtin `Int` sites untouched (blast-radius isolation, spec §11).
+    SizedInt {
+        val: i64,
+        /// One of: I8/I16/I32/U8/U16/U32/U64 — never I64 (that stays as Int).
+        ty: crate::types::Type,
+    },
     Float(f64),
     Bool(bool),
     Str(String),
     Unit,
     Array(Vec<Value>),
     /// Structural record: `Point { x, y }`.
-    Struct { name: String, fields: HashMap<String, Value> },
+    Struct {
+        name: String,
+        fields: HashMap<String, Value>,
+    },
     /// Enum variant: `Shape::Circle { radius }`.
-    Enum { enum_name: String, variant: String, fields: HashMap<String, Value> },
+    Enum {
+        enum_name: String,
+        variant: String,
+        fields: HashMap<String, Value>,
+    },
     Some(Box<Value>),
     None,
     Ok(Box<Value>),
     Err(Box<Value>),
     /// A lambda plus the environment it captured at creation time.
-    Closure { params: Vec<String>, body: Box<Expr>, captured: HashMap<String, Value> },
+    Closure {
+        params: Vec<String>,
+        body: Box<Expr>,
+        captured: HashMap<String, Value>,
+    },
     /// A channel — a shared FIFO queue. Cloning shares the same channel (Rc), so
     /// a `spawn`ed body and the main flow see the same queue. The interpreter is
     /// cooperative/single-threaded: `spawn` runs eagerly, so a `send` happens
@@ -69,6 +92,7 @@ impl Value {
     fn type_name(&self) -> String {
         match self {
             Value::Int(_) => "i64".into(),
+            Value::SizedInt { ty, .. } => ty.display(),
             Value::Float(_) => "f64".into(),
             Value::Bool(_) => "bool".into(),
             Value::Str(_) => "str".into(),
@@ -228,7 +252,9 @@ struct Env {
 
 impl Env {
     fn new() -> Self {
-        Env { scopes: vec![HashMap::new()] }
+        Env {
+            scopes: vec![HashMap::new()],
+        }
     }
     fn push(&mut self) {
         self.scopes.push(HashMap::new());
@@ -270,7 +296,9 @@ impl Env {
     /// Build an env whose single base scope is a captured snapshot — used to
     /// run a closure/handler-arm body in its defining environment.
     fn from_snapshot(captured: HashMap<String, Value>) -> Self {
-        Env { scopes: vec![captured] }
+        Env {
+            scopes: vec![captured],
+        }
     }
 }
 
@@ -718,7 +746,10 @@ pub fn run_program(program: &Program) -> i32 {
 /// Phase 5 §4: run with a set of SMT-discharged obligations installed, so the
 /// interpreter elides the runtime checks Z3 proved ∀-inputs. Identical to
 /// [`run_program`] with an empty set.
-pub fn run_program_with_discharged(program: &Program, discharged: crate::verify::Discharged) -> i32 {
+pub fn run_program_with_discharged(
+    program: &Program,
+    discharged: crate::verify::Discharged,
+) -> i32 {
     on_deep_stack(|| run_program_inner(program, discharged))
 }
 
@@ -732,7 +763,8 @@ pub fn run_program_with_discharged(program: &Program, discharged: crate::verify:
 /// Globals are initialized before calling so the function can read module-level lets.
 pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
     on_deep_stack(|| {
-        let mut interp = Interp::build(program).with_discharged(crate::verify::Discharged::default());
+        let mut interp =
+            Interp::build(program).with_discharged(crate::verify::Discharged::default());
         if !interp.fns.contains_key(fn_name) {
             return None;
         }
@@ -851,7 +883,12 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
 pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     extern "C" {
-        fn axon_host_await(req_ptr: *const u8, req_len: usize, out_ptr: *mut u8, out_cap: usize) -> i64;
+        fn axon_host_await(
+            req_ptr: *const u8,
+            req_len: usize,
+            out_ptr: *mut u8,
+            out_cap: usize,
+        ) -> i64;
     }
     // A generous fixed reply buffer (the page truncates to fit). 64 KiB covers a
     // prompt reply / tool result; larger payloads should stream (future).
@@ -1076,9 +1113,13 @@ fn run_test_fn_inner(program: &Program, name: &str) -> Result<(), String> {
 
 fn flow_to_msg(f: Flow) -> String {
     match f {
-        Flow::Panic(m) | Flow::VerifyFailed(m) | Flow::Halted(m)
-        | Flow::AiPolicyUnreachable(m) | Flow::RefineViolation(m)
-        | Flow::GoalBudgetExhausted(m) | Flow::SandboxViolation(m) => m,
+        Flow::Panic(m)
+        | Flow::VerifyFailed(m)
+        | Flow::Halted(m)
+        | Flow::AiPolicyUnreachable(m)
+        | Flow::RefineViolation(m)
+        | Flow::GoalBudgetExhausted(m)
+        | Flow::SandboxViolation(m) => m,
         Flow::Exit(n) => format!("exited with code {n}"),
         _ => "non-local control flow escaped the program".into(),
     }
@@ -1123,7 +1164,11 @@ impl<'p> Interp<'p> {
                 Item::EnumDef(e) => {
                     enums.insert(e.name.clone(), e);
                 }
-                Item::ImplBlock(ImplBlock { for_type, methods: ms, .. }) => {
+                Item::ImplBlock(ImplBlock {
+                    for_type,
+                    methods: ms,
+                    ..
+                }) => {
                     let tn = type_name_of(for_type);
                     for m in ms {
                         methods.insert((tn.clone(), m.name.clone()), m);
@@ -1435,6 +1480,14 @@ impl<'p> Interp<'p> {
             } else {
                 a
             };
+            // R19 Slice B: coerce Int→SizedInt when the declared param type is a
+            // non-i64 integer width — ensures arithmetic inside the callee's body
+            // uses width-correct ops (completeness, I-9).
+            let a = if let Some(width) = interp_eval_axon_type_to_width(&p.ty) {
+                interp_eval_coerce_to_sized(a, width)
+            } else {
+                a
+            };
             env.define(p.name.clone(), a);
         }
         // Phase 5: refinement-type PRECONDITIONS. A parameter `p: T where P`
@@ -1489,18 +1542,45 @@ impl<'p> Interp<'p> {
                     let _ = self.run_goal(&spec.metric, spec.target, me)?;
                 }
                 GoalStrategy::Random => {
-                    let _ = self.run_goal_random(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi)?;
+                    let _ = self.run_goal_random(
+                        &spec.metric,
+                        spec.target,
+                        me.max(1),
+                        spec.lo,
+                        spec.hi,
+                    )?;
                 }
                 GoalStrategy::Multistart => {
                     let (starts, per) = split_budget(me);
-                    let _ = self.run_goal_multistart(&spec.metric, spec.target, starts, per, spec.lo, spec.hi)?;
+                    let _ = self.run_goal_multistart(
+                        &spec.metric,
+                        spec.target,
+                        starts,
+                        per,
+                        spec.lo,
+                        spec.hi,
+                    )?;
                 }
                 GoalStrategy::Tournament => {
-                    let _ = self.run_goal_tournament(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi, false)?;
+                    let _ = self.run_goal_tournament(
+                        &spec.metric,
+                        spec.target,
+                        me.max(1),
+                        spec.lo,
+                        spec.hi,
+                        false,
+                    )?;
                 }
                 GoalStrategy::Bayesian => {
                     // Exploit-biased tournament (single elite + heavy refine).
-                    let _ = self.run_goal_tournament(&spec.metric, spec.target, me.max(1), spec.lo, spec.hi, true)?;
+                    let _ = self.run_goal_tournament(
+                        &spec.metric,
+                        spec.target,
+                        me.max(1),
+                        spec.lo,
+                        spec.hi,
+                        true,
+                    )?;
                 }
             }
             let s = if spec.holdout_set.is_empty() {
@@ -1509,7 +1589,9 @@ impl<'p> Interp<'p> {
                 let mut worst = f64::INFINITY;
                 for h in &spec.holdout_set {
                     let score = self.goal_eval_holdout(&spec.metric, *h)?;
-                    if score < worst { worst = score; }
+                    if score < worst {
+                        worst = score;
+                    }
                 }
                 worst
             };
@@ -1647,19 +1729,29 @@ impl<'p> Interp<'p> {
                 // `@[verify(value <= 500)]` on a Temporal-returning fn was
                 // silently UNENFORCED before (only Uncertain hit this branch).
                 if name == "Uncertain" || name == "Temporal" {
-                    let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
-                    let val_str = fields.get("value").map(display).unwrap_or_else(|| "?".into());
-                    let conf_str = fields.get("confidence").map(display).unwrap_or_else(|| "?".into());
-                    let input_str = input_arg.map(|n| format!(", input {n}")).unwrap_or_default();
+                    let decoded =
+                        crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
+                    let val_str = fields
+                        .get("value")
+                        .map(display)
+                        .unwrap_or_else(|| "?".into());
+                    let conf_str = fields
+                        .get("confidence")
+                        .map(display)
+                        .unwrap_or_else(|| "?".into());
+                    let input_str = input_arg
+                        .map(|n| format!(", input {n}"))
+                        .unwrap_or_default();
 
                     if let Some((ident, op, bound)) = decoded {
                         // Simple shape: do the targeted, well-typed compare.
-                        let observed: Option<f64> = match (ident.as_str(), fields.get(ident.as_str())) {
-                            ("confidence", Some(Value::Float(c))) => Some(*c),
-                            ("value", Some(Value::Int(n))) => Some(*n as f64),
-                            ("value", Some(Value::Float(v))) => Some(*v),
-                            _ => None,
-                        };
+                        let observed: Option<f64> =
+                            match (ident.as_str(), fields.get(ident.as_str())) {
+                                ("confidence", Some(Value::Float(c))) => Some(*c),
+                                ("value", Some(Value::Int(n))) => Some(*n as f64),
+                                ("value", Some(Value::Float(v))) => Some(*v),
+                                _ => None,
+                            };
                         if let Some(c) = observed {
                             if !cmp_f64(&op, c, bound) {
                                 return Err(Flow::VerifyFailed(format!(
@@ -1709,7 +1801,8 @@ impl<'p> Interp<'p> {
                 // discharged this fn's `value OP K` bound for ALL inputs — the
                 // check is provably dead. `verify_proven` is false unless a
                 // `Discharged` set was installed, so the default build is unchanged.
-                scalar_as_f64(&result).filter(|_| !self.discharged.verify_proven(&f.name))
+                scalar_as_f64(&result)
+                    .filter(|_| !self.discharged.verify_proven(&f.name))
             {
                 // SCALAR return (`i64`/`f64`/`bool`): `value` binds to the
                 // returned scalar itself. A `@[verify(value OP K)]` safety bound on
@@ -1717,7 +1810,9 @@ impl<'p> Interp<'p> {
                 // fired for an Uncertain result) — a real hole for a hard bound
                 // like `@[verify(value <= 500)]` on an i64 spend recommender.
                 let val_str = display(&result);
-                let input_str = input_arg.map(|n| format!(", input {n}")).unwrap_or_default();
+                let input_str = input_arg
+                    .map(|n| format!(", input {n}"))
+                    .unwrap_or_default();
                 let decoded = crate::verify::decode_verify_predicate_with_ident(&spec.predicate);
                 if let Some((ident, op, bound)) = decoded {
                     // Only the `value` ident maps to a scalar return (a scalar has
@@ -1756,7 +1851,12 @@ impl<'p> Interp<'p> {
     }
 
     fn call_closure(&self, c: Value, args: Vec<Value>) -> R {
-        let Value::Closure { params, body, captured } = c else {
+        let Value::Closure {
+            params,
+            body,
+            captured,
+        } = c
+        else {
             return panic(format!("value of type {} is not callable", c.type_name()));
         };
         if params.len() != args.len() {
@@ -1837,7 +1937,6 @@ impl<'p> Interp<'p> {
         steps.reverse();
         Ok((base, steps))
     }
-
 }
 
 enum LoopStep {
@@ -1883,6 +1982,11 @@ enum PlaceStep {
 fn as_int(v: &Value) -> Result<i64, Flow> {
     match v {
         Value::Int(n) => Ok(*n),
+        // R19 Slice B: SizedInt values are valid integer values; return the raw stored i64.
+        // Builtin operations that receive a SizedInt (e.g. abs_i64, to_str, etc.) get the
+        // value as i64 and apply their semantics. This keeps the ~102 builtin Int sites
+        // working without modification.
+        Value::SizedInt { val, .. } => Ok(*val),
         other => panic(format!("expected i64, got {}", other.type_name())),
     }
 }
@@ -1907,6 +2011,7 @@ fn as_str(v: &Value) -> Result<&str, Flow> {
 fn as_int_opt(v: &Value) -> Option<i64> {
     match v {
         Value::Int(n) => Some(*n),
+        Value::SizedInt { val, .. } => Some(*val),
         _ => None,
     }
 }
@@ -1921,7 +2026,9 @@ fn as_float_opt(v: &Value) -> Option<f64> {
 /// not "0"/empty). Lets the ASI demos run end-to-end with no API key, no
 /// network, and no `asi-runtime` feature — for showcases, CI, and tests.
 pub fn ai_mock_enabled() -> bool {
-    std::env::var("AXON_AI_MOCK").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+    std::env::var("AXON_AI_MOCK")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
 }
 
 /// Milliseconds since the Unix epoch.
@@ -1973,8 +2080,9 @@ mod provenance;
 // and re-export the public API at the original `interp::` path for main.rs.
 use provenance::*;
 pub use provenance::{
-    AiCallRecord, ProvRecord, RunStartRecord, append_run_start_jsonl, best_recorded_score,
-    find_run_start, provenance_log_path, read_ai_calls, read_provenance, set_provenance_source,
+    append_run_start_jsonl, best_recorded_score, find_run_start, provenance_log_path,
+    read_ai_calls, read_provenance, set_provenance_source, AiCallRecord, ProvRecord,
+    RunStartRecord,
 };
 
 /// A pseudo-random `u64` from a process-global xorshift state (seeded from the
@@ -2043,6 +2151,7 @@ fn i64_to_radix(n: i64, base: u32) -> String {
 fn numeric_score(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => Some(*n as f64),
+        Value::SizedInt { val, .. } => Some(*val as f64),
         Value::Float(f) => Some(*f),
         // An `@[adaptive]` fn that returns `Uncertain<T>`/`Temporal<T>` (e.g. an
         // AI scorer whose score carries a confidence) scores on its INNER value —
@@ -2119,7 +2228,10 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
     fields.insert("value".to_string(), value);
     fields.insert("confidence".to_string(), Value::Float(confidence));
     fields.insert("source_tag".to_string(), Value::Int(0));
-    Value::Struct { name: "Uncertain".to_string(), fields }
+    Value::Struct {
+        name: "Uncertain".to_string(),
+        fields,
+    }
 }
 
 /// Build a `Temporal { value, confidence, horizon_ms, decay, created_ms,
@@ -2129,10 +2241,19 @@ fn make_uncertain(value: Value, confidence: f64) -> Value {
 /// `valid_until_ms` = created_ms + horizon_ms is the user-facing expiry timestamp
 /// the checker exposes as a field — without it, `t.valid_until_ms` type-checked
 /// then panicked "no field valid_until_ms" (a checker-only phantom field).
-fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, created_ms: i64) -> Value {
+fn make_temporal(
+    value: Value,
+    confidence: f64,
+    horizon_ms: i64,
+    decay: f64,
+    created_ms: i64,
+) -> Value {
     let mut fields = HashMap::new();
     fields.insert("value".to_string(), value);
-    fields.insert("confidence".to_string(), Value::Float(confidence.clamp(0.0, 1.0)));
+    fields.insert(
+        "confidence".to_string(),
+        Value::Float(confidence.clamp(0.0, 1.0)),
+    );
     fields.insert("horizon_ms".to_string(), Value::Int(horizon_ms));
     fields.insert("decay".to_string(), Value::Float(decay));
     fields.insert("created_ms".to_string(), Value::Int(created_ms));
@@ -2140,7 +2261,10 @@ fn make_temporal(value: Value, confidence: f64, horizon_ms: i64, decay: f64, cre
         "valid_until_ms".to_string(),
         Value::Int(created_ms.saturating_add(horizon_ms)),
     );
-    Value::Struct { name: "Temporal".to_string(), fields }
+    Value::Struct {
+        name: "Temporal".to_string(),
+        fields,
+    }
 }
 
 fn is_i64_type(ty: &crate::ast::AxonType) -> bool {
@@ -2198,6 +2322,7 @@ fn cmp_f64(op: &BinOp, a: f64, b: f64) -> bool {
 fn scalar_as_f64(v: &Value) -> Option<f64> {
     match v {
         Value::Int(n) => Some(*n as f64),
+        Value::SizedInt { val, .. } => Some(*val as f64),
         Value::Float(f) => Some(*f),
         Value::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
         _ => None,
@@ -2207,9 +2332,14 @@ fn scalar_as_f64(v: &Value) -> Option<f64> {
 fn eval_unary(op: &UnaryOp, v: Value) -> R {
     match (op, v) {
         (UnaryOp::Neg, Value::Int(n)) => Ok(Value::Int(-n)),
+        (UnaryOp::Neg, Value::SizedInt { val, ty }) => Ok(Value::SizedInt {
+            val: val.wrapping_neg(),
+            ty,
+        }),
         (UnaryOp::Neg, Value::Float(f)) => Ok(Value::Float(-f)),
         (UnaryOp::Not, Value::Bool(b)) => Ok(Value::Bool(!b)),
         (UnaryOp::BitNot, Value::Int(n)) => Ok(Value::Int(!n)),
+        (UnaryOp::BitNot, Value::SizedInt { val, ty }) => Ok(Value::SizedInt { val: !val, ty }),
         // `&expr` is a no-op at runtime for a value interpreter.
         (UnaryOp::Ref, v) => Ok(v),
         (op, v) => panic(format!("cannot apply {op:?} to {}", v.type_name())),
@@ -2225,6 +2355,39 @@ fn eval_unary(op: &UnaryOp, v: Value) -> R {
 // Value formatting + value-level ops extracted to interp/value.rs (R0 slice 2).
 mod value;
 use value::*;
+
+// ── R19 Slice B — interp.rs-level coercion helpers ───────────────────────────
+// These mirror the ones in eval.rs but are needed by call_fn (in this file).
+
+/// Map AxonType → semantic Type for non-i64 integer widths only. Returns None
+/// for i64 (already the default Value::Int representation) and non-integers.
+fn interp_eval_axon_type_to_width(ty: &crate::ast::AxonType) -> Option<crate::types::Type> {
+    use crate::ast::AxonType::Named;
+    use crate::types::Type;
+    match ty {
+        Named(n) => match n.as_str() {
+            "u8" => Some(Type::U8),
+            "u16" => Some(Type::U16),
+            "u32" => Some(Type::U32),
+            "u64" => Some(Type::U64),
+            "i8" => Some(Type::I8),
+            "i16" => Some(Type::I16),
+            "i32" => Some(Type::I32),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Coerce Int → SizedInt (or re-tag an existing SizedInt). Other values pass
+/// through unchanged. Used at the call-arg → param boundary.
+fn interp_eval_coerce_to_sized(v: Value, width: crate::types::Type) -> Value {
+    match v {
+        Value::Int(n) => Value::SizedInt { val: n, ty: width },
+        Value::SizedInt { val, .. } => Value::SizedInt { val, ty: width },
+        other => other,
+    }
+}
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 
@@ -2275,7 +2438,10 @@ mod tests {
             calls += 1;
             Some("ok".to_string()) // len 2
         });
-        assert_eq!(calls, 3, "host must be called exactly once per host_await (no replay)");
+        assert_eq!(
+            calls, 3,
+            "host must be called exactly once per host_await (no replay)"
+        );
         assert_eq!(code, 6); // 2 + 2 + 2
     }
 
@@ -2317,7 +2483,8 @@ mod tests {
         // Robustness: a program that ERRORS after a host_await must return cleanly
         // (the host loop ends when the worker drops its channels), never hang. Here
         // `10 / str_len("")` is a runtime div-by-zero (exit 101) after one await.
-        let prog = parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
+        let prog =
+            parse("fn main() -> i64 { let g = host_await(\"x\")  let z = str_len(\"\")  10 / z }");
         let code = super::run_suspendable(&prog, |_| Some("ok".to_string()));
         assert_eq!(code, 101, "interp panic mid-suspend → exit 101, no hang");
     }
@@ -2334,7 +2501,11 @@ mod tests {
         let mut fed = 0;
         let code = super::run_suspendable(&prog, |_| {
             fed += 1;
-            if fed <= 2 { Some("x".to_string()) } else { None } // 2 lines, then EOF
+            if fed <= 2 {
+                Some("x".to_string())
+            } else {
+                None
+            } // 2 lines, then EOF
         });
         assert_eq!(code, 2, "two Some replies then None ⇒ loop stops at 2");
     }
@@ -2476,8 +2647,16 @@ mod tests {
         assert_eq!(max_depth_from_env(None), RECURSION_LIMIT);
         assert_eq!(max_depth_from_env(Some("")), RECURSION_LIMIT);
         assert_eq!(max_depth_from_env(Some("banana")), RECURSION_LIMIT);
-        assert_eq!(max_depth_from_env(Some("0")), RECURSION_LIMIT, "zero is not a useful limit");
-        assert_eq!(max_depth_from_env(Some("-5")), RECURSION_LIMIT, "negatives don't parse as usize");
+        assert_eq!(
+            max_depth_from_env(Some("0")),
+            RECURSION_LIMIT,
+            "zero is not a useful limit"
+        );
+        assert_eq!(
+            max_depth_from_env(Some("-5")),
+            RECURSION_LIMIT,
+            "negatives don't parse as usize"
+        );
     }
 
     #[test]
@@ -2781,7 +2960,10 @@ mod tests {
             }
         "#);
         std::env::remove_var("AXON_AI_MOCK");
-        assert!(n > 0, "mock ai_complete should return Ok(non-empty), got {n}");
+        assert!(
+            n > 0,
+            "mock ai_complete should return Ok(non-empty), got {n}"
+        );
     }
 
     #[test]
@@ -2791,8 +2973,8 @@ mod tests {
         // hello/flagship are exercised separately.)
         let base = concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples/goals/");
         for (file, expected) in [
-            ("optimize-goal.md", 0),   // deploys
-            ("compose-goal.md", 0),    // deploys (prelude-composed score)
+            ("optimize-goal.md", 0), // deploys
+            ("compose-goal.md", 0),  // deploys (prelude-composed score)
             // enforced confidence gate blocks → distinct verify-failed code 3,
             // not a crash 101 (BUG_HUNT #26).
             ("verified-goal.md", VERIFY_FAILED_EXIT_CODE),
@@ -2805,12 +2987,15 @@ mod tests {
                 .unwrap_or_else(|e| panic!("read {file}: {e}"));
             let goal = axon_surface::parser::GoalFile::parse(&md)
                 .unwrap_or_else(|e| panic!("parse {file}: {e}"));
-            let ax = axon_surface::compile::emit(&goal)
-                .unwrap_or_else(|e| panic!("emit {file}: {e}"));
+            let ax =
+                axon_surface::compile::emit(&goal).unwrap_or_else(|e| panic!("emit {file}: {e}"));
             let program =
                 crate::parse_source(&ax).unwrap_or_else(|e| panic!("parse .ax for {file}: {e}"));
             let code = run_program(&program);
-            assert_eq!(code, expected, "{file}: expected exit {expected}, got {code}");
+            assert_eq!(
+                code, expected,
+                "{file}: expected exit {expected}, got {code}"
+            );
         }
     }
 
@@ -2829,9 +3014,12 @@ mod tests {
                 sandbox_run(sb, "noisy", 0)
             }
         "#;
-        assert_eq!(run(src_denied), SANDBOX_VIOLATION_EXIT_CODE,
+        assert_eq!(
+            run(src_denied),
+            SANDBOX_VIOLATION_EXIT_CODE,
             "sandbox_run should exit {} when the fn calls random_i64 but Random is not allowed",
-            SANDBOX_VIOLATION_EXIT_CODE);
+            SANDBOX_VIOLATION_EXIT_CODE
+        );
 
         // Case 2: sandbox allows "Random" — random_i64 is permitted; result is non-error.
         let src_allowed = r#"
@@ -2849,7 +3037,10 @@ mod tests {
         std::env::set_var("AXON_SEED", "42");
         let result = run(src_allowed);
         std::env::remove_var("AXON_SEED");
-        assert_eq!(result, 0, "sandbox_run should succeed and return a value in [1,10] when Random is allowed");
+        assert_eq!(
+            result, 0,
+            "sandbox_run should succeed and return a value in [1,10] when Random is allowed"
+        );
     }
 
     #[test]
@@ -2864,7 +3055,11 @@ mod tests {
                 sandbox_run(sb, "double", 21)
             }
         "#;
-        assert_eq!(run(src), 42, "pure fn should run inside an empty-ceiling sandbox");
+        assert_eq!(
+            run(src),
+            42,
+            "pure fn should run inside an empty-ceiling sandbox"
+        );
     }
 
     #[test]
@@ -2886,9 +3081,14 @@ mod tests {
         let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../examples"));
         let mut files = Vec::new();
         collect(root, &mut files);
-        assert!(files.len() >= 20, "expected many example .ax files, found {}", files.len());
+        assert!(
+            files.len() >= 20,
+            "expected many example .ax files, found {}",
+            files.len()
+        );
         for f in &files {
-            let src = std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
+            let src =
+                std::fs::read_to_string(f).unwrap_or_else(|e| panic!("read {}: {e}", f.display()));
             if let Err(e) = crate::parse_source(&src) {
                 panic!("{} failed to parse: {e}", f.display());
             }

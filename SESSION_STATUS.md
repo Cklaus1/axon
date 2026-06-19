@@ -1,6 +1,25 @@
 # Axon Session Status
 
-**Last update**: 2026-06-10
+**Last update**: 2026-06-19
+**Branch**: `asiloop/roadmap` (pushed to `origin/asiloop/roadmap`)
+
+## R19 Slice B — width-correct unsigned/fixed-width integer arithmetic (2026-06-19)
+
+**Status: LANDED.** Slice B completes width-correct arithmetic in the interpreter:
+
+- **`Value::SizedInt { val: i64, ty: Type }`** variant added to the `Value` enum (interp.rs). `Value::Int(i64)` remains the i64 default — the ~102 builtin `Int` sites are untouched (blast-radius isolation).
+- **Coercion at all 4 static-type-introduction sites**: `let`/`own`/`ref` binding (eval.rs), struct field construction (eval.rs), call-arg→param binding (interp.rs `call_fn`), and the `as_int` helper used by builtins.
+- **Width-correct `eval_binop_vals` arms** (value.rs): `+,-,*,/,%,<<,>>,&,|,^` and comparisons for SizedInt. Checked overflow (graceful panic at the width boundary, I-9 — no silent wrapping). Unsigned types use unsigned division/remainder/shift/comparison; signed narrow types use signed semantics.
+- **Mixed Int-literal op SizedInt** coerces the bare literal to the operand width at the value level.
+- **infer.rs BinOp arm** relaxed: sized-int arithmetic no longer emits E0102 for same-width ops or literal operands.
+- **checker.rs let-binding scope** uses the annotation type for non-i64 integer annotations (prevents spurious E0306 when a variable of type `u8` is passed to a `u8` param).
+- **26 dedicated unsigned-arithmetic tests** pass (coverage: wrap/overflow/underflow, div/rem, shifts, bitwise, comparisons, value-flow through let→struct→param→return, i64 regression).
+
+**Pending (Slice C)**: codegen — `axon build` E0910-refuses non-i64 widths until the LLVM IR selection + unsigned op variants are added. Slice B is interp-only (I-2 sound).
+
+---
+
+**Previous update**: 2026-06-10
 **Branch**: `merge-asi-layer3` (pushed to `origin/merge-asi-layer3`)
 **Latest commit**: `baebc92` — merge remote-tracking branch; latest feature commit
 `044b73e` Layer-3 DSL widening (fold-logical rule kind, red-teamed).
