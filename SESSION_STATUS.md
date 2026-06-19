@@ -345,3 +345,7 @@ In-language opportunities still on the table:
 ## ASI build loop — iteration 8 (2026-06-19)
 - SCOPED (not landed — no sound contained increment exists): R19 Slice B = width-correct unsigned arithmetic. Confirmed structural: interp is dynamically typed, Value::Int(i64) flat (interp.rs:36), no type at op site. Design recorded in R19 §11 (width-aware SizedInt variant keeping Int(i64) as default + construction-coercion at the 4 binding sites + eval_binop arms). Slice B is its own multi-step effort; the loop gate forbids the i64-backed half-measure (I-9).
 - NEXT: implement Slice B incrementally — variant + construction coercion first (interp let-arm has the annotation ty at eval.rs:42), then width-correct eval_binop arms. Full-suite-gated, contained-or-revert.
+
+## ASI build loop — iteration 9 (2026-06-19) — HONEST STOP at the Slice B soundness boundary
+- FINDING: Slice B's soundness can't be verified by the existing gate (no test exercises unsigned arithmetic), and overflow ops (*, <<, +) need COMPREHENSIVE width-carrying coercion — a missed construction site is silently unsound (I-9). So Slice B is test-driven + multi-iteration, NOT a safe autonomous one-pass grind. Recorded in R19 §11.
+- LOOP STOPPED (not self-paced): the next decision is the user's — (a) authorize the test-driven multi-iteration Slice B, (b) pause R19 at the construction surface (a clean useful landing) + redirect, or (c) supply R18 spike inputs. Re-running /loop into Slice B would either re-hit this boundary or risk an unsound grind.

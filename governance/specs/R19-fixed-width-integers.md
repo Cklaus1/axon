@@ -150,6 +150,29 @@ the variant) or land the variant+coercion first and the op-arms next — never a
 **Blast-radius risk for Slice A** (now landed): literal polymorphism touched the inference core — the
 full-suite gate held (1004 green); the let/struct/param-call sites use the shared `try_int_literal_coercion`.
 
+#### Slice B soundness finding (iter 9, 2026-06-19 — why it's not a one-pass autonomous grind)
+
+Deeper analysis revealed two coupled problems that make Slice B test-driven and multi-iteration, **not** a
+safe single gate-green pass:
+
+1. **Completeness is required for soundness.** Overflow-producing ops (`*`, `<<`, `+` near the width
+   boundary) on a u32 value MUST know its width to mask. A u32 value left as a bare `Int(i64)` at *any*
+   missed construction site would compute in i64 and exceed u32 range — **silently unsound (I-9)**. So the
+   width-aware `SizedInt` must be produced at **every** static-type-introduction site (let/struct/param/
+   return/`as`-cast), not just some. (Right-shift/div/cmp of in-range non-negative values happen to agree
+   with i64, but `*`/`<<`/`+`-overflow do **not** — so partial coercion is unsound, not merely incomplete.)
+2. **The existing gate cannot verify it.** No test in the current 1004-suite exercises unsigned arithmetic,
+   so a green suite would **not** imply soundness — the cardinal anti-pattern (a green that doesn't test the
+   thing that matters). Slice B therefore requires its **own dedicated unsigned-arithmetic test suite**
+   (wrap at width boundary; unsigned div/rem/shift/cmp; value-flow through let/struct/param/return/array) as
+   the real gate, authored alongside the implementation.
+
+**Conclusion:** Slice B is a deliberate, test-driven, multi-iteration effort whose correctness the autonomous
+loop's existing gate cannot certify. The loop correctly **stops here** (construction surface is a clean,
+useful landing) rather than risk a green-but-unsound grind. Implementation should: (a) author the unsigned
+test suite first; (b) add `SizedInt` + comprehensive coercion at ALL static-type sites; (c) width-correct
+`eval_binop`; (d) gate on existing-suite (no i64 regression) **AND** the new unsigned suite.
+
 ### 12. Open questions
 
 1. **Overflow policy:** wrapping vs checked for unsigned arithmetic. *Default: match the existing i64
