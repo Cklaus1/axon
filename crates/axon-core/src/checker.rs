@@ -173,6 +173,14 @@ fn is_integer_widening(from: &Type, to: &Type) -> bool {
     matches!((rank(from), rank(to)), (Some(f), Some(t)) if f < t)
 }
 
+/// True when `t` is any fixed-width integer type (signed or unsigned). (R19)
+fn is_int_width(t: &Type) -> bool {
+    matches!(
+        t,
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::U8 | Type::U16 | Type::U32 | Type::U64
+    )
+}
+
 // ── Known primitives (for R08) ────────────────────────────────────────────────
 
 const PRIMITIVE_NAMES: &[&str] = &[
@@ -3438,6 +3446,19 @@ impl CheckCtx {
                     .found(found_disp)
                     .fix(hint),
                 );
+                continue;
+            }
+
+            // R19: a literal int arg coerces to a fixed-width/unsigned param —
+            // infer owns the coercion + E1900 range-check, so don't double-report
+            // E0306 here. Sound: only *literals* coerce; a non-literal int →
+            // narrower/unsigned still mismatches, and unsigned arithmetic stays
+            // rejected until Slice B (I-9, no i64-backed half-measure).
+            if matches!(arg, Expr::Literal(crate::ast::Literal::Int(_)))
+                && is_int_width(param_ty)
+                && is_int_width(&arg_ty)
+                && *param_ty != arg_ty
+            {
                 continue;
             }
 

@@ -890,6 +890,10 @@ impl InferCtx {
                             args.iter().zip(inst_sig.params.iter()).enumerate()
                         {
                             let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                            // R19: a literal arg coerces to a fixed-width/unsigned param.
+                            if self.try_int_literal_coercion(arg, &arg_ty, param_ty) {
+                                continue;
+                            }
                             self.constrain(
                                 arg_ty,
                                 param_ty.clone(),

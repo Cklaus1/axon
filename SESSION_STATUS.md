@@ -336,3 +336,8 @@ In-language opportunities still on the table:
 - LANDED: R19 Slice A-cont — struct-field literal coercion + E1900 (`Reg { flags: 65535 }` works; 99999 → E1900). Refactored let+struct to shared try_int_literal_coercion helper. Full suite green (1004).
 - REVERTED: return-coercion — return path has separate checker E0307 + fn-body-type check beyond the infer constraint; half-doing it is unsound. Deferred to Slice A-cont-2.
 - NEXT: param/call-arg coercion sites; then return (needs checker E0307 + fn-body path); then Slice B (width-correct ops).
+
+## ASI build loop — iteration 7 (2026-06-19)
+- LANDED: R19 param/call-arg literal coercion (2-file: infer applies the helper at the Call arm; checker R06 skips the literal case via is_int_width to avoid double E0306). `takes(200)` runs; `takes(300)` → E1900; non-literal `takes(n)` → sound E0102+E0306 with 'as u8' hint. Full suite green (1004).
+- Slice A construction surface now COMPLETE: let + struct-field + param/call-arg. Return still deferred (checker E0307 + fn-body path).
+- NEXT: Slice B — width-correct unsigned ops via a width-aware interp Value (the real unlock; bigger change, own iteration).
