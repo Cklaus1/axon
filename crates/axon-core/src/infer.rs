@@ -12,8 +12,8 @@
 use std::collections::HashMap;
 
 use crate::ast::{
-    AxonType, BinOp, Expr, FmtPart, FnDef, Item, Literal as AstLiteral, MatchArm, Pattern,
-    Program, UnaryOp,
+    AxonType, BinOp, Expr, FmtPart, FnDef, Item, Literal as AstLiteral, MatchArm, Pattern, Program,
+    UnaryOp,
 };
 use crate::builtins::builtin_sigs;
 use crate::types::{Constraint, Substitution, Type};
@@ -22,6 +22,7 @@ use crate::types::{Constraint, Substitution, Type};
 
 const E0101: &str = "E0101";
 const E0102: &str = "E0102";
+const E1900: &str = "E1900";
 const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant/field
 
 // ── Integer widening ──────────────────────────────────────────────────────────
@@ -29,13 +30,37 @@ const E0404: &str = "E0404"; // enum-variant literal names a nonexistent variant
 /// True when `from` can be implicitly widened to `to` (i8 → i16 → i32 → i64).
 fn is_int_widening(from: &Type, to: &Type) -> bool {
     let rank = |t: &Type| match t {
-        Type::I8  => Some(0u8),
+        Type::I8 => Some(0u8),
         Type::I16 => Some(1),
         Type::I32 => Some(2),
         Type::I64 => Some(3),
-        _         => None,
+        _ => None,
     };
     matches!((rank(from), rank(to)), (Some(f), Some(t)) if f < t)
+}
+
+/// True when `t` is any fixed-width integer type (signed or unsigned). (R19)
+fn is_int_type(t: &Type) -> bool {
+    matches!(
+        t,
+        Type::I8 | Type::I16 | Type::I32 | Type::I64 | Type::U8 | Type::U16 | Type::U32 | Type::U64
+    )
+}
+
+/// True when integer literal `n` is representable in integer type `ty`. (R19 §4
+/// range-check; literal is `i64`, so `u64`'s only constraint is non-negativity.)
+fn int_lit_in_range(n: i64, ty: &Type) -> bool {
+    match ty {
+        Type::I8 => (i8::MIN as i64..=i8::MAX as i64).contains(&n),
+        Type::I16 => (i16::MIN as i64..=i16::MAX as i64).contains(&n),
+        Type::I32 => (i32::MIN as i64..=i32::MAX as i64).contains(&n),
+        Type::I64 => true,
+        Type::U8 => (0..=u8::MAX as i64).contains(&n),
+        Type::U16 => (0..=u16::MAX as i64).contains(&n),
+        Type::U32 => (0..=u32::MAX as i64).contains(&n),
+        Type::U64 => n >= 0,
+        _ => false,
+    }
 }
 
 // ── Inference error ───────────────────────────────────────────────────────────
@@ -86,7 +111,9 @@ pub struct Scope {
 
 impl Scope {
     pub fn new() -> Self {
-        Scope { frames: vec![HashMap::new()] }
+        Scope {
+            frames: vec![HashMap::new()],
+        }
     }
 
     /// Push a new inner scope frame.
@@ -299,7 +326,12 @@ impl InferCtx {
     /// Record that `lhs` and `rhs` must unify.
     pub fn constrain(&mut self, lhs: Type, rhs: Type, origin: &str) {
         let span = self.current_stmt_span;
-        self.constraints.push(Constraint { lhs, rhs, origin: origin.to_string(), span });
+        self.constraints.push(Constraint {
+            lhs,
+            rhs,
+            origin: origin.to_string(),
+            span,
+        });
     }
 
     /// Convert an AST `AxonType` to a semantic `Type`.
@@ -331,11 +363,17 @@ impl InferCtx {
             AxonType::Generic { base, args } => {
                 // Uncertain<T> and Temporal<T> are first-class in the type system.
                 if base == "Uncertain" {
-                    let inner = args.first().map(|a| self.resolve_ast_type(a)).unwrap_or(Type::Unknown);
+                    let inner = args
+                        .first()
+                        .map(|a| self.resolve_ast_type(a))
+                        .unwrap_or(Type::Unknown);
                     return Type::Uncertain(Box::new(inner));
                 }
                 if base == "Temporal" {
-                    let inner = args.first().map(|a| self.resolve_ast_type(a)).unwrap_or(Type::Unknown);
+                    let inner = args
+                        .first()
+                        .map(|a| self.resolve_ast_type(a))
+                        .unwrap_or(Type::Unknown);
                     return Type::Temporal(Box::new(inner));
                 }
                 // Phase 1: other generics treated as deferred.
@@ -348,7 +386,9 @@ impl InferCtx {
             AxonType::Ref(inner) => self.resolve_ast_type(inner), // Phase 1: ref transparent
             AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
-            AxonType::Tuple(elems) => Type::Tuple(elems.iter().map(|e| self.resolve_ast_type(e)).collect()),
+            AxonType::Tuple(elems) => {
+                Type::Tuple(elems.iter().map(|e| self.resolve_ast_type(e)).collect())
+            }
             // Union types are not yet first-class in the semantic type system.
             // Treat them permissively: resolve to `Type::Unknown` so unification
             // does not assert a specific element type.
@@ -373,14 +413,18 @@ impl InferCtx {
                     // Register with placeholder types; pass 2 will resolve properly.
                     self.fn_sigs.insert(
                         f.name.clone(),
-                        FnSig { params: vec![], ret: Type::Unit },
+                        FnSig {
+                            params: vec![],
+                            ret: Type::Unit,
+                        },
                     );
                 }
                 Item::TypeDef(td) => {
                     // Register struct name so forward refs resolve to Type::Struct.
                     self.struct_fields.insert(td.name.clone(), vec![]);
                     if !td.generic_params.is_empty() {
-                        self.struct_generic_params.insert(td.name.clone(), td.generic_params.clone());
+                        self.struct_generic_params
+                            .insert(td.name.clone(), td.generic_params.clone());
                     }
                 }
                 Item::EnumDef(ed) => {
@@ -397,7 +441,13 @@ impl InferCtx {
                     let type_name = ast_type_simple_name(&blk.for_type);
                     for m in &blk.methods {
                         let mangled = format!("{type_name}__{}", m.name);
-                        self.fn_sigs.insert(mangled, FnSig { params: vec![], ret: Type::Unit });
+                        self.fn_sigs.insert(
+                            mangled,
+                            FnSig {
+                                params: vec![],
+                                ret: Type::Unit,
+                            },
+                        );
                     }
                 }
                 _ => {}
@@ -420,15 +470,20 @@ impl InferCtx {
                         }
                         self.resolve_ast_type(ty)
                     };
-                    let params = f.params.iter()
+                    let params = f
+                        .params
+                        .iter()
                         .map(|p| resolve_with_generics(&p.ty))
                         .collect();
-                    let ret = f.return_type.as_ref()
+                    let ret = f
+                        .return_type
+                        .as_ref()
                         .map(resolve_with_generics)
                         .unwrap_or(Type::Unit);
                     self.fn_sigs.insert(f.name.clone(), FnSig { params, ret });
                     if !f.generic_params.is_empty() {
-                        self.generic_fn_params.insert(f.name.clone(), f.generic_params.clone());
+                        self.generic_fn_params
+                            .insert(f.name.clone(), f.generic_params.clone());
                     }
                 }
                 Item::TypeDef(td) => {
@@ -451,15 +506,19 @@ impl InferCtx {
                             .collect();
                         variant_map.insert(variant.name.clone(), fields);
                     }
-                    self.enum_variant_fields.insert(ed.name.clone(), variant_map);
+                    self.enum_variant_fields
+                        .insert(ed.name.clone(), variant_map);
                 }
                 Item::ImplBlock(blk) => {
                     // Pass 2: register impl methods with fully-resolved types.
                     let type_name = ast_type_simple_name(&blk.for_type);
                     for m in &blk.methods {
                         let mangled = format!("{type_name}__{}", m.name);
-                        let params =
-                            m.params.iter().map(|p| self.resolve_ast_type(&p.ty)).collect();
+                        let params = m
+                            .params
+                            .iter()
+                            .map(|p| self.resolve_ast_type(&p.ty))
+                            .collect();
                         let ret = m
                             .return_type
                             .as_ref()
@@ -473,11 +532,15 @@ impl InferCtx {
                     let mut method_sigs = HashMap::new();
                     for m in &td.methods {
                         // Exclude the `self` param; callers are the non-self args.
-                        let params: Vec<Type> = m.params.iter()
+                        let params: Vec<Type> = m
+                            .params
+                            .iter()
                             .filter(|p| p.name != "self")
                             .map(|p| self.resolve_ast_type(&p.ty))
                             .collect();
-                        let ret = m.return_type.as_ref()
+                        let ret = m
+                            .return_type
+                            .as_ref()
                             .map(|t| self.resolve_ast_type(t))
                             .unwrap_or(Type::Unit);
                         method_sigs.insert(m.name.clone(), FnSig { params, ret });
@@ -536,6 +599,32 @@ impl InferCtx {
                 // becomes the binding's declared type.
                 if let Some(annot) = ty {
                     let annot_ty = self.resolve_ast_type(annot);
+                    // R19 Slice A: an integer LITERAL binds to any fixed-width /
+                    // unsigned integer annotation (the literal takes that type),
+                    // range-checked at compile time (E1900). A non-literal int →
+                    // narrower/unsigned still needs an `as` cast (normal constrain
+                    // → E0102). Sound by construction: arithmetic on the bound
+                    // value still rejects via width-mismatch until R19 Slice B
+                    // adds width-correct ops — no i64-backed half-measure (I-9).
+                    if let Expr::Literal(AstLiteral::Int(n)) = value.as_ref() {
+                        if is_int_type(&annot_ty) && is_int_type(&val_ty) && annot_ty != val_ty {
+                            if !int_lit_in_range(*n, &annot_ty) {
+                                let span = self.current_stmt_span;
+                                self.errors.push(
+                                    InferError::new(
+                                        E1900,
+                                        format!(
+                                            "literal {n} out of range for {}",
+                                            annot_ty.display()
+                                        ),
+                                    )
+                                    .with_span(span),
+                                );
+                            }
+                            scope.bind(name.clone(), annot_ty);
+                            return Type::Unit;
+                        }
+                    }
                     self.constrain(val_ty.clone(), annot_ty.clone(), "let type annotation");
                     scope.bind(name.clone(), annot_ty);
                 } else {
@@ -600,7 +689,8 @@ impl InferCtx {
                         // The checker (Fix #4b) performs the definitive check.
                         if is_unc(&lt) || is_unc(&rt) {
                             // Pick the inner type from whichever side is Uncertain.
-                            let inner = unc_inner(&lt).or_else(|| unc_inner(&rt))
+                            let inner = unc_inner(&lt)
+                                .or_else(|| unc_inner(&rt))
                                 .unwrap_or(Type::I64);
                             Type::Uncertain(Box::new(inner))
                         } else {
@@ -638,8 +728,7 @@ impl InferCtx {
                             Type::Bool
                         }
                     }
-                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor
-                    | BinOp::Shl  | BinOp::Shr => {
+                    BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr => {
                         self.constrain(lt.clone(), Type::I64, "bitwise operand");
                         self.constrain(rt, Type::I64, "bitwise operand");
                         Type::I64
@@ -691,7 +780,10 @@ impl InferCtx {
 
                 // Handle `chan<T>()` lowered form: "chan::<T>" → Type::Chan(T)
                 if let Some(ref name) = fn_name {
-                    if let Some(inner) = name.strip_prefix("chan::<").and_then(|s| s.strip_suffix(">")) {
+                    if let Some(inner) = name
+                        .strip_prefix("chan::<")
+                        .and_then(|s| s.strip_suffix(">"))
+                    {
                         for arg in args {
                             self.infer_expr(arg, scope, ret_ty);
                         }
@@ -706,7 +798,10 @@ impl InferCtx {
                 // get a dispatch); the type system flows the declared T through
                 // unchanged so callers see the right `Result<T, str>` shape.
                 if let Some(ref name) = fn_name {
-                    if let Some(inner) = name.strip_prefix("ai_extract::<").and_then(|s| s.strip_suffix(">")) {
+                    if let Some(inner) = name
+                        .strip_prefix("ai_extract::<")
+                        .and_then(|s| s.strip_suffix(">"))
+                    {
                         let t = parse_type_str(inner);
                         // Constrain the (single) arg to be `str`.
                         for arg in args {
@@ -759,7 +854,11 @@ impl InferCtx {
                 if let Some(name) = fn_name {
                     if let Some(sig) = self.fn_sigs.get(&name).cloned() {
                         // For generic functions: instantiate with fresh type vars per call site.
-                        let param_names = self.generic_fn_params.get(&name).cloned().unwrap_or_default();
+                        let param_names = self
+                            .generic_fn_params
+                            .get(&name)
+                            .cloned()
+                            .unwrap_or_default();
                         let (inst_sig, var_map) = if !param_names.is_empty() {
                             self.instantiate_sig(&sig, &param_names)
                         } else {
@@ -789,11 +888,13 @@ impl InferCtx {
                         let ret = inst_sig.ret.clone();
                         // Record instantiation for the mono pass (resolved later).
                         if !var_map.is_empty() {
-                            let var_ids: Vec<u32> = param_names.iter()
+                            let var_ids: Vec<u32> = param_names
+                                .iter()
                                 .filter_map(|n| var_map.get(n).copied())
                                 .collect();
                             // Store pending instantiation — vars will be resolved after solving.
-                            self.call_instantiations.push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
+                            self.call_instantiations
+                                .push((name, var_ids.iter().map(|&v| Type::Var(v)).collect()));
                         }
                         return ret;
                     }
@@ -806,7 +907,11 @@ impl InferCtx {
             }
 
             // ── Method call (Phase 1: treat as top-level fn lookup) ───────────
-            Expr::MethodCall { receiver, method, args } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
                 let recv_ty = self.infer_expr(receiver, scope, ret_ty);
                 // Special-case Chan<T> methods: recv() → T, send(T) → Unit, clone() → Chan<T>.
                 match (method.as_str(), &recv_ty) {
@@ -837,7 +942,9 @@ impl InferCtx {
                         }
                     }
                     // Unknown trait method — infer args and return fresh.
-                    for arg in args { self.infer_expr(arg, scope, ret_ty); }
+                    for arg in args {
+                        self.infer_expr(arg, scope, ret_ty);
+                    }
                     return self.fresh();
                 }
                 if let Some(sig) = self.fn_sigs.get(method).cloned() {
@@ -883,7 +990,8 @@ impl InferCtx {
                 if arms.is_empty() {
                     return Type::Unit;
                 }
-                let first_ty = self.infer_match_arm_with_subj(&arms[0], scope, ret_ty, Some(&subj_ty));
+                let first_ty =
+                    self.infer_match_arm_with_subj(&arms[0], scope, ret_ty, Some(&subj_ty));
                 for arm in &arms[1..] {
                     let arm_ty = self.infer_match_arm_with_subj(arm, scope, ret_ty, Some(&subj_ty));
                     self.constrain(arm_ty, first_ty.clone(), "match arm type");
@@ -954,7 +1062,12 @@ impl InferCtx {
 
             Expr::Tuple(elems) => {
                 // Heterogeneous: each element keeps its own inferred type.
-                Type::Tuple(elems.iter().map(|e| self.infer_expr(e, scope, ret_ty)).collect())
+                Type::Tuple(
+                    elems
+                        .iter()
+                        .map(|e| self.infer_expr(e, scope, ret_ty))
+                        .collect(),
+                )
             }
 
             // ── Struct literal ─────────────────────────────────────────────────
@@ -990,11 +1103,7 @@ impl InferCtx {
                             if let Some((_, decl_ty)) =
                                 declared_payload.iter().find(|(dn, _)| dn == fname)
                             {
-                                self.constrain(
-                                    inferred_ty,
-                                    decl_ty.clone(),
-                                    "enum variant field",
-                                );
+                                self.constrain(inferred_ty, decl_ty.clone(), "enum variant field");
                             } else if variant_known {
                                 // A field name not on this variant: `S::A { y }`
                                 // when `A`'s only field is `x`. Was silently
@@ -1026,34 +1135,33 @@ impl InferCtx {
                 // For generic structs (e.g. Pair<A, B>), substitute fresh Vars for TypeParams.
                 let raw_declared: Vec<(String, Type)> =
                     self.struct_fields.get(name).cloned().unwrap_or_default();
-                let declared: Vec<(String, Type)> = if let Some(param_names) =
-                    self.struct_generic_params.get(name).cloned()
-                {
-                    let mut var_map: HashMap<String, u32> = HashMap::new();
-                    for pname in &param_names {
-                        let vid = self.next_var;
-                        self.next_var += 1;
-                        var_map.insert(pname.clone(), vid);
-                    }
-                    raw_declared
-                        .iter()
-                        .map(|(fname, fty)| {
-                            let subst_ty = match fty {
-                                Type::TypeParam(n) => {
-                                    if let Some(&vid) = var_map.get(n) {
-                                        Type::Var(vid)
-                                    } else {
-                                        fty.clone()
+                let declared: Vec<(String, Type)> =
+                    if let Some(param_names) = self.struct_generic_params.get(name).cloned() {
+                        let mut var_map: HashMap<String, u32> = HashMap::new();
+                        for pname in &param_names {
+                            let vid = self.next_var;
+                            self.next_var += 1;
+                            var_map.insert(pname.clone(), vid);
+                        }
+                        raw_declared
+                            .iter()
+                            .map(|(fname, fty)| {
+                                let subst_ty = match fty {
+                                    Type::TypeParam(n) => {
+                                        if let Some(&vid) = var_map.get(n) {
+                                            Type::Var(vid)
+                                        } else {
+                                            fty.clone()
+                                        }
                                     }
-                                }
-                                _ => fty.clone(),
-                            };
-                            (fname.clone(), subst_ty)
-                        })
-                        .collect()
-                } else {
-                    raw_declared
-                };
+                                    _ => fty.clone(),
+                                };
+                                (fname.clone(), subst_ty)
+                            })
+                            .collect()
+                    } else {
+                        raw_declared
+                    };
 
                 // Track which declared fields were provided for missing-field detection.
                 let mut provided: std::collections::HashSet<String> =
@@ -1063,18 +1171,11 @@ impl InferCtx {
                     let inferred_ty = self.infer_expr(fexpr, scope, ret_ty);
                     provided.insert(fname.clone());
 
-                    if let Some((_, decl_ty)) =
-                        declared.iter().find(|(dn, _)| dn == fname)
-                    {
-                        self.constrain(
-                            inferred_ty,
-                            decl_ty.clone(),
-                            "struct field",
-                        );
+                    if let Some((_, decl_ty)) = declared.iter().find(|(dn, _)| dn == fname) {
+                        self.constrain(inferred_ty, decl_ty.clone(), "struct field");
                     } else if !declared.is_empty() {
                         // Unknown field name (only report if we know the struct).
-                        let known: Vec<String> =
-                            declared.iter().map(|(n, _)| n.clone()).collect();
+                        let known: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
                         let span = self.current_stmt_span;
                         self.errors.push(
                             InferError::new(
@@ -1201,7 +1302,11 @@ impl InferCtx {
             Expr::Comptime(body) => self.infer_expr(body, scope, ret_ty),
 
             // ── Lambda ────────────────────────────────────────────────────────
-            Expr::Lambda { params, body, captures: _ } => {
+            Expr::Lambda {
+                params,
+                body,
+                captures: _,
+            } => {
                 let param_types: Vec<Type> = params.iter().map(|_| self.fresh()).collect();
                 // Fix #6: create a fresh return-type variable for the lambda
                 // instead of reusing the enclosing function's ret_ty. This
@@ -1232,7 +1337,11 @@ impl InferCtx {
             // ── While-let loop ────────────────────────────────────────────────
             // `while let Some(x) = expr { body }` — expr is Option<T>,
             // pattern binds T; loop evaluates as unit.
-            Expr::WhileLet { pattern, expr, body } => {
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
                 let expr_ty = self.infer_expr(expr, scope, ret_ty);
                 scope.push();
                 self.bind_pattern_with_subj(pattern, scope, Some(&expr_ty));
@@ -1244,11 +1353,17 @@ impl InferCtx {
             }
 
             // ── For loop (range iteration) ───────────────────────────────────
-            Expr::For { var, start, end, body, .. } => {
+            Expr::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
                 let start_ty = self.infer_expr(start, scope, ret_ty);
-                let end_ty   = self.infer_expr(end,   scope, ret_ty);
+                let end_ty = self.infer_expr(end, scope, ret_ty);
                 self.constrain(start_ty, Type::I64, "for range start");
-                self.constrain(end_ty,   Type::I64, "for range end");
+                self.constrain(end_ty, Type::I64, "for range end");
                 scope.push();
                 scope.bind(var.clone(), Type::I64);
                 for stmt in body {
@@ -1436,23 +1551,23 @@ impl InferCtx {
     pub fn type_to_axon(ty: &Type) -> crate::ast::AxonType {
         use crate::ast::AxonType;
         match ty {
-            Type::I8  => AxonType::Named("i8".into()),
+            Type::I8 => AxonType::Named("i8".into()),
             Type::I16 => AxonType::Named("i16".into()),
             Type::I32 => AxonType::Named("i32".into()),
             Type::I64 => AxonType::Named("i64".into()),
-            Type::U8  => AxonType::Named("u8".into()),
+            Type::U8 => AxonType::Named("u8".into()),
             Type::U16 => AxonType::Named("u16".into()),
             Type::U32 => AxonType::Named("u32".into()),
             Type::U64 => AxonType::Named("u64".into()),
             Type::F32 => AxonType::Named("f32".into()),
             Type::F64 => AxonType::Named("f64".into()),
             Type::Bool => AxonType::Named("bool".into()),
-            Type::Str  => AxonType::Named("str".into()),
+            Type::Str => AxonType::Named("str".into()),
             Type::Unit => AxonType::Named("unit".into()),
             Type::Struct(n) | Type::Enum(n) => AxonType::Named(n.clone()),
             Type::Option(inner) => AxonType::Option(Box::new(Self::type_to_axon(inner))),
-            Type::Slice(inner)  => AxonType::Slice(Box::new(Self::type_to_axon(inner))),
-            Type::Chan(inner)   => AxonType::Chan(Box::new(Self::type_to_axon(inner))),
+            Type::Slice(inner) => AxonType::Slice(Box::new(Self::type_to_axon(inner))),
+            Type::Chan(inner) => AxonType::Chan(Box::new(Self::type_to_axon(inner))),
             Type::Result(ok, err) => AxonType::Result {
                 ok: Box::new(Self::type_to_axon(ok)),
                 err: Box::new(Self::type_to_axon(err)),
@@ -1469,7 +1584,10 @@ impl InferCtx {
         let mut result = Vec::new();
         for (name, type_args) in self.call_instantiations.drain(..) {
             let axon_args: Vec<_> = type_args.iter().map(Self::type_to_axon).collect();
-            let key = (name.clone(), axon_args.iter().map(|t| format!("{t:?}")).collect());
+            let key = (
+                name.clone(),
+                axon_args.iter().map(|t| format!("{t:?}")).collect(),
+            );
             if seen.insert(key) {
                 result.push((name, axon_args));
             }
@@ -1481,7 +1599,11 @@ impl InferCtx {
     ///
     /// Returns a fresh `FnSig` with each `TypeParam` replaced by a new `Var`,
     /// plus the mapping from param-name → Var index (for recording the instantiation).
-    fn instantiate_sig(&mut self, sig: &FnSig, param_names: &[String]) -> (FnSig, HashMap<String, u32>) {
+    fn instantiate_sig(
+        &mut self,
+        sig: &FnSig,
+        param_names: &[String],
+    ) -> (FnSig, HashMap<String, u32>) {
         let mut var_map: HashMap<String, u32> = HashMap::new();
         for name in param_names {
             let var_id = self.next_var;
@@ -1649,7 +1771,8 @@ impl InferCtx {
                     // value/actual type as `lhs` and the declared/expected type as
                     // `rhs`. Report in that order so "expected" is the annotation
                     // and "found" is the value — not the reverse.
-                    self.errors.push(InferError::mismatch(origin, &rhs, &lhs).with_span(span));
+                    self.errors
+                        .push(InferError::mismatch(origin, &rhs, &lhs).with_span(span));
                 }
             }
         }
@@ -1659,8 +1782,11 @@ impl InferCtx {
     fn occurs(&self, var: u32, ty: &Type) -> bool {
         match ty {
             Type::Var(n) => *n == var,
-            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner)
-            | Type::Uncertain(inner) | Type::Temporal(inner) => self.occurs(var, inner),
+            Type::Option(inner)
+            | Type::Slice(inner)
+            | Type::Chan(inner)
+            | Type::Uncertain(inner)
+            | Type::Temporal(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {
@@ -1724,7 +1850,8 @@ mod tests {
     #[test]
     fn let_binding_propagates_type() {
         let (mut ctx, mut scope) = ctx();
-        let binding = Expr::Let { ty: None,
+        let binding = Expr::Let {
+            ty: None,
             name: "x".to_string(),
             value: Box::new(lit_int(10)),
         };
@@ -1765,9 +1892,16 @@ mod tests {
         };
         ctx.infer_expr(&binding, &mut scope, &Type::Unit);
         ctx.solve();
-        let err = ctx.errors.iter().find(|e| e.code == "E0102")
+        let err = ctx
+            .errors
+            .iter()
+            .find(|e| e.code == "E0102")
             .expect("expected an E0102 mismatch");
-        assert_eq!(err.expected.as_deref(), Some("i64"), "annotation is `expected`");
+        assert_eq!(
+            err.expected.as_deref(),
+            Some("i64"),
+            "annotation is `expected`"
+        );
         assert_eq!(err.found.as_deref(), Some("str"), "value type is `found`");
     }
 
@@ -1991,7 +2125,10 @@ mod tests {
         let mut ctx = InferCtx::new("test");
         ctx.infer_program(&program);
         // The mangled name "Rect__area" should be registered in fn_sigs.
-        assert!(ctx.fn_sigs.contains_key("Rect__area"), "mangled fn sig not registered");
+        assert!(
+            ctx.fn_sigs.contains_key("Rect__area"),
+            "mangled fn sig not registered"
+        );
         assert!(ctx.errors.is_empty(), "unexpected errors: {:?}", ctx.errors);
     }
 
@@ -2003,7 +2140,8 @@ mod tests {
         ctx.solve();
         assert!(
             ctx.errors.is_empty(),
-            "i32→i64 widening should not produce an inference error, got: {:?}", ctx.errors
+            "i32→i64 widening should not produce an inference error, got: {:?}",
+            ctx.errors
         );
     }
 
@@ -2028,7 +2166,10 @@ mod tests {
             "chan unification",
         );
         ctx.solve();
-        assert!(ctx.errors.is_empty(), "Chan<i64> ~ Chan<i64> should unify cleanly");
+        assert!(
+            ctx.errors.is_empty(),
+            "Chan<i64> ~ Chan<i64> should unify cleanly"
+        );
     }
 
     #[test]
@@ -2100,13 +2241,22 @@ mod tests {
             span: Span::dummy(),
         };
 
-        let program = Program { items: vec![Item::FnDef(identity), Item::FnDef(main_fn)] };
+        let program = Program {
+            items: vec![Item::FnDef(identity), Item::FnDef(main_fn)],
+        };
         let mut ctx = InferCtx::new("test.ax");
         ctx.infer_program(&program);
 
-        assert!(ctx.errors.is_empty(), "generic call should not produce errors: {:?}", ctx.errors);
+        assert!(
+            ctx.errors.is_empty(),
+            "generic call should not produce errors: {:?}",
+            ctx.errors
+        );
         // Should have recorded one instantiation for identity.
-        assert!(!ctx.call_instantiations.is_empty(), "expected call instantiation recorded");
+        assert!(
+            !ctx.call_instantiations.is_empty(),
+            "expected call instantiation recorded"
+        );
         assert_eq!(ctx.call_instantiations[0].0, "identity");
     }
 
@@ -2122,8 +2272,16 @@ mod tests {
             generic_params: vec!["T".into()],
             generic_bounds: vec![],
             params: vec![
-                Param { name: "x".into(), ty: AxonType::TypeParam("T".into()), span: Span::dummy() },
-                Param { name: "y".into(), ty: AxonType::TypeParam("T".into()), span: Span::dummy() },
+                Param {
+                    name: "x".into(),
+                    ty: AxonType::TypeParam("T".into()),
+                    span: Span::dummy(),
+                },
+                Param {
+                    name: "y".into(),
+                    ty: AxonType::TypeParam("T".into()),
+                    span: Span::dummy(),
+                },
             ],
             return_type: Some(AxonType::TypeParam("T".into())),
             body: crate::ast::Expr::Ident("x".into()),
@@ -2162,13 +2320,23 @@ mod tests {
             span: Span::dummy(),
         };
 
-        let program = Program { items: vec![Item::FnDef(double_fn), Item::FnDef(main_fn)] };
+        let program = Program {
+            items: vec![Item::FnDef(double_fn), Item::FnDef(main_fn)],
+        };
         let mut ctx = InferCtx::new("test.ax");
         ctx.infer_program(&program);
-        assert!(ctx.errors.is_empty(), "no errors expected: {:?}", ctx.errors);
+        assert!(
+            ctx.errors.is_empty(),
+            "no errors expected: {:?}",
+            ctx.errors
+        );
 
         let insts = ctx.drain_instantiations();
-        assert_eq!(insts.len(), 1, "two identical instantiations should deduplicate to one");
+        assert_eq!(
+            insts.len(),
+            1,
+            "two identical instantiations should deduplicate to one"
+        );
         assert_eq!(insts[0].0, "double");
     }
 
@@ -2194,13 +2362,11 @@ mod tests {
         };
 
         // fn announce(g: dyn Greet) -> unit  { g.greet() }
-        let body = crate::ast::Expr::Block(vec![
-            Stmt::simple(crate::ast::Expr::MethodCall {
-                receiver: Box::new(crate::ast::Expr::Ident("g".into())),
-                method: "greet".into(),
-                args: vec![],
-            }),
-        ]);
+        let body = crate::ast::Expr::Block(vec![Stmt::simple(crate::ast::Expr::MethodCall {
+            receiver: Box::new(crate::ast::Expr::Ident("g".into())),
+            method: "greet".into(),
+            args: vec![],
+        })]);
         let announce_fn = FnDef {
             public: false,
             name: "announce".into(),
@@ -2221,17 +2387,18 @@ mod tests {
         };
 
         let program = Program {
-            items: vec![
-                Item::TraitDef(greet_trait),
-                Item::FnDef(announce_fn),
-            ],
+            items: vec![Item::TraitDef(greet_trait), Item::FnDef(announce_fn)],
         };
         let mut ctx = InferCtx::new("test.ax");
         ctx.infer_program(&program);
         assert!(
             ctx.errors.is_empty(),
-            "dyn Greet method call should not produce errors: {:?}", ctx.errors
+            "dyn Greet method call should not produce errors: {:?}",
+            ctx.errors
         );
-        assert!(ctx.trait_method_sigs.contains_key("Greet"), "Greet trait sigs should be registered");
+        assert!(
+            ctx.trait_method_sigs.contains_key("Greet"),
+            "Greet trait sigs should be registered"
+        );
     }
 }

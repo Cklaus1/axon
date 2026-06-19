@@ -128,7 +128,7 @@ pub const E1405: &str = "E1405"; // pass manifest hash mismatch at boot (TCB att
 pub const E1406: &str = "E1406"; // correctness judged by AI — forbidden; the oracle is the interpreter
 pub const E1407: &str = "E1407"; // AI proposed a template name not in the closed registry (rejected before verify)
 pub const E1408: &str = "E1408"; // a graduated/verified pass name is absent from the template registry (tamper / version skew)
-// R10 Layer 3 — AI-authored RewriteSpec proposal-stage validation (fail-closed, before the firewall)
+                                 // R10 Layer 3 — AI-authored RewriteSpec proposal-stage validation (fail-closed, before the firewall)
 pub const E1409: &str = "E1409"; // RewriteSpec empty / not provably total (proposes no transform)
 pub const E1411: &str = "E1411"; // RewriteSpec rule name outside the closed reviewed vocabulary
 pub const E1412: &str = "E1412"; // RewriteSpec could express a capability (grammar violation — defense in design)
@@ -139,6 +139,7 @@ pub const E1500: &str = "E1500"; // metric must name an @[adaptive] fn
 pub const E1503: &str = "E1503"; // target/max_evals/holdout must parse as numbers
 pub const E1504: &str = "E1504"; // #[goal] fn must have zero params
 pub const E1505: &str = "E1505"; // unknown #[goal(strategy: …)] — not hill_climb|random|multistart|tournament|bayesian
+pub const E1900: &str = "E1900"; // R19: integer literal out of range for its fixed-width/unsigned annotation
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
@@ -147,16 +148,16 @@ pub const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes pre
 pub const W0004: &str = "W0004"; // unreachable match arm (a duplicate pattern already covers it)
 pub const W0005: &str = "W0005"; // unreachable code after a return/break/continue
 pub const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
-// Layer-1 ASI warnings
+                                 // Layer-1 ASI warnings
 pub const W0701: &str = "W0701"; // uncertainty discarded (Uncertain<T>.value used without checking .confidence)
 pub const W1103: &str = "W1103"; // @[verify] outside the SMT-provable fragment (R9); runtime gate applies
-// R3c AI-budget warning
+                                 // R3c AI-budget warning
 pub const W1311: &str = "W1311"; // @[ai(policy(budget: N))] value is not a non-negative integer; ignored
-// R6 registry warnings
+                                 // R6 registry warnings
 pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
-// R10 self-improving warnings
+                                 // R10 self-improving warnings
 pub const W1410: &str = "W1410"; // pass claims `faster` but the perf gate (G4) was not run
-// R3 AI-primitive warning
+                                 // R3 AI-primitive warning
 pub const W1310: &str = "W1310"; // live AI call by a fn with no @[ai(policy)] (un-metered/un-pinned)
 
 // Info codes
@@ -307,27 +308,15 @@ mod tests {
     #[test]
     fn error_codes_are_unique() {
         let codes = [
-            E0000,
-            E0001, E0002, E0003, E0004,
-            E0101, E0102,
-            E0301, E0302, E0303, E0304, E0305,
-            E0306, E0307, E0308, E0309, E0310,
-            E0311, E0312, E0313, E0314, E0315,
-            E0401, E0402, E0403, E0404, E0405, E0406, E0407,
-            E0501, E0502, E0503, E0504,
-            E0601, E0602, E0603,
-            E0701, E0702, E0703,
-            E0800, E0801, E0802, E0803,
-            E0901, E0902, E0903, E0904, E0905, E0906, E0907, E0908, E0910,
-            E1001, E1002, E1003, E1004,
-            E1101, E1102,
-            E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209,
-            E1300, E1301, E1302,
-            E1306, E1310, E1316,
-            E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412, E1413,
-            E1500, E1503, E1504, E1505,
-            W0001, W0002, W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410,
-            I0001,
+            E0000, E0001, E0002, E0003, E0004, E0101, E0102, E0301, E0302, E0303, E0304, E0305,
+            E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401, E0402,
+            E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0601, E0602, E0603,
+            E0701, E0702, E0703, E0800, E0801, E0802, E0803, E0901, E0902, E0903, E0904, E0905,
+            E0906, E0907, E0908, E0910, E1001, E1002, E1003, E1004, E1101, E1102, E1201, E1202,
+            E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302, E1306, E1310,
+            E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412,
+            E1413, E1500, E1503, E1504, E1505, E1900, W0001, W0002, W0003, W0004, W0005, W0006, W0701,
+            W1103, W1210, W1310, W1311, W1410, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {
@@ -346,8 +335,7 @@ mod tests {
 
     #[test]
     fn axon_error_display_with_location() {
-        let e = AxonError::new(E0001, "undefined variable")
-            .at("main.ax", 5, 10);
+        let e = AxonError::new(E0001, "undefined variable").at("main.ax", 5, 10);
         let d = e.display();
         assert!(d.contains("main.ax:5:10"));
     }
@@ -376,8 +364,7 @@ mod tests {
 
     #[test]
     fn axon_error_fix_shown() {
-        let e = AxonError::new(E0001, "undefined")
-            .fix("did you mean 'foo'?");
+        let e = AxonError::new(E0001, "undefined").fix("did you mean 'foo'?");
         let d = e.display();
         assert!(d.contains("fix:"));
         assert!(d.contains("foo"));

@@ -327,3 +327,7 @@ In-language opportunities still on the table:
 - LANDED: code-verified R17 §12 Q5 — unsigned types (U8..U64) recognized+enforced but NON-FUNCTIONAL (`let a: u32 = N` → E0102); corrected R17 spec + REQUIREMENTS R17 row; memory saved.
 - VERIFIED: repro `let a: u32 = 1` → E0102 via fast interp (`axon check`).
 - NEXT: the unsigned-int support fix is a Structural slice (infer.rs/checker.rs literal-typing → ops → codegen parity) — spec-first. Beyond it, top-value R16/R17/R18 work is §9 user-owned forks (wedge call).
+
+## ASI build loop — iteration 5 (2026-06-19)
+- LANDED: R19 Slice A (let-binding) — `let a: u32 = N` typechecks + runs; out-of-range → E1900; unsigned arithmetic soundly rejected (E0102) pending Slice B. infer.rs (literal-coercion + range-check) + error.rs (E1900 registered). Full fast suite green (901).
+- NEXT: Slice A-cont (param/return/struct sites), then Slice B (width-correct interp ops via width-aware Value), then Slice C (codegen+parity).

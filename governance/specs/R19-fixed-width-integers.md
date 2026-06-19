@@ -1,7 +1,7 @@
 # R19 — Fixed-width & unsigned integer support
 
 **Spec ID:** `R19-fixed-width-integers` (advances `REQUIREMENTS.md` R2 type-system; unblocks `R17-freestanding-substrate.md` §12 Q5 — bare-metal MMIO needs unsigned)
-**Status:** Draft — implementation-ready (code sites pinned)
+**Status:** **Slice A (let-binding) LANDED 2026-06-19** — integer literals bind to fixed-width/unsigned annotations at `let`/`own`/`ref` with compile-time range-check (E1900); construction + display work in the interpreter; unsigned *arithmetic* stays soundly rejected (E0102 width-mismatch) pending Slice B (NO i64-backed half-measure, I-9). Full fast suite green (901 tests). **Pending:** param/return/struct annotation sites (Slice A-cont), width-correct ops (Slice B), codegen+parity (Slice C).
 **Risk class:** Structural (touches HM integer inference + codegen ABI; I-2 parity)
 **Author / date:** cklaus, 2026-06-19 (ASI build-loop iter 1–4: de-risked → scoped → spec)
 
