@@ -1,7 +1,7 @@
 # R17 — Freestanding Substrate + Trusted HAL (bare-metal Axon)
 
 **Spec ID:** `R17-freestanding-substrate` (new requirement row; depends on `R13-native-ffi.md`, `R7-targets.md`; extends ROADMAP §3 substrate/surface + §7 TCB; **reverses ROADMAP §2.3** — see §12 Q1)
-**Status:** Draft
+**Status:** Draft — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** Building. First slice = `R19-fixed-width-integers.md` (unsigned ints), then the trusted HAL + boot-under-QEMU (Slice 0).
 **Risk class:** Structural (introduces the language's *only* `unsafe` surface; amends I-3/I-4/I-5/I-6, extends I-11/I-12)
 **Author / date:** cklaus, 2026-06-12
 

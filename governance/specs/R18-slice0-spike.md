@@ -1,7 +1,7 @@
 # R18 Slice-0 Spike — does the provenance substrate generalize, and is the answer worth paying for?
 
 **Spec ID:** `R18-slice0-spike` (the evidence experiment that gates `R18-provenance-ledger.md` §12 Q1 — the wedge decision)
-**Status:** Draft — **RESHAPED per the panel review** (verdict was RESHAPE: the original test couldn't distinguish "wedge is real" from "schema fits its own data and the builder liked it"). Runnable once an external Source A repo + ≥3 buyer-jury judges are secured.
+**Status:** **GREENLIT (founder decision 2026-06-19) — blocked on two external inputs only.** Reshaped per the panel review. The autonomous parts (the importer harness, the queries, the competitive scan) can proceed now; the spike is **runnable end-to-end once the founder supplies: (1) an external, not-pre-linked Source A repo, and (2) ≥3 coding-agent-platform buyer-jury contacts.** Those two cannot be procured autonomously — they are the hand-off.
 **Risk class:** Trivial (a throwaway experiment; nothing ships)
 **Author / date:** cklaus, 2026-06-19
 

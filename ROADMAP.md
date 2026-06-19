@@ -66,6 +66,14 @@ Every Phase below ships *all three layers* of its scope.
 No syscall replacement, no process-model replacement, no Linux fork. Userland OS forever
 (or until forced otherwise by a real customer requirement).
 
+> **REVERSED 2026-06-19 (founder decision).** The kernel ambition is un-killed for the **R17 bare-metal**
+> track (`governance/specs/R17-freestanding-substrate.md` §12 Q1 resolved). A from-scratch Axon OS is now an
+> active multi-quarter direction; the capability-microkernel thesis (Principals/effects/`@[contained]` ≈
+> seL4 caps, SMT-proven isolation) is the rationale. First build slice = fixed-width/unsigned integers
+> (`R19-fixed-width-integers.md`), then the trusted HAL + boot-under-QEMU (R17 Slice 0). This reversal is
+> recorded per the invariant/decision-change discipline; it does **not** lower the cost (the GPU driver +
+> HAL below the language remain the hard 90%).
+
 ### 2.4 The typed AST — not the English — is the legal/audit artifact
 
 Users author intent; Axon's LLM-compiler proposes a typed AST; users **must approve the
