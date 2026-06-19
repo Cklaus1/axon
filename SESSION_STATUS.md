@@ -341,3 +341,7 @@ In-language opportunities still on the table:
 - LANDED: R19 param/call-arg literal coercion (2-file: infer applies the helper at the Call arm; checker R06 skips the literal case via is_int_width to avoid double E0306). `takes(200)` runs; `takes(300)` → E1900; non-literal `takes(n)` → sound E0102+E0306 with 'as u8' hint. Full suite green (1004).
 - Slice A construction surface now COMPLETE: let + struct-field + param/call-arg. Return still deferred (checker E0307 + fn-body path).
 - NEXT: Slice B — width-correct unsigned ops via a width-aware interp Value (the real unlock; bigger change, own iteration).
+
+## ASI build loop — iteration 8 (2026-06-19)
+- SCOPED (not landed — no sound contained increment exists): R19 Slice B = width-correct unsigned arithmetic. Confirmed structural: interp is dynamically typed, Value::Int(i64) flat (interp.rs:36), no type at op site. Design recorded in R19 §11 (width-aware SizedInt variant keeping Int(i64) as default + construction-coercion at the 4 binding sites + eval_binop arms). Slice B is its own multi-step effort; the loop gate forbids the i64-backed half-measure (I-9).
+- NEXT: implement Slice B incrementally — variant + construction coercion first (interp let-arm has the annotation ty at eval.rs:42), then width-correct eval_binop arms. Full-suite-gated, contained-or-revert.

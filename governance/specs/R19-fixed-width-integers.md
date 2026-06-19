@@ -121,8 +121,34 @@ instructions.
 | **C — codegen** | LLVM width selection + signed/unsigned op variants; until then E0910-refuse | `unsigned_parity.sh` native==interp |
 
 Each slice is independently revertible; A+B are fast-build (interp oracle), C needs the codegen-parity build.
-**Blast-radius risk is Slice A** (literal polymorphism touches the inference core) — the full-suite
-regression gate is the guard; if A perturbs i64 inference unrecoverably, revert and reconsider the model.
+
+#### Slice B design (scoped 2026-06-19, code-grounded — Slice A construction surface is now LANDED)
+
+Confirmed by inspection: the interp is **dynamically typed** — `Value::Int(i64)` (`interp.rs:36`) is **flat with
+no width**, bindings store bare `Int` (`eval.rs:254`), and `eval_binop` (`value.rs:101+`) dispatches on
+`(Op, Int(a), Int(b))` with no type context. So width-correctness **cannot** be inferred at the op site, and
+there is **no sound contained increment** (typing unsigned arithmetic while the interp does i64 ops is exactly
+the I-9 violation the gate forbids). Slice B is therefore a **structural refactor**:
+
+1. **Width-aware `Value`** — add ONE variant (e.g. `Value::SizedInt { val: i64, width: IntWidth }` capturing
+   bits+signedness) and **keep `Value::Int(i64)` as the i64 default** so the ~102 `Int` sites in
+   `builtins.rs` (and elsewhere) are *untouched* — only non-i64 widths use the new variant. This isolates the
+   blast radius.
+2. **Construction coercion** — at the binding sites Slice A already touches (`let`/`own`/`ref` — the interp
+   let-arm `Expr::Let { ty, .. }` at `eval.rs:42` **has the annotation `ty` available** ✓; struct fields;
+   call args/params), coerce the produced `Int(i64)` → `SizedInt` when the declared type is a non-i64 width.
+3. **`eval_binop` arms** — `SizedInt op SizedInt`: width-correct (`+ - *` wrap-or-checked per the existing
+   i64 checked-overflow policy at the width boundary; `Div/Rem/<</>>` and comparisons use **unsigned**
+   semantics by signedness). Mixed `Int`(bare literal) `op SizedInt` → coerce the literal to the operand width.
+4. **`to_str`/display + builtin interactions** — handle `SizedInt` (print the unsigned value; feed builtins).
+
+**Blast-radius risk: MODERATE-HIGH** (a new Value variant + ~4 construction sites + the binop arms + display).
+Mitigated by keeping `Int(i64)` as default (most sites untouched) and the full-suite gate. **Per the loop
+gate, if this can't land sound+green in one pass, do a contained increment (one width / one op family with
+the variant) or land the variant+coercion first and the op-arms next — never an i64-backed half-measure.**
+
+**Blast-radius risk for Slice A** (now landed): literal polymorphism touched the inference core — the
+full-suite gate held (1004 green); the let/struct/param-call sites use the shared `try_int_literal_coercion`.
 
 ### 12. Open questions
 
