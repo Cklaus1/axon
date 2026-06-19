@@ -248,10 +248,15 @@ part is the *invariant amendments* (§7) — each gated to the slice that needs 
 4. **(§3, Slice 0)** Bootloader: bring-your-own (Limine / multiboot2 / GRUB) vs custom. *Default: BYO
    (multiboot2 or Limine handoff); Axon owns everything post-handoff — writing a bootloader is not on the
    critical path.*
-5. **(§5 — verify before relying on it)** Unsigned-integer *operation* maturity: the `U8..U64` *types* exist,
-   but are the unsigned ops (`udiv`/`urem`/`lshr`/unsigned `icmp`/zext) fully wired in codegen **and** interp,
-   with parity? Hardware code is all unsigned. *Action: audit + close gaps as a prerequisite to Slice 0; this
-   is a concrete, verifiable task, not a design question.*
+5. **(§5 — AUDITED 2026-06-19, code-verified via the interp path; worse than feared)** Unsigned-integer
+   support: the `U8..U64` *types* are recognized by name (`Type::from_name`) and **enforced** by the checker,
+   but they are **non-functional** — you cannot even bind a literal: `let a: u32 = 4000000000` is **E0102**
+   ("expected u32, found i64") because integer literals default to `i64` with **no coercion/inference to
+   unsigned**. So unsigned ops are moot — there's no way to construct an unsigned value in the first place.
+   **Conclusion: unsigned fixed-width support is a BUILD PREREQUISITE for Slice 0, not a present asset** (a
+   type-inference change in `infer.rs`/`checker.rs` for literal defaulting + annotation coercion, then the
+   unsigned ops `udiv`/`urem`/`lshr`/unsigned `icmp`/zext, then codegen parity). This is a separate Structural
+   slice (spec-first), scoped ahead of the bare-metal HAL. *Repro: `let a: u32 = 1` → E0102.*
 6. **(§7)** `@[global_allocator]`: does v1 require a user allocator, or support a no-alloc kernel (static
    allocation only)? *Default: no-alloc first (Slice 0 boots with zero heap); the allocator hook lands when a
    slice needs `str`/array/closure heap ops in kernel context.*
