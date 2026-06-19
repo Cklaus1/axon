@@ -1,7 +1,7 @@
 # R19 — Fixed-width & unsigned integer support
 
 **Spec ID:** `R19-fixed-width-integers` (advances `REQUIREMENTS.md` R2 type-system; unblocks `R17-freestanding-substrate.md` §12 Q5 — bare-metal MMIO needs unsigned)
-**Status:** **Slice A (let-binding) LANDED 2026-06-19** — integer literals bind to fixed-width/unsigned annotations at `let`/`own`/`ref` with compile-time range-check (E1900); construction + display work in the interpreter; unsigned *arithmetic* stays soundly rejected (E0102 width-mismatch) pending Slice B (NO i64-backed half-measure, I-9). Full fast suite green (901 tests). **Pending:** param/return/struct annotation sites (Slice A-cont), width-correct ops (Slice B), codegen+parity (Slice C).
+**Status:** **Slice A LANDED 2026-06-19 (let-binding + struct-field).** Integer literals coerce to fixed-width/unsigned annotations at `let`/`own`/`ref` bindings AND struct-literal fields, with compile-time range-check (E1900), via the shared `try_int_literal_coercion` helper; construction + display work in the interpreter; unsigned *arithmetic* stays soundly rejected (E0102 width-mismatch) pending Slice B (NO i64-backed half-measure, I-9). Full fast suite green (1004 tests). **Return coercion DEFERRED** — the return path has a separate checker `E0307` + fn-body-type check beyond the infer constraint, so a literal-coercion at the infer Return arm alone is insufficient (and unsound to half-do); reverted. **Pending:** param/call-arg sites + return (Slice A-cont-2), width-correct ops (Slice B), codegen+parity (Slice C).
 **Risk class:** Structural (touches HM integer inference + codegen ABI; I-2 parity)
 **Author / date:** cklaus, 2026-06-19 (ASI build-loop iter 1–4: de-risked → scoped → spec)
 

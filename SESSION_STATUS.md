@@ -331,3 +331,8 @@ In-language opportunities still on the table:
 ## ASI build loop — iteration 5 (2026-06-19)
 - LANDED: R19 Slice A (let-binding) — `let a: u32 = N` typechecks + runs; out-of-range → E1900; unsigned arithmetic soundly rejected (E0102) pending Slice B. infer.rs (literal-coercion + range-check) + error.rs (E1900 registered). Full fast suite green (901).
 - NEXT: Slice A-cont (param/return/struct sites), then Slice B (width-correct interp ops via width-aware Value), then Slice C (codegen+parity).
+
+## ASI build loop — iteration 6 (2026-06-19)
+- LANDED: R19 Slice A-cont — struct-field literal coercion + E1900 (`Reg { flags: 65535 }` works; 99999 → E1900). Refactored let+struct to shared try_int_literal_coercion helper. Full suite green (1004).
+- REVERTED: return-coercion — return path has separate checker E0307 + fn-body-type check beyond the infer constraint; half-doing it is unsound. Deferred to Slice A-cont-2.
+- NEXT: param/call-arg coercion sites; then return (needs checker E0307 + fn-body path); then Slice B (width-correct ops).

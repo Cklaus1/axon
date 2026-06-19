@@ -334,6 +334,32 @@ impl InferCtx {
         });
     }
 
+    /// R19 Slice A: if `value` is an integer literal and `target` is a
+    /// fixed-width/unsigned integer type differing from the literal's `i64`
+    /// default, range-check it (E1900) and return `true` — the literal coerces
+    /// to `target`, so the caller skips the normal width-mismatch constraint.
+    /// Sound by construction: only *literals* coerce; a non-literal int still
+    /// needs an explicit `as` cast, and unsigned arithmetic stays E0102-rejected
+    /// until Slice B adds width-correct ops (no i64-backed half-measure, I-9).
+    fn try_int_literal_coercion(&mut self, value: &Expr, val_ty: &Type, target: &Type) -> bool {
+        if let Expr::Literal(AstLiteral::Int(n)) = value {
+            if is_int_type(target) && is_int_type(val_ty) && target != val_ty {
+                if !int_lit_in_range(*n, target) {
+                    let span = self.current_stmt_span;
+                    self.errors.push(
+                        InferError::new(
+                            E1900,
+                            format!("literal {n} out of range for {}", target.display()),
+                        )
+                        .with_span(span),
+                    );
+                }
+                return true;
+            }
+        }
+        false
+    }
+
     /// Convert an AST `AxonType` to a semantic `Type`.
     pub fn resolve_ast_type(&self, ast_ty: &AxonType) -> Type {
         match ast_ty {
@@ -606,24 +632,9 @@ impl InferCtx {
                     // → E0102). Sound by construction: arithmetic on the bound
                     // value still rejects via width-mismatch until R19 Slice B
                     // adds width-correct ops — no i64-backed half-measure (I-9).
-                    if let Expr::Literal(AstLiteral::Int(n)) = value.as_ref() {
-                        if is_int_type(&annot_ty) && is_int_type(&val_ty) && annot_ty != val_ty {
-                            if !int_lit_in_range(*n, &annot_ty) {
-                                let span = self.current_stmt_span;
-                                self.errors.push(
-                                    InferError::new(
-                                        E1900,
-                                        format!(
-                                            "literal {n} out of range for {}",
-                                            annot_ty.display()
-                                        ),
-                                    )
-                                    .with_span(span),
-                                );
-                            }
-                            scope.bind(name.clone(), annot_ty);
-                            return Type::Unit;
-                        }
+                    if self.try_int_literal_coercion(value, &val_ty, &annot_ty) {
+                        scope.bind(name.clone(), annot_ty);
+                        return Type::Unit;
                     }
                     self.constrain(val_ty.clone(), annot_ty.clone(), "let type annotation");
                     scope.bind(name.clone(), annot_ty);
@@ -1022,6 +1033,10 @@ impl InferCtx {
                     .as_ref()
                     .map(|v| self.infer_expr(v, scope, ret_ty))
                     .unwrap_or(Type::Unit);
+                // R19 NOTE: unsigned/fixed-width RETURNS are deferred — the return
+                // path has a separate checker E0307 + fn-body-type check beyond this
+                // infer constraint, so a literal-coercion here alone is insufficient
+                // (and unsound to half-do). Tracked as Slice A-cont in R19.
                 self.constrain(val_ty, ret_ty.clone(), "return value");
                 Type::Unit // Return is diverging; block type isn't used after it.
             }
@@ -1172,7 +1187,11 @@ impl InferCtx {
                     provided.insert(fname.clone());
 
                     if let Some((_, decl_ty)) = declared.iter().find(|(dn, _)| dn == fname) {
-                        self.constrain(inferred_ty, decl_ty.clone(), "struct field");
+                        // R19: a literal field value coerces to a fixed-width/unsigned field type.
+                        let decl_ty = decl_ty.clone();
+                        if !self.try_int_literal_coercion(fexpr, &inferred_ty, &decl_ty) {
+                            self.constrain(inferred_ty, decl_ty, "struct field");
+                        }
                     } else if !declared.is_empty() {
                         // Unknown field name (only report if we know the struct).
                         let known: Vec<String> = declared.iter().map(|(n, _)| n.clone()).collect();
