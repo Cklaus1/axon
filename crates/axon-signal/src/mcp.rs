@@ -4,13 +4,14 @@
 /// mid-session. Run with: `axon-signal mcp [--ledger-dir <path>]`
 ///
 /// Tools:
-///   signal_score    { engineer?: str, days?: int }  → SessionScore[]
-///   signal_weekly   { days?: int }                  → WeeklyReport
-///   signal_rework   { days?: int }                  → ReworkHotspot[]
-///   signal_patterns { min_score?: int }             → PatternLibrary
-///   signal_trends   { weeks?: int, engineer?: str } → TrendsReport
-///   signal_goals    { days?: int }                  → EngineerGoalSummary[]
-///   signal_loops    { turns_threshold?: int, days?: int } → LoopCandidate[]
+///   signal_score      { engineer?: str, days?: int }  → SessionScore[]
+///   signal_weekly     { days?: int }                  → WeeklyReport
+///   signal_rework     { days?: int }                  → ReworkHotspot[]
+///   signal_patterns   { min_score?: int }             → PatternLibrary
+///   signal_trends     { weeks?: int, engineer?: str } → TrendsReport
+///   signal_goals      { days?: int }                  → EngineerGoalSummary[]
+///   signal_loops      { turns_threshold?: int, days?: int } → LoopCandidate[]
+///   signal_benchmark  { days?: int }                  → BenchmarkReport
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -19,6 +20,7 @@ use serde_json::{json, Value};
 
 use axon_ledger::store::Store;
 
+use crate::benchmark::compute_benchmark;
 use crate::patterns::{antipatterns, build_pattern_library};
 use crate::rework::find_rework_hotspots;
 use crate::score::score_sessions;
@@ -161,6 +163,16 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                             "engineer": { "type": "string", "description": "Filter to a specific engineer email prefix (optional)" }
                         }
                     }
+                },
+                {
+                    "name": "signal_benchmark",
+                    "description": "Compare the team's AI coding effectiveness to industry percentile tiers (Developing/Bronze/Silver/Gold/Platinum). Returns team average score, tier, dimension-level comparison vs industry medians (goal clarity, turns/commit, rework rate, commit rate), per-engineer tier breakdown, and ranked recommendations for improvement.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "days": { "type": "integer", "description": "Only include sessions from the last N days (default: all time)" }
+                        }
+                    }
                 }
             ]
         }
@@ -273,6 +285,11 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                 serde_json::to_value(r).unwrap_or(json!({}))
             })
         }
+        "signal_benchmark" => {
+            let days = args.get("days").and_then(|v| v.as_u64());
+            compute_benchmark(&store, days)
+                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -317,14 +334,15 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_seven_tools() {
+    fn test_tools_list_has_eight_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &["signal_score", "signal_weekly", "signal_rework",
-                          "signal_patterns", "signal_goals", "signal_loops", "signal_trends"] {
+                          "signal_patterns", "signal_goals", "signal_loops",
+                          "signal_trends", "signal_benchmark"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
     }

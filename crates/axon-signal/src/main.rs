@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use axon_ledger::store::Store;
+use axon_signal::benchmark::{compute_benchmark, render_benchmark};
 use axon_signal::dashboard::run_dashboard;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
 use axon_signal::mcp::run_mcp_server;
@@ -127,6 +128,15 @@ enum Commands {
         /// Filter to a specific engineer (email prefix)
         #[arg(long)]
         engineer: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compare the team's effectiveness to industry percentile tiers (Bronze/Silver/Gold/Platinum)
+    Benchmark {
+        /// Only include sessions from the last N days (default: all time)
+        #[arg(long)]
+        days: Option<u64>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -444,6 +454,15 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render_trends(&report));
+            }
+        }
+
+        Commands::Benchmark { days, json } => {
+            let report = compute_benchmark(&store, days)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render_benchmark(&report));
             }
         }
 

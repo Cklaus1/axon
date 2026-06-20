@@ -1,3 +1,4 @@
+pub mod benchmark;
 pub mod dashboard;
 pub mod export;
 pub mod mcp;

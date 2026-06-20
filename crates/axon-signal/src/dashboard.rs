@@ -11,7 +11,8 @@
 ///   GET  /api/weekly  → WeeklyReport
 ///   GET  /api/rework  → ReworkHotspot[]
 ///   GET  /api/trends  → TrendsReport
-///   GET  /api/loops   → loop candidate[]
+///   GET  /api/loops      → loop candidate[]
+///   GET  /api/benchmark  → BenchmarkReport
 use std::path::Path;
 
 use anyhow::Result;
@@ -19,6 +20,7 @@ use tiny_http::{Header, Response, Server};
 
 use axon_ledger::store::Store;
 
+use crate::benchmark::compute_benchmark;
 use crate::rework::find_rework_hotspots;
 use crate::score::score_sessions;
 use crate::trends::compute_trends;
@@ -87,6 +89,12 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
                             .collect();
                         serde_json::to_value(candidates).unwrap()
                     })
+                })
+            }
+            "/api/benchmark" => {
+                json_response(ledger_dir, |store| {
+                    compute_benchmark(&store, None)
+                        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
                 })
             }
             _ => {

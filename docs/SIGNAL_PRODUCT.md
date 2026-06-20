@@ -265,7 +265,7 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 ### v1.0
 - [x] Web dashboard — `axon-signal dashboard [--port 7373]`; single-page HTML/JS; 5 panes: Overview (avg score, top sessions, coverage), Trends (per-engineer bar charts), Rework hotspots, Loop opportunities, All sessions table; REST API (/api/score|weekly|rework|trends|loops)
 - [x] Per-engineer trend charts (score week-over-week) — `signal trends [--weeks N] [--engineer prefix]`; MCP `signal_trends`; direction + delta + ASCII bar chart + tailored recommendation
-- [ ] Team benchmark (how does your team compare to signal percentiles?)
+- [x] Team benchmark — `signal benchmark [--days N] [--json]`; MCP `signal_benchmark`; REST `/api/benchmark`; Developing/Bronze/Silver/Gold/Platinum tiers with dimension-level comparison (goal clarity, turns/commit, rework rate, commit rate) vs estimated industry medians; per-engineer intra-team percentile; ranked recommendations
 - [ ] Recommendation engine with A/B testing (did following last week's recommendation improve scores?)
 
 ---
