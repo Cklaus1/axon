@@ -5,6 +5,25 @@ use crate::ingest::session::parse_iso_to_ms;
 use crate::model::{Effect, LedgerRecord};
 use crate::store::Store;
 
+/// Snapshot of ledger state at a given point in time.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct AsOfResult {
+    /// Timestamp used for the snapshot (ms since epoch)
+    pub ts_ms: u64,
+    /// Human-readable timestamp
+    pub ts_iso: String,
+    /// Most recent commits at or before `ts_ms` (up to 10)
+    pub recent_commits: Vec<LedgerRecord>,
+    /// Sessions active at or before `ts_ms` (started before, ended after or unknown)
+    pub active_sessions: Vec<LedgerRecord>,
+    /// Files being actively worked on across visible sessions
+    pub files_in_flight: Vec<String>,
+    /// Total commits known at this point
+    pub commit_count: usize,
+    /// Total sessions known at this point
+    pub session_count: usize,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct WhyResult {
     pub commit: LedgerRecord,
@@ -115,6 +134,105 @@ pub fn diff(t1_ms: u64, t2_ms: u64, store: &Store) -> Result<Vec<LedgerRecord>> 
         .into_iter()
         .filter(|r| r.ts_ms >= t1_ms && r.ts_ms <= t2_ms)
         .collect())
+}
+
+/// Reconstruct the ledger state at a given point in time.
+///
+/// Returns what was known/shipped up to `ts_ms`: the most recent commits,
+/// any sessions that were active at that moment, and the files in flight.
+/// This is the "what did we know then?" query — the key differentiator
+/// over `git log`, which only shows the code state, not the decision context.
+pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
+    let all = store.all()?;
+
+    // All records visible at ts_ms
+    let visible: Vec<&LedgerRecord> = all.iter().filter(|r| r.ts_ms <= ts_ms).collect();
+
+    // Commits up to ts_ms, most recent first (up to 10)
+    let mut commits: Vec<LedgerRecord> = visible
+        .iter()
+        .filter(|r| r.effect == Effect::GitCommit)
+        .map(|r| (*r).clone())
+        .collect();
+    commits.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+    let recent_commits = commits.iter().take(10).cloned().collect();
+    let commit_count = commits.len();
+
+    // Sessions that started before ts_ms. "Active" = ended after ts_ms, or no
+    // end_ts recorded (treat as active if it started within 8h of ts_ms).
+    let eight_hours_ms: u64 = 28_800_000;
+    let mut active_sessions: Vec<LedgerRecord> = visible
+        .iter()
+        .filter(|r| r.effect == Effect::AgentSession)
+        .filter(|r| {
+            let end_ts_ms = r.payload
+                .get("end_ts")
+                .and_then(|v| v.as_str())
+                .and_then(parse_iso_to_ms);
+            match end_ts_ms {
+                Some(end) => end >= ts_ms,
+                // No end_ts: treat as active if session started within 8h
+                None => ts_ms.saturating_sub(r.ts_ms) <= eight_hours_ms,
+            }
+        })
+        .map(|r| (*r).clone())
+        .collect();
+    active_sessions.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+    let session_count = visible.iter().filter(|r| r.effect == Effect::AgentSession).count();
+
+    // Files in flight: union of files_touched across active sessions, deduped
+    let mut files_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for s in &active_sessions {
+        if let Some(arr) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
+            for f in arr {
+                if let Some(path) = f.as_str() {
+                    // Keep only the last 2 path components for readability
+                    let short = path.rsplitn(3, '/').collect::<Vec<_>>();
+                    let label = if short.len() >= 2 {
+                        format!("{}/{}", short[1], short[0])
+                    } else {
+                        path.to_string()
+                    };
+                    files_set.insert(label);
+                }
+            }
+        }
+    }
+    let files_in_flight: Vec<String> = files_set.into_iter().take(20).collect();
+
+    // Build a human-readable timestamp from ts_ms
+    let ts_iso = ms_to_iso_approx(ts_ms);
+
+    Ok(AsOfResult {
+        ts_ms,
+        ts_iso,
+        recent_commits,
+        active_sessions,
+        files_in_flight,
+        commit_count,
+        session_count,
+    })
+}
+
+fn ms_to_iso_approx(ms: u64) -> String {
+    let secs = ms / 1000;
+    let total_days = secs / 86400;
+    let time_secs = secs % 86400;
+    let h = time_secs / 3600;
+    let m = (time_secs % 3600) / 60;
+    let s = time_secs % 60;
+    // Julian Day Number → Gregorian (same algorithm as edge.rs tests)
+    let jd = total_days as i64 + 2_440_588;
+    let a = jd + 32044;
+    let b = (4 * a + 3) / 146097;
+    let c = a - (146097 * b) / 4;
+    let d = (4 * c + 3) / 1461;
+    let e = c - (1461 * d) / 4;
+    let m_raw = (5 * e + 2) / 153;
+    let day = e - (153 * m_raw + 2) / 5 + 1;
+    let month = m_raw + 3 - 12 * (m_raw / 10);
+    let year = 100 * b + d - 4800 + m_raw / 10;
+    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
 }
 
 #[cfg(test)]

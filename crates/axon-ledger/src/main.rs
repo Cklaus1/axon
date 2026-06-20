@@ -9,7 +9,7 @@ use axon_ledger::ingest::edge::infer_edges;
 use axon_ledger::ingest::git::ingest_git;
 use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
-use axon_ledger::query::{diff, why};
+use axon_ledger::query::{as_of, diff, why};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
 
@@ -53,6 +53,14 @@ enum Commands {
     },
     /// Show ledger statistics
     Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reconstruct what was known/shipped at a point in time
+    AsOf {
+        /// ISO 8601 timestamp (e.g. 2026-06-19T00:00:00Z)
+        timestamp: String,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -296,6 +304,48 @@ fn main() -> Result<()> {
                 println!("  Agent sessions:   {}", session_count);
                 println!("  Agent edges:      {}", edge_count);
                 println!("  Metric outcomes:  {}", outcome_count);
+            }
+        }
+
+        Commands::AsOf { timestamp, json } => {
+            let ts_ms = parse_iso_cli(&timestamp)?;
+            let result = as_of(ts_ms, &store)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else {
+                println!("SNAPSHOT AT  {}", result.ts_iso);
+                println!("  commits:  {} total", result.commit_count);
+                println!("  sessions: {} total", result.session_count);
+                println!();
+
+                println!("RECENT COMMITS ({}):", result.recent_commits.len());
+                for c in &result.recent_commits {
+                    let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                    let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                    println!("  {}  {}", &sha[..sha.len().min(10)], msg);
+                }
+                println!();
+
+                if result.active_sessions.is_empty() {
+                    println!("ACTIVE SESSIONS  (none at this timestamp)");
+                } else {
+                    println!("ACTIVE SESSIONS ({}):", result.active_sessions.len());
+                    for s in &result.active_sessions {
+                        let sid = s.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
+                        let goal = s.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");
+                        let turns = s.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        println!("  {} ({} turns)", &sid[..sid.len().min(8)], turns);
+                        println!("    goal: {}", goal);
+                    }
+                }
+                println!();
+
+                if !result.files_in_flight.is_empty() {
+                    println!("FILES IN FLIGHT:");
+                    for f in &result.files_in_flight {
+                        println!("  {}", f);
+                    }
+                }
             }
         }
 
