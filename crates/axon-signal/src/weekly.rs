@@ -82,7 +82,8 @@ pub fn generate_weekly(
         let total_commits: usize = sessions.iter().map(|s| s.commits_linked).sum();
         let total_turns: u64 = sessions.iter().map(|s| s.turns).sum();
         let avg_tpc = if total_commits > 0 { total_turns as f64 / total_commits as f64 } else { total_turns as f64 };
-        let top_goal = sessions.iter().max_by_key(|s| s.score).map(|s| s.goal.clone()).unwrap_or_default();
+        let top_goal = sessions.iter().max_by_key(|s| s.score)
+            .map(|s| crate::display_goal(&s.goal, 120)).unwrap_or_default();
         EngineerSummary {
             engineer: eng.clone(),
             sessions: sessions.len(),
