@@ -159,13 +159,16 @@ fn files_overlap(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
-    // Compare basenames
-    let a_base = a.rsplit('/').next().unwrap_or(a);
-    let b_base = b.rsplit('/').next().unwrap_or(b);
-    if a_base == b_base && !a_base.is_empty() {
-        return true;
-    }
-    false
+    // Compare last 2 path components (e.g. "src/main.rs") to avoid false-positive
+    // basename collisions: `crates/axon-signal/src/main.rs` must not match
+    // `crates/axon-ledger/src/main.rs` just because both are named `main.rs`.
+    let tail = |s: &str| -> String {
+        let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+        parts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("/")
+    };
+    let ta = tail(a);
+    let tb = tail(b);
+    !ta.is_empty() && ta == tb
 }
 
 #[cfg(test)]
