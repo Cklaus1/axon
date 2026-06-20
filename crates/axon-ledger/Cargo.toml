@@ -22,3 +22,6 @@ clap = { version = "4", features = ["derive"] }
 sha2 = "0.10"
 thiserror = "1"
 anyhow = "1"
+
+[dev-dependencies]
+tempfile = "3"

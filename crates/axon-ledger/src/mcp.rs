@@ -207,3 +207,77 @@ fn json_error(id: Option<&Value>, code: i32, message: &str) -> Value {
         "error": { "code": code, "message": message }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    fn temp_ledger() -> TempDir {
+        tempfile::tempdir().expect("tempdir")
+    }
+
+    #[test]
+    fn test_initialize_response() {
+        let id = Some(json!(1));
+        let r = handle_initialize(&id);
+        assert_eq!(r["result"]["serverInfo"]["name"], "axon-ledger");
+        assert_eq!(r["result"]["protocolVersion"], "2024-11-05");
+    }
+
+    #[test]
+    fn test_tools_list_has_four_tools() {
+        let id = Some(json!(1));
+        let r = handle_tools_list(&id);
+        let tools = r["result"]["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 4);
+        let names: Vec<&str> = tools.iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
+        assert!(names.contains(&"ledger_why"));
+        assert!(names.contains(&"ledger_search"));
+        assert!(names.contains(&"ledger_as_of"));
+        assert!(names.contains(&"ledger_stats"));
+    }
+
+    #[test]
+    fn test_unknown_tool_returns_error() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "does_not_exist", "arguments": {} });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("error").is_some(), "expected error for unknown tool");
+        assert_eq!(r["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn test_missing_sha_returns_error() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_why", "arguments": {} });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("error").is_some());
+    }
+
+    #[test]
+    fn test_stats_on_empty_ledger() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_stats", "arguments": {} });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("result").is_some(), "expected result for stats on empty ledger");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["total"], 0);
+    }
+
+    #[test]
+    fn test_json_error_format() {
+        let id = Some(json!(42));
+        let r = json_error(id.as_ref(), -32700, "Parse error");
+        assert_eq!(r["jsonrpc"], "2.0");
+        assert_eq!(r["id"], 42);
+        assert_eq!(r["error"]["code"], -32700);
+        assert_eq!(r["error"]["message"], "Parse error");
+    }
+}
