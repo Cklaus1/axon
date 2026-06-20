@@ -424,6 +424,13 @@ fn main() -> Result<()> {
                     .map(|r| format!(" [repo={}]", r))
                     .unwrap_or_default();
                 println!("Ingested {} new git commits{}{}.", n, filter_note, repo_note);
+                // Always re-infer edges after a git ingest so `why`/`pre-deploy` reflect
+                // the new commits immediately — without this users see 0% coverage until
+                // they remember to run `ingest edges` separately.
+                let edges = infer_edges(&mut store)?;
+                if edges > 0 {
+                    println!("Inferred {} new session→commit edge(s).", edges);
+                }
             }
             IngestSource::Session { path, gate, axon_bin, gate_script, repo_name, engineer } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
@@ -473,6 +480,13 @@ fn main() -> Result<()> {
                     .unwrap_or_default();
                 println!("Ingested {} new sessions ({} already known, {} rejected by gate){}.",
                     total, skipped, rejected, eng_note);
+                // Re-infer edges whenever new sessions land so commits link immediately.
+                if total > 0 {
+                    let edges = infer_edges(&mut store)?;
+                    if edges > 0 {
+                        println!("Inferred {} new session→commit edge(s).", edges);
+                    }
+                }
             }
             IngestSource::Edges => {
                 let n = infer_edges(&mut store)?;
