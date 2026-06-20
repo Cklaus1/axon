@@ -9,6 +9,7 @@ use axon_ledger::ingest::edge::infer_edges;
 use axon_ledger::ingest::git::ingest_git;
 use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
+use axon_ledger::mcp::run_mcp_server;
 use axon_ledger::query::{as_of, diff, search, why};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
@@ -77,6 +78,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Start an MCP (Model Context Protocol) server over stdio
+    Mcp,
     /// Watch a directory for new Claude Code sessions and auto-ingest them
     Watch {
         /// Directory to watch for .jsonl session files
@@ -429,6 +432,11 @@ fn main() -> Result<()> {
                     }
                 }
             }
+        }
+
+        Commands::Mcp => {
+            let store = Store::open(&dir_path)?;
+            run_mcp_server(store)?;
         }
 
         Commands::Watch { dir, interval, gate, axon_bin, gate_script } => {

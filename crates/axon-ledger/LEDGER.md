@@ -114,7 +114,45 @@ Override: `--ledger-dir /path/to/ledger` (all subcommands accept this global fla
 | `diff --from <ISO> --to <ISO>` | List all ledger records in a time window |
 | `stats` | Total records by type |
 | `watch --dir <dir> [--interval 60]` | Continuous ingest daemon |
+| `mcp` | Start MCP stdio server (ledger_why / ledger_search / ledger_as_of / ledger_stats tools) |
 | Any command + `--json` | Machine-readable output |
+
+## MCP server — let Claude Code query the ledger mid-session
+
+Run the ledger as an MCP tool server so Claude Code (and other MCP clients) can call `ledger_why`, `ledger_search`, `ledger_as_of`, and `ledger_stats` automatically during a session.
+
+```bash
+# Start the MCP server (reads stdin, writes stdout — stdio transport)
+axon-ledger mcp
+
+# Or with a custom ledger directory:
+axon-ledger --ledger-dir ~/.axon/ledger mcp
+```
+
+**Wire it into Claude Code** — add to `~/.claude/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "axon-ledger": {
+      "command": "axon-ledger",
+      "args": ["mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+After restarting Claude Code, the agent can call `ledger_why("ed5775d")` inline and get back the full provenance record — session goal, confidence score, metric outcomes — without leaving the conversation.
+
+**Tools exposed:**
+
+| Tool | Input | What it returns |
+|---|---|---|
+| `ledger_why` | `{ sha }` | Session that produced the commit + original goal + outcomes |
+| `ledger_search` | `{ query, limit? }` | Commits and sessions matching all terms |
+| `ledger_as_of` | `{ timestamp }` | State snapshot at a point in time |
+| `ledger_stats` | `{}` | Record counts by type |
 
 ## Brief gate (optional)
 

@@ -1,6 +1,7 @@
 pub mod gate;
 pub mod hash;
 pub mod ingest;
+pub mod mcp;
 pub mod model;
 pub mod query;
 pub mod store;
