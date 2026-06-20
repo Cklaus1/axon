@@ -601,6 +601,56 @@ mod tests {
     }
 
     #[test]
+    fn test_why_surfaces_signal_score_by_session_id() {
+        // Reproduce the score --ingest write-back path:
+        //   MetricOutcome has causal_parent: None but payload.session_id matches the edge session_id.
+        let dir = env::temp_dir().join(format!("axon-ledger-why-score-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir).unwrap();
+
+        let ts = 2_000_000_000_000u64;
+        let commit = make_commit("cafecafe5678abcd", ts);
+        let commit_id = commit.id.clone();
+        let session = make_session("score-session-42", ts - 300_000);
+        let edge = make_edge("score-session-42", "cafecafe5678abcd", &commit_id, ts);
+
+        // MetricOutcome written by `signal score --ingest`: causal_parent=None, session_id in payload
+        let outcome_payload = json!({
+            "session_id": "score-session-42",
+            "score": 87,
+            "training_tier": "positive_gold",
+            "source": "axon-signal",
+        });
+        let outcome_id = record_id("signal:session:score-session-42", &Effect::MetricOutcome, ts + 1, &outcome_payload);
+        let outcome = LedgerRecord {
+            id: outcome_id,
+            principal: "signal:test@example.com".to_string(),
+            effect: Effect::MetricOutcome,
+            causal_parent: None,   // ← the key: no direct link to commit
+            ts_ms: ts + 1,
+            payload: outcome_payload,
+            repo: None,
+        };
+
+        store.append(&commit).unwrap();
+        store.append(&session).unwrap();
+        store.append(&edge).unwrap();
+        store.append(&outcome).unwrap();
+
+        let result = why("cafecafe", &store).unwrap();
+
+        assert_eq!(result.outcomes.len(), 1, "should find the score write-back via session_id");
+        assert_eq!(
+            result.outcomes[0].payload.get("score").and_then(|v| v.as_i64()),
+            Some(87)
+        );
+        assert_eq!(
+            result.outcomes[0].payload.get("training_tier").and_then(|v| v.as_str()),
+            Some("positive_gold")
+        );
+    }
+
+    #[test]
     fn test_why_returns_error_for_unknown_sha() {
         let dir = env::temp_dir().join(format!("axon-ledger-why-err-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
