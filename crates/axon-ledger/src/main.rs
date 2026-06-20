@@ -9,7 +9,7 @@ use axon_ledger::ingest::edge::infer_edges;
 use axon_ledger::ingest::git::ingest_git;
 use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
-use axon_ledger::query::{as_of, diff, why};
+use axon_ledger::query::{as_of, diff, search, why};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
 
@@ -53,6 +53,18 @@ enum Commands {
     },
     /// Show ledger statistics
     Stats {
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Search commits and sessions by keyword
+    Search {
+        /// One or more search terms (all must match)
+        #[arg(required = true)]
+        terms: Vec<String>,
+        /// Maximum results to show (default: 10)
+        #[arg(long, default_value = "10")]
+        limit: usize,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -330,6 +342,50 @@ fn main() -> Result<()> {
                 println!("  Agent sessions:   {}", session_count);
                 println!("  Agent edges:      {}", edge_count);
                 println!("  Metric outcomes:  {}", outcome_count);
+            }
+        }
+
+        Commands::Search { terms, limit, json } => {
+            let query = terms.join(" ");
+            let hits = search(&query, &store, limit)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&hits)?);
+            } else if hits.is_empty() {
+                println!("No results for {:?}", query);
+            } else {
+                println!("{} result(s) for {:?}:\n", hits.len(), query);
+                for hit in &hits {
+                    match hit.record.effect {
+                        axon_ledger::model::Effect::GitCommit => {
+                            let sha = hit.record.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                            let author = hit.record.payload.get("author").and_then(|v| v.as_str()).unwrap_or("?");
+                            let msg = hit.record.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("COMMIT  {}  ({})", &sha[..sha.len().min(10)], author);
+                            println!("  msg:  {}", msg);
+                            if hit.matched_field == "commit.file" {
+                                println!("  file: {}", short_path(&hit.matched_text, 4));
+                            }
+                            if let Some(goal) = &hit.session_goal {
+                                println!("  why:  {}", goal);
+                            }
+                        }
+                        axon_ledger::model::Effect::AgentSession => {
+                            let sid = hit.record.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
+                            let turns = hit.record.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let start = hit.record.payload.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
+                            let goal = hit.record.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");
+                            println!("SESSION {}  ({} turns, {})", &sid[..sid.len().min(8)], turns, &start[..start.len().min(10)]);
+                            println!("  goal: {}", goal);
+                            if hit.matched_field == "session.file" {
+                                println!("  file: {}", short_path(&hit.matched_text, 3));
+                            }
+                        }
+                        _ => {
+                            println!("{:?}  {}", hit.record.effect, hit.record.id);
+                        }
+                    }
+                    println!();
+                }
             }
         }
 

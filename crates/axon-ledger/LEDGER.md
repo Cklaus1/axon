@@ -65,6 +65,24 @@ echo "Ledger running in background. Ctrl-C or kill %1 to stop."
 
 After each completed Claude Code session, new commits made during that session will be linkable via `why` within ~60 seconds.
 
+## Search the ledger
+
+```bash
+# What decisions touched auth?
+axon-ledger search auth
+
+# Which sessions worked on the payment flow?
+axon-ledger search payment checkout
+
+# What commits changed the database schema?
+axon-ledger search "schema migration"
+
+# All terms must match (AND semantics):
+axon-ledger search api rate limit --limit 20
+```
+
+Results show the commit message or session goal that matched, plus the linked agent goal for commit hits.
+
 ## Record metric outcomes
 
 Link a metrics JSON file causally to a commit (precision/recall, A/B results, deploy success rate — anything):
@@ -91,6 +109,8 @@ Override: `--ledger-dir /path/to/ledger` (all subcommands accept this global fla
 | `ingest edges` | Infer session→commit causal links (run after ingest git + session) |
 | `ingest outcome --commit <sha> --file <json>` | Record a metric outcome against a commit |
 | `why <sha>` | Explain why a commit happened (session + goal + outcomes) |
+| `search <terms...>` | Full-text search across commit messages, session goals, and files |
+| `as-of <ISO timestamp>` | Reconstruct what was known/shipped at a point in time |
 | `diff --from <ISO> --to <ISO>` | List all ledger records in a time window |
 | `stats` | Total records by type |
 | `watch --dir <dir> [--interval 60]` | Continuous ingest daemon |

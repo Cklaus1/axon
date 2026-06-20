@@ -227,6 +227,120 @@ pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
     })
 }
 
+/// A single search hit with its context.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct SearchHit {
+    pub record: LedgerRecord,
+    /// Which field matched and what the matched text was
+    pub matched_field: String,
+    pub matched_text: String,
+    /// For commit hits: the linked session goal (if any)
+    pub session_goal: Option<String>,
+}
+
+/// Full-text search across commit messages, session goals, and file paths.
+/// Returns hits ranked by recency (most recent first), up to `limit`.
+pub fn search(query: &str, store: &Store, limit: usize) -> Result<Vec<SearchHit>> {
+    let q_lower = query.to_lowercase();
+    let terms: Vec<&str> = q_lower.split_whitespace().collect();
+    if terms.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let all = store.all()?;
+    let sessions = store.find_by_effect(&Effect::AgentSession)?;
+    let edges = store.find_by_effect(&Effect::AgentEdge)?;
+
+    // Build session-id → goal map for enriching commit hits
+    let session_goals: std::collections::HashMap<&str, &str> = sessions
+        .iter()
+        .filter_map(|s| {
+            let id = s.payload.get("session_id").and_then(|v| v.as_str())?;
+            let goal = s.payload.get("goal").and_then(|v| v.as_str())?;
+            Some((id, goal))
+        })
+        .collect();
+
+    // Build commit-sha → session-id map via edges
+    let commit_to_session: std::collections::HashMap<&str, &str> = edges
+        .iter()
+        .filter_map(|e| {
+            let sha = e.payload.get("commit_sha").and_then(|v| v.as_str())?;
+            let sid = e.payload.get("session_id").and_then(|v| v.as_str())?;
+            Some((sha, sid))
+        })
+        .collect();
+
+    let mut hits: Vec<SearchHit> = Vec::new();
+
+    for record in &all {
+        // Search commits: message and files
+        if record.effect == Effect::GitCommit {
+            let msg = record.payload.get("message").and_then(|v| v.as_str()).unwrap_or("");
+            let sha = record.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
+            let files_arr = record.payload.get("files").and_then(|v| v.as_array());
+
+            let msg_match = matches_all(&msg.to_lowercase(), &terms);
+            let file_match = files_arr.and_then(|arr| {
+                arr.iter()
+                    .find_map(|f| f.as_str().filter(|p| matches_all(&p.to_lowercase(), &terms)))
+            });
+
+            let (matched_field, matched_text) = if msg_match {
+                ("commit.message".to_string(), msg.chars().take(120).collect())
+            } else if let Some(fp) = file_match {
+                ("commit.file".to_string(), fp.to_string())
+            } else {
+                continue;
+            };
+
+            let session_goal = commit_to_session.get(sha)
+                .and_then(|sid| session_goals.get(*sid))
+                .map(|g| g.chars().take(120).collect());
+
+            hits.push(SearchHit { record: record.clone(), matched_field, matched_text, session_goal });
+        }
+
+        // Search sessions: goal text and files_touched
+        if record.effect == Effect::AgentSession {
+            let goal = record.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
+            let files_arr = record.payload.get("files_touched").and_then(|v| v.as_array());
+
+            let goal_match = matches_all(&goal.to_lowercase(), &terms);
+            let file_match = files_arr.and_then(|arr| {
+                arr.iter()
+                    .find_map(|f| f.as_str().filter(|p| matches_all(&p.to_lowercase(), &terms)))
+            });
+
+            let (matched_field, matched_text) = if goal_match {
+                ("session.goal".to_string(), goal.chars().take(120).collect())
+            } else if let Some(fp) = file_match {
+                ("session.file".to_string(), fp.to_string())
+            } else {
+                continue;
+            };
+
+            hits.push(SearchHit {
+                record: record.clone(),
+                matched_field,
+                matched_text,
+                session_goal: if goal_match { Some(goal.chars().take(120).collect()) } else { None },
+            });
+        }
+    }
+
+    // Sort by recency (newest first), then deduplicate by record id
+    hits.sort_by(|a, b| b.record.ts_ms.cmp(&a.record.ts_ms));
+    hits.dedup_by_key(|h| h.record.id.clone());
+    hits.truncate(limit);
+    Ok(hits)
+}
+
+/// Returns true if the text contains ALL whitespace-separated terms.
+fn matches_all(text: &str, terms: &[&str]) -> bool {
+    terms.iter().all(|t| text.contains(t))
+}
+
 fn ms_to_iso_approx(ms: u64) -> String {
     let secs = ms / 1000;
     let total_days = secs / 86400;
