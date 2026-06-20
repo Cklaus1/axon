@@ -49,7 +49,13 @@ enum Commands {
         /// Window in days (default: 14)
         #[arg(long, default_value = "14")]
         days: u64,
-        /// Output as JSON
+        /// Show only the top N hotspots in text output (default: 10)
+        #[arg(long, default_value = "10")]
+        top: usize,
+        /// Minimum distinct sessions to qualify as a hotspot (default: 3)
+        #[arg(long, default_value = "3")]
+        min_sessions: usize,
+        /// Output as JSON (all hotspots, no cap)
         #[arg(long)]
         json: bool,
     },
@@ -268,20 +274,32 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Rework { days, json } => {
-            let hotspots = find_rework_hotspots(&store, days)?;
+        Commands::Rework { days, top, min_sessions, json } => {
+            let all_hotspots = find_rework_hotspots(&store, days)?;
+            // Filter by minimum session count before display
+            let hotspots: Vec<_> = all_hotspots.into_iter()
+                .filter(|h| h.session_count >= min_sessions)
+                .collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&hotspots)?);
             } else if hotspots.is_empty() {
-                println!("No rework hotspots detected in the last {} days.", days);
+                println!("No rework hotspots detected (last {} days, ≥{} sessions).", days, min_sessions);
             } else {
-                println!("{} rework hotspot(s) (last {} days):\n", hotspots.len(), days);
-                for h in &hotspots {
+                let shown = hotspots.len().min(top);
+                println!("{} rework hotspot(s) (last {} days, ≥{} sessions) — showing top {}:\n",
+                    hotspots.len(), days, min_sessions, shown);
+                for h in hotspots.iter().take(top) {
                     println!("  ⚠ {}  ({} sessions, {:.0}h window)", h.file, h.session_count, h.window_hours);
-                    for g in &h.session_goals {
-                        println!("    → {:?}", g);
+                    for g in h.session_goals.iter().take(3) {
+                        println!("    → {}", display_goal(g, 70));
+                    }
+                    if h.session_goals.len() > 3 {
+                        println!("    … and {} more sessions", h.session_goals.len() - 3);
                     }
                     println!();
+                }
+                if hotspots.len() > top {
+                    println!("  … and {} more hotspot(s). Use --top N or --json to see all.", hotspots.len() - top);
                 }
             }
         }

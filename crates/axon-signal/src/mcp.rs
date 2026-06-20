@@ -121,7 +121,8 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                     "inputSchema": {
                         "type": "object",
                         "properties": {
-                            "days": { "type": "integer", "description": "Rework window in days (default: 14)" }
+                            "days": { "type": "integer", "description": "Rework window in days (default: 14)" },
+                            "min_sessions": { "type": "integer", "description": "Minimum distinct sessions to qualify as hotspot (default: 3 — use 2 to catch all)" }
                         }
                     }
                 },
@@ -236,8 +237,12 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         }
         "signal_rework" => {
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
+            let min_sessions = args.get("min_sessions").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
             find_rework_hotspots(&store, days)
-                .map(|h| serde_json::to_value(h).unwrap_or(json!([])))
+                .map(|all| {
+                    let filtered: Vec<_> = all.into_iter().filter(|h| h.session_count >= min_sessions).collect();
+                    serde_json::to_value(filtered).unwrap_or(json!([]))
+                })
         }
         "signal_patterns" => {
             let min_score = args.get("min_score").and_then(|v| v.as_u64()).unwrap_or(65) as u8;
