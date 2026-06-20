@@ -4,3 +4,4 @@ pub mod ingest;
 pub mod model;
 pub mod query;
 pub mod store;
+pub mod watch;

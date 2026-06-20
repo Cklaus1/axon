@@ -154,8 +154,9 @@ pub fn ingest_session(
             last_ts = Some(ts.to_string());
         }
 
-        // Count turns from message events; capture first user message as goal
-        if event.get("type").and_then(|v| v.as_str()) == Some("message") {
+        // Claude Code JSONL: type="user" = human turn, type="assistant" = model turn
+        let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if event_type == "user" {
             turn_count += 1;
         }
         if goal_text.is_none() {
@@ -164,11 +165,18 @@ pub fn ingest_session(
             }
         }
 
-        // Extract files from tool_use content blocks
-        if let Some(content) = event
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_array())
+        // Extract files from tool_use content blocks.
+        // In Claude Code JSONL the content array lives at event.message.content
+        // (for user/assistant events) or at event.content (for some tool events).
+        let content_sources: &[&str] = &["message", "content"];
+        let content_arr = content_sources.iter().find_map(|key| {
+            if *key == "message" {
+                event.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
+            } else {
+                event.get("content").and_then(|c| c.as_array())
+            }
+        });
+        if let Some(content) = content_arr
         {
             for block in content {
                 if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {

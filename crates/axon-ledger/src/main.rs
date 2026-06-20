@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -10,6 +11,7 @@ use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::query::{diff, why};
 use axon_ledger::store::Store;
+use axon_ledger::watch::watch_sessions;
 
 #[derive(Parser)]
 #[command(name = "axon-ledger", about = "Provenance ledger for Axon")]
@@ -54,6 +56,24 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Watch a directory for new Claude Code sessions and auto-ingest them
+    Watch {
+        /// Directory to watch for .jsonl session files
+        #[arg(long)]
+        dir: PathBuf,
+        /// Poll interval in seconds (default: 60)
+        #[arg(long, default_value = "60")]
+        interval: u64,
+        /// Run the brief gate on ingested sessions
+        #[arg(long)]
+        gate: bool,
+        /// Explicit path to the axon binary
+        #[arg(long)]
+        axon_bin: Option<PathBuf>,
+        /// Explicit path to brief-gate.ax
+        #[arg(long)]
+        gate_script: Option<PathBuf>,
     },
 }
 
@@ -125,6 +145,7 @@ fn parse_iso_cli(s: &str) -> Result<u64> {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = ledger_dir(cli.ledger_dir.as_ref());
+    let dir_path = dir.clone();
     let mut store = Store::open(&dir)?;
 
     match cli.command {
@@ -276,6 +297,12 @@ fn main() -> Result<()> {
                 println!("  Agent edges:      {}", edge_count);
                 println!("  Metric outcomes:  {}", outcome_count);
             }
+        }
+
+        Commands::Watch { dir, interval, gate, axon_bin, gate_script } => {
+            let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
+            println!("[ledger-watch] polling {} every {}s  (Ctrl-C to stop)", dir.display(), interval);
+            watch_sessions(&dir, &dir_path, Duration::from_secs(interval), &gate_opts, true)?;
         }
     }
 

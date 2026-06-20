@@ -92,20 +92,40 @@ pub fn infer_edges(store: &mut Store) -> Result<usize> {
                 })
                 .unwrap_or_default();
 
-            let has_overlap = files_touched
+            // Count commit files covered by the session (not session files matching commit —
+            // that can exceed commit_files.len() via basename collisions giving ratio > 1).
+            let covered_commit_files = commit_files
                 .iter()
-                .any(|sf| commit_files.iter().any(|cf| files_overlap(sf, cf)));
+                .filter(|cf| files_touched.iter().any(|sf| files_overlap(sf, cf)))
+                .count();
 
-            if !has_overlap {
+            if covered_commit_files == 0 {
                 continue;
             }
+
+            // Confidence = file_coverage_ratio × time_decay
+            // file_coverage_ratio: fraction of the commit's files the session touched (0..1)
+            let file_ratio = if commit_files.is_empty() {
+                0.5
+            } else {
+                covered_commit_files as f64 / commit_files.len() as f64
+            };
+            // time_decay: 1.0 when commit is right at session end, decays to 0.1 at window edge (7h)
+            let gap_ms = if commit.ts_ms >= session_start_ms {
+                commit.ts_ms - session_start_ms
+            } else {
+                session_start_ms - commit.ts_ms
+            };
+            let decay = 1.0_f64 - 0.9 * (gap_ms as f64 / 25_200_000.0_f64).min(1.0);
+            let confidence = (file_ratio * decay * 100.0).round() / 100.0;
 
             let payload = json!({
                 "session_id": session_id,
                 "commit_sha": commit_sha,
                 "session_record_id": session.id,
                 "commit_record_id": commit.id,
-                "confidence": "high",
+                "confidence": confidence,
+                "overlap_count": covered_commit_files,
             });
 
             let ts_ms = commit.ts_ms;
