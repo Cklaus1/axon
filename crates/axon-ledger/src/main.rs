@@ -150,6 +150,19 @@ fn parse_iso_cli(s: &str) -> Result<u64> {
         .ok_or_else(|| anyhow::anyhow!("Could not parse timestamp: {}", s))
 }
 
+/// Shorten an absolute path to at most `max_components` trailing components.
+/// "/home/user/project/crates/foo/src/bar.rs" → "crates/foo/src/bar.rs" (max 4)
+fn short_path(path: &str, max_components: usize) -> String {
+    // Strip leading ./
+    let path = path.trim_start_matches("./");
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() <= max_components {
+        path.to_string()
+    } else {
+        parts[parts.len() - max_components..].join("/")
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let dir = ledger_dir(cli.ledger_dir.as_ref());
@@ -211,9 +224,9 @@ fn main() -> Result<()> {
                 let commit_sha  = p.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
                 let msg         = p.get("message").and_then(|v| v.as_str()).unwrap_or("?");
                 let author      = p.get("author").and_then(|v| v.as_str()).unwrap_or("?");
-                let files: Vec<&str> = p.get("files")
+                let files: Vec<String> = p.get("files")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).map(|f| short_path(f, 4)).collect())
                     .unwrap_or_default();
 
                 println!("COMMIT   {}", &commit_sha[..commit_sha.len().min(12)]);
@@ -228,9 +241,16 @@ fn main() -> Result<()> {
                     let goal    = sp.get("goal").and_then(|v| v.as_str()).unwrap_or("(no goal extracted)");
                     let start   = sp.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
                     let turns   = sp.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let sfiles: Vec<&str> = sp.get("files_touched")
+                    let sfiles: Vec<String> = sp.get("files_touched")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                        .map(|a| a.iter()
+                            .filter_map(|v| v.as_str())
+                            .filter(|f| {
+                                !f.contains('*') && !f.starts_with('-')
+                                    && !f.ends_with(".jsonl") // session metadata, not source
+                            })
+                            .map(|f| short_path(f, 3))
+                            .collect())
                         .unwrap_or_default();
                     let conf_str = result.edge.as_ref()
                         .and_then(|e| e.payload.get("confidence"))
@@ -248,7 +268,13 @@ fn main() -> Result<()> {
                     println!("  start:  {}", start);
                     println!("  turns:  {}", turns);
                     if !sfiles.is_empty() {
-                        println!("  files:  {}", sfiles[..sfiles.len().min(8)].join("  "));
+                        // Dedup after shortening, show up to 6
+                        let mut seen = std::collections::HashSet::new();
+                        let deduped: Vec<&String> = sfiles.iter()
+                            .filter(|f| seen.insert(f.as_str()))
+                            .take(6)
+                            .collect();
+                        println!("  files:  {}", deduped.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("  "));
                     }
                 } else {
                     println!("AGENT SESSION  (none — not found in ledger or outside inference window)");
