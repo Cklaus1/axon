@@ -13,6 +13,8 @@ use axon_ledger::mcp::run_mcp_server;
 use axon_ledger::query::{as_of, diff, history, search, why};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
+use axon_ledger::webhook::{add_webhook, fire_webhooks, load_webhooks, remove_webhook,
+                           WebhookEvent, WebhookProvider};
 
 #[derive(Parser)]
 #[command(name = "axon-ledger", about = "Provenance ledger for Axon")]
@@ -124,6 +126,11 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Manage webhook egress — notify Slack or PagerDuty when events occur
+    Webhook {
+        #[command(subcommand)]
+        action: WebhookAction,
+    },
     /// Start an MCP (Model Context Protocol) server over stdio
     Mcp,
     /// Watch a directory for new Claude Code sessions and auto-ingest them
@@ -210,6 +217,29 @@ enum IngestSource {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebhookAction {
+    /// Register a new webhook
+    Add {
+        /// Event to subscribe to: unexplained-deploy
+        #[arg(long)]
+        event: String,
+        /// Provider: slack, pagerduty, generic
+        #[arg(long)]
+        provider: String,
+        /// Webhook URL (Slack Incoming Webhook or PagerDuty Events API v2 endpoint)
+        #[arg(long)]
+        url: String,
+    },
+    /// List registered webhooks
+    List,
+    /// Remove a webhook by id
+    Rm {
+        /// Webhook id (from webhook list)
+        id: String,
     },
 }
 
@@ -680,6 +710,21 @@ fn main() -> Result<()> {
                 }
             }
 
+            // Fire webhooks for unexplained-deploy event (best-effort, non-blocking)
+            if !unexplained.is_empty() {
+                let webhook_payload = serde_json::json!({
+                    "range": range,
+                    "total_commits": range_commits.len(),
+                    "unexplained": unexplained.len(),
+                    "explained": explained.len(),
+                    "coverage_pct": coverage,
+                    "unexplained_commits": unexplained.iter().map(|(sha, author, msg)| serde_json::json!({
+                        "sha": sha, "author": author, "message": msg
+                    })).collect::<Vec<_>>(),
+                });
+                fire_webhooks(&dir_path, &WebhookEvent::UnexplainedDeploy, &webhook_payload);
+            }
+
             if fail_on_unexplained && !unexplained.is_empty() {
                 std::process::exit(1);
             }
@@ -865,6 +910,36 @@ fn main() -> Result<()> {
                 }
             }
         }
+
+        Commands::Webhook { action } => match action {
+            WebhookAction::Add { event, provider, url } => {
+                let ev = WebhookEvent::from_str(&event)?;
+                let prov = WebhookProvider::from_str(&provider)?;
+                let id = add_webhook(&dir_path, ev, prov, &url)?;
+                println!("Webhook registered: {id}  event={event}  provider={provider}");
+                println!("  URL: {url}");
+            }
+            WebhookAction::List => {
+                let hooks = load_webhooks(&dir_path)?;
+                if hooks.is_empty() {
+                    println!("No webhooks configured. Add one with: axon-ledger webhook add --event unexplained-deploy --provider slack --url <url>");
+                } else {
+                    println!("{} webhook(s):\n", hooks.len());
+                    for h in &hooks {
+                        println!("  {}  event={}  provider={:?}", h.id, h.event.as_str(), h.provider);
+                        println!("       url: {}", h.url);
+                    }
+                }
+            }
+            WebhookAction::Rm { id } => {
+                if remove_webhook(&dir_path, &id)? {
+                    println!("Removed webhook {id}.");
+                } else {
+                    eprintln!("No webhook with id '{id}' found.");
+                    std::process::exit(1);
+                }
+            }
+        },
 
         Commands::Mcp => {
             run_mcp_server(&dir_path)?;

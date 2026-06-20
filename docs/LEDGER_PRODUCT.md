@@ -152,7 +152,7 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 ### v1.0 (enterprise)
 - [ ] Multi-repo ledger (microservices)
 - [ ] RBAC — per-engineer vs. per-team visibility
-- [ ] Webhook egress (Slack, PagerDuty on unexplained deploy)
+- [x] Webhook egress (Slack, PagerDuty on unexplained deploy — `webhook add/list/rm`; fired by `pre-deploy`)
 - [ ] Retention policy (GDPR / data minimization)
 
 ---
