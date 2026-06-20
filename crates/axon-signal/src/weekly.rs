@@ -6,6 +6,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::display_goal;
 use crate::patterns::{antipatterns, build_pattern_library, GoalPattern};
 use crate::rework::{find_rework_hotspots, ReworkHotspot};
 use crate::score::{score_sessions, SessionScore};
@@ -243,7 +244,7 @@ pub fn render_text(r: &WeeklyReport) -> String {
     if !r.top_sessions.is_empty() {
         let _ = writeln!(out, "TOP SESSIONS THIS WEEK");
         for s in &r.top_sessions {
-            let goal = if s.goal.len() > 60 { format!("{}…", &s.goal[..60]) } else { s.goal.clone() };
+            let goal = display_goal(&s.goal, 60);
             let _ = writeln!(out, "  ★ {:?}", goal);
             let _ = writeln!(out, "    score {}  ·  {} turns  ·  {} commits  ·  {}",
                 s.score, s.turns, s.commits_linked, s.engineer);
