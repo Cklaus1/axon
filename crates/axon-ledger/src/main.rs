@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 
 use axon_ledger::ingest::edge::infer_edges;
 use axon_ledger::ingest::git::ingest_git;
+use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::query::{diff, why};
 use axon_ledger::store::Store;
@@ -94,6 +95,15 @@ enum IngestSource {
     },
     /// Infer agent->commit edges from existing sessions and commits
     Edges,
+    /// Ingest a metric outcome JSON file and link it to a commit
+    Outcome {
+        /// SHA prefix of the commit this outcome belongs to
+        #[arg(long)]
+        commit: String,
+        /// Path to a JSON file containing metric key/value pairs
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 fn default_ledger_dir() -> PathBuf {
@@ -157,6 +167,10 @@ fn main() -> Result<()> {
                 let n = infer_edges(&mut store)?;
                 println!("Inferred {} new edges.", n);
             }
+            IngestSource::Outcome { commit, file } => {
+                let r = ingest_outcome(&commit, &file, &mut store)?;
+                println!("Ingested outcome: {} (linked to commit {})", r.id, commit);
+            }
         },
 
         Commands::Why { sha, json } => {
@@ -164,32 +178,61 @@ fn main() -> Result<()> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
-                println!("Commit:  {}", result.commit.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?"));
-                println!("Message: {}", result.commit.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?"));
-                println!("Author:  {}", result.commit.payload.get("author").and_then(|v| v.as_str()).unwrap_or("?"));
+                let p = &result.commit.payload;
+                let commit_sha  = p.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                let msg         = p.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                let author      = p.get("author").and_then(|v| v.as_str()).unwrap_or("?");
+                let files: Vec<&str> = p.get("files")
+                    .and_then(|v| v.as_array())
+                    .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                    .unwrap_or_default();
+
+                println!("COMMIT   {}", &commit_sha[..commit_sha.len().min(12)]);
+                println!("  msg:   {}", msg);
+                println!("  by:    {}", author);
+                println!("  files: {}", if files.is_empty() { "(none)".to_string() } else { files.join("  ") });
+                println!();
+
                 if let Some(session) = &result.agent_session {
-                    println!(
-                        "Session: {}",
-                        session.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("?")
-                    );
-                    println!(
-                        "  Files: {}",
-                        session
-                            .payload
-                            .get("files_touched")
-                            .and_then(|v| v.as_array())
-                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(", "))
-                            .unwrap_or_default()
-                    );
+                    let sp = &session.payload;
+                    let sid     = sp.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let goal    = sp.get("goal").and_then(|v| v.as_str()).unwrap_or("(no goal extracted)");
+                    let start   = sp.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
+                    let turns   = sp.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let sfiles: Vec<&str> = sp.get("files_touched")
+                        .and_then(|v| v.as_array())
+                        .map(|a| a.iter().filter_map(|v| v.as_str()).collect())
+                        .unwrap_or_default();
+                    let conf_str = result.edge.as_ref()
+                        .and_then(|e| e.payload.get("confidence"))
+                        .map(|v| {
+                            if let Some(f) = v.as_f64() {
+                                format!("{:.2}", f)
+                            } else {
+                                v.as_str().unwrap_or("?").to_string()
+                            }
+                        })
+                        .unwrap_or_else(|| "?".to_string());
+
+                    println!("AGENT SESSION  {} (inferred, confidence {})", &sid[..sid.len().min(8)], conf_str);
+                    println!("  goal:   {}", goal);
+                    println!("  start:  {}", start);
+                    println!("  turns:  {}", turns);
+                    if !sfiles.is_empty() {
+                        println!("  files:  {}", sfiles[..sfiles.len().min(8)].join("  "));
+                    }
                 } else {
-                    println!("Session: (none found)");
+                    println!("AGENT SESSION  (none — not found in ledger or outside inference window)");
                 }
+                println!();
+
                 if result.outcomes.is_empty() {
-                    println!("Outcomes: (none)");
+                    println!("OUTCOMES  (none recorded)");
                 } else {
-                    println!("Outcomes ({}):", result.outcomes.len());
+                    println!("OUTCOMES ({}):", result.outcomes.len());
                     for o in &result.outcomes {
-                        println!("  - {}", o.id);
+                        let file = o.payload.get("file").and_then(|v| v.as_str()).unwrap_or(&o.id);
+                        println!("  {}", file);
                     }
                 }
             }

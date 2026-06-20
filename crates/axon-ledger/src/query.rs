@@ -1,6 +1,7 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
+use crate::ingest::session::parse_iso_to_ms;
 use crate::model::{Effect, LedgerRecord};
 use crate::store::Store;
 
@@ -26,17 +27,50 @@ pub fn why(sha: &str, store: &Store) -> Result<WhyResult> {
         })
         .ok_or_else(|| anyhow::anyhow!("No commit found with sha prefix: {}", sha))?;
 
-    // 2. Find AgentEdge records where payload["commit_sha"] starts with sha
+    // 2. Find all AgentEdge records that point to this commit, then pick the best.
+    //    "Best" = the edge whose session started closest to (and before) the commit,
+    //    constrained to the same 7-hour window used during inference.
     let edges = store.find_by_effect(&Effect::AgentEdge)?;
-    let edge = edges
+    let sessions = store.find_by_effect(&Effect::AgentSession)?;
+
+    let commit_ts = commit.ts_ms;
+    let max_gap_ms: u64 = 25_200_000; // 7 h
+
+    let candidates: Vec<LedgerRecord> = edges
         .into_iter()
-        .find(|r| {
+        .filter(|r| {
             r.payload
                 .get("commit_sha")
                 .and_then(|v| v.as_str())
                 .map(|s| s.starts_with(sha))
                 .unwrap_or(false)
-        });
+        })
+        .collect();
+
+    // Score each candidate edge by |session_start - commit_ts|, prefer sessions
+    // that started before the commit and whose gap is within the inference window.
+    let edge = candidates.into_iter().min_by_key(|e| {
+        let session_id = e.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        let session_ts = sessions
+            .iter()
+            .find(|s| s.payload.get("session_id").and_then(|v| v.as_str()) == Some(session_id))
+            .map(|s| {
+                // Prefer end_ts over start_ts as the "session activity" anchor
+                let end_ts = s.payload.get("end_ts").and_then(|v| v.as_str())
+                    .and_then(parse_iso_to_ms)
+                    .unwrap_or(s.ts_ms);
+                // Use end_ts if it's plausible (within 24h of start), else start
+                if end_ts > s.ts_ms && end_ts - s.ts_ms < 86_400_000 { end_ts } else { s.ts_ms }
+            })
+            .unwrap_or(e.ts_ms);
+        // Gap from session to commit; sessions after the commit are penalized heavily
+        let gap = if commit_ts >= session_ts {
+            commit_ts - session_ts
+        } else {
+            (session_ts - commit_ts) + max_gap_ms * 10
+        };
+        gap
+    });
 
     // 3. From edge, find AgentSession
     let agent_session = if let Some(ref e) = edge {
