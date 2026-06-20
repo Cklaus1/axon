@@ -210,7 +210,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Weekly { from, to, slack_webhook: _, json } => {
+        Commands::Weekly { from, to, slack_webhook, json } => {
             let from_ms = from.as_deref()
                 .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s))
                 .unwrap_or_else(week_ago_ms);
@@ -224,6 +224,32 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render_text(&report));
+            }
+
+            if let Some(webhook_url) = slack_webhook {
+                let text = render_text(&report);
+                let payload = serde_json::json!({ "text": text });
+                let payload_str = serde_json::to_string(&payload)?;
+                let status = std::process::Command::new("curl")
+                    .args([
+                        "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                        "-X", "POST",
+                        "-H", "Content-Type: application/json",
+                        "-d", &payload_str,
+                        &webhook_url,
+                    ])
+                    .output();
+                match status {
+                    Ok(out) => {
+                        let code = String::from_utf8_lossy(&out.stdout);
+                        if code.trim() == "200" {
+                            eprintln!("Weekly report posted to Slack.");
+                        } else {
+                            eprintln!("Slack webhook returned HTTP {code} — check the URL.");
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to post to Slack (curl not found?): {e}"),
+                }
             }
         }
 

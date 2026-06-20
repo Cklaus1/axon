@@ -1,0 +1,131 @@
+# axon-signal PR session score action
+#
+# Posts the effectiveness score of the AI sessions behind a PR on the PR itself.
+# Engineers and reviewers see: was this a well-scoped session or a rework candidate?
+#
+# Setup:
+#   1. Copy to .github/workflows/axon-signal-pr.yml
+#   2. cargo install axon-signal axon-ledger  (or pin versions)
+#   3. Optional: set AXON_LEDGER_DIR secret for a shared team ledger
+#
+# What it shows:
+#   - Session goal and effectiveness score (0–100)
+#   - Training tier: PositiveGold / PositiveSilver / Filtered / Negative
+#   - Turns, commits linked, files touched
+#   - Per-file rework warning if any hotspot detected
+
+name: axon-signal PR score
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  signal-score:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cache binaries
+        uses: actions/cache@v4
+        id: cache-bins
+        with:
+          path: ~/.cargo/bin
+          key: axon-signal-${{ runner.os }}-0.1.0
+
+      - name: Install axon-ledger and axon-signal
+        if: steps.cache-bins.outputs.cache-hit != 'true'
+        run: |
+          cargo install axon-ledger --version "0.1.0" --locked
+          cargo install axon-signal  --version "0.1.0" --locked
+
+      - name: Ingest recent commits
+        env:
+          AXON_LEDGER_DIR: ${{ secrets.AXON_LEDGER_DIR || format('{0}/.axon/ledger', env.HOME) }}
+        run: |
+          axon-ledger --ledger-dir "$AXON_LEDGER_DIR" ingest git \
+            --repo . --since "30 days ago"
+
+      - name: Score sessions
+        id: score
+        env:
+          AXON_LEDGER_DIR: ${{ secrets.AXON_LEDGER_DIR || format('{0}/.axon/ledger', env.HOME) }}
+        run: |
+          axon-signal --ledger-dir "$AXON_LEDGER_DIR" score --week --json \
+            > /tmp/scores.json
+          echo "result=$(cat /tmp/scores.json | jq -c .)" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const raw = process.env.SCORES_JSON;
+            let scores;
+            try { scores = JSON.parse(raw); } catch { scores = []; }
+
+            if (!scores || scores.length === 0) {
+              console.log('No scored sessions for this week — skipping comment.');
+              return;
+            }
+
+            // Sort by ts_ms descending, take top 5
+            scores.sort((a, b) => (b.ts_ms || 0) - (a.ts_ms || 0));
+            const recent = scores.slice(0, 5);
+
+            const tierEmoji = {
+              'PositiveGold':   '🥇',
+              'PositiveSilver': '🥈',
+              'Filtered':       '🔶',
+              'Negative':       '🔴',
+            };
+
+            let body = `## axon-signal: AI session effectiveness\n\n`;
+            body += `| Score | Tier | Turns | Commits | Goal |\n`;
+            body += `|---|---|---|---|---|\n`;
+
+            for (const s of recent) {
+              const emoji = tierEmoji[s.training_tier] || '•';
+              const tierLabel = (s.training_tier || '').replace(/([A-Z])/g, ' $1').trim();
+              const goal = (s.goal || '').slice(0, 60) + (s.goal?.length > 60 ? '…' : '');
+              body += `| **${s.score}/100** | ${emoji} ${tierLabel} | ${s.turns} | ${s.commits_linked} | ${goal} |\n`;
+            }
+
+            const avg = recent.length
+              ? (recent.reduce((sum, s) => sum + (s.score || 0), 0) / recent.length).toFixed(1)
+              : 0;
+            body += `\n*${recent.length} session(s) this week · team avg ${avg}/100*\n\n`;
+            body += `---\n*[axon-signal](https://github.com/anthropics/axon) · `;
+            body += `\`axon-signal loops\` to find sessions that would benefit from /loop*`;
+
+            // Find and update or create comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('axon-signal: AI session effectiveness')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+        env:
+          SCORES_JSON: ${{ steps.score.outputs.result }}

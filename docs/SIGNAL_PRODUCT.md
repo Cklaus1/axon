@@ -252,8 +252,8 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 ### v0.2
 - [x] `signal patterns` — team prompt pattern library
 - [x] `signal goals` — goal quality per engineer
-- [ ] Slack webhook integration for weekly report
-- [ ] GitHub Action: post session score on PR
+- [x] Slack webhook integration for weekly report
+- [x] GitHub Action: post session score on PR
 
 ### v0.3 (Axon integration)
 - [ ] `@[goal(intent, metric, scope)]` structured annotation
