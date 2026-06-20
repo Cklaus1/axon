@@ -23,27 +23,88 @@ pub struct ReworkHotspot {
     pub window_hours: f64,
 }
 
+/// Files that appear in virtually every session and are not meaningful rework signals.
+/// CHANGELOG.md, README.md etc. are updated as part of every feature — flagging them
+/// as hotspots just adds noise.
+const REWORK_BLOCKLIST: &[&str] = &[
+    "CHANGELOG.md", "CHANGELOG", "changelog.md",
+    "README.md", "README", "readme.md",
+    "ROADMAP.md", "ROADMAP",
+    "Cargo.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    ".gitignore", ".gitattributes",
+    "Cargo.toml",  // workspace manifest changed by many sessions
+];
+
+fn is_blocklisted(path: &str) -> bool {
+    let name = path.split('/').last().unwrap_or(path);
+    REWORK_BLOCKLIST.iter().any(|b| name.eq_ignore_ascii_case(b))
+}
+
+/// Goal prefixes that indicate a loop-continuation or autonomous-iteration session
+/// rather than an independent rework attempt. These sessions should not be counted
+/// as distinct "rework" sessions — they're the same logical work unit split across
+/// multiple iterations by `/loop` or a continuation prompt.
+const CONTINUATION_PREFIXES: &[&str] = &[
+    "/loop",
+    "keep going",
+    "continue with",
+    "pick up",
+    "continue the",
+    "(structured session)",
+    "(system prompt)",
+];
+
+fn is_continuation_session(goal: &str) -> bool {
+    let lower = goal.trim().to_lowercase();
+    CONTINUATION_PREFIXES.iter().any(|p| lower.starts_with(p))
+        || lower.is_empty()
+}
+
+/// Normalize a file path for cross-session matching.
+///
+/// Strips absolute path prefixes so that `/home/user/project/crates/foo.rs`
+/// and `crates/foo.rs` (relative) both normalize to `crates/foo.rs`.
+/// This avoids false-positive deduplication: `eval.rs` in `axon-core/` and
+/// `eval.rs` in `axon-signal/` remain distinct (`axon-core/src/eval.rs` vs
+/// `axon-signal/src/eval.rs`).
+fn normalize_path(path: &str) -> String {
+    if path.starts_with('/') {
+        // Strip up to the first conventional root anchor
+        for anchor in &["crates/", "src/", "packages/", "lib/", "tests/", "spec/"] {
+            if let Some(pos) = path.find(anchor) {
+                return path[pos..].to_string();
+            }
+        }
+        // Fallback: strip leading '/' so absolute and relative match
+        return path.trim_start_matches('/').to_string();
+    }
+    path.to_string()
+}
+
 /// Find files touched by multiple sessions within `window_days`.
 pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<Vec<ReworkHotspot>> {
     let window_ms = window_days * 24 * 60 * 60 * 1000;
     let all = store.all().map_err(anyhow::Error::from)?;
 
-    // Build session_id → (goal, ts_ms, files) from sessions
+    // Build session_id → (goal, ts_ms, files) from sessions.
+    // Skip loop-continuation sessions — they repeat the same work and inflate counts.
     let sessions: HashMap<String, (String, u64, Vec<String>)> = all.iter()
         .filter(|r| r.effect == Effect::AgentSession)
-        .map(|r| {
+        .filter_map(|r| {
             let id_prefix = &r.id[..r.id.len().min(8)];
             let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or(id_prefix).to_string();
             let raw_goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
             let goal = display_goal(raw_goal, 80);
+            // Skip continuation/loop sessions — they're not independent rework
+            if is_continuation_session(&goal) { return None; }
             let files: Vec<String> = r.payload.get("files_touched")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| {
-                    // Normalize to basename for cross-session matching
-                    s.split('/').last().unwrap_or(s).to_string()
-                })).collect())
+                .map(|a| a.iter()
+                    .filter_map(|v| v.as_str().map(normalize_path))
+                    .filter(|s| !s.is_empty() && !is_blocklisted(s))
+                    .collect())
                 .unwrap_or_default();
-            (sid, (goal, r.ts_ms, files))
+            Some((sid, (goal, r.ts_ms, files)))
         })
         .collect();
 
@@ -161,5 +222,75 @@ mod tests {
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
         assert!(hotspots.is_empty(), "sessions 30 days apart should not be rework");
+    }
+
+    #[test]
+    fn test_continuation_sessions_not_counted_as_rework() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        let hour_ms = 3_600_000u64;
+
+        // One real session plus two loop-continuation sessions touching the same file
+        store.append(&make_session("s1", "fix JWT clock skew", &["auth.rs"], 0)).unwrap();
+        store.append(&make_session("s2", "keep going with this", &["auth.rs"], hour_ms)).unwrap();
+        store.append(&make_session("s3", "/loop 5m keep going", &["auth.rs"], hour_ms * 2)).unwrap();
+
+        let hotspots = find_rework_hotspots(&store, 7).unwrap();
+        // Only s1 is a non-continuation session — no rework (need ≥2 non-continuation sessions)
+        assert!(hotspots.is_empty(),
+            "loop-continuation sessions should not count as independent rework; got {:?}", hotspots);
+    }
+
+    #[test]
+    fn test_blocklisted_files_excluded() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+
+        store.append(&make_session("s1", "add feature A", &["CHANGELOG.md", "auth.rs"], 0)).unwrap();
+        store.append(&make_session("s2", "add feature B", &["CHANGELOG.md", "auth.rs"], 3_600_000)).unwrap();
+        store.append(&make_session("s3", "add feature C", &["CHANGELOG.md"], 7_200_000)).unwrap();
+
+        let hotspots = find_rework_hotspots(&store, 7).unwrap();
+        // CHANGELOG.md should be excluded; auth.rs should appear as rework
+        let changelog = hotspots.iter().find(|h| h.file.contains("CHANGELOG.md"));
+        assert!(changelog.is_none(), "CHANGELOG.md should be blocklisted");
+        let auth = hotspots.iter().find(|h| h.file.contains("auth.rs"));
+        assert!(auth.is_some(), "auth.rs should be flagged as rework");
+    }
+
+    #[test]
+    fn test_absolute_and_relative_paths_deduplicated() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+
+        // One session stores absolute, another stores relative — same file
+        store.append(&make_session("s1", "fix auth bug",
+            &["/home/user/project/crates/axon-core/src/auth.rs"], 0)).unwrap();
+        store.append(&make_session("s2", "improve auth",
+            &["crates/axon-core/src/auth.rs"], 3_600_000)).unwrap();
+
+        let hotspots = find_rework_hotspots(&store, 7).unwrap();
+        // Should produce exactly one hotspot (deduplicated), not two separate entries
+        assert_eq!(hotspots.len(), 1, "absolute and relative paths should normalize to the same file");
+        assert_eq!(hotspots[0].session_count, 2);
+    }
+
+    #[test]
+    fn test_is_continuation_session() {
+        assert!(is_continuation_session("keep going with the work"));
+        assert!(is_continuation_session("/loop 5m fix tests"));
+        assert!(is_continuation_session("continue with the plan"));
+        assert!(is_continuation_session("(structured session)"));
+        assert!(is_continuation_session(""));
+        assert!(!is_continuation_session("fix JWT clock skew in auth.rs"));
+        assert!(!is_continuation_session("add rate limiting to /api/users"));
+    }
+
+    #[test]
+    fn test_normalize_path() {
+        assert_eq!(normalize_path("crates/foo.rs"), "crates/foo.rs");
+        assert_eq!(normalize_path("/home/user/project/crates/foo.rs"), "crates/foo.rs");
+        assert_eq!(normalize_path("/home/user/project/src/main.rs"), "src/main.rs");
+        assert_eq!(normalize_path("/root/project/foo.rs"), "root/project/foo.rs");
     }
 }
