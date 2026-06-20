@@ -442,6 +442,8 @@ fn main() -> Result<()> {
             // Flag sessions with high turns-per-commit — would benefit from /loop automation.
             // Exclude: continuation/loop sessions (they already use it), and sessions with >100
             // commits (those ARE automated loop sessions, not candidates for one).
+            // Also deduplicate by goal — multiple iterations of the same goal show up once
+            // (the highest-turn instance, as that represents the worst-case cost).
             let mut candidates: Vec<_> = scores.iter()
                 .filter(|s| s.ts_ms >= cutoff)
                 .filter(|s| s.turns >= turns_threshold)
@@ -449,6 +451,8 @@ fn main() -> Result<()> {
                 .filter(|s| s.commits_linked <= 100)
                 .collect();
             candidates.sort_by(|a, b| b.turns.cmp(&a.turns));
+            let mut seen_goals = std::collections::HashSet::new();
+            candidates.retain(|s| seen_goals.insert(s.goal.trim().to_lowercase()));
 
             if json {
                 let out_val = serde_json::json!(candidates.iter().map(|s| serde_json::json!({

@@ -298,11 +298,15 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             let threshold = args.get("turns_threshold").and_then(|v| v.as_u64()).unwrap_or(40);
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(30);
             let cutoff = now_ms().saturating_sub(days * 86_400_000);
-            score_sessions(&store).map(|scores| {
+            score_sessions(&store).map(|mut scores| {
+                // Sort by turns desc so highest-turn iteration is kept after goal dedup
+                scores.sort_by(|a, b| b.turns.cmp(&a.turns));
+                let mut seen_goals = std::collections::HashSet::new();
                 let candidates: Vec<_> = scores.iter()
                     .filter(|s| s.ts_ms >= cutoff && s.turns >= threshold)
                     .filter(|s| !is_continuation_session(&s.goal))
                     .filter(|s| s.commits_linked <= 100)
+                    .filter(|s| seen_goals.insert(s.goal.trim().to_lowercase()))
                     .map(|s| json!({
                         "session_id": s.session_id,
                         "engineer": s.engineer,
