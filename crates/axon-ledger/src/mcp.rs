@@ -4,11 +4,14 @@
 /// can call mid-session. Run with: `axon-ledger mcp [--ledger-dir <path>]`
 ///
 /// Tools exposed:
-///   ledger_why     { sha: string }                → WhyResult
-///   ledger_history { file: string }              → HistoryResult
-///   ledger_search  { query: string, limit?: int } → SearchHit[]
-///   ledger_as_of   { timestamp: string }          → AsOfResult
-///   ledger_stats   {}                             → StatsResult
+///   ledger_why        { sha: string }                → WhyResult
+///   ledger_history    { file: string }               → HistoryResult
+///   ledger_search     { query: string, limit?: int } → SearchHit[]
+///   ledger_as_of      { timestamp: string }           → AsOfResult
+///   ledger_stats      {}                              → StatsResult
+///   ledger_weekly     { days?: int }                  → WeeklyDigest
+///   ledger_audit      { module: string, since?: string } → AuditResult
+///   ledger_pre_deploy { range?: string }              → PreDeployResult
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -143,6 +146,39 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                         "type": "object",
                         "properties": {}
                     }
+                },
+                {
+                    "name": "ledger_weekly",
+                    "description": "Weekly digest of AI coding activity: sessions, commits, goals shipped, coverage %, and rework hotspots. Auto-expands from 7 to 30 days when session count is low. Use this to understand what work happened in a recent period.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "days": { "type": "integer", "description": "Window in days (default: 7, auto-expands to 30 if fewer than 3 sessions)" }
+                        }
+                    }
+                },
+                {
+                    "name": "ledger_audit",
+                    "description": "Compliance query: list all AI sessions and commits that touched files under a module path. Use for 'who worked on payments/ in the last 90 days?' or 'which sessions touched auth/?'",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "module": { "type": "string", "description": "Module path prefix to match, e.g. 'payments/', 'src/auth', 'lib/db'" },
+                            "since": { "type": "string", "description": "Only include records after this date (ISO 8601 or '90 days ago')" }
+                        },
+                        "required": ["module"]
+                    }
+                },
+                {
+                    "name": "ledger_pre_deploy",
+                    "description": "Flag unexplained commits before a deploy — commits with no linked AI session. Returns coverage % and lists which commits lack session provenance. Use before merging or deploying to check that all changes are explainable.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "range": { "type": "string", "description": "Git commit range, e.g. 'HEAD~8..HEAD' or 'sha1..sha2' (default: HEAD~10..HEAD)" },
+                            "repo": { "type": "string", "description": "Path to the git repository (default: current directory)" }
+                        }
+                    }
                 }
             ]
         }
@@ -205,6 +241,175 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                     })
                 })
         }
+        "ledger_weekly" => {
+            use crate::model::Effect;
+            let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(7);
+            let now_ms = now_ms();
+            let to_ms = now_ms;
+            let cutoff = now_ms.saturating_sub(days * 86_400_000);
+            // Auto-expand if sparse
+            let all_raw = match store.all().map_err(anyhow::Error::from) {
+                Ok(v) => v,
+                Err(e) => return json_error(id.as_ref(), -32000, &e.to_string()),
+            };
+            let sessions_in_window = all_raw.iter()
+                .filter(|r| r.effect == Effect::AgentSession && r.ts_ms >= cutoff)
+                .count();
+            let from_ms = if sessions_in_window < 3 && days <= 7 {
+                now_ms.saturating_sub(30 * 86_400_000)
+            } else { cutoff };
+
+            let in_window: Vec<_> = all_raw.iter()
+                .filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms)
+                .collect();
+            let sessions: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentSession).collect();
+            let commits: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::GitCommit).collect();
+            let edges: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentEdge).collect();
+
+            let goals: Vec<serde_json::Value> = {
+                let mut g: Vec<(u64, String)> = sessions.iter().map(|s| {
+                    let goal = s.payload.get("goal").and_then(|v| v.as_str())
+                        .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)").to_string();
+                    (s.ts_ms, goal)
+                }).collect();
+                g.sort_by_key(|(ts, _)| *ts);
+                g.iter().map(|(ts, goal)| json!({"ts_ms": ts, "goal": goal})).collect()
+            };
+
+            let explained_shas: std::collections::HashSet<String> = edges.iter()
+                .filter_map(|e| e.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .collect();
+            let explained_count = commits.iter().filter(|c| {
+                let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
+                explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha))
+            }).count();
+
+            let mut file_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for s in &sessions {
+                if let Some(files) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
+                    for f in files {
+                        if let Some(fname) = f.as_str() {
+                            *file_counts.entry(fname.split('/').last().unwrap_or(fname).to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            let mut rework: Vec<_> = file_counts.into_iter().filter(|(_, c)| *c >= 2).collect();
+            rework.sort_by(|a, b| b.1.cmp(&a.1));
+
+            Ok(json!({
+                "from_ms": from_ms, "to_ms": to_ms, "window_days": (to_ms - from_ms) / 86_400_000,
+                "sessions": sessions.len(), "commits": commits.len(), "explained_commits": explained_count,
+                "coverage_pct": if commits.is_empty() { 100u64 } else { (explained_count * 100 / commits.len()) as u64 },
+                "goals": goals,
+                "rework_hotspots": rework.iter().take(5).map(|(f, c)| json!({"file": f, "session_count": c})).collect::<Vec<_>>(),
+            }))
+        }
+        "ledger_audit" => {
+            use crate::model::Effect;
+            use crate::ingest::session::parse_iso_to_ms;
+            let module = args.get("module").and_then(|v| v.as_str()).unwrap_or("");
+            if module.is_empty() {
+                return json_error(id.as_ref(), -32602, "ledger_audit requires 'module'");
+            }
+            let since_ms = args.get("since").and_then(|v| v.as_str()).and_then(parse_iso_to_ms).unwrap_or(0);
+            let module_lower = module.to_lowercase();
+
+            store.all().map_err(anyhow::Error::from).map(|all| {
+                let in_window: Vec<_> = all.iter().filter(|r| r.ts_ms >= since_ms).collect();
+                let matching_sessions: Vec<_> = in_window.iter()
+                    .filter(|r| r.effect == Effect::AgentSession)
+                    .filter(|r| r.payload.get("files_touched").and_then(|v| v.as_array())
+                        .map(|files| files.iter().any(|f| f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)))
+                        .unwrap_or(false))
+                    .collect();
+                let matching_commits: Vec<_> = in_window.iter()
+                    .filter(|r| r.effect == Effect::GitCommit)
+                    .filter(|r| r.payload.get("files_changed").and_then(|v| v.as_array())
+                        .map(|files| files.iter().any(|f| f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)))
+                        .unwrap_or(false))
+                    .collect();
+                json!({
+                    "module": module, "since_ms": since_ms,
+                    "total_sessions": matching_sessions.len(),
+                    "total_commits": matching_commits.len(),
+                    "sessions": matching_sessions.iter().map(|s| json!({
+                        "session_id": s.payload.get("session_id").and_then(|v| v.as_str()),
+                        "goal": s.payload.get("goal").and_then(|v| v.as_str()),
+                        "engineer": s.principal.trim_start_matches("session:").trim_start_matches("agent:"),
+                        "ts_ms": s.ts_ms,
+                    })).collect::<Vec<_>>(),
+                    "commits": matching_commits.iter().map(|c| json!({
+                        "sha": c.payload.get("sha").and_then(|v| v.as_str()),
+                        "message": c.payload.get("message").and_then(|v| v.as_str()),
+                        "author": c.payload.get("author").and_then(|v| v.as_str()),
+                        "ts_ms": c.ts_ms,
+                    })).collect::<Vec<_>>(),
+                })
+            })
+        }
+        "ledger_pre_deploy" => {
+            use crate::model::Effect;
+            let range = args.get("range").and_then(|v| v.as_str()).unwrap_or("HEAD~10..HEAD");
+            let repo = args.get("repo").and_then(|v| v.as_str()).unwrap_or(".");
+
+            let git_out = match std::process::Command::new("git")
+                .arg("-C").arg(repo)
+                .args(["log", "--format=%H|%ae|%s", range])
+                .output()
+            {
+                Ok(o) => o,
+                Err(e) => return json_error(id.as_ref(), -32000, &format!("git log failed: {e}")),
+            };
+            if !git_out.status.success() {
+                return json_error(id.as_ref(), -32000,
+                    &format!("git log failed: {}", String::from_utf8_lossy(&git_out.stderr)));
+            }
+            let range_commits: Vec<(String, String, String)> = String::from_utf8_lossy(&git_out.stdout)
+                .lines()
+                .filter_map(|l| {
+                    let parts: Vec<&str> = l.splitn(3, '|').collect();
+                    if parts.len() == 3 { Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string())) }
+                    else { None }
+                })
+                .collect();
+
+            store.all().map_err(anyhow::Error::from).map(|all| {
+                let explained_shas: std::collections::HashSet<String> = all.iter()
+                    .filter(|r| r.effect == Effect::AgentEdge)
+                    .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                    .collect();
+                let mut sha_to_goal: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+                for edge in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
+                    let sha = edge.payload.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let sid = edge.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                    if let Some(session) = all.iter().find(|r| r.effect == Effect::AgentSession &&
+                        r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("") == sid)
+                    {
+                        let goal = session.payload.get("goal").and_then(|v| v.as_str())
+                            .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)").to_string();
+                        sha_to_goal.entry(sha).or_insert(goal);
+                    }
+                }
+                let is_explained = |sha: &str| explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha));
+                let explained: Vec<_> = range_commits.iter().filter(|(sha, _, _)| is_explained(sha)).collect();
+                let unexplained: Vec<_> = range_commits.iter().filter(|(sha, _, _)| !is_explained(sha)).collect();
+                let coverage = if range_commits.is_empty() { 100u64 }
+                    else { (explained.len() * 100 / range_commits.len()) as u64 };
+                json!({
+                    "range": range, "total_commits": range_commits.len(),
+                    "explained": explained.len(), "unexplained": unexplained.len(),
+                    "coverage_pct": coverage,
+                    "explained_commits": explained.iter().map(|(sha, author, msg)| {
+                        let goal = sha_to_goal.get(sha.as_str()).cloned().unwrap_or_default();
+                        json!({"sha": sha, "author": author, "message": msg, "session_goal": goal})
+                    }).collect::<Vec<_>>(),
+                    "unexplained_commits": unexplained.iter().map(|(sha, author, msg)| {
+                        json!({"sha": sha, "author": author, "message": msg})
+                    }).collect::<Vec<_>>(),
+                })
+            })
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -218,6 +423,13 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         }),
         Err(e) => json_error(id.as_ref(), -32000, &e.to_string()),
     }
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 fn json_error(id: Option<&Value>, code: i32, message: &str) -> Value {
@@ -246,19 +458,55 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_four_tools() {
+    fn test_tools_list_has_eight_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 5);
+        assert_eq!(tools.len(), 8);
         let names: Vec<&str> = tools.iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert!(names.contains(&"ledger_why"));
-        assert!(names.contains(&"ledger_history"));
-        assert!(names.contains(&"ledger_search"));
-        assert!(names.contains(&"ledger_as_of"));
-        assert!(names.contains(&"ledger_stats"));
+        for expected in &["ledger_why", "ledger_history", "ledger_search",
+                          "ledger_as_of", "ledger_stats",
+                          "ledger_weekly", "ledger_audit", "ledger_pre_deploy"] {
+            assert!(names.contains(expected), "missing tool: {expected}");
+        }
+    }
+
+    #[test]
+    fn test_weekly_on_empty_ledger() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_weekly", "arguments": {} });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("result").is_some());
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["sessions"], 0);
+        assert_eq!(data["coverage_pct"], 100);
+    }
+
+    #[test]
+    fn test_audit_requires_module() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_audit", "arguments": {} });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("error").is_some());
+        assert_eq!(r["error"]["code"], -32602);
+    }
+
+    #[test]
+    fn test_audit_on_empty_ledger() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_audit", "arguments": { "module": "src/auth" } });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("result").is_some());
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["total_sessions"], 0);
+        assert_eq!(data["module"], "src/auth");
     }
 
     #[test]
