@@ -244,21 +244,21 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 ## Roadmap
 
 ### v0.1 (first sprint)
-- [ ] `signal score` — per-session effectiveness from ledger data
-- [ ] `signal weekly` — formatted team report (stdout)
-- [ ] `signal rework` — rework hotspot detection
-- [ ] `signal loops` — loop opportunity detector
+- [x] `signal score` — per-session effectiveness from ledger data
+- [x] `signal weekly` — formatted team report (stdout)
+- [x] `signal rework` — rework hotspot detection
+- [x] `signal loops` — loop opportunity detector
 
 ### v0.2
-- [ ] `signal patterns` — team prompt pattern library
-- [ ] `signal goals` — goal quality per engineer
+- [x] `signal patterns` — team prompt pattern library
+- [x] `signal goals` — goal quality per engineer
 - [ ] Slack webhook integration for weekly report
 - [ ] GitHub Action: post session score on PR
 
 ### v0.3 (Axon integration)
 - [ ] `@[goal(intent, metric, scope)]` structured annotation
 - [ ] W2001 lint for vague goals
-- [ ] `signal export-training` — Trainloop/LoRA export (see TRAINLOOP.md)
+- [x] `signal export-training` — Trainloop/LoRA export (see TRAINLOOP.md)
 
 ### v1.0
 - [ ] Web dashboard (session timeline, score trends, heatmaps)

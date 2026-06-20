@@ -71,6 +71,27 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Per-engineer goal quality breakdown — who writes the clearest session goals?
+    Goals {
+        /// Filter to sessions from the last N days (default: 30)
+        #[arg(long, default_value = "30")]
+        days: u64,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Detect sessions that would benefit from a loop/workflow (high-turn, low-commit)
+    Loops {
+        /// Turn-count threshold to flag a session (default: 40)
+        #[arg(long, default_value = "40")]
+        turns_threshold: u64,
+        /// Only include sessions from the last N days (default: 30)
+        #[arg(long, default_value = "30")]
+        days: u64,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Export training data for Trainloop / MegaBrain fine-tuning
     ExportTraining {
         /// Minimum signal score to include (default: 75)
@@ -203,6 +224,100 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render_text(&report));
+            }
+        }
+
+        Commands::Goals { days, json } => {
+            let cutoff = now_ms().saturating_sub(days * 24 * 60 * 60 * 1000);
+            let mut scores = score_sessions(&store)?;
+            scores.retain(|s| s.ts_ms >= cutoff);
+
+            // Group by engineer
+            let mut by_eng: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+            for s in &scores {
+                by_eng.entry(s.engineer.clone()).or_default().push(s.goal_clarity);
+            }
+            let mut eng_summary: Vec<(String, f64, usize, u8, u8)> = by_eng.into_iter().map(|(eng, clarities)| {
+                let avg = clarities.iter().map(|&c| c as f64).sum::<f64>() / clarities.len() as f64;
+                let max = clarities.iter().copied().max().unwrap_or(0);
+                let min = clarities.iter().copied().min().unwrap_or(0);
+                (eng, avg, clarities.len(), max, min)
+            }).collect();
+            eng_summary.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            if json {
+                let out_val = serde_json::json!(eng_summary.iter().map(|(eng, avg, count, max, min)| serde_json::json!({
+                    "engineer": eng, "avg_goal_clarity": avg, "sessions": count, "max": max, "min": min
+                })).collect::<Vec<_>>());
+                println!("{}", serde_json::to_string_pretty(&out_val)?);
+            } else {
+                println!("Goal clarity by engineer (last {} days):\n", days);
+                println!("  {:40}  {:>5}  {:>7}  {:>4}  {:>4}",
+                    "engineer", "avg", "sessions", "best", "worst");
+                println!("  {}", "-".repeat(67));
+                for (eng, avg, count, max, min) in &eng_summary {
+                    let bar = "█".repeat((*avg as usize) / 10)
+                        + &"░".repeat(10usize.saturating_sub(*avg as usize / 10));
+                    println!("  {bar}  {avg:>4.0}/100  {count:>3} sessions  best:{max:>3}  worst:{min:>3}  {eng}");
+                }
+
+                // Team recommendation
+                let low: Vec<_> = eng_summary.iter().filter(|(_, avg, _, _, _)| *avg < 50.0).collect();
+                if !low.is_empty() {
+                    println!("\n  Recommendation: {} engineer(s) avg below 50 — suggest adding file refs and measurable outcomes to session goals.", low.len());
+                }
+            }
+        }
+
+        Commands::Loops { turns_threshold, days, json } => {
+            let cutoff = now_ms().saturating_sub(days * 24 * 60 * 60 * 1000);
+            let scores = score_sessions(&store)?;
+
+            // Flag sessions with high turns and low commits — would benefit from a loop
+            let mut candidates: Vec<_> = scores.iter()
+                .filter(|s| s.ts_ms >= cutoff)
+                .filter(|s| s.turns >= turns_threshold)
+                .collect();
+            candidates.sort_by(|a, b| b.turns.cmp(&a.turns));
+
+            if json {
+                let out_val = serde_json::json!(candidates.iter().map(|s| serde_json::json!({
+                    "session_id": s.session_id,
+                    "engineer": s.engineer,
+                    "goal": s.goal,
+                    "turns": s.turns,
+                    "commits_linked": s.commits_linked,
+                    "turns_per_commit": s.turns_per_commit,
+                    "score": s.score,
+                    "recommendation": if s.commits_linked == 0 {
+                        "High turn count with no commits — consider /loop to iterate automatically"
+                    } else if s.turns_per_commit > 40.0 {
+                        "High turns-per-commit — a /loop workflow could have automated the iteration"
+                    } else {
+                        "Possible loop candidate"
+                    }
+                })).collect::<Vec<_>>());
+                println!("{}", serde_json::to_string_pretty(&out_val)?);
+            } else if candidates.is_empty() {
+                println!("No loop-opportunity sessions found (last {} days, turns > {}).", days, turns_threshold);
+            } else {
+                println!("Loop opportunity candidates (last {} days, turns > {}):\n", days, turns_threshold);
+                for s in &candidates {
+                    let goal_trunc = if s.goal.chars().count() > 55 {
+                        let end = s.goal.char_indices().nth(55).map(|(i,_)|i).unwrap_or(s.goal.len());
+                        format!("{}…", &s.goal[..end])
+                    } else { s.goal.clone() };
+                    println!("  {} turns → {} commits  {} turns/commit",
+                        s.turns, s.commits_linked,
+                        if s.commits_linked > 0 { format!("{:.0}", s.turns_per_commit) } else { "∞".to_string() });
+                    println!("  {}", goal_trunc);
+                    if s.commits_linked == 0 {
+                        println!("  → try: /loop <your-goal>");
+                    } else {
+                        println!("  → try: /loop 5m <your-goal>  (automate the iteration)");
+                    }
+                    println!();
+                }
             }
         }
 
