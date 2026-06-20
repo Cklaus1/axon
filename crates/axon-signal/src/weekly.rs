@@ -95,9 +95,12 @@ pub fn generate_weekly(
     }).collect();
     engineers.sort_by(|a, b| b.avg_score.partial_cmp(&a.avg_score).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Top 3 sessions this week
+    // Top 3 sessions this week — deduplicate by goal so repeated /loop iterations
+    // don't crowd out genuinely distinct sessions.
     let mut top_sessions = window_scores.clone();
     top_sessions.sort_by(|a, b| b.score.cmp(&a.score));
+    let mut seen_goals = std::collections::HashSet::new();
+    top_sessions.retain(|s| seen_goals.insert(s.goal.trim().to_lowercase()));
     top_sessions.truncate(3);
 
     let hotspots = find_rework_hotspots(store, window_days)?;
