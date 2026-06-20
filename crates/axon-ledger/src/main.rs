@@ -38,6 +38,9 @@ enum Commands {
     Why {
         /// SHA prefix of the commit
         sha: String,
+        /// Filter to a specific repo name (multi-repo ledger)
+        #[arg(long)]
+        repo: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -68,6 +71,9 @@ enum Commands {
         /// Maximum results to show (default: 10)
         #[arg(long, default_value = "10")]
         limit: usize,
+        /// Filter to a specific repo name (multi-repo ledger)
+        #[arg(long)]
+        repo: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -84,6 +90,9 @@ enum Commands {
     History {
         /// File path (suffix matching: "auth/jwt.rs" matches "src/auth/jwt.rs")
         file: String,
+        /// Filter to a specific repo name (multi-repo ledger)
+        #[arg(long)]
+        repo: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -110,6 +119,9 @@ enum Commands {
         /// End of window (ISO 8601 or relative; default: now)
         #[arg(long)]
         to: Option<String>,
+        /// Filter to a specific repo name (multi-repo ledger)
+        #[arg(long)]
+        repo: Option<String>,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -122,6 +134,9 @@ enum Commands {
         /// Only include records after this date (ISO 8601 or "90 days ago")
         #[arg(long)]
         since: Option<String>,
+        /// Filter to a specific repo name (multi-repo ledger)
+        #[arg(long)]
+        repo: Option<String>,
         /// Output as JSON (machine-readable)
         #[arg(long)]
         json: bool,
@@ -178,6 +193,9 @@ enum IngestSource {
         /// Only ingest commits after this date/time (ISO 8601 or relative like "30 days ago")
         #[arg(long)]
         since: Option<String>,
+        /// Tag all ingested records with this repo name (e.g. "api", "frontend") — enables multi-repo filtering
+        #[arg(long)]
+        repo_name: Option<String>,
     },
     /// Ingest a single Claude Code session JSONL file
     Session {
@@ -192,6 +210,9 @@ enum IngestSource {
         /// Explicit path to brief-gate.ax (auto-discovered if omitted)
         #[arg(long)]
         gate_script: Option<PathBuf>,
+        /// Tag this session with a repo name (e.g. "api", "frontend") — enables multi-repo filtering
+        #[arg(long)]
+        repo_name: Option<String>,
     },
     /// Ingest all session JSONL files in a directory
     SessionDir {
@@ -206,6 +227,9 @@ enum IngestSource {
         /// Explicit path to brief-gate.ax (auto-discovered if omitted)
         #[arg(long)]
         gate_script: Option<PathBuf>,
+        /// Tag all sessions with a repo name (e.g. "api", "frontend") — enables multi-repo filtering
+        #[arg(long)]
+        repo_name: Option<String>,
     },
     /// Infer agent->commit edges from existing sessions and commits
     Edges,
@@ -295,21 +319,24 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Ingest { source } => match source {
-            IngestSource::Git { repo, since } => {
-                let n = ingest_git(&repo, &mut store, since.as_deref())?;
+            IngestSource::Git { repo, since, repo_name } => {
+                let n = ingest_git(&repo, &mut store, since.as_deref(), repo_name.as_deref())?;
                 let filter_note = since.as_deref()
                     .map(|s| format!(" (after {})", s))
                     .unwrap_or_default();
-                println!("Ingested {} new git commits{}.", n, filter_note);
+                let repo_note = repo_name.as_deref()
+                    .map(|r| format!(" [repo={}]", r))
+                    .unwrap_or_default();
+                println!("Ingested {} new git commits{}{}.", n, filter_note, repo_note);
             }
-            IngestSource::Session { path, gate, axon_bin, gate_script } => {
+            IngestSource::Session { path, gate, axon_bin, gate_script, repo_name } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
-                match ingest_session(&path, &mut store, &gate_opts)? {
+                match ingest_session(&path, &mut store, &gate_opts, repo_name.as_deref())? {
                     Some(r) => println!("Ingested session: {}", r.id),
                     None => println!("Session already in ledger, skipped."),
                 }
             }
-            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script } => {
+            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script, repo_name } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin: axon_bin.clone(), gate_script: gate_script.clone() };
                 let mut total = 0usize;
                 let mut skipped = 0usize;
@@ -325,7 +352,7 @@ fn main() -> Result<()> {
                 for (i, path) in paths.iter().enumerate() {
                     eprint!("\r  [{}/{}] {}", i + 1, n_files,
                         path.file_name().unwrap_or_default().to_string_lossy());
-                    match ingest_session(path, &mut store, &gate_opts) {
+                    match ingest_session(path, &mut store, &gate_opts, repo_name.as_deref()) {
                         Ok(Some(_)) => total += 1,
                         Ok(None) => skipped += 1,
                         Err(e) if e.to_string().starts_with("brief gate:") => {
@@ -361,8 +388,14 @@ fn main() -> Result<()> {
             }
         },
 
-        Commands::Why { sha, json } => {
+        Commands::Why { sha, repo, json } => {
             let result = why(&sha, &store)?;
+            if let Some(ref r) = repo {
+                if result.commit.repo.as_deref() != Some(r.as_str()) {
+                    anyhow::bail!("commit {} is not tagged with repo {:?} (actual: {:?})",
+                        &sha, r, result.commit.repo);
+                }
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
@@ -495,9 +528,12 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Search { terms, limit, json } => {
+        Commands::Search { terms, limit, repo, json } => {
             let query = terms.join(" ");
-            let hits = search(&query, &store, limit)?;
+            let mut hits = search(&query, &store, limit)?;
+            if let Some(ref r) = repo {
+                hits.retain(|h| h.record.repo.as_deref() == Some(r.as_str()));
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
             } else if hits.is_empty() {
@@ -581,8 +617,13 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::History { file, json } => {
-            let result = history(&file, &store)?;
+        Commands::History { file, repo, json } => {
+            let mut result = history(&file, &store)?;
+            if let Some(ref r) = repo {
+                result.chapters.retain(|ch| ch.session.repo.as_deref() == Some(r.as_str()));
+                result.total_sessions = result.chapters.len();
+                result.total_commits = result.chapters.iter().map(|ch| ch.commits.len()).sum();
+            }
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else if result.chapters.is_empty() {
@@ -745,7 +786,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Weekly { from, to, json } => {
+        Commands::Weekly { from, to, repo, json } => {
             use axon_ledger::model::Effect;
             use axon_ledger::ingest::session::parse_iso_to_ms;
 
@@ -762,7 +803,10 @@ fn main() -> Result<()> {
                 .unwrap_or(now_ms);
 
             let all = store.all()?;
-            let in_window: Vec<_> = all.iter().filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms).collect();
+            let in_window: Vec<_> = all.iter()
+                .filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms)
+                .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
+                .collect();
 
             let sessions: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentSession).collect();
             let commits: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::GitCommit).collect();
@@ -831,7 +875,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Audit { module, since, json } => {
+        Commands::Audit { module, since, repo, json } => {
             use axon_ledger::model::Effect;
             use axon_ledger::ingest::session::parse_iso_to_ms;
 
@@ -839,7 +883,10 @@ fn main() -> Result<()> {
             let module_lower = module.to_lowercase();
 
             let all = store.all()?;
-            let in_window: Vec<_> = all.iter().filter(|r| r.ts_ms >= since_ms).collect();
+            let in_window: Vec<_> = all.iter()
+                .filter(|r| r.ts_ms >= since_ms)
+                .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
+                .collect();
 
             // Sessions that touched files under the module path
             let matching_sessions: Vec<_> = in_window.iter()

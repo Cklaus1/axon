@@ -50,6 +50,7 @@ pub fn ingest_outcome(commit_sha_prefix: &str, file: &Path, store: &mut Store) -
         causal_parent: Some(commit_id),
         ts_ms,
         payload,
+        repo: None,
     };
 
     store.append(&record)?;

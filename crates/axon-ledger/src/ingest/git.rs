@@ -13,7 +13,7 @@ use crate::store::Store;
 /// `since`: if provided, passed directly to `git log --after=<since>`.
 /// git accepts ISO 8601 dates ("2026-01-01"), relative times ("30 days ago"),
 /// or Unix epoch prefixed with "@".
-pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>) -> Result<usize> {
+pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>, repo_name: Option<&str>) -> Result<usize> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(repo_path)
@@ -65,6 +65,7 @@ pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>) -> R
             causal_parent: None,
             ts_ms,
             payload,
+            repo: repo_name.map(String::from),
         };
 
         store.append(&record)?;

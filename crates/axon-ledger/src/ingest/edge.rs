@@ -139,6 +139,7 @@ pub fn infer_edges(store: &mut Store) -> Result<usize> {
                 causal_parent: Some(commit.id.clone()),
                 ts_ms,
                 payload,
+                repo: commit.repo.clone(),
             };
 
             new_edges.push(edge);
@@ -192,6 +193,7 @@ mod tests {
             causal_parent: None,
             ts_ms: start_ms,
             payload,
+            repo: None,
         }
     }
 
@@ -210,6 +212,7 @@ mod tests {
             causal_parent: None,
             ts_ms,
             payload,
+            repo: None,
         }
     }
 

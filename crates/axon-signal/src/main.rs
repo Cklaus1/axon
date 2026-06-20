@@ -215,6 +215,7 @@ fn main() -> Result<()> {
                         causal_parent: None,
                         ts_ms,
                         payload,
+                        repo: None,
                     };
                     if store_mut.append(&record).is_ok() {
                         written += 1;

@@ -105,6 +105,7 @@ pub fn ingest_session(
     session_path: &Path,
     store: &mut Store,
     gate: &GateOptions,
+    repo_name: Option<&str>,
 ) -> Result<Option<LedgerRecord>> {
     let session_id = session_path
         .file_stem()
@@ -267,6 +268,7 @@ pub fn ingest_session(
         causal_parent: None,
         ts_ms,
         payload,
+        repo: repo_name.map(String::from),
     };
 
     store.append(&record)?;

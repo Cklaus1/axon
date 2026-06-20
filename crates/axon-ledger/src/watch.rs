@@ -63,7 +63,7 @@ pub fn watch_sessions(
             }
             seen.insert(path.clone());
 
-            match ingest_session(&path, &mut store, gate) {
+            match ingest_session(&path, &mut store, gate, None) {
                 Ok(Some(r)) => {
                     if verbose {
                         let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");

@@ -128,6 +128,7 @@ mod tests {
                 "goal": goal,
                 "files_touched": files,
             }),
+            repo: None,
         }
     }
 

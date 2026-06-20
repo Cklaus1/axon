@@ -66,6 +66,16 @@ impl Store {
         Ok(records.into_iter().filter(|r| &r.effect == effect).collect())
     }
 
+    /// Filter records to a specific repo name tag.
+    /// `None` or an empty filter returns all records (single-repo behaviour).
+    pub fn find_by_repo(&self, repo: Option<&str>) -> Result<Vec<LedgerRecord>> {
+        let records = self.all()?;
+        match repo {
+            None => Ok(records),
+            Some(r) => Ok(records.into_iter().filter(|rec| rec.repo.as_deref() == Some(r)).collect()),
+        }
+    }
+
     pub fn find_by_payload_field(&self, key: &str, value: &str) -> Result<Vec<LedgerRecord>> {
         let records = self.all()?;
         Ok(records
@@ -139,6 +149,7 @@ mod tests {
             causal_parent: parent.map(String::from),
             ts_ms,
             payload: json!({}),
+            repo: None,
         }
     }
 
@@ -183,6 +194,27 @@ mod tests {
         let (kept, pruned) = store.prune(5000).unwrap();
         assert_eq!(pruned, 0);
         assert_eq!(kept, 2);
+    }
+
+    #[test]
+    fn test_find_by_repo_filters_correctly() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        let mut r1 = make_record("r1", 1000, None);
+        r1.repo = Some("api".to_string());
+        let mut r2 = make_record("r2", 2000, None);
+        r2.repo = Some("frontend".to_string());
+        let r3 = make_record("r3", 3000, None); // untagged
+        store.append(&r1).unwrap();
+        store.append(&r2).unwrap();
+        store.append(&r3).unwrap();
+
+        let api = store.find_by_repo(Some("api")).unwrap();
+        assert_eq!(api.len(), 1);
+        assert_eq!(api[0].id, "r1");
+
+        let all = store.find_by_repo(None).unwrap();
+        assert_eq!(all.len(), 3);
     }
 
     #[test]

@@ -251,6 +251,7 @@ pub fn ingest_provider_outcome(
         causal_parent: Some(commit_id),
         ts_ms,
         payload,
+        repo: None,
     };
 
     store.append(&record)?;

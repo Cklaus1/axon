@@ -150,7 +150,7 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 - [x] Outcome integrations (Datadog, Sentry, PostHog via JSON schema — `ingest outcome-provider --provider <name>`)
 
 ### v1.0 (enterprise)
-- [ ] Multi-repo ledger (microservices)
+- [x] Multi-repo ledger (microservices) — `--repo-name <name>` on all ingest commands; `--repo <name>` filter on why/search/history/weekly/audit; `repo` field in NDJSON (backward-compatible, skipped when None)
 - [ ] RBAC — per-engineer vs. per-team visibility
 - [x] Webhook egress (Slack, PagerDuty on unexplained deploy — `webhook add/list/rm`; fired by `pre-deploy`)
 - [x] Retention policy (GDPR / data minimization — `prune --older-than <date>`, dry-run, causal-chain aware)

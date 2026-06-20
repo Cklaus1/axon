@@ -511,6 +511,7 @@ mod tests {
             causal_parent: None,
             ts_ms,
             payload,
+            repo: None,
         }
     }
 
@@ -537,6 +538,7 @@ mod tests {
             causal_parent: None,
             ts_ms,
             payload,
+            repo: None,
         }
     }
 
@@ -555,6 +557,7 @@ mod tests {
             causal_parent: Some(commit_id.to_string()),
             ts_ms,
             payload,
+            repo: None,
         }
     }
 
@@ -633,7 +636,7 @@ mod tests {
         });
         let id = record_id(&format!("session:{sid}"), &Effect::AgentSession, ts_ms, &payload);
         LedgerRecord { id, principal: format!("session:{sid}"), effect: Effect::AgentSession,
-            causal_parent: None, ts_ms, payload }
+            causal_parent: None, ts_ms, payload, repo: None }
     }
 
     #[test]
