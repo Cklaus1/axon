@@ -11,8 +11,9 @@
 ///   signal_trends     { weeks?: int, engineer?: str } → TrendsReport
 ///   signal_goals      { days?: int }                  → EngineerGoalSummary[]
 ///   signal_loops      { turns_threshold?: int, days?: int } → LoopCandidate[]
-///   signal_benchmark  { days?: int }                  → BenchmarkReport
-///   signal_ab_status  {}                              → AbReport
+///   signal_benchmark        { days?: int }                          → BenchmarkReport
+///   signal_ab_status        {}                                      → AbReport
+///   signal_export_training  { min_score?: int, format?: str }      → TrainingExport
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -23,6 +24,7 @@ use axon_ledger::store::Store;
 
 use crate::ab::compute_ab_report;
 use crate::benchmark::compute_benchmark;
+use crate::export::{export_training, ExportFormat, ExportOptions};
 use crate::patterns::{antipatterns, build_pattern_library};
 use crate::rework::find_rework_hotspots;
 use crate::score::score_sessions;
@@ -94,7 +96,7 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
             "tools": [
                 {
                     "name": "signal_score",
-                    "description": "Score AI coding sessions for effectiveness (0–100). Shows goal clarity, turns-per-commit, scope fit, and training tier (PositiveGold / PositiveSilver / Filtered / Negative). Use this to understand whether sessions are high-quality or need improvement.",
+                    "description": "Score AI coding sessions for effectiveness (0–100). Shows goal clarity, turns-per-commit, scope fit, and training tier (positive_gold / positive_silver / filtered / negative). Use this to understand whether sessions are high-quality or need improvement.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {
@@ -173,6 +175,18 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                         "type": "object",
                         "properties": {
                             "days": { "type": "integer", "description": "Only include sessions from the last N days (default: all time)" }
+                        }
+                    }
+                },
+                {
+                    "name": "signal_export_training",
+                    "description": "Export high-signal sessions as training data for Trainloop/LoRA fine-tuning. Returns JSONL records with messages + metadata (signal_score, goal, commits_produced, training_tier). Use to build a training corpus of effective AI coding sessions.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "min_score": { "type": "integer", "description": "Minimum signal score to include (default: 75)" },
+                            "format": { "type": "string", "description": "Output format: 'trainloop' (default) or 'dpo' (chosen/rejected pairs for DPO training)" },
+                            "anonymize": { "type": "boolean", "description": "Anonymize engineer names (default: false)" }
                         }
                     }
                 },
@@ -304,6 +318,22 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             compute_ab_report(ledger_dir, &store)
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
+        "signal_export_training" => {
+            let min_score = args.get("min_score").and_then(|v| v.as_u64()).unwrap_or(75) as u8;
+            let format_str = args.get("format").and_then(|v| v.as_str()).unwrap_or("trainloop");
+            let anonymize = args.get("anonymize").and_then(|v| v.as_bool()).unwrap_or(false);
+            let format = if format_str == "dpo" { ExportFormat::Dpo } else { ExportFormat::Trainloop };
+            let opts = ExportOptions { format, min_score, anonymize, ..ExportOptions::default() };
+            let mut buf = Vec::new();
+            export_training(&store, &opts, &mut buf)
+                .map(|count| {
+                    let records: Vec<serde_json::Value> = String::from_utf8_lossy(&buf)
+                        .lines()
+                        .filter_map(|l| serde_json::from_str(l).ok())
+                        .collect();
+                    json!({ "count": count, "format": format_str, "records": records })
+                })
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -348,17 +378,33 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_nine_tools() {
+    fn test_tools_list_has_ten_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 9);
+        assert_eq!(tools.len(), 10, "expected 10 MCP tools, got {}", tools.len());
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &["signal_score", "signal_weekly", "signal_rework",
                           "signal_patterns", "signal_goals", "signal_loops",
-                          "signal_trends", "signal_benchmark", "signal_ab_status"] {
+                          "signal_trends", "signal_benchmark", "signal_ab_status",
+                          "signal_export_training"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
+    }
+
+    #[test]
+    fn test_export_training_on_empty_store() {
+        let id = Some(json!(1));
+        let dir = tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let _ = store; // ensure store exists
+        let params = json!({ "name": "signal_export_training", "arguments": { "min_score": 50 } });
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("result").is_some(), "should not error: {:?}", r);
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let data: serde_json::Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["count"], 0);
+        assert_eq!(data["format"], "trainloop");
     }
 
     #[test]
