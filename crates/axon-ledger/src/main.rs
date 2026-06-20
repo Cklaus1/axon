@@ -1189,12 +1189,13 @@ fn main() -> Result<()> {
                 let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
                 goal.contains('📋') || goal.contains("buildoncerun") || goal.contains("🟢 Strong")
             };
-            let stale: Vec<(String, String)> = existing.iter()
+            // Include original principal so session-refresh preserves engineer identity
+            let stale: Vec<(String, String, String)> = existing.iter()
                 .filter(|r| r.effect == Effect::AgentSession)
                 .filter(is_stale)
                 .filter_map(|r| {
                     let sid = r.payload.get("session_id").and_then(|v| v.as_str())?;
-                    Some((r.id.clone(), sid.to_string()))
+                    Some((r.id.clone(), sid.to_string(), r.principal.clone()))
                 })
                 .collect();
 
@@ -1221,7 +1222,7 @@ fn main() -> Result<()> {
             let mut not_found = 0usize;
             let gate = axon_ledger::ingest::session::GateOptions::default();
 
-            for (old_id, session_id) in &stale {
+            for (old_id, session_id, original_principal) in &stale {
                 let Some(session_path) = session_files.get(session_id) else {
                     not_found += 1;
                     continue;
@@ -1230,7 +1231,10 @@ fn main() -> Result<()> {
                 let tmp_dir = std::env::temp_dir().join(format!("axon_refresh_{}_{}", &session_id[..8], std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()));
                 let mut tmp_store = Store::open(&tmp_dir)?;
                 match ingest_session(session_path, &mut tmp_store, &gate, None, None) {
-                    Ok(Some(new_record)) => {
+                    Ok(Some(mut new_record)) => {
+                        // Preserve the original record's id and principal (engineer identity must survive refresh)
+                        new_record.id = old_id.clone();
+                        new_record.principal = original_principal.clone();
                         if dry_run {
                             println!("  would refresh {} → turn_count={}", &session_id[..8], new_record.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0));
                         } else {
