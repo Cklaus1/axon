@@ -13,11 +13,14 @@
 ///   ledger_audit      { module: string, since?: string } → AuditResult
 ///   ledger_pre_deploy { range?: string }              → PreDeployResult
 use std::io::{self, BufRead, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
+use crate::ingest::edge::infer_edges;
+use crate::ingest::git::ingest_git;
+use crate::ingest::session::{ingest_session, GateOptions};
 use crate::query::{as_of, history, search, why};
 use crate::store::Store;
 
@@ -177,6 +180,18 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                         "properties": {
                             "range": { "type": "string", "description": "Git commit range, e.g. 'HEAD~8..HEAD' or 'sha1..sha2' (default: HEAD~10..HEAD)" },
                             "repo": { "type": "string", "description": "Path to the git repository (default: current directory)" }
+                        }
+                    }
+                },
+                {
+                    "name": "ledger_refresh",
+                    "description": "Refresh the ledger: ingest new git commits, ingest new Claude Code sessions, then infer causal edges. Call this at the start of a session or after making commits to ensure the ledger has current data. Returns counts of newly ingested records.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "repo": { "type": "string", "description": "Path to the git repository (default: current directory)" },
+                            "session_dir": { "type": "string", "description": "Directory containing Claude Code JSONL session files (default: auto-detected from ~/.claude/projects/)" },
+                            "engineer": { "type": "string", "description": "Engineer email for session attribution (default: git config user.email)" }
                         }
                     }
                 }
@@ -410,6 +425,64 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                 })
             })
         }
+        "ledger_refresh" => {
+            let repo_path = args.get("repo").and_then(|v| v.as_str())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let session_dir_arg = args.get("session_dir").and_then(|v| v.as_str()).map(PathBuf::from);
+            let engineer = args.get("engineer").and_then(|v| v.as_str())
+                .map(String::from)
+                .or_else(|| {
+                    std::process::Command::new("git")
+                        .args(["config", "user.email"])
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                });
+
+            let mut store_mut = match Store::open(ledger_dir) {
+                Ok(s) => s,
+                Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}")),
+            };
+            let commits = ingest_git(&repo_path, &mut store_mut, None, None).unwrap_or(0);
+
+            let resolved_session_dir = session_dir_arg.or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                let cwd_slug = cwd.to_string_lossy().replace('/', "-");
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let candidate = PathBuf::from(home).join(".claude").join("projects").join(&cwd_slug);
+                if candidate.exists() { Some(candidate) } else { None }
+            });
+
+            let sessions = if let Some(sdir) = resolved_session_dir {
+                let gate = GateOptions::default();
+                let eng_ref = engineer.as_deref();
+                let mut ingested = 0usize;
+                if let Ok(rd) = std::fs::read_dir(&sdir) {
+                    for entry in rd.flatten() {
+                        let path = entry.path();
+                        if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                            if ingest_session(&path, &mut store_mut, &gate, None, eng_ref).is_ok() {
+                                ingested += 1;
+                            }
+                        }
+                    }
+                }
+                ingested
+            } else { 0 };
+
+            let edges = infer_edges(&mut store_mut).unwrap_or(0);
+
+            Ok(json!({
+                "ok": true,
+                "commits_ingested": commits,
+                "sessions_ingested": sessions,
+                "edges_inferred": edges,
+                "message": format!("Refreshed: {commits} commits, {sessions} sessions, {edges} edges")
+            }))
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -458,19 +531,37 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_eight_tools() {
+    fn test_tools_list_has_nine_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9, "expected 9 MCP tools, got {}", tools.len());
         let names: Vec<&str> = tools.iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         for expected in &["ledger_why", "ledger_history", "ledger_search",
                           "ledger_as_of", "ledger_stats",
-                          "ledger_weekly", "ledger_audit", "ledger_pre_deploy"] {
+                          "ledger_weekly", "ledger_audit", "ledger_pre_deploy",
+                          "ledger_refresh"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
+    }
+
+    #[test]
+    fn test_refresh_on_empty_dir() {
+        let id = Some(json!(1));
+        let dir = temp_ledger();
+        let params = json!({ "name": "ledger_refresh", "arguments": {
+            "repo": "/tmp",
+            "session_dir": "/tmp/nonexistent_sessions_xyz"
+        }});
+        let r = handle_tools_call(&id, &params, dir.path());
+        assert!(r.get("result").is_some(), "refresh should not error: {:?}", r);
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        let data: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(data["ok"], true);
+        assert_eq!(data["commits_ingested"], 0); // /tmp has no git repo
+        assert_eq!(data["sessions_ingested"], 0); // nonexistent dir
     }
 
     #[test]
