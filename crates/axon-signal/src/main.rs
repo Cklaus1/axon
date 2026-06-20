@@ -422,9 +422,11 @@ fn main() -> Result<()> {
             let scores = score_sessions(&store)?;
 
             // Flag sessions with high turns and low commits — would benefit from a loop
+            // Skip sessions whose goal already references /loop (they already use it)
             let mut candidates: Vec<_> = scores.iter()
                 .filter(|s| s.ts_ms >= cutoff)
                 .filter(|s| s.turns >= turns_threshold)
+                .filter(|s| !s.goal.contains("/loop"))
                 .collect();
             candidates.sort_by(|a, b| b.turns.cmp(&a.turns));
 
@@ -451,10 +453,7 @@ fn main() -> Result<()> {
             } else {
                 println!("Loop opportunity candidates (last {} days, turns > {}):\n", days, turns_threshold);
                 for s in &candidates {
-                    let goal_trunc = if s.goal.chars().count() > 55 {
-                        let end = s.goal.char_indices().nth(55).map(|(i,_)|i).unwrap_or(s.goal.len());
-                        format!("{}…", &s.goal[..end])
-                    } else { s.goal.clone() };
+                    let goal_trunc = display_goal(&s.goal, 55);
                     println!("  {} turns → {} commits  {} turns/commit",
                         s.turns, s.commits_linked,
                         if s.commits_linked > 0 { format!("{:.0}", s.turns_per_commit) } else { "∞".to_string() });

@@ -199,6 +199,36 @@ enum Commands {
         #[command(subcommand)]
         action: RbacAction,
     },
+    /// One-shot ledger refresh: ingest git commits, Claude Code sessions, then infer edges.
+    ///
+    /// Equivalent to running these three commands in sequence:
+    ///   axon-ledger ingest git [--repo <path>]
+    ///   axon-ledger ingest session-dir <session-dir> [--engineer <email>]
+    ///   axon-ledger ingest edges
+    ///
+    /// Designed for the common post-work-session workflow: run this once and
+    /// `axon-ledger pre-deploy` will reflect the new commits and sessions.
+    ///
+    /// Example:
+    ///   axon-ledger refresh
+    ///   axon-ledger refresh --repo /path/to/repo --session-dir ~/.claude/projects/myrepo/
+    Refresh {
+        /// Git repo to ingest (default: current directory)
+        #[arg(long)]
+        repo: Option<PathBuf>,
+        /// Claude Code session directory (default: auto-detected from ~/.claude/projects/)
+        #[arg(long)]
+        session_dir: Option<PathBuf>,
+        /// Engineer email for sessions (default: auto-detected from git config user.email)
+        #[arg(long)]
+        engineer: Option<String>,
+        /// Only ingest commits since this ISO 8601 date (passed to ingest git)
+        #[arg(long)]
+        since: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Start an MCP (Model Context Protocol) server over stdio
     Mcp,
     /// Watch a directory for new Claude Code sessions and auto-ingest them
@@ -1321,6 +1351,76 @@ fn main() -> Result<()> {
                 }
             }
         },
+
+        Commands::Refresh { repo, session_dir, engineer, since, json } => {
+            let repo_path = repo.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+
+            // Step 1: ingest git commits
+            let mut store_mut = Store::open(&dir_path)?;
+            let commits = ingest_git(&repo_path, &mut store_mut, since.as_deref(), None)
+                .unwrap_or_else(|e| { eprintln!("[refresh] git ingest: {e}"); 0 });
+
+            // Step 2: ingest Claude Code sessions
+            // Auto-detect session dir from ~/.claude/projects/ by matching cwd
+            let resolved_session_dir = session_dir.or_else(|| {
+                let cwd = std::env::current_dir().ok()?;
+                let cwd_slug = cwd.to_string_lossy().replace('/', "-");
+                let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+                let candidate = PathBuf::from(home).join(".claude").join("projects").join(&cwd_slug);
+                if candidate.exists() { Some(candidate) } else { None }
+            });
+
+            let resolved_engineer = engineer.or_else(|| {
+                std::process::Command::new("git")
+                    .args(["config", "user.email"])
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+
+            let sessions = if let Some(sdir) = resolved_session_dir {
+                let gate = GateOptions::default();
+                let eng_ref = resolved_engineer.as_deref();
+                let rd = std::fs::read_dir(&sdir)
+                    .map_err(|e| anyhow::anyhow!("Cannot read session dir: {e}"))?;
+                let mut ingested = 0usize;
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                        match ingest_session(&path, &mut store_mut, &gate, None, eng_ref) {
+                            Ok(Some(_)) => ingested += 1,
+                            Ok(None) => {} // already known
+                            Err(e) => eprintln!("[refresh] session {}: {e}", path.display()),
+                        }
+                    }
+                }
+                ingested
+            } else {
+                0
+            };
+
+            // Step 3: infer causal edges
+            let edges = infer_edges(&mut store_mut).unwrap_or_else(|e| { eprintln!("[refresh] edges: {e}"); 0 });
+
+            if json {
+                println!("{}", serde_json::json!({
+                    "ok": true,
+                    "commits_ingested": commits,
+                    "sessions_ingested": sessions,
+                    "edges_inferred": edges,
+                }));
+            } else {
+                println!("Refresh complete:");
+                println!("  Git commits ingested : {commits}");
+                println!("  Sessions ingested    : {sessions}");
+                println!("  Edges inferred       : {edges}");
+                if commits == 0 && sessions == 0 {
+                    println!("\n  Ledger is up to date.");
+                }
+            }
+        }
 
         Commands::Mcp => {
             run_mcp_server(&dir_path)?;
