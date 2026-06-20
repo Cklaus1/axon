@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 use axon_ledger::store::Store;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
 use axon_signal::mcp::run_mcp_server;
+use axon_signal::trends::{compute_trends, render_trends};
 use axon_signal::patterns::{antipatterns, build_pattern_library};
 use axon_signal::rework::find_rework_hotspots;
 use axon_signal::score::score_sessions;
@@ -116,6 +117,18 @@ enum Commands {
         /// Output file (default: stdout)
         #[arg(long)]
         out: Option<PathBuf>,
+    },
+    /// Per-engineer week-over-week score trends — improving, stable, or declining
+    Trends {
+        /// Number of weeks to include (default: 8)
+        #[arg(long, default_value = "8")]
+        weeks: usize,
+        /// Filter to a specific engineer (email prefix)
+        #[arg(long)]
+        engineer: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
     },
     /// Start an MCP (Model Context Protocol) server over stdio — exposes all signal analytics as tools
     Mcp,
@@ -412,6 +425,18 @@ fn main() -> Result<()> {
             };
 
             eprintln!("Exported {} training record(s) (min score: {}, format: {}).", n, min_score, format);
+        }
+
+        Commands::Trends { weeks, engineer, json } => {
+            let mut report = compute_trends(&store, weeks)?;
+            if let Some(ref eng) = engineer {
+                report.engineers.retain(|e| e.engineer.contains(eng.as_str()));
+            }
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render_trends(&report));
+            }
         }
 
         Commands::Mcp => {

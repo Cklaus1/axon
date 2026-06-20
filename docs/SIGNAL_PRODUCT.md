@@ -254,7 +254,7 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 - [x] `signal goals` — goal quality per engineer
 - [x] Slack webhook integration for weekly report
 - [x] GitHub Action: post session score on PR
-- [x] MCP server — all 6 analytics tools exposed (signal_score/weekly/rework/patterns/goals/loops)
+- [x] MCP server — all 7 analytics tools exposed (signal_score/weekly/rework/patterns/goals/loops/trends)
 - [x] `score --ingest` — write scores back into ledger as MetricOutcome records
 
 ### v0.3 (Axon integration)
@@ -264,7 +264,7 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 
 ### v1.0
 - [ ] Web dashboard (session timeline, score trends, heatmaps)
-- [ ] Per-engineer trend charts (score week-over-week)
+- [x] Per-engineer trend charts (score week-over-week) — `signal trends [--weeks N] [--engineer prefix]`; MCP `signal_trends`; direction + delta + ASCII bar chart + tailored recommendation
 - [ ] Team benchmark (how does your team compare to signal percentiles?)
 - [ ] Recommendation engine with A/B testing (did following last week's recommendation improve scores?)
 

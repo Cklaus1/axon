@@ -8,6 +8,7 @@
 ///   signal_weekly   { days?: int }                  → WeeklyReport
 ///   signal_rework   { days?: int }                  → ReworkHotspot[]
 ///   signal_patterns { min_score?: int }             → PatternLibrary
+///   signal_trends   { weeks?: int, engineer?: str } → TrendsReport
 ///   signal_goals    { days?: int }                  → EngineerGoalSummary[]
 ///   signal_loops    { turns_threshold?: int, days?: int } → LoopCandidate[]
 use std::io::{self, BufRead, Write};
@@ -21,6 +22,7 @@ use axon_ledger::store::Store;
 use crate::patterns::{antipatterns, build_pattern_library};
 use crate::rework::find_rework_hotspots;
 use crate::score::score_sessions;
+use crate::trends::compute_trends;
 use crate::weekly::generate_weekly;
 
 pub fn run_mcp_server(ledger_dir: &Path) -> Result<()> {
@@ -148,6 +150,17 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                             "days": { "type": "integer", "description": "Window in days (default: 30)" }
                         }
                     }
+                },
+                {
+                    "name": "signal_trends",
+                    "description": "Per-engineer week-over-week score trends: who is improving, who is declining, and why. Includes per-week averages, delta from first to last week, and a tailored recommendation for each engineer.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "weeks": { "type": "integer", "description": "Number of weeks to include (default: 8)" },
+                            "engineer": { "type": "string", "description": "Filter to a specific engineer email prefix (optional)" }
+                        }
+                    }
                 }
             ]
         }
@@ -250,6 +263,16 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                 json!(candidates)
             })
         }
+        "signal_trends" => {
+            let weeks = args.get("weeks").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
+            let engineer = args.get("engineer").and_then(|v| v.as_str()).map(String::from);
+            compute_trends(&store, weeks).map(|mut r| {
+                if let Some(ref eng) = engineer {
+                    r.engineers.retain(|e| e.engineer.contains(eng.as_str()));
+                }
+                serde_json::to_value(r).unwrap_or(json!({}))
+            })
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -294,14 +317,14 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_six_tools() {
+    fn test_tools_list_has_seven_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 6);
+        assert_eq!(tools.len(), 7);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &["signal_score", "signal_weekly", "signal_rework",
-                          "signal_patterns", "signal_goals", "signal_loops"] {
+                          "signal_patterns", "signal_goals", "signal_loops", "signal_trends"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
     }
