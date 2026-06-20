@@ -1,0 +1,229 @@
+use std::collections::HashSet;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+
+use anyhow::{Context, Result};
+use serde_json::json;
+
+use crate::hash::record_id;
+use crate::model::{Effect, LedgerRecord};
+use crate::store::Store;
+
+/// Parse ISO 8601 timestamp string into unix milliseconds.
+/// Handles formats: `YYYY-MM-DDTHH:MM:SS.sssZ`, `YYYY-MM-DDTHH:MM:SSZ`,
+/// and `YYYY-MM-DDTHH:MM:SS+HH:MM` (offset ignored, treated as UTC).
+pub fn parse_iso_to_ms(s: &str) -> Option<u64> {
+    // Strip trailing Z or offset like +00:00
+    let s = s.trim();
+    let dt_part = if let Some(pos) = s.find('Z') {
+        &s[..pos]
+    } else if let Some(pos) = s.rfind('+') {
+        if pos > 10 {
+            &s[..pos]
+        } else {
+            s
+        }
+    } else if let Some(pos) = s.rfind('-') {
+        // Check if it's the date separator or offset separator
+        if pos > 10 {
+            &s[..pos]
+        } else {
+            s
+        }
+    } else {
+        s
+    };
+
+    // dt_part is now like YYYY-MM-DDTHH:MM:SS or YYYY-MM-DDTHH:MM:SS.sss
+    let (date_part, time_part) = dt_part.split_once('T')?;
+
+    let date_parts: Vec<&str> = date_part.split('-').collect();
+    if date_parts.len() < 3 {
+        return None;
+    }
+    let year: i64 = date_parts[0].parse().ok()?;
+    let month: i64 = date_parts[1].parse().ok()?;
+    let day: i64 = date_parts[2].parse().ok()?;
+
+    // Split milliseconds if present
+    let (hms_part, ms_part) = if let Some(dot_pos) = time_part.find('.') {
+        let ms_str = &time_part[dot_pos + 1..];
+        let ms: u64 = ms_str.chars().take(3).collect::<String>().parse().ok()?;
+        (&time_part[..dot_pos], ms)
+    } else {
+        (time_part, 0u64)
+    };
+
+    let time_parts: Vec<&str> = hms_part.split(':').collect();
+    if time_parts.len() < 3 {
+        return None;
+    }
+    let hour: i64 = time_parts[0].parse().ok()?;
+    let minute: i64 = time_parts[1].parse().ok()?;
+    let second: i64 = time_parts[2].parse().ok()?;
+
+    // Compute days since Unix epoch (1970-01-01)
+    let days = days_since_epoch(year, month, day)?;
+    let total_secs = days * 86400 + hour * 3600 + minute * 60 + second;
+    if total_secs < 0 {
+        return None;
+    }
+    let total_ms = (total_secs as u64) * 1000 + ms_part;
+    Some(total_ms)
+}
+
+fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
+    // Use the Julian Day Number formula then subtract epoch Julian Day
+    // Simplified: compute from 1970-01-01
+    let y = if month <= 2 { year - 1 } else { year };
+    let m = if month <= 2 { month + 12 } else { month };
+    let a = y / 100;
+    let b = 2 - a + a / 4;
+    let jd = ((365.25 * (y + 4716) as f64) as i64)
+        + ((30.6001 * (m + 1) as f64) as i64)
+        + day
+        + b
+        - 1524;
+    // Julian Day of 1970-01-01 is 2440588
+    Some(jd - 2440588)
+}
+
+pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<LedgerRecord>> {
+    let session_id = session_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(String::from)
+        .context("Could not determine session id from file path")?;
+
+    // Dedup: check if session already in store
+    let existing = store.find_by_effect(&Effect::AgentSession)?;
+    for r in &existing {
+        if r.payload
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s == session_id)
+            .unwrap_or(false)
+        {
+            return Ok(None);
+        }
+    }
+
+    let file = File::open(session_path)
+        .with_context(|| format!("Cannot open session file: {}", session_path.display()))?;
+    let reader = BufReader::new(file);
+
+    let mut turn_count: u64 = 0;
+    let mut first_ts: Option<String> = None;
+    let mut last_ts: Option<String> = None;
+    let mut files_touched: HashSet<String> = HashSet::new();
+
+    for line in reader.lines() {
+        let line = line?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let event: serde_json::Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        // Capture timestamps
+        if let Some(ts) = event.get("timestamp").and_then(|v| v.as_str()) {
+            if first_ts.is_none() {
+                first_ts = Some(ts.to_string());
+            }
+            last_ts = Some(ts.to_string());
+        }
+
+        // Count turns from message events
+        if event.get("type").and_then(|v| v.as_str()) == Some("message") {
+            turn_count += 1;
+        }
+
+        // Extract files from tool_use content blocks
+        if let Some(content) = event
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_array())
+        {
+            for block in content {
+                if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                    let tool_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                    let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+
+                    match tool_name {
+                        "Edit" | "Write" => {
+                            if let Some(fp) = input.get("file_path").and_then(|v| v.as_str()) {
+                                files_touched.insert(fp.to_string());
+                            }
+                        }
+                        "Bash" => {
+                            if let Some(cmd) = input.get("command").and_then(|v| v.as_str()) {
+                                extract_file_paths_from_command(cmd, &mut files_touched);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let start_ts = first_ts.clone().unwrap_or_default();
+    let end_ts = last_ts.unwrap_or_default();
+    let ts_ms = first_ts
+        .as_deref()
+        .and_then(parse_iso_to_ms)
+        .unwrap_or(0);
+
+    let mut files_list: Vec<String> = files_touched.into_iter().collect();
+    files_list.sort();
+
+    let summary = format!(
+        "Session {} with {} turns, {} files touched",
+        session_id,
+        turn_count,
+        files_list.len()
+    );
+
+    let payload = json!({
+        "session_id": session_id,
+        "file_path": session_path.to_string_lossy(),
+        "start_ts": start_ts,
+        "end_ts": end_ts,
+        "files_touched": files_list,
+        "turn_count": turn_count,
+        "summary": summary,
+    });
+
+    let id = record_id(
+        &format!("agent:{}", session_id),
+        &Effect::AgentSession,
+        ts_ms,
+        &payload,
+    );
+
+    let record = LedgerRecord {
+        id,
+        principal: format!("agent:{}", session_id),
+        effect: Effect::AgentSession,
+        causal_parent: None,
+        ts_ms,
+        payload,
+    };
+
+    store.append(&record)?;
+    Ok(Some(record))
+}
+
+fn extract_file_paths_from_command(cmd: &str, files: &mut HashSet<String>) {
+    let extensions = [".rs", ".ax", ".toml", ".md", ".json"];
+    for token in cmd.split_whitespace() {
+        let token = token.trim_matches(|c| c == '"' || c == '\'');
+        if extensions.iter().any(|ext| token.ends_with(ext)) {
+            files.insert(token.to_string());
+        }
+    }
+}
