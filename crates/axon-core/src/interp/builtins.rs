@@ -1804,6 +1804,94 @@ impl<'p> Interp<'p> {
                 ));
             }
 
+            "chr" => {
+                want(1)?;
+                let n = as_int(&args[0])?;
+                match u32::try_from(n).ok().and_then(char::from_u32) {
+                    Some(c) => ok!(Value::Str(c.to_string())),
+                    None => return panic(format!("chr: {n} is not a valid Unicode code point")),
+                }
+            }
+
+            // ── JSON builtins ────────────────────────────────────────────────────
+            "json_parse" => {
+                want(1)?;
+                let s = as_str(&args[0])?.to_string();
+                match serde_json::from_str::<serde_json::Value>(&s) {
+                    Ok(_) => ok!(Value::Ok(Box::new(Value::Str(s)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            "json_stringify" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                let mut out = String::with_capacity(s.len() + 2);
+                out.push('"');
+                for c in s.chars() {
+                    match c {
+                        '"' => out.push_str("\\\""),
+                        '\\' => out.push_str("\\\\"),
+                        '\n' => out.push_str("\\n"),
+                        '\r' => out.push_str("\\r"),
+                        '\t' => out.push_str("\\t"),
+                        c if (c as u32) < 0x20 => {
+                            out.push_str(&format!("\\u{:04x}", c as u32));
+                        }
+                        c => out.push(c),
+                    }
+                }
+                out.push('"');
+                ok!(Value::Str(out))
+            }
+            "json_get_str" => {
+                want(2)?;
+                let json = as_str(&args[0])?;
+                let key = as_str(&args[1])?;
+                match serde_json::from_str::<serde_json::Value>(json) {
+                    Ok(serde_json::Value::Object(map)) => match map.get(key) {
+                        Some(serde_json::Value::String(v)) => {
+                            ok!(Value::Ok(Box::new(Value::Str(v.clone()))))
+                        }
+                        Some(other) => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "key {key:?} is not a string (found {})",
+                            other.is_null().then_some("null").unwrap_or("other type")
+                        ))))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "key {key:?} not found"
+                        ))))),
+                    },
+                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(
+                        "json_get_str: input is not a JSON object".into()
+                    )))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            "json_get_i64" => {
+                want(2)?;
+                let json = as_str(&args[0])?;
+                let key = as_str(&args[1])?;
+                match serde_json::from_str::<serde_json::Value>(json) {
+                    Ok(serde_json::Value::Object(map)) => match map.get(key) {
+                        Some(serde_json::Value::Number(n)) => match n.as_i64() {
+                            Some(v) => ok!(Value::Ok(Box::new(Value::Int(v)))),
+                            None => ok!(Value::Err(Box::new(Value::Str(format!(
+                                "key {key:?} is a number but not an integer"
+                            ))))),
+                        },
+                        Some(_) => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "key {key:?} is not a number"
+                        ))))),
+                        None => ok!(Value::Err(Box::new(Value::Str(format!(
+                            "key {key:?} not found"
+                        ))))),
+                    },
+                    Ok(_) => ok!(Value::Err(Box::new(Value::Str(
+                        "json_get_i64: input is not a JSON object".into()
+                    )))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+
             // ── Assertions ──────────────────────────────────────────────────────
             "assert" => {
                 want(1)?;

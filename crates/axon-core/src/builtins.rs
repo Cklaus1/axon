@@ -625,6 +625,37 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "str",
         doc: "Return a string containing `s` repeated `n` times (empty string if n <= 0).",
     },
+    BuiltinFn {
+        name: "chr",
+        params: &[("n", "i64")],
+        ret: "str",
+        doc: "Return a one-character string for the given Unicode code point. Panics if n is not a valid code point (0–0x10FFFF).",
+    },
+    // ── JSON builtins ─────────────────────────────────────────────────────────
+    BuiltinFn {
+        name: "json_parse",
+        params: &[("s", "str")],
+        ret: "Result<str, str>",
+        doc: "Validate `s` as JSON. Returns Ok(s) if valid, Err(reason) if not. Pure; no network call.",
+    },
+    BuiltinFn {
+        name: "json_stringify",
+        params: &[("s", "str")],
+        ret: "str",
+        doc: "JSON-encode a string value: wraps in double quotes and escapes special characters. For numbers/booleans use to_str first.",
+    },
+    BuiltinFn {
+        name: "json_get_str",
+        params: &[("json", "str"), ("key", "str")],
+        ret: "Result<str, str>",
+        doc: "Extract a string field from a JSON object string. Returns Ok(value) or Err(reason).",
+    },
+    BuiltinFn {
+        name: "json_get_i64",
+        params: &[("json", "str"), ("key", "str")],
+        ret: "Result<i64, str>",
+        doc: "Extract an integer field from a JSON object string. Returns Ok(n) or Err(reason).",
+    },
     // ── Phase 6: System builtins ──────────────────────────────────────────────
     BuiltinFn {
         name: "env_var",
@@ -1679,13 +1710,16 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
     match name {
         // AI / model inference — reaches the network for a model call.
         "ai_complete"
-        | "ai_extract_i64" | "ai_extract_f64" | "ai_extract_str" | "ai_extract_bool"
-        | "ai_extract_uncertain_i64" | "ai_extract_uncertain_f64"
+        | "ai_extract_i64"
+        | "ai_extract_f64"
+        | "ai_extract_str"
+        | "ai_extract_bool"
+        | "ai_extract_uncertain_i64"
+        | "ai_extract_uncertain_f64"
         | "ai_cost_spent" => &["AI", "Net"],
 
         // I/O — console, files, process spawning, environment, exit.
-        "println" | "print" | "eprintln" | "eprint"
-        | "read_line" | "read_file" | "write_file"
+        "println" | "print" | "eprintln" | "eprint" | "read_line" | "read_file" | "write_file"
         | "env_var" | "exit" => &["IO"],
         "exec" => &["IO"],
 
@@ -1707,11 +1741,20 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // goal_* accessors (incl. goal_count) touch process-global optimizer state
         // (modeled as IO). Must stay in lockstep with is_impure_builtin (see
         // builtin_effect_row_agrees_with_impurity).
-        "goal_run" | "goal_run_constrained" | "goal_run_categorical"
-        | "goal_run_random" | "goal_run_multistart" | "goal_continue"
+        "goal_run"
+        | "goal_run_constrained"
+        | "goal_run_categorical"
+        | "goal_run_random"
+        | "goal_run_multistart"
+        | "goal_continue"
         | "goal_eval" => &["AI", "Net", "IO"],
-        "goal_best_input" | "goal_best_inputs" | "goal_best_inputs_f64"
-        | "goal_best_score" | "goal_history" | "goal_clear" | "goal_count" => &["IO"],
+        "goal_best_input"
+        | "goal_best_inputs"
+        | "goal_best_inputs_f64"
+        | "goal_best_score"
+        | "goal_history"
+        | "goal_clear"
+        | "goal_count" => &["IO"],
 
         // Channels / concurrency.
         "chan_new" | "chan_send" | "chan_recv" => &["Chan"],
@@ -1832,10 +1875,7 @@ mod tests {
         assert!(!DEFERRED_ATTRS.is_empty());
         let mut seen = std::collections::HashSet::new();
         for attr in DEFERRED_ATTRS {
-            assert!(
-                seen.insert(*attr),
-                "duplicate deferred attr: `{attr}`"
-            );
+            assert!(seen.insert(*attr), "duplicate deferred attr: `{attr}`");
         }
     }
 
@@ -1845,9 +1885,15 @@ mod tests {
         // `verify` is intentionally absent — it is now a checked attribute handled
         // by `crate::verify::check_verify`, not a deferred one.
         for expected in &["adaptive", "goal", "agent", "ai"] {
-            assert!(set.contains(expected), "expected deferred attr `{expected}` not found");
+            assert!(
+                set.contains(expected),
+                "expected deferred attr `{expected}` not found"
+            );
         }
-        assert!(!set.contains("verify"), "`verify` should no longer be deferred");
+        assert!(
+            !set.contains("verify"),
+            "`verify` should no longer be deferred"
+        );
     }
 
     #[test]
@@ -1863,7 +1909,8 @@ mod tests {
                 !row.is_empty(),
                 impure,
                 "`{}`: effect row {:?} disagrees with is_impure_builtin={impure}",
-                b.name, row
+                b.name,
+                row
             );
         }
         // Spot-check the catalog's specific row assignments (spec §3).

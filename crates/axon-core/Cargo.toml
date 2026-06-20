@@ -38,7 +38,7 @@ default = ["codegen"]
 # build free of `which` — which fails to compile for wasm32-unknown-unknown (the
 # browser target), the precondition for the in-browser interpreter (R7c).
 codegen = ["dep:inkwell", "dep:which"]
-serde-json = ["dep:serde", "dep:serde_json"]
+serde-json = ["dep:serde"]
 # Live LLM calls for the interpreter's ASI builtins (ai_complete / ai_extract_*).
 # Pulls in axon-ai (reqwest). Opt-in so the base interpreter stays dependency-light:
 #   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
@@ -53,7 +53,7 @@ smt = ["dep:z3"]
 [dependencies]
 logos = { workspace = true }
 serde = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true }
 clap = { workspace = true }
 thiserror = { workspace = true }
 inkwell = { version = "0.4", features = ["llvm17-0"], optional = true }
