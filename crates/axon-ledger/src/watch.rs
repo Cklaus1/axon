@@ -23,6 +23,7 @@ pub fn watch_sessions(
     interval: Duration,
     gate: &GateOptions,
     verbose: bool,
+    engineer: Option<&str>,
 ) -> Result<()> {
     // Track files we've already attempted this run (suppresses re-logging skips)
     let mut seen: HashSet<PathBuf> = HashSet::new();
@@ -63,7 +64,7 @@ pub fn watch_sessions(
             }
             seen.insert(path.clone());
 
-            match ingest_session(&path, &mut store, gate, None) {
+            match ingest_session(&path, &mut store, gate, None, engineer) {
                 Ok(Some(r)) => {
                     if verbose {
                         let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");

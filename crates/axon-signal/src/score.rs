@@ -197,7 +197,10 @@ pub fn score_sessions(store: &Store) -> anyhow::Result<Vec<SessionScore>> {
             .and_then(|v| v.as_array())
             .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
             .unwrap_or_default();
-        let engineer = s.principal.trim_start_matches("session:").to_string();
+        let engineer = s.principal
+            .trim_start_matches("session:")
+            .trim_start_matches("agent:")
+            .to_string();
 
         let commits_linked = session_commits.get(&session_id).map(|v| v.len()).unwrap_or(0);
         let goal_clarity = score_goal_clarity(&goal);

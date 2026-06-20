@@ -190,6 +190,9 @@ enum Commands {
         /// Explicit path to brief-gate.ax
         #[arg(long)]
         gate_script: Option<PathBuf>,
+        /// Engineer email/name to attribute watched sessions to (falls back to git config user.email)
+        #[arg(long)]
+        engineer: Option<String>,
     },
 }
 
@@ -223,6 +226,9 @@ enum IngestSource {
         /// Tag this session with a repo name (e.g. "api", "frontend") — enables multi-repo filtering
         #[arg(long)]
         repo_name: Option<String>,
+        /// Engineer email/name to attribute these sessions to (e.g. alice@example.com)
+        #[arg(long)]
+        engineer: Option<String>,
     },
     /// Ingest all session JSONL files in a directory
     SessionDir {
@@ -240,6 +246,10 @@ enum IngestSource {
         /// Tag all sessions with a repo name (e.g. "api", "frontend") — enables multi-repo filtering
         #[arg(long)]
         repo_name: Option<String>,
+        /// Engineer email/name to attribute these sessions to (e.g. alice@example.com).
+        /// If omitted, falls back to git config user.email in the current directory.
+        #[arg(long)]
+        engineer: Option<String>,
     },
     /// Infer agent->commit edges from existing sessions and commits
     Edges,
@@ -357,15 +367,25 @@ fn main() -> Result<()> {
                     .unwrap_or_default();
                 println!("Ingested {} new git commits{}{}.", n, filter_note, repo_note);
             }
-            IngestSource::Session { path, gate, axon_bin, gate_script, repo_name } => {
+            IngestSource::Session { path, gate, axon_bin, gate_script, repo_name, engineer } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
-                match ingest_session(&path, &mut store, &gate_opts, repo_name.as_deref())? {
+                match ingest_session(&path, &mut store, &gate_opts, repo_name.as_deref(), engineer.as_deref())? {
                     Some(r) => println!("Ingested session: {}", r.id),
                     None => println!("Session already in ledger, skipped."),
                 }
             }
-            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script, repo_name } => {
+            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script, repo_name, engineer } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin: axon_bin.clone(), gate_script: gate_script.clone() };
+                // If --engineer not given, fall back to git config user.email
+                let resolved_engineer = engineer.or_else(|| {
+                    std::process::Command::new("git")
+                        .args(["config", "user.email"])
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                });
                 let mut total = 0usize;
                 let mut skipped = 0usize;
                 let mut rejected = 0usize;
@@ -380,7 +400,7 @@ fn main() -> Result<()> {
                 for (i, path) in paths.iter().enumerate() {
                     eprint!("\r  [{}/{}] {}", i + 1, n_files,
                         path.file_name().unwrap_or_default().to_string_lossy());
-                    match ingest_session(path, &mut store, &gate_opts, repo_name.as_deref()) {
+                    match ingest_session(path, &mut store, &gate_opts, repo_name.as_deref(), resolved_engineer.as_deref()) {
                         Ok(Some(_)) => total += 1,
                         Ok(None) => skipped += 1,
                         Err(e) if e.to_string().starts_with("brief gate:") => {
@@ -390,8 +410,11 @@ fn main() -> Result<()> {
                     }
                 }
                 if n_files > 0 { eprintln!(); }
-                println!("Ingested {} new sessions ({} already known, {} rejected by gate).",
-                    total, skipped, rejected);
+                let eng_note = resolved_engineer.as_deref()
+                    .map(|e| format!(" [engineer={}]", e))
+                    .unwrap_or_default();
+                println!("Ingested {} new sessions ({} already known, {} rejected by gate){}.",
+                    total, skipped, rejected, eng_note);
             }
             IngestSource::Edges => {
                 let n = infer_edges(&mut store)?;
@@ -968,7 +991,7 @@ fn main() -> Result<()> {
                     "sessions": matching_sessions.iter().map(|s| serde_json::json!({
                         "session_id": s.payload.get("session_id").and_then(|v| v.as_str()),
                         "goal": s.payload.get("goal").and_then(|v| v.as_str()),
-                        "engineer": s.principal.trim_start_matches("session:"),
+                        "engineer": s.principal.trim_start_matches("session:").trim_start_matches("agent:"),
                         "ts_ms": s.ts_ms,
                         "files_touched": s.payload.get("files_touched"),
                     })).collect::<Vec<_>>(),
@@ -993,7 +1016,7 @@ fn main() -> Result<()> {
                         let end = goal.char_indices().nth(60).map(|(i,_)|i).unwrap_or(goal.len());
                         format!("{}…", &goal[..end])
                     } else { goal.to_string() };
-                    let eng = s.principal.trim_start_matches("session:");
+                    let eng = s.principal.trim_start_matches("session:").trim_start_matches("agent:");
                     println!("  [session] {eng}  {trunc}");
                 }
                 for c in &matching_commits {
@@ -1149,10 +1172,19 @@ fn main() -> Result<()> {
             run_mcp_server(&dir_path)?;
         }
 
-        Commands::Watch { dir, interval, gate, axon_bin, gate_script } => {
+        Commands::Watch { dir, interval, gate, axon_bin, gate_script, engineer } => {
             let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
+            let resolved_engineer = engineer.or_else(|| {
+                std::process::Command::new("git")
+                    .args(["config", "user.email"])
+                    .output()
+                    .ok()
+                    .and_then(|o| String::from_utf8(o.stdout).ok())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
             println!("[ledger-watch] polling {} every {}s  (Ctrl-C to stop)", dir.display(), interval);
-            watch_sessions(&dir, &dir_path, Duration::from_secs(interval), &gate_opts, true)?;
+            watch_sessions(&dir, &dir_path, Duration::from_secs(interval), &gate_opts, true, resolved_engineer.as_deref())?;
         }
     }
 

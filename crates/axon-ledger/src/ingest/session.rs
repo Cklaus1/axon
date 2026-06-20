@@ -101,11 +101,48 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
     Some(jd - 2440588)
 }
 
+/// Strip markdown formatting from a raw first-user-message to get a clean goal summary.
+///
+/// Handles the common pattern of `/loop` goals like:
+///   `# Goal: fix the auth bug\n\nMore context here...`
+/// → `fix the auth bug`
+///
+/// And plain messages like:
+///   `analyze this project, whats the status`
+/// → unchanged
+fn clean_goal_text(raw: &str) -> String {
+    // Walk lines, skip blanks and heading lines (# / ##), strip heading markers
+    for line in raw.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Strip leading # markers (e.g. "# Goal: ..." → "Goal: ..." → strip "Goal: " prefix too)
+        let without_hashes = line.trim_start_matches('#').trim();
+        if without_hashes.is_empty() {
+            continue;
+        }
+        // Common pattern: "Goal: <text>" or "Goal:\n<text>" — strip the label
+        let text = if let Some(rest) = without_hashes.strip_prefix("Goal:") {
+            rest.trim()
+        } else {
+            without_hashes
+        };
+        if text.is_empty() {
+            continue;
+        }
+        // Take up to 120 chars of this first content line
+        return text.chars().take(120).collect();
+    }
+    raw.chars().take(120).collect()
+}
+
 pub fn ingest_session(
     session_path: &Path,
     store: &mut Store,
     gate: &GateOptions,
     repo_name: Option<&str>,
+    engineer: Option<&str>,
 ) -> Result<Option<LedgerRecord>> {
     let session_id = session_path
         .file_stem()
@@ -214,10 +251,12 @@ pub fn ingest_session(
 
     // Filter out Claude Code system-injected caveat headers that start with '<'
     // (e.g. "<local-command-caveat>...") — these are not real user goals.
-    let goal = goal_text
+    let raw_goal = goal_text
         .as_deref()
         .filter(|g| !g.starts_with('<'))
         .unwrap_or("(no user goal found in session)");
+    let goal_owned = clean_goal_text(raw_goal);
+    let goal = goal_owned.as_str();
 
     // ── Brief gate ────────────────────────────────────────────────────────────
     if gate.enabled {
@@ -261,9 +300,13 @@ pub fn ingest_session(
         &payload,
     );
 
+    let principal = engineer
+        .map(String::from)
+        .unwrap_or_else(|| format!("agent:{}", session_id));
+
     let record = LedgerRecord {
         id,
-        principal: format!("agent:{}", session_id),
+        principal,
         effect: Effect::AgentSession,
         causal_parent: None,
         ts_ms,
@@ -346,4 +389,63 @@ fn extract_first_user_text(event: &serde_json::Value) -> Option<String> {
     }
     // Cap at 200 chars for use as goal text
     Some(trimmed.chars().take(200).collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_clean_goal_markdown_header() {
+        assert_eq!(
+            clean_goal_text("# Goal: fix the auth bug\n\nMore context here"),
+            "fix the auth bug"
+        );
+    }
+
+    #[test]
+    fn test_clean_goal_plain_text() {
+        assert_eq!(
+            clean_goal_text("analyze this project, whats the status"),
+            "analyze this project, whats the status"
+        );
+    }
+
+    #[test]
+    fn test_clean_goal_double_hash() {
+        assert_eq!(
+            clean_goal_text("## complete the remaining Axon roadmap requirements\n\nSome more text"),
+            "complete the remaining Axon roadmap requirements"
+        );
+    }
+
+    #[test]
+    fn test_clean_goal_hash_no_label() {
+        assert_eq!(
+            clean_goal_text("# migrate payments to Stripe\n\n- step 1"),
+            "migrate payments to Stripe"
+        );
+    }
+
+    #[test]
+    fn test_clean_goal_empty_header_then_content() {
+        assert_eq!(
+            clean_goal_text("# \n\nactual goal text here"),
+            "actual goal text here"
+        );
+    }
+
+    #[test]
+    fn test_parse_iso_to_ms_basic() {
+        // 1970-01-01T00:00:00.000Z should be 0ms
+        assert_eq!(parse_iso_to_ms("1970-01-01T00:00:00.000Z"), Some(0));
+    }
+
+    #[test]
+    fn test_parse_iso_to_ms_with_offset() {
+        let ts = "2026-06-20T15:58:18.700Z";
+        let ms = parse_iso_to_ms(ts);
+        assert!(ms.is_some());
+        assert!(ms.unwrap() > 0);
+    }
 }
