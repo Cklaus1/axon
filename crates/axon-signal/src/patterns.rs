@@ -72,22 +72,27 @@ pub fn build_pattern_library(
 
     let mut patterns: Vec<GoalPattern> = buckets
         .into_iter()
-        .filter(|(_, sessions)| sessions.len() >= min_sessions)
-        .map(|(pattern, sessions)| {
+        .filter_map(|(pattern, mut sessions)| {
+            // Deduplicate by exact goal text BEFORE applying the min_sessions threshold.
+            // Loop iterations all share one goal string and should count as one data point.
+            sessions.sort_by(|a, b| b.score.cmp(&a.score));
+            let mut seen = std::collections::HashSet::new();
+            sessions.retain(|s| seen.insert(s.goal.trim().to_lowercase()));
+            if sessions.len() < min_sessions { return None; }
+
             let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
             let avg_commits = sessions.iter().map(|s| s.commits_linked as f64).sum::<f64>() / sessions.len() as f64;
-            // Pick the highest-scoring session as the example
             let example = sessions.iter()
                 .max_by_key(|s| s.score)
                 .map(|s| s.goal.clone())
                 .unwrap_or_default();
-            GoalPattern {
+            Some(GoalPattern {
                 pattern,
                 example,
                 avg_score,
                 session_count: sessions.len(),
                 avg_commits,
-            }
+            })
         })
         .collect();
 
@@ -107,15 +112,20 @@ pub fn antipatterns(scores: &[SessionScore], min_sessions: usize) -> Vec<GoalPat
 
     let mut patterns: Vec<GoalPattern> = buckets
         .into_iter()
-        .filter(|(_, sessions)| sessions.len() >= min_sessions)
-        .map(|(pattern, sessions)| {
+        .filter_map(|(pattern, mut sessions)| {
+            // Deduplicate before threshold — same logic as build_pattern_library.
+            sessions.sort_by(|a, b| a.score.cmp(&b.score));
+            let mut seen = std::collections::HashSet::new();
+            sessions.retain(|s| seen.insert(s.goal.trim().to_lowercase()));
+            if sessions.len() < min_sessions { return None; }
+
             let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
             let avg_commits = sessions.iter().map(|s| s.commits_linked as f64).sum::<f64>() / sessions.len() as f64;
             let example = sessions.iter()
                 .min_by_key(|s| s.score)
                 .map(|s| s.goal.clone())
                 .unwrap_or_default();
-            GoalPattern { pattern, example, avg_score, session_count: sessions.len(), avg_commits }
+            Some(GoalPattern { pattern, example, avg_score, session_count: sessions.len(), avg_commits })
         })
         .collect();
 
