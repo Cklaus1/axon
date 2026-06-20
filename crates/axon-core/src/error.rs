@@ -157,6 +157,8 @@ pub const W1311: &str = "W1311"; // @[ai(policy(budget: N))] value is not a non-
 pub const W1210: &str = "W1210"; // use resolved by AXON_PATH with no lockfile entry (dev mode, unaudited)
                                  // R10 self-improving warnings
 pub const W1410: &str = "W1410"; // pass claims `faster` but the perf gate (G4) was not run
+                                 // R18 signal quality warnings
+pub const W2001: &str = "W2001"; // @[goal] string is vague (no file ref, no measurable criterion, or < 5 words)
                                  // R3 AI-primitive warning
 pub const W1310: &str = "W1310"; // live AI call by a fn with no @[ai(policy)] (un-metered/un-pinned)
 
@@ -315,8 +317,8 @@ mod tests {
             E0906, E0907, E0908, E0910, E1001, E1002, E1003, E1004, E1101, E1102, E1201, E1202,
             E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302, E1306, E1310,
             E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412,
-            E1413, E1500, E1503, E1504, E1505, E1900, W0001, W0002, W0003, W0004, W0005, W0006, W0701,
-            W1103, W1210, W1310, W1311, W1410, I0001,
+            E1413, E1500, E1503, E1504, E1505, E1900, W0001, W0002, W0003, W0004, W0005, W0006,
+            W0701, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

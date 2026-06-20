@@ -258,8 +258,8 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 - [x] `score --ingest` — write scores back into ledger as MetricOutcome records
 
 ### v0.3 (Axon integration)
-- [ ] `@[goal(intent, metric, scope)]` structured annotation
-- [ ] W2001 lint for vague goals
+- [ ] `@[goal(intent, metric, scope)]` structured annotation (parser extension, deferred)
+- [x] W2001 lint for vague goals — fires when `@[goal("...")]` has no file ref, no metric, or < 5 words
 - [x] `signal export-training` — Trainloop/LoRA export (see TRAINLOOP.md)
 
 ### v1.0

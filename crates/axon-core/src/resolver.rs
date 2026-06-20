@@ -110,7 +110,7 @@ impl Diagnostic {
 const E0001: &str = "E0001"; // undefined name
 const E0002: &str = "E0002"; // duplicate name
 const E0003: &str = "E0003"; // module not found
-// E0004 (item not exported) is Phase 2 — declared but not yet used.
+                             // E0004 (item not exported) is Phase 2 — declared but not yet used.
 const W0003: &str = "W0003"; // user fn shadows a builtin (builtin takes precedence)
 const W0006: &str = "W0006"; // unused local binding (`let x = …` never read)
 #[allow(dead_code)]
@@ -257,7 +257,9 @@ impl SymbolTable {
     /// until those callers land).
     #[allow(dead_code)]
     pub fn all_visible_names(&self) -> impl Iterator<Item = &str> {
-        self.scopes.iter().flat_map(|s| s.keys().map(String::as_str))
+        self.scopes
+            .iter()
+            .flat_map(|s| s.keys().map(String::as_str))
     }
 }
 
@@ -496,10 +498,8 @@ impl<'a> Resolver<'a> {
                         // Use the qualified name as the key so variant names don't
                         // shadow each other across enums; the resolver checks the
                         // qualified "EnumName::VariantName" form in patterns.
-                        self.table.define(
-                            format!("{}::{}", e.name, variant.name),
-                            variant_sym,
-                        );
+                        self.table
+                            .define(format!("{}::{}", e.name, variant.name), variant_sym);
                     }
                 }
                 Item::ModDecl(m) => {
@@ -512,10 +512,7 @@ impl<'a> Resolver<'a> {
                             self.emit_error(
                                 Diagnostic::error(
                                     E0002,
-                                    format!(
-                                        "module `{}` is declared more than once",
-                                        m.name
-                                    ),
+                                    format!("module `{}` is declared more than once", m.name),
                                 )
                                 .with_file(self.file),
                             );
@@ -578,7 +575,8 @@ impl<'a> Resolver<'a> {
         // Bring generic type parameters into scope as type symbols so that
         // type names like `T` inside the body don't produce E0001.
         for gp in &f.generic_params {
-            self.table.define(gp.clone(), Symbol::Type { name: gp.clone() });
+            self.table
+                .define(gp.clone(), Symbol::Type { name: gp.clone() });
         }
 
         // Bring value parameters into scope.
@@ -634,7 +632,9 @@ impl<'a> Resolver<'a> {
                 format!("unused variable `{name}` — its value is never read"),
             )
             .with_file(self.file)
-            .with_fix(format!("remove the binding, or prefix it `_{name}` to silence this"));
+            .with_fix(format!(
+                "remove the binding, or prefix it `_{name}` to silence this"
+            ));
             if !span.is_dummy() {
                 d = d.with_span(span);
             }
@@ -648,11 +648,8 @@ impl<'a> Resolver<'a> {
             match self.table.lookup(root) {
                 None => {
                     let suggestion = self.table.suggest(root);
-                    let mut d = Diagnostic::error(
-                        E0003,
-                        format!("module `{root}` not found"),
-                    )
-                    .with_file(self.file);
+                    let mut d = Diagnostic::error(E0003, format!("module `{root}` not found"))
+                        .with_file(self.file);
                     if let Some(s) = suggestion {
                         d = d.with_fix(format!("did you mean `{s}`?"));
                     }
@@ -660,11 +657,8 @@ impl<'a> Resolver<'a> {
                 }
                 Some(sym) if !matches!(sym, Symbol::Mod { .. }) => {
                     self.emit_error(
-                        Diagnostic::error(
-                            E0003,
-                            format!("`{root}` is not a module"),
-                        )
-                        .with_file(self.file),
+                        Diagnostic::error(E0003, format!("`{root}` is not a module"))
+                            .with_file(self.file),
                     );
                 }
                 Some(_) => {
@@ -693,13 +687,43 @@ impl<'a> Resolver<'a> {
                     )
                     .with_file(self.file),
                 );
+
+                // W2001: @[goal("...")] string is vague — missing file ref,
+                // measurable criterion, or too short (< 5 words).
+                if attr.name == "goal" {
+                    if let Some(goal_text) = attr.args.first() {
+                        let text = goal_text.trim();
+                        let words: Vec<&str> = text.split_whitespace().collect();
+                        let lower = text.to_lowercase();
+                        let has_file_ref = words.iter().any(|w| w.contains('.') || w.contains('/'));
+                        let has_metric = ["<", ">", "%", "ms", "passes", "fails", "below",
+                            "above", "error rate", "latency", "test"].iter().any(|m| lower.contains(m));
+                        let has_verb = ["fix", "add", "refactor", "migrate", "extract", "remove",
+                            "update", "replace", "implement", "delete", "rename"].iter()
+                            .any(|v| lower.starts_with(v) || lower.contains(&format!(" {v} ")));
+                        let is_vague = words.len() < 5 || (!has_file_ref && !has_metric && !has_verb);
+
+                        if is_vague {
+                            self.emit_warning(
+                                Diagnostic::warning(
+                                    crate::error::W2001,
+                                    format!(
+                                        "`@[goal(\"{}\")]` goal is vague — add a file reference \
+                                         (e.g. auth/jwt.rs), a measurable criterion (e.g. p99_ms < 50), \
+                                         or a specific verb (fix / add / refactor). \
+                                         Vague goals score low in axon-signal.",
+                                        if text.len() > 40 { &text[..40] } else { text }
+                                    ),
+                                )
+                                .with_file(self.file),
+                            );
+                        }
+                    }
+                }
             } else if !KNOWN_ATTRS.contains(&attr.name.as_str()) {
                 self.emit_warning(
-                    Diagnostic::warning(
-                        "W0001",
-                        format!("unknown attribute `@[{}]`", attr.name),
-                    )
-                    .with_file(self.file),
+                    Diagnostic::warning("W0001", format!("unknown attribute `@[{}]`", attr.name))
+                        .with_file(self.file),
                 );
             }
             // `test`, `target`, etc. — silently accepted.
@@ -737,7 +761,9 @@ impl<'a> Resolver<'a> {
                         // handler-special binding available only inside arm bodies.
                         self.table.define(
                             "resume".to_string(),
-                            Symbol::Local { name: "resume".to_string() },
+                            Symbol::Local {
+                                name: "resume".to_string(),
+                            },
                         );
                         self.resolve_pattern(&arm.binding);
                         self.resolve_expr(&arm.body);
@@ -891,10 +917,16 @@ impl<'a> Resolver<'a> {
             }
 
             // ── Lambda ───────────────────────────────────────────────────
-            Expr::Lambda { params, body, captures: _ } => {
+            Expr::Lambda {
+                params,
+                body,
+                captures: _,
+            } => {
                 self.table.push_scope();
                 for p in params {
-                    let sym = Symbol::Local { name: p.name.clone() };
+                    let sym = Symbol::Local {
+                        name: p.name.clone(),
+                    };
                     self.table.define(p.name.clone(), sym);
                 }
                 self.resolve_expr(body);
@@ -942,7 +974,11 @@ impl<'a> Resolver<'a> {
                 }
                 self.table.pop_scope();
             }
-            Expr::WhileLet { pattern, expr, body } => {
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
                 self.resolve_expr(expr);
                 self.table.push_scope();
                 self.resolve_pattern(pattern);
@@ -951,7 +987,13 @@ impl<'a> Resolver<'a> {
                 }
                 self.table.pop_scope();
             }
-            Expr::For { var, start, end, body, .. } => {
+            Expr::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
                 self.resolve_expr(start);
                 self.resolve_expr(end);
                 self.table.push_scope();
@@ -972,9 +1014,7 @@ impl<'a> Resolver<'a> {
                         let suggestion = self.table.suggest(name);
                         let mut d = Diagnostic::error(
                             E0001,
-                            format!(
-                                "cannot assign to `{name}` — no such variable is in scope"
-                            ),
+                            format!("cannot assign to `{name}` — no such variable is in scope"),
                         )
                         .with_file(self.file)
                         .with_span(self.current_span);
@@ -1008,8 +1048,11 @@ impl<'a> Resolver<'a> {
                             )
                             .with_file(self.file)
                             .with_span(self.current_span)
-                            .with_fix("introduce a fresh `let` binding with a different name, \
-                                       or rename the local you intended to assign to".to_string()),
+                            .with_fix(
+                                "introduce a fresh `let` binding with a different name, \
+                                       or rename the local you intended to assign to"
+                                    .to_string(),
+                            ),
                         );
                     }
                     Some(_) => {} // Symbol::Local — valid assignment target
@@ -1021,7 +1064,6 @@ impl<'a> Resolver<'a> {
                 self.resolve_expr(place);
                 self.resolve_expr(value);
             }
-
 
             // ── FmtStr: resolve each interpolated sub-expression ─────────────
             Expr::FmtStr { parts } => {
@@ -1090,9 +1132,7 @@ impl<'a> Resolver<'a> {
                 let sym = Symbol::Local { name: name.clone() };
                 self.table.define(name.clone(), sym);
             }
-            Pattern::Some(inner)
-            | Pattern::Ok(inner)
-            | Pattern::Err(inner) => {
+            Pattern::Some(inner) | Pattern::Ok(inner) | Pattern::Err(inner) => {
                 self.resolve_pattern(inner);
             }
             Pattern::Struct { name, fields } => {
@@ -1103,9 +1143,7 @@ impl<'a> Resolver<'a> {
                     let suggestion = self.table.suggest(name);
                     let mut d = Diagnostic::error(
                         E0001,
-                        format!(
-                            "cannot find type or enum variant `{name}` in this scope"
-                        ),
+                        format!("cannot find type or enum variant `{name}` in this scope"),
                     )
                     .with_file(self.file)
                     .with_span(self.current_span);
@@ -1168,14 +1206,12 @@ pub fn fill_captures(program: &mut Program) {
     for item in &mut program.items {
         match item {
             Item::FnDef(f) => {
-                let outer: HashSet<String> =
-                    f.params.iter().map(|p| p.name.clone()).collect();
+                let outer: HashSet<String> = f.params.iter().map(|p| p.name.clone()).collect();
                 fill_captures_expr(&mut f.body, &outer);
             }
             Item::ImplBlock(blk) => {
                 for m in &mut blk.methods {
-                    let outer: HashSet<String> =
-                        m.params.iter().map(|p| p.name.clone()).collect();
+                    let outer: HashSet<String> = m.params.iter().map(|p| p.name.clone()).collect();
                     fill_captures_expr(&mut m.body, &outer);
                 }
             }
@@ -1187,7 +1223,11 @@ pub fn fill_captures(program: &mut Program) {
 fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>) {
     use std::collections::HashSet;
     match expr {
-        Expr::Lambda { params, body, captures } => {
+        Expr::Lambda {
+            params,
+            body,
+            captures,
+        } => {
             // The lambda's own params are NOT captures.
             let lambda_params: HashSet<String> = params.iter().map(|p| p.name.clone()).collect();
 
@@ -1278,7 +1318,9 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
                 fill_captures_expr(&mut stmt.expr, outer);
             }
         }
-        Expr::For { start, end, body, .. } => {
+        Expr::For {
+            start, end, body, ..
+        } => {
             fill_captures_expr(start, outer);
             fill_captures_expr(end, outer);
             for stmt in body {
@@ -1318,8 +1360,12 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
             fill_captures_expr(body, outer);
         }
         // Terminal nodes — no sub-expressions.
-        Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Return(None)
-        | Expr::Break | Expr::Continue => {}
+        Expr::Ident(_)
+        | Expr::Literal(_)
+        | Expr::None
+        | Expr::Return(None)
+        | Expr::Break
+        | Expr::Continue => {}
     }
 }
 
@@ -1348,9 +1394,7 @@ fn collect_free_vars(
                 }
             }
         }
-        Expr::Let { value, .. } | Expr::Own { value, .. } => {
-            collect_free_vars(value, bound, free)
-        }
+        Expr::Let { value, .. } | Expr::Own { value, .. } => collect_free_vars(value, bound, free),
         Expr::RefBind { value, .. } => collect_free_vars(value, bound, free),
         Expr::BinOp { left, right, .. } => {
             collect_free_vars(left, bound, free);
@@ -1408,7 +1452,13 @@ fn collect_free_vars(
                 collect_free_vars(&stmt.expr, bound, free);
             }
         }
-        Expr::For { start, end, body, var, .. } => {
+        Expr::For {
+            start,
+            end,
+            body,
+            var,
+            ..
+        } => {
             collect_free_vars(start, bound, free);
             collect_free_vars(end, bound, free);
             let mut for_bound = bound.clone();
@@ -1452,8 +1502,7 @@ fn collect_free_vars(
             }
             collect_free_vars(body, bound, free);
         }
-        Expr::Literal(_) | Expr::None | Expr::Return(None)
-        | Expr::Break | Expr::Continue => {}
+        Expr::Literal(_) | Expr::None | Expr::Return(None) | Expr::Break | Expr::Continue => {}
     }
 }
 
@@ -1481,7 +1530,9 @@ fn collect_binds_and_uses(
             // attached by the enclosing Stmt walk (see the block case), so a
             // top-level Let reached directly records a dummy span (still warns).
             collect_binds_and_uses(value, bound, bound_count, used);
-            bound.entry(name.clone()).or_insert_with(crate::span::Span::dummy);
+            bound
+                .entry(name.clone())
+                .or_insert_with(crate::span::Span::dummy);
             *bound_count.entry(name.clone()).or_insert(0) += 1;
         }
         E::Ident(name) => {
@@ -1501,8 +1552,7 @@ fn collect_binds_and_uses(
             for s in stmts {
                 // For a `let`-family binding, record the STMT's span (the Let
                 // expr itself carries none) so the warning points at the source.
-                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } =
-                    &s.expr
+                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } = &s.expr
                 {
                     if !s.span.is_dummy() {
                         bound.insert(name.clone(), s.span);
@@ -1524,12 +1574,13 @@ fn collect_binds_and_uses(
                 collect_binds_and_uses(&s.expr, bound, bound_count, used);
             }
         }
-        E::For { start, end, body, .. } => {
+        E::For {
+            start, end, body, ..
+        } => {
             collect_binds_and_uses(start, bound, bound_count, used);
             collect_binds_and_uses(end, bound, bound_count, used);
             for s in body {
-                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } =
-                    &s.expr
+                if let E::Let { name, .. } | E::Own { name, .. } | E::RefBind { name, .. } = &s.expr
                 {
                     if !s.span.is_dummy() {
                         bound.insert(name.clone(), s.span);
@@ -1908,7 +1959,8 @@ mod tests {
     fn let_binding_available_after_definition() {
         // `let x = 1; x` — `x` is used after binding.
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None,
+            Stmt::simple(Expr::Let {
+                ty: None,
                 name: "x".to_string(),
                 value: Box::new(lit_int(1)),
             }),
@@ -1928,7 +1980,8 @@ mod tests {
         // `x; let x = 1` — `x` is used *before* the binding.
         let body = Expr::Block(vec![
             Stmt::simple(ident_expr("x")),
-            Stmt::simple(Expr::Let { ty: None,
+            Stmt::simple(Expr::Let {
+                ty: None,
                 name: "x".to_string(),
                 value: Box::new(lit_int(1)),
             }),
@@ -1946,7 +1999,8 @@ mod tests {
     #[test]
     fn let_rhs_does_not_see_own_binding() {
         // `let x = x` — the RHS `x` should be undefined if nothing else defines it.
-        let body = Expr::Let { ty: None,
+        let body = Expr::Let {
+            ty: None,
             name: "x".to_string(),
             value: Box::new(ident_expr("x")),
         };
@@ -1966,7 +2020,11 @@ mod tests {
     fn params_are_in_scope_in_body() {
         // fn add(a: i64, b: i64) -> i64 { a }
         let body = ident_expr("a");
-        let prog = program(vec![fn_with_params("add", vec![("a", "i64"), ("b", "i64")], body)]);
+        let prog = program(vec![fn_with_params(
+            "add",
+            vec![("a", "i64"), ("b", "i64")],
+            body,
+        )]);
         let result = resolve_program(&prog, "test.ax");
         let e0001s = errors_with_code(&result, E0001);
         assert!(
@@ -2036,10 +2094,18 @@ mod tests {
 
     #[test]
     fn unknown_attr_produces_w0001() {
-        let prog = program(vec![fn_with_attrs("f", vec!["totally_unknown"], Expr::Block(vec![]))]);
+        let prog = program(vec![fn_with_attrs(
+            "f",
+            vec!["totally_unknown"],
+            Expr::Block(vec![]),
+        )]);
         let result = resolve_program(&prog, "test.ax");
         let w0001s = warnings_with_code(&result, "W0001");
-        assert!(!w0001s.is_empty(), "expected W0001 for unknown attribute, got: {:?}", result.warnings);
+        assert!(
+            !w0001s.is_empty(),
+            "expected W0001 for unknown attribute, got: {:?}",
+            result.warnings
+        );
         // The message must use Axon's `@[...]` attribute syntax, not Rust's `#[...]`.
         assert!(
             w0001s[0].contains("@[totally_unknown]") && !w0001s[0].contains("#["),
@@ -2050,10 +2116,18 @@ mod tests {
 
     #[test]
     fn known_attr_test_produces_no_w0001() {
-        let prog = program(vec![fn_with_attrs("my_test", vec!["test"], Expr::Block(vec![]))]);
+        let prog = program(vec![fn_with_attrs(
+            "my_test",
+            vec!["test"],
+            Expr::Block(vec![]),
+        )]);
         let result = resolve_program(&prog, "test.ax");
         let w0001s = warnings_with_code(&result, "W0001");
-        assert!(w0001s.is_empty(), "#[test] should not produce W0001, got: {:?}", w0001s);
+        assert!(
+            w0001s.is_empty(),
+            "#[test] should not produce W0001, got: {:?}",
+            w0001s
+        );
     }
 
     // ── W0002: variable shadowing ─────────────────────────────────────────────
@@ -2074,16 +2148,36 @@ mod tests {
             captures: vec![],
         };
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(1)) }),
-            Stmt::simple(Expr::Let { ty: None, name: "g".into(), value: Box::new(lambda) }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "x".into(),
+                value: Box::new(lit_int(1)),
+            }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "g".into(),
+                value: Box::new(lambda),
+            }),
         ]);
         let mut prog = program(vec![simple_fn("f", body)]);
         fill_captures(&mut prog);
 
         // Find the lambda in the AST and check captures.
-        let fn_body = if let Item::FnDef(f) = &prog.items[0] { &f.body } else { panic!() };
-        let g_stmt = if let Expr::Block(stmts) = fn_body { &stmts[1].expr } else { panic!() };
-        let lambda = if let Expr::Let { value, .. } = g_stmt { value.as_ref() } else { panic!() };
+        let fn_body = if let Item::FnDef(f) = &prog.items[0] {
+            &f.body
+        } else {
+            panic!()
+        };
+        let g_stmt = if let Expr::Block(stmts) = fn_body {
+            &stmts[1].expr
+        } else {
+            panic!()
+        };
+        let lambda = if let Expr::Let { value, .. } = g_stmt {
+            value.as_ref()
+        } else {
+            panic!()
+        };
         if let Expr::Lambda { captures, .. } = lambda {
             let names: Vec<&str> = captures.iter().map(|(n, _)| n.as_str()).collect();
             assert_eq!(names, ["x"], "expected capture [x], got {:?}", names);
@@ -2104,17 +2198,35 @@ mod tests {
             }),
             captures: vec![],
         };
-        let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None, name: "g".into(), value: Box::new(lambda) }),
-        ]);
+        let body = Expr::Block(vec![Stmt::simple(Expr::Let {
+            ty: None,
+            name: "g".into(),
+            value: Box::new(lambda),
+        })]);
         let mut prog = program(vec![simple_fn("f", body)]);
         fill_captures(&mut prog);
 
-        let fn_body = if let Item::FnDef(f) = &prog.items[0] { &f.body } else { panic!() };
-        let g_stmt = if let Expr::Block(stmts) = fn_body { &stmts[0].expr } else { panic!() };
-        let lambda = if let Expr::Let { value, .. } = g_stmt { value.as_ref() } else { panic!() };
+        let fn_body = if let Item::FnDef(f) = &prog.items[0] {
+            &f.body
+        } else {
+            panic!()
+        };
+        let g_stmt = if let Expr::Block(stmts) = fn_body {
+            &stmts[0].expr
+        } else {
+            panic!()
+        };
+        let lambda = if let Expr::Let { value, .. } = g_stmt {
+            value.as_ref()
+        } else {
+            panic!()
+        };
         if let Expr::Lambda { captures, .. } = lambda {
-            assert!(captures.is_empty(), "own params should not be captured, got {:?}", captures);
+            assert!(
+                captures.is_empty(),
+                "own params should not be captured, got {:?}",
+                captures
+            );
         } else {
             panic!("expected Lambda");
         }
@@ -2123,13 +2235,25 @@ mod tests {
     #[test]
     fn shadowing_let_produces_w0002() {
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(1)) }),
-            Stmt::simple(Expr::Let { ty: None, name: "x".into(), value: Box::new(lit_int(2)) }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "x".into(),
+                value: Box::new(lit_int(1)),
+            }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "x".into(),
+                value: Box::new(lit_int(2)),
+            }),
         ]);
         let prog = program(vec![simple_fn("f", body)]);
         let result = resolve_program(&prog, "test.ax");
         let w0002s = warnings_with_code(&result, "W0002");
-        assert!(!w0002s.is_empty(), "expected W0002 for variable shadowing, got: {:?}", result.warnings);
+        assert!(
+            !w0002s.is_empty(),
+            "expected W0002 for variable shadowing, got: {:?}",
+            result.warnings
+        );
     }
 
     #[test]
@@ -2138,14 +2262,34 @@ mod tests {
         // ignore pattern. Treating it as a shadow warning floods every
         // demo that fire-and-forgets a result.
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None, name: "_".into(), value: Box::new(lit_int(1)) }),
-            Stmt::simple(Expr::Let { ty: None, name: "_".into(), value: Box::new(lit_int(2)) }),
-            Stmt::simple(Expr::Let { ty: None, name: "_unused".into(), value: Box::new(lit_int(3)) }),
-            Stmt::simple(Expr::Let { ty: None, name: "_unused".into(), value: Box::new(lit_int(4)) }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "_".into(),
+                value: Box::new(lit_int(1)),
+            }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "_".into(),
+                value: Box::new(lit_int(2)),
+            }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "_unused".into(),
+                value: Box::new(lit_int(3)),
+            }),
+            Stmt::simple(Expr::Let {
+                ty: None,
+                name: "_unused".into(),
+                value: Box::new(lit_int(4)),
+            }),
         ]);
         let prog = program(vec![simple_fn("f", body)]);
         let result = resolve_program(&prog, "test.ax");
         let w0002s = warnings_with_code(&result, "W0002");
-        assert!(w0002s.is_empty(), "underscore-prefixed names must not shadow-warn, got: {:?}", result.warnings);
+        assert!(
+            w0002s.is_empty(),
+            "underscore-prefixed names must not shadow-warn, got: {:?}",
+            result.warnings
+        );
     }
 }
