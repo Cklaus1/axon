@@ -1,0 +1,27 @@
+[package]
+name = "axon-signal"
+version = "0.1.0"
+edition = "2021"
+description = "AI coding effectiveness analytics for engineering teams — score sessions, surface patterns, generate training data"
+license = "MIT"
+repository = "https://github.com/cklaus/axon"
+keywords = ["ai", "productivity", "analytics", "claude", "fine-tuning"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "axon-signal"
+path = "src/main.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+axon-ledger = { path = "../axon-ledger" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tempfile = "3"
