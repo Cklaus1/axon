@@ -137,11 +137,11 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 - [x] session-dir progress display
 
 ### v0.2 (next)
-- [ ] `history <file>` — AI session lineage per file
-- [ ] `pre-deploy <range>` — unexplained commit flagging
-- [ ] `weekly` report — goals, not commit counts
+- [x] `history <file>` — AI session lineage per file
+- [x] `pre-deploy <range>` — unexplained commit flagging
+- [x] `weekly` report — goals, not commit counts
 - [ ] GitHub Action — PR enrichment with session goal comment
-- [ ] `audit --module <path>` — compliance query
+- [x] `audit --module <path>` — compliance query
 
 ### v0.3 (signal integration)
 - [ ] Per-session effectiveness score (feeds axon-signal)

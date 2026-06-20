@@ -100,6 +100,30 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Weekly digest — sessions, commits, top goals, and rework hotspots for a time window
+    Weekly {
+        /// Start of window (ISO 8601 or relative: "7 days ago"; default: 7 days ago)
+        #[arg(long)]
+        from: Option<String>,
+        /// End of window (ISO 8601 or relative; default: now)
+        #[arg(long)]
+        to: Option<String>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compliance query — list all sessions and commits that touched files under a module path
+    Audit {
+        /// Module path prefix, e.g. "payments/" or "src/auth"
+        #[arg(long)]
+        module: String,
+        /// Only include records after this date (ISO 8601 or "90 days ago")
+        #[arg(long)]
+        since: Option<String>,
+        /// Output as JSON (machine-readable)
+        #[arg(long)]
+        json: bool,
+    },
     /// Start an MCP (Model Context Protocol) server over stdio
     Mcp,
     /// Watch a directory for new Claude Code sessions and auto-ingest them
@@ -630,6 +654,187 @@ fn main() -> Result<()> {
 
             if fail_on_unexplained && !unexplained.is_empty() {
                 std::process::exit(1);
+            }
+        }
+
+        Commands::Weekly { from, to, json } => {
+            use axon_ledger::model::Effect;
+            use axon_ledger::ingest::session::parse_iso_to_ms;
+
+            // Parse window bounds (default: last 7 days)
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+            let week_ms = 7 * 24 * 60 * 60 * 1000u64;
+
+            let from_ms = from.as_deref()
+                .and_then(parse_iso_to_ms)
+                .unwrap_or(now_ms.saturating_sub(week_ms));
+            let to_ms = to.as_deref()
+                .and_then(parse_iso_to_ms)
+                .unwrap_or(now_ms);
+
+            let all = store.all()?;
+            let in_window: Vec<_> = all.iter().filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms).collect();
+
+            let sessions: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentSession).collect();
+            let commits: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::GitCommit).collect();
+            let edges: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentEdge).collect();
+
+            // Goals from sessions, sorted by ts_ms
+            let mut goals: Vec<(u64, String)> = sessions.iter().map(|s| {
+                let goal = s.payload.get("goal").and_then(|v| v.as_str())
+                    .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)").to_string();
+                (s.ts_ms, goal)
+            }).collect();
+            goals.sort_by_key(|(ts, _)| *ts);
+
+            // Files touched (for rework detection — files with 2+ sessions)
+            let mut file_session_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            for s in &sessions {
+                if let Some(files) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
+                    for f in files {
+                        if let Some(fname) = f.as_str() {
+                            *file_session_count.entry(fname.split('/').last().unwrap_or(fname).to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+            let mut rework_files: Vec<(String, usize)> = file_session_count.into_iter()
+                .filter(|(_, c)| *c >= 2).collect();
+            rework_files.sort_by(|a, b| b.1.cmp(&a.1));
+
+            let explained_shas: std::collections::HashSet<String> = edges.iter()
+                .filter_map(|e| e.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .collect();
+            let explained_count = commits.iter().filter(|c| {
+                let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
+                explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha))
+            }).count();
+
+            if json {
+                let out = serde_json::json!({
+                    "from_ms": from_ms, "to_ms": to_ms,
+                    "sessions": sessions.len(),
+                    "commits": commits.len(),
+                    "explained_commits": explained_count,
+                    "coverage_pct": if commits.is_empty() { 100u64 } else { (explained_count * 100 / commits.len()) as u64 },
+                    "goals": goals.iter().map(|(ts, g)| serde_json::json!({"ts_ms": ts, "goal": g})).collect::<Vec<_>>(),
+                    "rework_hotspots": rework_files.iter().take(5).map(|(f, c)| serde_json::json!({"file": f, "session_count": c})).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Weekly digest  ({} sessions, {} commits, {}% explained)\n",
+                    sessions.len(), commits.len(),
+                    if commits.is_empty() { 100usize } else { explained_count * 100 / commits.len() });
+                println!("Goals shipped:");
+                for (_, goal) in &goals {
+                    let trunc = if goal.chars().count() > 72 {
+                        let end = goal.char_indices().nth(72).map(|(i,_)|i).unwrap_or(goal.len());
+                        format!("{}…", &goal[..end])
+                    } else { goal.clone() };
+                    println!("  • {trunc}");
+                }
+                if !rework_files.is_empty() {
+                    println!("\nRework hotspots (multiple sessions, same file):");
+                    for (file, count) in rework_files.iter().take(5) {
+                        println!("  ⚠ {file}  ({count} sessions)");
+                    }
+                }
+            }
+        }
+
+        Commands::Audit { module, since, json } => {
+            use axon_ledger::model::Effect;
+            use axon_ledger::ingest::session::parse_iso_to_ms;
+
+            let since_ms = since.as_deref().and_then(parse_iso_to_ms).unwrap_or(0);
+            let module_lower = module.to_lowercase();
+
+            let all = store.all()?;
+            let in_window: Vec<_> = all.iter().filter(|r| r.ts_ms >= since_ms).collect();
+
+            // Sessions that touched files under the module path
+            let matching_sessions: Vec<_> = in_window.iter()
+                .filter(|r| r.effect == Effect::AgentSession)
+                .filter(|r| {
+                    r.payload.get("files_touched")
+                        .and_then(|v| v.as_array())
+                        .map(|files| files.iter().any(|f| {
+                            f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)
+                        }))
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // Commits that touched files under the module path
+            let matching_commits: Vec<_> = in_window.iter()
+                .filter(|r| r.effect == Effect::GitCommit)
+                .filter(|r| {
+                    r.payload.get("files_changed")
+                        .and_then(|v| v.as_array())
+                        .map(|files| files.iter().any(|f| {
+                            f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)
+                        }))
+                        .unwrap_or(false)
+                })
+                .collect();
+
+            // Edges linking matching sessions to matching commits
+            let matching_edges: Vec<_> = in_window.iter()
+                .filter(|r| r.effect == Effect::AgentEdge)
+                .filter(|r| {
+                    let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                    matching_sessions.iter().any(|s| {
+                        s.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("") == sid
+                    })
+                })
+                .collect();
+
+            if json {
+                let out = serde_json::json!({
+                    "module": module,
+                    "since_ms": since_ms,
+                    "sessions": matching_sessions.iter().map(|s| serde_json::json!({
+                        "session_id": s.payload.get("session_id").and_then(|v| v.as_str()),
+                        "goal": s.payload.get("goal").and_then(|v| v.as_str()),
+                        "engineer": s.principal.trim_start_matches("session:"),
+                        "ts_ms": s.ts_ms,
+                        "files_touched": s.payload.get("files_touched"),
+                    })).collect::<Vec<_>>(),
+                    "commits": matching_commits.iter().map(|c| serde_json::json!({
+                        "sha": c.payload.get("sha").and_then(|v| v.as_str()),
+                        "message": c.payload.get("message").and_then(|v| v.as_str()),
+                        "author": c.payload.get("author").and_then(|v| v.as_str()),
+                        "ts_ms": c.ts_ms,
+                    })).collect::<Vec<_>>(),
+                    "edges": matching_edges.len(),
+                    "total_sessions": matching_sessions.len(),
+                    "total_commits": matching_commits.len(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Audit: module={module}  sessions={} commits={}\n",
+                    matching_sessions.len(), matching_commits.len());
+                for s in &matching_sessions {
+                    let goal = s.payload.get("goal").and_then(|v| v.as_str())
+                        .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)");
+                    let trunc = if goal.chars().count() > 60 {
+                        let end = goal.char_indices().nth(60).map(|(i,_)|i).unwrap_or(goal.len());
+                        format!("{}…", &goal[..end])
+                    } else { goal.to_string() };
+                    let eng = s.principal.trim_start_matches("session:");
+                    println!("  [session] {eng}  {trunc}");
+                }
+                for c in &matching_commits {
+                    let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                    let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                    let short_sha = &sha[..sha.len().min(10)];
+                    let msg_trunc = if msg.chars().count() > 55 {
+                        let end = msg.char_indices().nth(55).map(|(i,_)|i).unwrap_or(msg.len());
+                        format!("{}…", &msg[..end])
+                    } else { msg.to_string() };
+                    println!("  [commit]  {short_sha}  {msg_trunc}");
+                }
             }
         }
 
