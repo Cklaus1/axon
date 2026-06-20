@@ -107,6 +107,9 @@ enum IngestSource {
         /// Path to the git repository
         #[arg(long)]
         repo: PathBuf,
+        /// Only ingest commits after this date/time (ISO 8601 or relative like "30 days ago")
+        #[arg(long)]
+        since: Option<String>,
     },
     /// Ingest a single Claude Code session JSONL file
     Session {
@@ -186,9 +189,12 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Ingest { source } => match source {
-            IngestSource::Git { repo } => {
-                let n = ingest_git(&repo, &mut store)?;
-                println!("Ingested {} new git commits.", n);
+            IngestSource::Git { repo, since } => {
+                let n = ingest_git(&repo, &mut store, since.as_deref())?;
+                let filter_note = since.as_deref()
+                    .map(|s| format!(" (after {})", s))
+                    .unwrap_or_default();
+                println!("Ingested {} new git commits{}.", n, filter_note);
             }
             IngestSource::Session { path, gate, axon_bin, gate_script } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
@@ -323,11 +329,24 @@ fn main() -> Result<()> {
         }
 
         Commands::Stats { json } => {
+            use axon_ledger::model::Effect;
             let all = store.all()?;
-            let git_count = all.iter().filter(|r| r.effect == axon_ledger::model::Effect::GitCommit).count();
-            let session_count = all.iter().filter(|r| r.effect == axon_ledger::model::Effect::AgentSession).count();
-            let edge_count = all.iter().filter(|r| r.effect == axon_ledger::model::Effect::AgentEdge).count();
-            let outcome_count = all.iter().filter(|r| r.effect == axon_ledger::model::Effect::MetricOutcome).count();
+            let git_count = all.iter().filter(|r| r.effect == Effect::GitCommit).count();
+            let session_count = all.iter().filter(|r| r.effect == Effect::AgentSession).count();
+            let edge_count = all.iter().filter(|r| r.effect == Effect::AgentEdge).count();
+            let outcome_count = all.iter().filter(|r| r.effect == Effect::MetricOutcome).count();
+
+            // Coverage: unique commit SHAs that appear in at least one edge
+            let linked_commit_shas: std::collections::HashSet<String> = all.iter()
+                .filter(|r| r.effect == Effect::AgentEdge)
+                .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .collect();
+            let linked_commits = linked_commit_shas.len();
+            let coverage_pct = if git_count > 0 {
+                (linked_commits as f64 / git_count as f64 * 100.0).round() as u64
+            } else {
+                0
+            };
 
             if json {
                 let stats = serde_json::json!({
@@ -336,6 +355,8 @@ fn main() -> Result<()> {
                     "agent_sessions": session_count,
                     "agent_edges": edge_count,
                     "metric_outcomes": outcome_count,
+                    "linked_commits": linked_commits,
+                    "coverage_pct": coverage_pct,
                 });
                 println!("{}", serde_json::to_string_pretty(&stats)?);
             } else {
@@ -345,6 +366,7 @@ fn main() -> Result<()> {
                 println!("  Agent sessions:   {}", session_count);
                 println!("  Agent edges:      {}", edge_count);
                 println!("  Metric outcomes:  {}", outcome_count);
+                println!("  Coverage:         {}/{} commits linked ({}%)", linked_commits, git_count, coverage_pct);
             }
         }
 

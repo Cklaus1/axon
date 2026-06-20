@@ -8,16 +8,23 @@ use crate::hash::record_id;
 use crate::model::{Effect, LedgerRecord};
 use crate::store::Store;
 
-pub fn ingest_git(repo_path: &Path, store: &mut Store) -> Result<usize> {
-    let output = Command::new("git")
-        .arg("-C")
+/// Ingest git commits into the ledger.
+///
+/// `since`: if provided, passed directly to `git log --after=<since>`.
+/// git accepts ISO 8601 dates ("2026-01-01"), relative times ("30 days ago"),
+/// or Unix epoch prefixed with "@".
+pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>) -> Result<usize> {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(repo_path)
         .arg("log")
         .arg("--all")
         .arg("--format=COMMIT_START%n%H|%ae|%at|%s")
-        .arg("--name-only")
-        .output()
-        .context("Failed to run git log")?;
+        .arg("--name-only");
+    if let Some(s) = since {
+        cmd.arg(format!("--after={s}"));
+    }
+    let output = cmd.output().context("Failed to run git log")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
