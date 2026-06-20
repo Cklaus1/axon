@@ -144,9 +144,9 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 - [x] `audit --module <path>` — compliance query
 
 ### v0.3 (signal integration)
-- [ ] Per-session effectiveness score (feeds axon-signal)
-- [ ] Rework detection (same file, multiple sessions, short window)
-- [ ] Loop opportunity detection
+- [x] Per-session effectiveness score (via `signal score --ingest` → MetricOutcome records)
+- [x] Rework detection (same file, multiple sessions, short window — via `signal rework`)
+- [x] Loop opportunity detection (via `signal loops`)
 - [ ] Outcome integrations (Datadog, Sentry, PostHog via JSON schema)
 
 ### v1.0 (enterprise)

@@ -31,6 +31,9 @@ enum Commands {
         /// Only score sessions from this week
         #[arg(long)]
         week: bool,
+        /// Write effectiveness scores back into the ledger as MetricOutcome records
+        #[arg(long)]
+        ingest: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -137,7 +140,7 @@ fn main() -> Result<()> {
     let store = Store::open(&ledger_dir)?;
 
     match cli.command {
-        Commands::Score { engineer, week, json } => {
+        Commands::Score { engineer, week, ingest, json } => {
             let mut scores = score_sessions(&store)?;
 
             if let Some(eng) = &engineer {
@@ -163,6 +166,45 @@ fn main() -> Result<()> {
                     scores.iter().map(|s| s.score as f64).sum::<f64>() / scores.len() as f64
                 };
                 println!("\n  Average: {:.1}/100", avg);
+            }
+
+            if ingest {
+                use axon_ledger::hash::record_id;
+                use axon_ledger::model::{Effect, LedgerRecord};
+                let mut store_mut = Store::open(&ledger_dir)?;
+                let mut written = 0usize;
+                for s in &scores {
+                    let payload = serde_json::json!({
+                        "session_id": s.session_id,
+                        "score": s.score,
+                        "label": s.label,
+                        "goal_clarity": s.goal_clarity,
+                        "turns_per_commit": s.turns_per_commit,
+                        "scope_fit": s.scope_fit,
+                        "training_tier": s.training_tier.label(),
+                        "rework_signal": s.rework_signal,
+                        "source": "axon-signal",
+                    });
+                    let ts_ms = s.ts_ms + 1;
+                    let id = record_id(
+                        &format!("signal:session:{}", s.session_id),
+                        &Effect::MetricOutcome,
+                        ts_ms,
+                        &payload,
+                    );
+                    let record = LedgerRecord {
+                        id,
+                        principal: format!("signal:{}", s.engineer),
+                        effect: Effect::MetricOutcome,
+                        causal_parent: None,
+                        ts_ms,
+                        payload,
+                    };
+                    if store_mut.append(&record).is_ok() {
+                        written += 1;
+                    }
+                }
+                eprintln!("Ingested {written} signal score(s) into ledger.");
             }
         }
 
