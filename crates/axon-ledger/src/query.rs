@@ -110,13 +110,21 @@ pub fn why(sha: &str, store: &Store) -> Result<WhyResult> {
         None
     };
 
-    // 4. Find MetricOutcome records with causal_parent == commit.id
+    // 4. Find MetricOutcome records:
+    //    (a) causal_parent == commit.id (commit-linked outcomes)
+    //    (b) payload.session_id == edge session_id (signal score write-backs)
     let all = store.all()?;
+    let linked_session_id = edge.as_ref()
+        .and_then(|e| e.payload.get("session_id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let outcomes = all
         .into_iter()
         .filter(|r| {
-            r.effect == Effect::MetricOutcome
-                && r.causal_parent.as_deref() == Some(commit.id.as_str())
+            if r.effect != Effect::MetricOutcome { return false; }
+            r.causal_parent.as_deref() == Some(commit.id.as_str())
+                || (!linked_session_id.is_empty()
+                    && r.payload.get("session_id").and_then(|v| v.as_str()) == Some(linked_session_id))
         })
         .collect();
 
