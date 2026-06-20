@@ -1,0 +1,128 @@
+# axon-ledger PR enrichment action
+#
+# Posts a comment on every PR showing the AI session goal(s) that produced the
+# commits in the PR. Reviewers see WHY the code changed, not just what changed.
+#
+# Setup:
+#   1. Copy this file to .github/workflows/axon-ledger-pr.yml in your repo
+#   2. Add AXON_LEDGER_DIR as a repository secret (path to your shared ledger,
+#      or use the default $HOME/.axon/ledger for per-runner ledgers)
+#   3. cargo install axon-ledger  (or pin a version in the install step below)
+#
+# The action:
+#   - Installs axon-ledger
+#   - Ingests recent git commits from the repo
+#   - Runs `axon-ledger pre-deploy <base>..<head> --json`
+#   - Posts a formatted comment with explained/unexplained commit breakdown
+
+name: axon-ledger PR enrichment
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  ledger-comment:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for git log
+
+      - name: Cache axon-ledger binary
+        uses: actions/cache@v4
+        id: cache-axon-ledger
+        with:
+          path: ~/.cargo/bin/axon-ledger
+          key: axon-ledger-${{ runner.os }}-0.1.0
+
+      - name: Install axon-ledger
+        if: steps.cache-axon-ledger.outputs.cache-hit != 'true'
+        run: cargo install axon-ledger --version "0.1.0" --locked
+
+      - name: Ingest commits for this PR
+        env:
+          AXON_LEDGER_DIR: ${{ secrets.AXON_LEDGER_DIR || format('{0}/.axon/ledger', env.HOME) }}
+        run: |
+          axon-ledger --ledger-dir "$AXON_LEDGER_DIR" ingest git \
+            --repo . \
+            --since "30 days ago"
+
+      - name: Run pre-deploy check
+        id: predeploy
+        env:
+          AXON_LEDGER_DIR: ${{ secrets.AXON_LEDGER_DIR || format('{0}/.axon/ledger', env.HOME) }}
+        run: |
+          RANGE="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          axon-ledger --ledger-dir "$AXON_LEDGER_DIR" pre-deploy "$RANGE" --json \
+            > /tmp/predeploy.json
+          echo "result=$(cat /tmp/predeploy.json | jq -c .)" >> "$GITHUB_OUTPUT"
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const result = JSON.parse(process.env.PREDEPLOY_JSON);
+            const { range, total_commits, explained, unexplained, coverage_pct,
+                    explained_commits, unexplained_commits } = result;
+
+            let body = `## axon-ledger: AI session provenance\n\n`;
+            body += `**${explained}/${total_commits} commits** explained by AI sessions `;
+            body += `(${coverage_pct}% coverage)\n\n`;
+
+            if (explained_commits.length > 0) {
+              body += `### ✓ Explained commits\n\n`;
+              for (const c of explained_commits) {
+                const short = c.sha.slice(0, 10);
+                const goal = c.session_goal || '(goal unavailable)';
+                body += `- \`${short}\` ${c.message}\n`;
+                body += `  > **Goal:** ${goal}\n`;
+              }
+              body += `\n`;
+            }
+
+            if (unexplained_commits.length > 0) {
+              body += `### ⚠ Unexplained commits\n\n`;
+              body += `These commits have no linked AI session in the ledger. `;
+              body += `They may be manual changes, CI commits, or sessions not yet ingested.\n\n`;
+              for (const c of unexplained_commits) {
+                const short = c.sha.slice(0, 10);
+                body += `- \`${short}\` ${c.message} — *${c.author}*\n`;
+              }
+              body += `\n`;
+            }
+
+            body += `---\n`;
+            body += `*[axon-ledger](https://github.com/anthropics/axon) · `;
+            body += `\`axon-ledger history <file>\` to see per-file AI session history*`;
+
+            // Find existing comment to update (avoid duplicates)
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('axon-ledger: AI session provenance')
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+        env:
+          PREDEPLOY_JSON: ${{ steps.predeploy.outputs.result }}

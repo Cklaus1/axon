@@ -110,12 +110,16 @@ Override: `--ledger-dir /path/to/ledger` (all subcommands accept this global fla
 | `ingest edges` | Infer session→commit causal links (run after ingest git + session) |
 | `ingest outcome --commit <sha> --file <json>` | Record a metric outcome against a commit |
 | `why <sha>` | Explain why a commit happened (session + goal + outcomes) |
+| `history <file>` | AI session lineage for a file — who worked on it, with what goal, which commits |
+| `pre-deploy [range]` | Flag unexplained commits before a deploy (`--fail-on-unexplained` for CI) |
+| `weekly [--from X --to Y]` | Goals + coverage + rework hotspots for the week |
+| `audit --module <path> [--since <date>]` | Compliance query — all sessions + commits touching a module |
 | `search <terms...>` | Full-text search across commit messages, session goals, and files |
 | `as-of <ISO timestamp>` | Reconstruct what was known/shipped at a point in time |
 | `diff --from <ISO> --to <ISO>` | List all ledger records in a time window |
 | `stats` | Total records by type |
 | `watch --dir <dir> [--interval 60]` | Continuous ingest daemon |
-| `mcp` | Start MCP stdio server (ledger_why / ledger_search / ledger_as_of / ledger_stats tools) |
+| `mcp` | Start MCP stdio server (ledger_why / ledger_history / ledger_search / ledger_as_of / ledger_stats tools) |
 | Any command + `--json` | Machine-readable output |
 
 ## MCP server — let Claude Code query the ledger mid-session
@@ -156,6 +160,25 @@ After restarting Claude Code, the agent can call `ledger_why("ed5775d")` inline 
 | `ledger_search` | `{ query, limit? }` | Commits and sessions matching all terms |
 | `ledger_as_of` | `{ timestamp }` | State snapshot at a point in time |
 | `ledger_stats` | `{}` | Record counts by type |
+
+## GitHub Action — PR enrichment
+
+Post a comment on every pull request showing the AI session goal(s) behind each commit. Reviewers see WHY the code changed, not just what changed.
+
+```
+## axon-ledger: AI session provenance
+
+**3/4 commits** explained by AI sessions (75% coverage)
+
+### ✓ Explained commits
+- `ed5775db2c` feat(week1): json_parse/json_stringify builtins
+  > Goal: add json_parse and json_stringify builtins to axon-core
+
+### ⚠ Unexplained commits
+- `a1b2c3d4e5` chore: bump version — chris@example.com
+```
+
+Copy `github-action/pr-enrichment.yml` from this repo into `.github/workflows/` in your repo. See that file for setup instructions (requires `axon-ledger` on the PATH or via `cargo install`).
 
 ## Brief gate (optional)
 

@@ -140,7 +140,7 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 - [x] `history <file>` — AI session lineage per file
 - [x] `pre-deploy <range>` — unexplained commit flagging
 - [x] `weekly` report — goals, not commit counts
-- [ ] GitHub Action — PR enrichment with session goal comment
+- [x] GitHub Action — PR enrichment with session goal comment
 - [x] `audit --module <path>` — compliance query
 
 ### v0.3 (signal integration)
