@@ -6,7 +6,7 @@ use clap::{Parser, Subcommand};
 
 use axon_ledger::ingest::edge::infer_edges;
 use axon_ledger::ingest::git::ingest_git;
-use axon_ledger::ingest::session::ingest_session;
+use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::query::{diff, why};
 use axon_ledger::store::Store;
 
@@ -68,11 +68,29 @@ enum IngestSource {
     Session {
         /// Path to the session JSONL file
         path: PathBuf,
+        /// Run the brief gate on the session's extracted goal before ingesting
+        #[arg(long)]
+        gate: bool,
+        /// Explicit path to the axon binary (auto-discovered if omitted)
+        #[arg(long)]
+        axon_bin: Option<PathBuf>,
+        /// Explicit path to brief-gate.ax (auto-discovered if omitted)
+        #[arg(long)]
+        gate_script: Option<PathBuf>,
     },
     /// Ingest all session JSONL files in a directory
     SessionDir {
         /// Directory containing session JSONL files
         dir: PathBuf,
+        /// Run the brief gate on each session's extracted goal before ingesting
+        #[arg(long)]
+        gate: bool,
+        /// Explicit path to the axon binary (auto-discovered if omitted)
+        #[arg(long)]
+        axon_bin: Option<PathBuf>,
+        /// Explicit path to brief-gate.ax (auto-discovered if omitted)
+        #[arg(long)]
+        gate_script: Option<PathBuf>,
     },
     /// Infer agent->commit edges from existing sessions and commits
     Edges,
@@ -105,25 +123,35 @@ fn main() -> Result<()> {
                 let n = ingest_git(&repo, &mut store)?;
                 println!("Ingested {} new git commits.", n);
             }
-            IngestSource::Session { path } => {
-                match ingest_session(&path, &mut store)? {
+            IngestSource::Session { path, gate, axon_bin, gate_script } => {
+                let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
+                match ingest_session(&path, &mut store, &gate_opts)? {
                     Some(r) => println!("Ingested session: {}", r.id),
                     None => println!("Session already in ledger, skipped."),
                 }
             }
-            IngestSource::SessionDir { dir: sessions_dir } => {
+            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script } => {
+                let gate_opts = GateOptions { enabled: gate, axon_bin: axon_bin.clone(), gate_script: gate_script.clone() };
                 let mut total = 0usize;
+                let mut rejected = 0usize;
                 let entries = fs::read_dir(&sessions_dir)?;
                 for entry in entries {
                     let entry = entry?;
                     let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) == Some("jsonl")
-                        && ingest_session(&path, &mut store)?.is_some()
-                    {
-                        total += 1;
+                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+                        continue;
+                    }
+                    match ingest_session(&path, &mut store, &gate_opts) {
+                        Ok(Some(_)) => total += 1,
+                        Ok(None) => {}
+                        Err(e) if e.to_string().starts_with("brief gate:") => {
+                            eprintln!("[ledger] skipped {}: {}", path.display(), e);
+                            rejected += 1;
+                        }
+                        Err(e) => return Err(e),
                     }
                 }
-                println!("Ingested {} new sessions.", total);
+                println!("Ingested {} new sessions ({} rejected by brief gate).", total, rejected);
             }
             IngestSource::Edges => {
                 let n = infer_edges(&mut store)?;

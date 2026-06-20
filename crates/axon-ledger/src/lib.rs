@@ -1,3 +1,4 @@
+pub mod gate;
 pub mod hash;
 pub mod ingest;
 pub mod model;

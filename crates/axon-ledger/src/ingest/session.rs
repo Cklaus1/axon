@@ -1,14 +1,26 @@
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::json;
 
+use crate::gate::run_brief_gate;
 use crate::hash::record_id;
 use crate::model::{Effect, LedgerRecord};
 use crate::store::Store;
+
+/// Options for the brief gate check during session ingestion.
+#[derive(Default)]
+pub struct GateOptions {
+    /// Enable the brief gate check (default: false = skip).
+    pub enabled: bool,
+    /// Explicit path to the `axon` binary (auto-discovered if None).
+    pub axon_bin: Option<PathBuf>,
+    /// Explicit path to `brief-gate.ax` (auto-discovered if None).
+    pub gate_script: Option<PathBuf>,
+}
 
 /// Parse ISO 8601 timestamp string into unix milliseconds.
 /// Handles formats: `YYYY-MM-DDTHH:MM:SS.sssZ`, `YYYY-MM-DDTHH:MM:SSZ`,
@@ -89,7 +101,11 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
     Some(jd - 2440588)
 }
 
-pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<LedgerRecord>> {
+pub fn ingest_session(
+    session_path: &Path,
+    store: &mut Store,
+    gate: &GateOptions,
+) -> Result<Option<LedgerRecord>> {
     let session_id = session_path
         .file_stem()
         .and_then(|s| s.to_str())
@@ -117,6 +133,7 @@ pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<L
     let mut first_ts: Option<String> = None;
     let mut last_ts: Option<String> = None;
     let mut files_touched: HashSet<String> = HashSet::new();
+    let mut goal_text: Option<String> = None; // first user message text
 
     for line in reader.lines() {
         let line = line?;
@@ -137,9 +154,14 @@ pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<L
             last_ts = Some(ts.to_string());
         }
 
-        // Count turns from message events
+        // Count turns from message events; capture first user message as goal
         if event.get("type").and_then(|v| v.as_str()) == Some("message") {
             turn_count += 1;
+        }
+        if goal_text.is_none() {
+            if let Some(text) = extract_first_user_text(&event) {
+                goal_text = Some(text);
+            }
         }
 
         // Extract files from tool_use content blocks
@@ -181,9 +203,30 @@ pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<L
     let mut files_list: Vec<String> = files_touched.into_iter().collect();
     files_list.sort();
 
+    let goal = goal_text
+        .as_deref()
+        .unwrap_or("(no user message found in session)");
+
+    // ── Brief gate ────────────────────────────────────────────────────────────
+    if gate.enabled {
+        let outcome = run_brief_gate(
+            goal,
+            &session_id,
+            gate.axon_bin.as_deref(),
+            gate.gate_script.as_deref(),
+        )?;
+        if !outcome.passed {
+            anyhow::bail!("brief gate: {}", outcome.reason);
+        }
+        // Log the gate reason when it was available and passed (soft-pass is silent)
+        if !outcome.reason.contains("skipped") {
+            eprintln!("[ledger] {}", outcome.reason);
+        }
+    }
+
     let summary = format!(
-        "Session {} with {} turns, {} files touched",
-        session_id,
+        "{} ({} turns, {} files)",
+        goal.chars().take(120).collect::<String>(),
         turn_count,
         files_list.len()
     );
@@ -195,6 +238,7 @@ pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<L
         "end_ts": end_ts,
         "files_touched": files_list,
         "turn_count": turn_count,
+        "goal": goal,
         "summary": summary,
     });
 
@@ -221,9 +265,42 @@ pub fn ingest_session(session_path: &Path, store: &mut Store) -> Result<Option<L
 fn extract_file_paths_from_command(cmd: &str, files: &mut HashSet<String>) {
     let extensions = [".rs", ".ax", ".toml", ".md", ".json"];
     for token in cmd.split_whitespace() {
-        let token = token.trim_matches(|c| c == '"' || c == '\'');
+        let token = token.trim_matches(|c: char| c == '"' || c == '\'');
         if extensions.iter().any(|ext| token.ends_with(ext)) {
             files.insert(token.to_string());
         }
     }
+}
+
+/// Extract the text of the first user message from a session event.
+/// Handles both plain-string content and content-block arrays.
+fn extract_first_user_text(event: &serde_json::Value) -> Option<String> {
+    let msg = event.get("message")?;
+    let role = msg.get("role").and_then(|v| v.as_str())?;
+    if role != "user" {
+        return None;
+    }
+    let content = msg.get("content")?;
+    let text = if let Some(s) = content.as_str() {
+        s.to_string()
+    } else if let Some(arr) = content.as_array() {
+        arr.iter()
+            .filter_map(|block| {
+                if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+                    block.get("text").and_then(|v| v.as_str()).map(str::to_string)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        return None;
+    };
+    let trimmed = text.trim().to_string();
+    if trimmed.is_empty() {
+        return None;
+    }
+    // Cap at 200 chars for use as goal text
+    Some(trimmed.chars().take(200).collect())
 }
