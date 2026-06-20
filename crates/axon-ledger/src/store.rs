@@ -132,6 +132,34 @@ impl Store {
 
         Ok((to_keep.len(), pruned))
     }
+
+    /// Rewrite all records whose principal matches `old_prefix` to use `new_principal`.
+    ///
+    /// Used for engineer-backfill: sessions ingested before `--engineer` was available
+    /// store `agent:<uuid>` as principal; this replaces them with a real email address.
+    ///
+    /// Returns `(total, updated)` counts. Writes atomically via a `.tmp` rename.
+    pub fn rewrite_principals(&mut self, old_prefix: &str, new_principal: &str) -> Result<(usize, usize)> {
+        let all = self.all()?;
+        let total = all.len();
+        let mut updated = 0usize;
+        let rewritten: Vec<LedgerRecord> = all.into_iter().map(|mut r| {
+            if r.principal.starts_with(old_prefix) {
+                r.principal = new_principal.to_string();
+                updated += 1;
+            }
+            r
+        }).collect();
+        let tmp_path = self.events_path.with_extension("ndjson.tmp");
+        {
+            let mut f = File::create(&tmp_path)?;
+            for r in &rewritten {
+                writeln!(f, "{}", serde_json::to_string(r)?)?;
+            }
+        }
+        fs::rename(&tmp_path, &self.events_path)?;
+        Ok((total, updated))
+    }
 }
 
 #[cfg(test)]
@@ -224,5 +252,37 @@ mod tests {
         let (kept, pruned) = store.prune(9999).unwrap();
         assert_eq!(kept, 0);
         assert_eq!(pruned, 0);
+    }
+
+    #[test]
+    fn test_rewrite_principals_updates_matching() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        let mut r1 = make_record("r1", 1000, None);
+        r1.principal = "agent:abc123".to_string();
+        let mut r2 = make_record("r2", 2000, None);
+        r2.principal = "agent:def456".to_string();
+        let mut r3 = make_record("r3", 3000, None);
+        r3.principal = "chris@example.com".to_string(); // already a real email, should not change
+        store.append(&r1).unwrap();
+        store.append(&r2).unwrap();
+        store.append(&r3).unwrap();
+
+        let (total, updated) = store.rewrite_principals("agent:", "chris@example.com").unwrap();
+        assert_eq!(total, 3);
+        assert_eq!(updated, 2);
+
+        let all = store.all().unwrap();
+        assert!(all.iter().all(|r| r.principal == "chris@example.com"));
+    }
+
+    #[test]
+    fn test_rewrite_principals_no_match() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.append(&make_record("r1", 1000, None)).unwrap(); // principal="test"
+        let (total, updated) = store.rewrite_principals("agent:", "chris@example.com").unwrap();
+        assert_eq!(total, 1);
+        assert_eq!(updated, 0);
     }
 }

@@ -161,6 +161,21 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Backfill engineer identity for sessions ingested before --engineer was available.
+    ///
+    /// Rewrites all records whose principal starts with "agent:" (the anonymous fallback)
+    /// to the given email address. Auto-detects from `git config user.email` when omitted.
+    ///
+    /// Example: axon-ledger engineer-backfill --email chris@example.com
+    ///          axon-ledger engineer-backfill          # auto-detect from git config
+    EngineerBackfill {
+        /// Engineer email to assign (default: auto-detected from `git config user.email`)
+        #[arg(long)]
+        email: Option<String>,
+        /// Dry run — show counts without modifying the ledger
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Manage webhook egress — notify Slack or PagerDuty when events occur
     Webhook {
         #[command(subcommand)]
@@ -1116,6 +1131,35 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
                 println!("Done. Pruned {pruned} record(s); {kept} remain.");
+            }
+        }
+
+        Commands::EngineerBackfill { email, dry_run } => {
+            // Resolve email: explicit flag → git config user.email → error
+            let resolved = email
+                .or_else(|| {
+                    std::process::Command::new("git")
+                        .args(["config", "user.email"])
+                        .output()
+                        .ok()
+                        .and_then(|o| String::from_utf8(o.stdout).ok())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty())
+                })
+                .ok_or_else(|| anyhow::anyhow!(
+                    "Could not detect engineer email. Pass --email <email> explicitly or set git config user.email"
+                ))?;
+
+            let all = store.all()?;
+            let would_update = all.iter().filter(|r| r.principal.starts_with("agent:")).count();
+
+            if dry_run {
+                println!("Dry run: would backfill {would_update}/{} records → {resolved}", all.len());
+                println!("(no changes made)");
+            } else {
+                let mut store_mut = Store::open(&dir_path)?;
+                let (total, updated) = store_mut.rewrite_principals("agent:", &resolved)?;
+                println!("Engineer backfill complete: {updated}/{total} records → {resolved}");
             }
         }
 
