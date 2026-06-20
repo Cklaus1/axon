@@ -13,6 +13,7 @@
 ///   signal_loops      { turns_threshold?: int, days?: int } → LoopCandidate[]
 ///   signal_benchmark        { days?: int }                          → BenchmarkReport
 ///   signal_ab_status        {}                                      → AbReport
+///   signal_ab_track         { text: str, week?: str, baseline?: f64, engineer?: str } → rec
 ///   signal_export_training  { min_score?: int, format?: str }      → TrainingExport
 use std::io::{self, BufRead, Write};
 use std::path::Path;
@@ -22,7 +23,7 @@ use serde_json::{json, Value};
 
 use axon_ledger::store::Store;
 
-use crate::ab::compute_ab_report;
+use crate::ab::{compute_ab_report, current_iso_week, record_recommendation};
 use crate::benchmark::compute_benchmark;
 use crate::export::{export_training, ExportFormat, ExportOptions};
 use crate::patterns::{antipatterns, build_pattern_library};
@@ -193,10 +194,24 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                 },
                 {
                     "name": "signal_ab_status",
-                    "description": "Show A/B tracking outcomes for weekly recommendations: which recommendation types correlated with score improvement the following week. Observational (not a randomised trial) — use for directional guidance. Record recommendations with `signal weekly --track` or `signal ab-track`.",
+                    "description": "Show A/B tracking outcomes for weekly recommendations: which recommendation types correlated with score improvement the following week. Observational (not a randomised trial) — use for directional guidance. Record recommendations with signal_ab_track.",
                     "inputSchema": {
                         "type": "object",
                         "properties": {}
+                    }
+                },
+                {
+                    "name": "signal_ab_track",
+                    "description": "Record a recommendation for A/B outcome tracking. Call this after advising an engineer to change their goal-writing style, session scope, or loop usage — then check signal_ab_status next week to see if scores improved. Returns the recorded recommendation id.",
+                    "inputSchema": {
+                        "type": "object",
+                        "required": ["text"],
+                        "properties": {
+                            "text": { "type": "string", "description": "The recommendation text to track" },
+                            "engineer": { "type": "string", "description": "Engineer email to attribute this to (optional)" },
+                            "week": { "type": "string", "description": "ISO week string like '2025-W23' (default: current week)" },
+                            "baseline": { "type": "number", "description": "Baseline effectiveness score before the recommendation (default: computed from last 7 days)" }
+                        }
                     }
                 }
             ]
@@ -323,6 +338,29 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             compute_ab_report(ledger_dir, &store)
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
+        "signal_ab_track" => {
+            let text = match args.get("text").and_then(|v| v.as_str()) {
+                Some(t) => t.to_string(),
+                None => return json_error(id.as_ref(), -32602, "signal_ab_track requires 'text'"),
+            };
+            let engineer = args.get("engineer").and_then(|v| v.as_str()).map(String::from);
+            let week = args.get("week").and_then(|v| v.as_str())
+                .map(String::from)
+                .unwrap_or_else(current_iso_week);
+            let baseline = args.get("baseline").and_then(|v| v.as_f64()).unwrap_or_else(|| {
+                score_sessions(&store)
+                    .ok()
+                    .and_then(|scores| {
+                        let cutoff = now_ms().saturating_sub(7 * 86_400_000);
+                        let recent: Vec<_> = scores.iter().filter(|s| s.ts_ms >= cutoff).collect();
+                        if recent.is_empty() { None }
+                        else { Some(recent.iter().map(|s| s.score as f64).sum::<f64>() / recent.len() as f64) }
+                    })
+                    .unwrap_or(0.0)
+            });
+            record_recommendation(ledger_dir, &week, &text, baseline, engineer.as_deref())
+                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
+        }
         "signal_export_training" => {
             let min_score = args.get("min_score").and_then(|v| v.as_u64()).unwrap_or(75) as u8;
             let format_str = args.get("format").and_then(|v| v.as_str()).unwrap_or("trainloop");
@@ -383,16 +421,16 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_ten_tools() {
+    fn test_tools_list_has_eleven_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 10, "expected 10 MCP tools, got {}", tools.len());
+        assert_eq!(tools.len(), 11, "expected 11 MCP tools, got {}", tools.len());
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &["signal_score", "signal_weekly", "signal_rework",
                           "signal_patterns", "signal_goals", "signal_loops",
                           "signal_trends", "signal_benchmark", "signal_ab_status",
-                          "signal_export_training"] {
+                          "signal_ab_track", "signal_export_training"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
     }
