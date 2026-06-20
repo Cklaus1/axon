@@ -4,6 +4,7 @@ pub mod ingest;
 pub mod mcp;
 pub mod model;
 pub mod query;
+pub mod rbac;
 pub mod store;
 pub mod watch;
 pub mod webhook;

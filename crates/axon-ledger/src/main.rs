@@ -11,6 +11,7 @@ use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::mcp::run_mcp_server;
 use axon_ledger::query::{as_of, diff, history, search, why};
+use axon_ledger::rbac::{resolve_caller, RbacConfig};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
 use axon_ledger::webhook::{add_webhook, fire_webhooks, load_webhooks, remove_webhook,
@@ -22,6 +23,10 @@ struct Cli {
     /// Directory for ledger data (default: $HOME/.axon/ledger)
     #[arg(long, global = true)]
     ledger_dir: Option<PathBuf>,
+
+    /// Caller identity (email) for RBAC filtering. Overrides AXON_PRINCIPAL env var.
+    #[arg(long = "as", global = true)]
+    caller: Option<String>,
 
     #[command(subcommand)]
     command: Commands,
@@ -161,6 +166,11 @@ enum Commands {
         #[command(subcommand)]
         action: WebhookAction,
     },
+    /// Manage RBAC — control who can view which records
+    Rbac {
+        #[command(subcommand)]
+        action: RbacAction,
+    },
     /// Start an MCP (Model Context Protocol) server over stdio
     Mcp,
     /// Watch a directory for new Claude Code sessions and auto-ingest them
@@ -282,6 +292,22 @@ enum WebhookAction {
     },
 }
 
+#[derive(Subcommand)]
+enum RbacAction {
+    /// Grant admin role to an engineer (can view all records)
+    Grant {
+        /// Engineer email address
+        email: String,
+    },
+    /// Revoke admin role from an engineer
+    Revoke {
+        /// Engineer email address
+        email: String,
+    },
+    /// List current RBAC config
+    List,
+}
+
 fn default_ledger_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     PathBuf::from(home).join(".axon").join("ledger")
@@ -316,6 +342,8 @@ fn main() -> Result<()> {
     let dir = ledger_dir(cli.ledger_dir.as_ref());
     let dir_path = dir.clone();
     let mut store = Store::open(&dir)?;
+    let rbac = RbacConfig::load(&dir_path)?;
+    let caller = resolve_caller(cli.caller.as_deref());
 
     match cli.command {
         Commands::Ingest { source } => match source {
@@ -488,7 +516,7 @@ fn main() -> Result<()> {
 
         Commands::Stats { json } => {
             use axon_ledger::model::Effect;
-            let all = store.all()?;
+            let all = rbac.filter_owned(store.all()?, caller.as_deref());
             let git_count = all.iter().filter(|r| r.effect == Effect::GitCommit).count();
             let session_count = all.iter().filter(|r| r.effect == Effect::AgentSession).count();
             let edge_count = all.iter().filter(|r| r.effect == Effect::AgentEdge).count();
@@ -533,6 +561,12 @@ fn main() -> Result<()> {
             let mut hits = search(&query, &store, limit)?;
             if let Some(ref r) = repo {
                 hits.retain(|h| h.record.repo.as_deref() == Some(r.as_str()));
+            }
+            // RBAC: member can only see their own session/commit records
+            if !rbac.admins.is_empty() {
+                hits.retain(|h| {
+                    rbac.filter_visible(vec![&h.record], caller.as_deref()).len() == 1
+                });
             }
             if json {
                 println!("{}", serde_json::to_string_pretty(&hits)?);
@@ -802,7 +836,8 @@ fn main() -> Result<()> {
                 .and_then(parse_iso_to_ms)
                 .unwrap_or(now_ms);
 
-            let all = store.all()?;
+            let all_raw = store.all()?;
+            let all = rbac.filter_owned(all_raw, caller.as_deref());
             let in_window: Vec<_> = all.iter()
                 .filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms)
                 .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
@@ -882,7 +917,8 @@ fn main() -> Result<()> {
             let since_ms = since.as_deref().and_then(parse_iso_to_ms).unwrap_or(0);
             let module_lower = module.to_lowercase();
 
-            let all = store.all()?;
+            let all_raw = store.all()?;
+            let all = rbac.filter_owned(all_raw, caller.as_deref());
             let in_window: Vec<_> = all.iter()
                 .filter(|r| r.ts_ms >= since_ms)
                 .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
@@ -1071,6 +1107,40 @@ fn main() -> Result<()> {
                 } else {
                     eprintln!("No webhook with id '{id}' found.");
                     std::process::exit(1);
+                }
+            }
+        },
+
+        Commands::Rbac { action } => match action {
+            RbacAction::Grant { email } => {
+                let mut config = RbacConfig::load(&dir_path)?;
+                config.add_admin(&email);
+                config.save(&dir_path)?;
+                println!("Granted admin role to {email}.");
+                println!("Admins can view all records; members see only their own.");
+            }
+            RbacAction::Revoke { email } => {
+                let mut config = RbacConfig::load(&dir_path)?;
+                if config.is_admin(&email) {
+                    config.remove_admin(&email);
+                    config.save(&dir_path)?;
+                    println!("Revoked admin role from {email}.");
+                } else {
+                    eprintln!("{email} is not an admin.");
+                    std::process::exit(1);
+                }
+            }
+            RbacAction::List => {
+                let config = RbacConfig::load(&dir_path)?;
+                if config.admins.is_empty() {
+                    println!("RBAC is disabled (no admins configured). All records are visible to everyone.");
+                    println!("Enable with: axon-ledger rbac grant <email>");
+                } else {
+                    println!("Admins ({}):", config.admins.len());
+                    for a in &config.admins {
+                        println!("  {a}");
+                    }
+                    println!("\nMembers see only their own records. Use --as <email> to identify yourself.");
                 }
             }
         },

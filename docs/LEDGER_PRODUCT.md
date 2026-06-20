@@ -151,7 +151,7 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 
 ### v1.0 (enterprise)
 - [x] Multi-repo ledger (microservices) — `--repo-name <name>` on all ingest commands; `--repo <name>` filter on why/search/history/weekly/audit; `repo` field in NDJSON (backward-compatible, skipped when None)
-- [ ] RBAC — per-engineer vs. per-team visibility
+- [x] RBAC — per-engineer vs. per-team visibility (`rbac grant/revoke/list`; `--as <email>` / `AXON_PRINCIPAL`; admins see all, members see their own records only)
 - [x] Webhook egress (Slack, PagerDuty on unexplained deploy — `webhook add/list/rm`; fired by `pre-deploy`)
 - [x] Retention policy (GDPR / data minimization — `prune --older-than <date>`, dry-run, causal-chain aware)
 
