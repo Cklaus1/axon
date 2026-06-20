@@ -54,7 +54,7 @@ const CONTINUATION_PREFIXES: &[&str] = &[
     "(system prompt)",
 ];
 
-fn is_continuation_session(goal: &str) -> bool {
+pub fn is_continuation_session(goal: &str) -> bool {
     let lower = goal.trim().to_lowercase();
     CONTINUATION_PREFIXES.iter().any(|p| lower.starts_with(p))
         || lower.is_empty()

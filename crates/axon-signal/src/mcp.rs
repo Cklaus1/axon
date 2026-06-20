@@ -27,7 +27,7 @@ use crate::ab::{compute_ab_report, current_iso_week, record_recommendation};
 use crate::benchmark::compute_benchmark;
 use crate::export::{export_training, ExportFormat, ExportOptions};
 use crate::patterns::{antipatterns, build_pattern_library};
-use crate::rework::find_rework_hotspots;
+use crate::rework::{find_rework_hotspots, is_continuation_session};
 use crate::score::score_sessions;
 use crate::trends::compute_trends;
 use crate::weekly::generate_weekly;
@@ -301,6 +301,8 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             score_sessions(&store).map(|scores| {
                 let candidates: Vec<_> = scores.iter()
                     .filter(|s| s.ts_ms >= cutoff && s.turns >= threshold)
+                    .filter(|s| !is_continuation_session(&s.goal))
+                    .filter(|s| s.commits_linked <= 100)
                     .map(|s| json!({
                         "session_id": s.session_id,
                         "engineer": s.engineer,

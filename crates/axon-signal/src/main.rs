@@ -12,7 +12,7 @@ use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptio
 use axon_signal::mcp::run_mcp_server;
 use axon_signal::trends::{compute_trends, render_trends};
 use axon_signal::patterns::{antipatterns, build_pattern_library};
-use axon_signal::rework::find_rework_hotspots;
+use axon_signal::rework::{find_rework_hotspots, is_continuation_session};
 use axon_signal::score::score_sessions;
 use axon_signal::weekly::{generate_weekly, render_text};
 
@@ -439,12 +439,14 @@ fn main() -> Result<()> {
             let cutoff = now_ms().saturating_sub(days * 24 * 60 * 60 * 1000);
             let scores = score_sessions(&store)?;
 
-            // Flag sessions with high turns and low commits — would benefit from a loop
-            // Skip sessions whose goal already references /loop (they already use it)
+            // Flag sessions with high turns-per-commit — would benefit from /loop automation.
+            // Exclude: continuation/loop sessions (they already use it), and sessions with >100
+            // commits (those ARE automated loop sessions, not candidates for one).
             let mut candidates: Vec<_> = scores.iter()
                 .filter(|s| s.ts_ms >= cutoff)
                 .filter(|s| s.turns >= turns_threshold)
-                .filter(|s| !s.goal.contains("/loop"))
+                .filter(|s| !is_continuation_session(&s.goal))
+                .filter(|s| s.commits_linked <= 100)
                 .collect();
             candidates.sort_by(|a, b| b.turns.cmp(&a.turns));
 
