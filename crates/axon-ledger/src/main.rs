@@ -196,6 +196,21 @@ enum IngestSource {
         #[arg(long)]
         file: PathBuf,
     },
+    /// Ingest an observability provider payload (Datadog, Sentry, PostHog, or generic JSON)
+    OutcomeProvider {
+        /// Provider: datadog, sentry, posthog, generic
+        #[arg(long)]
+        provider: String,
+        /// SHA prefix of the commit this outcome belongs to
+        #[arg(long)]
+        commit: String,
+        /// Path to the provider JSON payload (webhook body or API export)
+        #[arg(long)]
+        file: PathBuf,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 fn default_ledger_dir() -> PathBuf {
@@ -285,6 +300,19 @@ fn main() -> Result<()> {
             IngestSource::Outcome { commit, file } => {
                 let r = ingest_outcome(&commit, &file, &mut store)?;
                 println!("Ingested outcome: {} (linked to commit {})", r.id, commit);
+            }
+            IngestSource::OutcomeProvider { provider, commit, file, json } => {
+                use axon_ledger::ingest::provider::{ingest_provider_outcome, Provider};
+                let p = Provider::from_str(&provider)?;
+                let r = ingest_provider_outcome(p, &commit, &file, &mut store)?;
+                if json {
+                    println!("{}", serde_json::to_string_pretty(&r)?);
+                } else {
+                    let metric_count = r.payload.get("metrics")
+                        .and_then(|m| m.as_object()).map(|o| o.len()).unwrap_or(0);
+                    println!("Ingested {} outcome: {} metric(s) linked to commit {}",
+                        provider, metric_count, commit);
+                }
             }
         },
 

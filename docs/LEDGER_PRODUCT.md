@@ -147,7 +147,7 @@ Claude Code can then call `ledger_why`, `ledger_search`, `ledger_as_of`, `ledger
 - [x] Per-session effectiveness score (via `signal score --ingest` → MetricOutcome records)
 - [x] Rework detection (same file, multiple sessions, short window — via `signal rework`)
 - [x] Loop opportunity detection (via `signal loops`)
-- [ ] Outcome integrations (Datadog, Sentry, PostHog via JSON schema)
+- [x] Outcome integrations (Datadog, Sentry, PostHog via JSON schema — `ingest outcome-provider --provider <name>`)
 
 ### v1.0 (enterprise)
 - [ ] Multi-repo ledger (microservices)
