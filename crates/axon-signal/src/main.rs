@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use axon_ledger::store::Store;
+use axon_signal::ab::{compute_ab_report, record_recommendation, render_ab_report};
 use axon_signal::benchmark::{compute_benchmark, render_benchmark};
 use axon_signal::dashboard::run_dashboard;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
@@ -74,6 +75,9 @@ enum Commands {
         /// Slack webhook URL (post report to Slack)
         #[arg(long)]
         slack_webhook: Option<String>,
+        /// Record the top recommendation to the A/B tracking file for outcome measurement
+        #[arg(long)]
+        track: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -137,6 +141,27 @@ enum Commands {
         /// Only include sessions from the last N days (default: all time)
         #[arg(long)]
         days: Option<u64>,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Record a recommendation for A/B outcome tracking
+    AbTrack {
+        /// The recommendation text (from the weekly report or manual)
+        #[arg(long)]
+        text: String,
+        /// Engineer this was shown to (optional, omit for team-wide)
+        #[arg(long)]
+        engineer: Option<String>,
+        /// ISO year-week to record (default: current week, e.g. 2026-W25)
+        #[arg(long)]
+        week: Option<String>,
+        /// Override baseline score (default: computed from recent sessions)
+        #[arg(long)]
+        baseline: Option<f64>,
+    },
+    /// Show A/B outcomes — did following the recommendation improve scores next week?
+    AbStatus {
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -286,7 +311,7 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Weekly { from, to, slack_webhook, json } => {
+        Commands::Weekly { from, to, slack_webhook, track, json } => {
             let from_ms = from.as_deref()
                 .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s))
                 .unwrap_or_else(week_ago_ms);
@@ -300,6 +325,16 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render_text(&report));
+            }
+
+            if track {
+                if let Some(rec_text) = report.recommendations.first() {
+                    let week = axon_signal::ab::current_iso_week();
+                    match record_recommendation(&ledger_dir, &week, rec_text, report.avg_score, None) {
+                        Ok(rec) => eprintln!("A/B tracking: recorded recommendation [{:?}] for {} (baseline {:.1})", rec.rec_type, week, rec.baseline_score),
+                        Err(e) => eprintln!("Warning: could not record recommendation for A/B tracking: {e}"),
+                    }
+                }
             }
 
             if let Some(webhook_url) = slack_webhook {
@@ -463,6 +498,33 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
                 print!("{}", render_benchmark(&report));
+            }
+        }
+
+        Commands::AbTrack { text, engineer, week, baseline } => {
+            let week_str = week.unwrap_or_else(axon_signal::ab::current_iso_week);
+            let baseline_score = baseline.unwrap_or_else(|| {
+                // Compute recent avg from last 7 days if not provided
+                score_sessions(&store)
+                    .ok()
+                    .and_then(|scores| {
+                        let cutoff = now_ms().saturating_sub(7 * 86_400_000);
+                        let recent: Vec<_> = scores.iter().filter(|s| s.ts_ms >= cutoff).collect();
+                        if recent.is_empty() { None }
+                        else { Some(recent.iter().map(|s| s.score as f64).sum::<f64>() / recent.len() as f64) }
+                    })
+                    .unwrap_or(0.0)
+            });
+            let rec = record_recommendation(&ledger_dir, &week_str, &text, baseline_score, engineer.as_deref())?;
+            eprintln!("Recorded: [{:?}] week={} baseline={:.1}", rec.rec_type, rec.week, rec.baseline_score);
+        }
+
+        Commands::AbStatus { json } => {
+            let report = compute_ab_report(&ledger_dir, &store)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", render_ab_report(&report));
             }
         }
 

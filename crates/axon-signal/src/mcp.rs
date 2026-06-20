@@ -12,6 +12,7 @@
 ///   signal_goals      { days?: int }                  → EngineerGoalSummary[]
 ///   signal_loops      { turns_threshold?: int, days?: int } → LoopCandidate[]
 ///   signal_benchmark  { days?: int }                  → BenchmarkReport
+///   signal_ab_status  {}                              → AbReport
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -20,6 +21,7 @@ use serde_json::{json, Value};
 
 use axon_ledger::store::Store;
 
+use crate::ab::compute_ab_report;
 use crate::benchmark::compute_benchmark;
 use crate::patterns::{antipatterns, build_pattern_library};
 use crate::rework::find_rework_hotspots;
@@ -173,6 +175,14 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                             "days": { "type": "integer", "description": "Only include sessions from the last N days (default: all time)" }
                         }
                     }
+                },
+                {
+                    "name": "signal_ab_status",
+                    "description": "Show A/B tracking outcomes for weekly recommendations: which recommendation types correlated with score improvement the following week. Observational (not a randomised trial) — use for directional guidance. Record recommendations with `signal weekly --track` or `signal ab-track`.",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {}
+                    }
                 }
             ]
         }
@@ -290,6 +300,10 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             compute_benchmark(&store, days)
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
+        "signal_ab_status" => {
+            compute_ab_report(ledger_dir, &store)
+                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
+        }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
 
@@ -334,15 +348,15 @@ mod tests {
     }
 
     #[test]
-    fn test_tools_list_has_eight_tools() {
+    fn test_tools_list_has_nine_tools() {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 8);
+        assert_eq!(tools.len(), 9);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         for expected in &["signal_score", "signal_weekly", "signal_rework",
                           "signal_patterns", "signal_goals", "signal_loops",
-                          "signal_trends", "signal_benchmark"] {
+                          "signal_trends", "signal_benchmark", "signal_ab_status"] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
     }

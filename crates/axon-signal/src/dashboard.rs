@@ -13,6 +13,7 @@
 ///   GET  /api/trends  → TrendsReport
 ///   GET  /api/loops      → loop candidate[]
 ///   GET  /api/benchmark  → BenchmarkReport
+///   GET  /api/ab         → AbReport
 use std::path::Path;
 
 use anyhow::Result;
@@ -20,6 +21,7 @@ use tiny_http::{Header, Response, Server};
 
 use axon_ledger::store::Store;
 
+use crate::ab::compute_ab_report;
 use crate::benchmark::compute_benchmark;
 use crate::rework::find_rework_hotspots;
 use crate::score::score_sessions;
@@ -96,6 +98,18 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
                     compute_benchmark(&store, None)
                         .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
                 })
+            }
+            "/api/ab" => {
+                let body = match Store::open(ledger_dir).map_err(anyhow::Error::from)
+                    .and_then(|store| compute_ab_report(ledger_dir, &store))
+                    .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
+                {
+                    Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".to_string()),
+                    Err(e) => format!(r#"{{"error":"{}"}}"#, e),
+                };
+                Response::from_string(body)
+                    .with_header("Content-Type: application/json".parse::<Header>().unwrap())
+                    .with_header("Access-Control-Allow-Origin: *".parse::<Header>().unwrap())
             }
             _ => {
                 Response::from_string(r#"{"error":"not found"}"#)
