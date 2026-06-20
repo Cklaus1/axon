@@ -133,6 +133,33 @@ impl Store {
         Ok((to_keep.len(), pruned))
     }
 
+    /// Replace a single record by id. Returns `true` if a record was replaced.
+    /// Writes atomically via a `.tmp` rename.
+    pub fn replace_record(&mut self, old_id: &str, new_record: &LedgerRecord) -> Result<bool> {
+        let all = self.all()?;
+        let mut replaced = false;
+        let rewritten: Vec<LedgerRecord> = all.into_iter().map(|r| {
+            if r.id == old_id {
+                replaced = true;
+                new_record.clone()
+            } else {
+                r
+            }
+        }).collect();
+        if !replaced {
+            return Ok(false);
+        }
+        let tmp_path = self.events_path.with_extension("ndjson.tmp");
+        {
+            let mut f = File::create(&tmp_path)?;
+            for r in &rewritten {
+                writeln!(f, "{}", serde_json::to_string(r)?)?;
+            }
+        }
+        fs::rename(&tmp_path, &self.events_path)?;
+        Ok(true)
+    }
+
     /// Rewrite all records whose principal matches `old_prefix` to use `new_principal`.
     ///
     /// Used for engineer-backfill: sessions ingested before `--engineer` was available

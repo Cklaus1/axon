@@ -138,20 +138,8 @@ fn clean_goal_text(raw: &str) -> String {
         // Take up to 120 chars of this first content line (Unicode-safe)
         return text.chars().take(120).collect();
     }
-    // All lines were table rows or empty — strip pipe chars and try again
-    let fallback: String = raw.chars()
-        .filter(|&c| c != '│' && c != '|' && c != '+' && c != '-')
-        .collect::<String>()
-        .split_whitespace()
-        .take(20)
-        .collect::<Vec<_>>()
-        .join(" ");
-    let fallback = fallback.trim().to_string();
-    if fallback.is_empty() {
-        "(structured session)".to_string()
-    } else {
-        fallback.chars().take(120).collect()
-    }
+    // All lines were empty or table rows — no suitable goal text
+    "(structured session)".to_string()
 }
 
 pub fn ingest_session(

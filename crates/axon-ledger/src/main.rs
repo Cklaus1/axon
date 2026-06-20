@@ -176,6 +176,19 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Re-read session JSONL files and refresh stale ledger fields (turn_count, files_touched).
+    ///
+    /// Only updates sessions whose turn_count is 0 (ingested before turn counting existed).
+    /// Use this after upgrading axon-ledger if old sessions show "0 turns" in reports.
+    ///
+    /// Example: axon-ledger session-refresh ~/.claude/projects/-home-user-myrepo/
+    SessionRefresh {
+        /// Directory containing Claude Code session .jsonl files
+        dir: PathBuf,
+        /// Dry run — show what would be updated without changing the ledger
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Manage webhook egress — notify Slack or PagerDuty when events occur
     Webhook {
         #[command(subcommand)]
@@ -1160,6 +1173,81 @@ fn main() -> Result<()> {
                 let mut store_mut = Store::open(&dir_path)?;
                 let (total, updated) = store_mut.rewrite_principals("agent:", &resolved)?;
                 println!("Engineer backfill complete: {updated}/{total} records → {resolved}");
+            }
+        }
+
+        Commands::SessionRefresh { dir, dry_run } => {
+            use axon_ledger::model::Effect;
+
+            let existing = store.all()?;
+            // Build map: session_id → (record_id, turn_count) for AgentSession records with turn_count=0
+            let is_stale = |r: &&axon_ledger::model::LedgerRecord| -> bool {
+                let turn_count = r.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                if turn_count == 0 { return true; }
+                // Also refresh if the stored goal looks like a garbled table fallback
+                // (pipe-table stripping produced readable-but-wrong text before this was fixed)
+                let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
+                goal.contains('📋') || goal.contains("buildoncerun") || goal.contains("🟢 Strong")
+            };
+            let stale: Vec<(String, String)> = existing.iter()
+                .filter(|r| r.effect == Effect::AgentSession)
+                .filter(is_stale)
+                .filter_map(|r| {
+                    let sid = r.payload.get("session_id").and_then(|v| v.as_str())?;
+                    Some((r.id.clone(), sid.to_string()))
+                })
+                .collect();
+
+            println!("Stale sessions: {}/{}", stale.len(), existing.iter().filter(|r| r.effect == Effect::AgentSession).count());
+            if stale.is_empty() {
+                println!("Nothing to refresh.");
+                return Ok(());
+            }
+
+            // Map session_id → .jsonl file path
+            let mut session_files: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for entry in rd.flatten() {
+                    let path = entry.path();
+                    if path.extension().and_then(|e| e.to_str()) == Some("jsonl") {
+                        if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                            session_files.insert(stem.to_string(), path);
+                        }
+                    }
+                }
+            }
+
+            let mut refreshed = 0usize;
+            let mut not_found = 0usize;
+            let gate = axon_ledger::ingest::session::GateOptions::default();
+
+            for (old_id, session_id) in &stale {
+                let Some(session_path) = session_files.get(session_id) else {
+                    not_found += 1;
+                    continue;
+                };
+                // Use a throwaway store in a fresh temp dir to re-parse without dedup
+                let tmp_dir = std::env::temp_dir().join(format!("axon_refresh_{}_{}", &session_id[..8], std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()));
+                let mut tmp_store = Store::open(&tmp_dir)?;
+                match ingest_session(session_path, &mut tmp_store, &gate, None, None) {
+                    Ok(Some(new_record)) => {
+                        if dry_run {
+                            println!("  would refresh {} → turn_count={}", &session_id[..8], new_record.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0));
+                        } else {
+                            let mut store_mut = Store::open(&dir_path)?;
+                            store_mut.replace_record(old_id, &new_record)?;
+                        }
+                        refreshed += 1;
+                    }
+                    Ok(None) => { /* deduped in tmp store — shouldn't happen but safe */ }
+                    Err(e) => eprintln!("  [skip] {}: {e}", &session_id[..8]),
+                }
+            }
+
+            if dry_run {
+                println!("\nDry run: would refresh {refreshed}, skip {not_found} (JSONL not found)");
+            } else {
+                println!("Done: refreshed {refreshed}, skipped {not_found} (JSONL not found)");
             }
         }
 

@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use axon_ledger::model::Effect;
 use axon_ledger::store::Store;
+use crate::display_goal;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReworkHotspot {
@@ -33,7 +34,8 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
         .map(|r| {
             let id_prefix = &r.id[..r.id.len().min(8)];
             let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or(id_prefix).to_string();
-            let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let raw_goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
+            let goal = display_goal(raw_goal, 80);
             let files: Vec<String> = r.payload.get("files_touched")
                 .and_then(|v| v.as_array())
                 .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| {

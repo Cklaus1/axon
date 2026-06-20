@@ -16,6 +16,10 @@ pub mod weekly;
 /// - Clips at `max_chars` char boundaries and appends `…`
 pub fn display_goal(goal: &str, max_chars: usize) -> String {
     let s = goal.trim();
+    // System-injected caveat headers are not real user goals
+    if s.starts_with('<') {
+        return "(system prompt)".to_string();
+    }
     // Strip leading markdown heading markers
     let stripped = if s.starts_with('#') {
         let without = s.trim_start_matches('#').trim();
