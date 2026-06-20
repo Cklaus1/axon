@@ -847,17 +847,32 @@ fn main() -> Result<()> {
             use axon_ledger::model::Effect;
             use axon_ledger::ingest::session::parse_iso_to_ms;
 
-            // Parse window bounds (default: last 7 days)
+            // Parse window bounds (default: last 7 days, auto-expand to 30d if fewer than 3 sessions)
             let now_ms = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
             let week_ms = 7 * 24 * 60 * 60 * 1000u64;
+            let month_ms = 30 * 24 * 60 * 60 * 1000u64;
 
-            let from_ms = from.as_deref()
-                .and_then(parse_iso_to_ms)
-                .unwrap_or(now_ms.saturating_sub(week_ms));
+            let explicit_from = from.as_deref().and_then(parse_iso_to_ms);
             let to_ms = to.as_deref()
                 .and_then(parse_iso_to_ms)
                 .unwrap_or(now_ms);
+
+            // Auto-expand: if no --from given and <3 sessions in last 7d, use last 30d
+            let from_ms = if let Some(f) = explicit_from {
+                f
+            } else {
+                let all_raw_check = store.all().unwrap_or_default();
+                let sessions_7d = all_raw_check.iter()
+                    .filter(|r| r.effect == Effect::AgentSession)
+                    .filter(|r| r.ts_ms >= now_ms.saturating_sub(week_ms) && r.ts_ms <= to_ms)
+                    .count();
+                if sessions_7d < 3 {
+                    now_ms.saturating_sub(month_ms)
+                } else {
+                    now_ms.saturating_sub(week_ms)
+                }
+            };
 
             let all_raw = store.all()?;
             let all = rbac.filter_owned(all_raw, caller.as_deref());

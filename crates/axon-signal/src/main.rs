@@ -312,12 +312,22 @@ fn main() -> Result<()> {
         }
 
         Commands::Weekly { from, to, slack_webhook, track, json } => {
-            let from_ms = from.as_deref()
-                .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s))
-                .unwrap_or_else(week_ago_ms);
             let to_ms = to.as_deref()
                 .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s))
                 .unwrap_or_else(now_ms);
+            // Auto-expand: if --from not specified and <3 sessions in last 7d, use 30d window
+            let from_ms = if let Some(f) = from.as_deref().and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s)) {
+                f
+            } else {
+                let all_scores = score_sessions(&store).unwrap_or_default();
+                let cutoff_7d = now_ms().saturating_sub(7 * 86_400_000);
+                let sessions_7d = all_scores.iter().filter(|s| s.ts_ms >= cutoff_7d).count();
+                if sessions_7d < 3 {
+                    now_ms().saturating_sub(30 * 86_400_000)
+                } else {
+                    week_ago_ms()
+                }
+            };
 
             let report = generate_weekly(&store, from_ms, to_ms, 14)?;
 
