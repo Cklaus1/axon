@@ -108,15 +108,21 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
         })
         .collect();
 
-    // Build file → [(session_id, goal, ts_ms)] map
+    // Build file → [(session_id, goal, ts_ms)] map.
+    // Deduplicate per file by goal: multiple sessions with the SAME goal touching the
+    // same file (e.g. /loop iterations) count as ONE data point. Only the earliest
+    // touch is kept so the window calculation stays correct.
     let mut file_touches: HashMap<String, Vec<(String, String, u64)>> = HashMap::new();
     for (sid, (goal, ts_ms, files)) in &sessions {
         for file in files {
             if file.is_empty() { continue; }
-            file_touches
-                .entry(file.clone())
-                .or_default()
-                .push((sid.clone(), goal.clone(), *ts_ms));
+            let touches = file_touches.entry(file.clone()).or_default();
+            let goal_lower = goal.trim().to_lowercase();
+            // Skip if this goal already appears for this file (keep earliest touch)
+            if touches.iter().any(|(_, g, _)| g.trim().to_lowercase() == goal_lower) {
+                continue;
+            }
+            touches.push((sid.clone(), goal.clone(), *ts_ms));
         }
     }
 
