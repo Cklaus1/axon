@@ -9,6 +9,7 @@
 ///   ledger_as_of  { timestamp: string }          → AsOfResult
 ///   ledger_stats  {}                             → StatsResult
 use std::io::{self, BufRead, Write};
+use std::path::Path;
 
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -18,7 +19,11 @@ use crate::store::Store;
 
 /// Blocking MCP server loop. Reads JSON-RPC 2.0 requests from stdin,
 /// writes responses to stdout. Each message is newline-delimited JSON.
-pub fn run_mcp_server(store: Store) -> Result<()> {
+///
+/// The store is re-opened per request so the server always sees the latest
+/// records — safe because the ledger is append-only JSONL and Store::open
+/// is a path wrapper (essentially free).
+pub fn run_mcp_server(ledger_dir: &Path) -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
 
@@ -53,7 +58,7 @@ pub fn run_mcp_server(store: Store) -> Result<()> {
         let response = match method {
             "initialize" => handle_initialize(&id),
             "tools/list" => handle_tools_list(&id),
-            "tools/call" => handle_tools_call(&id, &params, &store),
+            "tools/call" => handle_tools_call(&id, &params, ledger_dir),
             "ping" => json!({ "jsonrpc": "2.0", "id": id, "result": {} }),
             _ => json_error(id.as_ref(), -32601, &format!("Method not found: {method}")),
         };
@@ -132,9 +137,14 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
     })
 }
 
-fn handle_tools_call(id: &Option<Value>, params: &Value, store: &Store) -> Value {
+fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> Value {
     let tool_name = params.get("name").and_then(|v| v.as_str()).unwrap_or("");
     let args = params.get("arguments").cloned().unwrap_or(json!({}));
+
+    let store = match Store::open(ledger_dir).map_err(anyhow::Error::from) {
+        Ok(s) => s,
+        Err(e) => return json_error(id.as_ref(), -32000, &format!("Could not open ledger: {e}")),
+    };
 
     let result = match tool_name {
         "ledger_why" => {
@@ -142,7 +152,7 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, store: &Store) -> Value
             if sha.is_empty() {
                 return json_error(id.as_ref(), -32602, "ledger_why requires 'sha'");
             }
-            why(sha, store)
+            why(sha, &store)
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
         "ledger_search" => {
@@ -151,14 +161,14 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, store: &Store) -> Value
                 return json_error(id.as_ref(), -32602, "ledger_search requires 'query'");
             }
             let limit = args.get("limit").and_then(|v| v.as_u64()).unwrap_or(10) as usize;
-            search(query, store, limit)
+            search(query, &store, limit)
                 .map(|hits| serde_json::to_value(hits).unwrap_or(json!([])))
         }
         "ledger_as_of" => {
             let ts_str = args.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
             let ts_ms = crate::ingest::session::parse_iso_to_ms(ts_str)
                 .ok_or_else(|| anyhow::anyhow!("Invalid timestamp: {ts_str}"));
-            ts_ms.and_then(|ms| as_of(ms, store))
+            ts_ms.and_then(|ms| as_of(ms, &store))
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
         "ledger_stats" => {

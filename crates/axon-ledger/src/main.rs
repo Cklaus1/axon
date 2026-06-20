@@ -435,8 +435,7 @@ fn main() -> Result<()> {
         }
 
         Commands::Mcp => {
-            let store = Store::open(&dir_path)?;
-            run_mcp_server(store)?;
+            run_mcp_server(&dir_path)?;
         }
 
         Commands::Watch { dir, interval, gate, axon_bin, gate_script } => {
