@@ -211,9 +211,12 @@ pub fn ingest_session(
     let mut files_list: Vec<String> = files_touched.into_iter().collect();
     files_list.sort();
 
+    // Filter out Claude Code system-injected caveat headers that start with '<'
+    // (e.g. "<local-command-caveat>...") — these are not real user goals.
     let goal = goal_text
         .as_deref()
-        .unwrap_or("(no user message found in session)");
+        .filter(|g| !g.starts_with('<'))
+        .unwrap_or("(no user goal found in session)");
 
     // ── Brief gate ────────────────────────────────────────────────────────────
     if gate.enabled {
@@ -271,12 +274,42 @@ pub fn ingest_session(
 }
 
 fn extract_file_paths_from_command(cmd: &str, files: &mut HashSet<String>) {
-    let extensions = [".rs", ".ax", ".toml", ".md", ".json"];
+    let extensions = [".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock"];
     for token in cmd.split_whitespace() {
-        let token = token.trim_matches(|c: char| c == '"' || c == '\'');
-        if extensions.iter().any(|ext| token.ends_with(ext)) {
-            files.insert(token.to_string());
+        let token = token.trim_matches(|c: char| {
+            matches!(c, '"' | '\'' | ';' | '|' | '(' | ')' | ',' )
+        });
+        // Reject CLI flags, glob patterns, shell metacharacters
+        if token.starts_with('-')
+            || token.starts_with('!')
+            || token.contains('*')
+            || token.contains('+')
+            || token.contains('=')
+            || token.contains('[')
+            || token.contains(' ')
+        {
+            continue;
         }
+        // Must end with a known extension
+        let Some(ext) = extensions.iter().find(|e| token.ends_with(*e)) else {
+            continue;
+        };
+        // Basename (the part before the extension) must be non-empty
+        let basename_end = token.len() - ext.len();
+        let basename = &token[..basename_end];
+        if basename.is_empty() {
+            continue;
+        }
+        // No interior path segment should itself look like a source file
+        // (catches artifacts like "gate.sh/parity_all.sh", "expr.rs/mod.rs")
+        let segments: Vec<&str> = token.split('/').collect();
+        let interior_ok = segments[..segments.len().saturating_sub(1)]
+            .iter()
+            .all(|seg| !extensions.iter().any(|e| seg.ends_with(e)));
+        if !interior_ok {
+            continue;
+        }
+        files.insert(token.to_string());
     }
 }
 

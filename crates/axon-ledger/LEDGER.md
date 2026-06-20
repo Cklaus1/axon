@@ -30,11 +30,12 @@ OUTCOMES  (none recorded)
 ## Quickstart (your own repo, < 5 minutes)
 
 ```bash
-# 1. Build
-git clone https://github.com/cklaus/axon  # or use your existing checkout
-cd axon
-cargo build -p axon-ledger
-# binary: ./target/debug/axon-ledger
+# 1. Install (requires Rust — https://rustup.rs)
+cargo install --git https://github.com/cklaus/axon axon-ledger
+# or build from source:
+#   git clone https://github.com/cklaus/axon && cd axon
+#   cargo build -p axon-ledger
+#   alias axon-ledger=./target/debug/axon-ledger
 
 # 2. Ingest your repo's git history (one-time, ~10s for 1000 commits)
 ./target/debug/axon-ledger ingest git --repo /path/to/your-repo

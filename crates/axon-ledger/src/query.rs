@@ -180,16 +180,29 @@ pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
     active_sessions.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
     let session_count = visible.iter().filter(|r| r.effect == Effect::AgentSession).count();
 
-    // Files in flight: union of files_touched across active sessions, deduped
+    // Files in flight: union of files_touched across active sessions, deduped.
+    // Only keep paths that look like real source files: no flags, globs, or shell fragments.
+    let valid_extensions = [".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock", ".html", ".js", ".ts", ".py"];
     let mut files_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for s in &active_sessions {
         if let Some(arr) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
             for f in arr {
                 if let Some(path) = f.as_str() {
-                    // Keep only the last 2 path components for readability
-                    let short = path.rsplitn(3, '/').collect::<Vec<_>>();
-                    let label = if short.len() >= 2 {
-                        format!("{}/{}", short[1], short[0])
+                    // Skip shell artifacts: flags, globs, bash groupings
+                    if path.starts_with('-') || path.starts_with('(')
+                        || path.contains('*') || path.contains('+')
+                        || path.contains('=') || path.contains('[')
+                        || path.contains(' ')
+                    {
+                        continue;
+                    }
+                    if !valid_extensions.iter().any(|ext| path.ends_with(ext)) {
+                        continue;
+                    }
+                    // Keep last 2 path components for readability
+                    let parts: Vec<&str> = path.rsplitn(3, '/').collect();
+                    let label = if parts.len() >= 2 {
+                        format!("{}/{}", parts[1], parts[0])
                     } else {
                         path.to_string()
                     };
