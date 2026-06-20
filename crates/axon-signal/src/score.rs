@@ -249,6 +249,8 @@ pub fn score_sessions(store: &Store) -> anyhow::Result<Vec<SessionScore>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axon_ledger::hash::record_id;
+    use serde_json::json;
 
     #[test]
     fn test_goal_clarity_specific() {
@@ -305,5 +307,130 @@ mod tests {
     fn test_training_tier_rework() {
         // Even high score + rework = negative (rework means something went wrong)
         assert_eq!(training_tier(85, 3, true), TrainingTier::Negative);
+    }
+
+    #[test]
+    fn test_training_tier_serializes_snake_case() {
+        let gold = TrainingTier::PositiveGold;
+        let silver = TrainingTier::PositiveSilver;
+        let neg = TrainingTier::Negative;
+        let filt = TrainingTier::Filtered;
+        assert_eq!(serde_json::to_string(&gold).unwrap(), "\"positive_gold\"");
+        assert_eq!(serde_json::to_string(&silver).unwrap(), "\"positive_silver\"");
+        assert_eq!(serde_json::to_string(&neg).unwrap(), "\"negative\"");
+        assert_eq!(serde_json::to_string(&filt).unwrap(), "\"filtered\"");
+    }
+
+    /// Integration: score_sessions produces scores from a minimal store,
+    /// and the MetricOutcome write-back is visible via query::why().
+    #[test]
+    fn test_score_writeback_visible_in_why() {
+        use axon_ledger::query::why;
+        use axon_ledger::store::Store;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+
+        let ts = 3_000_000_000_000u64;
+
+        // Minimal session record
+        let session_payload = json!({
+            "session_id": "int-test-session-1",
+            "goal": "fix JWT clock skew in auth/jwt.go — reproduces when device time > 5min off",
+            "files_touched": ["auth/jwt.go", "auth/jwt_test.go"],
+            "turn_count": 12,
+            "start_ts": "",
+            "end_ts": "",
+        });
+        let session_id = record_id("agent:int-test-session-1", &Effect::AgentSession, ts - 300_000, &session_payload);
+        let session = LedgerRecord {
+            id: session_id,
+            principal: "agent:int-test-session-1".to_string(),
+            effect: Effect::AgentSession,
+            causal_parent: None,
+            ts_ms: ts - 300_000,
+            payload: session_payload,
+            repo: None,
+        };
+
+        // Commit record
+        let commit_sha = "aabbcc112233";
+        let commit_payload = json!({
+            "sha": commit_sha,
+            "message": "fix: JWT clock skew tolerance",
+            "author": "test@example.com",
+            "files": ["auth/jwt.go", "auth/jwt_test.go"],
+        });
+        let commit_id = record_id("git:test@example.com", &Effect::GitCommit, ts, &commit_payload);
+        let commit = LedgerRecord {
+            id: commit_id.clone(),
+            principal: "git:test@example.com".to_string(),
+            effect: Effect::GitCommit,
+            causal_parent: None,
+            ts_ms: ts,
+            payload: commit_payload,
+            repo: None,
+        };
+
+        // Edge linking session → commit
+        let edge_payload = json!({
+            "session_id": "int-test-session-1",
+            "commit_sha": commit_sha,
+            "commit_record_id": commit_id,
+            "confidence": "high",
+        });
+        let edge_id = record_id("ledger", &Effect::AgentEdge, ts, &edge_payload);
+        let edge = LedgerRecord {
+            id: edge_id,
+            principal: "ledger".to_string(),
+            effect: Effect::AgentEdge,
+            causal_parent: Some(commit_id.clone()),
+            ts_ms: ts,
+            payload: edge_payload,
+            repo: None,
+        };
+
+        store.append(&session).unwrap();
+        store.append(&commit).unwrap();
+        store.append(&edge).unwrap();
+
+        // Score sessions
+        let scores = score_sessions(&store).unwrap();
+        assert!(!scores.is_empty(), "should produce at least one score");
+        let s = scores.iter().find(|s| s.session_id == "int-test-session-1").unwrap();
+        assert!(s.score >= 60, "well-scoped goal with commits should score ≥ 60, got {}", s.score);
+
+        // Simulate score --ingest: write MetricOutcome with session_id in payload, causal_parent: None
+        let outcome_payload = json!({
+            "session_id": "int-test-session-1",
+            "score": s.score,
+            "training_tier": s.training_tier.label(),
+            "source": "axon-signal",
+        });
+        let outcome_id = record_id(
+            "signal:session:int-test-session-1",
+            &Effect::MetricOutcome,
+            ts + 1,
+            &outcome_payload,
+        );
+        let outcome = LedgerRecord {
+            id: outcome_id,
+            principal: "signal:test@example.com".to_string(),
+            effect: Effect::MetricOutcome,
+            causal_parent: None,  // intentionally not linked to commit
+            ts_ms: ts + 1,
+            payload: outcome_payload,
+            repo: None,
+        };
+        store.append(&outcome).unwrap();
+
+        // Verify why() surfaces the score via session_id lookup
+        let result = why(commit_sha, &store).unwrap();
+        assert_eq!(result.outcomes.len(), 1, "why() should find the MetricOutcome via session_id");
+        assert_eq!(
+            result.outcomes[0].payload.get("score").and_then(|v| v.as_u64()).unwrap_or(0),
+            s.score as u64
+        );
     }
 }
