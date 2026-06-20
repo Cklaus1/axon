@@ -37,8 +37,9 @@ cargo install --git https://github.com/cklaus/axon axon-ledger
 #   cargo build -p axon-ledger
 #   alias axon-ledger=./target/debug/axon-ledger
 
-# 2. Ingest your repo's git history (one-time, ~10s for 1000 commits)
-./target/debug/axon-ledger ingest git --repo /path/to/your-repo
+# 2. Ingest your repo's git history
+#    --since keeps it fast on large repos; remove it to ingest everything
+./target/debug/axon-ledger ingest git --repo /path/to/your-repo --since "90 days ago"
 
 # 3. Ingest your Claude Code sessions
 ./target/debug/axon-ledger ingest session-dir \
@@ -103,7 +104,7 @@ Override: `--ledger-dir /path/to/ledger` (all subcommands accept this global fla
 
 | Command | What it does |
 |---|---|
-| `ingest git --repo <path>` | Index all commits in a git repo |
+| `ingest git --repo <path> [--since <date>]` | Index commits in a git repo (`--since "90 days ago"` for large repos) |
 | `ingest session <file.jsonl>` | Ingest one Claude Code session file |
 | `ingest session-dir <dir>` | Ingest all sessions in a directory |
 | `ingest edges` | Infer session→commit causal links (run after ingest git + session) |
