@@ -1034,11 +1034,13 @@ fn main() -> Result<()> {
                 .collect();
 
             // Commits that touched files under the module path
+            // Note: git ingest stores files under "files" key (not "files_changed")
             let matching_commits: Vec<_> = in_window.iter()
                 .filter(|r| r.effect == Effect::GitCommit)
                 .filter(|r| {
-                    r.payload.get("files_changed")
-                        .and_then(|v| v.as_array())
+                    let files = r.payload.get("files")
+                        .or_else(|| r.payload.get("files_changed"));
+                    files.and_then(|v| v.as_array())
                         .map(|files| files.iter().any(|f| {
                             f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)
                         }))

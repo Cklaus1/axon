@@ -26,6 +26,7 @@ pub struct SessionScore {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum TrainingTier {
     /// score ≥ 85, commits ≥ 1, no rework — primary training examples
     PositiveGold,

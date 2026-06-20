@@ -160,7 +160,6 @@ pub fn export_dpo<W: Write>(
         .collect();
 
     let negatives: Vec<&SessionScore> = scores.iter()
-        .filter(|s| s.score < 40)
         .filter(|s| s.training_tier == TrainingTier::Negative)
         .collect();
 
@@ -176,12 +175,16 @@ pub fn export_dpo<W: Write>(
 
     let mut exported = 0;
     for pos in &positives {
-        // Find a negative session with a similar-ish goal (same leading verb)
+        // Find a negative session: prefer one with same leading verb, fall back to any negative
         let pos_verb = pos.goal.split_whitespace().next().unwrap_or("").to_lowercase();
-        let neg = negatives.iter().find(|n| {
+        let neg_by_verb = negatives.iter().find(|n| {
             n.goal.to_lowercase().starts_with(&pos_verb) && n.session_id != pos.session_id
         });
-        let neg = match neg { Some(n) => n, None => continue };
+        let verb_matched = neg_by_verb.is_some();
+        let neg = match neg_by_verb.or_else(|| negatives.iter().find(|n| n.session_id != pos.session_id)) {
+            Some(n) => n,
+            None => continue,
+        };
 
         let pos_file = match session_files.get(&pos.session_id) { Some(p) => p, None => continue };
         let neg_file = match session_files.get(&neg.session_id) { Some(p) => p, None => continue };
@@ -204,7 +207,7 @@ pub fn export_dpo<W: Write>(
                 rejected_session_id: neg.session_id.clone(),
                 chosen_score: pos.score,
                 rejected_score: neg.score,
-                goal_similarity: if pos_verb == neg.goal.split_whitespace().next().unwrap_or("").to_lowercase() { 0.7 } else { 0.3 },
+                goal_similarity: if verb_matched { 0.7 } else { 0.3 },
             },
         };
 
