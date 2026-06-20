@@ -111,10 +111,14 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
 ///   `analyze this project, whats the status`
 /// → unchanged
 fn clean_goal_text(raw: &str) -> String {
-    // Walk lines, skip blanks and heading lines (# / ##), strip heading markers
+    // Walk lines, skip blanks, heading-only lines, and pipe-table rows (│ / |)
     for line in raw.lines() {
         let line = line.trim();
         if line.is_empty() {
+            continue;
+        }
+        // Skip markdown table rows — lines containing │ or starting with |
+        if line.contains('│') || line.starts_with('|') {
             continue;
         }
         // Strip leading # markers (e.g. "# Goal: ..." → "Goal: ..." → strip "Goal: " prefix too)
@@ -131,10 +135,23 @@ fn clean_goal_text(raw: &str) -> String {
         if text.is_empty() {
             continue;
         }
-        // Take up to 120 chars of this first content line
+        // Take up to 120 chars of this first content line (Unicode-safe)
         return text.chars().take(120).collect();
     }
-    raw.chars().take(120).collect()
+    // All lines were table rows or empty — strip pipe chars and try again
+    let fallback: String = raw.chars()
+        .filter(|&c| c != '│' && c != '|' && c != '+' && c != '-')
+        .collect::<String>()
+        .split_whitespace()
+        .take(20)
+        .collect::<Vec<_>>()
+        .join(" ");
+    let fallback = fallback.trim().to_string();
+    if fallback.is_empty() {
+        "(structured session)".to_string()
+    } else {
+        fallback.chars().take(120).collect()
+    }
 }
 
 pub fn ingest_session(
@@ -447,5 +464,20 @@ mod tests {
         let ms = parse_iso_to_ms(ts);
         assert!(ms.is_some());
         assert!(ms.unwrap() > 0);
+    }
+
+    #[test]
+    fn test_clean_goal_pipe_table_skipped() {
+        let raw = "│ Phase │ Status │\n│ 1 │ ✅ │\nadd payment integration to checkout.rs";
+        assert_eq!(clean_goal_text(raw), "add payment integration to checkout.rs");
+    }
+
+    #[test]
+    fn test_clean_goal_unicode_truncate() {
+        // Goal with Unicode em-dashes and box-drawing chars should not panic on 120-char limit
+        let long_goal = "fix the auth bug — reproduces when device clock drift exceeds 5 min; affects all OAuth flows; see auth/jwt.go line 42 for the failing assertion that needs a leeway parameter";
+        let result = clean_goal_text(long_goal);
+        assert!(result.len() <= 200, "should not exceed byte length for reasonable input");
+        assert!(!result.contains("│"));
     }
 }

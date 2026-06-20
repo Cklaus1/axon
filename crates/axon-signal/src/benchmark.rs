@@ -316,12 +316,7 @@ pub fn render_benchmark(r: &BenchmarkReport) -> String {
 
     out.push_str("\nDIMENSIONS  (vs estimated industry median)\n");
     for d in &r.dimensions {
-        let arrow = if d.higher_is_better {
-            if d.gap >= 0.0 { "↑" } else { "↓" }
-        } else {
-            if d.gap >= 0.0 { "↑" } else { "↓" }
-        };
-        let better = if d.higher_is_better { d.gap >= 0.0 } else { d.gap >= 0.0 };
+        let better = d.gap >= 0.0;
         let sym = if better { "✓" } else { "!" };
         out.push_str(&format!(
             "  {} {:22}  {:.0}{}  (median {:.0}{})\n",

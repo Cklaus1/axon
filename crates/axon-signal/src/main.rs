@@ -192,6 +192,31 @@ fn week_ago_ms() -> u64 {
     now_ms().saturating_sub(7 * 24 * 60 * 60 * 1000)
 }
 
+/// Unicode-safe truncation for display: clips at `max_chars` char boundary, appends `…`.
+/// Also strips stale `# Goal:` / `## ` markdown headers that predate the ingest-time cleaning.
+fn truncate_display(s: &str, max_chars: usize) -> String {
+    // Strip leading markdown heading markers left over from old sessions
+    let s = s.trim();
+    let stripped = if s.starts_with('#') {
+        let without = s.trim_start_matches('#').trim();
+        if let Some(rest) = without.strip_prefix("Goal:") { rest.trim() } else { without }
+    } else {
+        s
+    };
+    // Skip pipe-table lines (│ character) and take the first non-table, non-empty line
+    let clean = stripped.lines()
+        .map(|l| l.trim())
+        .find(|l| !l.is_empty() && !l.contains('│') && !l.starts_with('|'))
+        .unwrap_or("(structured session)");
+    let char_count = clean.chars().count();
+    if char_count <= max_chars {
+        clean.to_string()
+    } else {
+        let end = clean.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(clean.len());
+        format!("{}…", &clean[..end])
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     let ledger_dir = cli.ledger_dir.unwrap_or_else(default_ledger_dir);
@@ -216,7 +241,7 @@ fn main() -> Result<()> {
                 for s in &scores {
                     let bar = "█".repeat(s.score as usize / 10)
                         + &"░".repeat(10usize.saturating_sub(s.score as usize / 10));
-                    let goal = if s.goal.len() > 55 { format!("{}…", &s.goal[..55]) } else { s.goal.clone() };
+                    let goal = truncate_display(&s.goal, 55);
                     println!("  {} {:>3}  {} turns → {} commits  {:?}",
                         bar, s.score, s.turns, s.commits_linked, goal);
                 }

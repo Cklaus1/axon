@@ -17,7 +17,6 @@
 ///
 /// When RBAC is disabled (no rbac.json), all records are visible to everyone
 /// (the original single-engineer behaviour).
-use std::collections::HashSet;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
