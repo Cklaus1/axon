@@ -5,6 +5,7 @@ use clap::{Parser, Subcommand};
 
 use axon_ledger::store::Store;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
+use axon_signal::mcp::run_mcp_server;
 use axon_signal::patterns::{antipatterns, build_pattern_library};
 use axon_signal::rework::find_rework_hotspots;
 use axon_signal::score::score_sessions;
@@ -116,6 +117,8 @@ enum Commands {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Start an MCP (Model Context Protocol) server over stdio — exposes all signal analytics as tools
+    Mcp,
 }
 
 fn default_ledger_dir() -> PathBuf {
@@ -409,6 +412,10 @@ fn main() -> Result<()> {
             };
 
             eprintln!("Exported {} training record(s) (min score: {}, format: {}).", n, min_score, format);
+        }
+
+        Commands::Mcp => {
+            run_mcp_server(&ledger_dir)?;
         }
     }
 

@@ -254,6 +254,8 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 - [x] `signal goals` — goal quality per engineer
 - [x] Slack webhook integration for weekly report
 - [x] GitHub Action: post session score on PR
+- [x] MCP server — all 6 analytics tools exposed (signal_score/weekly/rework/patterns/goals/loops)
+- [x] `score --ingest` — write scores back into ledger as MetricOutcome records
 
 ### v0.3 (Axon integration)
 - [ ] `@[goal(intent, metric, scope)]` structured annotation
