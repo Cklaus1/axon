@@ -202,7 +202,10 @@ pub fn ingest_session(
         if event_type == "user" {
             turn_count += 1;
         }
-        if goal_text.is_none() {
+        // Keep looking if current goal_text is a system caveat (starts with '<')
+        let needs_goal = goal_text.is_none()
+            || goal_text.as_deref().map(|g| g.starts_with('<')).unwrap_or(false);
+        if needs_goal {
             if let Some(text) = extract_first_user_text(&event) {
                 goal_text = Some(text);
             }

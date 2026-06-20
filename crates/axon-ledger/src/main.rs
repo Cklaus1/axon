@@ -1184,10 +1184,13 @@ fn main() -> Result<()> {
             let is_stale = |r: &&axon_ledger::model::LedgerRecord| -> bool {
                 let turn_count = r.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
                 if turn_count == 0 { return true; }
-                // Also refresh if the stored goal looks like a garbled table fallback
-                // (pipe-table stripping produced readable-but-wrong text before this was fixed)
                 let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
-                goal.contains('📋') || goal.contains("buildoncerun") || goal.contains("🟢 Strong")
+                // Garbled table fallback (fixed in clean_goal_text)
+                if goal.contains('📋') || goal.contains("buildoncerun") || goal.contains("🟢 Strong") {
+                    return true;
+                }
+                // "(no user goal found in session)" — now we look past the <caveat> for a real goal
+                goal == "(no user goal found in session)"
             };
             // Include original principal so session-refresh preserves engineer identity
             let stale: Vec<(String, String, String)> = existing.iter()
