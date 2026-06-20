@@ -126,6 +126,21 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Delete records older than a threshold (GDPR / data minimization)
+    Prune {
+        /// Delete records older than this ISO 8601 date or relative duration (e.g. "90 days ago", "2025-01-01")
+        #[arg(long)]
+        older_than: String,
+        /// Dry run — show what would be deleted without changing the ledger
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Manage webhook egress — notify Slack or PagerDuty when events occur
     Webhook {
         #[command(subcommand)]
@@ -908,6 +923,78 @@ fn main() -> Result<()> {
                     } else { msg.to_string() };
                     println!("  [commit]  {short_sha}  {msg_trunc}");
                 }
+            }
+        }
+
+        Commands::Prune { older_than, dry_run, yes, json } => {
+            use axon_ledger::ingest::session::parse_iso_to_ms;
+
+            // Parse the cutoff — try ISO 8601 first, then ask git to interpret it
+            let cutoff_ms = if let Some(ms) = parse_iso_to_ms(&older_than) {
+                ms
+            } else {
+                // Use `date -d "<arg>"` to resolve relative expressions like "90 days ago"
+                let date_out = std::process::Command::new("date")
+                    .args(["-d", &older_than, "+%s%3N"])
+                    .output()
+                    .context("Could not resolve date — use ISO 8601 (e.g. 2025-01-01) or a GNU date expression")?;
+                if !date_out.status.success() {
+                    anyhow::bail!("Cannot parse date '{}'. Use ISO 8601 or a GNU date expression like '90 days ago'.", older_than);
+                }
+                String::from_utf8_lossy(&date_out.stdout).trim().parse::<u64>()
+                    .context("date output was not a valid millisecond timestamp")?
+            };
+
+            // Count what would be pruned without touching the store
+            let all = store.all()?;
+            let would_prune = all.iter().filter(|r| r.ts_ms < cutoff_ms).count();
+            let would_keep = all.len() - would_prune;
+
+            if json {
+                let out = serde_json::json!({
+                    "older_than": older_than,
+                    "cutoff_ms": cutoff_ms,
+                    "total_records": all.len(),
+                    "would_prune": would_prune,
+                    "would_keep": would_keep,
+                    "dry_run": dry_run,
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+                if dry_run { return Ok(()); }
+            } else {
+                println!("Prune: records older than '{older_than}' (cutoff_ms={cutoff_ms})");
+                println!("  Total records : {}", all.len());
+                println!("  Would delete  : {would_prune}");
+                println!("  Would keep    : {would_keep}");
+                if dry_run {
+                    println!("\n(dry run — no changes made)");
+                    return Ok(());
+                }
+            }
+
+            if would_prune == 0 {
+                println!("Nothing to prune.");
+                return Ok(());
+            }
+
+            // Confirm unless --yes
+            if !yes {
+                eprint!("Delete {would_prune} record(s)? [y/N] ");
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)?;
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    eprintln!("Aborted.");
+                    return Ok(());
+                }
+            }
+
+            let mut store_mut = Store::open(&dir_path)?;
+            let (kept, pruned) = store_mut.prune(cutoff_ms)?;
+            if json {
+                let out = serde_json::json!({ "kept": kept, "pruned": pruned, "ok": true });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Done. Pruned {pruned} record(s); {kept} remain.");
             }
         }
 

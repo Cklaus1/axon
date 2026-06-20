@@ -79,4 +79,118 @@ impl Store {
             })
             .collect())
     }
+
+    /// Delete all records older than `cutoff_ms` (Unix epoch milliseconds).
+    /// Records whose `causal_parent` points to a surviving record are kept
+    /// even if they are older — orphaning a causal chain would corrupt the graph.
+    ///
+    /// Returns `(kept, pruned)` counts.
+    pub fn prune(&mut self, cutoff_ms: u64) -> Result<(usize, usize)> {
+        let all = self.all()?;
+
+        // IDs of records recent enough to keep.
+        let kept_ids: std::collections::HashSet<String> = all.iter()
+            .filter(|r| r.ts_ms >= cutoff_ms)
+            .map(|r| r.id.clone())
+            .collect();
+
+        // Also keep any record whose id is a causal_parent of a kept record —
+        // prevents dangling edges that reference pruned ancestors.
+        let parent_ids: std::collections::HashSet<String> = all.iter()
+            .filter(|r| kept_ids.contains(&r.id))
+            .filter_map(|r| r.causal_parent.clone())
+            .collect();
+
+        let to_keep: Vec<LedgerRecord> = all.into_iter()
+            .filter(|r| kept_ids.contains(&r.id) || parent_ids.contains(&r.id))
+            .collect();
+
+        let pruned = {
+            let all_count = self.all()?.len();
+            all_count - to_keep.len()
+        };
+
+        // Rewrite the store atomically: write to .tmp then rename
+        let tmp_path = self.events_path.with_extension("ndjson.tmp");
+        {
+            let mut f = File::create(&tmp_path)?;
+            for r in &to_keep {
+                writeln!(f, "{}", serde_json::to_string(r)?)?;
+            }
+        }
+        fs::rename(&tmp_path, &self.events_path)?;
+
+        Ok((to_keep.len(), pruned))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::Effect;
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    fn make_record(id: &str, ts_ms: u64, parent: Option<&str>) -> LedgerRecord {
+        LedgerRecord {
+            id: id.to_string(),
+            principal: "test".to_string(),
+            effect: Effect::GitCommit,
+            causal_parent: parent.map(String::from),
+            ts_ms,
+            payload: json!({}),
+        }
+    }
+
+    #[test]
+    fn test_prune_removes_old_records() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.append(&make_record("r1", 1000, None)).unwrap();
+        store.append(&make_record("r2", 5000, None)).unwrap();
+        store.append(&make_record("r3", 9000, None)).unwrap();
+
+        // Prune everything older than ts_ms=5000
+        let (kept, pruned) = store.prune(5000).unwrap();
+        assert_eq!(pruned, 1, "r1 should be pruned");
+        assert_eq!(kept, 2, "r2 and r3 should remain");
+        let remaining = store.all().unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert!(remaining.iter().any(|r| r.id == "r2"));
+        assert!(remaining.iter().any(|r| r.id == "r3"));
+    }
+
+    #[test]
+    fn test_prune_keeps_causal_children_of_survivors() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        // r1 is old but r2 (new) has r1 as causal_parent — r1 must survive
+        store.append(&make_record("r1", 1000, None)).unwrap();
+        store.append(&make_record("r2", 9000, Some("r1"))).unwrap();
+
+        let (kept, pruned) = store.prune(5000).unwrap();
+        assert_eq!(pruned, 0, "r1 must be kept because r2 references it");
+        assert_eq!(kept, 2);
+    }
+
+    #[test]
+    fn test_prune_nothing_when_all_recent() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        store.append(&make_record("r1", 9000, None)).unwrap();
+        store.append(&make_record("r2", 9001, None)).unwrap();
+
+        let (kept, pruned) = store.prune(5000).unwrap();
+        assert_eq!(pruned, 0);
+        assert_eq!(kept, 2);
+    }
+
+    #[test]
+    fn test_prune_empty_store() {
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+        let (kept, pruned) = store.prune(9999).unwrap();
+        assert_eq!(kept, 0);
+        assert_eq!(pruned, 0);
+    }
 }
