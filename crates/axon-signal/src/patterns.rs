@@ -24,9 +24,14 @@ pub struct GoalPattern {
 
 /// Extract the leading verb from a goal string.
 fn extract_verb(goal: &str) -> Option<&str> {
-    let verbs = ["fix", "add", "refactor", "migrate", "extract", "remove",
-                 "update", "replace", "implement", "delete", "rename", "move",
-                 "improve", "clean", "work on", "make"];
+    let verbs = [
+        "fix", "add", "refactor", "migrate", "extract", "remove",
+        "update", "replace", "implement", "delete", "rename", "move",
+        "improve", "clean", "work on", "make", "complete", "finish",
+        "build", "write", "test", "debug", "investigate", "analyze",
+        "pick up", "continue", "wire", "land", "ship", "deploy",
+        "integrate", "connect", "expose", "extend", "optimize",
+    ];
     let lower = goal.to_lowercase();
     verbs.iter().find(|&&v| lower.starts_with(v)).copied()
 }

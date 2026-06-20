@@ -92,7 +92,10 @@ pub fn score_goal_clarity(goal: &str) -> u8 {
 
     // Specific verb
     let specific_verbs = ["fix", "add", "refactor", "migrate", "extract", "remove",
-                          "update", "replace", "implement", "delete", "rename", "move"];
+                          "update", "replace", "implement", "delete", "rename", "move",
+                          "complete", "finish", "build", "write", "test", "debug",
+                          "wire", "land", "ship", "deploy", "integrate", "extend",
+                          "pick up", "continue", "investigate"];
     if specific_verbs.iter().any(|v| lower.starts_with(v) || lower.contains(&format!(" {v} "))) {
         score += 10;
     }
