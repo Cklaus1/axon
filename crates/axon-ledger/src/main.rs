@@ -574,8 +574,17 @@ fn main() -> Result<()> {
                 } else {
                     println!("OUTCOMES ({}):", result.outcomes.len());
                     for o in &result.outcomes {
-                        let file = o.payload.get("file").and_then(|v| v.as_str()).unwrap_or(&o.id);
-                        println!("  {}", file);
+                        // Signal score write-back: has score + training_tier
+                        if let Some(score) = o.payload.get("score").and_then(|v| v.as_i64()) {
+                            let tier = o.payload.get("training_tier").and_then(|v| v.as_str()).unwrap_or("?");
+                            let eng = o.payload.get("engineer").and_then(|v| v.as_str()).unwrap_or("");
+                            let eng_part = if eng.is_empty() { String::new() } else { format!("  {}", eng) };
+                            println!("  signal_score={}  tier={}{}",  score, tier, eng_part);
+                        } else {
+                            // File-linked or generic outcome
+                            let label = o.payload.get("file").and_then(|v| v.as_str()).unwrap_or(&o.id);
+                            println!("  {}", label);
+                        }
                     }
                 }
             }
