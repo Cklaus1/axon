@@ -91,12 +91,13 @@ pub fn score_goal_clarity(goal: &str) -> u8 {
         score += 20;
     }
 
-    // Specific verb
+    // Specific verb — rewarded when it implies a concrete, bounded action.
+    // Intentionally excludes continuation verbs ("continue", "complete", "pick up",
+    // "investigate") which produce high-word-count but low-specificity goals.
     let specific_verbs = ["fix", "add", "refactor", "migrate", "extract", "remove",
                           "update", "replace", "implement", "delete", "rename", "move",
-                          "complete", "finish", "build", "write", "test", "debug",
-                          "wire", "land", "ship", "deploy", "integrate", "extend",
-                          "pick up", "continue", "investigate"];
+                          "build", "write", "test", "debug",
+                          "wire", "land", "ship", "deploy", "integrate", "extend"];
     if specific_verbs.iter().any(|v| lower.starts_with(v) || lower.contains(&format!(" {v} "))) {
         score += 10;
     }
@@ -108,11 +109,14 @@ pub fn score_goal_clarity(goal: &str) -> u8 {
         score -= 20;
     }
 
-    // Penalize known-vague openers
+    // Penalize known-vague openers (including continuation/roadmap phrases)
     let vague = ["improve", "clean", "work on", "look at", "fix stuff", "fix things",
-                 "make better", "update things", "various", "misc"];
+                 "make better", "update things", "various", "misc",
+                 "complete the remaining", "finish the remaining", "continue with",
+                 "pick up", "keep going", "continue the", "finish up",
+                 "analyze this", "analyze the project"];
     if vague.iter().any(|v| lower.starts_with(v)) {
-        score -= 15;
+        score -= 20;
     }
 
     score.clamp(0, 100) as u8
@@ -156,12 +160,15 @@ fn score_scope_fit(files: usize, goal_words: usize) -> u8 {
     }
 }
 
-fn training_tier(score: u8, commits: usize, rework: bool) -> TrainingTier {
+fn training_tier(score: u8, commits: usize, rework: bool, goal_clarity: u8) -> TrainingTier {
     // Rework always = Negative regardless of score (something went wrong)
     if rework {
         return TrainingTier::Negative;
     }
-    if score >= 85 && commits >= 1 {
+    // Gold requires score ≥ 85 AND a clear goal (clarity ≥ 60).
+    // Vague-but-productive sessions cap at Silver — they're valid outcome signals
+    // but poor training examples since the goal won't generalize.
+    if score >= 85 && commits >= 1 && goal_clarity >= 60 {
         TrainingTier::PositiveGold
     } else if score >= 65 && commits >= 1 {
         TrainingTier::PositiveSilver
@@ -222,7 +229,7 @@ pub fn score_sessions(store: &Store) -> anyhow::Result<Vec<SessionScore>> {
             if commits_linked > 0 { 100.0 } else { 20.0 } * 0.10
         ).round() as u8;
 
-        let tier = training_tier(composite, commits_linked, rework_signal);
+        let tier = training_tier(composite, commits_linked, rework_signal, goal_clarity);
 
         scores.push(SessionScore {
             session_id,
@@ -295,18 +302,44 @@ mod tests {
 
     #[test]
     fn test_training_tier_gold() {
-        assert_eq!(training_tier(90, 2, false), TrainingTier::PositiveGold);
+        assert_eq!(training_tier(90, 2, false, 80), TrainingTier::PositiveGold);
     }
 
     #[test]
     fn test_training_tier_negative() {
-        assert_eq!(training_tier(25, 0, false), TrainingTier::Negative);
+        assert_eq!(training_tier(25, 0, false, 30), TrainingTier::Negative);
     }
 
     #[test]
     fn test_training_tier_rework() {
         // Even high score + rework = negative (rework means something went wrong)
-        assert_eq!(training_tier(85, 3, true), TrainingTier::Negative);
+        assert_eq!(training_tier(85, 3, true, 80), TrainingTier::Negative);
+    }
+
+    #[test]
+    fn test_training_tier_gold_requires_clarity() {
+        // High score + many commits, but vague goal → silver not gold
+        assert_eq!(training_tier(85, 10, false, 50), TrainingTier::PositiveSilver);
+        // Same score + good clarity → gold
+        assert_eq!(training_tier(85, 10, false, 65), TrainingTier::PositiveGold);
+    }
+
+    #[test]
+    fn test_goal_clarity_roadmap_phrases() {
+        // Common vague-but-productive goals should score below the gold clarity floor
+        let vague = score_goal_clarity("complete the remaining Axon roadmap requirements");
+        assert!(vague < 60, "roadmap completion phrase should score below gold threshold, got {vague}");
+        let also_vague = score_goal_clarity("analyze this project, whats the status");
+        assert!(also_vague < 60, "analysis phrase should score below gold threshold, got {also_vague}");
+    }
+
+    #[test]
+    fn test_goal_clarity_continuation_verbs_not_bonus() {
+        // "continue" and "complete" no longer give the +10 specific-verb bonus
+        let cont = score_goal_clarity("continue with the auth refactor");
+        let pick = score_goal_clarity("pick up the session where we left off");
+        assert!(cont < 60, "continuation goal should not score gold-eligible, got {cont}");
+        assert!(pick < 60, "pick-up goal should not score gold-eligible, got {pick}");
     }
 
     #[test]
