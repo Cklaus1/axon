@@ -4,6 +4,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use axon_ledger::store::Store;
+use axon_signal::dashboard::run_dashboard;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
 use axon_signal::mcp::run_mcp_server;
 use axon_signal::trends::{compute_trends, render_trends};
@@ -129,6 +130,12 @@ enum Commands {
         /// Output as JSON
         #[arg(long)]
         json: bool,
+    },
+    /// Start a web dashboard at http://localhost:<port>/
+    Dashboard {
+        /// Port to listen on (default: 7373)
+        #[arg(long, default_value = "7373")]
+        port: u16,
     },
     /// Start an MCP (Model Context Protocol) server over stdio — exposes all signal analytics as tools
     Mcp,
@@ -438,6 +445,10 @@ fn main() -> Result<()> {
             } else {
                 print!("{}", render_trends(&report));
             }
+        }
+
+        Commands::Dashboard { port } => {
+            run_dashboard(&ledger_dir, port)?;
         }
 
         Commands::Mcp => {

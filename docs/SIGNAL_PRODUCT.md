@@ -263,7 +263,7 @@ Enforces focus at the language level. The compiler warns if a session annotated 
 - [x] `signal export-training` — Trainloop/LoRA export (see TRAINLOOP.md)
 
 ### v1.0
-- [ ] Web dashboard (session timeline, score trends, heatmaps)
+- [x] Web dashboard — `axon-signal dashboard [--port 7373]`; single-page HTML/JS; 5 panes: Overview (avg score, top sessions, coverage), Trends (per-engineer bar charts), Rework hotspots, Loop opportunities, All sessions table; REST API (/api/score|weekly|rework|trends|loops)
 - [x] Per-engineer trend charts (score week-over-week) — `signal trends [--weeks N] [--engineer prefix]`; MCP `signal_trends`; direction + delta + ASCII bar chart + tailored recommendation
 - [ ] Team benchmark (how does your team compare to signal percentiles?)
 - [ ] Recommendation engine with A/B testing (did following last week's recommendation improve scores?)
