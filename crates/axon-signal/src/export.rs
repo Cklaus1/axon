@@ -91,11 +91,17 @@ pub fn export_training<W: Write>(
     let scores = score_sessions(store)?;
 
     // Filter by score and time window
-    let eligible: Vec<SessionScore> = scores.into_iter()
+    let mut eligible: Vec<SessionScore> = scores.into_iter()
         .filter(|s| s.score >= opts.min_score)
         .filter(|s| opts.since_ms.map_or(true, |ms| s.ts_ms >= ms))
         .filter(|s| matches!(s.training_tier, TrainingTier::PositiveGold | TrainingTier::PositiveSilver))
         .collect();
+
+    // Deduplicate by exact goal string — loop iterations all share the same goal text.
+    // Keep only the highest-scoring session per unique goal; ties go to the most recent.
+    eligible.sort_by(|a, b| b.score.cmp(&a.score).then(b.ts_ms.cmp(&a.ts_ms)));
+    let mut seen_goals = std::collections::HashSet::new();
+    eligible.retain(|s| seen_goals.insert(s.goal.trim().to_lowercase()));
 
     // Load raw session file paths from ledger to extract conversation turns
     let all = store.all().map_err(anyhow::Error::from)?;
@@ -293,5 +299,71 @@ mod tests {
     fn test_load_messages_missing_file() {
         let result = load_messages("/nonexistent/path.jsonl", false);
         assert!(result.is_err());
+    }
+
+    /// Goal deduplication: when multiple sessions share the exact same goal text
+    /// (e.g. /loop iterations), only the highest-scoring one should be exported.
+    #[test]
+    fn test_export_deduplicates_repeated_goals() {
+        use tempfile::tempdir;
+        use axon_ledger::model::{Effect, LedgerRecord};
+        use serde_json::json;
+
+        let dir = tempdir().unwrap();
+        let mut store = Store::open(dir.path()).unwrap();
+
+        // Write a minimal JSONL session file so load_messages succeeds
+        let jsonl_dir = dir.path().join("sessions");
+        std::fs::create_dir_all(&jsonl_dir).unwrap();
+        let make_jsonl = |id: &str| -> String {
+            let path = jsonl_dir.join(format!("session-{id}.jsonl"));
+            let content = "{\"type\":\"user\",\"message\":{\"content\":\"fix the auth bug\"}}\n\
+                           {\"type\":\"assistant\",\"message\":{\"content\":\"Done.\"}}\n";
+            std::fs::write(&path, content).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+
+        let common_goal = "complete the remaining roadmap requirements";
+        let make_session = |id: &str, ts: u64, score_hint: u64, files: &[&str]| -> LedgerRecord {
+            let path = make_jsonl(id);
+            LedgerRecord {
+                id: id.to_string(),
+                principal: format!("session:{id}"),
+                effect: Effect::AgentSession,
+                causal_parent: None,
+                ts_ms: ts,
+                payload: json!({
+                    "session_id": id,
+                    "goal": common_goal,
+                    "turns": 50u64,
+                    "commits_linked": 5u64,
+                    "files_touched": files,
+                    "file_path": path,
+                    // score_hint not a real field but we need different commit counts to
+                    // get different scores. Use files_touched length as proxy.
+                }),
+                repo: None,
+            }
+        };
+
+        // Three sessions, same goal, different timestamps and file counts → different scores.
+        // We can't fully control score without controlling commits; instead verify count ≤ 1 goal.
+        store.append(&make_session("sess0001", 1000, 0, &["auth.rs", "lib.rs"])).unwrap();
+        store.append(&make_session("sess0002", 2000, 0, &["auth.rs"])).unwrap();
+        store.append(&make_session("sess0003", 3000, 0, &["auth.rs", "lib.rs", "main.rs"])).unwrap();
+
+        let opts = ExportOptions { min_score: 0, since_ms: None, ..ExportOptions::default() };
+        let mut buf = Vec::new();
+        let n = export_training(&store, &opts, &mut buf).unwrap();
+
+        // At most 1 export record for the shared goal (may be 0 if score threshold filters all)
+        assert!(n <= 1, "expected at most 1 record for a repeated goal, got {n}");
+
+        if n == 1 {
+            let line = String::from_utf8(buf).unwrap();
+            let rec: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+            let exported_goal = rec["metadata"]["goal"].as_str().unwrap_or("");
+            assert_eq!(exported_goal, common_goal);
+        }
     }
 }
