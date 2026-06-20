@@ -341,6 +341,131 @@ fn matches_all(text: &str, terms: &[&str]) -> bool {
     terms.iter().all(|t| text.contains(t))
 }
 
+// ─── history ─────────────────────────────────────────────────────────────────
+
+/// One chapter in a file's history: the AI session that worked on it,
+/// the original goal, and the commits it produced that touched this file.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FileChapter {
+    /// The session that touched this file
+    pub session: LedgerRecord,
+    /// Resolved session goal text
+    pub goal: String,
+    /// Commits produced by this session that mention this file
+    pub commits: Vec<LedgerRecord>,
+    /// Edge confidence for the session→commit links
+    pub confidence: Option<f64>,
+    /// Human-readable session start time
+    pub date: String,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct HistoryResult {
+    /// Normalized file path used for matching
+    pub file: String,
+    /// Chapters in chronological order (oldest first)
+    pub chapters: Vec<FileChapter>,
+    pub total_sessions: usize,
+    pub total_commits: usize,
+}
+
+/// Return the provenance history of a file: which AI sessions shaped it,
+/// in what order, with which goals, and which commits each session produced.
+///
+/// Matching is done on path suffix so "auth/jwt.rs" matches
+/// "crates/core/src/auth/jwt.rs", "auth/jwt.rs", and "jwt.rs".
+pub fn history(file_path: &str, store: &Store) -> Result<HistoryResult> {
+    let all = store.all().map_err(anyhow::Error::from)?;
+
+    // Normalise the query: strip leading ./ and lower-case
+    let query = file_path.trim_start_matches("./");
+    let query_lower = query.to_lowercase();
+
+    // Helper: does a stored path match the query?
+    let file_matches = |stored: &str| -> bool {
+        let s = stored.trim_start_matches("./").to_lowercase();
+        s == query_lower || s.ends_with(&format!("/{query_lower}")) || s.ends_with(&query_lower)
+    };
+
+    // ── 1. Find sessions that touched this file ──────────────────────────────
+    let sessions: Vec<&LedgerRecord> = all.iter()
+        .filter(|r| r.effect == Effect::AgentSession)
+        .filter(|r| {
+            r.payload.get("files_touched")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(|f| file_matches(f)))
+                .unwrap_or(false)
+        })
+        .collect();
+
+    // ── 2. Build session_id → commit list from edges ─────────────────────────
+    let mut session_to_edge: std::collections::HashMap<String, &LedgerRecord> =
+        std::collections::HashMap::new();
+    for r in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
+        let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        session_to_edge.entry(sid.to_string()).or_insert(r);
+    }
+
+    // Build commit sha → record map
+    let commit_by_sha: std::collections::HashMap<String, &LedgerRecord> = all.iter()
+        .filter(|r| r.effect == Effect::GitCommit)
+        .filter_map(|r| {
+            r.payload.get("sha").and_then(|v| v.as_str())
+                .map(|sha| (sha.to_string(), r))
+        })
+        .collect();
+
+    // For each session, collect its edges and then the commits that touched our file
+    let mut session_commits: std::collections::HashMap<String, Vec<&LedgerRecord>> =
+        std::collections::HashMap::new();
+    for edge in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
+        let sid = edge.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        let sha = edge.payload.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("");
+        if let Some(&commit) = commit_by_sha.get(sha) {
+            let files_match = commit.payload.get("files")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(|f| file_matches(f)))
+                .unwrap_or(false);
+            if files_match {
+                session_commits.entry(sid.to_string()).or_default().push(commit);
+            }
+        }
+    }
+
+    // ── 3. Build chapters ────────────────────────────────────────────────────
+    let mut chapters: Vec<FileChapter> = sessions.iter().map(|s| {
+        let p = &s.payload;
+        let sid = p.get("session_id").and_then(|v| v.as_str()).unwrap_or(&s.id[..s.id.len().min(8)]);
+        let goal = p.get("goal").and_then(|v| v.as_str())
+            .filter(|g| !g.starts_with('<'))
+            .unwrap_or("(no goal recorded)")
+            .to_string();
+        let commits = session_commits.get(sid).cloned().unwrap_or_default()
+            .into_iter().cloned().collect();
+        let edge = session_to_edge.get(sid);
+        let confidence = edge.and_then(|e| e.payload.get("confidence").and_then(|v| v.as_f64()));
+        FileChapter {
+            session: (*s).clone(),
+            goal,
+            commits,
+            confidence,
+            date: ms_to_iso_approx(s.ts_ms),
+        }
+    }).collect();
+
+    // Oldest first
+    chapters.sort_by_key(|c| c.session.ts_ms);
+
+    let total_commits: usize = chapters.iter().map(|c| c.commits.len()).sum();
+
+    Ok(HistoryResult {
+        file: query.to_string(),
+        chapters,
+        total_sessions: sessions.len(),
+        total_commits,
+    })
+}
+
 fn ms_to_iso_approx(ms: u64) -> String {
     let secs = ms / 1000;
     let total_days = secs / 86400;
@@ -497,5 +622,62 @@ mod tests {
             result[0].payload.get("sha").and_then(|v| v.as_str()),
             Some("sha000002")
         );
+    }
+
+    fn make_session_with_file(sid: &str, goal: &str, file: &str, ts_ms: u64) -> LedgerRecord {
+        let payload = json!({
+            "session_id": sid,
+            "goal": goal,
+            "turn_count": 10,
+            "files_touched": [file],
+        });
+        let id = record_id(&format!("session:{sid}"), &Effect::AgentSession, ts_ms, &payload);
+        LedgerRecord { id, principal: format!("session:{sid}"), effect: Effect::AgentSession,
+            causal_parent: None, ts_ms, payload }
+    }
+
+    #[test]
+    fn test_history_finds_sessions_by_suffix() {
+        let dir = env::temp_dir().join(format!("axon-ledger-hist-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir).unwrap();
+
+        let s = make_session_with_file("sess1", "fix the auth bug", "src/auth/jwt.rs", 1_000_000);
+        store.append(&s).unwrap();
+
+        // Match by basename
+        let r = history("jwt.rs", &store).unwrap();
+        assert_eq!(r.chapters.len(), 1);
+        assert_eq!(r.chapters[0].goal, "fix the auth bug");
+
+        // Match by suffix
+        let r2 = history("auth/jwt.rs", &store).unwrap();
+        assert_eq!(r2.chapters.len(), 1);
+    }
+
+    #[test]
+    fn test_history_empty_for_unknown_file() {
+        let dir = env::temp_dir().join(format!("axon-ledger-hist2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir).unwrap();
+        let r = history("nonexistent.rs", &store).unwrap();
+        assert_eq!(r.chapters.len(), 0);
+        assert_eq!(r.total_sessions, 0);
+    }
+
+    #[test]
+    fn test_history_chronological_order() {
+        let dir = env::temp_dir().join(format!("axon-ledger-hist3-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir).unwrap();
+
+        // Insert in reverse order
+        store.append(&make_session_with_file("s2", "second goal", "lib.rs", 2_000_000)).unwrap();
+        store.append(&make_session_with_file("s1", "first goal", "lib.rs", 1_000_000)).unwrap();
+
+        let r = history("lib.rs", &store).unwrap();
+        assert_eq!(r.chapters.len(), 2);
+        assert_eq!(r.chapters[0].goal, "first goal",  "should be oldest first");
+        assert_eq!(r.chapters[1].goal, "second goal");
     }
 }

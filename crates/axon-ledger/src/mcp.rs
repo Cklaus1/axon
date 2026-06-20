@@ -4,17 +4,18 @@
 /// can call mid-session. Run with: `axon-ledger mcp [--ledger-dir <path>]`
 ///
 /// Tools exposed:
-///   ledger_why    { sha: string }                → WhyResult
-///   ledger_search { query: string, limit?: int } → SearchHit[]
-///   ledger_as_of  { timestamp: string }          → AsOfResult
-///   ledger_stats  {}                             → StatsResult
+///   ledger_why     { sha: string }                → WhyResult
+///   ledger_history { file: string }              → HistoryResult
+///   ledger_search  { query: string, limit?: int } → SearchHit[]
+///   ledger_as_of   { timestamp: string }          → AsOfResult
+///   ledger_stats   {}                             → StatsResult
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
 use anyhow::Result;
 use serde_json::{json, Value};
 
-use crate::query::{as_of, search, why};
+use crate::query::{as_of, history, search, why};
 use crate::store::Store;
 
 /// Blocking MCP server loop. Reads JSON-RPC 2.0 requests from stdin,
@@ -102,6 +103,17 @@ fn handle_tools_list(id: &Option<Value>) -> Value {
                     }
                 },
                 {
+                    "name": "ledger_history",
+                    "description": "Show the AI session history of a file — which sessions worked on it, with what goal, and which commits each session produced. Answers 'why does this file look the way it does?'",
+                    "inputSchema": {
+                        "type": "object",
+                        "properties": {
+                            "file": { "type": "string", "description": "File path or suffix, e.g. 'auth/jwt.rs' or 'jwt.rs'" }
+                        },
+                        "required": ["file"]
+                    }
+                },
+                {
                     "name": "ledger_search",
                     "description": "Search commits and sessions by keyword. Returns commits whose messages or files match, and sessions whose goals or files match, ranked by recency.",
                     "inputSchema": {
@@ -153,6 +165,14 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
                 return json_error(id.as_ref(), -32602, "ledger_why requires 'sha'");
             }
             why(sha, &store)
+                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
+        }
+        "ledger_history" => {
+            let file = args.get("file").and_then(|v| v.as_str()).unwrap_or("");
+            if file.is_empty() {
+                return json_error(id.as_ref(), -32602, "ledger_history requires 'file'");
+            }
+            history(file, &store)
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
         "ledger_search" => {
@@ -230,11 +250,12 @@ mod tests {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
         let names: Vec<&str> = tools.iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
         assert!(names.contains(&"ledger_why"));
+        assert!(names.contains(&"ledger_history"));
         assert!(names.contains(&"ledger_search"));
         assert!(names.contains(&"ledger_as_of"));
         assert!(names.contains(&"ledger_stats"));

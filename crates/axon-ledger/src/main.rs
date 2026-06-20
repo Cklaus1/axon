@@ -10,7 +10,7 @@ use axon_ledger::ingest::git::ingest_git;
 use axon_ledger::ingest::outcome::ingest_outcome;
 use axon_ledger::ingest::session::{ingest_session, GateOptions};
 use axon_ledger::mcp::run_mcp_server;
-use axon_ledger::query::{as_of, diff, search, why};
+use axon_ledger::query::{as_of, diff, history, search, why};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
 
@@ -74,6 +74,14 @@ enum Commands {
     AsOf {
         /// ISO 8601 timestamp (e.g. 2026-06-19T00:00:00Z)
         timestamp: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the AI session history of a file — who worked on it, with what goal, producing which commits
+    History {
+        /// File path (suffix matching: "auth/jwt.rs" matches "src/auth/jwt.rs")
+        file: String,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -458,6 +466,51 @@ fn main() -> Result<()> {
                     for f in &result.files_in_flight {
                         println!("  {}", f);
                     }
+                }
+            }
+        }
+
+        Commands::History { file, json } => {
+            let result = history(&file, &store)?;
+            if json {
+                println!("{}", serde_json::to_string_pretty(&result)?);
+            } else if result.chapters.is_empty() {
+                println!("No AI sessions found for {:?}.", file);
+                println!("(Try a shorter path suffix, e.g. \"jwt.rs\" instead of the full path)");
+            } else {
+                println!("HISTORY  {}", result.file);
+                println!("  {} session(s)  ·  {} linked commit(s)\n", result.total_sessions, result.total_commits);
+                for (i, ch) in result.chapters.iter().enumerate() {
+                    let sid = ch.session.payload.get("session_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(&ch.session.id[..ch.session.id.len().min(8)]);
+                    let turns = ch.session.payload.get("turn_count")
+                        .and_then(|v| v.as_u64()).unwrap_or(0);
+                    let conf = ch.confidence.map(|c| format!(" confidence {:.2}", c)).unwrap_or_default();
+                    println!("  Chapter {}  [{}]  {}{}",
+                        i + 1, &sid[..sid.len().min(8)], &ch.date[..10], conf);
+                    let goal = if ch.goal.chars().count() > 72 {
+                        let end = ch.goal.char_indices().nth(72).map(|(i, _)| i).unwrap_or(ch.goal.len());
+                        format!("{}…", &ch.goal[..end])
+                    } else {
+                        ch.goal.clone()
+                    };
+                    println!("  goal:   {}", goal);
+                    println!("  turns:  {}", turns);
+                    if ch.commits.is_empty() {
+                        println!("  commits: (none linked to this file)");
+                    } else {
+                        for c in &ch.commits {
+                            let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                            let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                            let short_msg = if msg.chars().count() > 60 {
+                                let end = msg.char_indices().nth(60).map(|(i, _)| i).unwrap_or(msg.len());
+                                format!("{}…", &msg[..end])
+                            } else { msg.to_string() };
+                            println!("  commit: {}  {}", &sha[..sha.len().min(10)], short_msg);
+                        }
+                    }
+                    println!();
                 }
             }
         }
