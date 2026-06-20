@@ -2,7 +2,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
 use axon_ledger::ingest::edge::infer_edges;
@@ -82,6 +82,20 @@ enum Commands {
     History {
         /// File path (suffix matching: "auth/jwt.rs" matches "src/auth/jwt.rs")
         file: String,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Flag unexplained commits before a deploy (commits with no linked AI session)
+    PreDeploy {
+        /// Git commit range, e.g. HEAD~8..HEAD or sha1..sha2 (default: HEAD~10..HEAD)
+        range: Option<String>,
+        /// Path to the git repo (default: current directory)
+        #[arg(long, default_value = ".")]
+        repo: PathBuf,
+        /// Fail (exit 1) if any unexplained commits are found
+        #[arg(long)]
+        fail_on_unexplained: bool,
         /// Output as JSON
         #[arg(long)]
         json: bool,
@@ -512,6 +526,110 @@ fn main() -> Result<()> {
                     }
                     println!();
                 }
+            }
+        }
+
+        Commands::PreDeploy { range, repo, fail_on_unexplained, json } => {
+            let range = range.as_deref().unwrap_or("HEAD~10..HEAD");
+            // Get SHAs in range from git
+            let git_out = std::process::Command::new("git")
+                .arg("-C").arg(&repo)
+                .args(["log", "--format=%H|%ae|%s", range])
+                .output()
+                .context("Failed to run git log for pre-deploy check")?;
+            if !git_out.status.success() {
+                anyhow::bail!("git log failed: {}", String::from_utf8_lossy(&git_out.stderr));
+            }
+            let range_commits: Vec<(String, String, String)> = String::from_utf8_lossy(&git_out.stdout)
+                .lines()
+                .filter_map(|l| {
+                    let parts: Vec<&str> = l.splitn(3, '|').collect();
+                    if parts.len() == 3 { Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string())) }
+                    else { None }
+                })
+                .collect();
+
+            // Build set of explained SHAs (appear in at least one edge)
+            let all = store.all()?;
+            use axon_ledger::model::Effect;
+            let explained_shas: std::collections::HashSet<String> = all.iter()
+                .filter(|r| r.effect == Effect::AgentEdge)
+                .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .collect();
+
+            // Session goals indexed by sha for display
+            let mut sha_to_goal: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            for edge in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
+                let sha = edge.payload.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let sid = edge.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                if let Some(session) = all.iter().find(|r| r.effect == Effect::AgentSession &&
+                    r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("") == sid)
+                {
+                    let goal = session.payload.get("goal").and_then(|v| v.as_str())
+                        .filter(|g| !g.starts_with('<'))
+                        .unwrap_or("(no goal)").to_string();
+                    sha_to_goal.entry(sha).or_insert(goal);
+                }
+            }
+
+            let explained: Vec<_> = range_commits.iter()
+                .filter(|(sha, _, _)| explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str())))
+                .collect();
+            let unexplained: Vec<_> = range_commits.iter()
+                .filter(|(sha, _, _)| !explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str())))
+                .collect();
+
+            let coverage = if range_commits.is_empty() { 100u64 }
+                else { (explained.len() * 100 / range_commits.len()) as u64 };
+
+            if json {
+                let out = serde_json::json!({
+                    "range": range,
+                    "total_commits": range_commits.len(),
+                    "explained": explained.len(),
+                    "unexplained": unexplained.len(),
+                    "coverage_pct": coverage,
+                    "unexplained_commits": unexplained.iter().map(|(sha, author, msg)| serde_json::json!({
+                        "sha": sha, "author": author, "message": msg
+                    })).collect::<Vec<_>>(),
+                    "explained_commits": explained.iter().map(|(sha, author, msg)| {
+                        let goal = sha_to_goal.get(sha.as_str()).cloned().unwrap_or_default();
+                        serde_json::json!({ "sha": sha, "author": author, "message": msg, "session_goal": goal })
+                    }).collect::<Vec<_>>(),
+                });
+                println!("{}", serde_json::to_string_pretty(&out)?);
+            } else {
+                println!("Pre-deploy check  {range}\n");
+                for (sha, _author, msg) in &range_commits {
+                    let short = &sha[..sha.len().min(10)];
+                    let is_explained = explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str()));
+                    let msg_trunc = if msg.chars().count() > 55 {
+                        let end = msg.char_indices().nth(55).map(|(i,_)|i).unwrap_or(msg.len());
+                        format!("{}…", &msg[..end])
+                    } else { msg.clone() };
+                    if is_explained {
+                        let goal = sha_to_goal.get(sha.as_str()).cloned()
+                            .unwrap_or_else(|| "(goal)".to_string());
+                        let goal_trunc = if goal.chars().count() > 50 {
+                            let end = goal.char_indices().nth(50).map(|(i,_)|i).unwrap_or(goal.len());
+                            format!("{}…", &goal[..end])
+                        } else { goal };
+                        println!("  ✓ {short}  {msg_trunc}");
+                        println!("         goal: {goal_trunc}");
+                    } else {
+                        println!("  ⚠ {short}  {msg_trunc}");
+                        println!("         NO LINKED SESSION");
+                    }
+                }
+                println!("\n  {}/{} commits explained  ({}% coverage)",
+                    explained.len(), range_commits.len(), coverage);
+                if !unexplained.is_empty() {
+                    println!("  {} unexplained commit(s) — review before deploy", unexplained.len());
+                }
+            }
+
+            if fail_on_unexplained && !unexplained.is_empty() {
+                std::process::exit(1);
             }
         }
 
