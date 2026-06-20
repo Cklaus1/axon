@@ -206,25 +206,31 @@ fn main() -> Result<()> {
             IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script } => {
                 let gate_opts = GateOptions { enabled: gate, axon_bin: axon_bin.clone(), gate_script: gate_script.clone() };
                 let mut total = 0usize;
+                let mut skipped = 0usize;
                 let mut rejected = 0usize;
-                let entries = fs::read_dir(&sessions_dir)?;
-                for entry in entries {
-                    let entry = entry?;
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                        continue;
-                    }
-                    match ingest_session(&path, &mut store, &gate_opts) {
+                // Collect and sort for deterministic ordering
+                let mut paths: Vec<_> = fs::read_dir(&sessions_dir)?
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("jsonl"))
+                    .collect();
+                paths.sort();
+                let n_files = paths.len();
+                for (i, path) in paths.iter().enumerate() {
+                    eprint!("\r  [{}/{}] {}", i + 1, n_files,
+                        path.file_name().unwrap_or_default().to_string_lossy());
+                    match ingest_session(path, &mut store, &gate_opts) {
                         Ok(Some(_)) => total += 1,
-                        Ok(None) => {}
+                        Ok(None) => skipped += 1,
                         Err(e) if e.to_string().starts_with("brief gate:") => {
-                            eprintln!("[ledger] skipped {}: {}", path.display(), e);
                             rejected += 1;
                         }
-                        Err(e) => return Err(e),
+                        Err(e) => { eprintln!(); return Err(e); }
                     }
                 }
-                println!("Ingested {} new sessions ({} rejected by brief gate).", total, rejected);
+                if n_files > 0 { eprintln!(); }
+                println!("Ingested {} new sessions ({} already known, {} rejected by gate).",
+                    total, skipped, rejected);
             }
             IngestSource::Edges => {
                 let n = infer_edges(&mut store)?;
