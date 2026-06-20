@@ -135,13 +135,15 @@ axon-ledger --ledger-dir ~/.axon/ledger mcp
 {
   "mcpServers": {
     "axon-ledger": {
-      "command": "axon-ledger",
+      "command": "/home/<your-username>/.cargo/bin/axon-ledger",
       "args": ["mcp"],
       "env": {}
     }
   }
 }
 ```
+
+> Tip: after `cargo install axon-ledger`, run `which axon-ledger` to get the exact path. On most systems it's `~/.cargo/bin/axon-ledger`. Substitute the full path (no `~` expansion in MCP configs).
 
 After restarting Claude Code, the agent can call `ledger_why("ed5775d")` inline and get back the full provenance record — session goal, confidence score, metric outcomes — without leaving the conversation.
 
