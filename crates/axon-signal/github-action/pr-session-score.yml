@@ -78,10 +78,16 @@ jobs:
             const recent = scores.slice(0, 5);
 
             const tierEmoji = {
-              'PositiveGold':   '🥇',
-              'PositiveSilver': '🥈',
-              'Filtered':       '🔶',
-              'Negative':       '🔴',
+              'positive_gold':   '🥇',
+              'positive_silver': '🥈',
+              'filtered':        '🔶',
+              'negative':        '🔴',
+            };
+            const tierLabel = {
+              'positive_gold':   'Positive Gold',
+              'positive_silver': 'Positive Silver',
+              'filtered':        'Filtered',
+              'negative':        'Negative',
             };
 
             let body = `## axon-signal: AI session effectiveness\n\n`;
@@ -90,9 +96,9 @@ jobs:
 
             for (const s of recent) {
               const emoji = tierEmoji[s.training_tier] || '•';
-              const tierLabel = (s.training_tier || '').replace(/([A-Z])/g, ' $1').trim();
+              const tierLabelStr = tierLabel[s.training_tier] || s.training_tier || '';
               const goal = (s.goal || '').slice(0, 60) + (s.goal?.length > 60 ? '…' : '');
-              body += `| **${s.score}/100** | ${emoji} ${tierLabel} | ${s.turns} | ${s.commits_linked} | ${goal} |\n`;
+              body += `| **${s.score}/100** | ${emoji} ${tierLabelStr} | ${s.turns} | ${s.commits_linked} | ${goal} |\n`;
             }
 
             const avg = recent.length
