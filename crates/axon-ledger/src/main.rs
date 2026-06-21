@@ -388,7 +388,13 @@ fn ledger_dir(cli_override: Option<&PathBuf>) -> PathBuf {
 }
 
 fn parse_iso_cli(s: &str) -> Result<u64> {
-    axon_ledger::ingest::session::parse_iso_to_ms(s)
+    // Accept bare date "YYYY-MM-DD" as midnight UTC
+    let normalized = if s.len() == 10 && s.chars().nth(4) == Some('-') {
+        format!("{}T00:00:00Z", s)
+    } else {
+        s.to_string()
+    };
+    axon_ledger::ingest::session::parse_iso_to_ms(&normalized)
         .ok_or_else(|| anyhow::anyhow!("Could not parse timestamp: {}", s))
 }
 
