@@ -1,6 +1,6 @@
+use crate::span::Span;
 #[cfg(feature = "serde-json")]
 use serde::{Deserialize, Serialize};
-use crate::span::Span;
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
@@ -26,7 +26,11 @@ pub enum Item {
     TraitDef(TraitDef),
     ImplBlock(ImplBlock),
     /// Module-level comptime constant: `let NAME = comptime { expr }`
-    LetDef { name: String, value: Box<Expr>, span: Span },
+    LetDef {
+        name: String,
+        value: Box<Expr>,
+        span: Span,
+    },
     /// Phase 5: a named refinement type `type Name = BaseType where <pred>`.
     /// The predicate's implicit binder `_` refers to the value of the base type.
     RefineDef(RefineDef),
@@ -208,12 +212,21 @@ pub struct Attr {
 #[cfg_attr(feature = "serde-json", serde(tag = "kind"))]
 pub enum AxonType {
     Named(String),
-    Result { ok: Box<AxonType>, err: Box<AxonType> },
+    Result {
+        ok: Box<AxonType>,
+        err: Box<AxonType>,
+    },
     Option(Box<AxonType>),
     Chan(Box<AxonType>),
     Slice(Box<AxonType>),
-    Generic { base: String, args: Vec<AxonType> },
-    Fn { params: Vec<AxonType>, ret: Box<AxonType> },
+    Generic {
+        base: String,
+        args: Vec<AxonType>,
+    },
+    Fn {
+        params: Vec<AxonType>,
+        ret: Box<AxonType>,
+    },
     Ref(Box<AxonType>),
     /// Phase 3: trait object type — `dyn Displayable`
     DynTrait(String),
@@ -226,6 +239,8 @@ pub enum AxonType {
     /// TypeScript-style union type — `A|B|C`.
     /// Always has at least two members; a single type is represented directly.
     Union(Vec<AxonType>),
+    /// R17 HAL: raw pointer type `*T` — substrate-only; rejected in surface files (E1700).
+    RawPtr(Box<AxonType>),
 }
 
 // ── Expressions ──────────────────────────────────────────────────────────────
@@ -236,9 +251,21 @@ pub enum AxonType {
 pub enum Expr {
     Block(Vec<Stmt>),
     /// `let name (: ty)? = value` — `ty` is an optional explicit type annotation.
-    Let { name: String, ty: Option<AxonType>, value: Box<Expr> },
-    Own { name: String, ty: Option<AxonType>, value: Box<Expr> },
-    RefBind { name: String, ty: Option<AxonType>, value: Box<Expr> },
+    Let {
+        name: String,
+        ty: Option<AxonType>,
+        value: Box<Expr>,
+    },
+    Own {
+        name: String,
+        ty: Option<AxonType>,
+        value: Box<Expr>,
+    },
+    RefBind {
+        name: String,
+        ty: Option<AxonType>,
+        value: Box<Expr>,
+    },
     /// A call. `tier` is an optional per-call AI routing tier from a trailing
     /// `tier:` named arg (R3b) — `None` for every ordinary call; only `ai_*`
     /// builtins read it. Additive: the default keeps existing call sites valid.
@@ -248,12 +275,30 @@ pub enum Expr {
         #[cfg_attr(feature = "serde-json", serde(default))]
         tier: Option<String>,
     },
-    MethodCall { receiver: Box<Expr>, method: String, args: Vec<Expr> },
-    BinOp { op: BinOp, left: Box<Expr>, right: Box<Expr> },
-    UnaryOp { op: UnaryOp, operand: Box<Expr> },
-    Question(Box<Expr>),    // expr?
-    Match { subject: Box<Expr>, arms: Vec<MatchArm> },
-    If { cond: Box<Expr>, then: Box<Expr>, else_: Option<Box<Expr>> },
+    MethodCall {
+        receiver: Box<Expr>,
+        method: String,
+        args: Vec<Expr>,
+    },
+    BinOp {
+        op: BinOp,
+        left: Box<Expr>,
+        right: Box<Expr>,
+    },
+    UnaryOp {
+        op: UnaryOp,
+        operand: Box<Expr>,
+    },
+    Question(Box<Expr>), // expr?
+    Match {
+        subject: Box<Expr>,
+        arms: Vec<MatchArm>,
+    },
+    If {
+        cond: Box<Expr>,
+        then: Box<Expr>,
+        else_: Option<Box<Expr>>,
+    },
     Spawn(Box<Expr>),
     Select(Vec<SelectArm>),
     Comptime(Box<Expr>),
@@ -266,8 +311,14 @@ pub enum Expr {
         captures: Vec<(String, Option<crate::types::Type>)>,
     },
     Return(Option<Box<Expr>>),
-    FieldAccess { receiver: Box<Expr>, field: String },
-    Index { receiver: Box<Expr>, index: Box<Expr> },
+    FieldAccess {
+        receiver: Box<Expr>,
+        field: String,
+    },
+    Index {
+        receiver: Box<Expr>,
+        index: Box<Expr>,
+    },
     /// Tuple literal: `(a, b, …)` (≥2 elements). A 1-elem paren is grouping and
     /// `()` is the unit literal — neither becomes a Tuple. Tuple elements are
     /// accessed with `t.0`, `t.1`, … (parsed as `FieldAccess` with a numeric
@@ -278,13 +329,18 @@ pub enum Expr {
     /// String interpolation: `"hello {name}!"` lowered to a series of
     /// `axon_concat` calls.  Parts alternate between literal text and
     /// sub-expressions that evaluate to `str`.
-    FmtStr { parts: Vec<FmtPart> },
+    FmtStr {
+        parts: Vec<FmtPart>,
+    },
     Ok(Box<Expr>),
     Err(Box<Expr>),
     Some(Box<Expr>),
     None,
     Array(Vec<Expr>),
-    StructLit { name: String, fields: Vec<(String, Expr)> },
+    StructLit {
+        name: String,
+        fields: Vec<(String, Expr)>,
+    },
     While {
         cond: Box<Expr>,
         body: Vec<Stmt>,
@@ -295,7 +351,10 @@ pub enum Expr {
         expr: Box<Expr>,
         body: Vec<Stmt>,
     },
-    Assign { name: String, value: Box<Expr> },
+    Assign {
+        name: String,
+        value: Box<Expr>,
+    },
     /// Phase 6: `with <handler> { body }` — run `body` under an effect handler.
     /// The handler is either a named reference or an inline `handler { … }`. In
     /// this surface slice the node is parsed and preserved but evaluates to its
@@ -307,7 +366,10 @@ pub enum Expr {
     /// Place assignment: `<place> = <value>`, where `place` is an `Index` or
     /// `FieldAccess` (e.g. `xs[i] = v`, `s.field = v`). Bare `ident = v` uses
     /// `Assign` instead.
-    AssignTo { place: Box<Expr>, value: Box<Expr> },
+    AssignTo {
+        place: Box<Expr>,
+        value: Box<Expr>,
+    },
     /// Exit the nearest enclosing `while` loop.
     Break,
     /// Jump to the condition-check of the nearest enclosing `while` loop.
@@ -334,7 +396,10 @@ pub struct LambdaParam {
 
 impl LambdaParam {
     pub fn untyped(name: impl Into<String>) -> Self {
-        LambdaParam { name: name.into(), ty: None }
+        LambdaParam {
+            name: name.into(),
+            ty: None,
+        }
     }
 }
 
@@ -349,7 +414,10 @@ pub struct Stmt {
 impl Stmt {
     /// Construct a statement with no source-span information (for synthesised AST nodes).
     pub fn simple(expr: Expr) -> Self {
-        Stmt { expr, span: Span::dummy() }
+        Stmt {
+            expr,
+            span: Span::dummy(),
+        }
     }
 }
 
@@ -434,7 +502,10 @@ pub enum Pattern {
     None,
     Ok(Box<Pattern>),
     Err(Box<Pattern>),
-    Struct { name: String, fields: Vec<(String, Pattern)> },
+    Struct {
+        name: String,
+        fields: Vec<(String, Pattern)>,
+    },
     Tuple(Vec<Pattern>),
 }
 
@@ -517,15 +588,31 @@ pub struct VerifySpec {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Rem,
-    Eq, NotEq, Lt, Gt, LtEq, GtEq,
-    And, Or,
-    BitAnd, BitOr, BitXor, Shl, Shr,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Eq,
+    NotEq,
+    Lt,
+    Gt,
+    LtEq,
+    GtEq,
+    And,
+    Or,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
 }
 
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde-json", derive(Serialize, Deserialize))]
 pub enum UnaryOp {
-    Neg, Not, Ref,
+    Neg,
+    Not,
+    Ref,
     BitNot,
 }

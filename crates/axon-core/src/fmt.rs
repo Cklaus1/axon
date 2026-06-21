@@ -23,7 +23,10 @@ struct Formatter {
 
 impl Formatter {
     fn new() -> Self {
-        Self { buf: String::new(), indent: 0 }
+        Self {
+            buf: String::new(),
+            indent: 0,
+        }
     }
 
     fn finish(mut self) -> String {
@@ -35,14 +38,18 @@ impl Formatter {
         self.buf
     }
 
-    fn write(&mut self, s: &str) { self.buf.push_str(s); }
+    fn write(&mut self, s: &str) {
+        self.buf.push_str(s);
+    }
 
     fn writeln(&mut self, s: &str) {
         self.buf.push_str(s);
         self.buf.push('\n');
     }
 
-    fn nl(&mut self) { self.buf.push('\n'); }
+    fn nl(&mut self) {
+        self.buf.push('\n');
+    }
 
     fn ind(&mut self) {
         for _ in 0..self.indent {
@@ -50,26 +57,46 @@ impl Formatter {
         }
     }
 
-    fn push(&mut self) { self.indent += 1; }
-    fn pop(&mut self)  { if self.indent > 0 { self.indent -= 1; } }
+    fn push(&mut self) {
+        self.indent += 1;
+    }
+    fn pop(&mut self) {
+        if self.indent > 0 {
+            self.indent -= 1;
+        }
+    }
 
     // ── Program ───────────────────────────────────────────────────────────────
 
     fn emit_program(&mut self, program: &Program) {
         // Emit `use` declarations first, then a blank line.
-        let uses: Vec<_> = program.items.iter()
-            .filter_map(|i| if let Item::UseDecl(u) = i { Some(u) } else { None })
+        let uses: Vec<_> = program
+            .items
+            .iter()
+            .filter_map(|i| {
+                if let Item::UseDecl(u) = i {
+                    Some(u)
+                } else {
+                    None
+                }
+            })
             .collect();
         if !uses.is_empty() {
-            for u in uses { self.emit_use(u); }
+            for u in uses {
+                self.emit_use(u);
+            }
             self.nl();
         }
 
         // Emit all other items, separated by one blank line.
         let mut first = true;
         for item in &program.items {
-            if matches!(item, Item::UseDecl(_) | Item::ModDecl(_)) { continue; }
-            if !first { self.nl(); }
+            if matches!(item, Item::UseDecl(_) | Item::ModDecl(_)) {
+                continue;
+            }
+            if !first {
+                self.nl();
+            }
             first = false;
             self.emit_item(item);
         }
@@ -88,7 +115,7 @@ impl Formatter {
 
     fn emit_item(&mut self, item: &Item) {
         match item {
-            Item::FnDef(f)   => self.emit_fn(f),
+            Item::FnDef(f) => self.emit_fn(f),
             Item::TypeDef(t) => self.emit_typedef(t),
             Item::EnumDef(e) => self.emit_enumdef(e),
             Item::TraitDef(t) => self.emit_traitdef(t),
@@ -132,7 +159,9 @@ impl Formatter {
 
     fn emit_fn(&mut self, f: &FnDef) {
         self.emit_attrs(&f.attrs);
-        if f.public { self.write("pub "); }
+        if f.public {
+            self.write("pub ");
+        }
         self.write("fn ");
         self.write(&f.name);
         if !f.generic_params.is_empty() {
@@ -143,19 +172,25 @@ impl Formatter {
                 .iter()
                 .map(|(n, bs)| (n.as_str(), bs))
                 .collect();
-            let parts: Vec<String> = f.generic_params.iter().map(|p| {
-                if let Some(bs) = bounds_map.get(p.as_str()) {
-                    format!("{}: {}", p, bs.join(" + "))
-                } else {
-                    p.clone()
-                }
-            }).collect();
+            let parts: Vec<String> = f
+                .generic_params
+                .iter()
+                .map(|p| {
+                    if let Some(bs) = bounds_map.get(p.as_str()) {
+                        format!("{}: {}", p, bs.join(" + "))
+                    } else {
+                        p.clone()
+                    }
+                })
+                .collect();
             self.write(&parts.join(", "));
             self.write(">");
         }
         self.write("(");
         for (i, p) in f.params.iter().enumerate() {
-            if i > 0 { self.write(", "); }
+            if i > 0 {
+                self.write(", ");
+            }
             self.write(&p.name);
             self.write(": ");
             self.emit_axon_type(&p.ty);
@@ -178,11 +213,15 @@ impl Formatter {
     fn emit_effect_row(&mut self, row: &crate::ast::EffectRow) {
         self.write(" | {");
         for (i, eff) in row.effects.iter().enumerate() {
-            if i > 0 { self.write(", "); }
+            if i > 0 {
+                self.write(", ");
+            }
             self.write(eff);
         }
         if let Some(v) = &row.row_var {
-            if !row.effects.is_empty() { self.write(", "); }
+            if !row.effects.is_empty() {
+                self.write(", ");
+            }
             self.write("...");
             self.write(v);
         }
@@ -201,7 +240,9 @@ impl Formatter {
         }
         self.write(" = { ");
         for (i, field) in t.fields.iter().enumerate() {
-            if i > 0 { self.write(", "); }
+            if i > 0 {
+                self.write(", ");
+            }
             self.write(&field.name);
             self.write(": ");
             self.emit_axon_type(&field.ty);
@@ -225,7 +266,9 @@ impl Formatter {
             if !variant.fields.is_empty() {
                 self.write(" { ");
                 for (i, f) in variant.fields.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.write(&f.name);
                     self.write(": ");
                     self.emit_axon_type(&f.ty);
@@ -254,7 +297,9 @@ impl Formatter {
             self.write(&m.name);
             self.write("(");
             for (i, p) in m.params.iter().enumerate() {
-                if i > 0 { self.write(", "); }
+                if i > 0 {
+                    self.write(", ");
+                }
                 self.write(&p.name);
                 self.write(": ");
                 self.emit_axon_type(&p.ty);
@@ -279,7 +324,9 @@ impl Formatter {
         self.push();
         let mut first = true;
         for m in &b.methods {
-            if !first { self.nl(); }
+            if !first {
+                self.nl();
+            }
             first = false;
             self.ind();
             self.emit_fn(m);
@@ -298,11 +345,16 @@ impl Formatter {
 
     fn emit_axon_type(&mut self, ty: &AxonType) {
         match ty {
-            AxonType::Named(n)     => self.write(n),
+            AxonType::Named(n) => self.write(n),
             AxonType::TypeParam(n) => self.write(n),
-            AxonType::DynTrait(n)  => { self.write("dyn "); self.write(n); }
+            AxonType::DynTrait(n) => {
+                self.write("dyn ");
+                self.write(n);
+            }
             AxonType::Option(inner) => {
-                self.write("Option<"); self.emit_axon_type(inner); self.write(">");
+                self.write("Option<");
+                self.emit_axon_type(inner);
+                self.write(">");
             }
             AxonType::Result { ok, err } => {
                 self.write("Result<");
@@ -312,16 +364,22 @@ impl Formatter {
                 self.write(">");
             }
             AxonType::Chan(inner) => {
-                self.write("Chan<"); self.emit_axon_type(inner); self.write(">");
+                self.write("Chan<");
+                self.emit_axon_type(inner);
+                self.write(">");
             }
             AxonType::Slice(inner) => {
-                self.write("["); self.emit_axon_type(inner); self.write("]");
+                self.write("[");
+                self.emit_axon_type(inner);
+                self.write("]");
             }
             AxonType::Generic { base, args } => {
                 self.write(base);
                 self.write("<");
                 for (i, a) in args.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_axon_type(a);
                 }
                 self.write(">");
@@ -329,26 +387,37 @@ impl Formatter {
             AxonType::Fn { params, ret } => {
                 self.write("fn(");
                 for (i, p) in params.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_axon_type(p);
                 }
                 self.write(") -> ");
                 self.emit_axon_type(ret);
             }
             AxonType::Ref(inner) => {
-                self.write("&"); self.emit_axon_type(inner);
+                self.write("&");
+                self.emit_axon_type(inner);
+            }
+            AxonType::RawPtr(inner) => {
+                self.write("*");
+                self.emit_axon_type(inner);
             }
             AxonType::Tuple(elems) => {
                 self.write("(");
                 for (i, e) in elems.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_axon_type(e);
                 }
                 self.write(")");
             }
             AxonType::Union(members) => {
                 for (i, m) in members.iter().enumerate() {
-                    if i > 0 { self.write("|"); }
+                    if i > 0 {
+                        self.write("|");
+                    }
                     self.emit_axon_type(m);
                 }
             }
@@ -504,18 +573,26 @@ impl Formatter {
                 self.emit_expr(callee);
                 self.write("(");
                 for (i, a) in args.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_expr(a);
                 }
                 self.write(")");
             }
-            Expr::MethodCall { receiver, method, args } => {
+            Expr::MethodCall {
+                receiver,
+                method,
+                args,
+            } => {
                 self.emit_expr(receiver);
                 self.write(".");
                 self.write(method);
                 self.write("(");
                 for (i, a) in args.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_expr(a);
                 }
                 self.write(")");
@@ -552,7 +629,11 @@ impl Formatter {
                 self.emit_block_body(&Expr::Block(body.clone()));
             }
 
-            Expr::WhileLet { pattern, expr, body } => {
+            Expr::WhileLet {
+                pattern,
+                expr,
+                body,
+            } => {
                 self.write("while let ");
                 self.emit_pattern(pattern);
                 self.write(" = ");
@@ -603,7 +684,9 @@ impl Formatter {
                 } else {
                     self.write("|");
                     for (i, p) in params.iter().enumerate() {
-                        if i > 0 { self.write(", "); }
+                        if i > 0 {
+                            self.write(", ");
+                        }
                         self.write(&p.name);
                         if let Some(ty) = &p.ty {
                             self.write(": ");
@@ -640,13 +723,31 @@ impl Formatter {
                 self.emit_expr(inner);
             }
 
-            Expr::Ok(inner) => { self.write("Ok("); self.emit_expr(inner); self.write(")"); }
-            Expr::Err(inner) => { self.write("Err("); self.emit_expr(inner); self.write(")"); }
-            Expr::Some(inner) => { self.write("Some("); self.emit_expr(inner); self.write(")"); }
+            Expr::Ok(inner) => {
+                self.write("Ok(");
+                self.emit_expr(inner);
+                self.write(")");
+            }
+            Expr::Err(inner) => {
+                self.write("Err(");
+                self.emit_expr(inner);
+                self.write(")");
+            }
+            Expr::Some(inner) => {
+                self.write("Some(");
+                self.emit_expr(inner);
+                self.write(")");
+            }
             Expr::None => self.write("None"),
             Expr::Break => self.write("break"),
             Expr::Continue => self.write("continue"),
-            Expr::For { var, start, end, body, inclusive } => {
+            Expr::For {
+                var,
+                start,
+                end,
+                body,
+                inclusive,
+            } => {
                 self.write("for ");
                 self.write(var);
                 self.write(" in ");
@@ -660,7 +761,9 @@ impl Formatter {
             Expr::Array(elems) => {
                 self.write("[");
                 for (i, e) in elems.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_expr(e);
                 }
                 self.write("]");
@@ -668,7 +771,9 @@ impl Formatter {
             Expr::Tuple(elems) => {
                 self.write("(");
                 for (i, e) in elems.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_expr(e);
                 }
                 self.write(")");
@@ -682,7 +787,9 @@ impl Formatter {
                 } else {
                     self.write(" { ");
                     for (i, (fname, val)) in fields.iter().enumerate() {
-                        if i > 0 { self.write(", "); }
+                        if i > 0 {
+                            self.write(", ");
+                        }
                         self.write(fname);
                         self.write(": ");
                         self.emit_expr(val);
@@ -699,10 +806,13 @@ impl Formatter {
                             // Re-escape special chars inside the literal fragment.
                             for ch in s.chars() {
                                 match ch {
-                                    '"'  => self.write("\\\""),
+                                    '"' => self.write("\\\""),
                                     '\\' => self.write("\\\\"),
-                                    '{'  => self.write("{"),
-                                    _    => { let mut tmp = [0u8; 4]; self.write(ch.encode_utf8(&mut tmp)); }
+                                    '{' => self.write("{"),
+                                    _ => {
+                                        let mut tmp = [0u8; 4];
+                                        self.write(ch.encode_utf8(&mut tmp));
+                                    }
                                 }
                             }
                         }
@@ -724,17 +834,22 @@ impl Formatter {
             Literal::Float(f) => {
                 let s = format!("{f}");
                 self.write(&s);
-                if !s.contains('.') && !s.contains('e') { self.write(".0"); }
+                if !s.contains('.') && !s.contains('e') {
+                    self.write(".0");
+                }
             }
             Literal::Str(s) => {
                 self.write("\"");
                 for ch in s.chars() {
                     match ch {
-                        '"'  => self.write("\\\""),
+                        '"' => self.write("\\\""),
                         '\\' => self.write("\\\\"),
                         '\n' => self.write("\\n"),
                         '\t' => self.write("\\t"),
-                        _    => { let mut tmp = [0u8; 4]; self.write(ch.encode_utf8(&mut tmp)); }
+                        _ => {
+                            let mut tmp = [0u8; 4];
+                            self.write(ch.encode_utf8(&mut tmp));
+                        }
                     }
                 }
                 self.write("\"");
@@ -745,17 +860,31 @@ impl Formatter {
 
     fn emit_pattern(&mut self, pat: &Pattern) {
         match pat {
-            Pattern::Wildcard   => self.write("_"),
-            Pattern::Ident(n)   => self.write(n),
-            Pattern::None       => self.write("None"),
+            Pattern::Wildcard => self.write("_"),
+            Pattern::Ident(n) => self.write(n),
+            Pattern::None => self.write("None"),
             Pattern::Literal(l) => self.emit_literal(l),
-            Pattern::Some(inner) => { self.write("Some("); self.emit_pattern(inner); self.write(")"); }
-            Pattern::Ok(inner)   => { self.write("Ok(");   self.emit_pattern(inner); self.write(")"); }
-            Pattern::Err(inner)  => { self.write("Err(");  self.emit_pattern(inner); self.write(")"); }
+            Pattern::Some(inner) => {
+                self.write("Some(");
+                self.emit_pattern(inner);
+                self.write(")");
+            }
+            Pattern::Ok(inner) => {
+                self.write("Ok(");
+                self.emit_pattern(inner);
+                self.write(")");
+            }
+            Pattern::Err(inner) => {
+                self.write("Err(");
+                self.emit_pattern(inner);
+                self.write(")");
+            }
             Pattern::Tuple(elems) => {
                 self.write("(");
                 for (i, e) in elems.iter().enumerate() {
-                    if i > 0 { self.write(", "); }
+                    if i > 0 {
+                        self.write(", ");
+                    }
                     self.emit_pattern(e);
                 }
                 self.write(")");
@@ -768,7 +897,9 @@ impl Formatter {
                 } else {
                     self.write(" { ");
                     for (i, (fname, fpat)) in fields.iter().enumerate() {
-                        if i > 0 { self.write(", "); }
+                        if i > 0 {
+                            self.write(", ");
+                        }
                         self.write(fname);
                         self.write(": ");
                         self.emit_pattern(fpat);
@@ -799,35 +930,44 @@ impl Formatter {
 
 fn binop_str(op: &BinOp) -> &'static str {
     match op {
-        BinOp::Add  => "+",  BinOp::Sub  => "-",
-        BinOp::Mul  => "*",  BinOp::Div  => "/",  BinOp::Rem  => "%",
-        BinOp::Eq   => "==", BinOp::NotEq => "!=",
-        BinOp::Lt   => "<",  BinOp::Gt   => ">",
-        BinOp::LtEq => "<=", BinOp::GtEq => ">=",
-        BinOp::And  => "&&", BinOp::Or   => "||",
-        BinOp::BitAnd => "&",  BinOp::BitOr  => "|",  BinOp::BitXor => "^",
-        BinOp::Shl    => "<<", BinOp::Shr    => ">>",
+        BinOp::Add => "+",
+        BinOp::Sub => "-",
+        BinOp::Mul => "*",
+        BinOp::Div => "/",
+        BinOp::Rem => "%",
+        BinOp::Eq => "==",
+        BinOp::NotEq => "!=",
+        BinOp::Lt => "<",
+        BinOp::Gt => ">",
+        BinOp::LtEq => "<=",
+        BinOp::GtEq => ">=",
+        BinOp::And => "&&",
+        BinOp::Or => "||",
+        BinOp::BitAnd => "&",
+        BinOp::BitOr => "|",
+        BinOp::BitXor => "^",
+        BinOp::Shl => "<<",
+        BinOp::Shr => ">>",
     }
 }
 
 fn unaryop_str(op: &UnaryOp) -> &'static str {
     match op {
-        UnaryOp::Neg    => "-",
-        UnaryOp::Not    => "!",
-        UnaryOp::Ref    => "&",
+        UnaryOp::Neg => "-",
+        UnaryOp::Not => "!",
+        UnaryOp::Ref => "&",
         UnaryOp::BitNot => "~",
     }
 }
 
 fn binop_prec(op: &BinOp) -> u8 {
     match op {
-        BinOp::Or  => 1,
+        BinOp::Or => 1,
         BinOp::And => 2,
-        BinOp::BitOr  => 3,
+        BinOp::BitOr => 3,
         BinOp::BitXor => 4,
         BinOp::BitAnd => 5,
-        BinOp::Eq | BinOp::NotEq |
-        BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => 6,
+        BinOp::Eq | BinOp::NotEq | BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq => 6,
         BinOp::Shl | BinOp::Shr => 7,
         BinOp::Add | BinOp::Sub => 8,
         BinOp::Mul | BinOp::Div | BinOp::Rem => 9,
@@ -843,7 +983,12 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if stmts.len() != 2 {
         return None;
     }
-    let Expr::RefBind { name: arr, value: coll, .. } = &stmts[0].expr else {
+    let Expr::RefBind {
+        name: arr,
+        value: coll,
+        ..
+    } = &stmts[0].expr
+    else {
         return None;
     };
     if !arr.starts_with("__forarr_") {
@@ -855,7 +1000,12 @@ fn as_desugared_foreach(stmts: &[Stmt]) -> Option<(String, &Expr, Vec<Stmt>)> {
     if !idx.starts_with("__fori_") {
         return None;
     }
-    let Expr::Let { name: uservar, value, .. } = &body.first()?.expr else {
+    let Expr::Let {
+        name: uservar,
+        value,
+        ..
+    } = &body.first()?.expr
+    else {
         return None;
     };
     let Expr::Index { receiver, .. } = value.as_ref() else {
@@ -886,7 +1036,10 @@ mod tests {
     fn fmt_simple_fn() {
         let src = "fn add(a: i64, b: i64) -> i64 { a + b }";
         let out = fmt(src);
-        assert!(out.contains("fn add(a: i64, b: i64) -> i64 {"), "signature: {out}");
+        assert!(
+            out.contains("fn add(a: i64, b: i64) -> i64 {"),
+            "signature: {out}"
+        );
         assert!(out.contains("    a + b"), "body indent: {out}");
         assert!(out.ends_with('\n'), "trailing newline: {out}");
     }
@@ -920,7 +1073,10 @@ mod tests {
     fn fmt_type_alias() {
         let src = "type Point = { x: i64, y: i64 }";
         let out = fmt(src);
-        assert!(out.contains("type Point = { x: i64, y: i64 }"), "type def: {out}");
+        assert!(
+            out.contains("type Point = { x: i64, y: i64 }"),
+            "type def: {out}"
+        );
     }
 
     #[test]
@@ -933,11 +1089,11 @@ mod tests {
     }
 
     fn round_trip(src: &str) -> (String, String) {
-        let prog1 = crate::parse_source(src).unwrap_or_else(|e| panic!("parse1 failed: {e}\nsrc:\n{src}"));
+        let prog1 =
+            crate::parse_source(src).unwrap_or_else(|e| panic!("parse1 failed: {e}\nsrc:\n{src}"));
         let out1 = format_program(&prog1);
-        let prog2 = crate::parse_source(&out1).unwrap_or_else(|e| {
-            panic!("parse2 failed on formatter output:\n{out1}\nError: {e}")
-        });
+        let prog2 = crate::parse_source(&out1)
+            .unwrap_or_else(|e| panic!("parse2 failed on formatter output:\n{out1}\nError: {e}"));
         let out2 = format_program(&prog2);
         (out1, out2)
     }
@@ -1007,13 +1163,19 @@ mod tests {
         let src = "fn save(p: str) -> i64 | {IO, Net} { 0 }\n";
         let (out1, out2) = round_trip(src);
         assert_eq!(out1, out2);
-        assert!(out1.contains("| {IO, Net}"), "row clause should appear: {out1}");
+        assert!(
+            out1.contains("| {IO, Net}"),
+            "row clause should appear: {out1}"
+        );
 
         // Row-extension form `...e`.
         let src = "fn with_log(x: i64) -> i64 | {IO, ...e} { x }\n";
         let (out1, out2) = round_trip(src);
         assert_eq!(out1, out2);
-        assert!(out1.contains("| {IO, ...e}"), "open row should appear: {out1}");
+        assert!(
+            out1.contains("| {IO, ...e}"),
+            "open row should appear: {out1}"
+        );
     }
 
     #[test]
@@ -1031,7 +1193,13 @@ mod tests {
         let src = "fn main() -> i64 {\n    let xs = [1, 2, 3]\n    let s = 0\n    for x in xs {\n        s = s + x\n    }\n    s\n}\n";
         let (out1, out2) = round_trip(src);
         assert_eq!(out1, out2, "format must be idempotent");
-        assert!(out1.contains("for x in xs"), "should re-sugar the collection loop: {out1}");
-        assert!(!out1.contains("__forarr"), "must not leak internal names: {out1}");
+        assert!(
+            out1.contains("for x in xs"),
+            "should re-sugar the collection loop: {out1}"
+        );
+        assert!(
+            !out1.contains("__forarr"),
+            "must not leak internal names: {out1}"
+        );
     }
 }

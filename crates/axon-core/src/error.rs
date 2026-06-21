@@ -141,6 +141,12 @@ pub const E1504: &str = "E1504"; // #[goal] fn must have zero params
 pub const E1505: &str = "E1505"; // unknown #[goal(strategy: …)] — not hill_climb|random|multistart|tournament|bayesian
 pub const E1900: &str = "E1900"; // R19: integer literal out of range for its fixed-width/unsigned annotation
 
+// R17 freestanding substrate / HAL errors
+pub const E1700: &str = "E1700"; // raw pointer `*T`, volatile_*, ptr_from_addr, or @[hal] used in a `surface` file
+pub const E1701: &str = "E1701"; // @[hal] fn body calls hardware primitive without the Hal capability minted to its Principal
+pub const E1702: &str = "E1702"; // freestanding build has no @[entry] or @[panic_handler]
+pub const E1703: &str = "E1703"; // surface caller reaches a Hal-effected fn without declaring | {Hal}
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -317,7 +323,8 @@ mod tests {
             E0906, E0907, E0908, E0910, E1001, E1002, E1003, E1004, E1101, E1102, E1201, E1202,
             E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302, E1306, E1310,
             E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412,
-            E1413, E1500, E1503, E1504, E1505, E1900, W0001, W0002, W0003, W0004, W0005, W0006,
+            E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1900, W0001, W0002,
+            W0003, W0004, W0005, W0006,
             W0701, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();

@@ -4153,7 +4153,7 @@ impl CheckCtx {
             AxonType::Option(inner) => {
                 self.check_axon_type(inner, &format!("{node_path}.inner"));
             }
-            AxonType::Chan(inner) | AxonType::Slice(inner) | AxonType::Ref(inner) => {
+            AxonType::Chan(inner) | AxonType::Slice(inner) | AxonType::Ref(inner) | AxonType::RawPtr(inner) => {
                 self.check_axon_type(inner, &format!("{node_path}.inner"));
             }
             AxonType::Generic { base, args } => {
@@ -4835,6 +4835,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
             "bool" => Type::Bool,
             "str" | "String" => Type::Str,
             "()" | "unit" => Type::Unit,
+            "never" | "Never" | "!" => Type::Never,
             other => {
                 if DEFERRED_PREFIXES.iter().any(|p| other.starts_with(p)) {
                     Type::Deferred(other.to_string())
@@ -4869,6 +4870,8 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
         // Treat permissively as `Type::Unknown` to skip strict signature checks
         // (E0306 etc.) for union-typed arguments.
         AxonType::Union(_) => Type::Unknown,
+        // R17 HAL
+        AxonType::RawPtr(inner) => Type::RawPtr(Box::new(axon_type_to_type(inner))),
     }
 }
 
@@ -5068,6 +5071,7 @@ fn axon_type_name(ty: &AxonType) -> String {
             let parts: Vec<String> = members.iter().map(axon_type_name).collect();
             parts.join("|")
         }
+        AxonType::RawPtr(inner) => format!("*{}", axon_type_name(inner)),
     }
 }
 
@@ -5398,6 +5402,7 @@ fn axon_types_compatible(a: &AxonType, b: &AxonType) -> bool {
         (AxonType::Chan(ia), AxonType::Chan(ib)) => axon_types_compatible(ia, ib),
         (AxonType::Slice(ia), AxonType::Slice(ib)) => axon_types_compatible(ia, ib),
         (AxonType::Ref(ia), AxonType::Ref(ib)) => axon_types_compatible(ia, ib),
+        (AxonType::RawPtr(ia), AxonType::RawPtr(ib)) => axon_types_compatible(ia, ib),
         (AxonType::DynTrait(na), AxonType::DynTrait(nb)) => na == nb,
         (
             AxonType::Fn {

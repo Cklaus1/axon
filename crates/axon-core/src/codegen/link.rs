@@ -43,9 +43,12 @@ pub fn compile_bitcode_to_binary(
     use inkwell::memory_buffer::MemoryBuffer;
     let ctx = inkwell::context::Context::create();
     let buf = MemoryBuffer::create_from_memory_range(bitcode, "cached_bitcode");
-    let module = ctx
-        .create_module_from_ir(buf)
-        .map_err(|e| format!("[E0906] cached bitcode could not be loaded: {}", e.to_string()))?;
+    let module = ctx.create_module_from_ir(buf).map_err(|e| {
+        format!(
+            "[E0906] cached bitcode could not be loaded: {}",
+            e.to_string()
+        )
+    })?;
     emit_object_and_link(&module, output_path, release, target_triple)
 }
 
@@ -75,7 +78,14 @@ pub fn emit_wasm_object(
         format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
     })?;
     let machine = target
-        .create_target_machine(&triple, "generic", "", opt, RelocMode::PIC, CodeModel::Default)
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
         .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
     module.set_triple(&triple);
     machine
@@ -115,7 +125,14 @@ pub(super) fn emit_object_and_link(
             )
         })?;
         let machine = target
-            .create_target_machine(&triple, "generic", "", opt, RelocMode::PIC, CodeModel::Default)
+            .create_target_machine(
+                &triple,
+                "generic",
+                "",
+                opt,
+                RelocMode::PIC,
+                CodeModel::Default,
+            )
             .ok_or_else(|| {
                 format!(
                     "[E0904] could not create target machine for '{}'",
@@ -128,8 +145,7 @@ pub(super) fn emit_object_and_link(
         Target::initialize_native(&InitializationConfig::default())
             .map_err(|e| format!("LLVM native target init: {e}"))?;
         let triple = TargetMachine::get_default_triple();
-        let target =
-            Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
+        let target = Target::from_triple(&triple).map_err(|e| format!("get native target: {e}"))?;
         let machine = target
             .create_target_machine(
                 &triple,
@@ -184,8 +200,12 @@ pub(super) fn emit_object_and_link(
     // rustc `core`, so taking the first is safe — this is the standard remedy
     // for linking two Rust staticlibs into one binary.
     let mut link_args: Vec<&str> = vec![
-        &obj_path, "-o", output_path,
-        "-lpthread", "-no-pie", "-lm",
+        &obj_path,
+        "-o",
+        output_path,
+        "-lpthread",
+        "-no-pie",
+        "-lm",
         "-Wl,--allow-multiple-definition",
     ];
     if let Some(ref lib) = rt_lib {
@@ -205,7 +225,107 @@ pub(super) fn emit_object_and_link(
     if status.success() {
         Ok(())
     } else {
-        Err(format!("linker ({}) exited with {}", linker.display(), status))
+        Err(format!(
+            "linker ({}) exited with {}",
+            linker.display(),
+            status
+        ))
+    }
+}
+
+/// Emit an object file and link it as a freestanding (bare-metal) ELF binary.
+///
+/// Differences from the hosted path:
+///   - Target defaults to `x86_64-unknown-none`; `RelocMode::Static`, `CodeModel::Kernel`.
+///   - No axon-rt, no axon-ai, no libc/pthreads/libm.
+///   - Linker is `ld` (or `x86_64-elf-ld`/`ld.bfd`); falls back to `cc -nostdlib`.
+///   - `--entry <fn>` sets the ELF entry symbol from the `@[entry]`-annotated fn.
+pub(super) fn emit_freestanding_binary(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: Option<&str>,
+    entry_fn: Option<&str>,
+) -> Result<(), String> {
+    let triple_str = target_triple.unwrap_or("x86_64-unknown-none");
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(triple_str);
+    let target = Target::from_triple(&triple)
+        .map_err(|e| format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}"))?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::Static,
+            CodeModel::Kernel,
+        )
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+
+    module.set_triple(&triple);
+
+    let obj_path = format!("{output_path}.o");
+    machine
+        .write_to_file(module, FileType::Object, Path::new(&obj_path))
+        .map_err(|e| format!("freestanding object emit: {e}"))?;
+
+    // Prefer a bare-metal ld; fall back to cc with -nostdlib flags.
+    let linker = which::which("x86_64-elf-ld")
+        .or_else(|_| which::which("ld.bfd"))
+        .or_else(|_| which::which("ld"));
+
+    let result = if let Ok(ld) = linker {
+        let mut args: Vec<String> = vec![
+            obj_path.clone(),
+            "-o".into(),
+            output_path.into(),
+            "-static".into(),
+            "--no-dynamic-linker".into(),
+        ];
+        if let Some(entry) = entry_fn {
+            args.push("--entry".into());
+            args.push(entry.into());
+        }
+        Command::new(&ld)
+            .args(&args)
+            .status()
+            .map_err(|e| format!("freestanding ld spawn: {e}"))?
+    } else {
+        // Fallback: cc with -nostdlib/-static (works on most Linux hosts for x86-64).
+        let cc = which::which("cc")
+            .or_else(|_| which::which("gcc"))
+            .or_else(|_| which::which("clang"))
+            .map_err(|_| "no linker found (tried x86_64-elf-ld, ld.bfd, ld, cc, gcc, clang)".to_string())?;
+        let mut args: Vec<String> = vec![
+            obj_path.clone(),
+            "-o".into(),
+            output_path.into(),
+            "-nostdlib".into(),
+            "-static".into(),
+            "-no-pie".into(),
+        ];
+        if let Some(entry) = entry_fn {
+            args.push(format!("-Wl,--entry,{entry}"));
+        }
+        Command::new(&cc)
+            .args(&args)
+            .status()
+            .map_err(|e| format!("freestanding cc spawn: {e}"))?
+    };
+
+    let _ = std::fs::remove_file(&obj_path);
+
+    if result.success() {
+        Ok(())
+    } else {
+        Err(format!("freestanding linker exited with {result}"))
     }
 }
 
@@ -234,9 +354,7 @@ pub(super) fn read_cross_linker(target: &str) -> Option<String> {
         }
         if let Some(rest) = trimmed.strip_prefix("linker") {
             // Accept: linker = "value"  or  linker="value"
-            let val = rest
-                .trim_start_matches([' ', '\t', '='])
-                .trim_matches('"');
+            let val = rest.trim_start_matches([' ', '\t', '=']).trim_matches('"');
             if !val.is_empty() {
                 return Some(val.to_string());
             }
@@ -253,7 +371,9 @@ pub(super) fn read_cross_linker(target: &str) -> Option<String> {
 /// the linker step still attempts to proceed (channel/spawn functions will
 /// simply be missing symbols if the rt wasn't linked).
 pub(super) fn build_axon_rt(release: bool) -> Option<String> {
-    let cargo = std::env::var("CARGO").ok().unwrap_or_else(|| "cargo".into());
+    let cargo = std::env::var("CARGO")
+        .ok()
+        .unwrap_or_else(|| "cargo".into());
     let profile = if release { "release" } else { "debug" };
 
     // Locate the workspace root relative to this binary.
@@ -274,13 +394,12 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
     }
 
     // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .unwrap_or_else(|_| {
-            // Walk up from CARGO_MANIFEST_DIR to find <workspace>/target.
-            std::env::var("CARGO_MANIFEST_DIR")
-                .map(|d| format!("{d}/../../../target"))
-                .unwrap_or_else(|_| "target".into())
-        });
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+        // Walk up from CARGO_MANIFEST_DIR to find <workspace>/target.
+        std::env::var("CARGO_MANIFEST_DIR")
+            .map(|d| format!("{d}/../../../target"))
+            .unwrap_or_else(|_| "target".into())
+    });
 
     let lib_path = format!("{target_dir}/{profile}/libaxon_rt.a");
     if std::path::Path::new(&lib_path).exists() {
@@ -298,7 +417,9 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
 /// the linker step still attempts to proceed (ai_complete will be a missing
 /// symbol only when actually called).
 pub(super) fn build_axon_ai(release: bool) -> Option<String> {
-    let cargo = std::env::var("CARGO").ok().unwrap_or_else(|| "cargo".into());
+    let cargo = std::env::var("CARGO")
+        .ok()
+        .unwrap_or_else(|| "cargo".into());
     let profile = if release { "release" } else { "debug" };
 
     // Locate the workspace root relative to this binary.
@@ -319,12 +440,11 @@ pub(super) fn build_axon_ai(release: bool) -> Option<String> {
     }
 
     // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
-    let target_dir = std::env::var("CARGO_TARGET_DIR")
-        .unwrap_or_else(|_| {
-            std::env::var("CARGO_MANIFEST_DIR")
-                .map(|d| format!("{d}/../../../target"))
-                .unwrap_or_else(|_| "target".into())
-        });
+    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
+        std::env::var("CARGO_MANIFEST_DIR")
+            .map(|d| format!("{d}/../../../target"))
+            .unwrap_or_else(|_| "target".into())
+    });
 
     let lib_path = format!("{target_dir}/{profile}/libaxon_ai.a");
     if std::path::Path::new(&lib_path).exists() {

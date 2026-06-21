@@ -34,10 +34,10 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::Str => {
                 let i64_ty = self.ir.context.i64_type();
                 let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-                let str_ty = self.ir.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()],
-                    /*packed=*/ false,
-                );
+                let str_ty = self
+                    .ir
+                    .context
+                    .struct_type(&[i64_ty.into(), ptr_ty.into()], /*packed=*/ false);
                 Some(str_ty.into())
             }
 
@@ -48,10 +48,10 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::Option(inner) => {
                 let tag = self.ir.context.bool_type();
                 if let Some(inner_llvm) = self.llvm_type(inner) {
-                    let opt_ty = self.ir.context.struct_type(
-                        &[tag.into(), inner_llvm],
-                        false,
-                    );
+                    let opt_ty = self
+                        .ir
+                        .context
+                        .struct_type(&[tag.into(), inner_llvm], false);
                     Some(opt_ty.into())
                 } else {
                     // Option<Unit> is just a bool
@@ -67,10 +67,10 @@ impl<'ctx> super::Codegen<'ctx> {
                 let payload_size = ok_size.max(err_size).max(1);
                 let i8_ty = self.ir.context.i8_type();
                 let payload = i8_ty.array_type(payload_size as u32);
-                let result_ty = self.ir.context.struct_type(
-                    &[tag.into(), payload.into()],
-                    false,
-                );
+                let result_ty = self
+                    .ir
+                    .context
+                    .struct_type(&[tag.into(), payload.into()], false);
                 Some(result_ty.into())
             }
 
@@ -78,19 +78,17 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::Slice(_inner) => {
                 let i64_ty = self.ir.context.i64_type();
                 let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-                let slice_ty = self.ir.context.struct_type(
-                    &[i64_ty.into(), ptr_ty.into()],
-                    false,
-                );
+                let slice_ty = self
+                    .ir
+                    .context
+                    .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
                 Some(slice_ty.into())
             }
 
             // Tuple → struct { T0, T1, ... }
             Type::Tuple(fields) => {
-                let field_tys: Vec<BasicTypeEnum<'ctx>> = fields
-                    .iter()
-                    .filter_map(|f| self.llvm_type(f))
-                    .collect();
+                let field_tys: Vec<BasicTypeEnum<'ctx>> =
+                    fields.iter().filter_map(|f| self.llvm_type(f)).collect();
                 let tuple_ty = self.ir.context.struct_type(&field_tys, false);
                 Some(tuple_ty.into())
             }
@@ -107,13 +105,16 @@ impl<'ctx> super::Codegen<'ctx> {
             // (fn + captured env), so this is the faithful lowering.
             Type::Fn(_, _) => {
                 let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-                Some(self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
+                Some(
+                    self.ir
+                        .context
+                        .struct_type(&[ptr_ty.into(), ptr_ty.into()], false)
+                        .into(),
+                )
             }
 
             // Named struct — look up the named struct in the LLVM module.
-            Type::Struct(name) => {
-                self.ir.module.get_struct_type(name).map(|s| s.into())
-            }
+            Type::Struct(name) => self.ir.module.get_struct_type(name).map(|s| s.into()),
 
             // Enum — look up by name with "_enum" suffix convention.
             Type::Enum(name) => {
@@ -124,9 +125,13 @@ impl<'ctx> super::Codegen<'ctx> {
             // R1c: a `Dict` is an opaque runtime handle (i8*), like a channel —
             // the dynamically-typed map lives behind `__axon_dict_*` externs.
             // The builtin-sig parser lands "Dict" as `Deferred("Dict")`.
-            Type::Deferred(name) if name == "Dict" => {
-                Some(self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into())
-            }
+            Type::Deferred(name) if name == "Dict" => Some(
+                self.ir
+                    .context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            ),
             // Unresolved — skip
             Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
             // TypeParam should be eliminated by monomorphization.
@@ -134,12 +139,21 @@ impl<'ctx> super::Codegen<'ctx> {
             // DynTrait → fat pointer { ptr data, ptr vtable }
             Type::DynTrait(_) => {
                 let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
-                Some(self.ir.context.struct_type(&[ptr_ty.into(), ptr_ty.into()], false).into())
+                Some(
+                    self.ir
+                        .context
+                        .struct_type(&[ptr_ty.into(), ptr_ty.into()], false)
+                        .into(),
+                )
             }
             // Chan<T> → opaque pointer to axon-rt channel object
-            Type::Chan(_) => {
-                Some(self.ir.context.i8_type().ptr_type(AddressSpace::default()).into())
-            }
+            Type::Chan(_) => Some(
+                self.ir
+                    .context
+                    .i8_type()
+                    .ptr_type(AddressSpace::default())
+                    .into(),
+            ),
             // Uncertain<T> → struct { T value, f64 confidence, i64 source_tag }
             // V1 simplification: omits `alternatives` and `interval` slots from
             // the full PRD (AI_Language_Plan.md lines 1360-1410). Layer-1 only.
@@ -148,11 +162,18 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f64_ty = self.ir.context.f64_type();
                 let i64_ty = self.ir.context.i64_type();
                 Some(
-                    self.ir.context
+                    self.ir
+                        .context
                         .struct_type(&[inner_llvm, f64_ty.into(), i64_ty.into()], false)
                         .into(),
                 )
             }
+            // R17 HAL: `*T` → opaque LLVM `ptr` (LLVM 17 typed-pointer-free model).
+            // The element type is tracked at load/store call sites, not in the pointer.
+            Type::RawPtr(_) => Some(self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
+            // R17 HAL: `never` → no BasicTypeEnum (void; functions returning never
+            // are emitted as LLVM void functions and marked noreturn by the caller).
+            Type::Never => None,
             // Temporal<T> → struct { T value, f64 confidence, i64 horizon_ms,
             //                        f64 decay, i64 valid_until_ms }
             // V1 monomorphisation on T = i64 / f64 (PRD lines 1411-1467).
@@ -161,7 +182,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 let f64_ty = self.ir.context.f64_type();
                 let i64_ty = self.ir.context.i64_type();
                 Some(
-                    self.ir.context
+                    self.ir
+                        .context
                         .struct_type(
                             &[
                                 inner_llvm,
@@ -194,7 +216,10 @@ impl<'ctx> super::Codegen<'ctx> {
                 Some(align + inner_size)
             }
             Type::Tuple(fields) => Some(
-                fields.iter().map(|f| self.llvm_sizeof(f).unwrap_or(0)).sum(),
+                fields
+                    .iter()
+                    .map(|f| self.llvm_sizeof(f).unwrap_or(0))
+                    .sum(),
             ),
             Type::Struct(_) | Type::Enum(_) => Some(8), // conservative
             Type::Unit => Some(0),
@@ -208,6 +233,8 @@ impl<'ctx> super::Codegen<'ctx> {
                 let inner_size = self.llvm_sizeof(inner).unwrap_or(8);
                 Some(inner_size + 8 + 8 + 8 + 8)
             }
+            Type::RawPtr(_) => Some(8), // 64-bit pointer
+            Type::Never => Some(0),
             _ => None,
         }
     }

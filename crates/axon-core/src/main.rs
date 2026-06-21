@@ -120,6 +120,12 @@ enum Command {
         /// Override the cache directory (default: ~/.cache/axon/).
         #[arg(long, help = "Cache directory path")]
         cache_dir: Option<PathBuf>,
+
+        /// Freestanding / bare-metal build: skip axon-rt, link without libc,
+        /// use the @[entry]-annotated fn as the ELF entry point, and default
+        /// the target to `x86_64-unknown-none`.  Required for kernel images.
+        #[arg(long, help = "Freestanding bare-metal build (R17)")]
+        freestanding: bool,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -618,7 +624,8 @@ fn dispatch(command: Command) {
             target,
             no_cache,
             cache_dir,
-        } => cmd_build(files, out, release, target, no_cache, cache_dir),
+            freestanding,
+        } => cmd_build(files, out, release, target, no_cache, cache_dir, freestanding),
         Command::Goal {
             file,
             emit,
@@ -2349,6 +2356,7 @@ fn cmd_build(
     _target: Option<String>,
     _no_cache: bool,
     _cache_dir: Option<PathBuf>,
+    _freestanding: bool,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2368,6 +2376,7 @@ fn cmd_build(
     target: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
+    freestanding: bool,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2410,11 +2419,26 @@ fn cmd_build(
         process::exit(2);
     }
 
+    // Freestanding: resolve entry fn from @[entry]-annotated fn, force target.
+    let (freestanding_entry, effective_target) = if freestanding {
+        let entry = find_entry_fn(&program);
+        if entry.is_none() {
+            eprintln!("error[E1702]: --freestanding build has no @[entry]-annotated function");
+            process::exit(1);
+        }
+        let t = target.unwrap_or_else(|| "x86_64-unknown-none".to_string());
+        (entry, Some(t))
+    } else {
+        (None, target)
+    };
+
     let opts = BuildOptions {
         release,
-        target_triple: target,
+        target_triple: effective_target,
         no_cache,
         cache_dir,
+        freestanding,
+        entry_fn: freestanding_entry,
     };
 
     // Warn if cross-compiling without cross.toml configuration.
@@ -2459,6 +2483,21 @@ struct BuildOptions {
     target_triple: Option<String>,
     no_cache: bool,
     cache_dir: Option<PathBuf>,
+    freestanding: bool,
+    entry_fn: Option<String>,
+}
+
+/// Scan `program` for a function annotated `@[entry]` and return its name.
+#[cfg(feature = "codegen")]
+fn find_entry_fn(program: &axon_core::ast::Program) -> Option<String> {
+    for item in &program.items {
+        if let axon_core::ast::Item::FnDef(f) = item {
+            if f.attrs.iter().any(|a| a.name == "entry") {
+                return Some(f.name.clone());
+            }
+        }
+    }
+    None
 }
 
 // ── goal ──────────────────────────────────────────────────────────────────────
@@ -3876,25 +3915,36 @@ fn run_build_pipeline(
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 
-        if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
-            // Cache hit — skip IR emission, link from stored bitcode.
-            return axon_core::compile_bitcode_to_binary(
-                &bitcode,
-                &output.to_string_lossy(),
-                opts.release,
-                target_triple,
-            );
+        // Freestanding builds bypass the cache: linker args differ from hosted builds.
+        if !opts.freestanding {
+            if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
+                // Cache hit — skip IR emission, link from stored bitcode.
+                return axon_core::compile_bitcode_to_binary(
+                    &bitcode,
+                    &output.to_string_lossy(),
+                    opts.release,
+                    target_triple,
+                );
+            }
         }
 
         // Cache miss — full compilation then write.
+        // Freestanding builds bypass the cache (linker args differ from hosted).
+        let cache_slot = if opts.freestanding {
+            None
+        } else {
+            Some((&key as &str, cache_path.as_path(), compiler_version))
+        };
         let result = build_ir_and_link(
             program,
             source_path,
             output,
             opts.release,
             target_triple,
+            opts.freestanding,
+            opts.entry_fn.as_deref(),
             &mut infer_ctx,
-            Some((&key, &cache_path, compiler_version)),
+            cache_slot,
         );
         return result;
     }
@@ -3906,6 +3956,8 @@ fn run_build_pipeline(
         output,
         opts.release,
         target_triple,
+        opts.freestanding,
+        opts.entry_fn.as_deref(),
         &mut infer_ctx,
         None,
     )
@@ -3919,6 +3971,8 @@ fn build_ir_and_link(
     output: &std::path::Path,
     release: bool,
     target_triple: Option<&str>,
+    freestanding: bool,
+    entry_fn: Option<&str>,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -3978,7 +4032,16 @@ fn build_ir_and_link(
         let _ = axon_core::write_axc(cache_path, &bitcode, compiler_version);
     }
 
-    cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
+    if freestanding {
+        cg.compile_to_freestanding_binary(
+            &output.to_string_lossy(),
+            release,
+            target_triple,
+            entry_fn,
+        )
+    } else {
+        cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

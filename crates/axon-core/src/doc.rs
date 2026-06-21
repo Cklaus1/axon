@@ -22,7 +22,7 @@ pub fn generate_docs(program: &Program, source: &str, filename: &str) -> String 
 
     for item in &program.items {
         let (sig, byte_start) = match item {
-            Item::FnDef(f)   => (fn_signature(f),   f.span.start),
+            Item::FnDef(f) => (fn_signature(f), f.span.start),
             Item::TypeDef(t) => (type_signature(t), t.span.start),
             Item::EnumDef(e) => (enum_signature(e), e.span.start),
             Item::TraitDef(t) => {
@@ -33,21 +33,26 @@ pub fn generate_docs(program: &Program, source: &str, filename: &str) -> String 
                 };
                 (format!("trait {}{}", t.name, params), t.span.start)
             }
-            Item::RefineDef(r) => {
-                (format!("type {} = {}", r.name, render_type(&r.base)), r.span.start)
-            }
+            Item::RefineDef(r) => (
+                format!("type {} = {}", r.name, render_type(&r.base)),
+                r.span.start,
+            ),
             _ => continue,
         };
 
         let doc = doc_comment_before(source, byte_start);
-        if doc.is_empty() { continue; }
+        if doc.is_empty() {
+            continue;
+        }
 
         has_docs = true;
         out.push_str("## ");
         out.push_str(&sig);
         out.push_str("\n\n");
         out.push_str(&doc);
-        if !doc.ends_with('\n') { out.push('\n'); }
+        if !doc.ends_with('\n') {
+            out.push('\n');
+        }
         out.push('\n');
         out.push_str("---\n\n");
     }
@@ -89,7 +94,9 @@ fn fn_signature(f: &FnDef) -> String {
     }
     s.push('(');
     for (i, p) in f.params.iter().enumerate() {
-        if i > 0 { s.push_str(", "); }
+        if i > 0 {
+            s.push_str(", ");
+        }
         s.push_str(&p.name);
         s.push_str(": ");
         s.push_str(&render_type(&p.ty));
@@ -132,7 +139,9 @@ fn type_signature(t: &TypeDef) -> String {
     }
     s.push_str(" = { ");
     for (i, field) in t.fields.iter().enumerate() {
-        if i > 0 { s.push_str(", "); }
+        if i > 0 {
+            s.push_str(", ");
+        }
         s.push_str(&field.name);
         s.push_str(": ");
         s.push_str(&render_type(&field.ty));
@@ -157,7 +166,9 @@ fn render_type(ty: &AxonType) -> String {
         AxonType::Named(n) | AxonType::TypeParam(n) => n.clone(),
         AxonType::DynTrait(n) => format!("dyn {n}"),
         AxonType::Option(inner) => format!("Option<{}>", render_type(inner)),
-        AxonType::Result { ok, err } => format!("Result<{}, {}>", render_type(ok), render_type(err)),
+        AxonType::Result { ok, err } => {
+            format!("Result<{}, {}>", render_type(ok), render_type(err))
+        }
         AxonType::Chan(inner) => format!("Chan<{}>", render_type(inner)),
         AxonType::Slice(inner) => format!("[{}]", render_type(inner)),
         AxonType::Generic { base, args } => {
@@ -165,10 +176,15 @@ fn render_type(ty: &AxonType) -> String {
             format!("{base}<{args_str}>")
         }
         AxonType::Fn { params, ret } => {
-            let ps = params.iter().map(render_type).collect::<Vec<_>>().join(", ");
+            let ps = params
+                .iter()
+                .map(render_type)
+                .collect::<Vec<_>>()
+                .join(", ");
             format!("fn({ps}) -> {}", render_type(ret))
         }
         AxonType::Ref(inner) => format!("&{}", render_type(inner)),
+        AxonType::RawPtr(inner) => format!("*{}", render_type(inner)),
         AxonType::Tuple(elems) => {
             let parts: Vec<_> = elems.iter().map(render_type).collect();
             format!("({})", parts.join(", "))
@@ -245,7 +261,10 @@ mod tests {
         let src = "/// Add two numbers.\nfn add(a: i64, b: i64) -> i64 { a + b }";
         let prog = parse_source(src).expect("parse");
         let out = generate_docs(&prog, src, "test.ax");
-        assert!(out.contains("## fn add(a: i64, b: i64) -> i64"), "sig: {out}");
+        assert!(
+            out.contains("## fn add(a: i64, b: i64) -> i64"),
+            "sig: {out}"
+        );
         assert!(out.contains("Add two numbers."), "doc: {out}");
     }
 
@@ -256,7 +275,11 @@ mod tests {
         // doc-comment lookup stopped at the attribute line between the `///` and
         // the `fn`. Every annotated fn (pervasive in an AI-first language) lost
         // its docs. The backward scan now skips attribute / `pub` lines.
-        for attr in ["@[pure]", "@[verify(value > 0)]", "@[contained(net: [\"x.com\"])]"] {
+        for attr in [
+            "@[pure]",
+            "@[verify(value > 0)]",
+            "@[contained(net: [\"x.com\"])]",
+        ] {
             let src = format!("/// Documented thing.\n{attr}\nfn f() -> i64 {{ 0 }}");
             let prog = parse_source(&src).expect("parse");
             let out = generate_docs(&prog, &src, "t.ax");
@@ -271,12 +294,18 @@ mod tests {
         let src = "/// A trait.\ntrait Show { fn show(self) -> str }";
         let prog = parse_source(src).expect("parse");
         let out = generate_docs(&prog, src, "t.ax");
-        assert!(out.contains("## trait Show") && out.contains("A trait."), "trait doc: {out}");
+        assert!(
+            out.contains("## trait Show") && out.contains("A trait."),
+            "trait doc: {out}"
+        );
 
         let src = "/// Positive.\ntype Pos = i64 where _ > 0";
         let prog = parse_source(src).expect("parse");
         let out = generate_docs(&prog, src, "t.ax");
-        assert!(out.contains("## type Pos") && out.contains("Positive."), "refinement doc: {out}");
+        assert!(
+            out.contains("## type Pos") && out.contains("Positive."),
+            "refinement doc: {out}"
+        );
     }
 
     #[test]
@@ -305,7 +334,10 @@ mod tests {
         let prog3 = parse_source(src3).expect("parse");
         let out3 = generate_docs(&prog3, src3, "test.ax");
         assert!(out3.contains("fn p() -> i64"), "sig present: {out3}");
-        assert!(!out3.contains("p() -> i64 |"), "no spurious row for an unannotated fn: {out3}");
+        assert!(
+            !out3.contains("p() -> i64 |"),
+            "no spurious row for an unannotated fn: {out3}"
+        );
     }
 
     #[test]
@@ -321,7 +353,10 @@ mod tests {
         let src = "/// A 2D point.\ntype Point = { x: f64, y: f64 }";
         let prog = parse_source(src).expect("parse");
         let out = generate_docs(&prog, src, "test.ax");
-        assert!(out.contains("## type Point = { x: f64, y: f64 }"), "type sig: {out}");
+        assert!(
+            out.contains("## type Point = { x: f64, y: f64 }"),
+            "type sig: {out}"
+        );
         assert!(out.contains("A 2D point."), "doc text: {out}");
     }
 
@@ -330,6 +365,9 @@ mod tests {
         let src = "/// First line.\n///\n/// Second paragraph.\nfn f() {}";
         let prog = parse_source(src).expect("parse");
         let out = generate_docs(&prog, src, "test.ax");
-        assert!(out.contains("First line.\n\nSecond paragraph."), "paragraph: {out}");
+        assert!(
+            out.contains("First line.\n\nSecond paragraph."),
+            "paragraph: {out}"
+        );
     }
 }

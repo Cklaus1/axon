@@ -320,6 +320,42 @@ impl<'p> Interp<'p> {
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
                 }
             }
+            "http_get" => {
+                want(2)?;
+                let url = as_str(&args[0])?.to_string();
+                let headers = as_str(&args[1])?.to_string();
+                match crate::host::with_host(|h| h.http_get(&url, &headers)) {
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "http_post" => {
+                want(3)?;
+                let url = as_str(&args[0])?.to_string();
+                let headers = as_str(&args[1])?.to_string();
+                let body = as_str(&args[2])?.to_string();
+                match crate::host::with_host(|h| h.http_post(&url, &headers, &body)) {
+                    Ok(s) => ok!(Value::Ok(Box::new(Value::Str(s)))),
+                    Err(e) => ok!(Value::Err(Box::new(Value::Str(e)))),
+                }
+            }
+            "http_sse" => {
+                want(3)?;
+                let url = as_str(&args[0])?.to_string();
+                let headers = as_str(&args[1])?.to_string();
+                let callback = args[2].clone();
+                let events = match crate::host::with_host(|h| h.http_sse(&url, &headers)) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        ok!(Value::Err(Box::new(Value::Str(e))))
+                    }
+                };
+                let count = events.len() as i64;
+                for event in events {
+                    self.call_closure(callback.clone(), vec![Value::Str(event)])?;
+                }
+                ok!(Value::Ok(Box::new(Value::Int(count))))
+            }
 
             // ── Conversion / formatting ─────────────────────────────────────────
             "to_str" => {
@@ -4210,6 +4246,29 @@ impl<'p> Interp<'p> {
                     }
                 }
                 ok!(Value::Int(result));
+            }
+
+            // ── R17 HAL builtins — interp stubs (codegen-only) ──────────────────
+            // Raw hardware access cannot be emulated in the tree-walking interpreter;
+            // these builtins only run in a compiled freestanding binary.  An honest
+            // E0910 abort is safer than a silent wrong result.
+            "ptr_from_addr"
+            | "volatile_load_u8"
+            | "volatile_load_u16"
+            | "volatile_load_u32"
+            | "volatile_load_u64"
+            | "volatile_store_u8"
+            | "volatile_store_u16"
+            | "volatile_store_u32"
+            | "volatile_store_u64"
+            | "hlt"
+            | "cli"
+            | "sti" => {
+                Err(crate::interp::Flow::Panic(format!(
+                    "[E0910] `{name}` is a HAL builtin — it requires native codegen \
+                     (`axon build --freestanding`) and cannot run in the interpreter. \
+                     Use `axon check` to type-check the kernel source without running it."
+                )))
             }
 
             _ => Ok(None),

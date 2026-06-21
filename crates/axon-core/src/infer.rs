@@ -419,6 +419,8 @@ impl InferCtx {
             // Treat them permissively: resolve to `Type::Unknown` so unification
             // does not assert a specific element type.
             AxonType::Union(_) => Type::Unknown,
+            // R17 HAL: raw pointer type — substrate-only.
+            AxonType::RawPtr(inner) => Type::RawPtr(Box::new(self.resolve_ast_type(inner))),
         }
     }
 
@@ -1825,6 +1827,11 @@ impl InferCtx {
             (Type::Temporal(a), Type::Temporal(b)) => {
                 self.unify(*a, *b, origin, subst);
             }
+            (Type::RawPtr(a), Type::RawPtr(b)) => {
+                self.unify(*a, *b, origin, subst);
+            }
+            // `never` unifies with anything (bottom type — can appear anywhere a type is expected).
+            (Type::Never, _) | (_, Type::Never) => {}
             // Uncertain<T> is soft-compatible with T (AI soft typing: confidence implicit).
             (Type::Uncertain(inner), other) | (other, Type::Uncertain(inner)) => {
                 self.unify(*inner, other, origin, subst);
@@ -1877,7 +1884,8 @@ impl InferCtx {
             | Type::Slice(inner)
             | Type::Chan(inner)
             | Type::Uncertain(inner)
-            | Type::Temporal(inner) => self.occurs(var, inner),
+            | Type::Temporal(inner)
+            | Type::RawPtr(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {

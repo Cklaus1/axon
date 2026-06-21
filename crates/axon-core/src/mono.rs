@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::ast::{
-    AxonType, EnumDef, Expr, FnDef, Item, LambdaParam,
-    MatchArm, Param, Program, SelectArm, Stmt, TypeDef,
+    AxonType, EnumDef, Expr, FnDef, Item, LambdaParam, MatchArm, Param, Program, SelectArm, Stmt,
+    TypeDef,
 };
 
 // ── Type substitution ─────────────────────────────────────────────────────────
@@ -26,46 +26,75 @@ fn subst_type(ty: &AxonType, subst: &TypeSubst) -> AxonType {
                 AxonType::Named(n.clone())
             }
         }
-        AxonType::TypeParam(n) => {
-            subst.get(n).cloned().unwrap_or_else(|| AxonType::TypeParam(n.clone()))
-        }
+        AxonType::TypeParam(n) => subst
+            .get(n)
+            .cloned()
+            .unwrap_or_else(|| AxonType::TypeParam(n.clone())),
         AxonType::Generic { base, args } => {
             let new_args: Vec<_> = args.iter().map(|a| subst_type(a, subst)).collect();
-            AxonType::Generic { base: base.clone(), args: new_args }
+            AxonType::Generic {
+                base: base.clone(),
+                args: new_args,
+            }
         }
-        AxonType::Result { ok, err } =>
-            AxonType::Result { ok: Box::new(subst_type(ok, subst)), err: Box::new(subst_type(err, subst)) },
+        AxonType::Result { ok, err } => AxonType::Result {
+            ok: Box::new(subst_type(ok, subst)),
+            err: Box::new(subst_type(err, subst)),
+        },
         AxonType::Option(inner) => AxonType::Option(Box::new(subst_type(inner, subst))),
-        AxonType::Chan(inner)   => AxonType::Chan(Box::new(subst_type(inner, subst))),
-        AxonType::Slice(inner)  => AxonType::Slice(Box::new(subst_type(inner, subst))),
+        AxonType::Chan(inner) => AxonType::Chan(Box::new(subst_type(inner, subst))),
+        AxonType::Slice(inner) => AxonType::Slice(Box::new(subst_type(inner, subst))),
         AxonType::Fn { params, ret } => AxonType::Fn {
             params: params.iter().map(|p| subst_type(p, subst)).collect(),
             ret: Box::new(subst_type(ret, subst)),
         },
-        AxonType::Ref(inner)      => AxonType::Ref(Box::new(subst_type(inner, subst))),
-        AxonType::DynTrait(name)  => AxonType::DynTrait(name.clone()),
-        AxonType::Tuple(elems)    => AxonType::Tuple(elems.iter().map(|e| subst_type(e, subst)).collect()),
-        AxonType::Union(members)  => AxonType::Union(members.iter().map(|m| subst_type(m, subst)).collect()),
+        AxonType::Ref(inner) => AxonType::Ref(Box::new(subst_type(inner, subst))),
+        AxonType::RawPtr(inner) => AxonType::RawPtr(Box::new(subst_type(inner, subst))),
+        AxonType::DynTrait(name) => AxonType::DynTrait(name.clone()),
+        AxonType::Tuple(elems) => {
+            AxonType::Tuple(elems.iter().map(|e| subst_type(e, subst)).collect())
+        }
+        AxonType::Union(members) => {
+            AxonType::Union(members.iter().map(|m| subst_type(m, subst)).collect())
+        }
     }
 }
 
 fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
     match expr {
-        Expr::Block(stmts) =>
-            Expr::Block(stmts.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect()),
+        Expr::Block(stmts) => Expr::Block(
+            stmts
+                .iter()
+                .map(|s| Stmt {
+                    expr: subst_expr(&s.expr, subst),
+                    span: s.span,
+                })
+                .collect(),
+        ),
         Expr::WithHandler { handler, body } => Expr::WithHandler {
             handler: Box::new(handler.map_arm_bodies(|e| subst_expr(e, subst))),
             body: Box::new(subst_expr(body, subst)),
         },
 
-        Expr::Let { name, ty, value } =>
-            Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
-        Expr::Own { name, ty, value } =>
-            Expr::Own { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
-        Expr::RefBind { name, ty, value } =>
-            Expr::RefBind { name: name.clone(), ty: ty.clone(), value: Box::new(subst_expr(value, subst)) },
-        Expr::Assign { name, value } =>
-            Expr::Assign { name: name.clone(), value: Box::new(subst_expr(value, subst)) },
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(subst_expr(value, subst)),
+        },
+        Expr::Own { name, ty, value } => Expr::Own {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(subst_expr(value, subst)),
+        },
+        Expr::RefBind { name, ty, value } => Expr::RefBind {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(subst_expr(value, subst)),
+        },
+        Expr::Assign { name, value } => Expr::Assign {
+            name: name.clone(),
+            value: Box::new(subst_expr(value, subst)),
+        },
         Expr::AssignTo { place, value } => Expr::AssignTo {
             place: Box::new(subst_expr(place, subst)),
             value: Box::new(subst_expr(value, subst)),
@@ -76,7 +105,11 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
             args: args.iter().map(|a| subst_expr(a, subst)).collect(),
             tier: tier.clone(),
         },
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: Box::new(subst_expr(receiver, subst)),
             method: method.clone(),
             args: args.iter().map(|a| subst_expr(a, subst)).collect(),
@@ -101,11 +134,14 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
 
         Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(subst_expr(subject, subst)),
-            arms: arms.iter().map(|arm| MatchArm {
-                pattern: arm.pattern.clone(),
-                guard: arm.guard.as_ref().map(|g| subst_expr(g, subst)),
-                body: subst_expr(&arm.body, subst),
-            }).collect(),
+            arms: arms
+                .iter()
+                .map(|arm| MatchArm {
+                    pattern: arm.pattern.clone(),
+                    guard: arm.guard.as_ref().map(|g| subst_expr(g, subst)),
+                    body: subst_expr(&arm.body, subst),
+                })
+                .collect(),
         },
 
         Expr::Return(v) => Expr::Return(v.as_ref().map(|e| Box::new(subst_expr(e, subst)))),
@@ -119,34 +155,52 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
             index: Box::new(subst_expr(index, subst)),
         },
 
-        Expr::Ok(v)   => Expr::Ok(Box::new(subst_expr(v, subst))),
-        Expr::Err(v)  => Expr::Err(Box::new(subst_expr(v, subst))),
+        Expr::Ok(v) => Expr::Ok(Box::new(subst_expr(v, subst))),
+        Expr::Err(v) => Expr::Err(Box::new(subst_expr(v, subst))),
         Expr::Some(v) => Expr::Some(Box::new(subst_expr(v, subst))),
-        Expr::None    => Expr::None,
-        Expr::Break   => Expr::Break,
+        Expr::None => Expr::None,
+        Expr::Break => Expr::Break,
         Expr::Continue => Expr::Continue,
-        Expr::For { var, start, end, body, inclusive } => Expr::For {
+        Expr::For {
+            var,
+            start,
+            end,
+            body,
+            inclusive,
+        } => Expr::For {
             var: var.clone(),
             start: Box::new(subst_expr(start, subst)),
             end: Box::new(subst_expr(end, subst)),
             inclusive: *inclusive,
-            body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: subst_expr(&s.expr, subst),
+                    span: s.span,
+                })
+                .collect(),
         },
         Expr::Literal(_) | Expr::Ident(_) => expr.clone(),
 
         Expr::FmtStr { parts } => {
             use crate::ast::FmtPart;
             Expr::FmtStr {
-                parts: parts.iter().map(|p| match p {
-                    FmtPart::Lit(s)  => FmtPart::Lit(s.clone()),
-                    FmtPart::Expr(e) => FmtPart::Expr(Box::new(subst_expr(e, subst))),
-                }).collect(),
+                parts: parts
+                    .iter()
+                    .map(|p| match p {
+                        FmtPart::Lit(s) => FmtPart::Lit(s.clone()),
+                        FmtPart::Expr(e) => FmtPart::Expr(Box::new(subst_expr(e, subst))),
+                    })
+                    .collect(),
             }
         }
 
         Expr::StructLit { name, fields } => Expr::StructLit {
             name: name.clone(),
-            fields: fields.iter().map(|(f, v)| (f.clone(), subst_expr(v, subst))).collect(),
+            fields: fields
+                .iter()
+                .map(|(f, v)| (f.clone(), subst_expr(v, subst)))
+                .collect(),
         },
 
         Expr::Array(elems) => Expr::Array(elems.iter().map(|e| subst_expr(e, subst)).collect()),
@@ -154,29 +208,56 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
 
         Expr::While { cond, body } => Expr::While {
             cond: Box::new(subst_expr(cond, subst)),
-            body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: subst_expr(&s.expr, subst),
+                    span: s.span,
+                })
+                .collect(),
         },
 
-        Expr::WhileLet { pattern, expr, body } => Expr::WhileLet {
+        Expr::WhileLet {
+            pattern,
+            expr,
+            body,
+        } => Expr::WhileLet {
             pattern: pattern.clone(),
             expr: Box::new(subst_expr(expr, subst)),
-            body: body.iter().map(|s| Stmt { expr: subst_expr(&s.expr, subst), span: s.span }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: subst_expr(&s.expr, subst),
+                    span: s.span,
+                })
+                .collect(),
         },
 
-        Expr::Lambda { params, body, captures } => Expr::Lambda {
-            params: params.iter().map(|p| LambdaParam {
-                name: p.name.clone(),
-                ty: p.ty.as_ref().map(|t| subst_type(t, subst)),
-            }).collect(),
+        Expr::Lambda {
+            params,
+            body,
+            captures,
+        } => Expr::Lambda {
+            params: params
+                .iter()
+                .map(|p| LambdaParam {
+                    name: p.name.clone(),
+                    ty: p.ty.as_ref().map(|t| subst_type(t, subst)),
+                })
+                .collect(),
             body: Box::new(subst_expr(body, subst)),
             captures: captures.clone(),
         },
 
         Expr::Spawn(body) => Expr::Spawn(Box::new(subst_expr(body, subst))),
-        Expr::Select(arms) => Expr::Select(arms.iter().map(|a| SelectArm {
-            recv: subst_expr(&a.recv, subst),
-            body: subst_expr(&a.body, subst),
-        }).collect()),
+        Expr::Select(arms) => Expr::Select(
+            arms.iter()
+                .map(|a| SelectArm {
+                    recv: subst_expr(&a.recv, subst),
+                    body: subst_expr(&a.body, subst),
+                })
+                .collect(),
+        ),
         Expr::Comptime(inner) => Expr::Comptime(Box::new(subst_expr(inner, subst))),
     }
 }
@@ -187,11 +268,15 @@ fn subst_fn(fndef: &FnDef, subst: &TypeSubst) -> FnDef {
         name: fndef.name.clone(),
         generic_params: vec![], // concrete instance has no type params
         generic_bounds: vec![], // bounds are resolved during monomorphisation
-        params: fndef.params.iter().map(|p| Param {
-            name: p.name.clone(),
-            ty: subst_type(&p.ty, subst),
-            span: p.span,
-        }).collect(),
+        params: fndef
+            .params
+            .iter()
+            .map(|p| Param {
+                name: p.name.clone(),
+                ty: subst_type(&p.ty, subst),
+                span: p.span,
+            })
+            .collect(),
         return_type: fndef.return_type.as_ref().map(|t| subst_type(t, subst)),
         body: subst_expr(&fndef.body, subst),
         attrs: fndef.attrs.clone(),
@@ -207,24 +292,26 @@ fn subst_fn(fndef: &FnDef, subst: &TypeSubst) -> FnDef {
 /// Mangle a type argument for use in a symbol name.
 pub fn mangle_type(ty: &AxonType) -> String {
     match ty {
-        AxonType::Named(n)      => n.clone(),
-        AxonType::TypeParam(n)  => n.clone(),
+        AxonType::Named(n) => n.clone(),
+        AxonType::TypeParam(n) => n.clone(),
         AxonType::Generic { base, args } => {
             let mangled: Vec<_> = args.iter().map(mangle_type).collect();
             format!("{}__{}", base, mangled.join("__"))
         }
-        AxonType::Result { ok, err } =>
-            format!("Result__{}__{}", mangle_type(ok), mangle_type(err)),
-        AxonType::Option(t)     => format!("Option__{}", mangle_type(t)),
-        AxonType::Chan(t)       => format!("Chan__{}", mangle_type(t)),
-        AxonType::Slice(t)      => format!("Slice__{}", mangle_type(t)),
+        AxonType::Result { ok, err } => {
+            format!("Result__{}__{}", mangle_type(ok), mangle_type(err))
+        }
+        AxonType::Option(t) => format!("Option__{}", mangle_type(t)),
+        AxonType::Chan(t) => format!("Chan__{}", mangle_type(t)),
+        AxonType::Slice(t) => format!("Slice__{}", mangle_type(t)),
         AxonType::Fn { params, ret } => {
             let ps: Vec<_> = params.iter().map(mangle_type).collect();
             format!("Fn__{}__{}", ps.join("__"), mangle_type(ret))
         }
-        AxonType::Ref(t)        => format!("Ref__{}", mangle_type(t)),
-        AxonType::DynTrait(n)   => format!("dyn__{}", n),
-        AxonType::Tuple(elems)  => {
+        AxonType::Ref(t) => format!("Ref__{}", mangle_type(t)),
+        AxonType::RawPtr(t) => format!("RawPtr__{}", mangle_type(t)),
+        AxonType::DynTrait(n) => format!("dyn__{}", n),
+        AxonType::Tuple(elems) => {
             let parts: Vec<_> = elems.iter().map(mangle_type).collect();
             format!("Tuple__{}", parts.join("__"))
         }
@@ -314,14 +401,17 @@ impl MonoContext {
         let mangled = mangle_fn(fn_name, &type_args);
         if !self.seen.contains(&mangled) {
             if let Some(template) = self.generic_fns.get(fn_name).cloned() {
-                let subst: TypeSubst = template.generic_params.iter()
+                let subst: TypeSubst = template
+                    .generic_params
+                    .iter()
                     .cloned()
                     .zip(type_args.iter().cloned())
                     .collect();
                 let mut concrete = subst_fn(&template, &subst);
                 concrete.name = mangled.clone();
                 self.seen.insert(mangled.clone());
-                self.queue.push_back((fn_name.to_string(), type_args, concrete));
+                self.queue
+                    .push_back((fn_name.to_string(), type_args, concrete));
             }
         }
         mangled
@@ -340,7 +430,9 @@ impl MonoContext {
     fn collect_from_expr(&mut self, expr: &Expr) {
         match expr {
             Expr::Block(stmts) => {
-                for s in stmts { self.collect_from_expr(&s.expr); }
+                for s in stmts {
+                    self.collect_from_expr(&s.expr);
+                }
             }
             Expr::WithHandler { handler, body } => {
                 if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
@@ -352,7 +444,9 @@ impl MonoContext {
             }
             Expr::Call { callee, args, .. } => {
                 self.collect_from_expr(callee);
-                for a in args { self.collect_from_expr(a); }
+                for a in args {
+                    self.collect_from_expr(a);
+                }
             }
             Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
                 self.collect_from_expr(value);
@@ -367,7 +461,9 @@ impl MonoContext {
             Expr::If { cond, then, else_ } => {
                 self.collect_from_expr(cond);
                 self.collect_from_expr(then);
-                if let Some(e) = else_ { self.collect_from_expr(e); }
+                if let Some(e) = else_ {
+                    self.collect_from_expr(e);
+                }
             }
             Expr::Return(Some(v)) => self.collect_from_expr(v),
             Expr::FieldAccess { receiver, .. } => self.collect_from_expr(receiver),
@@ -378,23 +474,39 @@ impl MonoContext {
             Expr::Ok(v) | Expr::Err(v) | Expr::Some(v) | Expr::Spawn(v) => {
                 self.collect_from_expr(v);
             }
-            Expr::Array(elems) => { for e in elems { self.collect_from_expr(e); } }
-            Expr::Tuple(elems) => { for e in elems { self.collect_from_expr(e); } }
+            Expr::Array(elems) => {
+                for e in elems {
+                    self.collect_from_expr(e);
+                }
+            }
+            Expr::Tuple(elems) => {
+                for e in elems {
+                    self.collect_from_expr(e);
+                }
+            }
             Expr::StructLit { fields, .. } => {
-                for (_, v) in fields { self.collect_from_expr(v); }
+                for (_, v) in fields {
+                    self.collect_from_expr(v);
+                }
             }
             Expr::Lambda { body, .. } => self.collect_from_expr(body),
             Expr::Match { subject, arms } => {
                 self.collect_from_expr(subject);
-                for arm in arms { self.collect_from_expr(&arm.body); }
+                for arm in arms {
+                    self.collect_from_expr(&arm.body);
+                }
             }
             Expr::While { cond, body } => {
                 self.collect_from_expr(cond);
-                for s in body { self.collect_from_expr(&s.expr); }
+                for s in body {
+                    self.collect_from_expr(&s.expr);
+                }
             }
             Expr::WhileLet { expr, body, .. } => {
                 self.collect_from_expr(expr);
-                for s in body { self.collect_from_expr(&s.expr); }
+                for s in body {
+                    self.collect_from_expr(&s.expr);
+                }
             }
             Expr::Assign { value, .. } => self.collect_from_expr(value),
             Expr::AssignTo { place, value } => {
@@ -403,12 +515,16 @@ impl MonoContext {
             }
             Expr::MethodCall { receiver, args, .. } => {
                 self.collect_from_expr(receiver);
-                for a in args { self.collect_from_expr(a); }
+                for a in args {
+                    self.collect_from_expr(a);
+                }
             }
             Expr::FmtStr { parts } => {
                 use crate::ast::FmtPart;
                 for p in parts {
-                    if let FmtPart::Expr(e) = p { self.collect_from_expr(e); }
+                    if let FmtPart::Expr(e) = p {
+                        self.collect_from_expr(e);
+                    }
                 }
             }
             Expr::Select(arms) => {
@@ -417,13 +533,21 @@ impl MonoContext {
                     self.collect_from_expr(&arm.body);
                 }
             }
-            Expr::For { start, end, body, .. } => {
+            Expr::For {
+                start, end, body, ..
+            } => {
                 self.collect_from_expr(start);
                 self.collect_from_expr(end);
-                for s in body { self.collect_from_expr(&s.expr); }
+                for s in body {
+                    self.collect_from_expr(&s.expr);
+                }
             }
-            Expr::Literal(_) | Expr::Ident(_) | Expr::None | Expr::Return(None)
-            | Expr::Break | Expr::Continue => {}
+            Expr::Literal(_)
+            | Expr::Ident(_)
+            | Expr::None
+            | Expr::Return(None)
+            | Expr::Break
+            | Expr::Continue => {}
         }
     }
 }
@@ -432,7 +556,10 @@ impl MonoContext {
 ///
 /// `instantiations` is a list of `(fn_name, type_args)` produced by the
 /// inference pass; each entry represents one required concrete instance.
-pub fn monomorphise(program: &Program, instantiations: Vec<(String, Vec<AxonType>)>) -> MonoProgram {
+pub fn monomorphise(
+    program: &Program,
+    instantiations: Vec<(String, Vec<AxonType>)>,
+) -> MonoProgram {
     let mut ctx = MonoContext::new(program);
 
     // Build a rename map: generic function name → list of mangled concrete names.
@@ -445,12 +572,16 @@ pub fn monomorphise(program: &Program, instantiations: Vec<(String, Vec<AxonType
     // Build a single-instantiation rename map: name → unique mangled name.
     // (If a generic function has multiple distinct instantiations, call-site
     // renaming for it isn't yet supported — leave as-is and let codegen warn.)
-    let single_rename: HashMap<String, String> = rename.into_iter()
+    let single_rename: HashMap<String, String> = rename
+        .into_iter()
         .filter_map(|(k, mut v)| {
             v.sort();
             v.dedup();
-            if v.len() == 1 { Some((k, v.into_iter().next().unwrap())) }
-            else { None }
+            if v.len() == 1 {
+                Some((k, v.into_iter().next().unwrap()))
+            } else {
+                None
+            }
         })
         .collect();
 
@@ -489,16 +620,37 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
             }
         }
         Expr::Block(stmts) => Expr::Block(
-            stmts.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect()
+            stmts
+                .iter()
+                .map(|s| Stmt {
+                    expr: rename_calls_expr(&s.expr, rename),
+                    span: s.span,
+                })
+                .collect(),
         ),
         Expr::WithHandler { handler, body } => Expr::WithHandler {
             handler: Box::new(handler.map_arm_bodies(|e| rename_calls_expr(e, rename))),
             body: Box::new(rename_calls_expr(body, rename)),
         },
-        Expr::Let { name, ty, value } => Expr::Let { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
-        Expr::Own { name, ty, value } => Expr::Own { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
-        Expr::RefBind { name, ty, value } => Expr::RefBind { name: name.clone(), ty: ty.clone(), value: Box::new(rename_calls_expr(value, rename)) },
-        Expr::Assign { name, value } => Expr::Assign { name: name.clone(), value: Box::new(rename_calls_expr(value, rename)) },
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(rename_calls_expr(value, rename)),
+        },
+        Expr::Own { name, ty, value } => Expr::Own {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(rename_calls_expr(value, rename)),
+        },
+        Expr::RefBind { name, ty, value } => Expr::RefBind {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: Box::new(rename_calls_expr(value, rename)),
+        },
+        Expr::Assign { name, value } => Expr::Assign {
+            name: name.clone(),
+            value: Box::new(rename_calls_expr(value, rename)),
+        },
         Expr::AssignTo { place, value } => Expr::AssignTo {
             place: Box::new(rename_calls_expr(place, rename)),
             value: Box::new(rename_calls_expr(value, rename)),
@@ -508,21 +660,33 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
             left: Box::new(rename_calls_expr(left, rename)),
             right: Box::new(rename_calls_expr(right, rename)),
         },
-        Expr::UnaryOp { op, operand } => Expr::UnaryOp { op: op.clone(), operand: Box::new(rename_calls_expr(operand, rename)) },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp {
+            op: op.clone(),
+            operand: Box::new(rename_calls_expr(operand, rename)),
+        },
         Expr::Question(inner) => Expr::Question(Box::new(rename_calls_expr(inner, rename))),
         Expr::Comptime(inner) => Expr::Comptime(Box::new(rename_calls_expr(inner, rename))),
         Expr::If { cond, then, else_ } => Expr::If {
             cond: Box::new(rename_calls_expr(cond, rename)),
             then: Box::new(rename_calls_expr(then, rename)),
-            else_: else_.as_ref().map(|e| Box::new(rename_calls_expr(e, rename))),
+            else_: else_
+                .as_ref()
+                .map(|e| Box::new(rename_calls_expr(e, rename))),
         },
         Expr::Return(Some(v)) => Expr::Return(Some(Box::new(rename_calls_expr(v, rename)))),
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: Box::new(rename_calls_expr(receiver, rename)),
             method: method.clone(),
             args: args.iter().map(|a| rename_calls_expr(a, rename)).collect(),
         },
-        Expr::FieldAccess { receiver, field } => Expr::FieldAccess { receiver: Box::new(rename_calls_expr(receiver, rename)), field: field.clone() },
+        Expr::FieldAccess { receiver, field } => Expr::FieldAccess {
+            receiver: Box::new(rename_calls_expr(receiver, rename)),
+            field: field.clone(),
+        },
         Expr::Index { receiver, index } => Expr::Index {
             receiver: Box::new(rename_calls_expr(receiver, rename)),
             index: Box::new(rename_calls_expr(index, rename)),
@@ -531,56 +695,108 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         Expr::Err(v) => Expr::Err(Box::new(rename_calls_expr(v, rename))),
         Expr::Some(v) => Expr::Some(Box::new(rename_calls_expr(v, rename))),
         Expr::Spawn(v) => Expr::Spawn(Box::new(rename_calls_expr(v, rename))),
-        Expr::Array(elems) => Expr::Array(elems.iter().map(|e| rename_calls_expr(e, rename)).collect()),
-        Expr::Tuple(elems) => Expr::Tuple(elems.iter().map(|e| rename_calls_expr(e, rename)).collect()),
+        Expr::Array(elems) => {
+            Expr::Array(elems.iter().map(|e| rename_calls_expr(e, rename)).collect())
+        }
+        Expr::Tuple(elems) => {
+            Expr::Tuple(elems.iter().map(|e| rename_calls_expr(e, rename)).collect())
+        }
         Expr::StructLit { name, fields } => Expr::StructLit {
             name: name.clone(),
-            fields: fields.iter().map(|(f, v)| (f.clone(), rename_calls_expr(v, rename))).collect(),
+            fields: fields
+                .iter()
+                .map(|(f, v)| (f.clone(), rename_calls_expr(v, rename)))
+                .collect(),
         },
         Expr::While { cond, body } => Expr::While {
             cond: Box::new(rename_calls_expr(cond, rename)),
-            body: body.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: rename_calls_expr(&s.expr, rename),
+                    span: s.span,
+                })
+                .collect(),
         },
-        Expr::WhileLet { pattern, expr, body } => Expr::WhileLet {
+        Expr::WhileLet {
+            pattern,
+            expr,
+            body,
+        } => Expr::WhileLet {
             pattern: pattern.clone(),
             expr: Box::new(rename_calls_expr(expr, rename)),
-            body: body.iter().map(|s| Stmt { expr: rename_calls_expr(&s.expr, rename), span: s.span }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: rename_calls_expr(&s.expr, rename),
+                    span: s.span,
+                })
+                .collect(),
         },
-        Expr::Lambda { params, body, captures } => Expr::Lambda {
+        Expr::Lambda {
+            params,
+            body,
+            captures,
+        } => Expr::Lambda {
             params: params.clone(),
             body: Box::new(rename_calls_expr(body, rename)),
             captures: captures.clone(),
         },
         Expr::Match { subject, arms } => Expr::Match {
             subject: Box::new(rename_calls_expr(subject, rename)),
-            arms: arms.iter().map(|arm| crate::ast::MatchArm {
-                pattern: arm.pattern.clone(),
-                guard: arm.guard.as_ref().map(|g| rename_calls_expr(g, rename)),
-                body: rename_calls_expr(&arm.body, rename),
-            }).collect(),
+            arms: arms
+                .iter()
+                .map(|arm| crate::ast::MatchArm {
+                    pattern: arm.pattern.clone(),
+                    guard: arm.guard.as_ref().map(|g| rename_calls_expr(g, rename)),
+                    body: rename_calls_expr(&arm.body, rename),
+                })
+                .collect(),
         },
-        Expr::Select(arms) => Expr::Select(arms.iter().map(|arm| crate::ast::SelectArm {
-            recv: rename_calls_expr(&arm.recv, rename),
-            body: rename_calls_expr(&arm.body, rename),
-        }).collect()),
+        Expr::Select(arms) => Expr::Select(
+            arms.iter()
+                .map(|arm| crate::ast::SelectArm {
+                    recv: rename_calls_expr(&arm.recv, rename),
+                    body: rename_calls_expr(&arm.body, rename),
+                })
+                .collect(),
+        ),
         Expr::FmtStr { parts } => Expr::FmtStr {
-            parts: parts.iter().map(|p| match p {
-                crate::ast::FmtPart::Lit(s) => crate::ast::FmtPart::Lit(s.clone()),
-                crate::ast::FmtPart::Expr(e) => crate::ast::FmtPart::Expr(Box::new(rename_calls_expr(e, rename))),
-            }).collect(),
+            parts: parts
+                .iter()
+                .map(|p| match p {
+                    crate::ast::FmtPart::Lit(s) => crate::ast::FmtPart::Lit(s.clone()),
+                    crate::ast::FmtPart::Expr(e) => {
+                        crate::ast::FmtPart::Expr(Box::new(rename_calls_expr(e, rename)))
+                    }
+                })
+                .collect(),
         },
-        Expr::For { var, start, end, body, inclusive } => Expr::For {
+        Expr::For {
+            var,
+            start,
+            end,
+            body,
+            inclusive,
+        } => Expr::For {
             var: var.clone(),
             start: Box::new(rename_calls_expr(start, rename)),
             end: Box::new(rename_calls_expr(end, rename)),
             inclusive: *inclusive,
-            body: body.iter().map(|s| Stmt {
-                expr: rename_calls_expr(&s.expr, rename),
-                span: s.span,
-            }).collect(),
+            body: body
+                .iter()
+                .map(|s| Stmt {
+                    expr: rename_calls_expr(&s.expr, rename),
+                    span: s.span,
+                })
+                .collect(),
         },
         // Leaves — clone unchanged.
-        Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Return(None)
-        | Expr::Break | Expr::Continue => expr.clone(),
+        Expr::Ident(_)
+        | Expr::Literal(_)
+        | Expr::None
+        | Expr::Return(None)
+        | Expr::Break
+        | Expr::Continue => expr.clone(),
     }
 }

@@ -1960,7 +1960,7 @@ fn type_name_of(ty: &crate::ast::AxonType) -> String {
     match ty {
         Named(n) => n.clone(),
         Generic { base, .. } => base.clone(),
-        Ref(inner) => type_name_of(inner),
+        Ref(inner) | RawPtr(inner) => type_name_of(inner),
         DynTrait(n) => n.clone(),
         TypeParam(n) => n.clone(),
         Slice(_) => "[]".into(),

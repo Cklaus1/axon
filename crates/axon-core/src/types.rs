@@ -61,6 +61,11 @@ pub enum Type {
     Uncertain(Box<Type>),
     /// A temporally-scoped value of type T with validity windows: `Temporal<T>`.
     Temporal(Box<Type>),
+    /// R17 HAL: raw pointer to T — substrate-only. Lowers to LLVM `ptr` (opaque).
+    RawPtr(Box<Type>),
+    /// R17 HAL: the bottom / diverging type — a fn returning `never` does not return.
+    /// Lowers to LLVM `void` with the `noreturn` attribute.
+    Never,
 }
 
 impl Type {
@@ -80,6 +85,7 @@ impl Type {
             "bool" => Some(Type::Bool),
             "str" | "String" => Some(Type::Str),
             "()" | "unit" | "Unit" => Some(Type::Unit),
+            "never" | "Never" | "!" => Some(Type::Never),
             _ => None,
         }
     }
@@ -87,8 +93,14 @@ impl Type {
     pub fn is_integer(&self) -> bool {
         matches!(
             self,
-            Type::I8 | Type::I16 | Type::I32 | Type::I64
-                | Type::U8 | Type::U16 | Type::U32 | Type::U64
+            Type::I8
+                | Type::I16
+                | Type::I32
+                | Type::I64
+                | Type::U8
+                | Type::U16
+                | Type::U32
+                | Type::U64
         )
     }
 
@@ -197,11 +209,19 @@ impl Type {
             Type::Result(ok, err) => format!("Result<{}, {}>", ok.display(), err.display()),
             Type::Slice(t) => format!("[{}]", t.display()),
             Type::Tuple(ts) => {
-                let inner = ts.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ");
+                let inner = ts
+                    .iter()
+                    .map(|t| t.display())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("({inner})")
             }
             Type::Fn(params, ret) => {
-                let p = params.iter().map(|t| t.display()).collect::<Vec<_>>().join(", ");
+                let p = params
+                    .iter()
+                    .map(|t| t.display())
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 format!("fn({p}) -> {}", ret.display())
             }
             Type::Struct(n) | Type::Enum(n) | Type::Deferred(n) => n.clone(),
@@ -212,6 +232,8 @@ impl Type {
             Type::Chan(t) => format!("chan<{}>", t.display()),
             Type::Uncertain(t) => format!("Uncertain<{}>", t.display()),
             Type::Temporal(t) => format!("Temporal<{}>", t.display()),
+            Type::RawPtr(t) => format!("*{}", t.display()),
+            Type::Never => "never".into(),
         }
     }
 }
@@ -271,8 +293,12 @@ impl Substitution {
                     false
                 }
             }
-            Type::Option(inner) | Type::Slice(inner) | Type::Chan(inner)
-            | Type::Uncertain(inner) | Type::Temporal(inner) => self.occurs(var, inner),
+            Type::Option(inner)
+            | Type::Slice(inner)
+            | Type::Chan(inner)
+            | Type::Uncertain(inner)
+            | Type::Temporal(inner)
+            | Type::RawPtr(inner) => self.occurs(var, inner),
             Type::Result(ok, err) => self.occurs(var, ok) || self.occurs(var, err),
             Type::Tuple(ts) => ts.iter().any(|t| self.occurs(var, t)),
             Type::Fn(params, ret) => {
@@ -313,11 +339,15 @@ impl Substitution {
             Type::Chan(inner) => Type::Chan(Box::new(self.apply_inner(inner, visiting))),
             Type::Uncertain(inner) => Type::Uncertain(Box::new(self.apply_inner(inner, visiting))),
             Type::Temporal(inner) => Type::Temporal(Box::new(self.apply_inner(inner, visiting))),
+            Type::RawPtr(inner) => Type::RawPtr(Box::new(self.apply_inner(inner, visiting))),
             Type::Tuple(ts) => {
                 Type::Tuple(ts.iter().map(|t| self.apply_inner(t, visiting)).collect())
             }
             Type::Fn(params, ret) => Type::Fn(
-                params.iter().map(|p| self.apply_inner(p, visiting)).collect(),
+                params
+                    .iter()
+                    .map(|p| self.apply_inner(p, visiting))
+                    .collect(),
                 Box::new(self.apply_inner(ret, visiting)),
             ),
             // Ground types pass through unchanged.
@@ -504,7 +534,7 @@ mod tests {
     fn insert_checked_prevents_indirect_cycle() {
         let mut subst = Substitution::new();
         subst.insert(1, Type::Var(0)); // Var(1) → Var(0)
-        // Now inserting Var(0) → Option(Var(1)) would create a cycle
+                                       // Now inserting Var(0) → Option(Var(1)) would create a cycle
         let cyclic = Type::Option(Box::new(Type::Var(1)));
         let result = subst.insert_checked(0, &cyclic);
         assert!(result.is_err());

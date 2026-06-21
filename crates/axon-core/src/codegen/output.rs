@@ -11,8 +11,8 @@
 
 use std::path::Path;
 
-use inkwell::OptimizationLevel;
 use inkwell::values::BasicValue;
+use inkwell::OptimizationLevel;
 
 use super::link::emit_object_and_link;
 
@@ -30,7 +30,8 @@ impl<'ctx> super::Codegen<'ctx> {
 
     /// Write the LLVM IR text representation to `path` (usually `*.ll`).
     pub fn write_ir(&self, path: &str) -> Result<(), String> {
-        self.ir.module
+        self.ir
+            .module
             .print_to_file(Path::new(path))
             .map_err(|e| e.to_string())
     }
@@ -81,7 +82,9 @@ impl<'ctx> super::Codegen<'ctx> {
             for func in to_delete {
                 // Deleting a definition drops its instructions (and thus the uses
                 // of any extern it called), enabling the next round to prune those.
-                unsafe { func.delete(); }
+                unsafe {
+                    func.delete();
+                }
                 total += 1;
             }
         }
@@ -108,10 +111,72 @@ impl<'ctx> super::Codegen<'ctx> {
         // here: the native link tolerates the unused helpers, and pruning them
         // exposed a latent libm (`pow`) link-order fragility on the native path
         // (axon-rt's f64::powf → undefined `pow`). Keeping native unchanged.
-        self.ir.module
+        self.ir
+            .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
         emit_object_and_link(&self.ir.module, output_path, release, target_triple)
+    }
+
+    /// R17: Compile to a freestanding (bare-metal) ELF binary.
+    ///
+    /// Uses a static/kernel code model, omits axon-rt/libc, and sets the ELF
+    /// entry symbol to the `@[entry]`-annotated function.
+    pub fn compile_to_freestanding_binary(
+        &self,
+        output_path: &str,
+        release: bool,
+        target_triple: Option<&str>,
+        entry_fn: Option<&str>,
+    ) -> Result<(), String> {
+        // Prune unused builtins (println, assert, str ops, ...) before linking.
+        // For freestanding we preserve the @[entry] fn and any @[panic_handler]
+        // fn in addition to `main` (which won't exist in a kernel image).
+        self.prune_dead_functions_keep(
+            &["main", "on_panic", "__axon_kernel_panic"]
+                .iter()
+                .copied()
+                .chain(entry_fn)
+                .collect::<Vec<_>>(),
+        );
+        self.ir
+            .module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::emit_freestanding_binary(
+            &self.ir.module,
+            output_path,
+            release,
+            target_triple,
+            entry_fn,
+        )
+    }
+
+    /// Like `prune_dead_functions` but preserves a set of named roots.
+    fn prune_dead_functions_keep(&self, keep: &[&str]) -> usize {
+        let mut total = 0;
+        loop {
+            let mut to_delete = Vec::new();
+            let mut f = self.ir.module.get_first_function();
+            while let Some(func) = f {
+                let next = func.get_next_function();
+                let name = func.get_name().to_string_lossy().to_string();
+                let has_body = func.count_basic_blocks() > 0;
+                let used = func.as_global_value().get_first_use().is_some();
+                if has_body && !used && !keep.contains(&name.as_str()) {
+                    to_delete.push(func);
+                }
+                f = next;
+            }
+            if to_delete.is_empty() {
+                break;
+            }
+            for func in to_delete {
+                unsafe { func.delete(); }
+                total += 1;
+            }
+        }
+        total
     }
 
     /// Serialize the compiled LLVM IR as bitcode bytes (for the incremental cache).
@@ -133,7 +198,8 @@ impl<'ctx> super::Codegen<'ctx> {
         // helpers and their i64-ABI `__axon_*` imports, so a pure-integer
         // program emits a wasm object with no clashing externs.
         let _pruned = self.prune_dead_functions();
-        self.ir.module
+        self.ir
+            .module
             .verify()
             .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
         super::link::emit_wasm_object(&self.ir.module, output_path, release, target_triple)
@@ -151,24 +217,34 @@ impl<'ctx> super::Codegen<'ctx> {
     pub fn run_tests(&self, fns: &[String]) -> Vec<TestResult> {
         // Verify the module before running tests.
         if let Err(e) = self.ir.module.verify() {
-            return fns.iter().map(|name| TestResult {
-                name: name.clone(),
-                passed: false,
-                duration_ms: 0,
-                error: Some(format!("IR verification failed: {}", e.to_string())),
-            }).collect();
-        }
-
-        // Create a single JIT engine for the whole module.
-        let ee = match self.ir.module.create_jit_execution_engine(OptimizationLevel::None) {
-            Ok(e) => e,
-            Err(e) => {
-                return fns.iter().map(|name| TestResult {
+            return fns
+                .iter()
+                .map(|name| TestResult {
                     name: name.clone(),
                     passed: false,
                     duration_ms: 0,
-                    error: Some(format!("JIT init: {e}")),
-                }).collect();
+                    error: Some(format!("IR verification failed: {}", e.to_string())),
+                })
+                .collect();
+        }
+
+        // Create a single JIT engine for the whole module.
+        let ee = match self
+            .ir
+            .module
+            .create_jit_execution_engine(OptimizationLevel::None)
+        {
+            Ok(e) => e,
+            Err(e) => {
+                return fns
+                    .iter()
+                    .map(|name| TestResult {
+                        name: name.clone(),
+                        passed: false,
+                        duration_ms: 0,
+                        error: Some(format!("JIT init: {e}")),
+                    })
+                    .collect();
             }
         };
 
@@ -185,8 +261,18 @@ impl<'ctx> super::Codegen<'ctx> {
 
                 let duration_ms = start.elapsed().as_millis() as u64;
                 match result {
-                    Ok(()) => TestResult { name: name.clone(), passed: true, duration_ms, error: None },
-                    Err(e) => TestResult { name: name.clone(), passed: false, duration_ms, error: Some(e) },
+                    Ok(()) => TestResult {
+                        name: name.clone(),
+                        passed: true,
+                        duration_ms,
+                        error: None,
+                    },
+                    Err(e) => TestResult {
+                        name: name.clone(),
+                        passed: false,
+                        duration_ms,
+                        error: Some(e),
+                    },
                 }
             })
             .collect()

@@ -141,9 +141,18 @@ pub fn program_complexity(program: &Program) -> ProgramComplexity {
         }
     }
 
-    out.total = Complexity { bits: acc.bits, nodes: acc.nodes, depth: 0 };
+    out.total = Complexity {
+        bits: acc.bits,
+        nodes: acc.nodes,
+        depth: 0,
+    };
     // Depth is the max over functions (a program-level number isn't meaningful).
-    out.total.depth = out.functions.iter().map(|(_, c)| c.depth).max().unwrap_or(0);
+    out.total.depth = out
+        .functions
+        .iter()
+        .map(|(_, c)| c.depth)
+        .max()
+        .unwrap_or(0);
 
     let mut by_kind: Vec<(&'static str, u64)> = acc.by_kind.into_iter().collect();
     by_kind.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(b.0)));
@@ -182,7 +191,7 @@ fn ty_cost(t: &AxonType, acc: &mut Acc) {
         AxonType::Named(n) | AxonType::TypeParam(n) | AxonType::DynTrait(n) => {
             acc.add("Type", name_bits(n))
         }
-        AxonType::Option(i) | AxonType::Chan(i) | AxonType::Slice(i) | AxonType::Ref(i) => {
+        AxonType::Option(i) | AxonType::Chan(i) | AxonType::Slice(i) | AxonType::Ref(i) | AxonType::RawPtr(i) => {
             acc.add("Type", KIND_BITS);
             ty_cost(i, acc);
         }
@@ -284,7 +293,11 @@ fn expr_cost(e: &Expr, acc: &mut Acc, depth: u64) -> u64 {
                 child!(a);
             }
         }
-        Expr::MethodCall { receiver, method, args } => {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             acc.add("MethodCall", name_bits(method));
             child!(receiver);
             for a in args {
@@ -405,7 +418,11 @@ fn expr_cost(e: &Expr, acc: &mut Acc, depth: u64) -> u64 {
                 child!(&s.expr);
             }
         }
-        Expr::WhileLet { pattern, expr, body } => {
+        Expr::WhileLet {
+            pattern,
+            expr,
+            body,
+        } => {
             acc.add("WhileLet", KIND_BITS);
             pat_cost(pattern, acc);
             child!(expr);
@@ -442,7 +459,13 @@ fn expr_cost(e: &Expr, acc: &mut Acc, depth: u64) -> u64 {
         }
         Expr::Break => acc.add("Break", KIND_BITS),
         Expr::Continue => acc.add("Continue", KIND_BITS),
-        Expr::For { var, start, end, body, .. } => {
+        Expr::For {
+            var,
+            start,
+            end,
+            body,
+            ..
+        } => {
             acc.add("For", name_bits(var));
             child!(start);
             child!(end);
@@ -471,7 +494,9 @@ mod tests {
     use crate::parse_source;
 
     fn bits(src: &str) -> u64 {
-        program_complexity(&parse_source(src).expect("parse")).total.bits
+        program_complexity(&parse_source(src).expect("parse"))
+            .total
+            .bits
     }
 
     #[test]
@@ -528,9 +553,12 @@ mod tests {
 
     #[test]
     fn nesting_increases_depth() {
-        let flat = program_complexity(&parse_source("fn f() -> i64 { 1 }").unwrap()).total.depth;
+        let flat = program_complexity(&parse_source("fn f() -> i64 { 1 }").unwrap())
+            .total
+            .depth;
         let nested = program_complexity(
-            &parse_source("fn f() -> i64 { if true { if true { 1 } else { 2 } } else { 3 } }").unwrap(),
+            &parse_source("fn f() -> i64 { if true { if true { 1 } else { 2 } } else { 3 } }")
+                .unwrap(),
         )
         .total
         .depth;

@@ -36,17 +36,17 @@ use crate::types::Type;
 // this file pending Phase 2.3+ which requires faster-machine validation
 // because the bigger remaining splits will involve cross-cutting field-access
 // pub(super) decisions.
-pub mod link;
-pub mod types;
 pub mod asi;
-pub mod option_result;
-pub mod output;
-pub mod match_pat;
-pub mod builtins;
-pub mod builtin_externs;
 pub mod build_wrappers;
+pub mod builtin_externs;
+pub mod builtins;
 pub mod expr;
 pub mod ir_inkwell;
+pub mod link;
+pub mod match_pat;
+pub mod option_result;
+pub mod output;
+pub mod types;
 
 // Re-export TestResult so backward-compatible path
 // `axon_core::codegen::TestResult` keeps working.
@@ -111,7 +111,10 @@ fn expr_calls(e: &ast::Expr, target: &str) -> bool {
         Expr::Question(b) | Expr::Spawn(b) | Expr::Comptime(b) | Expr::Lambda { body: b, .. } => {
             expr_calls(b, target)
         }
-        Expr::Return(inner) => inner.as_ref().map(|b| expr_calls(b, target)).unwrap_or(false),
+        Expr::Return(inner) => inner
+            .as_ref()
+            .map(|b| expr_calls(b, target))
+            .unwrap_or(false),
         Expr::FieldAccess { receiver, .. } => expr_calls(receiver, target),
         Expr::Index { receiver, index } => {
             expr_calls(receiver, target) || expr_calls(index, target)
@@ -119,7 +122,10 @@ fn expr_calls(e: &ast::Expr, target: &str) -> bool {
         Expr::If { cond, then, else_ } => {
             expr_calls(cond, target)
                 || expr_calls(then, target)
-                || else_.as_ref().map(|b| expr_calls(b, target)).unwrap_or(false)
+                || else_
+                    .as_ref()
+                    .map(|b| expr_calls(b, target))
+                    .unwrap_or(false)
         }
         Expr::Match { subject, arms } => {
             expr_calls(subject, target) || arms.iter().any(|a| expr_calls(&a.body, target))
@@ -132,7 +138,9 @@ fn expr_calls(e: &ast::Expr, target: &str) -> bool {
         Expr::WhileLet { expr, body, .. } => {
             expr_calls(expr, target) || body.iter().any(|s| expr_calls(&s.expr, target))
         }
-        Expr::For { start, end, body, .. } => {
+        Expr::For {
+            start, end, body, ..
+        } => {
             expr_calls(start, target)
                 || expr_calls(end, target)
                 || body.iter().any(|s| expr_calls(&s.expr, target))
@@ -140,9 +148,7 @@ fn expr_calls(e: &ast::Expr, target: &str) -> bool {
         Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => expr_calls(b, target),
         Expr::StructLit { fields, .. } => fields.iter().any(|(_, v)| expr_calls(v, target)),
         Expr::Assign { value, .. } => expr_calls(value, target),
-        Expr::AssignTo { place, value } => {
-            expr_calls(place, target) || expr_calls(value, target)
-        }
+        Expr::AssignTo { place, value } => expr_calls(place, target) || expr_calls(value, target),
         Expr::FmtStr { parts } => parts.iter().any(|p| match p {
             ast::FmtPart::Expr(e) => expr_calls(e, target),
             _ => false,
@@ -228,7 +234,10 @@ pub struct Codegen<'ctx> {
     /// Module-level comptime binding table: name → evaluated constant.
     comptime_env: HashMap<String, crate::comptime::ComptimeVal>,
     /// Stack of (continue_target, break_target) for the enclosing while loops.
-    loop_stack: Vec<(inkwell::basic_block::BasicBlock<'ctx>, inkwell::basic_block::BasicBlock<'ctx>)>,
+    loop_stack: Vec<(
+        inkwell::basic_block::BasicBlock<'ctx>,
+        inkwell::basic_block::BasicBlock<'ctx>,
+    )>,
     /// Current lambda's closure environment, set when emitting a lambda body.
     /// Tuple of (env_ptr, env_struct_ty, capture_index_map).
     /// When set, `Ident` lookups that miss `self.locals` fall back to loading
@@ -489,7 +498,10 @@ impl<'ctx> Codegen<'ctx> {
             .builder
             .build_call(malloc_fn, &[size_arg.into()], name)
             .unwrap();
-        call.try_as_basic_value().left().unwrap().into_pointer_value()
+        call.try_as_basic_value()
+            .left()
+            .unwrap()
+            .into_pointer_value()
     }
 
     /// R4: set the program source path stamped into native `@[adaptive]`
@@ -509,7 +521,8 @@ impl<'ctx> Codegen<'ctx> {
                 self.refinement_base.insert(r.name.clone(), r.base.clone());
                 // Phase 5: also index the predicate for the entry-time runtime
                 // precondition check (mirrors the interpreter's refine_preds).
-                self.refine_preds.insert(r.name.clone(), (*r.predicate).clone());
+                self.refine_preds
+                    .insert(r.name.clone(), (*r.predicate).clone());
             }
         }
         // Phase 5: index struct-construction refinement obligations — per-field
@@ -532,7 +545,8 @@ impl<'ctx> Codegen<'ctx> {
                     self.struct_field_refines.insert(td.name.clone(), refs);
                 }
                 if let Some(pred) = &td.refinement {
-                    self.struct_whole_refines.insert(td.name.clone(), (**pred).clone());
+                    self.struct_whole_refines
+                        .insert(td.name.clone(), (**pred).clone());
                 }
             }
         }
@@ -576,8 +590,16 @@ impl<'ctx> Codegen<'ctx> {
         let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
 
         // Collect all impl blocks first (avoid borrow issues with trait_defs).
-        let impls: Vec<ast::ImplBlock> = program.items.iter()
-            .filter_map(|item| if let ast::Item::ImplBlock(b) = item { Some(b.clone()) } else { None })
+        let impls: Vec<ast::ImplBlock> = program
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ast::Item::ImplBlock(b) = item {
+                    Some(b.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for blk in &impls {
@@ -595,13 +617,17 @@ impl<'ctx> Codegen<'ctx> {
                 // Thunk params: (ptr self, non-self args...)
                 let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = vec![i8_ptr.into()];
                 for p in &tm.params {
-                    if p.name == "self" { continue; }
+                    if p.name == "self" {
+                        continue;
+                    }
                     if let Some(llvm_ty) = self.llvm_type_from_axon(&p.ty) {
                         param_tys.push(llvm_ty.into());
                     }
                 }
 
-                let ret_sem = tm.return_type.as_ref()
+                let ret_sem = tm
+                    .return_type
+                    .as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
                     .unwrap_or(crate::types::Type::Unit);
 
@@ -620,10 +646,8 @@ impl<'ctx> Codegen<'ctx> {
 
                 self.functions.insert(thunk_name, fn_val);
                 // Store one thunk type per (trait, method) pair for indirect dispatch.
-                self.vtable_thunk_types.insert(
-                    (trait_name.clone(), tm.name.clone()),
-                    fn_ty,
-                );
+                self.vtable_thunk_types
+                    .insert((trait_name.clone(), tm.name.clone()), fn_ty);
             }
         }
     }
@@ -638,12 +662,15 @@ impl<'ctx> Codegen<'ctx> {
                     .collect();
                 let named_struct = self.ir.context.opaque_struct_type(&td.name);
                 named_struct.set_body(&field_types, false);
-                let field_names: Vec<String> =
-                    td.fields.iter().map(|f| f.name.clone()).collect();
+                let field_names: Vec<String> = td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
-                let field_sem_types: Vec<Type> =
-                    td.fields.iter().map(|f| self.axon_type_to_semantic(&f.ty)).collect();
-                self.struct_field_sem_types.insert(td.name.clone(), field_sem_types);
+                let field_sem_types: Vec<Type> = td
+                    .fields
+                    .iter()
+                    .map(|f| self.axon_type_to_semantic(&f.ty))
+                    .collect();
+                self.struct_field_sem_types
+                    .insert(td.name.clone(), field_sem_types);
             }
         }
     }
@@ -790,16 +817,24 @@ impl<'ctx> Codegen<'ctx> {
         // to the Layer-2 retrospective best-observed path for those.
         self.adaptive_registry_targets.clear();
         for (mangled, f) in &fn_work {
-            if !has_adaptive_attr(&f.attrs) { continue; }
-            if f.params.len() != 1 { continue; }
+            if !has_adaptive_attr(&f.attrs) {
+                continue;
+            }
+            if f.params.len() != 1 {
+                continue;
+            }
             let p_sem = self.axon_type_to_semantic(&f.params[0].ty);
-            if !matches!(p_sem, Type::I64) { continue; }
+            if !matches!(p_sem, Type::I64) {
+                continue;
+            }
             let r_sem = f
                 .return_type
                 .as_ref()
                 .map(|t| self.axon_type_to_semantic(t))
                 .unwrap_or(Type::Unit);
-            if !matches!(r_sem, Type::I64) { continue; }
+            if !matches!(r_sem, Type::I64) {
+                continue;
+            }
             // Use the (mangled) name so we register the actual LLVM symbol.
             // For top-level fns this equals f.name; for impl methods it's
             // `Type__method`.  v1 doesn't expect impl methods to carry
@@ -865,7 +900,9 @@ impl<'ctx> Codegen<'ctx> {
                     fns: &self.fndefs,
                 };
                 match evaluator.eval(value) {
-                    Ok(cv) => { self.comptime_env.insert(name.clone(), cv); }
+                    Ok(cv) => {
+                        self.comptime_env.insert(name.clone(), cv);
+                    }
                     Err(e) => eprintln!("comptime[E0701]: {e}"),
                 }
             }
@@ -887,8 +924,16 @@ impl<'ctx> Codegen<'ctx> {
 
     /// Emit the body of each vtable thunk function.
     fn emit_vtable_thunks(&mut self, program: &ast::Program) {
-        let impls: Vec<ast::ImplBlock> = program.items.iter()
-            .filter_map(|item| if let ast::Item::ImplBlock(b) = item { Some(b.clone()) } else { None })
+        let impls: Vec<ast::ImplBlock> = program
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ast::Item::ImplBlock(b) = item {
+                    Some(b.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for blk in &impls {
@@ -926,14 +971,17 @@ impl<'ctx> Codegen<'ctx> {
                 let mut call_args: Vec<BasicMetadataValueEnum<'ctx>> = Vec::new();
 
                 // If the concrete method has a self param, load it from the pointer.
-                let has_self_param = blk.methods.iter()
+                let has_self_param = blk
+                    .methods
+                    .iter()
                     .find(|m| m.name == tm.name)
                     .map(|m| m.params.iter().any(|p| p.name == "self"))
                     .unwrap_or(false);
 
                 if has_self_param {
                     if let Some(ty) = concrete_llvm_ty {
-                        let self_val = build_wrappers::w_load(&self.ir.builder, ty, self_ptr, "self_val");
+                        let self_val =
+                            build_wrappers::w_load(&self.ir.builder, ty, self_ptr, "self_val");
                         call_args.push(self_val.into());
                     } else {
                         // Opaque self — pass the ptr directly.
@@ -949,8 +997,11 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 }
 
-                let call = build_wrappers::w_call(&self.ir.builder, concrete_fn, &call_args, "thunk_ret");
-                let ret_sem = tm.return_type.as_ref()
+                let call =
+                    build_wrappers::w_call(&self.ir.builder, concrete_fn, &call_args, "thunk_ret");
+                let ret_sem = tm
+                    .return_type
+                    .as_ref()
                     .map(|t| self.axon_type_to_semantic(t))
                     .unwrap_or(crate::types::Type::Unit);
 
@@ -962,7 +1013,9 @@ impl<'ctx> Codegen<'ctx> {
                     build_wrappers::w_ret_void(&self.ir.builder);
                 }
 
-                if let Some(b) = saved { self.ir.builder.position_at_end(b); }
+                if let Some(b) = saved {
+                    self.ir.builder.position_at_end(b);
+                }
             }
         }
     }
@@ -971,8 +1024,16 @@ impl<'ctx> Codegen<'ctx> {
     fn emit_vtable_globals(&mut self, program: &ast::Program) {
         let i8_ptr = self.ir.context.i8_type().ptr_type(AddressSpace::default());
 
-        let impls: Vec<ast::ImplBlock> = program.items.iter()
-            .filter_map(|item| if let ast::Item::ImplBlock(b) = item { Some(b.clone()) } else { None })
+        let impls: Vec<ast::ImplBlock> = program
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let ast::Item::ImplBlock(b) = item {
+                    Some(b.clone())
+                } else {
+                    None
+                }
+            })
             .collect();
 
         for blk in &impls {
@@ -994,7 +1055,9 @@ impl<'ctx> Codegen<'ctx> {
             }
 
             let n = thunk_ptrs.len();
-            if n == 0 { continue; }
+            if n == 0 {
+                continue;
+            }
 
             let arr_ty = i8_ptr.array_type(n as u32);
             // inkwell's const_array for pointer arrays uses PointerType::const_array.
@@ -1059,7 +1122,10 @@ impl<'ctx> Codegen<'ctx> {
             if let Some((ident, op, bound)) =
                 crate::verify::decode_verify_predicate_with_ident(&spec.predicate)
             {
-                let ret_sem = f.return_type.as_ref().map(|t| self.axon_type_to_semantic(t));
+                let ret_sem = f
+                    .return_type
+                    .as_ref()
+                    .map(|t| self.axon_type_to_semantic(t));
                 // Uncertain AND Temporal both carry value(0)/confidence(1) fields,
                 // so a `value`/`confidence` predicate applies to either.
                 let ret_is_wrapper =
@@ -1175,7 +1241,8 @@ impl<'ctx> Codegen<'ctx> {
         let body_val = self.emit_expr(&f.body, llvm_fn);
 
         // Emit return if the builder is still on a live block.
-        if self.ir
+        if self
+            .ir
             .builder
             .get_insert_block()
             .and_then(|b| b.get_terminator())
@@ -1203,10 +1270,8 @@ impl<'ctx> Codegen<'ctx> {
                         // else the struct is returned where a scalar is declared
                         // (IR mismatch). Scoped to SCALAR return types only, so a
                         // str/struct/tuple/Uncertain return is never touched.
-                        let ret_is_scalar = matches!(
-                            ret_sem,
-                            Type::I64 | Type::I32 | Type::F64 | Type::Bool
-                        );
+                        let ret_is_scalar =
+                            matches!(ret_sem, Type::I64 | Type::I32 | Type::F64 | Type::Bool);
                         let v = if ret_is_scalar {
                             if let BasicValueEnum::StructValue(sv) = v {
                                 self.ir
@@ -1299,12 +1364,8 @@ impl<'ctx> Codegen<'ctx> {
             ast::AxonType::Option(inner) => {
                 Type::Option(Box::new(self.axon_type_to_semantic(inner)))
             }
-            ast::AxonType::Slice(inner) => {
-                Type::Slice(Box::new(self.axon_type_to_semantic(inner)))
-            }
-            ast::AxonType::Chan(inner) => {
-                Type::Chan(Box::new(self.axon_type_to_semantic(inner)))
-            }
+            ast::AxonType::Slice(inner) => Type::Slice(Box::new(self.axon_type_to_semantic(inner))),
+            ast::AxonType::Chan(inner) => Type::Chan(Box::new(self.axon_type_to_semantic(inner))),
             ast::AxonType::Generic { base, args } => {
                 // Layer-1 ASI types are first-class generics in the type system.
                 if base == "Uncertain" {
@@ -1325,18 +1386,28 @@ impl<'ctx> Codegen<'ctx> {
                 Type::Deferred(base.clone())
             }
             ast::AxonType::Fn { params, ret } => Type::Fn(
-                params.iter().map(|p| self.axon_type_to_semantic(p)).collect(),
+                params
+                    .iter()
+                    .map(|p| self.axon_type_to_semantic(p))
+                    .collect(),
                 Box::new(self.axon_type_to_semantic(ret)),
             ),
             ast::AxonType::Ref(inner) => self.axon_type_to_semantic(inner),
             ast::AxonType::TypeParam(name) => Type::TypeParam(name.clone()),
             ast::AxonType::DynTrait(name) => Type::DynTrait(name.clone()),
             ast::AxonType::Tuple(elems) => Type::Tuple(
-                elems.iter().map(|e| self.axon_type_to_semantic(e)).collect(),
+                elems
+                    .iter()
+                    .map(|e| self.axon_type_to_semantic(e))
+                    .collect(),
             ),
             // Union types are not yet first-class — fall back to Unknown so
             // codegen does not assert a specific LLVM lowering.
             ast::AxonType::Union(_) => Type::Unknown,
+            // R17 HAL: `*T` raw pointer → opaque pointer in codegen.
+            ast::AxonType::RawPtr(inner) => {
+                Type::RawPtr(Box::new(self.axon_type_to_semantic(inner)))
+            }
         }
     }
 
@@ -1354,7 +1425,11 @@ impl<'ctx> Codegen<'ctx> {
         // The fn's declared generic param names (e.g. ["T"]). A bare `T` parses
         // as `AxonType::Named("T")` → `Type::Struct("T")`, so we can't tell it's
         // a param from the Type alone — use this set to recognise them.
-        let gp: &[String] = self.generic_fn_params.get(name).map(|v| v.as_slice()).unwrap_or(&[]);
+        let gp: &[String] = self
+            .generic_fn_params
+            .get(name)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[]);
         if gp.is_empty() || !Self::type_has_param(&ret, gp) {
             return Some(ret);
         }
@@ -1364,11 +1439,19 @@ impl<'ctx> Codegen<'ctx> {
         let mut binding: HashMap<String, Type> = HashMap::new();
         for (decl, arg) in params.iter().zip(args.iter()) {
             let arg_inner = match arg {
-                ast::Expr::UnaryOp { op: ast::UnaryOp::Ref, operand } => operand.as_ref(),
+                ast::Expr::UnaryOp {
+                    op: ast::UnaryOp::Ref,
+                    operand,
+                } => operand.as_ref(),
                 other => other,
             };
             if let Some(arg_ty) = self.infer_expr_sem_type(arg_inner) {
-                Self::bind_type_params(&self.axon_type_to_semantic(decl), &arg_ty, gp, &mut binding);
+                Self::bind_type_params(
+                    &self.axon_type_to_semantic(decl),
+                    &arg_ty,
+                    gp,
+                    &mut binding,
+                );
             }
         }
         if binding.is_empty() {
@@ -1382,11 +1465,16 @@ impl<'ctx> Codegen<'ctx> {
     fn type_has_param(ty: &Type, gp: &[String]) -> bool {
         match ty {
             Type::Struct(n) | Type::TypeParam(n) => gp.iter().any(|p| p == n),
-            Type::Option(i) | Type::Slice(i) | Type::Chan(i)
-            | Type::Uncertain(i) | Type::Temporal(i) => Self::type_has_param(i, gp),
+            Type::Option(i)
+            | Type::Slice(i)
+            | Type::Chan(i)
+            | Type::Uncertain(i)
+            | Type::Temporal(i) => Self::type_has_param(i, gp),
             Type::Result(a, b) => Self::type_has_param(a, gp) || Self::type_has_param(b, gp),
             Type::Tuple(es) => es.iter().any(|e| Self::type_has_param(e, gp)),
-            Type::Fn(ps, r) => ps.iter().any(|p| Self::type_has_param(p, gp)) || Self::type_has_param(r, gp),
+            Type::Fn(ps, r) => {
+                ps.iter().any(|p| Self::type_has_param(p, gp)) || Self::type_has_param(r, gp)
+            }
             _ => false,
         }
     }
@@ -1395,7 +1483,12 @@ impl<'ctx> Codegen<'ctx> {
     /// `out` with param-name -> concrete bindings. `gp` is the set of names that
     /// are type params (a bare `Struct(n)` whose n ∈ gp is a param, not a real
     /// struct).
-    fn bind_type_params(decl: &Type, concrete: &Type, gp: &[String], out: &mut HashMap<String, Type>) {
+    fn bind_type_params(
+        decl: &Type,
+        concrete: &Type,
+        gp: &[String],
+        out: &mut HashMap<String, Type>,
+    ) {
         match (decl, concrete) {
             (Type::Struct(n) | Type::TypeParam(n), c) if gp.iter().any(|p| p == n) => {
                 out.entry(n.clone()).or_insert_with(|| c.clone());
@@ -1422,7 +1515,9 @@ impl<'ctx> Codegen<'ctx> {
     /// generic param names; they appear as `Struct(name)`/`TypeParam(name)`).
     fn subst_type_params(ty: &Type, binding: &HashMap<String, Type>) -> Type {
         match ty {
-            Type::Struct(n) | Type::TypeParam(n) => binding.get(n).cloned().unwrap_or_else(|| ty.clone()),
+            Type::Struct(n) | Type::TypeParam(n) => {
+                binding.get(n).cloned().unwrap_or_else(|| ty.clone())
+            }
             Type::Option(i) => Type::Option(Box::new(Self::subst_type_params(i, binding))),
             Type::Slice(i) => Type::Slice(Box::new(Self::subst_type_params(i, binding))),
             Type::Chan(i) => Type::Chan(Box::new(Self::subst_type_params(i, binding))),
@@ -1432,7 +1527,11 @@ impl<'ctx> Codegen<'ctx> {
                 Box::new(Self::subst_type_params(a, binding)),
                 Box::new(Self::subst_type_params(b, binding)),
             ),
-            Type::Tuple(es) => Type::Tuple(es.iter().map(|e| Self::subst_type_params(e, binding)).collect()),
+            Type::Tuple(es) => Type::Tuple(
+                es.iter()
+                    .map(|e| Self::subst_type_params(e, binding))
+                    .collect(),
+            ),
             other => other.clone(),
         }
     }
@@ -1441,6 +1540,74 @@ impl<'ctx> Codegen<'ctx> {
     fn llvm_type_from_axon(&self, ty: &ast::AxonType) -> Option<BasicTypeEnum<'ctx>> {
         let sem = self.axon_type_to_semantic(ty);
         self.llvm_type(&sem)
+    }
+
+    /// R19 Slice C: coerce an LLVM value to the target fixed-width integer type.
+    ///
+    /// `emit_literal` always emits integer literals as i64. When the binding
+    /// annotation is a fixed-width type (I8/I16/I32/U8/U16/U32), the emitted
+    /// i64 value must be truncated to the correct narrow LLVM integer type so
+    /// that locals are stored at their declared width.  The range-check (E1900)
+    /// already guarantees the literal fits, so truncation is safe.
+    ///
+    /// Also handles the reverse direction (narrow → wider via zext/sext) for
+    /// completeness, though the primary need is i64 → narrow.
+    ///
+    /// Only acts on Int→Int mismatches for the fixed-width integer types; all
+    /// other values are returned unchanged.
+    pub(crate) fn coerce_to_fixed_width(
+        &self,
+        val: inkwell::values::BasicValueEnum<'ctx>,
+        target: &crate::types::Type,
+    ) -> inkwell::values::BasicValueEnum<'ctx> {
+        let target_llvm = match self.llvm_type(target) {
+            Some(inkwell::types::BasicTypeEnum::IntType(t)) => t,
+            _ => return val, // not a fixed-width int target — leave as-is
+        };
+        let int_val = match val {
+            inkwell::values::BasicValueEnum::IntValue(i) => i,
+            _ => return val, // not an int — leave as-is (handles struct/ptr/etc.)
+        };
+        let actual_bits = int_val.get_type().get_bit_width();
+        let target_bits = target_llvm.get_bit_width();
+        if actual_bits == target_bits {
+            return val; // already correct width
+        }
+        // Bool (i1) is special — don't coerce a bool to a narrower int or vice versa.
+        if actual_bits == 1 || target_bits == 1 {
+            return val;
+        }
+        let is_unsigned = matches!(
+            target,
+            crate::types::Type::U8
+                | crate::types::Type::U16
+                | crate::types::Type::U32
+                | crate::types::Type::U64
+        );
+        if actual_bits > target_bits {
+            // truncate (i64 → i32/i16/i8); range-check (E1900) ensures no data loss
+            build_wrappers::w_int_truncate(&self.ir.builder, int_val, target_llvm, "trunc_fw")
+                .into()
+        } else {
+            // extend (narrow → wider); use zext for unsigned, sext for signed
+            if is_unsigned {
+                build_wrappers::w_int_z_extend(
+                    &self.ir.builder,
+                    int_val,
+                    target_llvm,
+                    "zext_fw",
+                )
+                .into()
+            } else {
+                build_wrappers::w_int_s_extend(
+                    &self.ir.builder,
+                    int_val,
+                    target_llvm,
+                    "sext_fw",
+                )
+                .into()
+            }
+        }
     }
 
     /// Heuristic: infer the semantic `Type` from an LLVM `BasicValueEnum`.
@@ -1527,15 +1694,25 @@ impl<'ctx> Codegen<'ctx> {
                     if let Some(t) = Self::fixed_collection_return_type(name) {
                         return Some(t);
                     }
-                    if name == "arr_reverse" || name == "arr_take" || name == "arr_drop"
-                        || name == "arr_map" || name == "arr_filter" || name == "arr_zip_with"
-                        || name == "arr_sort_by" || name == "arr_concat"
-                        || name == "arr_unique" || name == "arr_push"
-                        || name == "arr_take_while" || name == "arr_drop_while"
+                    if name == "arr_reverse"
+                        || name == "arr_take"
+                        || name == "arr_drop"
+                        || name == "arr_map"
+                        || name == "arr_filter"
+                        || name == "arr_zip_with"
+                        || name == "arr_sort_by"
+                        || name == "arr_concat"
+                        || name == "arr_unique"
+                        || name == "arr_push"
+                        || name == "arr_take_while"
+                        || name == "arr_drop_while"
                     {
                         if let Some(arg0) = args.first() {
                             let inner = match arg0 {
-                                ast::Expr::UnaryOp { op: ast::UnaryOp::Ref, operand } => operand.as_ref(),
+                                ast::Expr::UnaryOp {
+                                    op: ast::UnaryOp::Ref,
+                                    operand,
+                                } => operand.as_ref(),
                                 other => other,
                             };
                             return self.infer_expr_sem_type(inner);
@@ -1551,11 +1728,10 @@ impl<'ctx> Codegen<'ctx> {
                     None
                 }
             }
-            ast::Expr::Ok(_) | ast::Expr::Err(_) => {
-                self.current_result_types.as_ref().map(|(ok, err)| {
-                    Type::Result(Box::new(ok.clone()), Box::new(err.clone()))
-                })
-            }
+            ast::Expr::Ok(_) | ast::Expr::Err(_) => self
+                .current_result_types
+                .as_ref()
+                .map(|(ok, err)| Type::Result(Box::new(ok.clone()), Box::new(err.clone()))),
             ast::Expr::StructLit { name, .. } => {
                 if name.contains("::") {
                     // "EnumName::Variant" → Type::Enum("EnumName")
@@ -1579,9 +1755,7 @@ impl<'ctx> Codegen<'ctx> {
                     .collect();
                 Some(Type::Tuple(tys))
             }
-            ast::Expr::Block(stmts) => {
-                stmts.last().and_then(|s| self.infer_expr_sem_type(&s.expr))
-            }
+            ast::Expr::Block(stmts) => stmts.last().and_then(|s| self.infer_expr_sem_type(&s.expr)),
             ast::Expr::If { then, .. } => self.infer_expr_sem_type(then),
             ast::Expr::FmtStr { .. } => Some(Type::Str),
             // Layer-2 ASI: BinOp with an Uncertain<T> operand produces Uncertain<T>;
@@ -1599,19 +1773,26 @@ impl<'ctx> Codegen<'ctx> {
                     }
                 };
                 match op {
-                    ast::BinOp::Add | ast::BinOp::Sub | ast::BinOp::Mul
-                    | ast::BinOp::Div | ast::BinOp::Rem => {
+                    ast::BinOp::Add
+                    | ast::BinOp::Sub
+                    | ast::BinOp::Mul
+                    | ast::BinOp::Div
+                    | ast::BinOp::Rem => {
                         if is_unc(&lt) || is_unc(&rt) {
-                            let inner = unc_inner(&lt).or_else(|| unc_inner(&rt))
+                            let inner = unc_inner(&lt)
+                                .or_else(|| unc_inner(&rt))
                                 .unwrap_or(Type::I64);
                             Some(Type::Uncertain(Box::new(inner)))
                         } else {
                             lt.or(rt)
                         }
                     }
-                    ast::BinOp::Eq | ast::BinOp::NotEq
-                    | ast::BinOp::Lt | ast::BinOp::Gt
-                    | ast::BinOp::LtEq | ast::BinOp::GtEq => {
+                    ast::BinOp::Eq
+                    | ast::BinOp::NotEq
+                    | ast::BinOp::Lt
+                    | ast::BinOp::Gt
+                    | ast::BinOp::LtEq
+                    | ast::BinOp::GtEq => {
                         if is_unc(&lt) || is_unc(&rt) {
                             Some(Type::Uncertain(Box::new(Type::Bool)))
                         } else {
@@ -1630,7 +1811,8 @@ impl<'ctx> Codegen<'ctx> {
             }
             // Field access on Uncertain<T> / Temporal<T>: `.value` → T, `.confidence` → f64.
             ast::Expr::FieldAccess { receiver, field } => {
-                let recv_ty = self.infer_expr_sem_type(receiver)
+                let recv_ty = self
+                    .infer_expr_sem_type(receiver)
                     .or_else(|| self.sem_type_of_expr(receiver));
                 match (recv_ty, field.as_str()) {
                     (Some(Type::Uncertain(inner)), "value") => Some(*inner),
@@ -1656,7 +1838,11 @@ impl<'ctx> Codegen<'ctx> {
             ast::Expr::Index { receiver, .. } => {
                 // `arr[i]` → element type of the slice's inner type
                 self.infer_expr_sem_type(receiver).and_then(|ty| {
-                    if let Type::Slice(inner) = ty { Some(*inner.clone()) } else { None }
+                    if let Type::Slice(inner) = ty {
+                        Some(*inner.clone())
+                    } else {
+                        None
+                    }
                 })
             }
             _ => None,
@@ -1679,16 +1865,28 @@ impl<'ctx> Codegen<'ctx> {
                         return elts.get(idx as usize).cloned();
                     }
                 }
-                let sname = if let Type::Struct(sn) = &recv_ty { sn } else { return None; };
+                let sname = if let Type::Struct(sn) = &recv_ty {
+                    sn
+                } else {
+                    return None;
+                };
                 let field_names = self.struct_fields.get(sname.as_str())?;
                 let idx = field_names.iter().position(|n| n == field)?;
                 let struct_ty = self.ir.module.get_struct_type(sname)?;
                 let field_llvm_ty = struct_ty.get_field_type_at_index(idx as u32)?;
                 match field_llvm_ty {
                     BasicTypeEnum::IntType(it) => Some(match it.get_bit_width() {
-                        1 => Type::Bool, 8 => Type::I8, 16 => Type::I16, 32 => Type::I32, _ => Type::I64,
+                        1 => Type::Bool,
+                        8 => Type::I8,
+                        16 => Type::I16,
+                        32 => Type::I32,
+                        _ => Type::I64,
                     }),
-                    BasicTypeEnum::FloatType(ft) => Some(if ft == self.ir.context.f32_type() { Type::F32 } else { Type::F64 }),
+                    BasicTypeEnum::FloatType(ft) => Some(if ft == self.ir.context.f32_type() {
+                        Type::F32
+                    } else {
+                        Type::F64
+                    }),
                     BasicTypeEnum::StructType(st) => {
                         st.get_name().and_then(|n| n.to_str().ok()).map(|n| {
                             if n.ends_with("_enum") {

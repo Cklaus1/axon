@@ -30,10 +30,12 @@ type GenericParams = (Vec<String>, Vec<(String, Vec<String>)>);
 /// surrounding statements.
 fn push_stmt_or_splice_destructure(stmts: &mut Vec<Stmt>, expr: Expr, span: Span) {
     if let Expr::Block(inner) = &expr {
-        if inner.first().is_some_and(|s| matches!(
-            &s.expr,
-            Expr::Let { name, .. } if name.starts_with("__tup_")
-        )) {
+        if inner.first().is_some_and(|s| {
+            matches!(
+                &s.expr,
+                Expr::Let { name, .. } if name.starts_with("__tup_")
+            )
+        }) {
             for s in inner.iter().cloned() {
                 stmts.push(s);
             }
@@ -53,7 +55,7 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
     let mut remaining = raw;
 
     while !remaining.is_empty() {
-        let next_open  = remaining.find('{');
+        let next_open = remaining.find('{');
         let next_close = remaining.find('}');
 
         // Determine which brace comes first (or if there are none).
@@ -61,7 +63,13 @@ fn parse_fmt_str_raw(raw: &str) -> Result<Expr> {
             (None, None) => break,
             (Some(o), None) => ('o', o),
             (None, Some(c)) => ('c', c),
-            (Some(o), Some(c)) => if o <= c { ('o', o) } else { ('c', c) },
+            (Some(o), Some(c)) => {
+                if o <= c {
+                    ('o', o)
+                } else {
+                    ('c', c)
+                }
+            }
         };
 
         match next_brace {
@@ -189,7 +197,13 @@ pub struct Parser {
     /// only ever sees `HandlerExpr::Inline` — named handlers are pure syntactic
     /// sugar and need no new `Item`/`Program` variant. Maps name → (arms,
     /// return_arm). Same parser-side-table idiom as `synthetic_refinements`.
-    handler_defs: std::collections::HashMap<String, (Vec<crate::ast::HandlerArm>, Option<Box<crate::ast::HandlerArm>>)>,
+    handler_defs: std::collections::HashMap<
+        String,
+        (
+            Vec<crate::ast::HandlerArm>,
+            Option<Box<crate::ast::HandlerArm>>,
+        ),
+    >,
 }
 
 /// Max nested-expression depth before a graceful parse error. Far beyond any
@@ -215,16 +229,52 @@ type Result<T> = std::result::Result<T, ParseError>;
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans: vec![Span::dummy(); len], newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
+        Self {
+            tokens,
+            spans: vec![Span::dummy(); len],
+            newlines: vec![false; len],
+            pos: 0,
+            paren_depth: 0,
+            shr_pending: false,
+            expr_depth: 0,
+            synthetic_refinements: Vec::new(),
+            synthetic_refine_count: 0,
+            surface_mode: false,
+            handler_defs: std::collections::HashMap::new(),
+        }
     }
 
     pub fn with_spans(tokens: Vec<Token>, spans: Vec<Span>) -> Self {
         let len = tokens.len();
-        Self { tokens, spans, newlines: vec![false; len], pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
+        Self {
+            tokens,
+            spans,
+            newlines: vec![false; len],
+            pos: 0,
+            paren_depth: 0,
+            shr_pending: false,
+            expr_depth: 0,
+            synthetic_refinements: Vec::new(),
+            synthetic_refine_count: 0,
+            surface_mode: false,
+            handler_defs: std::collections::HashMap::new(),
+        }
     }
 
     pub fn with_newlines(tokens: Vec<Token>, spans: Vec<Span>, newlines: Vec<bool>) -> Self {
-        Self { tokens, spans, newlines, pos: 0, paren_depth: 0, shr_pending: false, expr_depth: 0, synthetic_refinements: Vec::new(), synthetic_refine_count: 0, surface_mode: false, handler_defs: std::collections::HashMap::new() }
+        Self {
+            tokens,
+            spans,
+            newlines,
+            pos: 0,
+            paren_depth: 0,
+            shr_pending: false,
+            expr_depth: 0,
+            synthetic_refinements: Vec::new(),
+            synthetic_refine_count: 0,
+            surface_mode: false,
+            handler_defs: std::collections::HashMap::new(),
+        }
     }
 
     fn current_span(&self) -> Span {
@@ -240,7 +290,9 @@ impl Parser {
     /// newline in the source AND we are not inside an open parenthesis/bracket
     /// context (where ASI is suppressed).
     fn preceded_by_newline(&self) -> bool {
-        if self.paren_depth > 0 { return false; }
+        if self.paren_depth > 0 {
+            return false;
+        }
         self.newlines.get(self.pos).copied().unwrap_or(false)
     }
 
@@ -276,10 +328,17 @@ impl Parser {
             return Ok(());
         }
         match self.peek() {
-            Some(Token::Gt)  => { self.pos += 1; Ok(()) }
-            Some(Token::Shr) => { self.pos += 1; self.shr_pending = true; Ok(()) }
+            Some(Token::Gt) => {
+                self.pos += 1;
+                Ok(())
+            }
+            Some(Token::Shr) => {
+                self.pos += 1;
+                self.shr_pending = true;
+                Ok(())
+            }
             Some(tok) => Err(ParseError::Unexpected(tok.clone(), "Gt".into())),
-            None      => Err(ParseError::Eof),
+            None => Err(ParseError::Eof),
         }
     }
 
@@ -290,7 +349,11 @@ impl Parser {
     }
 
     fn eat(&mut self, tok: &Token) -> bool {
-        if self.peek().map(|t| std::mem::discriminant(t) == std::mem::discriminant(tok)).unwrap_or(false) {
+        if self
+            .peek()
+            .map(|t| std::mem::discriminant(t) == std::mem::discriminant(tok))
+            .unwrap_or(false)
+        {
             self.pos += 1;
             true
         } else {
@@ -306,7 +369,9 @@ impl Parser {
     }
 
     fn at(&self, tok: &Token) -> bool {
-        self.peek().map(|t| std::mem::discriminant(t) == std::mem::discriminant(tok)).unwrap_or(false)
+        self.peek()
+            .map(|t| std::mem::discriminant(t) == std::mem::discriminant(tok))
+            .unwrap_or(false)
     }
 
     /// Returns true if the current position looks like the start of a paren-style
@@ -352,7 +417,11 @@ impl Parser {
         self.expect(&Token::RParen)?;
         self.expect(&Token::FatArrow)?;
         let body = self.parse_logical()?;
-        Ok(Expr::Lambda { params, body: Box::new(body), captures: Vec::new() })
+        Ok(Expr::Lambda {
+            params,
+            body: Box::new(body),
+            captures: Vec::new(),
+        })
     }
 
     // ── Program ──────────────────────────────────────────────────────────────
@@ -424,7 +493,9 @@ impl Parser {
             // Peek ahead: @[ contained ( ... ) ] — parse specially.
             if self.is_contained_attr() {
                 // Consume @[ or #[
-                if !self.eat(&Token::At) { self.eat(&Token::Hash); }
+                if !self.eat(&Token::At) {
+                    self.eat(&Token::Hash);
+                }
                 self.expect(&Token::LBracket)?;
                 let _name = self.expect_ident()?; // "contained"
                 let spec = self.parse_contained_spec()?;
@@ -433,7 +504,9 @@ impl Parser {
             } else if self.is_verify_attr() {
                 // Consume @[ or #[
                 let span_start = self.current_span().start;
-                if !self.eat(&Token::At) { self.eat(&Token::Hash); }
+                if !self.eat(&Token::At) {
+                    self.eat(&Token::Hash);
+                }
                 self.expect(&Token::LBracket)?;
                 let _name = self.expect_ident()?; // "verify"
                 self.expect(&Token::LParen)?;
@@ -456,28 +529,35 @@ impl Parser {
         let (attrs, contained_spec, verify_spec) = self.parse_attrs_with_specs()?;
         let public = self.eat(&Token::Pub);
         match self.peek() {
-            Some(Token::Fn)    => {
+            Some(Token::Fn) => {
                 let mut fndef = self.parse_fn(public, attrs)?;
                 fndef.contained = contained_spec;
                 fndef.verify = verify_spec;
                 Ok(Item::FnDef(fndef))
             }
-            Some(Token::Type)  => self.parse_type_def(attrs),
-            Some(Token::Enum)  => Ok(Item::EnumDef(self.parse_enum_def()?)),
-            Some(Token::Mod)   => Ok(Item::ModDecl(self.parse_mod()?)),
-            Some(Token::Use)   => Ok(Item::UseDecl(self.parse_use()?)),
+            Some(Token::Type) => self.parse_type_def(attrs),
+            Some(Token::Enum) => Ok(Item::EnumDef(self.parse_enum_def()?)),
+            Some(Token::Mod) => Ok(Item::ModDecl(self.parse_mod()?)),
+            Some(Token::Use) => Ok(Item::UseDecl(self.parse_use()?)),
             Some(Token::Trait) => Ok(Item::TraitDef(self.parse_trait_def()?)),
-            Some(Token::Impl)  => Ok(Item::ImplBlock(self.parse_impl_block()?)),
-            Some(Token::Let)   => {
+            Some(Token::Impl) => Ok(Item::ImplBlock(self.parse_impl_block()?)),
+            Some(Token::Let) => {
                 let start = self.current_span().start;
                 let _ = self.advance();
                 let name = self.expect_ident()?;
                 self.expect(&Token::Eq)?;
                 let value = self.parse_expr()?;
                 let span = Span::new(start, self.current_span().end);
-                Ok(Item::LetDef { name, value: Box::new(value), span })
+                Ok(Item::LetDef {
+                    name,
+                    value: Box::new(value),
+                    span,
+                })
             }
-            Some(tok) => Err(ParseError::Unexpected(tok.clone(), "item (fn/type/enum/mod/use/trait/impl/let)".into())),
+            Some(tok) => Err(ParseError::Unexpected(
+                tok.clone(),
+                "item (fn/type/enum/mod/use/trait/impl/let)".into(),
+            )),
             None => Err(ParseError::Eof),
         }
     }
@@ -565,11 +645,13 @@ impl Parser {
                         let path = self.expect_str()?;
                         self.expect(&Token::RParen)?;
                         match op.as_str() {
-                            "read"  => spec.fs_read.push(path),
+                            "read" => spec.fs_read.push(path),
                             "write" => spec.fs_write.push(path),
-                            _ => return Err(ParseError::Other(format!(
-                                "unknown fs clause `{op}`, expected `read` or `write`"
-                            ))),
+                            _ => {
+                                return Err(ParseError::Other(format!(
+                                    "unknown fs clause `{op}`, expected `read` or `write`"
+                                )))
+                            }
                         }
                         self.eat(&Token::Comma);
                     }
@@ -598,22 +680,24 @@ impl Parser {
                     while !self.at(&Token::RBracket) {
                         let op = self.expect_ident()?;
                         match op.as_str() {
-                            "exec"  => spec.never.push(NeverClause::Exec),
+                            "exec" => spec.never.push(NeverClause::Exec),
                             "spawn" => spec.never.push(NeverClause::Spawn),
                             "read" | "write" | "net" => {
                                 self.expect(&Token::LParen)?;
                                 let path = self.expect_str()?;
                                 self.expect(&Token::RParen)?;
                                 match op.as_str() {
-                                    "read"  => spec.never.push(NeverClause::Read(path)),
+                                    "read" => spec.never.push(NeverClause::Read(path)),
                                     "write" => spec.never.push(NeverClause::Write(path)),
-                                    "net"   => spec.never.push(NeverClause::Net(path)),
+                                    "net" => spec.never.push(NeverClause::Net(path)),
                                     _ => unreachable!(),
                                 }
                             }
-                            _ => return Err(ParseError::Other(format!(
-                                "unknown never clause `{op}`"
-                            ))),
+                            _ => {
+                                return Err(ParseError::Other(format!(
+                                    "unknown never clause `{op}`"
+                                )))
+                            }
                         }
                         self.eat(&Token::Comma);
                     }
@@ -700,10 +784,22 @@ impl Parser {
     fn parse_attr_atom(&mut self) -> Result<String> {
         match self.peek() {
             Some(Token::Ident(_)) => self.expect_ident(),
-            Some(Token::Int(n))   => { let v = *n; let _ = self.advance(); Ok(v.to_string()) }
-            Some(Token::Float(f)) => { let v = *f; let _ = self.advance(); Ok(format!("{v}")) }
-            Some(Token::Str(s))   => { let v = s.clone(); let _ = self.advance(); Ok(v) }
-            Some(Token::Minus)    => {
+            Some(Token::Int(n)) => {
+                let v = *n;
+                let _ = self.advance();
+                Ok(v.to_string())
+            }
+            Some(Token::Float(f)) => {
+                let v = *f;
+                let _ = self.advance();
+                Ok(format!("{v}"))
+            }
+            Some(Token::Str(s)) => {
+                let v = s.clone();
+                let _ = self.advance();
+                Ok(v)
+            }
+            Some(Token::Minus) => {
                 // Allow `-1` / `-0.25` as a single atom.
                 let _ = self.advance();
                 let inner = self.parse_attr_atom()?;
@@ -717,7 +813,9 @@ impl Parser {
                 let mut elems: Vec<String> = Vec::new();
                 while !self.at(&Token::RBracket) {
                     elems.push(self.parse_attr_atom()?);
-                    if !self.eat(&Token::Comma) { break; }
+                    if !self.eat(&Token::Comma) {
+                        break;
+                    }
                 }
                 self.expect(&Token::RBracket)?;
                 Ok(elems.join(","))
@@ -755,7 +853,20 @@ impl Parser {
         };
         let body = self.parse_block()?;
         let end = self.current_span().end;
-        Ok(FnDef { public, name, generic_params, generic_bounds, params, return_type, body, attrs, contained: None, verify: None, effect_row, span: Span::new(start, end) })
+        Ok(FnDef {
+            public,
+            name,
+            generic_params,
+            generic_bounds,
+            params,
+            return_type,
+            body,
+            attrs,
+            contained: None,
+            verify: None,
+            effect_row,
+            span: Span::new(start, end),
+        })
     }
 
     /// Phase 6: parse an effect-row clause `| { eff (, eff)* }`, where each `eff`
@@ -768,7 +879,8 @@ impl Parser {
         if self.surface_mode {
             return Err(ParseError::Other(
                 "[E1306] effect-row syntax `| {…}` is not allowed in a `surface` file; \
-                 declare effects via annotations, or mark the file `substrate`".into(),
+                 declare effects via annotations, or mark the file `substrate`"
+                    .into(),
             ));
         }
         let start = self.current_span().start;
@@ -791,7 +903,11 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(crate::ast::EffectRow { effects, row_var, span: Span::new(start, end) })
+        Ok(crate::ast::EffectRow {
+            effects,
+            row_var,
+            span: Span::new(start, end),
+        })
     }
 
     /// Lookahead: is the `with` at the cursor a Phase-6 handler block? True when
@@ -816,7 +932,10 @@ impl Parser {
         let _ = self.advance();
         let handler = self.parse_handler()?;
         let body = self.parse_block()?;
-        Ok(Expr::WithHandler { handler: Box::new(handler), body: Box::new(body) })
+        Ok(Expr::WithHandler {
+            handler: Box::new(handler),
+            body: Box::new(body),
+        })
     }
 
     /// Phase 6: if the cursor is at a top-level `handler NAME = handler { … }`
@@ -883,7 +1002,11 @@ impl Parser {
                 self.expect(&Token::RParen)?;
                 self.expect(&Token::FatArrow)?;
                 let body = self.parse_expr()?;
-                let arm = crate::ast::HandlerArm { effect, binding, body };
+                let arm = crate::ast::HandlerArm {
+                    effect,
+                    binding,
+                    body,
+                };
                 if is_return {
                     return_arm = Some(Box::new(arm));
                 } else {
@@ -927,7 +1050,9 @@ impl Parser {
                     ty: AxonType::Named("Self".into()),
                     span: Span::new(pspan.start, end),
                 });
-                if !self.eat(&Token::Comma) { break; }
+                if !self.eat(&Token::Comma) {
+                    break;
+                }
                 continue;
             }
             self.expect(&Token::Colon)?;
@@ -935,8 +1060,14 @@ impl Parser {
             // Phase 5: inline anonymous refinement `T where <pred>` on a param.
             let ty = self.maybe_desugar_inline_refinement(ty)?;
             let end = self.current_span().end;
-            params.push(Param { name, ty, span: Span::new(pspan.start, end) });
-            if !self.eat(&Token::Comma) { break; }
+            params.push(Param {
+                name,
+                ty,
+                span: Span::new(pspan.start, end),
+            });
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         Ok(params)
     }
@@ -993,7 +1124,9 @@ impl Parser {
                 bounds.push((name.clone(), traits));
             }
             params.push(name);
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         self.expect_gt()?;
         Ok((params, bounds))
@@ -1035,6 +1168,17 @@ impl Parser {
         if self.eat(&Token::Ampersand) {
             return Ok(AxonType::Ref(Box::new(self.parse_type_atom()?)));
         }
+        // R17 HAL: `*T` — raw pointer type, substrate-only.
+        if self.eat(&Token::Star) {
+            if self.surface_mode {
+                return Err(ParseError::Other(
+                    "[E1700] raw pointer `*T` is not allowed in a `surface` file; \
+                     move to a `substrate` file"
+                        .into(),
+                ));
+            }
+            return Ok(AxonType::RawPtr(Box::new(self.parse_type_atom()?)));
+        }
         // Tuple type: `(T1, T2, ...)` or unit `()`.
         // Disambiguation: `(` followed by `)` → unit type `()`.
         //                 `(` followed by a type → tuple (must have ≥1 comma).
@@ -1045,21 +1189,26 @@ impl Parser {
                 self.advance()?; // consume `)`
                 if self.eat(&Token::Arrow) {
                     let ret = self.parse_type()?;
-                    return Ok(AxonType::Fn { params: Vec::new(), ret: Box::new(ret) });
+                    return Ok(AxonType::Fn {
+                        params: Vec::new(),
+                        ret: Box::new(ret),
+                    });
                 }
                 return Ok(AxonType::Named("()".to_string()));
             }
             self.advance()?; // consume `(`
-            // Phase 5: a parenthesised inline refinement `(T where <pred>)` — the
-            // unambiguous form for a refinement in a position (e.g. a return type)
-            // where a bare `where` would clash with a generic where-clause.
+                             // Phase 5: a parenthesised inline refinement `(T where <pred>)` — the
+                             // unambiguous form for a refinement in a position (e.g. a return type)
+                             // where a bare `where` would clash with a generic where-clause.
             let inner_ty = self.parse_type()?;
             let first_elem = self.maybe_desugar_inline_refinement(inner_ty)?;
             let mut elems = vec![first_elem];
             let mut had_comma = false;
             while self.eat(&Token::Comma) {
                 had_comma = true;
-                if self.at(&Token::RParen) { break; }
+                if self.at(&Token::RParen) {
+                    break;
+                }
                 elems.push(self.parse_type()?);
             }
             self.expect(&Token::RParen)?;
@@ -1068,13 +1217,16 @@ impl Parser {
             // closure-returning functions.
             if self.eat(&Token::Arrow) {
                 let ret = self.parse_type()?;
-                return Ok(AxonType::Fn { params: elems, ret: Box::new(ret) });
+                return Ok(AxonType::Fn {
+                    params: elems,
+                    ret: Box::new(ret),
+                });
             }
             // A comma means a real tuple `(T1, T2)`; otherwise a grouping `(T)`.
             if had_comma {
                 return Ok(AxonType::Tuple(elems));
             }
-            return Ok(elems.into_iter().next().unwrap())
+            return Ok(elems.into_iter().next().unwrap());
         }
         if self.eat(&Token::LBracket) {
             let inner = self.parse_type()?;
@@ -1100,7 +1252,9 @@ impl Parser {
             let mut params = Vec::new();
             while !self.at(&Token::RParen) {
                 params.push(self.parse_type()?);
-                if !self.eat(&Token::Comma) { break; }
+                if !self.eat(&Token::Comma) {
+                    break;
+                }
             }
             self.expect(&Token::RParen)?;
             let ret = if self.eat(&Token::Arrow) {
@@ -1108,7 +1262,10 @@ impl Parser {
             } else {
                 AxonType::Named("()".to_string())
             };
-            return Ok(AxonType::Fn { params, ret: Box::new(ret) });
+            return Ok(AxonType::Fn {
+                params,
+                ret: Box::new(ret),
+            });
         }
         let name = self.expect_ident()?;
         match name.as_str() {
@@ -1118,7 +1275,10 @@ impl Parser {
                 self.expect(&Token::Comma)?;
                 let err = self.parse_type()?;
                 self.expect_gt()?;
-                Ok(AxonType::Result { ok: Box::new(ok), err: Box::new(err) })
+                Ok(AxonType::Result {
+                    ok: Box::new(ok),
+                    err: Box::new(err),
+                })
             }
             "Option" => {
                 self.expect(&Token::Lt)?;
@@ -1137,11 +1297,15 @@ impl Parser {
                 let mut args = Vec::new();
                 while !self.at_gt() {
                     args.push(self.parse_type()?);
-                    if !self.eat(&Token::Comma) { break; }
+                    if !self.eat(&Token::Comma) {
+                        break;
+                    }
                 }
                 self.expect_gt()?;
                 Ok(AxonType::Generic { base: name, args })
             }
+            // R17: `never` (diverging return type — fn does not return)
+            "never" | "Never" => Ok(AxonType::Named("never".to_string())),
             _ => Ok(AxonType::Named(name)),
         }
     }
@@ -1189,13 +1353,21 @@ impl Parser {
             loop {
                 let vname = self.expect_ident()?;
                 let fields = self.parse_variant_fields()?;
-                variants.push(EnumVariant { name: vname, fields });
+                variants.push(EnumVariant {
+                    name: vname,
+                    fields,
+                });
                 if !self.eat(&Token::Pipe) {
                     break;
                 }
             }
             let end = self.current_span().end;
-            return Ok(Item::EnumDef(EnumDef { name, generic_params, variants, span: Span::new(start, end) }));
+            return Ok(Item::EnumDef(EnumDef {
+                name,
+                generic_params,
+                variants,
+                span: Span::new(start, end),
+            }));
         }
 
         // Struct form: `type Name = { field: Type, ... }`.
@@ -1219,7 +1391,14 @@ impl Parser {
             None
         };
         let end = self.current_span().end;
-        Ok(Item::TypeDef(TypeDef { name, generic_params, fields, attrs, refinement, span: Span::new(start, end) }))
+        Ok(Item::TypeDef(TypeDef {
+            name,
+            generic_params,
+            fields,
+            attrs,
+            refinement,
+            span: Span::new(start, end),
+        }))
     }
 
     /// Parse an enum variant's optional `{ field: Type, ... }` payload (shared by
@@ -1250,12 +1429,20 @@ impl Parser {
         while !self.at(&Token::RBrace) {
             let vname = self.expect_ident()?;
             let fields = self.parse_variant_fields()?;
-            variants.push(EnumVariant { name: vname, fields });
+            variants.push(EnumVariant {
+                name: vname,
+                fields,
+            });
             self.eat(&Token::Comma);
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(EnumDef { name, generic_params, variants, span: Span::new(start, end) })
+        Ok(EnumDef {
+            name,
+            generic_params,
+            variants,
+            span: Span::new(start, end),
+        })
     }
 
     // ── Phase 3: Trait and impl block parsers ────────────────────────────────
@@ -1283,14 +1470,22 @@ impl Parser {
                 } else {
                     AxonType::Named("Self".to_string())
                 };
-                let mut ps = vec![Param { name: "self".into(), ty: self_ty, span: mspan }];
+                let mut ps = vec![Param {
+                    name: "self".into(),
+                    ty: self_ty,
+                    span: mspan,
+                }];
                 while self.eat(&Token::Comma) {
                     let pspan = self.current_span();
                     let pname = self.expect_ident()?;
                     self.expect(&Token::Colon)?;
                     let pty = self.parse_type()?;
                     let pend = self.current_span().end;
-                    ps.push(Param { name: pname, ty: pty, span: Span::new(pspan.start, pend) });
+                    ps.push(Param {
+                        name: pname,
+                        ty: pty,
+                        span: Span::new(pspan.start, pend),
+                    });
                 }
                 ps
             } else {
@@ -1313,7 +1508,12 @@ impl Parser {
         }
         self.expect(&Token::RBrace)?;
         let end = self.current_span().end;
-        Ok(TraitDef { name, generic_params, methods, span: Span::new(start, end) })
+        Ok(TraitDef {
+            name,
+            generic_params,
+            methods,
+            span: Span::new(start, end),
+        })
     }
 
     fn parse_impl_block(&mut self) -> Result<ImplBlock> {
@@ -1403,19 +1603,25 @@ impl Parser {
 
     fn parse_expr(&mut self) -> Result<Expr> {
         match self.peek() {
-            Some(Token::Let)      => self.parse_let(),
-            Some(Token::Own)      => self.parse_own(),
-            Some(Token::Ref)      => self.parse_ref_bind(),
-            Some(Token::Return)   => self.parse_return(),
-            Some(Token::Match)    => self.parse_match(),
-            Some(Token::If)       => self.parse_if(),
-            Some(Token::While)    => self.parse_while(),
-            Some(Token::For)      => self.parse_for(),
-            Some(Token::Break)    => { self.advance()?; Ok(Expr::Break) }
-            Some(Token::Continue) => { self.advance()?; Ok(Expr::Continue) }
-            Some(Token::Spawn)    => self.parse_spawn(),
-            Some(Token::Select)   => self.parse_select(),
-            Some(Token::Chan)     => self.parse_chan_new(),
+            Some(Token::Let) => self.parse_let(),
+            Some(Token::Own) => self.parse_own(),
+            Some(Token::Ref) => self.parse_ref_bind(),
+            Some(Token::Return) => self.parse_return(),
+            Some(Token::Match) => self.parse_match(),
+            Some(Token::If) => self.parse_if(),
+            Some(Token::While) => self.parse_while(),
+            Some(Token::For) => self.parse_for(),
+            Some(Token::Break) => {
+                self.advance()?;
+                Ok(Expr::Break)
+            }
+            Some(Token::Continue) => {
+                self.advance()?;
+                Ok(Expr::Continue)
+            }
+            Some(Token::Spawn) => self.parse_spawn(),
+            Some(Token::Select) => self.parse_select(),
+            Some(Token::Chan) => self.parse_chan_new(),
             // Phase 6: `with <handler> { body }`. `with` is a bare identifier, so
             // only treat it as a handler block when it's followed by a handler
             // head (`handler {` or `<name> {`); a plain variable named `with` is
@@ -1439,8 +1645,8 @@ impl Parser {
             // ASI: if `=` is on a new line it starts a new statement, not an assignment.
             Some(Token::Ident(_))
                 if matches!(self.tokens.get(self.pos + 1), Some(Token::Eq))
-                && !matches!(self.tokens.get(self.pos + 2), Some(Token::Eq))
-                && !self.newlines.get(self.pos + 1).copied().unwrap_or(false) =>
+                    && !matches!(self.tokens.get(self.pos + 2), Some(Token::Eq))
+                    && !self.newlines.get(self.pos + 1).copied().unwrap_or(false) =>
             {
                 self.parse_assign()
             }
@@ -1456,7 +1662,10 @@ impl Parser {
                 {
                     self.advance()?; // consume `=`
                     let value = self.parse_logical()?;
-                    Ok(Expr::AssignTo { place: Box::new(expr), value: Box::new(value) })
+                    Ok(Expr::AssignTo {
+                        place: Box::new(expr),
+                        value: Box::new(value),
+                    })
                 } else {
                     Ok(expr)
                 }
@@ -1480,7 +1689,11 @@ impl Parser {
                 push_stmt_or_splice_destructure(&mut body, e, span);
             }
             self.expect(&Token::RBrace)?;
-            return Ok(Expr::WhileLet { pattern, expr: Box::new(expr), body });
+            return Ok(Expr::WhileLet {
+                pattern,
+                expr: Box::new(expr),
+                body,
+            });
         }
         // `while <cond> { body }`
         let cond = self.parse_logical()?;
@@ -1493,7 +1706,10 @@ impl Parser {
             push_stmt_or_splice_destructure(&mut body, expr, span);
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::While { cond: Box::new(cond), body })
+        Ok(Expr::While {
+            cond: Box::new(cond),
+            body,
+        })
     }
 
     /// Parse `for <ident> in <start>..<end> { body }` or
@@ -1574,8 +1790,18 @@ impl Parser {
         // doesn't consume it — this is what lets the collection be iterated again,
         // or nested-iterated over itself (e.g. all-pairs), without a move error.
         Ok(Expr::Block(vec![
-            Stmt { expr: Expr::RefBind { name: arr_name, ty: None, value: Box::new(first) }, span },
-            Stmt { expr: inner_for, span },
+            Stmt {
+                expr: Expr::RefBind {
+                    name: arr_name,
+                    ty: None,
+                    value: Box::new(first),
+                },
+                span,
+            },
+            Stmt {
+                expr: inner_for,
+                span,
+            },
         ]))
     }
 
@@ -1692,13 +1918,11 @@ impl Parser {
                 "principal" => principal = Some(value),
                 "subject_to" => subject_to = Some(value),
                 "choices" => choices = Some(value),
-                other => {
-                    return Err(ParseError::Unexpected(
-                        Token::Ident(other.to_string()),
-                        "a `goal` field: metric / target / budget / subject_to / choices / principal"
-                            .into(),
-                    ))
-                }
+                other => return Err(ParseError::Unexpected(
+                    Token::Ident(other.to_string()),
+                    "a `goal` field: metric / target / budget / subject_to / choices / principal"
+                        .into(),
+                )),
             }
             self.eat(&Token::Comma);
         }
@@ -1761,7 +1985,10 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::Assign { name, value: Box::new(value) })
+        Ok(Expr::Assign {
+            name,
+            value: Box::new(value),
+        })
     }
 
     /// Parse an optional `: Type` annotation following a binding name.
@@ -1782,7 +2009,9 @@ impl Parser {
             let mut names = Vec::new();
             while !self.at(&Token::RParen) {
                 names.push(self.expect_ident()?);
-                if !self.eat(&Token::Comma) { break; }
+                if !self.eat(&Token::Comma) {
+                    break;
+                }
             }
             self.expect(&Token::RParen)?;
             self.expect(&Token::Eq)?;
@@ -1790,7 +2019,11 @@ impl Parser {
             let tmp = format!("__tup_{}", self.pos);
             let mut stmts: Vec<Stmt> = Vec::with_capacity(names.len() + 1);
             stmts.push(Stmt {
-                expr: Expr::Let { name: tmp.clone(), ty: None, value: Box::new(value) },
+                expr: Expr::Let {
+                    name: tmp.clone(),
+                    ty: None,
+                    value: Box::new(value),
+                },
                 span: Span::dummy(),
             });
             for (i, n) in names.into_iter().enumerate() {
@@ -1812,7 +2045,11 @@ impl Parser {
         let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::Let { name, ty, value: Box::new(value) })
+        Ok(Expr::Let {
+            name,
+            ty,
+            value: Box::new(value),
+        })
     }
 
     fn parse_own(&mut self) -> Result<Expr> {
@@ -1821,7 +2058,11 @@ impl Parser {
         let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::Own { name, ty, value: Box::new(value) })
+        Ok(Expr::Own {
+            name,
+            ty,
+            value: Box::new(value),
+        })
     }
 
     fn parse_ref_bind(&mut self) -> Result<Expr> {
@@ -1830,7 +2071,11 @@ impl Parser {
         let ty = self.parse_opt_binding_type()?;
         self.expect(&Token::Eq)?;
         let value = self.parse_expr()?;
-        Ok(Expr::RefBind { name, ty, value: Box::new(value) })
+        Ok(Expr::RefBind {
+            name,
+            ty,
+            value: Box::new(value),
+        })
     }
 
     fn parse_return(&mut self) -> Result<Expr> {
@@ -1860,16 +2105,25 @@ impl Parser {
             }
             let guard = if self.eat(&Token::If) {
                 Some(self.parse_logical()?)
-            } else { None };
+            } else {
+                None
+            };
             self.expect(&Token::FatArrow)?;
             let body = self.parse_expr()?;
             self.eat(&Token::Comma);
             for pattern in patterns {
-                arms.push(MatchArm { pattern, guard: guard.clone(), body: body.clone() });
+                arms.push(MatchArm {
+                    pattern,
+                    guard: guard.clone(),
+                    body: body.clone(),
+                });
             }
         }
         self.expect(&Token::RBrace)?;
-        Ok(Expr::Match { subject: Box::new(subject), arms })
+        Ok(Expr::Match {
+            subject: Box::new(subject),
+            arms,
+        })
     }
 
     fn parse_if(&mut self) -> Result<Expr> {
@@ -1882,8 +2136,14 @@ impl Parser {
             } else {
                 self.parse_block()?
             }))
-        } else { None };
-        Ok(Expr::If { cond: Box::new(cond), then: Box::new(then), else_ })
+        } else {
+            None
+        };
+        Ok(Expr::If {
+            cond: Box::new(cond),
+            then: Box::new(then),
+            else_,
+        })
     }
 
     fn parse_spawn(&mut self) -> Result<Expr> {
@@ -1977,11 +2237,19 @@ impl Parser {
         let mut left = self.parse_logical_and()?;
         loop {
             // ASI: an operator on a new line (outside parens) terminates the expression.
-            if self.preceded_by_newline() { break; }
-            if !matches!(self.peek(), Some(Token::Or)) { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
+            if !matches!(self.peek(), Some(Token::Or)) {
+                break;
+            }
             self.advance()?;
             let right = self.parse_logical_and()?;
-            left = Expr::BinOp { op: BinOp::Or, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::Or,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -1990,11 +2258,19 @@ impl Parser {
     fn parse_logical_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_or()?;
         loop {
-            if self.preceded_by_newline() { break; }
-            if !matches!(self.peek(), Some(Token::And)) { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
+            if !matches!(self.peek(), Some(Token::And)) {
+                break;
+            }
             self.advance()?;
             let right = self.parse_bitwise_or()?;
-            left = Expr::BinOp { op: BinOp::And, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::And,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2003,14 +2279,22 @@ impl Parser {
     fn parse_bitwise_or(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_xor()?;
         loop {
-            if self.preceded_by_newline() { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
             // Token::Pipe (`|`) is also used for lambda params and match arms,
             // but those contexts are fully consumed inside parse_primary/parse_match_arm
             // before this layer is entered, so here it is always infix bitwise-OR.
-            if !matches!(self.peek(), Some(Token::Pipe)) { break; }
+            if !matches!(self.peek(), Some(Token::Pipe)) {
+                break;
+            }
             self.advance()?;
             let right = self.parse_bitwise_xor()?;
-            left = Expr::BinOp { op: BinOp::BitOr, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitOr,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2019,11 +2303,19 @@ impl Parser {
     fn parse_bitwise_xor(&mut self) -> Result<Expr> {
         let mut left = self.parse_bitwise_and()?;
         loop {
-            if self.preceded_by_newline() { break; }
-            if !matches!(self.peek(), Some(Token::Caret)) { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
+            if !matches!(self.peek(), Some(Token::Caret)) {
+                break;
+            }
             self.advance()?;
             let right = self.parse_bitwise_and()?;
-            left = Expr::BinOp { op: BinOp::BitXor, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitXor,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2032,13 +2324,21 @@ impl Parser {
     fn parse_bitwise_and(&mut self) -> Result<Expr> {
         let mut left = self.parse_comparison()?;
         loop {
-            if self.preceded_by_newline() { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
             // Token::Ampersand (`&`) is also used as unary-ref in parse_primary;
             // as an infix token here it is always bitwise AND.
-            if !matches!(self.peek(), Some(Token::Ampersand)) { break; }
+            if !matches!(self.peek(), Some(Token::Ampersand)) {
+                break;
+            }
             self.advance()?;
             let right = self.parse_comparison()?;
-            left = Expr::BinOp { op: BinOp::BitAnd, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op: BinOp::BitAnd,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2053,14 +2353,16 @@ impl Parser {
     fn parse_comparison(&mut self) -> Result<Expr> {
         let mut left = self.parse_shift()?;
         // ASI: a comparison operator on a new line (outside parens) ends the expression.
-        if self.preceded_by_newline() { return Ok(left); }
+        if self.preceded_by_newline() {
+            return Ok(left);
+        }
         let op = match self.peek() {
-            Some(Token::EqEq)  => BinOp::Eq,
+            Some(Token::EqEq) => BinOp::Eq,
             Some(Token::NotEq) => BinOp::NotEq,
-            Some(Token::Lt)    => BinOp::Lt,
-            Some(Token::Gt)    => BinOp::Gt,
-            Some(Token::LtEq)  => BinOp::LtEq,
-            Some(Token::GtEq)  => BinOp::GtEq,
+            Some(Token::Lt) => BinOp::Lt,
+            Some(Token::Gt) => BinOp::Gt,
+            Some(Token::LtEq) => BinOp::LtEq,
+            Some(Token::GtEq) => BinOp::GtEq,
             _ => return Ok(left),
         };
         self.advance()?;
@@ -2071,7 +2373,11 @@ impl Parser {
                 "chained comparisons are not supported; use parentheses".into(),
             ));
         }
-        left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+        left = Expr::BinOp {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        };
         Ok(left)
     }
 
@@ -2079,7 +2385,9 @@ impl Parser {
     fn parse_shift(&mut self) -> Result<Expr> {
         let mut left = self.parse_additive()?;
         loop {
-            if self.preceded_by_newline() { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
             let op = match self.peek() {
                 Some(Token::Shl) => BinOp::Shl,
                 Some(Token::Shr) => BinOp::Shr,
@@ -2087,7 +2395,11 @@ impl Parser {
             };
             self.advance()?;
             let right = self.parse_additive()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2096,15 +2408,21 @@ impl Parser {
         let mut left = self.parse_multiplicative()?;
         loop {
             // ASI: operator at the start of a new line (outside parens) terminates.
-            if self.preceded_by_newline() { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
             let op = match self.peek() {
-                Some(Token::Plus)  => BinOp::Add,
+                Some(Token::Plus) => BinOp::Add,
                 Some(Token::Minus) => BinOp::Sub,
                 _ => break,
             };
             self.advance()?;
             let right = self.parse_multiplicative()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2113,16 +2431,22 @@ impl Parser {
         let mut left = self.parse_postfix()?;
         loop {
             // ASI: operator at the start of a new line (outside parens) terminates.
-            if self.preceded_by_newline() { break; }
+            if self.preceded_by_newline() {
+                break;
+            }
             let op = match self.peek() {
-                Some(Token::Star)    => BinOp::Mul,
-                Some(Token::Slash)   => BinOp::Div,
+                Some(Token::Star) => BinOp::Mul,
+                Some(Token::Slash) => BinOp::Div,
                 Some(Token::Percent) => BinOp::Rem,
                 _ => break,
             };
             self.advance()?;
             let right = self.parse_postfix()?;
-            left = Expr::BinOp { op, left: Box::new(left), right: Box::new(right) };
+            left = Expr::BinOp {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -2177,9 +2501,16 @@ impl Parser {
                         let args = self.parse_args()?;
                         self.paren_depth -= 1;
                         self.expect(&Token::RParen)?;
-                        expr = Expr::MethodCall { receiver: Box::new(expr), method: field, args };
+                        expr = Expr::MethodCall {
+                            receiver: Box::new(expr),
+                            method: field,
+                            args,
+                        };
                     } else {
-                        expr = Expr::FieldAccess { receiver: Box::new(expr), field };
+                        expr = Expr::FieldAccess {
+                            receiver: Box::new(expr),
+                            field,
+                        };
                     }
                 }
                 // ASI: `(` on a new line is NOT a continuation of a call — it's a
@@ -2191,7 +2522,11 @@ impl Parser {
                     let (args, tier) = self.parse_args_with_tier()?;
                     self.paren_depth -= 1;
                     self.expect(&Token::RParen)?;
-                    expr = Expr::Call { callee: Box::new(expr), args, tier };
+                    expr = Expr::Call {
+                        callee: Box::new(expr),
+                        args,
+                        tier,
+                    };
                 }
                 // ASI: `[` on a new line is NOT an index operation.
                 Some(Token::LBracket) if !self.preceded_by_newline() => {
@@ -2200,7 +2535,10 @@ impl Parser {
                     let index = self.parse_expr()?;
                     self.paren_depth -= 1;
                     self.expect(&Token::RBracket)?;
-                    expr = Expr::Index { receiver: Box::new(expr), index: Box::new(index) };
+                    expr = Expr::Index {
+                        receiver: Box::new(expr),
+                        index: Box::new(index),
+                    };
                 }
                 // `expr as Type` — postfix numeric cast. Desugars to a call to
                 // the polymorphic `as_<type>` builtin (`as_f64`, `as_i64`,
@@ -2215,10 +2553,12 @@ impl Parser {
                     let ty = self.parse_type_atom()?;
                     let name = match ty {
                         AxonType::Named(n) => n,
-                        other => return Err(ParseError::Other(format!(
+                        other => {
+                            return Err(ParseError::Other(format!(
                             "`as` expects a primitive type name (f64, i64, str, bool, …), got {:?}",
                             other,
-                        ))),
+                        )))
+                        }
                     };
                     let callee = format!("as_{name}");
                     expr = Expr::Call {
@@ -2237,7 +2577,9 @@ impl Parser {
         let mut args = Vec::new();
         while !self.at(&Token::RParen) {
             args.push(self.parse_expr()?);
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         Ok(args)
     }
@@ -2258,11 +2600,11 @@ impl Parser {
             {
                 self.advance()?; // `tier`
                 self.advance()?; // `:`
-                // The tier value (cheap|balanced|strong) — accept it as a bare
-                // identifier (`tier: strong`) OR a string literal (`tier:
-                // "strong"`), the form a user naturally reaches for. Both yield
-                // the same tier name; an unknown name is rejected downstream
-                // (E1302) with the configured-tiers list.
+                                 // The tier value (cheap|balanced|strong) — accept it as a bare
+                                 // identifier (`tier: strong`) OR a string literal (`tier:
+                                 // "strong"`), the form a user naturally reaches for. Both yield
+                                 // the same tier name; an unknown name is rejected downstream
+                                 // (E1302) with the configured-tiers list.
                 let name = match self.peek() {
                     Some(Token::Str(s)) => {
                         let s = s.clone();
@@ -2281,7 +2623,9 @@ impl Parser {
                 break;
             }
             args.push(self.parse_expr()?);
-            if !self.eat(&Token::Comma) { break; }
+            if !self.eat(&Token::Comma) {
+                break;
+            }
         }
         Ok((args, tier))
     }
@@ -2305,12 +2649,12 @@ impl Parser {
     fn parse_primary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
             Some(Token::Comptime) => self.parse_comptime(),
-            Some(Token::LBrace)  => self.parse_block(),
+            Some(Token::LBrace) => self.parse_block(),
             // Block-form expressions are valid operands too (e.g. `1 + if c {..}
             // else {..}`, `n * match k { .. }`), not just `let`-RHS / call args.
-            Some(Token::Match)   => self.parse_match(),
-            Some(Token::If)      => self.parse_if(),
-            Some(Token::LParen)  => {
+            Some(Token::Match) => self.parse_match(),
+            Some(Token::If) => self.parse_if(),
+            Some(Token::LParen) => {
                 if self.is_paren_lambda() {
                     self.parse_paren_lambda()
                 } else {
@@ -2336,31 +2680,48 @@ impl Parser {
                     }
                 }
             }
-            Some(Token::Int(_))   => {
+            Some(Token::Int(_)) => {
                 if let Token::Int(n) = self.advance()?.clone() {
                     Ok(Expr::Literal(Literal::Int(n)))
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(Token::Float(_)) => {
                 if let Token::Float(n) = self.advance()?.clone() {
                     Ok(Expr::Literal(Literal::Float(n)))
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(Token::Str(_)) => {
                 if let Token::Str(s) = self.advance()?.clone() {
                     parse_fmt_str_raw(&s)
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             // Raw strings skip interpolation entirely — the body lands as a
             // plain string literal. `{` / `}` / `\` pass through untouched.
             Some(Token::RawStr(_)) => {
                 if let Token::RawStr(s) = self.advance()?.clone() {
                     Ok(Expr::Literal(Literal::Str(s)))
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
-            Some(Token::True) => { self.advance()?; Ok(Expr::Literal(Literal::Bool(true))) }
-            Some(Token::False) => { self.advance()?; Ok(Expr::Literal(Literal::Bool(false))) }
-            Some(Token::None) => { self.advance()?; Ok(Expr::None) }
+            Some(Token::True) => {
+                self.advance()?;
+                Ok(Expr::Literal(Literal::Bool(true)))
+            }
+            Some(Token::False) => {
+                self.advance()?;
+                Ok(Expr::Literal(Literal::Bool(false)))
+            }
+            Some(Token::None) => {
+                self.advance()?;
+                Ok(Expr::None)
+            }
             Some(Token::Ok) => {
                 self.advance()?;
                 self.expect(&Token::LParen)?;
@@ -2394,7 +2755,9 @@ impl Parser {
                 let mut elems = Vec::new();
                 while !self.at(&Token::RBracket) {
                     elems.push(self.parse_expr()?);
-                    if !self.eat(&Token::Comma) { break; }
+                    if !self.eat(&Token::Comma) {
+                        break;
+                    }
                 }
                 self.paren_depth -= 1;
                 self.expect(&Token::RBracket)?;
@@ -2404,7 +2767,11 @@ impl Parser {
                 // Empty-parameter lambda: `|| body` (tokenized as Or, not Pipe+Pipe).
                 self.advance()?;
                 let body = self.parse_logical()?;
-                Ok(Expr::Lambda { params: Vec::new(), body: Box::new(body), captures: Vec::new() })
+                Ok(Expr::Lambda {
+                    params: Vec::new(),
+                    body: Box::new(body),
+                    captures: Vec::new(),
+                })
             }
             Some(Token::Pipe) => {
                 // Lambda expression: `|params| body`
@@ -2416,22 +2783,30 @@ impl Parser {
                     // `|` is not mis-parsed as a union-type continuation.
                     let ty = if self.eat(&Token::Colon) {
                         Some(self.parse_type_atom()?)
-                    } else { None };
+                    } else {
+                        None
+                    };
                     params.push(LambdaParam { name: pname, ty });
-                    if !self.eat(&Token::Comma) { break; }
+                    if !self.eat(&Token::Comma) {
+                        break;
+                    }
                 }
                 self.expect(&Token::Pipe)?; // consume closing `|`
-                // Optional explicit return type: `|...| -> Type body`. The
-                // type is parsed for forward-compat / readability and then
-                // discarded — Lambda::ret_ty is inferred during HM, and the
-                // ast::Expr::Lambda variant doesn't carry an explicit
-                // return-type slot. Matches the Rust/TypeScript ergonomics
-                // people expect when migrating example code.
+                                            // Optional explicit return type: `|...| -> Type body`. The
+                                            // type is parsed for forward-compat / readability and then
+                                            // discarded — Lambda::ret_ty is inferred during HM, and the
+                                            // ast::Expr::Lambda variant doesn't carry an explicit
+                                            // return-type slot. Matches the Rust/TypeScript ergonomics
+                                            // people expect when migrating example code.
                 if self.eat(&Token::Arrow) {
                     let _ret_ty = self.parse_type_atom()?;
                 }
                 let body = self.parse_logical()?;
-                Ok(Expr::Lambda { params, body: Box::new(body), captures: Vec::new() })
+                Ok(Expr::Lambda {
+                    params,
+                    body: Box::new(body),
+                    captures: Vec::new(),
+                })
             }
             Some(Token::Ident(_)) => {
                 if let Token::Ident(name) = self.advance()?.clone() {
@@ -2478,13 +2853,21 @@ impl Parser {
                                     Expr::Ident(fname.clone())
                                 };
                                 fields.push((fname, fval));
-                                if !self.eat(&Token::Comma) { break; }
+                                if !self.eat(&Token::Comma) {
+                                    break;
+                                }
                             }
                             self.expect(&Token::RBrace)?;
-                            Ok(Expr::StructLit { name: full_name, fields })
+                            Ok(Expr::StructLit {
+                                name: full_name,
+                                fields,
+                            })
                         } else {
                             // Unit variant: no fields → empty struct lit
-                            Ok(Expr::StructLit { name: full_name, fields: Vec::new() })
+                            Ok(Expr::StructLit {
+                                name: full_name,
+                                fields: Vec::new(),
+                            })
                         }
                     } else {
                         // Struct literal: Name { field: expr, ... }
@@ -2509,7 +2892,9 @@ impl Parser {
                                 self.expect(&Token::Colon)?;
                                 let fval = self.parse_expr()?;
                                 fields.push((fname, fval));
-                                if !self.eat(&Token::Comma) { break; }
+                                if !self.eat(&Token::Comma) {
+                                    break;
+                                }
                             }
                             self.expect(&Token::RBrace)?;
                             Ok(Expr::StructLit { name, fields })
@@ -2517,27 +2902,41 @@ impl Parser {
                             Ok(Expr::Ident(name))
                         }
                     }
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(Token::Ampersand) => {
                 self.advance()?;
                 let operand = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Ref, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Ref,
+                    operand: Box::new(operand),
+                })
             }
             Some(Token::Minus) => {
                 self.advance()?;
                 let operand = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Neg, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Neg,
+                    operand: Box::new(operand),
+                })
             }
             Some(Token::Bang) => {
                 self.advance()?;
                 let operand = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::Not, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    operand: Box::new(operand),
+                })
             }
             Some(Token::Tilde) => {
                 self.advance()?;
                 let operand = self.parse_postfix()?;
-                Ok(Expr::UnaryOp { op: UnaryOp::BitNot, operand: Box::new(operand) })
+                Ok(Expr::UnaryOp {
+                    op: UnaryOp::BitNot,
+                    operand: Box::new(operand),
+                })
             }
             Some(Token::SelfKw) => {
                 self.advance()?;
@@ -2559,7 +2958,7 @@ impl Parser {
             // Tuple pattern: `(p1, p2, ...)` or unit pattern `()`.
             Some(Token::LParen) => {
                 self.advance()?; // consume `(`
-                // `()` — unit / empty tuple pattern.
+                                 // `()` — unit / empty tuple pattern.
                 if self.eat(&Token::RParen) {
                     return Ok(Pattern::Tuple(Vec::new()));
                 }
@@ -2568,7 +2967,9 @@ impl Parser {
                     let mut pats = vec![first];
                     while !self.at(&Token::RParen) {
                         pats.push(self.parse_pattern()?);
-                        if !self.eat(&Token::Comma) { break; }
+                        if !self.eat(&Token::Comma) {
+                            break;
+                        }
                     }
                     self.expect(&Token::RParen)?;
                     Ok(Pattern::Tuple(pats))
@@ -2578,8 +2979,14 @@ impl Parser {
                     Ok(first)
                 }
             }
-            Some(Token::True) => { self.advance()?; Ok(Pattern::Literal(Literal::Bool(true))) }
-            Some(Token::False) => { self.advance()?; Ok(Pattern::Literal(Literal::Bool(false))) }
+            Some(Token::True) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(true)))
+            }
+            Some(Token::False) => {
+                self.advance()?;
+                Ok(Pattern::Literal(Literal::Bool(false)))
+            }
             // Negative integer literal pattern: `-` INT_LIT
             Some(Token::Minus) => {
                 self.advance()?; // consume `-`
@@ -2593,7 +3000,10 @@ impl Parser {
                     ))
                 }
             }
-            Some(Token::None) => { self.advance()?; Ok(Pattern::None) }
+            Some(Token::None) => {
+                self.advance()?;
+                Ok(Pattern::None)
+            }
             Some(Token::Some) => {
                 self.advance()?;
                 self.expect(&Token::LParen)?;
@@ -2618,12 +3028,16 @@ impl Parser {
             Some(Token::Int(_)) => {
                 if let Token::Int(n) = self.advance()?.clone() {
                     Ok(Pattern::Literal(Literal::Int(n)))
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(Token::Str(_)) => {
                 if let Token::Str(s) = self.advance()?.clone() {
                     Ok(Pattern::Literal(Literal::Str(s)))
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(Token::Ident(_)) => {
                 if let Token::Ident(name) = self.advance()?.clone() {
@@ -2651,18 +3065,28 @@ impl Parser {
                                     Pattern::Ident(fname.clone())
                                 };
                                 fields.push((fname, fpat));
-                                if !self.eat(&Token::Comma) { break; }
+                                if !self.eat(&Token::Comma) {
+                                    break;
+                                }
                             }
                             self.expect(&Token::RBrace)?;
-                            Ok(Pattern::Struct { name: full_name, fields })
+                            Ok(Pattern::Struct {
+                                name: full_name,
+                                fields,
+                            })
                         } else {
                             // Unit variant pattern
-                            Ok(Pattern::Struct { name: full_name, fields: Vec::new() })
+                            Ok(Pattern::Struct {
+                                name: full_name,
+                                fields: Vec::new(),
+                            })
                         }
                     } else {
                         Ok(Pattern::Ident(name))
                     }
-                } else { unreachable!() }
+                } else {
+                    unreachable!()
+                }
             }
             Some(tok) => Err(ParseError::Unexpected(tok.clone(), "pattern".into())),
             None => Err(ParseError::Eof),
@@ -2677,8 +3101,11 @@ fn axon_type_to_str(ty: &AxonType) -> String {
         AxonType::Chan(inner) => format!("Chan<{}>", axon_type_to_str(inner)),
         AxonType::Slice(inner) => format!("[{}]", axon_type_to_str(inner)),
         AxonType::Option(inner) => format!("Option<{}>", axon_type_to_str(inner)),
-        AxonType::Result { ok, err } => format!("Result<{},{}>", axon_type_to_str(ok), axon_type_to_str(err)),
+        AxonType::Result { ok, err } => {
+            format!("Result<{},{}>", axon_type_to_str(ok), axon_type_to_str(err))
+        }
         AxonType::Ref(inner) => format!("&{}", axon_type_to_str(inner)),
+        AxonType::RawPtr(inner) => format!("*{}", axon_type_to_str(inner)),
         AxonType::Fn { params, ret } => {
             let ps: Vec<String> = params.iter().map(axon_type_to_str).collect();
             format!("fn({}) -> {}", ps.join(", "), axon_type_to_str(ret))
@@ -2706,7 +3133,11 @@ mod tests {
     use crate::lexer::Lexer;
 
     fn parse(src: &str) -> Program {
-        let tokens: Vec<Token> = Lexer::tokenize(src).unwrap().into_iter().map(|(t,_)| t).collect();
+        let tokens: Vec<Token> = Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
         Parser::new(tokens).parse_program().expect("parse failed")
     }
 
@@ -2714,7 +3145,9 @@ mod tests {
     fn test_fn_def() {
         let prog = parse("fn add(a:i32,b:i32)->i32{a+b}");
         assert_eq!(prog.items.len(), 1);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.name, "add");
         assert_eq!(f.params.len(), 2);
     }
@@ -2722,16 +3155,24 @@ mod tests {
     #[test]
     fn test_let_binding() {
         let prog = parse("fn main(){let x=42}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[0].expr, Expr::Let { name, .. } if name == "x"));
     }
 
     #[test]
     fn test_ownership_modes() {
         let prog = parse("fn main(){own x=Vec.new();ref y=&x}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[0].expr, Expr::Own { name, .. } if name == "x"));
         assert!(matches!(&stmts[1].expr, Expr::RefBind { name, .. } if name == "y"));
     }
@@ -2739,22 +3180,30 @@ mod tests {
     #[test]
     fn test_result_type() {
         let prog = parse("fn fetch(url:str)->Result<Response,Error>{Ok(resp)}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert!(matches!(&f.return_type, Some(AxonType::Result { .. })));
     }
 
     #[test]
     fn test_match_expr() {
         let prog = parse("fn check(x:Option<i32>){match x{Some(v)=>v,None=>0}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[0].expr, Expr::Match { .. }));
     }
 
     #[test]
     fn test_enum_def() {
         let prog = parse("enum Shape{Circle{radius:f64},Rect{w:f64,h:f64},Point}");
-        let Item::EnumDef(e) = &prog.items[0] else { panic!() };
+        let Item::EnumDef(e) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(e.name, "Shape");
         assert_eq!(e.variants.len(), 3);
     }
@@ -2762,9 +3211,15 @@ mod tests {
     #[test]
     fn test_question_operator() {
         let prog = parse("fn process(data:Bytes)->Result<Output,Error>{let parsed=parse(data)?}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::Question(_)));
     }
 
@@ -2781,61 +3236,105 @@ mod tests {
     #[test]
     fn test_modulo_operator() {
         let prog = parse("fn f(){let r=10%3}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::BinOp { op: BinOp::Rem, .. }));
     }
 
     #[test]
     fn test_logical_and() {
         let prog = parse("fn f(){let r=true&&false}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::BinOp { op: BinOp::And, .. }));
     }
 
     #[test]
     fn test_logical_or() {
         let prog = parse("fn f(){let r=true||false}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::BinOp { op: BinOp::Or, .. }));
     }
 
     #[test]
     fn test_chained_comparison_errors() {
         let src = "fn f(){let x=1<2<3}";
-        let tokens: Vec<Token> = Lexer::tokenize(src).unwrap().into_iter().map(|(t,_)| t).collect();
+        let tokens: Vec<Token> = Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
         let result = Parser::new(tokens).parse_program();
-        assert!(result.is_err(), "chained comparisons should produce a parse error");
+        assert!(
+            result.is_err(),
+            "chained comparisons should produce a parse error"
+        );
     }
 
     #[test]
     fn test_nested_path_errors() {
         let src = "fn f(){let x=Foo::Bar::Baz}";
-        let tokens: Vec<Token> = Lexer::tokenize(src).unwrap().into_iter().map(|(t,_)| t).collect();
+        let tokens: Vec<Token> = Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
         let result = Parser::new(tokens).parse_program();
-        assert!(result.is_err(), "Foo::Bar::Baz should produce a parse error");
+        assert!(
+            result.is_err(),
+            "Foo::Bar::Baz should produce a parse error"
+        );
     }
 
     #[test]
     fn test_empty_struct_literal() {
         let prog = parse("fn f(){let x=Point{}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        assert!(matches!(value.as_ref(), Expr::StructLit { name, fields } if name == "Point" && fields.is_empty()));
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        assert!(
+            matches!(value.as_ref(), Expr::StructLit { name, fields } if name == "Point" && fields.is_empty())
+        );
     }
 
     #[test]
     fn test_fmt_str_double_brace_escapes() {
         // {{ → literal {, }} → literal }
         let prog = parse(r#"fn f(){println("{{hello}}")}"#);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         // Should parse without error; the string contains literal braces
         assert!(matches!(&stmts[0].expr, Expr::Call { .. }));
     }
@@ -2843,7 +3342,11 @@ mod tests {
     #[test]
     fn test_fmt_str_unclosed_brace_errors() {
         let src = r#"fn f(){println("hello {name")}"#;
-        let tokens: Vec<Token> = Lexer::tokenize(src).unwrap().into_iter().map(|(t,_)| t).collect();
+        let tokens: Vec<Token> = Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect();
         let result = Parser::new(tokens).parse_program();
         assert!(result.is_err(), "unclosed {{ in fmt string should error");
     }
@@ -2851,55 +3354,100 @@ mod tests {
     #[test]
     fn test_while_loop() {
         let prog = parse("fn f(){let i=0\nwhile i<10{i=i+1}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[1].expr, Expr::While { .. }));
     }
 
     #[test]
     fn test_while_let_some() {
         let prog = parse("fn f(){while let Some(x) = next() {x}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(
-            matches!(&stmts[0].expr, Expr::WhileLet { pattern: Pattern::Some(_), .. }),
-            "expected WhileLet with Some pattern, got {:?}", &stmts[0].expr
+            matches!(
+                &stmts[0].expr,
+                Expr::WhileLet {
+                    pattern: Pattern::Some(_),
+                    ..
+                }
+            ),
+            "expected WhileLet with Some pattern, got {:?}",
+            &stmts[0].expr
         );
     }
 
     #[test]
     fn test_assign_rebind() {
         let prog = parse("fn f(){let x=1\nx=2}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[1].expr, Expr::Assign { name, .. } if name == "x"));
     }
 
     #[test]
     fn test_unary_not() {
         let prog = parse("fn f(){let r=!true}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        assert!(matches!(value.as_ref(), Expr::UnaryOp { op: UnaryOp::Not, .. }));
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        assert!(matches!(
+            value.as_ref(),
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn test_lambda() {
         let prog = parse("fn f(){let add=|a,b|a+b}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::Lambda { params, .. } if params.len() == 2));
     }
 
     #[test]
     fn test_arrow_lambda_one_param() {
         let prog = parse("fn f(){let add=(x)=>x+1}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        let Expr::Lambda { params, .. } = value.as_ref() else { panic!("not a lambda") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        let Expr::Lambda { params, .. } = value.as_ref() else {
+            panic!("not a lambda")
+        };
         assert_eq!(params.len(), 1);
         assert_eq!(params[0].name, "x");
     }
@@ -2907,20 +3455,36 @@ mod tests {
     #[test]
     fn test_arrow_lambda_zero_params() {
         let prog = parse("fn f(){let g=()=>42}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        let Expr::Lambda { params, .. } = value.as_ref() else { panic!("not a lambda") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        let Expr::Lambda { params, .. } = value.as_ref() else {
+            panic!("not a lambda")
+        };
         assert_eq!(params.len(), 0);
     }
 
     #[test]
     fn test_arrow_lambda_with_block_body() {
         let prog = parse("fn f(){let g=()=>{42}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        let Expr::Lambda { params, body, .. } = value.as_ref() else { panic!("not a lambda") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        let Expr::Lambda { params, body, .. } = value.as_ref() else {
+            panic!("not a lambda")
+        };
         assert_eq!(params.len(), 0);
         assert!(matches!(body.as_ref(), Expr::Block(_)));
     }
@@ -2929,9 +3493,15 @@ mod tests {
     fn test_paren_expr_not_lambda() {
         // (x + y) * 2 should NOT be parsed as a lambda
         let prog = parse("fn f(){let r=(a+b)*2}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         // Should be a binary Mul, not a Lambda
         assert!(matches!(value.as_ref(), Expr::BinOp { op: BinOp::Mul, .. }));
     }
@@ -2939,9 +3509,15 @@ mod tests {
     #[test]
     fn test_enum_variant_with_fields() {
         let prog = parse("fn f(){let s=Shape::Circle{radius:1.0}}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::StructLit { name, .. } if name == "Shape::Circle"));
     }
 
@@ -2949,9 +3525,15 @@ mod tests {
     fn test_precedence_logical_vs_comparison() {
         // x > 3 && y < 20 should parse as (x > 3) && (y < 20)
         let prog = parse("fn f(){let r=x>3&&y<20}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         // Top-level should be And
         assert!(matches!(value.as_ref(), Expr::BinOp { op: BinOp::And, .. }));
     }
@@ -2966,20 +3548,31 @@ mod tests {
     fn asi_return_newline_no_value() {
         // `return` followed by a newline should produce Return(None), not consume `42`.
         let prog = parse_nl("fn f()->i64{\nreturn\n42\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         // First stmt: return with no value
         assert!(matches!(&stmts[0].expr, Expr::Return(None)));
         // Second stmt: the literal 42 (dead code, but parsed as a separate statement)
-        assert!(matches!(&stmts[1].expr, Expr::Literal(crate::ast::Literal::Int(42))));
+        assert!(matches!(
+            &stmts[1].expr,
+            Expr::Literal(crate::ast::Literal::Int(42))
+        ));
     }
 
     #[test]
     fn asi_return_same_line_has_value() {
         // `return expr` on the same line should still carry the value.
         let prog = parse_nl("fn f()->i64{return 42}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert!(matches!(&stmts[0].expr, Expr::Return(Some(_))));
     }
 
@@ -2988,9 +3581,17 @@ mod tests {
         // `foo()\n(bar)` — the `(` on the next line is a new statement (paren expr),
         // NOT a chained call `foo()(bar)`.
         let prog = parse_nl("fn f(){\nfoo()\n(bar)\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        assert_eq!(stmts.len(), 2, "should be two statements, not a chained call");
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        assert_eq!(
+            stmts.len(),
+            2,
+            "should be two statements, not a chained call"
+        );
         // First: call to foo()
         assert!(matches!(&stmts[0].expr, Expr::Call { .. }));
         // Second: parenthesized ident (bar)
@@ -3002,8 +3603,12 @@ mod tests {
         // `foo()\n[0]` — `[` on next line is a separate array literal, not an index.
         // (We just check it doesn't parse as Index on the call result.)
         let prog = parse_nl("fn f(){\nfoo()\n[1,2]\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert_eq!(stmts.len(), 2, "should be two statements, not foo()[1,2]");
     }
 
@@ -3012,11 +3617,17 @@ mod tests {
         // `.method()` on the next line IS allowed as a continuation (common style).
         // The dot is still consumed greedily regardless of newline — this is intentional.
         let prog = parse_nl("fn f(){\nlet x=foo()\n.bar()\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         // Should be ONE let-binding whose value is a method call chain.
         assert_eq!(stmts.len(), 1);
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(matches!(value.as_ref(), Expr::MethodCall { .. }));
     }
 
@@ -3028,7 +3639,10 @@ mod tests {
         // `1\n+2` is NOT `1 + 2` — the `+` starts an invalid new statement.
         let src = "fn f(){\n1\n+2\n}";
         let result = crate::parse_source(src);
-        assert!(result.is_err(), "operator at start of new line should not continue the expression");
+        assert!(
+            result.is_err(),
+            "operator at start of new line should not continue the expression"
+        );
     }
 
     #[test]
@@ -3036,12 +3650,20 @@ mod tests {
         // Operator at the END of a line (before the newline) must still continue.
         // `return 1 +\n2` — the `+` is on the same line as `1`, so `1 + 2` is the return value.
         let prog = parse_nl("fn f()->i64{\nreturn 1 +\n2\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert_eq!(stmts.len(), 1);
-        let Expr::Return(Some(v)) = &stmts[0].expr else { panic!("expected return with value") };
-        assert!(matches!(v.as_ref(), Expr::BinOp { op: BinOp::Add, .. }),
-            "return value should be 1 + 2");
+        let Expr::Return(Some(v)) = &stmts[0].expr else {
+            panic!("expected return with value")
+        };
+        assert!(
+            matches!(v.as_ref(), Expr::BinOp { op: BinOp::Add, .. }),
+            "return value should be 1 + 2"
+        );
     }
 
     #[test]
@@ -3049,7 +3671,10 @@ mod tests {
         // `>` at the start of a new line ends the previous expression.
         let src = "fn f()->i64{\nreturn 1\n>2\n}";
         let result = crate::parse_source(src);
-        assert!(result.is_err(), "comparison op at start of new line should not continue");
+        assert!(
+            result.is_err(),
+            "comparison op at start of new line should not continue"
+        );
     }
 
     #[test]
@@ -3057,7 +3682,10 @@ mod tests {
         // `&&` at the start of a new line ends the previous expression.
         let src = "fn f()->i64{\nreturn true\n&&false\n}";
         let result = crate::parse_source(src);
-        assert!(result.is_err(), "&& at start of new line should not continue the expression");
+        assert!(
+            result.is_err(),
+            "&& at start of new line should not continue the expression"
+        );
     }
 
     // ── Assignment `=` ASI guard ──────────────────────────────────────────────
@@ -3068,15 +3696,22 @@ mod tests {
         // Instead, `foo` is a standalone expression and `= bar` is a parse error.
         let src = "fn f(){\nlet foo=1\nfoo\n=2\n}";
         let result = crate::parse_source(src);
-        assert!(result.is_err(), "= on a new line must not be treated as assignment");
+        assert!(
+            result.is_err(),
+            "= on a new line must not be treated as assignment"
+        );
     }
 
     #[test]
     fn asi_assign_same_line_is_assignment() {
         // `foo = bar` on the same line is still a valid assignment.
         let prog = parse_nl("fn f(){\nlet x=1\nx=2\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert_eq!(stmts.len(), 2);
         assert!(matches!(&stmts[1].expr, Expr::Assign { name, .. } if name == "x"));
     }
@@ -3088,11 +3723,25 @@ mod tests {
         // `foo /* multi\nline */ (bar)` — the newline inside the comment means `(`
         // is considered newline-preceded, so it is NOT a call on `foo`.
         let prog = parse_nl("fn f(){\nfoo /* comment\ncontinued */ (bar)\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        assert_eq!(stmts.len(), 2, "newline inside block comment must prevent call chaining");
-        assert!(matches!(&stmts[0].expr, Expr::Ident(_)), "first stmt is `foo`");
-        assert!(matches!(&stmts[1].expr, Expr::Ident(_)), "second stmt is the parenthesised `bar`");
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        assert_eq!(
+            stmts.len(),
+            2,
+            "newline inside block comment must prevent call chaining"
+        );
+        assert!(
+            matches!(&stmts[0].expr, Expr::Ident(_)),
+            "first stmt is `foo`"
+        );
+        assert!(
+            matches!(&stmts[1].expr, Expr::Ident(_)),
+            "second stmt is the parenthesised `bar`"
+        );
     }
 
     #[test]
@@ -3100,10 +3749,17 @@ mod tests {
         // `foo /* no newline */ (bar)` — single-line block comment must NOT set the
         // newline flag, so `foo(bar)` parses as a call.
         let prog = parse_nl("fn f(){\nfoo /* inline */ (bar)\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert_eq!(stmts.len(), 1, "inline block comment must not prevent call");
-        assert!(matches!(&stmts[0].expr, Expr::Call { .. }), "should be a call expression");
+        assert!(
+            matches!(&stmts[0].expr, Expr::Call { .. }),
+            "should be a call expression"
+        );
     }
 
     // ── Paren depth suppression ───────────────────────────────────────────────
@@ -3113,23 +3769,39 @@ mod tests {
         // Inside `(...)`, a binary operator on the next line IS a continuation.
         // `(1\n+ 2)` must parse as `1 + 2`, not error.
         let prog = parse_nl("fn f()->i64{\nreturn (1\n+2)\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         assert_eq!(stmts.len(), 1);
-        let Expr::Return(Some(v)) = &stmts[0].expr else { panic!("expected return") };
-        assert!(matches!(v.as_ref(), Expr::BinOp { op: BinOp::Add, .. }),
-            "operator inside parens must still be a continuation");
+        let Expr::Return(Some(v)) = &stmts[0].expr else {
+            panic!("expected return")
+        };
+        assert!(
+            matches!(v.as_ref(), Expr::BinOp { op: BinOp::Add, .. }),
+            "operator inside parens must still be a continuation"
+        );
     }
 
     #[test]
     fn asi_bracket_suppresses_newline_guard() {
         // Inside `[...]`, operators on the next line are continuations.
         let prog = parse_nl("fn f()->i64{\nlet a=[1\n+2]\na[0]\n}");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         // The array literal `[1+2]` should parse as a single element.
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!() };
-        let Expr::Array(elems) = value.as_ref() else { panic!("expected array") };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        let Expr::Array(elems) = value.as_ref() else {
+            panic!("expected array")
+        };
         assert_eq!(elems.len(), 1, "array should have one element (1+2)");
         assert!(matches!(&elems[0], Expr::BinOp { op: BinOp::Add, .. }));
     }
@@ -3150,8 +3822,12 @@ mod tests {
     fn parse_inclusive_range_for() {
         let src = "fn f() { for i in 0..=10 { let x = i } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
         let Expr::For { inclusive, .. } = &stmts[0].expr else {
             panic!("expected For, got {:?}", stmts[0].expr)
         };
@@ -3163,9 +3839,15 @@ mod tests {
     fn parse_exclusive_range_for() {
         let src = "fn f() { for i in 0..10 { let x = i } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::For { inclusive, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::For { inclusive, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert!(!inclusive, ".. should set inclusive=false");
     }
 
@@ -3184,9 +3866,15 @@ mod tests {
     fn parse_bool_pattern_in_match() {
         let src = r#"fn f(b: bool) -> str { match b { true => "yes", false => "no" } }"#;
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Match { arms, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert_eq!(arms.len(), 2);
         assert!(
             matches!(&arms[0].pattern, Pattern::Literal(Literal::Bool(true))),
@@ -3215,9 +3903,15 @@ mod tests {
     fn parse_negative_int_pattern_in_match() {
         let src = "fn f(n: i64) -> i64 { match n { -1 => 0, 0 => 1, _ => 2 } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Match { arms, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert_eq!(arms.len(), 3);
         assert!(
             matches!(&arms[0].pattern, Pattern::Literal(Literal::Int(-1))),
@@ -3246,9 +3940,15 @@ mod tests {
     fn parse_tuple_pattern_two_elems() {
         let src = "fn f(p: (i64, i64)) { match p { (a, b) => a } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Match { arms, .. } = &stmts[0].expr else {
+            panic!()
+        };
         assert_eq!(arms.len(), 1);
         let Pattern::Tuple(pats) = &arms[0].pattern else {
             panic!("expected Tuple pattern, got {:?}", arms[0].pattern)
@@ -3263,10 +3963,18 @@ mod tests {
     fn parse_tuple_pattern_nested() {
         let src = "fn f() { match p { (a, (b, c)) => a } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
-        let Pattern::Tuple(pats) = &arms[0].pattern else { panic!("expected outer Tuple") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Match { arms, .. } = &stmts[0].expr else {
+            panic!()
+        };
+        let Pattern::Tuple(pats) = &arms[0].pattern else {
+            panic!("expected outer Tuple")
+        };
         assert_eq!(pats.len(), 2);
         // Second element should be an inner tuple (b, c).
         assert!(matches!(&pats[1], Pattern::Tuple(inner) if inner.len() == 2));
@@ -3277,13 +3985,20 @@ mod tests {
     fn parse_paren_pattern_not_tuple() {
         let src = "fn f() { match x { (v) => v } }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Expr::Block(stmts) = &f.body else { panic!() };
-        let Expr::Match { arms, .. } = &stmts[0].expr else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!()
+        };
+        let Expr::Match { arms, .. } = &stmts[0].expr else {
+            panic!()
+        };
         // A single-element paren group should lower to the inner pattern, not a Tuple.
         assert!(
             matches!(&arms[0].pattern, Pattern::Ident(_)),
-            "single-element paren group should not be a Tuple, got {:?}", arms[0].pattern
+            "single-element paren group should not be a Tuple, got {:?}",
+            arms[0].pattern
         );
     }
 
@@ -3301,8 +4016,12 @@ mod tests {
     fn parse_tuple_type_return() {
         let src = "fn f(a: i64, b: i64) -> (i64, bool) { a }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Some(ret) = &f.return_type else { panic!("no return type") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Some(ret) = &f.return_type else {
+            panic!("no return type")
+        };
         let AxonType::Tuple(elems) = ret else {
             panic!("expected Tuple return type, got {ret:?}")
         };
@@ -3316,7 +4035,9 @@ mod tests {
     fn parse_tuple_type_three_elems() {
         let src = "fn f(t: (i64, i64, str)) { t }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         let AxonType::Tuple(elems) = &f.params[0].ty else {
             panic!("expected Tuple param type, got {:?}", f.params[0].ty)
         };
@@ -3328,8 +4049,12 @@ mod tests {
     fn parse_unit_type_not_tuple() {
         let src = "fn f() -> () { 0 }";
         let prog = parse(src);
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
-        let Some(ret) = &f.return_type else { panic!("no return type") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
+        let Some(ret) = &f.return_type else {
+            panic!("no return type")
+        };
         assert!(
             matches!(ret, AxonType::Named(n) if n == "()"),
             "unit type should be Named(\"()\"), got {ret:?}"
@@ -3342,7 +4067,9 @@ mod tests {
     #[test]
     fn parse_attr_at_test() {
         let prog = parse("@[test] fn test_ok() { 1 }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.attrs.len(), 1, "expected one attribute");
         assert_eq!(f.attrs[0].name, "test");
         assert!(f.attrs[0].args.is_empty(), "test attr has no args");
@@ -3352,7 +4079,9 @@ mod tests {
     #[test]
     fn parse_attr_hash_test() {
         let prog = parse("#[test] fn test_hash() { 1 }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.attrs.len(), 1, "expected one attribute");
         assert_eq!(f.attrs[0].name, "test");
         assert!(f.attrs[0].args.is_empty(), "test attr has no args");
@@ -3362,7 +4091,9 @@ mod tests {
     #[test]
     fn parse_attr_hash_adaptive() {
         let prog = parse("#[adaptive] fn smart_fn(x: i64) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.attrs.len(), 1);
         assert_eq!(f.attrs[0].name, "adaptive");
         assert!(f.attrs[0].args.is_empty());
@@ -3372,7 +4103,9 @@ mod tests {
     #[test]
     fn parse_multiple_attrs_mixed_sigils() {
         let prog = parse("@[goal] #[adaptive] fn mixed(x: i64) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.attrs.len(), 2, "expected two attributes");
         assert_eq!(f.attrs[0].name, "goal");
         assert_eq!(f.attrs[1].name, "adaptive");
@@ -3382,7 +4115,9 @@ mod tests {
     #[test]
     fn parse_attr_hash_with_arg() {
         let prog = parse("#[goal(maximize_throughput)] fn optimize(x: i64) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!() };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!()
+        };
         assert_eq!(f.attrs.len(), 1);
         assert_eq!(f.attrs[0].name, "goal");
         assert_eq!(f.attrs[0].args, vec!["maximize_throughput"]);
@@ -3394,7 +4129,9 @@ mod tests {
     #[test]
     fn parse_union_param_two_members() {
         let prog = parse("fn foo(x: i64|str) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("expected FnDef")
+        };
         let AxonType::Union(members) = &f.params[0].ty else {
             panic!("expected Union, got {:?}", f.params[0].ty);
         };
@@ -3407,7 +4144,9 @@ mod tests {
     #[test]
     fn parse_union_param_three_members() {
         let prog = parse("fn foo(x: i64|str|bool) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("expected FnDef")
+        };
         let AxonType::Union(members) = &f.params[0].ty else {
             panic!("expected Union, got {:?}", f.params[0].ty);
         };
@@ -3419,7 +4158,9 @@ mod tests {
     #[test]
     fn parse_union_in_result_ok_branch() {
         let prog = parse("fn foo(x: i64) -> Result<i64|str, Error> { Ok(x) }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("expected FnDef")
+        };
         let Some(AxonType::Result { ok, err }) = &f.return_type else {
             panic!("expected Result return type");
         };
@@ -3436,7 +4177,9 @@ mod tests {
     #[test]
     fn parse_single_type_is_not_a_union() {
         let prog = parse("fn foo(x: i64) -> i64 { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("expected FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("expected FnDef")
+        };
         assert!(matches!(&f.params[0].ty, AxonType::Named(n) if n == "i64"));
         assert!(matches!(f.return_type.as_ref(), Some(AxonType::Named(n)) if n == "i64"));
     }
@@ -3453,7 +4196,9 @@ mod tests {
         );
         // Re-parse the formatted source and verify the Union shape survives.
         let prog2 = parse(&formatted);
-        let Item::FnDef(f2) = &prog2.items[0] else { panic!("re-parse failed") };
+        let Item::FnDef(f2) = &prog2.items[0] else {
+            panic!("re-parse failed")
+        };
         let AxonType::Union(members) = &f2.params[0].ty else {
             panic!("expected Union after round-trip, got {:?}", f2.params[0].ty);
         };
@@ -3466,9 +4211,15 @@ mod tests {
         // Wrap in a fn so the parser is happy, then extract the Literal::Str value.
         let wrapped = format!("fn f(){{ let x = {src} }}");
         let prog = parse(&wrapped);
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
-        let Expr::Block(stmts) = &f.body else { panic!("not a Block") };
-        let Expr::Let { value, .. } = &stmts[0].expr else { panic!("not a Let") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!("not a Block")
+        };
+        let Expr::Let { value, .. } = &stmts[0].expr else {
+            panic!("not a Let")
+        };
         match value.as_ref() {
             Expr::Literal(Literal::Str(s)) => s.clone(),
             other => panic!("expected Literal::Str, got {:?}", other),
@@ -3516,12 +4267,15 @@ mod tests {
     #[test]
     fn parse_generic_fn_with_single_bound() {
         let prog = parse("fn f<T: Display>(x: T) -> str { \"ok\" }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         assert_eq!(f.generic_params, vec!["T".to_string()]);
         assert_eq!(
             f.generic_bounds,
             vec![("T".to_string(), vec!["Display".to_string()])],
-            "expected a single Display bound on T, got {:?}", f.generic_bounds
+            "expected a single Display bound on T, got {:?}",
+            f.generic_bounds
         );
     }
 
@@ -3529,12 +4283,18 @@ mod tests {
     #[test]
     fn parse_generic_fn_with_multiple_bounds() {
         let prog = parse("fn f<T: Display + Clone>(x: T) -> T { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         assert_eq!(f.generic_params, vec!["T".to_string()]);
         assert_eq!(
             f.generic_bounds,
-            vec![("T".to_string(), vec!["Display".to_string(), "Clone".to_string()])],
-            "expected Display + Clone bounds on T, got {:?}", f.generic_bounds
+            vec![(
+                "T".to_string(),
+                vec!["Display".to_string(), "Clone".to_string()]
+            )],
+            "expected Display + Clone bounds on T, got {:?}",
+            f.generic_bounds
         );
     }
 
@@ -3544,7 +4304,9 @@ mod tests {
     #[test]
     fn parse_generic_struct_with_bound() {
         let prog = parse("type Wrapper<T: Clone> = { val: T }");
-        let Item::TypeDef(t) = &prog.items[0] else { panic!("not a TypeDef") };
+        let Item::TypeDef(t) = &prog.items[0] else {
+            panic!("not a TypeDef")
+        };
         assert_eq!(t.name, "Wrapper");
         assert_eq!(t.generic_params, vec!["T".to_string()]);
     }
@@ -3554,13 +4316,16 @@ mod tests {
     #[test]
     fn parse_impl_with_bound() {
         let prog = parse("impl<T: Display> MyTrait for Wrapper { fn x(self) -> i64 { 0 } }");
-        let Item::ImplBlock(b) = &prog.items[0] else { panic!("not an ImplBlock") };
+        let Item::ImplBlock(b) = &prog.items[0] else {
+            panic!("not an ImplBlock")
+        };
         assert_eq!(b.trait_name, "MyTrait");
         assert_eq!(b.generic_params, vec!["T".to_string()]);
         assert_eq!(
             b.generic_bounds,
             vec![("T".to_string(), vec!["Display".to_string()])],
-            "expected Display bound on impl parameter T, got {:?}", b.generic_bounds
+            "expected Display bound on impl parameter T, got {:?}",
+            b.generic_bounds
         );
     }
 
@@ -3572,12 +4337,15 @@ mod tests {
     #[test]
     fn parse_where_clause_if_applicable() {
         let prog = parse("fn f<T: Display, U>(x: T, y: U) -> T { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         assert_eq!(f.generic_params, vec!["T".to_string(), "U".to_string()]);
         assert_eq!(
             f.generic_bounds,
             vec![("T".to_string(), vec!["Display".to_string()])],
-            "only T should carry a bound, got {:?}", f.generic_bounds
+            "only T should carry a bound, got {:?}",
+            f.generic_bounds
         );
     }
 
@@ -3585,21 +4353,29 @@ mod tests {
     fn parse_phase6_with_handler() {
         // Named handler: `with retry { body }`.
         let prog = parse("fn f() -> i64 { with retry { 1 } }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
-        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!("not a block")
+        };
         match &stmts[0].expr {
             Expr::WithHandler { handler, .. } => {
-                assert!(matches!(handler.as_ref(), crate::ast::HandlerExpr::Named(n) if n == "retry"));
+                assert!(
+                    matches!(handler.as_ref(), crate::ast::HandlerExpr::Named(n) if n == "retry")
+                );
             }
             other => panic!("expected WithHandler, got {other:?}"),
         }
 
         // Inline handler with an `on` arm and a `return` arm.
-        let prog = parse(
-            "fn f() -> i64 { with handler { on IO(p) => p  return(v) => v } { 7 } }",
-        );
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
-        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        let prog = parse("fn f() -> i64 { with handler { on IO(p) => p  return(v) => v } { 7 } }");
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!("not a block")
+        };
         match &stmts[0].expr {
             Expr::WithHandler { handler, body } => {
                 let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() else {
@@ -3629,8 +4405,12 @@ mod tests {
         );
         // Only the fn is an item — the handler def produced none.
         assert_eq!(prog.items.len(), 1, "handler def must not emit an item");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
-        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!("not a block")
+        };
         match &stmts[0].expr {
             Expr::WithHandler { handler, .. } => {
                 // `retry` is DEFINED, so it desugared to Inline (not Named).
@@ -3645,9 +4425,15 @@ mod tests {
 
         // An UNDEFINED named handler stays Named (sound — discharges nothing).
         let prog = parse("fn f() -> i64 { with undefined_h { 1 } }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
-        let Expr::Block(stmts) = &f.body else { panic!("not a block") };
-        let Expr::WithHandler { handler, .. } = &stmts[0].expr else { panic!("no with") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
+        let Expr::Block(stmts) = &f.body else {
+            panic!("not a block")
+        };
+        let Expr::WithHandler { handler, .. } = &stmts[0].expr else {
+            panic!("no with")
+        };
         assert!(
             matches!(handler.as_ref(), crate::ast::HandlerExpr::Named(n) if n == "undefined_h"),
             "undefined named handler must stay Named"
@@ -3659,17 +4445,27 @@ mod tests {
         // A `surface` file rejects raw effect-row syntax (E1306).
         let src = "surface\nfn f(x: i64) -> i64 | {IO} { x }";
         let err = crate::parse_source(src).expect_err("surface + row must fail");
-        assert!(format!("{err}").contains("E1306"), "expected E1306, got {err}");
+        assert!(
+            format!("{err}").contains("E1306"),
+            "expected E1306, got {err}"
+        );
 
         // A `substrate` file (and the default) admits rows.
         let prog = parse("substrate\nfn f(x: i64) -> i64 | {IO} { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         assert!(f.effect_row.is_some(), "substrate file should keep the row");
 
         // A `surface` file with no rows parses fine, and the marker is consumed
         // (not treated as an item).
         let prog = parse("surface\nfn add(a: i64, b: i64) -> i64 { a + b }");
-        assert_eq!(prog.items.len(), 1, "marker must not become an item: {:?}", prog.items.len());
+        assert_eq!(
+            prog.items.len(),
+            1,
+            "marker must not become an item: {:?}",
+            prog.items.len()
+        );
 
         // `surface` / `substrate` as an ordinary identifier elsewhere is fine.
         let prog = parse("fn f() -> i64 { let surface = 5\n surface }");
@@ -3680,33 +4476,43 @@ mod tests {
     fn parse_phase6_effect_row_clause() {
         // No clause ⇒ pure (None).
         let prog = parse("fn add(a: i64, b: i64) -> i64 { a + b }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         assert!(f.effect_row.is_none(), "no clause means the empty/pure row");
 
         // Concrete effects in declaration order.
         let prog = parse("fn save(p: str) -> i64 | {IO, Net} { 0 }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         let row = f.effect_row.as_ref().expect("a row clause");
         assert_eq!(row.effects, vec!["IO".to_string(), "Net".to_string()]);
         assert!(row.row_var.is_none());
 
         // Row-extension `...e` closes an open row.
         let prog = parse("fn with_log(x: i64) -> i64 | {IO, ...e} { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         let row = f.effect_row.as_ref().expect("a row clause");
         assert_eq!(row.effects, vec!["IO".to_string()]);
         assert_eq!(row.row_var.as_deref(), Some("e"));
 
         // A bare row variable with no concrete effects.
         let prog = parse("fn forward(x: i64) -> i64 | {...e} { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         let row = f.effect_row.as_ref().expect("a row clause");
         assert!(row.effects.is_empty());
         assert_eq!(row.row_var.as_deref(), Some("e"));
 
         // An explicitly empty row `| {}` parses to an empty, closed row.
         let prog = parse("fn pure_x(x: i64) -> i64 | {} { x }");
-        let Item::FnDef(f) = &prog.items[0] else { panic!("not a FnDef") };
+        let Item::FnDef(f) = &prog.items[0] else {
+            panic!("not a FnDef")
+        };
         let row = f.effect_row.as_ref().expect("an (empty) row clause");
         assert!(row.effects.is_empty() && row.row_var.is_none());
     }

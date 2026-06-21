@@ -235,6 +235,24 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "Result<str, str>",
         doc: "Spawn a process: run `cmd` with `args`, returning Ok(stdout) on success or Err(message) on failure. Exercises the `exec` capability — a `@[contained(exec: none)]` fn that calls this is rejected at compile time (E1001), and `never: [exec]` hard-denies it. The active host may refuse exec entirely (a sandboxed/browser host returns Err). Use for shelling out to external tools from a trusted zone.",
     },
+    BuiltinFn {
+        name: "http_get",
+        params: &[("url", "str"), ("headers", "str")],
+        ret: "Result<str, str>",
+        doc: "HTTP GET `url` with `headers` (a JSON object string, pass `\"\"` for no custom headers). Returns Ok(body) on a 2xx response or Err(\"HTTP <status>: <body>\") on failure. Carries the `Net` effect row. Requires the `asi-runtime` Cargo feature.",
+    },
+    BuiltinFn {
+        name: "http_post",
+        params: &[("url", "str"), ("headers", "str"), ("body", "str")],
+        ret: "Result<str, str>",
+        doc: "HTTP POST `url` with `headers` (JSON object string) and `body`. Returns Ok(response_body) on 2xx or Err(\"HTTP <status>: <body>\") on failure. Carries the `Net` effect row.",
+    },
+    BuiltinFn {
+        name: "http_sse",
+        params: &[("url", "str"), ("headers", "str"), ("on_event", "fn(str) -> ()")],
+        ret: "Result<i64, str>",
+        doc: "Stream Server-Sent Events from `url`. Sets `Accept: text/event-stream` automatically. `headers` is a JSON object string (pass `\"\"` for none). `on_event` is called once per SSE event with the `data:` payload. Returns Ok(event_count) or Err(message). Carries the `Net` effect row. Requires the `asi-runtime` Cargo feature.",
+    },
     // ── Phase 4: Time builtins ────────────────────────────────────────────────
     BuiltinFn {
         name: "sleep_ms",
@@ -1618,6 +1636,82 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "f64",
         doc: "Phase 13 Slice 2: P(dist op k) — tail probability of a distribution in a refinement predicate.",
     },
+    // ── R17 HAL builtins (substrate-only; Hal effect row; E0910 in interpreter) ─
+    BuiltinFn {
+        name: "ptr_from_addr",
+        params: &[("addr", "i64")],
+        ret: "i64",  // opaque handle; codegen lowers to ptr
+        doc: "R17 HAL: construct a raw pointer from a physical address (i64 since literals default to i64). \
+              Substrate-only (@[hal] required). Returns an opaque handle; pass to volatile_load/volatile_store.",
+    },
+    BuiltinFn {
+        name: "volatile_load_u8",
+        params: &[("ptr", "i64")],
+        ret: "i64",  // zero-extended to i64 for the value stack
+        doc: "R17 HAL: volatile load of a u8 from an MMIO address (no optimizer elision). \
+              Returns i64 (zero-extended from u8). Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_load_u16",
+        params: &[("ptr", "i64")],
+        ret: "i64",
+        doc: "R17 HAL: volatile load of a u16 from an MMIO address. Returns i64 (zero-extended). Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_load_u32",
+        params: &[("ptr", "i64")],
+        ret: "i64",
+        doc: "R17 HAL: volatile load of a u32 from an MMIO address. Returns i64 (zero-extended). Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_load_u64",
+        params: &[("ptr", "i64")],
+        ret: "i64",
+        doc: "R17 HAL: volatile load of a u64 from an MMIO address. Returns i64. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_store_u8",
+        params: &[("ptr", "i64"), ("val", "i64")],
+        ret: "()",
+        doc: "R17 HAL: volatile store of a u8 (truncated from i64) to an MMIO address. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_store_u16",
+        params: &[("ptr", "i64"), ("val", "i64")],
+        ret: "()",
+        doc: "R17 HAL: volatile store of a u16 (truncated from i64) to an MMIO address. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_store_u32",
+        params: &[("ptr", "i64"), ("val", "i64")],
+        ret: "()",
+        doc: "R17 HAL: volatile store of a u32 (truncated from i64) to an MMIO address. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "volatile_store_u64",
+        params: &[("ptr", "i64"), ("val", "i64")],
+        ret: "()",
+        doc: "R17 HAL: volatile store of a u64 to an MMIO address. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "hlt",
+        params: &[],
+        ret: "()",
+        doc: "R17 HAL: execute the x86_64 `hlt` instruction — halts the CPU until the next interrupt. \
+              Used in the idle loop of a freestanding kernel. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "cli",
+        params: &[],
+        ret: "()",
+        doc: "R17 HAL: execute the x86_64 `cli` instruction — clear interrupt flag (disable interrupts). Substrate-only.",
+    },
+    BuiltinFn {
+        name: "sti",
+        params: &[],
+        ret: "()",
+        doc: "R17 HAL: execute the x86_64 `sti` instruction — set interrupt flag (enable interrupts). Substrate-only.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1677,6 +1771,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "println" | "print" | "eprintln" | "eprint"
             | "read_line" | "read_file" | "write_file"
             | "exec"
+            // network — raw HTTP
+            | "http_get" | "http_post" | "http_sse"
             // time / scheduling / randomness — non-deterministic
             | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
             // environment / process control
@@ -1697,6 +1793,11 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "sandbox_run"
             // Phase 13: distribution sampling (Random effect)
             | "gaussian_sample" | "beta_sample" | "categorical_sample"
+            // R17 HAL: raw hardware access (Hal effect)
+            | "ptr_from_addr"
+            | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32" | "volatile_load_u64"
+            | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
+            | "hlt" | "cli" | "sti"
     )
 }
 
@@ -1722,6 +1823,9 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "println" | "print" | "eprintln" | "eprint" | "read_line" | "read_file" | "write_file"
         | "env_var" | "exit" => &["IO"],
         "exec" => &["IO"],
+
+        // Network — raw HTTP calls.
+        "http_get" | "http_post" | "http_sse" => &["Net"],
 
         // Time / scheduling.
         "now_ms" | "sleep_ms" => &["Time"],
@@ -1763,6 +1867,24 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // the fn does, but the sandbox itself is modeled as IO to prevent it
         // from appearing inside pure contexts without annotation.
         "sandbox_run" => &["IO"],
+
+        // R17 HAL builtins — raw hardware access; substrate-only.
+        // The `Hal` row is a strict superset of IO: anything that leaks Hal into
+        // an unannotated context triggers E1310 (effect-row subsumption), and
+        // surface files cannot declare `| {Hal}` (E1306), closing the laundering
+        // path automatically.
+        "ptr_from_addr"
+        | "volatile_load_u8"
+        | "volatile_load_u16"
+        | "volatile_load_u32"
+        | "volatile_load_u64"
+        | "volatile_store_u8"
+        | "volatile_store_u16"
+        | "volatile_store_u32"
+        | "volatile_store_u64"
+        | "hlt"
+        | "cli"
+        | "sti" => &["Hal"],
 
         // Everything else is pure.
         _ => &[],
@@ -1816,6 +1938,21 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     // attributes here so they don't warn (W0001); the checker does the work.
     "pure",
     "total",
+    // R17 HAL attributes — substrate-only; checker enforces substrate context.
+    // `@[hal]` grants the Hal capability to the fn's body (effects: `| {Hal}`).
+    // `@[entry]` marks the bare-metal entry point (replaces host main/_start).
+    // `@[panic_handler]` is the no-return panic hook for freestanding builds.
+    // `@[no_alloc]` marks an ISR/early-boot fn that must not allocate (E1704, Slice 3).
+    "hal",
+    "entry",
+    "panic_handler",
+    "no_alloc",
+    // Layout control (R17 Slice 3)
+    "repr",
+    "packed",
+    "align",
+    "naked",
+    "interrupt",
 ];
 
 // ── Tests ─────────────────────────────────────────────────────────────────────

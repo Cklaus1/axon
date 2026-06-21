@@ -1,0 +1,84 @@
+// R17 Slice 0 — "axon booted" kernel
+//
+// A minimal freestanding Axon kernel for x86-64 that writes "axon booted\n"
+// to the serial port (COM1 at I/O address 0x3F8 = 1016) and halts.
+//
+// Type-checks with:    axon check examples/kernel/hello_kernel.ax
+// Builds with:         axon build examples/kernel/hello_kernel.ax --freestanding
+// Boots under QEMU:    qemu-system-x86_64 -nographic -kernel hello_kernel.bin
+//
+// Serial port layout (16550 UART, COM1):
+//   0x3F8 (1016): THR — transmit holding register
+//   0x3FD (1021): LSR — line status register; bit 5 = transmitter empty
+
+substrate
+
+// COM1 base address (decimal: 0x3F8 = 1016)
+let SERIAL_BASE = 1016
+
+// Line status register: base + 5
+let SERIAL_LSR = 1021
+
+// LSR bit 5 mask: transmitter empty (THRE) — safe to write
+let SERIAL_THRE = 32
+
+// ── Serial port HAL ──────────────────────────────────────────────────────────
+
+@[hal]
+fn serial_ready() -> bool | {Hal} {
+    let lsr = volatile_load_u8(SERIAL_LSR)
+    // volatile_load_u8 returns i64 (zero-extended from u8)
+    // bit 5 (mask=32) set means THRE: transmitter empty, ready to write
+    (lsr & SERIAL_THRE) != 0
+}
+
+@[hal]
+fn serial_write_byte(b: i64) | {Hal} {
+    while !serial_ready() {}
+    volatile_store_u8(SERIAL_BASE, b)
+}
+
+// Write the bytes of an ASCII message to the serial port.
+// Each character is passed as a u8 literal (ASCII code).
+@[hal]
+fn serial_write_hello() | {Hal} {
+    // "axon booted\n" in ASCII
+    // a=97 x=120 o=111 n=110 space=32 b=98 o=111 o=111 t=116 e=101 d=100 \n=10
+    serial_write_byte(97)   // a
+    serial_write_byte(120)  // x
+    serial_write_byte(111)  // o
+    serial_write_byte(110)  // n
+    serial_write_byte(32)   // space
+    serial_write_byte(98)   // b
+    serial_write_byte(111)  // o
+    serial_write_byte(111)  // o
+    serial_write_byte(116)  // t
+    serial_write_byte(101)  // e
+    serial_write_byte(100)  // d
+    serial_write_byte(10)   // \n
+}
+
+// ── Kernel entry ─────────────────────────────────────────────────────────────
+
+@[entry]
+fn kmain() | {Hal} {
+    serial_write_hello()
+    // Idle loop: halt the CPU on each interrupt.
+    while true {
+        hlt()
+    }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    // P=80 A=65 N=78 I=73 C=67 \n=10
+    serial_write_byte(80)
+    serial_write_byte(65)
+    serial_write_byte(78)
+    serial_write_byte(73)
+    serial_write_byte(67)
+    serial_write_byte(10)
+    while true {
+        hlt()
+    }
+}
