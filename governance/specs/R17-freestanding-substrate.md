@@ -204,7 +204,8 @@ gated to `substrate` files + the `Hal` capability + the TCB, so no `surface` cod
 - [x] `@[naked]` → LLVM "naked" attribute; `@[interrupt]` → x86-interrupt CC 83.
 - [x] `hlt`/`cli`/`sti` HAL builtins emit real inline asm (not const_zero placeholders).
 - [x] `scripts/kernel.ld` + `--linker-script` CLI option wired into freestanding link.
-- [ ] `axon_kernel_handles_timer_interrupt` — an `@[interrupt]` ISR set in an IDT fires under QEMU (QEMU boot test, deferred).
+- [x] `r17_slice1_qemu_boot_writes_axon_s1` — kernel boots under QEMU and writes "axon s1" to debugcon (76860bc). Uses multiboot1 + boot_stub.asm (32→64 mode switch) + port_out_u8 for QEMU debugcon; test skips gracefully if nasm/qemu absent.
+- [ ] `axon_kernel_handles_timer_interrupt` — full IDT + PIC + timer ISR fires under QEMU (deferred to Slice 2; requires port_in_u8 for PIC mask reads, @[repr(C)] for IDT entries).
 
 **Slice 2 (SMP + atomics):**
 - [ ] `axon_smp_atomic_counter_is_race_free` — two cores increment an atomic; final value is exact.
