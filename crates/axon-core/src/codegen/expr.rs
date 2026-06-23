@@ -8608,6 +8608,87 @@ impl<'ctx> super::Codegen<'ctx> {
                     self.emit_inline_asm("sti", "", "", "memory");
                     return Some(self.ir.context.i64_type().const_zero().into());
                 }
+                // R17 Slice 1: x86 I/O port access via inline asm
+                "port_out_u8" if args.len() == 2 => {
+                    if let (Some(port_v), Some(val_v)) = (
+                        self.emit_expr(&args[0], fn_val),
+                        self.emit_expr(&args[1], fn_val),
+                    ) {
+                        let i16_ty = self.ir.context.i16_type();
+                        let i8_ty = self.ir.context.i8_type();
+                        let void_ty = self.ir.context.void_type();
+                        let port_t = self
+                            .ir
+                            .builder
+                            .build_int_truncate(port_v.into_int_value(), i16_ty, "port16")
+                            .unwrap();
+                        let val_t = self
+                            .ir
+                            .builder
+                            .build_int_truncate(val_v.into_int_value(), i8_ty, "val8")
+                            .unwrap();
+                        // outb %al, %dx  (AT&T: src, dst)
+                        let fn_ty = void_ty.fn_type(&[i16_ty.into(), i8_ty.into()], false);
+                        let asm_ptr = self.ir.context.create_inline_asm(
+                            fn_ty,
+                            "outb $1, $0".to_string(),
+                            "{dx},{al},~{memory}".to_string(),
+                            true,
+                            false,
+                            None,
+                            false,
+                        );
+                        self.ir
+                            .builder
+                            .build_indirect_call(
+                                fn_ty,
+                                asm_ptr,
+                                &[port_t.into(), val_t.into()],
+                                "outb",
+                            )
+                            .unwrap();
+                        return Some(self.ir.context.i64_type().const_zero().into());
+                    }
+                }
+                "port_in_u8" if args.len() == 1 => {
+                    if let Some(port_v) = self.emit_expr(&args[0], fn_val) {
+                        let i16_ty = self.ir.context.i16_type();
+                        let i8_ty = self.ir.context.i8_type();
+                        let i64_ty = self.ir.context.i64_type();
+                        let port_t = self
+                            .ir
+                            .builder
+                            .build_int_truncate(port_v.into_int_value(), i16_ty, "port16")
+                            .unwrap();
+                        // inb %dx, %al  (AT&T: src, dst)
+                        let fn_ty = i8_ty.fn_type(&[i16_ty.into()], false);
+                        let asm_ptr = self.ir.context.create_inline_asm(
+                            fn_ty,
+                            "inb $1, $0".to_string(),
+                            "={al},{dx},~{memory}".to_string(),
+                            true,
+                            false,
+                            None,
+                            false,
+                        );
+                        let call = self
+                            .ir
+                            .builder
+                            .build_indirect_call(fn_ty, asm_ptr, &[port_t.into()], "inb")
+                            .unwrap();
+                        let i8_result = call
+                            .try_as_basic_value()
+                            .left()
+                            .unwrap()
+                            .into_int_value();
+                        let ext = self
+                            .ir
+                            .builder
+                            .build_int_z_extend(i8_result, i64_ty, "port_in_ext")
+                            .unwrap();
+                        return Some(ext.into());
+                    }
+                }
                 _ => {}
             }
         }

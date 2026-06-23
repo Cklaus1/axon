@@ -233,6 +233,42 @@ pub(super) fn emit_object_and_link(
     }
 }
 
+/// Emit just the object file for a freestanding build (no linking step).
+/// Used by `axon build --freestanding --emit-obj` to let the caller supply
+/// a boot stub object and run the final link manually.
+pub(super) fn emit_freestanding_obj(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: Option<&str>,
+) -> Result<(), String> {
+    let triple_str = target_triple.unwrap_or("x86_64-unknown-none");
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(triple_str);
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
+    })?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::Static,
+            CodeModel::Kernel,
+        )
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+    module.set_triple(&triple);
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("freestanding object emit: {e}"))
+}
+
 /// Emit an object file and link it as a freestanding (bare-metal) ELF binary.
 ///
 /// Differences from the hosted path:

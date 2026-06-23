@@ -122,6 +122,30 @@ impl<'ctx> super::Codegen<'ctx> {
     ///
     /// Uses a static/kernel code model, omits axon-rt/libc, and sets the ELF
     /// entry symbol to the `@[entry]`-annotated function.
+    /// Compile to a freestanding object file only (no linking).
+    /// Used with `axon build --freestanding --emit-obj` so the caller can link
+    /// a boot stub alongside the kernel object.
+    pub fn compile_to_freestanding_obj(
+        &self,
+        output_path: &str,
+        release: bool,
+        target_triple: Option<&str>,
+        entry_fn: Option<&str>,
+    ) -> Result<(), String> {
+        self.prune_dead_functions_keep(
+            &["main", "on_panic", "__axon_kernel_panic"]
+                .iter()
+                .copied()
+                .chain(entry_fn)
+                .collect::<Vec<_>>(),
+        );
+        self.ir
+            .module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::emit_freestanding_obj(&self.ir.module, output_path, release, target_triple)
+    }
+
     pub fn compile_to_freestanding_binary(
         &self,
         output_path: &str,

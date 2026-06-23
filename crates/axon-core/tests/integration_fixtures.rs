@@ -1607,3 +1607,47 @@ fn verify_runtime_panic_fires_on_violation() {
         "expected the offending fn name in stderr, got:\nstdout:\n{run_stdout}\nstderr:\n{run_stderr}",
     );
 }
+
+// ── R17 Slice 1: QEMU boot test ──────────────────────────────────────────────
+
+/// Acceptance gate: `hello_kernel_slice1.ax` builds, boots under QEMU, and writes
+/// "axon s1" to the debugcon port (0xE9) captured via `-debugcon stdio`.
+///
+/// Skips gracefully if any required tool is missing (nasm, qemu-system-x86_64)
+/// or if the axon binary lacks codegen support (`--emit-obj` flag absent).
+/// This allows the test to live in CI (where tools are absent) without failing.
+#[test]
+fn r17_slice1_qemu_boot_writes_axon_s1() {
+    use std::process::Command;
+
+    let script = {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop(); // crates/axon-core → crates
+        p.pop(); // crates → repo root
+        p.push("scripts/qemu_boot_test.sh");
+        p
+    };
+    if !script.exists() {
+        panic!("missing scripts/qemu_boot_test.sh — was it deleted?");
+    }
+
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("failed to spawn qemu_boot_test.sh");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // Exit 0 = PASS, exit 1 = FAIL; the script prints "SKIP:" and exits 0 when
+    // tools are absent — so we only fail the test on an explicit FAIL exit.
+    if out.status.code() == Some(0) {
+        // Either PASS or SKIP — both are acceptable in CI.
+        return;
+    }
+
+    panic!(
+        "R17 Slice 1 QEMU boot test FAILED (exit {})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        out.status.code().unwrap_or(-1),
+    );
+}

@@ -132,6 +132,12 @@ enum Command {
         /// Use `scripts/kernel.ld` for the Axon default x86_64 kernel layout.
         #[arg(long, help = "Linker script path (R17 Slice 1)")]
         linker_script: Option<PathBuf>,
+
+        /// Emit just the object file (.o) without linking.
+        /// Useful when linking a boot stub alongside the kernel object.
+        /// The output path is used as-is (e.g. --out kernel.o).
+        #[arg(long, help = "Emit .o only, skip link step (R17 Slice 1)")]
+        emit_obj: bool,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -632,6 +638,7 @@ fn dispatch(command: Command) {
             cache_dir,
             freestanding,
             linker_script,
+            emit_obj,
         } => cmd_build(
             files,
             out,
@@ -641,6 +648,7 @@ fn dispatch(command: Command) {
             cache_dir,
             freestanding,
             linker_script,
+            emit_obj,
         ),
         Command::Goal {
             file,
@@ -2375,6 +2383,7 @@ fn cmd_build(
     _cache_dir: Option<PathBuf>,
     _freestanding: bool,
     _linker_script: Option<PathBuf>,
+    _emit_obj: bool,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2397,6 +2406,7 @@ fn cmd_build(
     cache_dir: Option<PathBuf>,
     freestanding: bool,
     linker_script: Option<PathBuf>,
+    emit_obj: bool,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2460,6 +2470,7 @@ fn cmd_build(
         freestanding,
         entry_fn: freestanding_entry,
         linker_script: linker_script.map(|p| p.to_string_lossy().into_owned()),
+        emit_obj,
     };
 
     // Warn if cross-compiling without cross.toml configuration.
@@ -2507,6 +2518,7 @@ struct BuildOptions {
     freestanding: bool,
     entry_fn: Option<String>,
     linker_script: Option<String>,
+    emit_obj: bool,
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -3966,6 +3978,7 @@ fn run_build_pipeline(
             opts.freestanding,
             opts.entry_fn.as_deref(),
             opts.linker_script.as_deref(),
+            opts.emit_obj,
             &mut infer_ctx,
             cache_slot,
         );
@@ -3982,6 +3995,7 @@ fn run_build_pipeline(
         opts.freestanding,
         opts.entry_fn.as_deref(),
         opts.linker_script.as_deref(),
+        opts.emit_obj,
         &mut infer_ctx,
         None,
     )
@@ -3989,6 +4003,7 @@ fn run_build_pipeline(
 
 /// Emit LLVM IR, optionally write bitcode to cache, then link.
 #[cfg(feature = "codegen")]
+#[allow(clippy::too_many_arguments)]
 fn build_ir_and_link(
     program: &mut axon_core::ast::Program,
     source_path: &std::path::Path,
@@ -3998,6 +4013,7 @@ fn build_ir_and_link(
     freestanding: bool,
     entry_fn: Option<&str>,
     linker_script: Option<&str>,
+    emit_obj: bool,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -4058,13 +4074,22 @@ fn build_ir_and_link(
     }
 
     if freestanding {
-        cg.compile_to_freestanding_binary(
-            &output.to_string_lossy(),
-            release,
-            target_triple,
-            entry_fn,
-            linker_script,
-        )
+        if emit_obj {
+            cg.compile_to_freestanding_obj(
+                &output.to_string_lossy(),
+                release,
+                target_triple,
+                entry_fn,
+            )
+        } else {
+            cg.compile_to_freestanding_binary(
+                &output.to_string_lossy(),
+                release,
+                target_triple,
+                entry_fn,
+                linker_script,
+            )
+        }
     } else {
         cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
     }

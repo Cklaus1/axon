@@ -4335,7 +4335,8 @@ impl<'p> Interp<'p> {
             // E0910 abort is safer than a silent wrong result.
             "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
             | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
-            | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti" => {
+            | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
+            | "port_out_u8" | "port_in_u8" => {
                 Err(crate::interp::Flow::Panic(format!(
                     "[E0910] `{name}` is a HAL builtin — it requires native codegen \
                      (`axon build --freestanding`) and cannot run in the interpreter. \

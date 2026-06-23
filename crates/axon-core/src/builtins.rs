@@ -1724,6 +1724,20 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "()",
         doc: "R17 HAL: execute the x86_64 `sti` instruction — set interrupt flag (enable interrupts). Substrate-only.",
     },
+    BuiltinFn {
+        name: "port_out_u8",
+        params: &[("port", "i64"), ("val", "i64")],
+        ret: "()",
+        doc: "R17 HAL: write one byte to an x86 I/O port (`outb val, port`). \
+              Used for PIC, serial UART, and debug console (port 0xE9 = QEMU debugcon). Substrate-only.",
+    },
+    BuiltinFn {
+        name: "port_in_u8",
+        params: &[("port", "i64")],
+        ret: "i64",
+        doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
+              Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1810,6 +1824,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32" | "volatile_load_u64"
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
+            | "port_out_u8" | "port_in_u8"
     )
 }
 
@@ -1887,7 +1902,8 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // path automatically.
         "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
-        | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti" => &["Hal"],
+        | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
+        | "port_out_u8" | "port_in_u8" => &["Hal"],
 
         // Everything else is pure.
         _ => &[],
