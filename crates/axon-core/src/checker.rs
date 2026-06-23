@@ -1857,6 +1857,7 @@ impl CheckCtx {
             | Expr::Break
             | Expr::Continue
             | Expr::Return(None)
+            | Expr::InlineAsm { .. }
             | Expr::Lambda { .. } => {}
         }
     }
@@ -2267,7 +2268,8 @@ impl CheckCtx {
             | Expr::None
             | Expr::Break
             | Expr::Continue
-            | Expr::Return(None) => {}
+            | Expr::Return(None)
+            | Expr::InlineAsm { .. } => {}
         }
     }
 
@@ -3020,6 +3022,12 @@ impl CheckCtx {
             // ── Spawn / Comptime ─────────────────────────────────────────────
             Expr::Spawn(inner) | Expr::Comptime(inner) => {
                 self.check_expr(inner, &format!("{node_path}.inner"), scope);
+            }
+
+            // ── Inline asm (R17 Slice 1) ─────────────────────────────────────
+            Expr::InlineAsm { .. } => {
+                // Type is Unit; no sub-expressions to walk. Hardware-only:
+                // the interpreter refuses this at runtime (E0910).
             }
 
             // ── Select ───────────────────────────────────────────────────────
@@ -5229,7 +5237,13 @@ fn collect_explicit_returns<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
             collect_explicit_returns(place, out);
             collect_explicit_returns(value, out);
         }
-        E::Return(None) | E::Ident(_) | E::Literal(_) | E::None | E::Break | E::Continue => {}
+        E::Return(None)
+        | E::Ident(_)
+        | E::Literal(_)
+        | E::None
+        | E::Break
+        | E::Continue
+        | E::InlineAsm { .. } => {}
     }
 }
 
@@ -5349,7 +5363,13 @@ fn each_subexpr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
                 f(&s.expr);
             }
         }
-        E::Ident(_) | E::Literal(_) | E::None | E::Return(None) | E::Break | E::Continue => {}
+        E::Ident(_)
+        | E::Literal(_)
+        | E::None
+        | E::Return(None)
+        | E::Break
+        | E::Continue
+        | E::InlineAsm { .. } => {}
     }
 }
 

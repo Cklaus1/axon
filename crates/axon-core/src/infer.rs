@@ -1394,6 +1394,9 @@ impl InferCtx {
             // ── Comptime ──────────────────────────────────────────────────────
             Expr::Comptime(body) => self.infer_expr(body, scope, ret_ty),
 
+            // ── Inline asm (R17 Slice 1) — always Unit ───────────────────────
+            Expr::InlineAsm { .. } => Type::Unit,
+
             // ── Lambda ────────────────────────────────────────────────────────
             Expr::Lambda {
                 params,

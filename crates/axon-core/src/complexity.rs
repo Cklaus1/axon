@@ -477,6 +477,7 @@ fn expr_cost(e: &Expr, acc: &mut Acc, depth: u64) -> u64 {
                 child!(&s.expr);
             }
         }
+        Expr::InlineAsm { .. } => acc.add("InlineAsm", KIND_BITS),
     }
 
     max_depth

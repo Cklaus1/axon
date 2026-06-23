@@ -572,7 +572,65 @@ impl<'ctx> super::Codegen<'ctx> {
 
             // ── FmtStr: lower to a chain of axon_concat calls ────────────────
             ast::Expr::FmtStr { parts } => self.emit_fmt_str(parts, fn_val),
+
+            // ── Inline asm (R17 Slice 1) ──────────────────────────────────────
+            ast::Expr::InlineAsm {
+                template,
+                outputs,
+                inputs,
+                clobbers,
+            } => {
+                self.emit_inline_asm(template, outputs, inputs, clobbers);
+                None
+            }
         }
+    }
+
+    /// Emit an `asm(template : outputs : inputs : clobbers)` expression as an
+    /// LLVM inline-asm call. Always returns void (Unit in Axon).
+    fn emit_inline_asm(&mut self, template: &str, outputs: &str, inputs: &str, clobbers: &str) {
+        // Build the LLVM constraint string.
+        // Format: output_constraints,input_constraints,~{clobber1},~{clobber2}
+        let mut parts: Vec<String> = Vec::new();
+        if !outputs.is_empty() {
+            parts.push(outputs.to_string());
+        }
+        if !inputs.is_empty() {
+            parts.push(inputs.to_string());
+        }
+        if !clobbers.is_empty() {
+            for clobber in clobbers.split(',') {
+                let c = clobber.trim();
+                if !c.is_empty() {
+                    if c.starts_with("~{") {
+                        parts.push(c.to_string());
+                    } else {
+                        parts.push(format!("~{{{c}}}"));
+                    }
+                }
+            }
+        }
+        // Always mark as side-effecting and add ~{memory} as a baseline clobber
+        // so the compiler doesn't reorder/eliminate the asm.
+        if !parts.iter().any(|p| p == "~{memory}") {
+            parts.push("~{memory}".to_string());
+        }
+        let constraint_str = parts.join(",");
+        let void_ty = self.ir.context.void_type();
+        let asm_fn_ty = void_ty.fn_type(&[], false);
+        let asm_ptr = self.ir.context.create_inline_asm(
+            asm_fn_ty,
+            template.to_string(),
+            constraint_str,
+            true,  // sideeffects
+            false, // alignstack
+            None,  // dialect (None = ATT)
+            false, // can_throw
+        );
+        self.ir
+            .builder
+            .build_indirect_call(asm_fn_ty, asm_ptr, &[], "asm_call")
+            .unwrap();
     }
 
     // ── Literal emission ──────────────────────────────────────────────────────
@@ -8539,15 +8597,15 @@ impl<'ctx> super::Codegen<'ctx> {
                     }
                 }
                 "hlt" if args.is_empty() => {
-                    // `hlt` → inline asm `hlt` with no inputs/outputs (x86-64).
-                    // We call the LLVM inline-asm intrinsic via an asm string.
-                    // For now, lower to a nop loop: the build pipeline will
-                    // optimize this correctly when targeting bare-metal.
-                    // Full inline asm requires inkwell's inline_asm() method
-                    // (Slice 1). For Slice 0 just emit a void call placeholder.
+                    self.emit_inline_asm("hlt", "", "", "memory");
                     return Some(self.ir.context.i64_type().const_zero().into());
                 }
-                "cli" | "sti" if args.is_empty() => {
+                "cli" if args.is_empty() => {
+                    self.emit_inline_asm("cli", "", "", "memory");
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                }
+                "sti" if args.is_empty() => {
+                    self.emit_inline_asm("sti", "", "", "memory");
                     return Some(self.ir.context.i64_type().const_zero().into());
                 }
                 _ => {}

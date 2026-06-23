@@ -302,6 +302,16 @@ pub enum Expr {
     Spawn(Box<Expr>),
     Select(Vec<SelectArm>),
     Comptime(Box<Expr>),
+    /// R17 Slice 1 — inline assembly: `asm("template" ::: "clobbers")`.
+    /// Substrate/HAL-only; E0910 in the interpreter (no hardware target).
+    /// `outputs` / `inputs` are constraint strings (AT&T syntax, e.g. `"=r"`);
+    /// `clobbers` is a comma-separated list of register names + `"memory"`.
+    InlineAsm {
+        template: String,
+        outputs: String,
+        inputs: String,
+        clobbers: String,
+    },
     /// Phase 3: lambda params carry optional type annotations and a capture list.
     /// `captures` is filled in by the resolver; source syntax is unchanged: `|x, y| body`.
     Lambda {

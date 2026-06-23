@@ -2173,6 +2173,86 @@ impl Parser {
         Ok(Expr::Comptime(Box::new(body)))
     }
 
+    /// Parse R17 Slice 1 inline asm: `asm("template" ::: "clobbers")`.
+    /// Full syntax: `asm("template" : "output_constraints" : "input_constraints" : "clobbers")`
+    /// Any trailing section may be omitted (defaults to empty string).
+    /// Example: `asm("hlt" ::: "memory")`  — halt; clobbers memory
+    ///          `asm("cli")`               — disable interrupts, no explicit clobbers
+    fn parse_inline_asm(&mut self) -> Result<Expr> {
+        self.expect(&Token::Asm)?;
+        self.expect(&Token::LParen)?;
+        // template string (required)
+        let template = match self.advance()? {
+            Token::Str(s) => s.clone(),
+            other => {
+                return Err(ParseError::Other(format!(
+                    "asm: expected a string literal as the template, found `{other}`"
+                )))
+            }
+        };
+        // Optional sections separated by `:`.
+        //
+        // Logos greedily produces `::` as `ColonColon`, so the AT&T shorthand
+        // `:::` arrives as `ColonColon` + `Colon` (not `Colon` + `ColonColon`).
+        // We handle all three patterns:
+        //   `:::` → ColonColon + Colon  (outputs="" inputs="" clobbers)
+        //   `::` → ColonColon           (outputs="" then inputs/clobbers)
+        //   `:` → Colon                 (full explicit outputs : inputs : clobbers)
+        let mut outputs = String::new();
+        let mut inputs = String::new();
+        let mut clobbers = String::new();
+        if self.eat(&Token::ColonColon) {
+            // `::…` — outputs is empty; now inputs then optional `:` clobbers.
+            if let Some(Token::Str(_)) = self.peek() {
+                if let Token::Str(s) = self.advance()? {
+                    inputs = s.clone();
+                }
+            }
+            if self.eat(&Token::Colon) {
+                if let Some(Token::Str(_)) = self.peek() {
+                    if let Token::Str(s) = self.advance()? {
+                        clobbers = s.clone();
+                    }
+                }
+            }
+        } else if self.eat(&Token::Colon) {
+            // `:…` — outputs section.
+            if let Some(Token::Str(_)) = self.peek() {
+                if let Token::Str(s) = self.advance()? {
+                    outputs = s.clone();
+                }
+            }
+            // `::` after outputs = skip inputs section.
+            if self.eat(&Token::ColonColon) {
+                if let Some(Token::Str(_)) = self.peek() {
+                    if let Token::Str(s) = self.advance()? {
+                        clobbers = s.clone();
+                    }
+                }
+            } else if self.eat(&Token::Colon) {
+                if let Some(Token::Str(_)) = self.peek() {
+                    if let Token::Str(s) = self.advance()? {
+                        inputs = s.clone();
+                    }
+                }
+                if self.eat(&Token::Colon) {
+                    if let Some(Token::Str(_)) = self.peek() {
+                        if let Token::Str(s) = self.advance()? {
+                            clobbers = s.clone();
+                        }
+                    }
+                }
+            }
+        }
+        self.expect(&Token::RParen)?;
+        Ok(Expr::InlineAsm {
+            template,
+            outputs,
+            inputs,
+            clobbers,
+        })
+    }
+
     /// Parse `chan<T>()` — channel creation expression.
     ///
     /// Lowers to a `Call { callee: StructLit { "Chan::new" }, args: [Literal(16)] }`
@@ -2648,6 +2728,7 @@ impl Parser {
 
     fn parse_primary_inner(&mut self) -> Result<Expr> {
         match self.peek() {
+            Some(Token::Asm) => self.parse_inline_asm(),
             Some(Token::Comptime) => self.parse_comptime(),
             Some(Token::LBrace) => self.parse_block(),
             // Block-form expressions are valid operands too (e.g. `1 + if c {..}

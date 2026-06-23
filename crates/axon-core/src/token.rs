@@ -78,6 +78,10 @@ pub enum Token {
     /// `as_f64` / etc., which are polymorphic on the source type).
     #[token("as")]
     As,
+    /// R17 Slice 1: `asm("template" ::: "clobbers")` — inline assembly.
+    /// Substrate-only; E0910 under the interpreter (no hardware).
+    #[token("asm")]
+    Asm,
 
     // Operators
     #[token("->")]
@@ -167,7 +171,23 @@ pub enum Token {
     #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+", |lex| lex.slice().parse::<f64>().ok())]
     Float(f64),
 
-    #[regex(r"[0-9]+", |lex| lex.slice().parse::<i64>().map_err(|_| ()))]
+    // Hex integer: 0x3F8, 0xFF_FF_FF_FF (R17 Slice 1 — MMIO addresses need hex literals).
+    // Must be tried before the decimal regex so `0x` is not consumed as Int(0).
+    #[regex(r"0[xX][0-9a-fA-F][0-9a-fA-F_]*", |lex| {
+        let s = lex.slice();
+        let hex = &s[2..]; // strip "0x"/"0X"
+        i64::from_str_radix(&hex.replace('_', ""), 16).map_err(|_| ())
+    })]
+    // Binary integer: 0b1010, 0b1111_0000
+    #[regex(r"0[bB][01][01_]*", |lex| {
+        let s = lex.slice();
+        let bin = &s[2..]; // strip "0b"/"0B"
+        i64::from_str_radix(&bin.replace('_', ""), 2).map_err(|_| ())
+    })]
+    // Decimal integer with optional underscore separators: 1_000_000
+    #[regex(r"[0-9][0-9_]*", |lex| {
+        lex.slice().replace('_', "").parse::<i64>().map_err(|_| ())
+    })]
     Int(i64),
 
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
@@ -235,6 +255,7 @@ impl std::fmt::Display for Token {
             Token::Float(n) => write!(f, "{n}"),
             Token::Str(s) => write!(f, "\"{s}\""),
             Token::BlockComment => write!(f, "/*...*/"),
+            Token::Asm => write!(f, "asm"),
             other => write!(f, "{other:?}"),
         }
     }

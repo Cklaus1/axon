@@ -246,6 +246,7 @@ pub(super) fn emit_freestanding_binary(
     release: bool,
     target_triple: Option<&str>,
     entry_fn: Option<&str>,
+    linker_script: Option<&str>,
 ) -> Result<(), String> {
     let triple_str = target_triple.unwrap_or("x86_64-unknown-none");
     let opt = if release {
@@ -294,6 +295,10 @@ pub(super) fn emit_freestanding_binary(
             args.push("--entry".into());
             args.push(entry.into());
         }
+        if let Some(script) = linker_script {
+            args.push("-T".into());
+            args.push(script.into());
+        }
         Command::new(&ld)
             .args(&args)
             .status()
@@ -316,6 +321,9 @@ pub(super) fn emit_freestanding_binary(
         ];
         if let Some(entry) = entry_fn {
             args.push(format!("-Wl,--entry,{entry}"));
+        }
+        if let Some(script) = linker_script {
+            args.push(format!("-Wl,-T,{script}"));
         }
         Command::new(&cc)
             .args(&args)

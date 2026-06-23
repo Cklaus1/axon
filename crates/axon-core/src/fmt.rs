@@ -825,6 +825,27 @@ impl Formatter {
                 }
                 self.write("\"");
             }
+
+            Expr::InlineAsm {
+                template,
+                outputs,
+                inputs,
+                clobbers,
+            } => {
+                self.write("asm(\"");
+                self.write(template);
+                self.write("\"");
+                if !outputs.is_empty() || !inputs.is_empty() || !clobbers.is_empty() {
+                    self.write(" : \"");
+                    self.write(outputs);
+                    self.write("\" : \"");
+                    self.write(inputs);
+                    self.write("\" : \"");
+                    self.write(clobbers);
+                    self.write("\"");
+                }
+                self.write(")");
+            }
         }
     }
 

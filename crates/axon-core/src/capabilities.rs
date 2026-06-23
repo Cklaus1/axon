@@ -684,7 +684,12 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
         }
         Expr::Comptime(inner) => check_expr(inner, ctx),
         // Leaf nodes — no recursion needed.
-        Expr::Ident(_) | Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
+        Expr::Ident(_)
+        | Expr::Literal(_)
+        | Expr::None
+        | Expr::Break
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => {}
     }
 }
 

@@ -776,6 +776,21 @@ impl<'ctx> Codegen<'ctx> {
 
         self.fn_return_types.insert(name.to_string(), ret_sem);
         self.functions.insert(name.to_string(), fn_val);
+
+        // R17 Slice 1: @[naked] → LLVM "naked" attribute (no prologue/epilogue).
+        if f.attrs.iter().any(|a| a.name == "naked") {
+            let kind = inkwell::attributes::Attribute::get_named_enum_kind_id("naked");
+            if kind != 0 {
+                let attr = self.ir.context.create_enum_attribute(kind, 0);
+                fn_val.add_attribute(inkwell::attributes::AttributeLoc::Function, attr);
+            }
+        }
+
+        // R17 Slice 1: @[interrupt] → x86-interrupt calling convention (CC 83).
+        if f.attrs.iter().any(|a| a.name == "interrupt") {
+            fn_val.set_call_conventions(83);
+        }
+
         fn_val
     }
 

@@ -126,6 +126,12 @@ enum Command {
         /// the target to `x86_64-unknown-none`.  Required for kernel images.
         #[arg(long, help = "Freestanding bare-metal build (R17)")]
         freestanding: bool,
+
+        /// Linker script for freestanding builds (passed as -T to the linker).
+        /// Defaults to none; the linker uses its built-in layout.
+        /// Use `scripts/kernel.ld` for the Axon default x86_64 kernel layout.
+        #[arg(long, help = "Linker script path (R17 Slice 1)")]
+        linker_script: Option<PathBuf>,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -625,6 +631,7 @@ fn dispatch(command: Command) {
             no_cache,
             cache_dir,
             freestanding,
+            linker_script,
         } => cmd_build(
             files,
             out,
@@ -633,6 +640,7 @@ fn dispatch(command: Command) {
             no_cache,
             cache_dir,
             freestanding,
+            linker_script,
         ),
         Command::Goal {
             file,
@@ -2357,6 +2365,7 @@ fn try_link_wasm(obj: &Path, triple: &str) -> Option<PathBuf> {
 /// built with the `codegen` feature. (`axon run`/`check`/`test` work without it
 /// via the interpreter.)
 #[cfg(not(feature = "codegen"))]
+#[allow(clippy::too_many_arguments)]
 fn cmd_build(
     _files: Vec<PathBuf>,
     _out: Option<PathBuf>,
@@ -2365,6 +2374,7 @@ fn cmd_build(
     _no_cache: bool,
     _cache_dir: Option<PathBuf>,
     _freestanding: bool,
+    _linker_script: Option<PathBuf>,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2377,6 +2387,7 @@ fn cmd_build(
 }
 
 #[cfg(feature = "codegen")]
+#[allow(clippy::too_many_arguments)]
 fn cmd_build(
     files: Vec<PathBuf>,
     out: Option<PathBuf>,
@@ -2385,6 +2396,7 @@ fn cmd_build(
     no_cache: bool,
     cache_dir: Option<PathBuf>,
     freestanding: bool,
+    linker_script: Option<PathBuf>,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2447,6 +2459,7 @@ fn cmd_build(
         cache_dir,
         freestanding,
         entry_fn: freestanding_entry,
+        linker_script: linker_script.map(|p| p.to_string_lossy().into_owned()),
     };
 
     // Warn if cross-compiling without cross.toml configuration.
@@ -2493,6 +2506,7 @@ struct BuildOptions {
     cache_dir: Option<PathBuf>,
     freestanding: bool,
     entry_fn: Option<String>,
+    linker_script: Option<String>,
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -3951,6 +3965,7 @@ fn run_build_pipeline(
             target_triple,
             opts.freestanding,
             opts.entry_fn.as_deref(),
+            opts.linker_script.as_deref(),
             &mut infer_ctx,
             cache_slot,
         );
@@ -3966,6 +3981,7 @@ fn run_build_pipeline(
         target_triple,
         opts.freestanding,
         opts.entry_fn.as_deref(),
+        opts.linker_script.as_deref(),
         &mut infer_ctx,
         None,
     )
@@ -3981,6 +3997,7 @@ fn build_ir_and_link(
     target_triple: Option<&str>,
     freestanding: bool,
     entry_fn: Option<&str>,
+    linker_script: Option<&str>,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -4046,6 +4063,7 @@ fn build_ir_and_link(
             release,
             target_triple,
             entry_fn,
+            linker_script,
         )
     } else {
         cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)

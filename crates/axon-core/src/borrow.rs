@@ -396,7 +396,7 @@ impl OwnershipGraph {
                     self.pop_scope();
                 }
             }
-            Expr::Return(None) | Expr::Break | Expr::Continue => {}
+            Expr::Return(None) | Expr::Break | Expr::Continue | Expr::InlineAsm { .. } => {}
         }
     }
 

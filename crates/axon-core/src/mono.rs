@@ -259,6 +259,7 @@ fn subst_expr(expr: &Expr, subst: &TypeSubst) -> Expr {
                 .collect(),
         ),
         Expr::Comptime(inner) => Expr::Comptime(Box::new(subst_expr(inner, subst))),
+        Expr::InlineAsm { .. } => expr.clone(),
     }
 }
 
@@ -547,7 +548,8 @@ impl MonoContext {
             | Expr::None
             | Expr::Return(None)
             | Expr::Break
-            | Expr::Continue => {}
+            | Expr::Continue
+            | Expr::InlineAsm { .. } => {}
         }
     }
 }
@@ -797,6 +799,7 @@ fn rename_calls_expr(expr: &Expr, rename: &HashMap<String, String>) -> Expr {
         | Expr::None
         | Expr::Return(None)
         | Expr::Break
-        | Expr::Continue => expr.clone(),
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => expr.clone(),
     }
 }

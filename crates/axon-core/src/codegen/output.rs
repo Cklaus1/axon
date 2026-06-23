@@ -128,6 +128,7 @@ impl<'ctx> super::Codegen<'ctx> {
         release: bool,
         target_triple: Option<&str>,
         entry_fn: Option<&str>,
+        linker_script: Option<&str>,
     ) -> Result<(), String> {
         // Prune unused builtins (println, assert, str ops, ...) before linking.
         // For freestanding we preserve the @[entry] fn and any @[panic_handler]
@@ -149,6 +150,7 @@ impl<'ctx> super::Codegen<'ctx> {
             release,
             target_triple,
             entry_fn,
+            linker_script,
         )
     }
 

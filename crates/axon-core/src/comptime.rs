@@ -456,6 +456,7 @@ fn expr_kind_name(e: &Expr) -> &'static str {
         Expr::Break => "break",
         Expr::Continue => "continue",
         Expr::For { .. } => "for",
+        Expr::InlineAsm { .. } => "asm",
     }
 }
 

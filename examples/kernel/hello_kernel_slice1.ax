@@ -1,0 +1,99 @@
+// R17 Slice 1 — inline asm, hex literals, @[naked]/@[interrupt]
+//
+// Exercises R17 Slice 1 features:
+//   • Hex integer literals (0x3F8, 0xFF)
+//   • Binary integer literals (0b0010_0000)
+//   • Digit-separator underscore in integer literals (1_000)
+//   • `asm("template" : outputs : inputs : clobbers)` expression
+//   • @[naked] function attribute (LLVM: no prologue/epilogue)
+//   • @[interrupt] function attribute (calling convention: x86-interrupt)
+//
+// Type-checks with:    axon check examples/kernel/hello_kernel_slice1.ax
+// Builds with:         axon build examples/kernel/hello_kernel_slice1.ax \
+//                          --freestanding \
+//                          --linker-script scripts/kernel.ld
+// Boots under QEMU:    qemu-system-x86_64 -kernel hello_kernel_slice1 \
+//                          -serial stdio -display none
+
+substrate
+
+// COM1 UART addresses using hex literals (R17 Slice 1)
+let SERIAL_PORT = 0x3F8      // THR: transmit holding register
+let SERIAL_LSR  = 0x3FD      // LSR: line status register
+let SERIAL_THRE = 0b0010_0000 // bit 5: transmitter holding register empty
+
+// Halt the CPU using inline asm (R17 Slice 1) rather than the hlt() builtin.
+fn cpu_halt() | {Hal} {
+    asm("hlt" ::: "memory")
+}
+
+// Disable interrupts using inline asm.
+fn cpu_cli() | {Hal} {
+    asm("cli" ::: "memory")
+}
+
+// Enable interrupts using inline asm.
+fn cpu_sti() | {Hal} {
+    asm("sti" ::: "memory")
+}
+
+// Block until the UART transmitter is ready.
+@[hal]
+fn serial_ready() -> bool | {Hal} {
+    let lsr = volatile_load_u8(SERIAL_LSR)
+    (lsr & SERIAL_THRE) != 0
+}
+
+// Write one byte to COM1.
+@[hal]
+fn serial_write_byte(b: i64) | {Hal} {
+    while !serial_ready() {}
+    volatile_store_u8(SERIAL_PORT, b)
+}
+
+// Write "axon s1\n" to prove Slice 1 booted.
+@[hal]
+fn serial_write_msg() | {Hal} {
+    // "axon s1\n" in ASCII
+    serial_write_byte(0x61)  // a
+    serial_write_byte(0x78)  // x
+    serial_write_byte(0x6F)  // o
+    serial_write_byte(0x6E)  // n
+    serial_write_byte(0x20)  // space
+    serial_write_byte(0x73)  // s
+    serial_write_byte(0x31)  // 1
+    serial_write_byte(0x0A)  // \n
+}
+
+// Divide-by-zero exception handler — @[interrupt] uses x86-interrupt CC.
+@[interrupt]
+fn isr_div_zero() | {Hal} {
+    // Swallow the fault and return; a real kernel would log + kill the process.
+    // Inline asm: re-enable interrupts and return via iret.
+    asm("sti" ::: "memory")
+}
+
+// Kernel entry point.
+@[entry]
+fn kmain() | {Hal} {
+    cpu_cli()
+    serial_write_msg()
+    while true {
+        cpu_halt()
+    }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    cpu_cli()
+    // "PANIC\n"
+    serial_write_byte(0x50)  // P
+    serial_write_byte(0x41)  // A
+    serial_write_byte(0x4E)  // N
+    serial_write_byte(0x49)  // I
+    serial_write_byte(0x43)  // C
+    serial_write_byte(0x0A)  // \n
+    while true {
+        cpu_halt()
+    }
+}

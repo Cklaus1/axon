@@ -1101,7 +1101,11 @@ impl<'a> Resolver<'a> {
             }
 
             // ── Terminals: nothing to resolve ─────────────────────────────
-            Expr::Literal(_) | Expr::None | Expr::Break | Expr::Continue => {}
+            Expr::Literal(_)
+            | Expr::None
+            | Expr::Break
+            | Expr::Continue
+            | Expr::InlineAsm { .. } => {}
         }
     }
 
@@ -1391,7 +1395,8 @@ fn fill_captures_expr(expr: &mut Expr, outer: &std::collections::HashSet<String>
         | Expr::None
         | Expr::Return(None)
         | Expr::Break
-        | Expr::Continue => {}
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => {}
     }
 }
 
@@ -1528,7 +1533,12 @@ fn collect_free_vars(
             }
             collect_free_vars(body, bound, free);
         }
-        Expr::Literal(_) | Expr::None | Expr::Return(None) | Expr::Break | Expr::Continue => {}
+        Expr::Literal(_)
+        | Expr::None
+        | Expr::Return(None)
+        | Expr::Break
+        | Expr::Continue
+        | Expr::InlineAsm { .. } => {}
     }
 }
 
@@ -1702,7 +1712,12 @@ fn collect_binds_and_uses(
             collect_binds_and_uses(body, bound, bound_count, used);
         }
         // Leaves with no sub-expressions / no uses.
-        E::Literal(_) | E::None | E::Return(None) | E::Break | E::Continue => {}
+        E::Literal(_)
+        | E::None
+        | E::Return(None)
+        | E::Break
+        | E::Continue
+        | E::InlineAsm { .. } => {}
     }
 }
 

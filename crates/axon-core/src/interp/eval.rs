@@ -580,6 +580,11 @@ impl<'p> Interp<'p> {
 
             Expr::Comptime(inner) => self.eval(inner, env),
 
+            // R17 Slice 1: inline asm is hardware-only — refuses in the interpreter.
+            Expr::InlineAsm { .. } => Err(crate::interp::Flow::Panic(
+                "E0910: `asm(...)` requires a freestanding codegen build — use `axon build --freestanding`".into(),
+            )),
+
             // Cooperative concurrency: run the spawned body eagerly (single-
             // threaded), so its sends are queued before the main flow continues.
             Expr::Spawn(body) => {
