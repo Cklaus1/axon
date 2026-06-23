@@ -42,7 +42,7 @@ serde-json = ["dep:serde"]
 # Live LLM calls for the interpreter's ASI builtins (ai_complete / ai_extract_*).
 # Pulls in axon-ai (reqwest). Opt-in so the base interpreter stays dependency-light:
 #   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
-asi-runtime = ["dep:axon-ai"]
+asi-runtime = ["dep:axon-ai", "dep:reqwest"]
 # SMT-backed @[verify] static proof (R9). Pulls in the `z3` crate (links the
 # system libz3). OFF by default — the proof path is opt-in so the default
 # codegen/interp build never links z3 (same dependency-isolation discipline as
@@ -62,5 +62,6 @@ sha2  = "0.10"
 # SMT solver bindings (R9, `smt` feature only). Links the system libz3.
 z3 = { version = "0.12", optional = true }
 axon-ai = { path = "../axon-ai", optional = true }
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false, optional = true }
 # Phase-10 surface compiler (goal.md → .ax), for the `axon goal` command.
 axon-surface = { path = "../axon-surface" }

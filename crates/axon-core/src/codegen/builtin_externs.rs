@@ -100,43 +100,208 @@ pub(super) struct ExternSig {
 /// parity case), instead of a hand-written `declare_builtins` block.
 pub(super) const BUILTIN_EXTERNS: &[ExternSig] = &[
     // ── math scalars (migrated to axon-rt in R1 Batch 1/3) ──────────────────
-    ExternSig { axon_name: "abs_i64",  symbol: "__axon_abs_i64",  params: &[L::I64],          ret: L::I64, fn_key: Some("abs_i64"),  ret_type: Some(("abs_i64",  SemRet::I64)) },
-    ExternSig { axon_name: "abs_i32",  symbol: "__axon_abs_i32",  params: &[L::I32],          ret: L::I32, fn_key: Some("abs_i32"),  ret_type: Some(("abs_i32",  SemRet::I32)) },
-    ExternSig { axon_name: "abs_f64",  symbol: "__axon_abs_f64",  params: &[L::F64],          ret: L::F64, fn_key: Some("abs_f64"),  ret_type: Some(("abs_f64",  SemRet::F64)) },
-    ExternSig { axon_name: "sign_i64", symbol: "__axon_sign_i64", params: &[L::I64],          ret: L::I64, fn_key: Some("sign_i64"), ret_type: Some(("sign_i64", SemRet::I64)) },
-    ExternSig { axon_name: "pow_i64",  symbol: "__axon_pow_i64",  params: &[L::I64, L::I64],  ret: L::I64, fn_key: Some("pow_i64"),  ret_type: Some(("pow_i64",  SemRet::I64)) },
-    ExternSig { axon_name: "min_i64",  symbol: "__axon_min_i64",  params: &[L::I64, L::I64],  ret: L::I64, fn_key: Some("min_i64"),  ret_type: Some(("min_i64",  SemRet::I64)) },
-    ExternSig { axon_name: "max_i64",  symbol: "__axon_max_i64",  params: &[L::I64, L::I64],  ret: L::I64, fn_key: Some("max_i64"),  ret_type: Some(("max_i64",  SemRet::I64)) },
-    ExternSig { axon_name: "min_i32",  symbol: "__axon_min_i32",  params: &[L::I32, L::I32],  ret: L::I32, fn_key: Some("min_i32"),  ret_type: Some(("min_i32",  SemRet::I32)) },
-    ExternSig { axon_name: "max_i32",  symbol: "__axon_max_i32",  params: &[L::I32, L::I32],  ret: L::I32, fn_key: Some("max_i32"),  ret_type: Some(("max_i32",  SemRet::I32)) },
-    ExternSig { axon_name: "clamp_i64", symbol: "__axon_clamp_i64", params: &[L::I64, L::I64, L::I64], ret: L::I64, fn_key: Some("clamp_i64"), ret_type: Some(("clamp_i64", SemRet::I64)) },
-    ExternSig { axon_name: "clamp_f64", symbol: "__axon_clamp_f64", params: &[L::F64, L::F64, L::F64], ret: L::F64, fn_key: Some("clamp_f64"), ret_type: Some(("clamp_f64", SemRet::F64)) },
-
+    ExternSig {
+        axon_name: "abs_i64",
+        symbol: "__axon_abs_i64",
+        params: &[L::I64],
+        ret: L::I64,
+        fn_key: Some("abs_i64"),
+        ret_type: Some(("abs_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "abs_i32",
+        symbol: "__axon_abs_i32",
+        params: &[L::I32],
+        ret: L::I32,
+        fn_key: Some("abs_i32"),
+        ret_type: Some(("abs_i32", SemRet::I32)),
+    },
+    ExternSig {
+        axon_name: "abs_f64",
+        symbol: "__axon_abs_f64",
+        params: &[L::F64],
+        ret: L::F64,
+        fn_key: Some("abs_f64"),
+        ret_type: Some(("abs_f64", SemRet::F64)),
+    },
+    ExternSig {
+        axon_name: "sign_i64",
+        symbol: "__axon_sign_i64",
+        params: &[L::I64],
+        ret: L::I64,
+        fn_key: Some("sign_i64"),
+        ret_type: Some(("sign_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "pow_i64",
+        symbol: "__axon_pow_i64",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("pow_i64"),
+        ret_type: Some(("pow_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "min_i64",
+        symbol: "__axon_min_i64",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("min_i64"),
+        ret_type: Some(("min_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "max_i64",
+        symbol: "__axon_max_i64",
+        params: &[L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("max_i64"),
+        ret_type: Some(("max_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "min_i32",
+        symbol: "__axon_min_i32",
+        params: &[L::I32, L::I32],
+        ret: L::I32,
+        fn_key: Some("min_i32"),
+        ret_type: Some(("min_i32", SemRet::I32)),
+    },
+    ExternSig {
+        axon_name: "max_i32",
+        symbol: "__axon_max_i32",
+        params: &[L::I32, L::I32],
+        ret: L::I32,
+        fn_key: Some("max_i32"),
+        ret_type: Some(("max_i32", SemRet::I32)),
+    },
+    ExternSig {
+        axon_name: "clamp_i64",
+        symbol: "__axon_clamp_i64",
+        params: &[L::I64, L::I64, L::I64],
+        ret: L::I64,
+        fn_key: Some("clamp_i64"),
+        ret_type: Some(("clamp_i64", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "clamp_f64",
+        symbol: "__axon_clamp_f64",
+        params: &[L::F64, L::F64, L::F64],
+        ret: L::F64,
+        fn_key: Some("clamp_f64"),
+        ret_type: Some(("clamp_f64", SemRet::F64)),
+    },
     // ── str predicates / scalars (migrated in R1 Batch 2) ───────────────────
-    ExternSig { axon_name: "str_contains",    symbol: "__axon_str_contains",    params: &[L::Str, L::Str], ret: L::I1,  fn_key: Some("str_contains"),    ret_type: Some(("str_contains",    SemRet::Bool)) },
-    ExternSig { axon_name: "str_starts_with", symbol: "__axon_str_starts_with", params: &[L::Str, L::Str], ret: L::I1,  fn_key: Some("str_starts_with"), ret_type: Some(("str_starts_with", SemRet::Bool)) },
-    ExternSig { axon_name: "str_ends_with",   symbol: "__axon_str_ends_with",   params: &[L::Str, L::Str], ret: L::I1,  fn_key: Some("str_ends_with"),   ret_type: Some(("str_ends_with",   SemRet::Bool)) },
-    ExternSig { axon_name: "str_index_of",    symbol: "__axon_str_index_of",    params: &[L::Str, L::Str], ret: L::I64, fn_key: Some("str_index_of"),    ret_type: Some(("str_index_of",    SemRet::I64)) },
-    ExternSig { axon_name: "char_at",         symbol: "__axon_char_at",         params: &[L::Str, L::I64], ret: L::I64, fn_key: Some("char_at"),         ret_type: Some(("char_at",         SemRet::I64)) },
-    ExternSig { axon_name: "str_len",         symbol: "__axon_str_len",         params: &[L::Str],         ret: L::I64, fn_key: Some("str_len"),         ret_type: Some(("str_len",         SemRet::I64)) },
-
+    ExternSig {
+        axon_name: "str_contains",
+        symbol: "__axon_str_contains",
+        params: &[L::Str, L::Str],
+        ret: L::I1,
+        fn_key: Some("str_contains"),
+        ret_type: Some(("str_contains", SemRet::Bool)),
+    },
+    ExternSig {
+        axon_name: "str_starts_with",
+        symbol: "__axon_str_starts_with",
+        params: &[L::Str, L::Str],
+        ret: L::I1,
+        fn_key: Some("str_starts_with"),
+        ret_type: Some(("str_starts_with", SemRet::Bool)),
+    },
+    ExternSig {
+        axon_name: "str_ends_with",
+        symbol: "__axon_str_ends_with",
+        params: &[L::Str, L::Str],
+        ret: L::I1,
+        fn_key: Some("str_ends_with"),
+        ret_type: Some(("str_ends_with", SemRet::Bool)),
+    },
+    ExternSig {
+        axon_name: "str_index_of",
+        symbol: "__axon_str_index_of",
+        params: &[L::Str, L::Str],
+        ret: L::I64,
+        fn_key: Some("str_index_of"),
+        ret_type: Some(("str_index_of", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "char_at",
+        symbol: "__axon_char_at",
+        params: &[L::Str, L::I64],
+        ret: L::I64,
+        fn_key: Some("char_at"),
+        ret_type: Some(("char_at", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "str_len",
+        symbol: "__axon_str_len",
+        params: &[L::Str],
+        ret: L::I64,
+        fn_key: Some("str_len"),
+        ret_type: Some(("str_len", SemRet::I64)),
+    },
     // ── dict scalars (R1c) ──────────────────────────────────────────────────
     // These resolve at the call site via the bare `__axon_*` symbol
     // (`self.functions.get(...).or_else(module.get_function(...))`), so the
     // original blocks did NOT insert into `self.functions` — fn_key is None to
     // replicate that exactly. dict_get/set/remove/keys keep their bespoke
     // out-param lowering and are intentionally NOT in this table.
-    ExternSig { axon_name: "dict_new", symbol: "__axon_dict_new", params: &[],                ret: L::Ptr,  fn_key: None, ret_type: Some(("dict_new", SemRet::DictHandle)) },
-    ExternSig { axon_name: "dict_has", symbol: "__axon_dict_has", params: &[L::Ptr, L::Str],  ret: L::I1,   fn_key: None, ret_type: Some(("dict_has", SemRet::Bool)) },
-    ExternSig { axon_name: "dict_len", symbol: "__axon_dict_len", params: &[L::Ptr],          ret: L::I64,  fn_key: None, ret_type: Some(("dict_len", SemRet::I64)) },
-    ExternSig { axon_name: "dict_inc", symbol: "__axon_dict_inc", params: &[L::Ptr, L::Str],  ret: L::I64,  fn_key: None, ret_type: Some(("dict_inc", SemRet::I64)) },
+    ExternSig {
+        axon_name: "dict_new",
+        symbol: "__axon_dict_new",
+        params: &[],
+        ret: L::Ptr,
+        fn_key: None,
+        ret_type: Some(("dict_new", SemRet::DictHandle)),
+    },
+    ExternSig {
+        axon_name: "dict_has",
+        symbol: "__axon_dict_has",
+        params: &[L::Ptr, L::Str],
+        ret: L::I1,
+        fn_key: None,
+        ret_type: Some(("dict_has", SemRet::Bool)),
+    },
+    ExternSig {
+        axon_name: "dict_len",
+        symbol: "__axon_dict_len",
+        params: &[L::Ptr],
+        ret: L::I64,
+        fn_key: None,
+        ret_type: Some(("dict_len", SemRet::I64)),
+    },
+    ExternSig {
+        axon_name: "dict_inc",
+        symbol: "__axon_dict_inc",
+        params: &[L::Ptr, L::Str],
+        ret: L::I64,
+        fn_key: None,
+        ret_type: Some(("dict_inc", SemRet::I64)),
+    },
     // dict_merge(d1, d2) → a fresh Dict handle (d2 wins conflicts). Both args +
     // result are opaque i8* handles, so it's a plain registry row like dict_new.
-    ExternSig { axon_name: "dict_merge", symbol: "__axon_dict_merge", params: &[L::Ptr, L::Ptr], ret: L::Ptr, fn_key: Some("dict_merge"), ret_type: Some(("dict_merge", SemRet::DictHandle)) },
-
+    ExternSig {
+        axon_name: "dict_merge",
+        symbol: "__axon_dict_merge",
+        params: &[L::Ptr, L::Ptr],
+        ret: L::Ptr,
+        fn_key: Some("dict_merge"),
+        ret_type: Some(("dict_merge", SemRet::DictHandle)),
+    },
     // ── time builtins (Phase 4) ─────────────────────────────────────────────
-    ExternSig { axon_name: "sleep_ms", symbol: "__axon_sleep_ms", params: &[L::I64], ret: L::Void, fn_key: Some("sleep_ms"), ret_type: Some(("sleep_ms", SemRet::Unit)) },
-    ExternSig { axon_name: "now_ms",   symbol: "__axon_now_ms",   params: &[],       ret: L::I64,  fn_key: Some("now_ms"),   ret_type: Some(("now_ms",   SemRet::I64)) },
+    ExternSig {
+        axon_name: "sleep_ms",
+        symbol: "__axon_sleep_ms",
+        params: &[L::I64],
+        ret: L::Void,
+        fn_key: Some("sleep_ms"),
+        ret_type: Some(("sleep_ms", SemRet::Unit)),
+    },
+    ExternSig {
+        axon_name: "now_ms",
+        symbol: "__axon_now_ms",
+        params: &[],
+        ret: L::I64,
+        fn_key: Some("now_ms"),
+        ret_type: Some(("now_ms", SemRet::I64)),
+    },
 ];
 
 impl<'ctx> super::Codegen<'ctx> {
@@ -148,10 +313,14 @@ impl<'ctx> super::Codegen<'ctx> {
             L::I32 => ctx.i32_type().into(),
             L::F64 => ctx.f64_type().into(),
             L::I1 => ctx.bool_type().into(),
-            L::Ptr => ctx.i8_type().ptr_type(inkwell::AddressSpace::default()).into(),
+            L::Ptr => ctx
+                .i8_type()
+                .ptr_type(inkwell::AddressSpace::default())
+                .into(),
             L::Str => {
                 let i8_ptr = ctx.i8_type().ptr_type(inkwell::AddressSpace::default());
-                ctx.struct_type(&[ctx.i64_type().into(), i8_ptr.into()], false).into()
+                ctx.struct_type(&[ctx.i64_type().into(), i8_ptr.into()], false)
+                    .into()
             }
             L::Void => unreachable!("L::Void is a return-only shape"),
         }

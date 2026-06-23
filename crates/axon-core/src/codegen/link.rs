@@ -256,8 +256,9 @@ pub(super) fn emit_freestanding_binary(
 
     Target::initialize_all(&InitializationConfig::default());
     let triple = TargetTriple::create(triple_str);
-    let target = Target::from_triple(&triple)
-        .map_err(|e| format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}"))?;
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
+    })?;
     let machine = target
         .create_target_machine(
             &triple,
@@ -302,7 +303,9 @@ pub(super) fn emit_freestanding_binary(
         let cc = which::which("cc")
             .or_else(|_| which::which("gcc"))
             .or_else(|_| which::which("clang"))
-            .map_err(|_| "no linker found (tried x86_64-elf-ld, ld.bfd, ld, cc, gcc, clang)".to_string())?;
+            .map_err(|_| {
+                "no linker found (tried x86_64-elf-ld, ld.bfd, ld, cc, gcc, clang)".to_string()
+            })?;
         let mut args: Vec<String> = vec![
             obj_path.clone(),
             "-o".into(),

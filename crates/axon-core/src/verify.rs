@@ -100,7 +100,11 @@ pub struct VerifyError {
 
 impl VerifyError {
     fn new(code: &'static str, message: impl Into<String>, span: Span) -> Self {
-        Self { code, message: message.into(), span }
+        Self {
+            code,
+            message: message.into(),
+            span,
+        }
     }
 }
 
@@ -238,7 +242,12 @@ pub fn decode_verify_predicate_with_ident(expr: &Expr) -> Option<(String, BinOp,
 /// a different VC (at least one atom holds) and stays runtime-only in this slice.
 pub fn decode_verify_conjunction(expr: &Expr) -> Option<Vec<(String, BinOp, f64)>> {
     fn collect(expr: &Expr, out: &mut Vec<(String, BinOp, f64)>) -> bool {
-        if let Expr::BinOp { op: BinOp::And, left, right } = expr {
+        if let Expr::BinOp {
+            op: BinOp::And,
+            left,
+            right,
+        } = expr
+        {
             return collect(left, out) && collect(right, out);
         }
         if let Some(atom) = decode_verify_predicate_with_ident(expr) {
@@ -295,8 +304,8 @@ fn as_float_literal(expr: &Expr) -> Option<f64> {
 
 fn flip_op(op: BinOp) -> BinOp {
     match op {
-        BinOp::Lt   => BinOp::Gt,
-        BinOp::Gt   => BinOp::Lt,
+        BinOp::Lt => BinOp::Gt,
+        BinOp::Gt => BinOp::Lt,
         BinOp::LtEq => BinOp::GtEq,
         BinOp::GtEq => BinOp::LtEq,
         // Symmetric ops stay the same.
@@ -316,19 +325,39 @@ fn evaluate_predicate(op: &BinOp, min_conf: f64, lit: f64) -> Option<bool> {
         // `c >= lit` — sound iff min_conf >= lit.
         BinOp::GtEq => Some(min_conf >= lit),
         // `c > lit`  — sound iff min_conf > lit.
-        BinOp::Gt   => Some(min_conf > lit),
+        BinOp::Gt => Some(min_conf > lit),
         // `c <= lit` — sound iff *every* possible c <= lit. We only have a
         // lower bound, so this is undecidable unless lit >= 1.0.
-        BinOp::LtEq => if lit >= 1.0 { Some(true) } else { None },
+        BinOp::LtEq => {
+            if lit >= 1.0 {
+                Some(true)
+            } else {
+                None
+            }
+        }
         // `c < lit`  — sound iff every possible c < lit; undecidable unless lit > 1.0.
-        BinOp::Lt   => if lit > 1.0 { Some(true) } else { None },
+        BinOp::Lt => {
+            if lit > 1.0 {
+                Some(true)
+            } else {
+                None
+            }
+        }
         // Equality / inequality with a single literal can't be decided from a
         // lower bound alone unless lit < min_conf (then `==` provably fails).
         BinOp::Eq => {
-            if lit < min_conf { Some(false) } else { None }
+            if lit < min_conf {
+                Some(false)
+            } else {
+                None
+            }
         }
         BinOp::NotEq => {
-            if lit < min_conf { Some(true) } else { None }
+            if lit < min_conf {
+                Some(true)
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -384,7 +413,12 @@ fn check_fn(
                 format!(
                     "@[verify(confidence {} {})] not satisfied: minimum reachable confidence \
                      in `{}` is {} (must be {} {})",
-                    op_to_str(&op), lit, fndef.name, min, op_to_str(&op), lit,
+                    op_to_str(&op),
+                    lit,
+                    fndef.name,
+                    min,
+                    op_to_str(&op),
+                    lit,
                 ),
                 spec.span,
             ));
@@ -395,12 +429,12 @@ fn check_fn(
 
 fn op_to_str(op: &BinOp) -> &'static str {
     match op {
-        BinOp::Lt   => "<",
-        BinOp::Gt   => ">",
+        BinOp::Lt => "<",
+        BinOp::Gt => ">",
         BinOp::LtEq => "<=",
         BinOp::GtEq => ">=",
-        BinOp::Eq   => "==",
-        BinOp::NotEq=> "!=",
+        BinOp::Eq => "==",
+        BinOp::NotEq => "!=",
         _ => "?",
     }
 }
@@ -450,7 +484,9 @@ impl<'a> Analyzer<'a> {
             }
 
             Expr::Match { arms, .. } => {
-                if arms.is_empty() { return Confidence::Unknown; }
+                if arms.is_empty() {
+                    return Confidence::Unknown;
+                }
                 let mut acc: Option<Confidence> = None;
                 for arm in arms {
                     let c = self.confidence_of(&arm.body, env);
@@ -540,7 +576,10 @@ impl<'a> Analyzer<'a> {
                 let mut acc: Option<Confidence> = None;
                 for s in stmts {
                     if let Some(c) = self.scan_returns(&s.expr, env) {
-                        acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                        acc = Some(match acc {
+                            Some(prev) => prev.min(c),
+                            None => c,
+                        });
                     }
                 }
                 acc
@@ -548,11 +587,17 @@ impl<'a> Analyzer<'a> {
             Expr::If { cond, then, else_ } => {
                 let mut acc = self.scan_returns(cond, env);
                 if let Some(c) = self.scan_returns(then, env) {
-                    acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                    acc = Some(match acc {
+                        Some(prev) => prev.min(c),
+                        None => c,
+                    });
                 }
                 if let Some(e) = else_ {
                     if let Some(c) = self.scan_returns(e, env) {
-                        acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                        acc = Some(match acc {
+                            Some(prev) => prev.min(c),
+                            None => c,
+                        });
                     }
                 }
                 acc
@@ -561,7 +606,10 @@ impl<'a> Analyzer<'a> {
                 let mut acc = self.scan_returns(subject, env);
                 for arm in arms {
                     if let Some(c) = self.scan_returns(&arm.body, env) {
-                        acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                        acc = Some(match acc {
+                            Some(prev) => prev.min(c),
+                            None => c,
+                        });
                     }
                 }
                 acc
@@ -570,7 +618,10 @@ impl<'a> Analyzer<'a> {
                 let mut acc: Option<Confidence> = None;
                 for s in body {
                     if let Some(c) = self.scan_returns(&s.expr, env) {
-                        acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                        acc = Some(match acc {
+                            Some(prev) => prev.min(c),
+                            None => c,
+                        });
                     }
                 }
                 acc
@@ -579,7 +630,10 @@ impl<'a> Analyzer<'a> {
                 let mut acc: Option<Confidence> = None;
                 for s in body {
                     if let Some(c) = self.scan_returns(&s.expr, env) {
-                        acc = Some(match acc { Some(prev) => prev.min(c), None => c });
+                        acc = Some(match acc {
+                            Some(prev) => prev.min(c),
+                            None => c,
+                        });
                     }
                 }
                 acc
@@ -633,8 +687,7 @@ impl<'a> Analyzer<'a> {
             // `@[verify]` defers to the runtime check.  The flat-T variants
             // (`ai_extract::<i64>` etc.) return non-Uncertain types and so
             // never reach this classifier (no Uncertain to inspect).
-            "ai_extract::<Uncertain<i64>>"
-            | "ai_extract::<Uncertain<f64>>" => Confidence::Runtime,
+            "ai_extract::<Uncertain<i64>>" | "ai_extract::<Uncertain<f64>>" => Confidence::Runtime,
             // Inter-procedural: another verify-annotated function.
             other => match self.fn_bounds.get(other) {
                 Some(b) => Confidence::Known(*b),
@@ -668,11 +721,19 @@ mod tests {
     use crate::ast::{Expr, FnDef, Item, Literal, Program, Stmt, VerifySpec};
     use crate::span::Span;
 
-    fn lit_f(f: f64) -> Expr { Expr::Literal(Literal::Float(f)) }
-    fn lit_i(i: i64) -> Expr { Expr::Literal(Literal::Int(i)) }
+    fn lit_f(f: f64) -> Expr {
+        Expr::Literal(Literal::Float(f))
+    }
+    fn lit_i(i: i64) -> Expr {
+        Expr::Literal(Literal::Int(i))
+    }
 
     fn call(name: &str, args: Vec<Expr>) -> Expr {
-        Expr::Call { callee: Box::new(Expr::Ident(name.into())), args, tier: None }
+        Expr::Call {
+            callee: Box::new(Expr::Ident(name.into())),
+            args,
+            tier: None,
+        }
     }
 
     fn make_fn(name: &str, body: Expr, predicate: Option<Expr>) -> FnDef {
@@ -696,7 +757,11 @@ mod tests {
     }
 
     fn binop(op: BinOp, l: Expr, r: Expr) -> Expr {
-        Expr::BinOp { op, left: Box::new(l), right: Box::new(r) }
+        Expr::BinOp {
+            op,
+            left: Box::new(l),
+            right: Box::new(r),
+        }
     }
 
     #[test]
@@ -733,7 +798,10 @@ mod tests {
             binop(BinOp::GtEq, Expr::Ident("value".into()), lit_i(100)),
             binop(BinOp::LtEq, Expr::Ident("value".into()), lit_i(0)),
         );
-        assert!(decode_verify_conjunction(&or_pred).is_none(), "|| must not decode");
+        assert!(
+            decode_verify_conjunction(&or_pred).is_none(),
+            "|| must not decode"
+        );
         // A non-comparison leaf (a bare ident) fails the whole decode.
         let bad = binop(BinOp::And, Expr::Ident("value".into()), lit_i(0));
         assert!(decode_verify_conjunction(&bad).is_none());
@@ -751,7 +819,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("safe", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
@@ -768,7 +838,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("risky", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1101);
@@ -786,7 +858,9 @@ mod tests {
             right: Box::new(lit_f(0.99)),
         };
         let fndef = make_fn("d", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }
@@ -806,7 +880,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("cond", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1101);
@@ -821,9 +897,14 @@ mod tests {
         ))]);
         let pred = call("some_other_thing", vec![]);
         let fndef = make_fn("weird", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
-        assert!(errors.is_empty(), "unsupported predicate form should be silent");
+        assert!(
+            errors.is_empty(),
+            "unsupported predicate form should be silent"
+        );
     }
 
     #[test]
@@ -841,7 +922,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("ai_query", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(
             errors.is_empty(),
@@ -871,7 +954,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("ai_query_generic", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(
             errors.is_empty(),
@@ -895,7 +980,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("dyn_i64", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(
             errors.is_empty(),
@@ -916,7 +1003,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("dyn_f64", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(
             errors.is_empty(),
@@ -942,7 +1031,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("mixed", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let errors = check_verify(&prog);
         assert!(
             errors.is_empty(),
@@ -976,7 +1067,9 @@ mod tests {
             right: Box::new(lit_f(0.8)),
         };
         let fndef = make_fn("opaque_mix", body, Some(pred));
-        let prog = Program { items: vec![Item::FnDef(fndef)] };
+        let prog = Program {
+            items: vec![Item::FnDef(fndef)],
+        };
         let _errors = check_verify(&prog);
         // We don't assert on emit/silence here — the spec instructs *not* to
         // change Unknown semantics. We only assert the lattice combinator
@@ -988,8 +1081,8 @@ mod tests {
     fn lattice_min_rules() {
         let k_a = Confidence::Known(0.9);
         let k_b = Confidence::Known(0.5);
-        let r   = Confidence::Runtime;
-        let u   = Confidence::Unknown;
+        let r = Confidence::Runtime;
+        let u = Confidence::Unknown;
 
         // Known × Known
         assert_eq!(k_a.min(k_b), Confidence::Known(0.5));
@@ -1030,7 +1123,9 @@ mod tests {
         };
         let caller_fn = make_fn("caller", caller_body, Some(caller_pred));
 
-        let prog = Program { items: vec![Item::FnDef(safe_fn), Item::FnDef(caller_fn)] };
+        let prog = Program {
+            items: vec![Item::FnDef(safe_fn), Item::FnDef(caller_fn)],
+        };
         let errors = check_verify(&prog);
         assert!(errors.is_empty(), "expected no errors, got: {errors:?}");
     }

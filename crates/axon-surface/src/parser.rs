@@ -110,7 +110,9 @@ impl GoalFile {
     /// Expects markdown bullets of the form:
     ///   `- \`name: type\` — description`
     pub fn inputs(&self) -> Result<Vec<(String, String)>> {
-        let s = self.section("Inputs").expect("required, validated by parse");
+        let s = self
+            .section("Inputs")
+            .expect("required, validated by parse");
         parse_typed_bullets(&s.body, "Inputs")
     }
 
@@ -386,9 +388,15 @@ Some scoring.
             Error::MissingSections(missing) => {
                 // Every required section except Intent must be listed.
                 for req in REQUIRED.iter().filter(|r| **r != "Intent") {
-                    assert!(missing.iter().any(|m| m == req), "missing `{req}` not listed: {missing:?}");
+                    assert!(
+                        missing.iter().any(|m| m == req),
+                        "missing `{req}` not listed: {missing:?}"
+                    );
                 }
-                assert!(!missing.contains(&"Intent".to_string()), "Intent is present, must not be listed");
+                assert!(
+                    !missing.contains(&"Intent".to_string()),
+                    "Intent is present, must not be listed"
+                );
             }
             other => panic!("expected MissingSections, got {other:?}"),
         }
@@ -400,19 +408,23 @@ Some scoring.
         let msg = GoalFile::parse(bad).unwrap_err().to_string();
         // The rendered message lists the sections so the author sees them all.
         assert!(msg.contains("Inputs"), "msg should list Inputs: {msg}");
-        assert!(msg.contains("Provenance"), "msg should list Provenance: {msg}");
+        assert!(
+            msg.contains("Provenance"),
+            "msg should list Provenance: {msg}"
+        );
     }
 
     #[test]
     fn author_code_gathers_axon_blocks_excluding_verify() {
-        let md = format!(
-            "{SAMPLE}\n## Implementation\n\n```axon\nfn f() -> i64 {{ 1 }}\n```\n"
-        );
+        let md = format!("{SAMPLE}\n## Implementation\n\n```axon\nfn f() -> i64 {{ 1 }}\n```\n");
         let g = GoalFile::parse(&md).unwrap();
         let code = g.author_code();
         assert!(code.contains("fn f() -> i64 { 1 }"), "got: {code:?}");
         // The Verify section's `@[verify(...)]` block must be excluded.
-        assert!(!code.contains("@[verify"), "verify predicate leaked into author_code");
+        assert!(
+            !code.contains("@[verify"),
+            "verify predicate leaked into author_code"
+        );
     }
 
     #[test]

@@ -1,3 +1,6 @@
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 /// Training data export for Trainloop / MegaBrain fine-tuning pipeline.
 ///
 /// Exports high-signal sessions as (prompt, response) pairs in Trainloop-compatible
@@ -6,13 +9,10 @@
 ///
 /// See docs/TRAINLOOP_INTEGRATION.md for the full pipeline design.
 use std::io::Write;
-use anyhow::Result;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
+use crate::score::{score_sessions, SessionScore, TrainingTier};
 use axon_ledger::model::Effect;
 use axon_ledger::store::Store;
-use crate::score::{score_sessions, SessionScore, TrainingTier};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ExportFormat {
@@ -91,10 +91,16 @@ pub fn export_training<W: Write>(
     let scores = score_sessions(store)?;
 
     // Filter by score and time window
-    let mut eligible: Vec<SessionScore> = scores.into_iter()
+    let mut eligible: Vec<SessionScore> = scores
+        .into_iter()
         .filter(|s| s.score >= opts.min_score)
-        .filter(|s| opts.since_ms.map_or(true, |ms| s.ts_ms >= ms))
-        .filter(|s| matches!(s.training_tier, TrainingTier::PositiveGold | TrainingTier::PositiveSilver))
+        .filter(|s| opts.since_ms.is_none_or(|ms| s.ts_ms >= ms))
+        .filter(|s| {
+            matches!(
+                s.training_tier,
+                TrainingTier::PositiveGold | TrainingTier::PositiveSilver
+            )
+        })
         .collect();
 
     // Deduplicate by exact goal string — loop iterations all share the same goal text.
@@ -105,7 +111,8 @@ pub fn export_training<W: Write>(
 
     // Load raw session file paths from ledger to extract conversation turns
     let all = store.all().map_err(anyhow::Error::from)?;
-    let session_files: std::collections::HashMap<String, String> = all.iter()
+    let session_files: std::collections::HashMap<String, String> = all
+        .iter()
         .filter(|r| r.effect == Effect::AgentSession)
         .filter_map(|r| {
             let sid = r.payload.get("session_id")?.as_str()?.to_string();
@@ -153,24 +160,23 @@ pub fn export_training<W: Write>(
 }
 
 /// Export DPO pairs: match high-score sessions with low-score sessions on similar goals.
-pub fn export_dpo<W: Write>(
-    store: &Store,
-    opts: &ExportOptions,
-    out: &mut W,
-) -> Result<usize> {
+pub fn export_dpo<W: Write>(store: &Store, opts: &ExportOptions, out: &mut W) -> Result<usize> {
     let scores = score_sessions(store)?;
 
-    let positives: Vec<&SessionScore> = scores.iter()
+    let positives: Vec<&SessionScore> = scores
+        .iter()
         .filter(|s| s.score >= opts.min_score)
         .filter(|s| matches!(s.training_tier, TrainingTier::PositiveGold))
         .collect();
 
-    let negatives: Vec<&SessionScore> = scores.iter()
+    let negatives: Vec<&SessionScore> = scores
+        .iter()
         .filter(|s| s.training_tier == TrainingTier::Negative)
         .collect();
 
     let all = store.all().map_err(anyhow::Error::from)?;
-    let session_files: std::collections::HashMap<String, String> = all.iter()
+    let session_files: std::collections::HashMap<String, String> = all
+        .iter()
         .filter(|r| r.effect == Effect::AgentSession)
         .filter_map(|r| {
             let sid = r.payload.get("session_id")?.as_str()?.to_string();
@@ -182,18 +188,31 @@ pub fn export_dpo<W: Write>(
     let mut exported = 0;
     for pos in &positives {
         // Find a negative session: prefer one with same leading verb, fall back to any negative
-        let pos_verb = pos.goal.split_whitespace().next().unwrap_or("").to_lowercase();
+        let pos_verb = pos
+            .goal
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
         let neg_by_verb = negatives.iter().find(|n| {
             n.goal.to_lowercase().starts_with(&pos_verb) && n.session_id != pos.session_id
         });
         let verb_matched = neg_by_verb.is_some();
-        let neg = match neg_by_verb.or_else(|| negatives.iter().find(|n| n.session_id != pos.session_id)) {
+        let neg = match neg_by_verb
+            .or_else(|| negatives.iter().find(|n| n.session_id != pos.session_id))
+        {
             Some(n) => n,
             None => continue,
         };
 
-        let pos_file = match session_files.get(&pos.session_id) { Some(p) => p, None => continue };
-        let neg_file = match session_files.get(&neg.session_id) { Some(p) => p, None => continue };
+        let pos_file = match session_files.get(&pos.session_id) {
+            Some(p) => p,
+            None => continue,
+        };
+        let neg_file = match session_files.get(&neg.session_id) {
+            Some(p) => p,
+            None => continue,
+        };
 
         let chosen = match load_messages(pos_file, opts.exclude_code_content) {
             Ok(m) if !m.is_empty() => m,
@@ -231,7 +250,10 @@ fn load_messages(path: &str, exclude_code: bool) -> Result<Vec<Message>> {
     let mut messages = Vec::new();
 
     for line in content.lines() {
-        let event: Value = match serde_json::from_str(line) { Ok(v) => v, Err(_) => continue };
+        let event: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
         let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
         let role = match event_type {
@@ -240,22 +262,24 @@ fn load_messages(path: &str, exclude_code: bool) -> Result<Vec<Message>> {
             _ => continue,
         };
 
-        let content_val = event.get("message")
+        let content_val = event
+            .get("message")
             .and_then(|m| m.get("content"))
             .or_else(|| event.get("content"));
 
         let text = match content_val {
             Some(Value::String(s)) => s.clone(),
-            Some(Value::Array(blocks)) => {
-                blocks.iter()
-                    .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }
+            Some(Value::Array(blocks)) => blocks
+                .iter()
+                .filter_map(|b| b.get("text").and_then(|t| t.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n"),
             _ => continue,
         };
 
-        if text.trim().is_empty() { continue; }
+        if text.trim().is_empty() {
+            continue;
+        }
 
         let text = if exclude_code {
             // Strip content after common code-dump markers
@@ -272,7 +296,10 @@ fn load_messages(path: &str, exclude_code: bool) -> Result<Vec<Message>> {
         };
 
         if !text.trim().is_empty() {
-            messages.push(Message { role: role.to_string(), content: text });
+            messages.push(Message {
+                role: role.to_string(),
+                content: text,
+            });
         }
     }
 
@@ -305,9 +332,9 @@ mod tests {
     /// (e.g. /loop iterations), only the highest-scoring one should be exported.
     #[test]
     fn test_export_deduplicates_repeated_goals() {
-        use tempfile::tempdir;
         use axon_ledger::model::{Effect, LedgerRecord};
         use serde_json::json;
+        use tempfile::tempdir;
 
         let dir = tempdir().unwrap();
         let mut store = Store::open(dir.path()).unwrap();
@@ -348,16 +375,34 @@ mod tests {
 
         // Three sessions, same goal, different timestamps and file counts → different scores.
         // We can't fully control score without controlling commits; instead verify count ≤ 1 goal.
-        store.append(&make_session("sess0001", 1000, 0, &["auth.rs", "lib.rs"])).unwrap();
-        store.append(&make_session("sess0002", 2000, 0, &["auth.rs"])).unwrap();
-        store.append(&make_session("sess0003", 3000, 0, &["auth.rs", "lib.rs", "main.rs"])).unwrap();
+        store
+            .append(&make_session("sess0001", 1000, 0, &["auth.rs", "lib.rs"]))
+            .unwrap();
+        store
+            .append(&make_session("sess0002", 2000, 0, &["auth.rs"]))
+            .unwrap();
+        store
+            .append(&make_session(
+                "sess0003",
+                3000,
+                0,
+                &["auth.rs", "lib.rs", "main.rs"],
+            ))
+            .unwrap();
 
-        let opts = ExportOptions { min_score: 0, since_ms: None, ..ExportOptions::default() };
+        let opts = ExportOptions {
+            min_score: 0,
+            since_ms: None,
+            ..ExportOptions::default()
+        };
         let mut buf = Vec::new();
         let n = export_training(&store, &opts, &mut buf).unwrap();
 
         // At most 1 export record for the shared goal (may be 0 if score threshold filters all)
-        assert!(n <= 1, "expected at most 1 record for a repeated goal, got {n}");
+        assert!(
+            n <= 1,
+            "expected at most 1 record for a repeated goal, got {n}"
+        );
 
         if n == 1 {
             let line = String::from_utf8(buf).unwrap();

@@ -2,6 +2,7 @@
 ///
 /// Patterns are derived entirely from ledger data — no LLM required.
 /// The key structure is the VERB + OBJECT + (CONTEXT) shape of high-scoring goals.
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -25,12 +26,41 @@ pub struct GoalPattern {
 /// Extract the leading verb from a goal string.
 fn extract_verb(goal: &str) -> Option<&str> {
     let verbs = [
-        "fix", "add", "refactor", "migrate", "extract", "remove",
-        "update", "replace", "implement", "delete", "rename", "move",
-        "improve", "clean", "work on", "make", "complete", "finish",
-        "build", "write", "test", "debug", "investigate", "analyze",
-        "pick up", "continue", "wire", "land", "ship", "deploy",
-        "integrate", "connect", "expose", "extend", "optimize",
+        "fix",
+        "add",
+        "refactor",
+        "migrate",
+        "extract",
+        "remove",
+        "update",
+        "replace",
+        "implement",
+        "delete",
+        "rename",
+        "move",
+        "improve",
+        "clean",
+        "work on",
+        "make",
+        "complete",
+        "finish",
+        "build",
+        "write",
+        "test",
+        "debug",
+        "investigate",
+        "analyze",
+        "pick up",
+        "continue",
+        "wire",
+        "land",
+        "ship",
+        "deploy",
+        "integrate",
+        "connect",
+        "expose",
+        "extend",
+        "optimize",
     ];
     let lower = goal.to_lowercase();
     verbs.iter().find(|&&v| lower.starts_with(v)).copied()
@@ -39,17 +69,20 @@ fn extract_verb(goal: &str) -> Option<&str> {
 /// Classify a goal into a coarse pattern bucket.
 pub fn classify_goal_pattern(goal: &str) -> String {
     let lower = goal.to_lowercase();
-    let has_file = goal.split_whitespace().any(|w| w.contains('.') || w.contains('/'));
+    let has_file = goal
+        .split_whitespace()
+        .any(|w| w.contains('.') || w.contains('/'));
     let has_metric = ["<", ">", "%", "ms", "passes", "test", "error", "rate"]
-        .iter().any(|m| lower.contains(m));
+        .iter()
+        .any(|m| lower.contains(m));
     let verb = extract_verb(goal);
 
     match (verb, has_file, has_metric) {
-        (Some(v), true, true)  => format!("{v} [X] in [file] — [metric]"),
+        (Some(v), true, true) => format!("{v} [X] in [file] — [metric]"),
         (Some(v), true, false) => format!("{v} [X] in [file]"),
         (Some(v), false, true) => format!("{v} [X] — [metric]"),
         (Some(v), false, false) => format!("{v} [X]"),
-        (None, _, _)           => "(no clear verb)".to_string(),
+        (None, _, _) => "(no clear verb)".to_string(),
     }
 }
 
@@ -75,14 +108,22 @@ pub fn build_pattern_library(
         .filter_map(|(pattern, mut sessions)| {
             // Deduplicate by exact goal text BEFORE applying the min_sessions threshold.
             // Loop iterations all share one goal string and should count as one data point.
-            sessions.sort_by(|a, b| b.score.cmp(&a.score));
+            sessions.sort_by_key(|b| Reverse(b.score));
             let mut seen = std::collections::HashSet::new();
             sessions.retain(|s| seen.insert(s.goal.trim().to_lowercase()));
-            if sessions.len() < min_sessions { return None; }
+            if sessions.len() < min_sessions {
+                return None;
+            }
 
-            let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
-            let avg_commits = sessions.iter().map(|s| s.commits_linked as f64).sum::<f64>() / sessions.len() as f64;
-            let example = sessions.iter()
+            let avg_score =
+                sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
+            let avg_commits = sessions
+                .iter()
+                .map(|s| s.commits_linked as f64)
+                .sum::<f64>()
+                / sessions.len() as f64;
+            let example = sessions
+                .iter()
                 .max_by_key(|s| s.score)
                 .map(|s| s.goal.clone())
                 .unwrap_or_default();
@@ -96,7 +137,11 @@ pub fn build_pattern_library(
         })
         .collect();
 
-    patterns.sort_by(|a, b| b.avg_score.partial_cmp(&a.avg_score).unwrap_or(std::cmp::Ordering::Equal));
+    patterns.sort_by(|a, b| {
+        b.avg_score
+            .partial_cmp(&a.avg_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     patterns
 }
 
@@ -114,22 +159,40 @@ pub fn antipatterns(scores: &[SessionScore], min_sessions: usize) -> Vec<GoalPat
         .into_iter()
         .filter_map(|(pattern, mut sessions)| {
             // Deduplicate before threshold — same logic as build_pattern_library.
-            sessions.sort_by(|a, b| a.score.cmp(&b.score));
+            sessions.sort_by_key(|b| b.score);
             let mut seen = std::collections::HashSet::new();
             sessions.retain(|s| seen.insert(s.goal.trim().to_lowercase()));
-            if sessions.len() < min_sessions { return None; }
+            if sessions.len() < min_sessions {
+                return None;
+            }
 
-            let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
-            let avg_commits = sessions.iter().map(|s| s.commits_linked as f64).sum::<f64>() / sessions.len() as f64;
-            let example = sessions.iter()
+            let avg_score =
+                sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
+            let avg_commits = sessions
+                .iter()
+                .map(|s| s.commits_linked as f64)
+                .sum::<f64>()
+                / sessions.len() as f64;
+            let example = sessions
+                .iter()
                 .min_by_key(|s| s.score)
                 .map(|s| s.goal.clone())
                 .unwrap_or_default();
-            Some(GoalPattern { pattern, example, avg_score, session_count: sessions.len(), avg_commits })
+            Some(GoalPattern {
+                pattern,
+                example,
+                avg_score,
+                session_count: sessions.len(),
+                avg_commits,
+            })
         })
         .collect();
 
-    patterns.sort_by(|a, b| a.avg_score.partial_cmp(&b.avg_score).unwrap_or(std::cmp::Ordering::Equal));
+    patterns.sort_by(|a, b| {
+        a.avg_score
+            .partial_cmp(&b.avg_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     patterns
 }
 
@@ -161,16 +224,22 @@ mod tests {
     #[test]
     fn test_build_library_requires_min_sessions() {
         use crate::score::TrainingTier;
-        let scores = vec![
-            SessionScore {
-                session_id: "s1".into(), goal: "fix bug in auth.rs".into(),
-                score: 80, label: "good", turns: 10, commits_linked: 2,
-                files_touched: 1, goal_clarity: 70, turns_per_commit: 5.0,
-                scope_fit: 90, rework_signal: false,
-                training_tier: TrainingTier::PositiveSilver,
-                engineer: "chris".into(), ts_ms: 0,
-            },
-        ];
+        let scores = vec![SessionScore {
+            session_id: "s1".into(),
+            goal: "fix bug in auth.rs".into(),
+            score: 80,
+            label: "good",
+            turns: 10,
+            commits_linked: 2,
+            files_touched: 1,
+            goal_clarity: 70,
+            turns_per_commit: 5.0,
+            scope_fit: 90,
+            rework_signal: false,
+            training_tier: TrainingTier::PositiveSilver,
+            engineer: "chris".into(),
+            ts_ms: 0,
+        }];
         let lib = build_pattern_library(&scores, 2, 50);
         assert!(lib.is_empty(), "should require min 2 sessions");
 

@@ -3,7 +3,11 @@ use std::process::Command;
 
 pub fn intent_compile(body: &str, axon_bin: &str) -> String {
     let req = parse_content(body);
-    let ext = if req.content.trim_start().starts_with('#') { "md" } else { "ax" };
+    let ext = if req.content.trim_start().starts_with('#') {
+        "md"
+    } else {
+        "ax"
+    };
     let tmp = write_temp(&req.content, ext);
     run_json(axon_bin, &["intent", "compile", "--json", &tmp])
 }
@@ -55,16 +59,19 @@ pub fn goal_improve(body: &str, axon_bin: &str) -> String {
         Err(e) => (false, String::new(), e.to_string()),
     };
     // Fetch score trajectory after the run.
-    let trace_json: serde_json::Value = match Command::new(axon_bin).args(["trace", "--json"]).output() {
-        Ok(o) => {
-            let s = String::from_utf8_lossy(&o.stdout).into_owned();
-            serde_json::from_str(&s).unwrap_or(serde_json::Value::Array(vec![]))
-        }
-        Err(_) => serde_json::Value::Array(vec![]),
-    };
+    let trace_json: serde_json::Value =
+        match Command::new(axon_bin).args(["trace", "--json"]).output() {
+            Ok(o) => {
+                let s = String::from_utf8_lossy(&o.stdout).into_owned();
+                serde_json::from_str(&s).unwrap_or(serde_json::Value::Array(vec![]))
+            }
+            Err(_) => serde_json::Value::Array(vec![]),
+        };
     // Keep only entries with multiple evals (active adaptive fns).
-    let trajectory: Vec<serde_json::Value> = if let serde_json::Value::Array(entries) = &trace_json {
-        entries.iter()
+    let trajectory: Vec<serde_json::Value> = if let serde_json::Value::Array(entries) = &trace_json
+    {
+        entries
+            .iter()
             .filter(|e| e["evals"].as_u64().unwrap_or(0) > 1)
             .cloned()
             .collect()
@@ -72,7 +79,8 @@ pub fn goal_improve(body: &str, axon_bin: &str) -> String {
         vec![]
     };
     // Filter run stderr: skip warnings/run-id, keep meaningful output.
-    let run_message: String = run_stderr.lines()
+    let run_message: String = run_stderr
+        .lines()
         .filter(|l| !l.starts_with("warning:") && !l.contains("run-id "))
         .collect::<Vec<_>>()
         .join("\n");
@@ -84,7 +92,8 @@ pub fn goal_improve(body: &str, axon_bin: &str) -> String {
         "run_message": run_message,
         "best_score": best_score,
         "trajectory": trajectory,
-    }).to_string()
+    })
+    .to_string()
 }
 
 pub fn deploy(body: &str, axon_bin: &str) -> String {
@@ -123,11 +132,13 @@ fn run_json_merged(axon_bin: &str, args: &[&str]) -> String {
         Ok(out) => {
             let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
             // Find the last line that is valid JSON (the structured report).
-            let json_line = stdout.lines().rev()
-                .find(|l| l.trim_start().starts_with('{')
-                      && serde_json::from_str::<serde_json::Value>(l).is_ok());
+            let json_line = stdout.lines().rev().find(|l| {
+                l.trim_start().starts_with('{')
+                    && serde_json::from_str::<serde_json::Value>(l).is_ok()
+            });
             // Prose = everything except the JSON line itself.
-            let prose: String = stdout.lines()
+            let prose: String = stdout
+                .lines()
                 .filter(|l| {
                     let t = l.trim_start();
                     !(t.starts_with('{') && serde_json::from_str::<serde_json::Value>(t).is_ok())
@@ -138,10 +149,19 @@ fn run_json_merged(axon_bin: &str, args: &[&str]) -> String {
                 if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(json_str) {
                     if let Some(obj) = v.as_object_mut() {
                         if !prose.is_empty() {
-                            obj.insert("run_output".to_string(), serde_json::Value::String(prose.clone()));
+                            obj.insert(
+                                "run_output".to_string(),
+                                serde_json::Value::String(prose.clone()),
+                            );
                             // Surface prominent status lines as "message" for easy UI display.
-                            let msg: String = prose.lines()
-                                .filter(|l| l.contains("FAILED") || l.contains("CAUGHT") || l.contains("BLOCKED") || l.contains("passed"))
+                            let msg: String = prose
+                                .lines()
+                                .filter(|l| {
+                                    l.contains("FAILED")
+                                        || l.contains("CAUGHT")
+                                        || l.contains("BLOCKED")
+                                        || l.contains("passed")
+                                })
                                 .collect::<Vec<_>>()
                                 .join("\n");
                             if !msg.is_empty() {
@@ -157,7 +177,8 @@ fn run_json_merged(axon_bin: &str, args: &[&str]) -> String {
                 "ok": out.status.success(),
                 "exit_code": out.status.code(),
                 "stdout": stdout,
-            }).to_string()
+            })
+            .to_string()
         }
         Err(e) => err_json(&e.to_string()),
     }
@@ -217,7 +238,9 @@ fn parse_content(body: &str) -> ContentReq {
         let content = v["content"].as_str().unwrap_or(body).to_string();
         ContentReq { content }
     } else {
-        ContentReq { content: body.to_string() }
+        ContentReq {
+            content: body.to_string(),
+        }
     }
 }
 
@@ -227,6 +250,9 @@ fn parse_deploy(body: &str) -> DeployReq {
         let risk = v["risk"].as_str().map(|s| s.to_string());
         DeployReq { content, risk }
     } else {
-        DeployReq { content: body.to_string(), risk: None }
+        DeployReq {
+            content: body.to_string(),
+            risk: None,
+        }
     }
 }

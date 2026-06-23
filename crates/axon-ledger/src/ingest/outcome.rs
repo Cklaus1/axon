@@ -15,13 +15,26 @@ use crate::store::Store;
 /// `file`: path to a JSON file (e.g. `{"precision": 1.0, "recall": 0.52}`).
 ///
 /// The new MetricOutcome record gets `causal_parent = commit.id`.
-pub fn ingest_outcome(commit_sha_prefix: &str, file: &Path, store: &mut Store) -> Result<LedgerRecord> {
+pub fn ingest_outcome(
+    commit_sha_prefix: &str,
+    file: &Path,
+    store: &mut Store,
+) -> Result<LedgerRecord> {
     // Resolve the commit record to get its id for causal linking
-    let why_result = why(commit_sha_prefix, store)
-        .with_context(|| format!("Commit '{}' not found in ledger — run `ingest git` first", commit_sha_prefix))?;
+    let why_result = why(commit_sha_prefix, store).with_context(|| {
+        format!(
+            "Commit '{}' not found in ledger — run `ingest git` first",
+            commit_sha_prefix
+        )
+    })?;
     let commit_id = why_result.commit.id.clone();
-    let commit_sha = why_result.commit.payload
-        .get("sha").and_then(|v| v.as_str()).unwrap_or(commit_sha_prefix).to_string();
+    let commit_sha = why_result
+        .commit
+        .payload
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .unwrap_or(commit_sha_prefix)
+        .to_string();
 
     let raw = fs::read_to_string(file)
         .with_context(|| format!("Cannot read outcome file: {}", file.display()))?;

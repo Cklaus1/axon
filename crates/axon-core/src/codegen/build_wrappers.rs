@@ -31,11 +31,11 @@
 use inkwell::basic_block::BasicBlock;
 use inkwell::builder::Builder;
 use inkwell::types::BasicTypeEnum;
+use inkwell::types::PointerType;
 use inkwell::values::{
     AggregateValueEnum, BasicMetadataValueEnum, BasicValueEnum, CallSiteValue, FloatValue,
     FunctionValue, IntValue, PhiValue, PointerValue, StructValue,
 };
-use inkwell::types::PointerType;
 use inkwell::{FloatPredicate, IntPredicate};
 
 // ── memory: alloca / load / store / gep ──────────────────────────────────────
@@ -244,9 +244,17 @@ pub(crate) fn w_float_to_signed_int<'ctx>(
         .unwrap();
 
     // raw, then clamp high, then clamp low, then NaN→0 (innermost wins last).
-    let clamped_hi = b.build_select(ge_max, max_c, raw, "fti_hi").unwrap().into_int_value();
-    let clamped_lo = b.build_select(le_min, min_c, clamped_hi, "fti_lo").unwrap().into_int_value();
-    b.build_select(is_nan, zero_c, clamped_lo, "fti_sat").unwrap().into_int_value()
+    let clamped_hi = b
+        .build_select(ge_max, max_c, raw, "fti_hi")
+        .unwrap()
+        .into_int_value();
+    let clamped_lo = b
+        .build_select(le_min, min_c, clamped_hi, "fti_lo")
+        .unwrap()
+        .into_int_value();
+    b.build_select(is_nan, zero_c, clamped_lo, "fti_sat")
+        .unwrap()
+        .into_int_value()
 }
 
 // ── int arithmetic ────────────────────────────────────────────────────────────
@@ -279,13 +287,23 @@ pub(crate) fn w_int_add_sat<'ctx>(
     let sum = b.build_int_add(l, r, name).unwrap();
     let zero = ity.const_zero();
     // sign bits
-    let l_neg = b.build_int_compare(inkwell::IntPredicate::SLT, l, zero, "sat_lneg").unwrap();
-    let r_neg = b.build_int_compare(inkwell::IntPredicate::SLT, r, zero, "sat_rneg").unwrap();
-    let s_neg = b.build_int_compare(inkwell::IntPredicate::SLT, sum, zero, "sat_sneg").unwrap();
+    let l_neg = b
+        .build_int_compare(inkwell::IntPredicate::SLT, l, zero, "sat_lneg")
+        .unwrap();
+    let r_neg = b
+        .build_int_compare(inkwell::IntPredicate::SLT, r, zero, "sat_rneg")
+        .unwrap();
+    let s_neg = b
+        .build_int_compare(inkwell::IntPredicate::SLT, sum, zero, "sat_sneg")
+        .unwrap();
     // operands same sign?  (l_neg == r_neg)
-    let same_sign = b.build_int_compare(inkwell::IntPredicate::EQ, l_neg, r_neg, "sat_same").unwrap();
+    let same_sign = b
+        .build_int_compare(inkwell::IntPredicate::EQ, l_neg, r_neg, "sat_same")
+        .unwrap();
     // result sign differs from operands? (s_neg != l_neg)
-    let sign_flip = b.build_int_compare(inkwell::IntPredicate::NE, s_neg, l_neg, "sat_flip").unwrap();
+    let sign_flip = b
+        .build_int_compare(inkwell::IntPredicate::NE, s_neg, l_neg, "sat_flip")
+        .unwrap();
     let overflow = b.build_and(same_sign, sign_flip, "sat_ovf").unwrap();
     // saturate target: operands positive → MAX, negative → MIN.
     let bits = ity.get_bit_width();
@@ -296,8 +314,13 @@ pub(crate) fn w_int_add_sat<'ctx>(
     };
     let max_c = ity.const_int(max_v, true);
     let min_c = ity.const_int(min_v, true);
-    let sat_target = b.build_select(l_neg, min_c, max_c, "sat_tgt").unwrap().into_int_value();
-    b.build_select(overflow, sat_target, sum, "sat_res").unwrap().into_int_value()
+    let sat_target = b
+        .build_select(l_neg, min_c, max_c, "sat_tgt")
+        .unwrap()
+        .into_int_value();
+    b.build_select(overflow, sat_target, sum, "sat_res")
+        .unwrap()
+        .into_int_value()
 }
 
 #[inline(never)]
@@ -563,11 +586,7 @@ pub(crate) fn w_right_shift<'ctx>(
 }
 
 #[inline(never)]
-pub(crate) fn w_not<'ctx>(
-    b: &Builder<'ctx>,
-    value: IntValue<'ctx>,
-    name: &str,
-) -> IntValue<'ctx> {
+pub(crate) fn w_not<'ctx>(b: &Builder<'ctx>, value: IntValue<'ctx>, name: &str) -> IntValue<'ctx> {
     b.build_not(value, name).unwrap()
 }
 
@@ -589,7 +608,9 @@ pub(crate) fn w_global_string_ptr<'ctx>(
     s: &str,
     name: &str,
 ) -> PointerValue<'ctx> {
-    b.build_global_string_ptr(s, name).unwrap().as_pointer_value()
+    b.build_global_string_ptr(s, name)
+        .unwrap()
+        .as_pointer_value()
 }
 
 // ── switch ────────────────────────────────────────────────────────────────────

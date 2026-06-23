@@ -696,12 +696,38 @@ impl<'a> Resolver<'a> {
                         let words: Vec<&str> = text.split_whitespace().collect();
                         let lower = text.to_lowercase();
                         let has_file_ref = words.iter().any(|w| w.contains('.') || w.contains('/'));
-                        let has_metric = ["<", ">", "%", "ms", "passes", "fails", "below",
-                            "above", "error rate", "latency", "test"].iter().any(|m| lower.contains(m));
-                        let has_verb = ["fix", "add", "refactor", "migrate", "extract", "remove",
-                            "update", "replace", "implement", "delete", "rename"].iter()
-                            .any(|v| lower.starts_with(v) || lower.contains(&format!(" {v} ")));
-                        let is_vague = words.len() < 5 || (!has_file_ref && !has_metric && !has_verb);
+                        let has_metric = [
+                            "<",
+                            ">",
+                            "%",
+                            "ms",
+                            "passes",
+                            "fails",
+                            "below",
+                            "above",
+                            "error rate",
+                            "latency",
+                            "test",
+                        ]
+                        .iter()
+                        .any(|m| lower.contains(m));
+                        let has_verb = [
+                            "fix",
+                            "add",
+                            "refactor",
+                            "migrate",
+                            "extract",
+                            "remove",
+                            "update",
+                            "replace",
+                            "implement",
+                            "delete",
+                            "rename",
+                        ]
+                        .iter()
+                        .any(|v| lower.starts_with(v) || lower.contains(&format!(" {v} ")));
+                        let is_vague =
+                            words.len() < 5 || (!has_file_ref && !has_metric && !has_verb);
 
                         if is_vague {
                             self.emit_warning(

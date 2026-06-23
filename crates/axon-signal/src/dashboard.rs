@@ -38,69 +38,57 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
         let method = request.method().to_string();
 
         if method != "GET" {
-            let _ = request.respond(
-                Response::from_string("Method Not Allowed")
-                    .with_status_code(405)
-            );
+            let _ =
+                request.respond(Response::from_string("Method Not Allowed").with_status_code(405));
             continue;
         }
 
         let response = match url.as_str() {
-            "/" => {
-                Response::from_string(DASHBOARD_HTML)
-                    .with_header("Content-Type: text/html; charset=utf-8".parse::<Header>().unwrap())
-            }
-            "/api/score" => {
-                json_response(ledger_dir, |store| {
-                    score_sessions(&store).map(|s| serde_json::to_value(s).unwrap())
-                })
-            }
-            "/api/weekly" => {
-                json_response(ledger_dir, |store| {
-                    let now = now_ms();
-                    let from = now.saturating_sub(7 * 86_400_000);
-                    generate_weekly(&store, from, now, 14)
-                        .map(|r| serde_json::to_value(r).unwrap())
-                })
-            }
-            "/api/rework" => {
-                json_response(ledger_dir, |store| {
-                    find_rework_hotspots(&store, 14)
-                        .map(|h| serde_json::to_value(h).unwrap())
-                })
-            }
-            "/api/trends" => {
-                json_response(ledger_dir, |store| {
-                    compute_trends(&store, 8)
-                        .map(|r| serde_json::to_value(r).unwrap())
-                })
-            }
-            "/api/loops" => {
-                json_response(ledger_dir, |store| {
-                    score_sessions(&store).map(|scores| {
-                        let candidates: Vec<_> = scores.iter()
-                            .filter(|s| s.turns >= 40)
-                            .map(|s| serde_json::json!({
+            "/" => Response::from_string(DASHBOARD_HTML).with_header(
+                "Content-Type: text/html; charset=utf-8"
+                    .parse::<Header>()
+                    .unwrap(),
+            ),
+            "/api/score" => json_response(ledger_dir, |store| {
+                score_sessions(&store).map(|s| serde_json::to_value(s).unwrap())
+            }),
+            "/api/weekly" => json_response(ledger_dir, |store| {
+                let now = now_ms();
+                let from = now.saturating_sub(7 * 86_400_000);
+                generate_weekly(&store, from, now, 14).map(|r| serde_json::to_value(r).unwrap())
+            }),
+            "/api/rework" => json_response(ledger_dir, |store| {
+                find_rework_hotspots(&store, 14).map(|h| serde_json::to_value(h).unwrap())
+            }),
+            "/api/trends" => json_response(ledger_dir, |store| {
+                compute_trends(&store, 8).map(|r| serde_json::to_value(r).unwrap())
+            }),
+            "/api/loops" => json_response(ledger_dir, |store| {
+                score_sessions(&store).map(|scores| {
+                    let candidates: Vec<_> = scores
+                        .iter()
+                        .filter(|s| s.turns >= 40)
+                        .map(|s| {
+                            serde_json::json!({
                                 "session_id": s.session_id,
                                 "engineer": s.engineer,
                                 "goal": s.goal,
                                 "turns": s.turns,
                                 "commits_linked": s.commits_linked,
                                 "score": s.score,
-                            }))
-                            .collect();
-                        serde_json::to_value(candidates).unwrap()
-                    })
+                            })
+                        })
+                        .collect();
+                    serde_json::to_value(candidates).unwrap()
                 })
-            }
-            "/api/benchmark" => {
-                json_response(ledger_dir, |store| {
-                    compute_benchmark(&store, None)
-                        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
-                })
-            }
+            }),
+            "/api/benchmark" => json_response(ledger_dir, |store| {
+                compute_benchmark(&store, None)
+                    .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
+            }),
             "/api/ab" => {
-                let body = match Store::open(ledger_dir).map_err(anyhow::Error::from)
+                let body = match Store::open(ledger_dir)
+                    .map_err(anyhow::Error::from)
                     .and_then(|store| compute_ab_report(ledger_dir, &store))
                     .map(|r| serde_json::to_value(r).unwrap_or(serde_json::json!({})))
                 {
@@ -111,11 +99,9 @@ pub fn run_dashboard(ledger_dir: &Path, port: u16) -> Result<()> {
                     .with_header("Content-Type: application/json".parse::<Header>().unwrap())
                     .with_header("Access-Control-Allow-Origin: *".parse::<Header>().unwrap())
             }
-            _ => {
-                Response::from_string(r#"{"error":"not found"}"#)
-                    .with_status_code(404)
-                    .with_header("Content-Type: application/json".parse::<Header>().unwrap())
-            }
+            _ => Response::from_string(r#"{"error":"not found"}"#)
+                .with_status_code(404)
+                .with_header("Content-Type: application/json".parse::<Header>().unwrap()),
         };
 
         let _ = request.respond(response);
@@ -127,7 +113,10 @@ fn json_response<F>(ledger_dir: &Path, f: F) -> tiny_http::Response<std::io::Cur
 where
     F: FnOnce(Store) -> anyhow::Result<serde_json::Value>,
 {
-    let body = match Store::open(ledger_dir).map_err(anyhow::Error::from).and_then(f) {
+    let body = match Store::open(ledger_dir)
+        .map_err(anyhow::Error::from)
+        .and_then(f)
+    {
         Ok(v) => serde_json::to_string_pretty(&v).unwrap_or_else(|_| "{}".to_string()),
         Err(e) => format!(r#"{{"error":"{}"}}"#, e),
     };

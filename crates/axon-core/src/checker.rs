@@ -4153,7 +4153,10 @@ impl CheckCtx {
             AxonType::Option(inner) => {
                 self.check_axon_type(inner, &format!("{node_path}.inner"));
             }
-            AxonType::Chan(inner) | AxonType::Slice(inner) | AxonType::Ref(inner) | AxonType::RawPtr(inner) => {
+            AxonType::Chan(inner)
+            | AxonType::Slice(inner)
+            | AxonType::Ref(inner)
+            | AxonType::RawPtr(inner) => {
                 self.check_axon_type(inner, &format!("{node_path}.inner"));
             }
             AxonType::Generic { base, args } => {

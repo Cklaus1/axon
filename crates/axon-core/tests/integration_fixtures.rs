@@ -8,14 +8,15 @@ fn fixtures_dir() -> PathBuf {
 
 fn check_fixture(name: &str) -> Vec<String> {
     let path = fixtures_dir().join(name);
-    let source = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
-    let mut program = axon_core::parse_source(&source)
-        .unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
+    let mut program =
+        axon_core::parse_source(&source).unwrap_or_else(|e| panic!("parse failed for {name}: {e}"));
     // run_check_pipeline is pub(crate); replicate its steps here via the public API.
     let file = path.display().to_string();
     let resolve_result = axon_core::resolver::resolve_program(&program, &file);
-    let mut errors: Vec<String> = resolve_result.errors
+    let mut errors: Vec<String> = resolve_result
+        .errors
         .iter()
         .map(|d| format!("[{}] {}", d.code, d.message))
         .collect();
@@ -26,18 +27,27 @@ fn check_fixture(name: &str) -> Vec<String> {
     for e in &infer_ctx.errors {
         if !e.span.is_dummy() {
             let (line, col) = source_map.line_col(e.span.start);
-            errors.push(format!("[{}] {}:{}:{}: {}", e.code, file, line, col, e.message));
+            errors.push(format!(
+                "[{}] {}:{}:{}: {}",
+                e.code, file, line, col, e.message
+            ));
         } else {
             errors.push(format!("[{}] {}", e.code, e.message));
         }
     }
-    let fn_sigs: std::collections::HashMap<String, axon_core::checker::FnSig> =
-        infer_ctx.fn_sigs.iter()
-            .map(|(k, v)| (k.clone(), axon_core::checker::FnSig {
-                params: v.params.clone(),
-                ret: v.ret.clone(),
-            }))
-            .collect();
+    let fn_sigs: std::collections::HashMap<String, axon_core::checker::FnSig> = infer_ctx
+        .fn_sigs
+        .iter()
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                axon_core::checker::FnSig {
+                    params: v.params.clone(),
+                    ret: v.ret.clone(),
+                },
+            )
+        })
+        .collect();
     let mut check_ctx = axon_core::checker::CheckCtx::new(&file, fn_sigs, infer_ctx.struct_fields);
     let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
     for e in &check_errors {
@@ -48,7 +58,9 @@ fn check_fixture(name: &str) -> Vec<String> {
         if let axon_core::ast::Item::FnDef(fndef) = item {
             let param_types: std::collections::HashMap<String, axon_core::types::Type> =
                 if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
-                    fndef.params.iter()
+                    fndef
+                        .params
+                        .iter()
                         .zip(sig.params.iter())
                         .map(|(p, t)| (p.name.clone(), t.clone()))
                         .collect()
@@ -82,7 +94,8 @@ fn closure_captures_parses_cleanly() {
     let errors = check_fixture("closure_captures.ax");
     assert!(
         errors.is_empty(),
-        "closure_captures.ax produced unexpected errors:\n{}", errors.join("\n")
+        "closure_captures.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -91,7 +104,8 @@ fn comptime_consts_parses_cleanly() {
     let errors = check_fixture("comptime_consts.ax");
     assert!(
         errors.is_empty(),
-        "comptime_consts.ax produced unexpected errors:\n{}", errors.join("\n")
+        "comptime_consts.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -99,12 +113,19 @@ fn comptime_consts_parses_cleanly() {
 fn borrow_errors_fixture_detected() {
     let errors = check_fixture("borrow_errors.ax");
     // The fixture deliberately contains two borrow errors.
-    let borrow_errs: Vec<_> = errors.iter()
-        .filter(|e| e.contains("UseAfterMove") || e.contains("MoveBorrowed") || e.contains("use after move") || e.contains("move"))
+    let borrow_errs: Vec<_> = errors
+        .iter()
+        .filter(|e| {
+            e.contains("UseAfterMove")
+                || e.contains("MoveBorrowed")
+                || e.contains("use after move")
+                || e.contains("move")
+        })
         .collect();
     assert!(
         !borrow_errs.is_empty(),
-        "borrow_errors.ax should have produced borrow errors, got:\n{}", errors.join("\n")
+        "borrow_errors.ax should have produced borrow errors, got:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -113,7 +134,8 @@ fn generics_fixture_type_checks_cleanly() {
     let errors = check_fixture("generics.ax");
     assert!(
         errors.is_empty(),
-        "generics.ax produced unexpected errors:\n{}", errors.join("\n")
+        "generics.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -122,7 +144,8 @@ fn traits_fixture_type_checks_cleanly() {
     let errors = check_fixture("traits.ax");
     assert!(
         errors.is_empty(),
-        "traits.ax produced unexpected errors:\n{}", errors.join("\n")
+        "traits.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -131,7 +154,8 @@ fn chan_spawn_fixture_parses_cleanly() {
     let errors = check_fixture("chan_spawn.ax");
     assert!(
         errors.is_empty(),
-        "chan_spawn.ax produced unexpected errors:\n{}", errors.join("\n")
+        "chan_spawn.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -140,7 +164,8 @@ fn closures_fixture_type_checks_cleanly() {
     let errors = check_fixture("closures.ax");
     assert!(
         errors.is_empty(),
-        "closures.ax produced unexpected errors:\n{}", errors.join("\n")
+        "closures.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -149,19 +174,19 @@ fn select_fixture_parses_cleanly() {
     let errors = check_fixture("select.ax");
     assert!(
         errors.is_empty(),
-        "select.ax produced unexpected errors:\n{}", errors.join("\n")
+        "select.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
 #[test]
 fn spans_fixture_emits_e0401_with_location() {
     let errors = check_fixture("spans.ax");
-    let e0401: Vec<_> = errors.iter()
-        .filter(|e| e.contains("E0401"))
-        .collect();
+    let e0401: Vec<_> = errors.iter().filter(|e| e.contains("E0401")).collect();
     assert!(
         !e0401.is_empty(),
-        "spans.ax should have produced E0401, got:\n{}", errors.join("\n")
+        "spans.ax should have produced E0401, got:\n{}",
+        errors.join("\n")
     );
     // Verify line/col info is present (non-dummy span means the error string
     // contains a colon-separated location like "spans.ax:9:12").
@@ -178,7 +203,8 @@ fn channels_fixture_parses_cleanly() {
     let errors = check_fixture("channels.ax");
     assert!(
         errors.is_empty(),
-        "channels.ax produced unexpected errors:\n{}", errors.join("\n")
+        "channels.ax produced unexpected errors:\n{}",
+        errors.join("\n")
     );
 }
 
@@ -189,10 +215,7 @@ fn channels_fixture_parses_cleanly() {
 #[test]
 fn multifile_merge_type_checks_cleanly() {
     let dir = fixtures_dir();
-    let paths = vec![
-        dir.join("multifile_math.ax"),
-        dir.join("multifile_main.ax"),
-    ];
+    let paths = vec![dir.join("multifile_math.ax"), dir.join("multifile_main.ax")];
 
     let file_programs = axon_core::parse_source_files(&paths)
         .unwrap_or_else(|errs| panic!("parse failed: {}", errs.join("; ")));
@@ -207,13 +230,15 @@ fn multifile_merge_type_checks_cleanly() {
     // Run the check pipeline on the merged program.
     let file = "multifile_merge";
     let resolve_result = axon_core::resolver::resolve_program(&program, file);
-    let resolve_errors: Vec<String> = resolve_result.errors
+    let resolve_errors: Vec<String> = resolve_result
+        .errors
         .iter()
         .map(|d| format!("[{}] {}", d.code, d.message))
         .collect();
     assert!(
         resolve_errors.is_empty(),
-        "resolve errors after merge: {}", resolve_errors.join("\n")
+        "resolve errors after merge: {}",
+        resolve_errors.join("\n")
     );
 }
 
@@ -244,11 +269,25 @@ fn axon_path_load_use_decls_finds_module() {
         errors.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
     // After loading, the program should have both `helper` and `main` defined.
-    let fn_names: Vec<_> = program.items.iter().filter_map(|item| {
-        if let axon_core::ast::Item::FnDef(f) = item { Some(f.name.as_str()) } else { None }
-    }).collect();
-    assert!(fn_names.contains(&"helper"), "helper should be loaded from module; got {fn_names:?}");
-    assert!(fn_names.contains(&"main"), "main should still be in program; got {fn_names:?}");
+    let fn_names: Vec<_> = program
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let axon_core::ast::Item::FnDef(f) = item {
+                Some(f.name.as_str())
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert!(
+        fn_names.contains(&"helper"),
+        "helper should be loaded from module; got {fn_names:?}"
+    );
+    assert!(
+        fn_names.contains(&"main"),
+        "main should still be in program; got {fn_names:?}"
+    );
 }
 
 /// Verify that a missing module produces E0901.
@@ -261,7 +300,10 @@ fn axon_path_load_use_decls_missing_module() {
     let errors = axon_core::load_use_decls(&mut program, &[]);
 
     // With empty search_dirs, no errors (the function returns early).
-    assert!(errors.is_empty(), "empty search_dirs should produce no load errors");
+    assert!(
+        errors.is_empty(),
+        "empty search_dirs should produce no load errors"
+    );
 
     // Now try with a real (but empty) dir.
     let tmp = std::env::temp_dir().join(format!("axon_test_missing_{}", std::process::id()));
@@ -298,7 +340,12 @@ fn colon_path_import_of_flat_module_item_hints_dot_brace_form() {
     let e = errors
         .iter()
         .find(|e| e.code == "E0901")
-        .unwrap_or_else(|| panic!("expected E0901, got: {:?}", errors.iter().map(|e| e.code).collect::<Vec<_>>()));
+        .unwrap_or_else(|| {
+            panic!(
+                "expected E0901, got: {:?}",
+                errors.iter().map(|e| e.code).collect::<Vec<_>>()
+            )
+        });
     assert!(
         e.message.contains("use utils.{helper}"),
         "error must hint the dot-brace form; got: {}",
@@ -323,7 +370,10 @@ fn colon_path_import_without_flat_module_does_not_hint_dot_brace() {
     let errors = axon_core::load_use_decls(&mut program, std::slice::from_ref(&tmp));
     let _ = std::fs::remove_dir_all(&tmp);
 
-    let e = errors.iter().find(|e| e.code == "E0901").expect("expected E0901");
+    let e = errors
+        .iter()
+        .find(|e| e.code == "E0901")
+        .expect("expected E0901");
     assert!(
         !e.message.contains("dot-brace") && !e.message.contains(".{"),
         "must NOT hint dot-brace for a genuinely-missing module; got: {}",
@@ -357,7 +407,10 @@ fn circular_import_produces_e0902() {
     assert!(
         errors.iter().any(|e| e.code == "E0902"),
         "expected E0902 for circular import, got: {:?}",
-        errors.iter().map(|e| format!("[{}] {}", e.code, e.message)).collect::<Vec<_>>()
+        errors
+            .iter()
+            .map(|e| format!("[{}] {}", e.code, e.message))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -1145,7 +1198,8 @@ fn error_e0301_option_not_unwrapped_detected() {
     let errors = check_fixture("errors_e0301_option_not_unwrapped.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0301")),
-        "expected E0301 (option used without unwrap), got: {:?}", errors
+        "expected E0301 (option used without unwrap), got: {:?}",
+        errors
     );
 }
 
@@ -1154,7 +1208,8 @@ fn error_e0302_result_ignored_detected() {
     let errors = check_fixture("errors_e0302_result_ignored.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0302")),
-        "expected E0302 (result ignored), got: {:?}", errors
+        "expected E0302 (result ignored), got: {:?}",
+        errors
     );
 }
 
@@ -1163,7 +1218,8 @@ fn error_e0303_question_in_non_result_detected() {
     let errors = check_fixture("errors_e0303_question_in_non_result.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0303")),
-        "expected E0303 (? in non-result fn), got: {:?}", errors
+        "expected E0303 (? in non-result fn), got: {:?}",
+        errors
     );
 }
 
@@ -1172,7 +1228,8 @@ fn error_e0305_wrong_arity_detected() {
     let errors = check_fixture("errors_e0305_wrong_arity.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0305")),
-        "expected E0305 (wrong arg count), got: {:?}", errors
+        "expected E0305 (wrong arg count), got: {:?}",
+        errors
     );
 }
 
@@ -1181,7 +1238,8 @@ fn error_e0306_wrong_type_detected() {
     let errors = check_fixture("errors_e0306_wrong_type.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0306")),
-        "expected E0306 (wrong arg type), got: {:?}", errors
+        "expected E0306 (wrong arg type), got: {:?}",
+        errors
     );
 }
 
@@ -1189,8 +1247,11 @@ fn error_e0306_wrong_type_detected() {
 fn error_e0307_return_mismatch_detected() {
     let errors = check_fixture("errors_e0307_return_mismatch.ax");
     assert!(
-        errors.iter().any(|e| e.contains("E0307") || e.contains("E0102")),
-        "expected E0307 or E0102 (return type mismatch), got: {:?}", errors
+        errors
+            .iter()
+            .any(|e| e.contains("E0307") || e.contains("E0102")),
+        "expected E0307 or E0102 (return type mismatch), got: {:?}",
+        errors
     );
 }
 
@@ -1199,7 +1260,8 @@ fn error_e0308_unknown_type_detected() {
     let errors = check_fixture("errors_e0308_unknown_type.ax");
     assert!(
         errors.iter().any(|e| e.contains("E0308")),
-        "expected E0308 (unknown type), got: {:?}", errors
+        "expected E0308 (unknown type), got: {:?}",
+        errors
     );
 }
 
@@ -1207,8 +1269,11 @@ fn error_e0308_unknown_type_detected() {
 fn error_e0309_bad_field_detected() {
     let errors = check_fixture("errors_e0309_bad_field.ax");
     assert!(
-        errors.iter().any(|e| e.contains("E0309") || e.contains("E0401")),
-        "expected E0309 or E0401 (bad field access), got: {:?}", errors
+        errors
+            .iter()
+            .any(|e| e.contains("E0309") || e.contains("E0401")),
+        "expected E0309 or E0401 (bad field access), got: {:?}",
+        errors
     );
 }
 
@@ -1217,7 +1282,8 @@ fn error_e0309_bad_field_detected() {
 #[test]
 fn contained_pass_fixture_clean() {
     let errors = check_fixture("contained_pass.ax");
-    let hard_errors: Vec<_> = errors.iter()
+    let hard_errors: Vec<_> = errors
+        .iter()
         .filter(|e| !e.contains("I0001") && !e.contains("[W"))
         .collect();
     assert!(

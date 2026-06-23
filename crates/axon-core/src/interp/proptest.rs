@@ -14,7 +14,11 @@ pub enum PropertyOutcome {
     Passed { cases: u32 },
     /// A case failed; `counterexample` is the SHRUNK minimal input (rendered),
     /// `message` is the assertion/panic message, `seed` reproduces the run.
-    Failed { counterexample: String, message: String, seed: u64 },
+    Failed {
+        counterexample: String,
+        message: String,
+        seed: u64,
+    },
     /// The property fn has an unsupported param type / shape.
     Unsupported(String),
 }
@@ -28,7 +32,11 @@ pub fn run_property_test(program: &Program, name: &str, cases: u32) -> PropertyO
     on_deep_stack(|| run_property_test_inner(program, name, cases))
 }
 
-pub(super) fn run_property_test_inner(program: &Program, name: &str, cases: u32) -> PropertyOutcome {
+pub(super) fn run_property_test_inner(
+    program: &Program,
+    name: &str,
+    cases: u32,
+) -> PropertyOutcome {
     let seed = rng_seed();
     let mut interp = Interp::build(program);
     if let Err(f) = interp.init_globals() {
@@ -38,12 +46,23 @@ pub(super) fn run_property_test_inner(program: &Program, name: &str, cases: u32)
         return PropertyOutcome::Unsupported(format!("no function `{name}`"));
     };
     // Generators per param type; bail out if any param isn't supported.
-    let gens: Vec<PropGen> = match f.params.iter().map(|p| prop_gen_for(&p.ty)).collect::<Option<Vec<_>>>() {
+    let gens: Vec<PropGen> = match f
+        .params
+        .iter()
+        .map(|p| prop_gen_for(&p.ty))
+        .collect::<Option<Vec<_>>>()
+    {
         Some(g) if !g.is_empty() => g,
-        Some(_) => return PropertyOutcome::Unsupported(
-            "forall property test needs at least one parameter".into()),
-        None => return PropertyOutcome::Unsupported(
-            "forall supports i64/f64/bool/str parameters only".into()),
+        Some(_) => {
+            return PropertyOutcome::Unsupported(
+                "forall property test needs at least one parameter".into(),
+            )
+        }
+        None => {
+            return PropertyOutcome::Unsupported(
+                "forall supports i64/f64/bool/str parameters only".into(),
+            )
+        }
     };
 
     // Try `cases` random inputs; on the first failing one, shrink it.
@@ -53,7 +72,11 @@ pub(super) fn run_property_test_inner(program: &Program, name: &str, cases: u32)
             // Found a failing case — shrink toward minimal.
             let (shrunk_args, shrunk_msg) = shrink(&interp, f, &gens, args, msg);
             let ce = render_args(&f.params, &shrunk_args);
-            return PropertyOutcome::Failed { counterexample: ce, message: shrunk_msg, seed };
+            return PropertyOutcome::Failed {
+                counterexample: ce,
+                message: shrunk_msg,
+                seed,
+            };
         }
     }
     PropertyOutcome::Passed { cases }
@@ -75,7 +98,13 @@ pub(super) fn run_once(interp: &Interp, f: &FnDef, args: &[Value]) -> Result<(),
 /// failing at `a >= 50` shrinks to exactly `a = 50`, not just "some smaller
 /// failing value"); strings truncate; bool flips true→false. Returns the
 /// minimal failing args + the message from that minimal case.
-pub(super) fn shrink(interp: &Interp, f: &FnDef, gens: &[PropGen], start: Vec<Value>, start_msg: String) -> (Vec<Value>, String) {
+pub(super) fn shrink(
+    interp: &Interp,
+    f: &FnDef,
+    gens: &[PropGen],
+    start: Vec<Value>,
+    start_msg: String,
+) -> (Vec<Value>, String) {
     let mut best = start;
     let mut best_msg = start_msg;
     // A few passes let later-arg shrinks re-enable earlier-arg shrinks.
@@ -93,7 +122,12 @@ pub(super) fn shrink(interp: &Interp, f: &FnDef, gens: &[PropGen], start: Vec<Va
                 t0[i] = zero.clone();
                 let (mut pass, zero_fails) = match run_once(interp, f, &t0) {
                     Ok(()) => (Some(zero), false),
-                    Err(m) => { best = t0; best_msg = m; improved = true; (None, true) }
+                    Err(m) => {
+                        best = t0;
+                        best_msg = m;
+                        improved = true;
+                        (None, true)
+                    }
                 };
                 if !zero_fails {
                     // Binary-search between `pass` (toward 0) and best[i] (fails).
@@ -101,8 +135,14 @@ pub(super) fn shrink(interp: &Interp, f: &FnDef, gens: &[PropGen], start: Vec<Va
                         let mut trial = best.clone();
                         trial[i] = mid.clone();
                         match run_once(interp, f, &trial) {
-                            Err(m) => { best = trial; best_msg = m; improved = true; }
-                            Ok(()) => { pass = Some(mid); }
+                            Err(m) => {
+                                best = trial;
+                                best_msg = m;
+                                improved = true;
+                            }
+                            Ok(()) => {
+                                pass = Some(mid);
+                            }
                         }
                     }
                 }
@@ -112,26 +152,43 @@ pub(super) fn shrink(interp: &Interp, f: &FnDef, gens: &[PropGen], start: Vec<Va
                     let mut trial = best.clone();
                     trial[i] = candidate;
                     match run_once(interp, f, &trial) {
-                        Err(m) => { best = trial; best_msg = m; improved = true; }
+                        Err(m) => {
+                            best = trial;
+                            best_msg = m;
+                            improved = true;
+                        }
                         Ok(()) => break,
                     }
                 }
             }
         }
-        if !improved { break; }
+        if !improved {
+            break;
+        }
     }
     (best, best_msg)
 }
 
 /// A generator+shrinker for one property parameter type.
-pub(super) enum PropGen { I64, F64, Bool, Str }
+pub(super) enum PropGen {
+    I64,
+    F64,
+    Bool,
+    Str,
+}
 
 pub(super) fn prop_gen_for(ty: &crate::ast::AxonType) -> Option<PropGen> {
-    if is_i64_type(ty) { Some(PropGen::I64) }
-    else if is_f64_type(ty) { Some(PropGen::F64) }
-    else if matches!(ty, crate::ast::AxonType::Named(n) if n == "bool") { Some(PropGen::Bool) }
-    else if matches!(ty, crate::ast::AxonType::Named(n) if n == "str") { Some(PropGen::Str) }
-    else { None }
+    if is_i64_type(ty) {
+        Some(PropGen::I64)
+    } else if is_f64_type(ty) {
+        Some(PropGen::F64)
+    } else if matches!(ty, crate::ast::AxonType::Named(n) if n == "bool") {
+        Some(PropGen::Bool)
+    } else if matches!(ty, crate::ast::AxonType::Named(n) if n == "str") {
+        Some(PropGen::Str)
+    } else {
+        None
+    }
 }
 
 impl PropGen {
@@ -141,7 +198,11 @@ impl PropGen {
             // the full i64 range occasionally.
             PropGen::I64 => {
                 let r = next_rand_u64();
-                let v = if r & 7 == 0 { r as i64 } else { (r % 201) as i64 - 100 };
+                let v = if r & 7 == 0 {
+                    r as i64
+                } else {
+                    (r % 201) as i64 - 100
+                };
                 Value::Int(v)
             }
             PropGen::F64 => {
@@ -176,7 +237,9 @@ impl PropGen {
             (PropGen::I64, Value::Int(0)) => None,
             (PropGen::I64, Value::Int(n)) => Some(Value::Int(n / 2)),
             (PropGen::F64, Value::Float(f)) if *f == 0.0 => None,
-            (PropGen::F64, Value::Float(f)) => Some(Value::Float((f / 2.0 * 100.0).round() / 100.0)),
+            (PropGen::F64, Value::Float(f)) => {
+                Some(Value::Float((f / 2.0 * 100.0).round() / 100.0))
+            }
             (PropGen::Bool, Value::Bool(true)) => Some(Value::Bool(false)),
             (PropGen::Bool, Value::Bool(false)) => None,
             (PropGen::Str, Value::Str(s)) if s.is_empty() => None,
@@ -193,11 +256,19 @@ impl PropGen {
         match (self, from, to) {
             (PropGen::I64, Value::Int(a), Value::Int(b)) => {
                 let mid = a + (b - a) / 2;
-                if mid == *a || mid == *b { None } else { Some(Value::Int(mid)) }
+                if mid == *a || mid == *b {
+                    None
+                } else {
+                    Some(Value::Int(mid))
+                }
             }
             (PropGen::F64, Value::Float(a), Value::Float(b)) => {
                 let mid = ((a + (b - a) / 2.0) * 100.0).round() / 100.0;
-                if (mid - a).abs() < 0.01 || (mid - b).abs() < 0.01 { None } else { Some(Value::Float(mid)) }
+                if (mid - a).abs() < 0.01 || (mid - b).abs() < 0.01 {
+                    None
+                } else {
+                    Some(Value::Float(mid))
+                }
             }
             _ => None,
         }
@@ -205,6 +276,10 @@ impl PropGen {
 }
 
 pub(super) fn render_args(params: &[crate::ast::Param], args: &[Value]) -> String {
-    params.iter().zip(args).map(|(p, v)| format!("{}={}", p.name, display(v)))
-        .collect::<Vec<_>>().join(", ")
+    params
+        .iter()
+        .zip(args)
+        .map(|(p, v)| format!("{}={}", p.name, display(v)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }

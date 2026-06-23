@@ -13,8 +13,17 @@ path = "src/lib.rs"
 [[bin]]
 name = "axon-surface"
 path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+# `cli` (default) pulls clap for the `axon-surface` binary. The LIBRARY
+# (parser + compile) is clap-free, so a dependent that turns defaults off — e.g.
+# axon-wasm, which compiles the surface compiler into the wasm32 playground —
+# gets the pure prose→AST core with no CLI/terminal deps.
+default = ["cli"]
+cli = ["dep:clap"]
 
 [dependencies]
-clap.workspace = true
+clap = { workspace = true, optional = true }
 thiserror.workspace = true
 anyhow = "1"

@@ -1,0 +1,21 @@
+// SSE streaming example — consume a Server-Sent Events stream.
+//
+// Build and run:
+//   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
+//   ./target/debug/axon-run run examples/http_sse.ax
+//
+// Replace the URL with a real SSE endpoint (LLM providers, event buses, etc.).
+// The `http_sse` builtin sets `Accept: text/event-stream` automatically.
+// Pass "" for no custom headers, or a JSON object string for auth/etc:
+//   http_sse("https://api.example.com/events", "{\"Authorization\":\"Bearer token\"}", ...)
+//
+// Note: http_sse blocks until the stream closes. Infinite streams (Wikipedia, etc.)
+// will not return. LLM streaming APIs terminate with `data: [DONE]`, so they work.
+fn main() -> i64 {
+    match http_sse("https://httpbin.org/sse", "", |event: str| {
+        println("event: {event}")
+    }) {
+        Ok(n)  => { println("stream closed after {n} events")  0 }
+        Err(e) => { println("error: {e}")  1 }
+    }
+}

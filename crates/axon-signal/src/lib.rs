@@ -23,7 +23,11 @@ pub fn display_goal(goal: &str, max_chars: usize) -> String {
     // Strip leading markdown heading markers
     let stripped = if s.starts_with('#') {
         let without = s.trim_start_matches('#').trim();
-        if let Some(rest) = without.strip_prefix("Goal:") { rest.trim() } else { without }
+        if let Some(rest) = without.strip_prefix("Goal:") {
+            rest.trim()
+        } else {
+            without
+        }
     } else {
         s
     };
@@ -36,7 +40,8 @@ pub fn display_goal(goal: &str, max_chars: usize) -> String {
         stripped
     };
     // Find first non-table, non-empty line
-    let clean = stripped.lines()
+    let clean = stripped
+        .lines()
         .map(|l| l.trim())
         .find(|l| !l.is_empty() && !l.contains('│') && !l.starts_with('|'))
         .unwrap_or("(structured session)");
@@ -44,7 +49,11 @@ pub fn display_goal(goal: &str, max_chars: usize) -> String {
     if char_count <= max_chars {
         clean.to_string()
     } else {
-        let end = clean.char_indices().nth(max_chars).map(|(i, _)| i).unwrap_or(clean.len());
+        let end = clean
+            .char_indices()
+            .nth(max_chars)
+            .map(|(i, _)| i)
+            .unwrap_or(clean.len());
         format!("{}…", &clean[..end])
     }
 }
@@ -55,7 +64,10 @@ mod tests {
 
     #[test]
     fn test_display_goal_strips_hash_goal_label() {
-        assert_eq!(display_goal("# Goal: fix the auth bug\n\nmore context", 80), "fix the auth bug");
+        assert_eq!(
+            display_goal("# Goal: fix the auth bug\n\nmore context", 80),
+            "fix the auth bug"
+        );
     }
 
     #[test]
@@ -74,7 +86,10 @@ mod tests {
     fn test_display_goal_unicode_safe_truncate() {
         let s = "fix the — em dash bug in auth/jwt.go for all OAuth flows";
         let result = display_goal(s, 20);
-        assert!(!result.contains("—\u{0}"), "should not panic or produce invalid UTF-8");
+        assert!(
+            !result.contains("—\u{0}"),
+            "should not panic or produce invalid UTF-8"
+        );
         assert!(result.ends_with('…'));
     }
 

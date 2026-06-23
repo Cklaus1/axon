@@ -1,5 +1,5 @@
-use logos::Logos;
 use crate::token::Token;
+use logos::Logos;
 
 pub struct Lexer<'src> {
     _marker: std::marker::PhantomData<&'src ()>,
@@ -7,7 +7,9 @@ pub struct Lexer<'src> {
 
 impl<'src> Lexer<'src> {
     pub fn new(_src: &'src str) -> Self {
-        Self { _marker: std::marker::PhantomData }
+        Self {
+            _marker: std::marker::PhantomData,
+        }
     }
 
     /// Tokenize `src`, stripping `Newline` tokens and recording where each token
@@ -59,9 +61,15 @@ impl<'src> Lexer<'src> {
 #[derive(Debug, thiserror::Error)]
 pub enum LexError {
     #[error("unexpected character '{src}' at {span:?}")]
-    UnexpectedChar { span: std::ops::Range<usize>, src: String },
+    UnexpectedChar {
+        span: std::ops::Range<usize>,
+        src: String,
+    },
     #[error("integer literal too large for i64: '{src}' at {span:?}")]
-    IntegerTooLarge { span: std::ops::Range<usize>, src: String },
+    IntegerTooLarge {
+        span: std::ops::Range<usize>,
+        src: String,
+    },
 }
 
 #[cfg(test)]
@@ -70,7 +78,11 @@ mod tests {
     use crate::token::Token;
 
     fn lex(src: &str) -> Vec<Token> {
-        Lexer::tokenize(src).unwrap().into_iter().map(|(t, _)| t).collect()
+        Lexer::tokenize(src)
+            .unwrap()
+            .into_iter()
+            .map(|(t, _)| t)
+            .collect()
     }
 
     #[test]
@@ -131,7 +143,10 @@ mod tests {
         let (_, _, foo_nl) = &result[0];
         let (_, _, bar_nl) = &result[1];
         assert!(!foo_nl, "foo should not be preceded by a newline");
-        assert!(*bar_nl, "bar must be marked as preceded by a newline (newline inside comment)");
+        assert!(
+            *bar_nl,
+            "bar must be marked as preceded by a newline (newline inside comment)"
+        );
     }
 
     #[test]
@@ -139,13 +154,23 @@ mod tests {
         // A block comment WITHOUT a newline should NOT set pending_newline.
         let result = Lexer::tokenize_with_newlines("foo /* no newline here */ bar").unwrap();
         let (_, _, bar_nl) = &result[1];
-        assert!(!bar_nl, "bar must NOT be marked as newline-preceded for inline block comment");
+        assert!(
+            !bar_nl,
+            "bar must NOT be marked as newline-preceded for inline block comment"
+        );
     }
 
     #[test]
     fn test_percent_operator() {
         let tokens = lex("a%b");
-        assert_eq!(tokens, vec![Token::Ident("a".into()), Token::Percent, Token::Ident("b".into())]);
+        assert_eq!(
+            tokens,
+            vec![
+                Token::Ident("a".into()),
+                Token::Percent,
+                Token::Ident("b".into())
+            ]
+        );
     }
 
     #[test]
@@ -186,7 +211,10 @@ mod tests {
     fn test_integer_overflow_error() {
         let result = Lexer::tokenize("99999999999999999999999999");
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), LexError::IntegerTooLarge { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            LexError::IntegerTooLarge { .. }
+        ));
     }
 
     #[test]

@@ -92,10 +92,7 @@ fn days_since_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
     let m = if month <= 2 { month + 12 } else { month };
     let a = y / 100;
     let b = 2 - a + a / 4;
-    let jd = ((365.25 * (y + 4716) as f64) as i64)
-        + ((30.6001 * (m + 1) as f64) as i64)
-        + day
-        + b
+    let jd = ((365.25 * (y + 4716) as f64) as i64) + ((30.6001 * (m + 1) as f64) as i64) + day + b
         - 1524;
     // Julian Day of 1970-01-01 is 2440588
     Some(jd - 2440588)
@@ -204,7 +201,10 @@ pub fn ingest_session(
         }
         // Keep looking if current goal_text is a system caveat (starts with '<')
         let needs_goal = goal_text.is_none()
-            || goal_text.as_deref().map(|g| g.starts_with('<')).unwrap_or(false);
+            || goal_text
+                .as_deref()
+                .map(|g| g.starts_with('<'))
+                .unwrap_or(false);
         if needs_goal {
             if let Some(text) = extract_first_user_text(&event) {
                 goal_text = Some(text);
@@ -217,17 +217,22 @@ pub fn ingest_session(
         let content_sources: &[&str] = &["message", "content"];
         let content_arr = content_sources.iter().find_map(|key| {
             if *key == "message" {
-                event.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array())
+                event
+                    .get("message")
+                    .and_then(|m| m.get("content"))
+                    .and_then(|c| c.as_array())
             } else {
                 event.get("content").and_then(|c| c.as_array())
             }
         });
-        if let Some(content) = content_arr
-        {
+        if let Some(content) = content_arr {
             for block in content {
                 if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
                     let tool_name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
-                    let input = block.get("input").cloned().unwrap_or(serde_json::Value::Null);
+                    let input = block
+                        .get("input")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null);
 
                     match tool_name {
                         "Edit" | "Write" => {
@@ -249,10 +254,7 @@ pub fn ingest_session(
 
     let start_ts = first_ts.clone().unwrap_or_default();
     let end_ts = last_ts.unwrap_or_default();
-    let ts_ms = first_ts
-        .as_deref()
-        .and_then(parse_iso_to_ms)
-        .unwrap_or(0);
+    let ts_ms = first_ts.as_deref().and_then(parse_iso_to_ms).unwrap_or(0);
 
     let mut files_list: Vec<String> = files_touched.into_iter().collect();
     files_list.sort();
@@ -327,11 +329,12 @@ pub fn ingest_session(
 }
 
 fn extract_file_paths_from_command(cmd: &str, files: &mut HashSet<String>) {
-    let extensions = [".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock"];
+    let extensions = [
+        ".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock",
+    ];
     for token in cmd.split_whitespace() {
-        let token = token.trim_matches(|c: char| {
-            matches!(c, '"' | '\'' | ';' | '|' | '(' | ')' | ',' )
-        });
+        let token =
+            token.trim_matches(|c: char| matches!(c, '"' | '\'' | ';' | '|' | '(' | ')' | ','));
         // Reject CLI flags, glob patterns, shell metacharacters
         if token.starts_with('-')
             || token.starts_with('!')
@@ -381,7 +384,10 @@ fn extract_first_user_text(event: &serde_json::Value) -> Option<String> {
         arr.iter()
             .filter_map(|block| {
                 if block.get("type").and_then(|v| v.as_str()) == Some("text") {
-                    block.get("text").and_then(|v| v.as_str()).map(str::to_string)
+                    block
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
                 } else {
                     None
                 }
@@ -422,7 +428,9 @@ mod tests {
     #[test]
     fn test_clean_goal_double_hash() {
         assert_eq!(
-            clean_goal_text("## complete the remaining Axon roadmap requirements\n\nSome more text"),
+            clean_goal_text(
+                "## complete the remaining Axon roadmap requirements\n\nSome more text"
+            ),
             "complete the remaining Axon roadmap requirements"
         );
     }
@@ -460,7 +468,10 @@ mod tests {
     #[test]
     fn test_clean_goal_pipe_table_skipped() {
         let raw = "│ Phase │ Status │\n│ 1 │ ✅ │\nadd payment integration to checkout.rs";
-        assert_eq!(clean_goal_text(raw), "add payment integration to checkout.rs");
+        assert_eq!(
+            clean_goal_text(raw),
+            "add payment integration to checkout.rs"
+        );
     }
 
     #[test]
@@ -468,7 +479,10 @@ mod tests {
         // Goal with Unicode em-dashes and box-drawing chars should not panic on 120-char limit
         let long_goal = "fix the auth bug — reproduces when device clock drift exceeds 5 min; affects all OAuth flows; see auth/jwt.go line 42 for the failing assertion that needs a leeway parameter";
         let result = clean_goal_text(long_goal);
-        assert!(result.len() <= 200, "should not exceed byte length for reasonable input");
+        assert!(
+            result.len() <= 200,
+            "should not exceed byte length for reasonable input"
+        );
         assert!(!result.contains("│"));
     }
 }

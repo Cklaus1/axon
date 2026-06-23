@@ -73,9 +73,7 @@ fn split_code(raw: &str) -> (String, &str) {
 /// `[EWI]` followed by exactly four ASCII digits, e.g. `E1300`, `W0003`, `I0001`.
 fn is_diag_code(s: &str) -> bool {
     let b = s.as_bytes();
-    b.len() == 5
-        && matches!(b[0], b'E' | b'W' | b'I')
-        && b[1..].iter().all(|c| c.is_ascii_digit())
+    b.len() == 5 && matches!(b[0], b'E' | b'W' | b'I') && b[1..].iter().all(|c| c.is_ascii_digit())
 }
 
 /// Severity from a code's leading letter; no code → `error` (the `as_json` path
@@ -139,7 +137,10 @@ mod tests {
         assert!(j.contains("\"schema\":\"axon-diag/1\""), "schema tag: {j}");
         assert!(j.contains("\"severity\":\"error\""), "severity: {j}");
         assert!(j.contains("\"code\":\"E1300\""), "code field: {j}");
-        assert!(j.contains("\"message\":\"no model reachable\""), "message: {j}");
+        assert!(
+            j.contains("\"message\":\"no model reachable\""),
+            "message: {j}"
+        );
         // One physical line.
         assert!(!j.contains('\n'), "must be single-line: {j}");
     }
@@ -156,21 +157,36 @@ mod tests {
         // Help line split into its own field; message is the non-help remainder.
         let j = diagnostic_json("[W0003] fn shadows builtin\n  help: rename it");
         assert!(j.contains("\"code\":\"W0003\""), "{j}");
-        assert!(j.contains("\"message\":\"fn shadows builtin\""), "message excludes help: {j}");
+        assert!(
+            j.contains("\"message\":\"fn shadows builtin\""),
+            "message excludes help: {j}"
+        );
         assert!(j.contains("\"help\":\"rename it\""), "help field: {j}");
 
         // `fix:` is treated like `help:`.
         let jf = diagnostic_json("[E0001] undefined\n  fix: did you mean foo?");
-        assert!(jf.contains("\"help\":\"did you mean foo?\""), "fix→help: {jf}");
+        assert!(
+            jf.contains("\"help\":\"did you mean foo?\""),
+            "fix→help: {jf}"
+        );
 
         // No code → code="" and severity defaults to error; whole string is the message.
         let jn = diagnostic_json("plain message, no code");
         assert!(jn.contains("\"code\":\"\""), "empty code: {jn}");
-        assert!(jn.contains("\"severity\":\"error\""), "default severity: {jn}");
-        assert!(jn.contains("\"message\":\"plain message, no code\""), "{jn}");
+        assert!(
+            jn.contains("\"severity\":\"error\""),
+            "default severity: {jn}"
+        );
+        assert!(
+            jn.contains("\"message\":\"plain message, no code\""),
+            "{jn}"
+        );
 
         // No help → the `help` key is omitted entirely (not null/empty).
-        assert!(!diagnostic_json("[E1300] x").contains("\"help\""), "help key absent when no help");
+        assert!(
+            !diagnostic_json("[E1300] x").contains("\"help\""),
+            "help key absent when no help"
+        );
     }
 
     #[test]
@@ -193,7 +209,11 @@ mod tests {
             "[I0001] note\nline two",
         ];
         for i in inputs {
-            assert_eq!(diagnostic_json(i), diagnostic_json(i), "deterministic for {i:?}");
+            assert_eq!(
+                diagnostic_json(i),
+                diagnostic_json(i),
+                "deterministic for {i:?}"
+            );
         }
     }
 
@@ -202,6 +222,9 @@ mod tests {
         // `[hint]` is not a diagnostic code — the whole string stays the message.
         let j = diagnostic_json("[hint] try again");
         assert!(j.contains("\"code\":\"\""), "not a code: {j}");
-        assert!(j.contains("\"message\":\"[hint] try again\""), "message verbatim: {j}");
+        assert!(
+            j.contains("\"message\":\"[hint] try again\""),
+            "message verbatim: {j}"
+        );
     }
 }

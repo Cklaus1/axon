@@ -53,7 +53,11 @@ pub struct LockEntry {
 
 impl LockEntry {
     /// A minimal entry: name + hash + source, no caps, no audit yet.
-    pub fn new(name: impl Into<String>, hash: impl Into<String>, source: impl Into<String>) -> Self {
+    pub fn new(
+        name: impl Into<String>,
+        hash: impl Into<String>,
+        source: impl Into<String>,
+    ) -> Self {
         LockEntry {
             name: name.into(),
             hash: hash.into(),
@@ -103,13 +107,19 @@ pub fn parse_lock(text: &str) -> Result<LockFile, (&'static str, String)> {
     let mut cur: Option<LockEntry> = None;
 
     // Flush the in-progress table into `modules`, validating required fields.
-    fn flush(cur: Option<LockEntry>, modules: &mut Vec<LockEntry>) -> Result<(), (&'static str, String)> {
+    fn flush(
+        cur: Option<LockEntry>,
+        modules: &mut Vec<LockEntry>,
+    ) -> Result<(), (&'static str, String)> {
         if let Some(e) = cur {
             if e.name.is_empty() || e.hash.is_empty() {
-                return Err((E1205, format!(
-                    "axon.lock [[module]] is missing required `name`/`hash` (got name={:?})",
-                    e.name
-                )));
+                return Err((
+                    E1205,
+                    format!(
+                        "axon.lock [[module]] is missing required `name`/`hash` (got name={:?})",
+                        e.name
+                    ),
+                ));
             }
             modules.push(e);
         }
@@ -128,16 +138,22 @@ pub fn parse_lock(text: &str) -> Result<LockFile, (&'static str, String)> {
         }
         // `key = value`
         let Some((key, val)) = line.split_once('=') else {
-            return Err((E1205, format!(
-                "axon.lock line {}: expected `key = value` or `[[module]]`, got `{line}`",
-                lineno + 1
-            )));
+            return Err((
+                E1205,
+                format!(
+                    "axon.lock line {}: expected `key = value` or `[[module]]`, got `{line}`",
+                    lineno + 1
+                ),
+            ));
         };
         let key = key.trim();
         let val = val.trim();
         if key == "version" {
             let v: u32 = val.parse().map_err(|_| {
-                (E1205, format!("axon.lock has a non-numeric version `{val}`"))
+                (
+                    E1205,
+                    format!("axon.lock has a non-numeric version `{val}`"),
+                )
             })?;
             if v != LOCK_VERSION {
                 return Err((E1205, format!(
@@ -148,10 +164,13 @@ pub fn parse_lock(text: &str) -> Result<LockFile, (&'static str, String)> {
             continue;
         }
         let Some(e) = cur.as_mut() else {
-            return Err((E1205, format!(
-                "axon.lock line {}: `{key}` appears before any [[module]]",
-                lineno + 1
-            )));
+            return Err((
+                E1205,
+                format!(
+                    "axon.lock line {}: `{key}` appears before any [[module]]",
+                    lineno + 1
+                ),
+            ));
         };
         match key {
             "name" => e.name = parse_toml_str(val).map_err(tag1205)?,
@@ -160,7 +179,10 @@ pub fn parse_lock(text: &str) -> Result<LockFile, (&'static str, String)> {
             "audit" => e.audit = parse_toml_str(val).map_err(tag1205)?,
             "caps" => e.caps = parse_toml_str_array(val).map_err(tag1205)?,
             other => {
-                return Err((E1205, format!("axon.lock line {}: unknown key `{other}`", lineno + 1)));
+                return Err((
+                    E1205,
+                    format!("axon.lock line {}: unknown key `{other}`", lineno + 1),
+                ));
             }
         }
     }
@@ -292,7 +314,10 @@ mod tests {
         let h1 = module_hash(b"fn main() -> i64 { 0 }");
         let h2 = module_hash(b"fn main() -> i64 { 0 }");
         assert_eq!(h1, h2, "same bytes must hash identically");
-        assert!(h1.starts_with("axh1:"), "hash must carry the axh1: tag: {h1}");
+        assert!(
+            h1.starts_with("axh1:"),
+            "hash must carry the axh1: tag: {h1}"
+        );
         // axh1: (5) + 64 hex chars.
         assert_eq!(h1.len(), 5 + 64, "axh1: + 64-hex SHA-256: {h1}");
     }
@@ -325,7 +350,11 @@ mod tests {
         assert_eq!(parsed.modules[1].name, "scorelib::metric");
         assert_eq!(parsed.modules[1].caps, vec!["fs:read(./data/)".to_string()]);
         // Re-serializing the parse yields byte-identical text (determinism).
-        assert_eq!(write_lock(&parsed.modules), text, "write∘parse∘write is stable");
+        assert_eq!(
+            write_lock(&parsed.modules),
+            text,
+            "write∘parse∘write is stable"
+        );
     }
 
     #[test]
@@ -338,7 +367,11 @@ mod tests {
             LockEntry::new("abe", "axh1:a", "file:a"),
             LockEntry::new("zed", "axh1:z", "file:z"),
         ];
-        assert_eq!(write_lock(&a), write_lock(&b), "input order must not affect output");
+        assert_eq!(
+            write_lock(&a),
+            write_lock(&b),
+            "input order must not affect output"
+        );
     }
 
     #[test]
@@ -362,17 +395,18 @@ mod tests {
 
     #[test]
     fn caps_array_roundtrips_including_empty() {
-        let modules = vec![
-            LockEntry {
-                name: "m".into(),
-                hash: "axh1:h".into(),
-                source: "file:m".into(),
-                caps: vec!["fs:read(./a/)".into(), "net:api.x".into()],
-                audit: "axh1-audit:7c".into(),
-            },
-        ];
+        let modules = vec![LockEntry {
+            name: "m".into(),
+            hash: "axh1:h".into(),
+            source: "file:m".into(),
+            caps: vec!["fs:read(./a/)".into(), "net:api.x".into()],
+            audit: "axh1-audit:7c".into(),
+        }];
         let parsed = parse_lock(&write_lock(&modules)).unwrap();
-        assert_eq!(parsed.modules[0].caps, vec!["fs:read(./a/)".to_string(), "net:api.x".to_string()]);
+        assert_eq!(
+            parsed.modules[0].caps,
+            vec!["fs:read(./a/)".to_string(), "net:api.x".to_string()]
+        );
         assert_eq!(parsed.modules[0].audit, "axh1-audit:7c");
     }
 }

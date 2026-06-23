@@ -63,7 +63,10 @@ impl Store {
 
     pub fn find_by_effect(&self, effect: &Effect) -> Result<Vec<LedgerRecord>> {
         let records = self.all()?;
-        Ok(records.into_iter().filter(|r| &r.effect == effect).collect())
+        Ok(records
+            .into_iter()
+            .filter(|r| &r.effect == effect)
+            .collect())
     }
 
     /// Filter records to a specific repo name tag.
@@ -72,7 +75,10 @@ impl Store {
         let records = self.all()?;
         match repo {
             None => Ok(records),
-            Some(r) => Ok(records.into_iter().filter(|rec| rec.repo.as_deref() == Some(r)).collect()),
+            Some(r) => Ok(records
+                .into_iter()
+                .filter(|rec| rec.repo.as_deref() == Some(r))
+                .collect()),
         }
     }
 
@@ -99,19 +105,22 @@ impl Store {
         let all = self.all()?;
 
         // IDs of records recent enough to keep.
-        let kept_ids: std::collections::HashSet<String> = all.iter()
+        let kept_ids: std::collections::HashSet<String> = all
+            .iter()
             .filter(|r| r.ts_ms >= cutoff_ms)
             .map(|r| r.id.clone())
             .collect();
 
         // Also keep any record whose id is a causal_parent of a kept record —
         // prevents dangling edges that reference pruned ancestors.
-        let parent_ids: std::collections::HashSet<String> = all.iter()
+        let parent_ids: std::collections::HashSet<String> = all
+            .iter()
             .filter(|r| kept_ids.contains(&r.id))
             .filter_map(|r| r.causal_parent.clone())
             .collect();
 
-        let to_keep: Vec<LedgerRecord> = all.into_iter()
+        let to_keep: Vec<LedgerRecord> = all
+            .into_iter()
             .filter(|r| kept_ids.contains(&r.id) || parent_ids.contains(&r.id))
             .collect();
 
@@ -138,14 +147,17 @@ impl Store {
     pub fn replace_record(&mut self, old_id: &str, new_record: &LedgerRecord) -> Result<bool> {
         let all = self.all()?;
         let mut replaced = false;
-        let rewritten: Vec<LedgerRecord> = all.into_iter().map(|r| {
-            if r.id == old_id {
-                replaced = true;
-                new_record.clone()
-            } else {
-                r
-            }
-        }).collect();
+        let rewritten: Vec<LedgerRecord> = all
+            .into_iter()
+            .map(|r| {
+                if r.id == old_id {
+                    replaced = true;
+                    new_record.clone()
+                } else {
+                    r
+                }
+            })
+            .collect();
         if !replaced {
             return Ok(false);
         }
@@ -166,17 +178,24 @@ impl Store {
     /// store `agent:<uuid>` as principal; this replaces them with a real email address.
     ///
     /// Returns `(total, updated)` counts. Writes atomically via a `.tmp` rename.
-    pub fn rewrite_principals(&mut self, old_prefix: &str, new_principal: &str) -> Result<(usize, usize)> {
+    pub fn rewrite_principals(
+        &mut self,
+        old_prefix: &str,
+        new_principal: &str,
+    ) -> Result<(usize, usize)> {
         let all = self.all()?;
         let total = all.len();
         let mut updated = 0usize;
-        let rewritten: Vec<LedgerRecord> = all.into_iter().map(|mut r| {
-            if r.principal.starts_with(old_prefix) {
-                r.principal = new_principal.to_string();
-                updated += 1;
-            }
-            r
-        }).collect();
+        let rewritten: Vec<LedgerRecord> = all
+            .into_iter()
+            .map(|mut r| {
+                if r.principal.starts_with(old_prefix) {
+                    r.principal = new_principal.to_string();
+                    updated += 1;
+                }
+                r
+            })
+            .collect();
         let tmp_path = self.events_path.with_extension("ndjson.tmp");
         {
             let mut f = File::create(&tmp_path)?;
@@ -295,7 +314,9 @@ mod tests {
         store.append(&r2).unwrap();
         store.append(&r3).unwrap();
 
-        let (total, updated) = store.rewrite_principals("agent:", "chris@example.com").unwrap();
+        let (total, updated) = store
+            .rewrite_principals("agent:", "chris@example.com")
+            .unwrap();
         assert_eq!(total, 3);
         assert_eq!(updated, 2);
 
@@ -308,7 +329,9 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut store = Store::open(dir.path()).unwrap();
         store.append(&make_record("r1", 1000, None)).unwrap(); // principal="test"
-        let (total, updated) = store.rewrite_principals("agent:", "chris@example.com").unwrap();
+        let (total, updated) = store
+            .rewrite_principals("agent:", "chris@example.com")
+            .unwrap();
         assert_eq!(total, 1);
         assert_eq!(updated, 0);
     }

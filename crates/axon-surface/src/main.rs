@@ -41,22 +41,23 @@ fn main() -> AnyResult<()> {
     match cli.command {
         Cmd::Validate { input } => {
             let md = std::fs::read_to_string(&input)?;
-            let goal = GoalFile::parse(&md)
-                .map_err(|e| anyhow::anyhow!("validation failed: {e}"))?;
+            let goal =
+                GoalFile::parse(&md).map_err(|e| anyhow::anyhow!("validation failed: {e}"))?;
             println!("✓ goal file is valid: `{}`", input.display());
             println!("  title:    {}", goal.title);
             println!("  inputs:   {:?}", goal.inputs()?);
             println!("  outputs:  {:?}", goal.outputs()?);
             println!("  verify:   {}", goal.verify_predicate()?);
-            println!("  sections: {} (all 10 required present)", goal.sections.len());
+            println!(
+                "  sections: {} (all 10 required present)",
+                goal.sections.len()
+            );
             Ok(())
         }
         Cmd::Compile { input, out } => {
             let md = std::fs::read_to_string(&input)?;
-            let goal = GoalFile::parse(&md)
-                .map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
-            let ax = compile::emit(&goal)
-                .map_err(|e| anyhow::anyhow!("emit failed: {e}"))?;
+            let goal = GoalFile::parse(&md).map_err(|e| anyhow::anyhow!("parse failed: {e}"))?;
+            let ax = compile::emit(&goal).map_err(|e| anyhow::anyhow!("emit failed: {e}"))?;
             let out_path = out.unwrap_or_else(|| input.with_extension("ax"));
             std::fs::write(&out_path, &ax)?;
             println!("wrote {} ({} bytes)", out_path.display(), ax.len());

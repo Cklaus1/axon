@@ -1,3 +1,5 @@
+use std::cmp::Reverse;
+
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
@@ -69,26 +71,36 @@ pub fn why(sha: &str, store: &Store) -> Result<WhyResult> {
     // Score each candidate edge by |session_start - commit_ts|, prefer sessions
     // that started before the commit and whose gap is within the inference window.
     let edge = candidates.into_iter().min_by_key(|e| {
-        let session_id = e.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        let session_id = e
+            .payload
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let session_ts = sessions
             .iter()
             .find(|s| s.payload.get("session_id").and_then(|v| v.as_str()) == Some(session_id))
             .map(|s| {
                 // Prefer end_ts over start_ts as the "session activity" anchor
-                let end_ts = s.payload.get("end_ts").and_then(|v| v.as_str())
+                let end_ts = s
+                    .payload
+                    .get("end_ts")
+                    .and_then(|v| v.as_str())
                     .and_then(parse_iso_to_ms)
                     .unwrap_or(s.ts_ms);
                 // Use end_ts if it's plausible (within 24h of start), else start
-                if end_ts > s.ts_ms && end_ts - s.ts_ms < 86_400_000 { end_ts } else { s.ts_ms }
+                if end_ts > s.ts_ms && end_ts - s.ts_ms < 86_400_000 {
+                    end_ts
+                } else {
+                    s.ts_ms
+                }
             })
             .unwrap_or(e.ts_ms);
         // Gap from session to commit; sessions after the commit are penalized heavily
-        let gap = if commit_ts >= session_ts {
+        if commit_ts >= session_ts {
             commit_ts - session_ts
         } else {
             (session_ts - commit_ts) + max_gap_ms * 10
-        };
-        gap
+        }
     });
 
     // 3. From edge, find AgentSession
@@ -114,17 +126,21 @@ pub fn why(sha: &str, store: &Store) -> Result<WhyResult> {
     //    (a) causal_parent == commit.id (commit-linked outcomes)
     //    (b) payload.session_id == edge session_id (signal score write-backs)
     let all = store.all()?;
-    let linked_session_id = edge.as_ref()
+    let linked_session_id = edge
+        .as_ref()
         .and_then(|e| e.payload.get("session_id"))
         .and_then(|v| v.as_str())
         .unwrap_or("");
     let outcomes = all
         .into_iter()
         .filter(|r| {
-            if r.effect != Effect::MetricOutcome { return false; }
+            if r.effect != Effect::MetricOutcome {
+                return false;
+            }
             r.causal_parent.as_deref() == Some(commit.id.as_str())
                 || (!linked_session_id.is_empty()
-                    && r.payload.get("session_id").and_then(|v| v.as_str()) == Some(linked_session_id))
+                    && r.payload.get("session_id").and_then(|v| v.as_str())
+                        == Some(linked_session_id))
         })
         .collect();
 
@@ -162,7 +178,7 @@ pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
         .filter(|r| r.effect == Effect::GitCommit)
         .map(|r| (*r).clone())
         .collect();
-    commits.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
+    commits.sort_by_key(|b| Reverse(b.ts_ms));
     let recent_commits = commits.iter().take(10).cloned().collect();
     let commit_count = commits.len();
 
@@ -173,7 +189,8 @@ pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
         .iter()
         .filter(|r| r.effect == Effect::AgentSession)
         .filter(|r| {
-            let end_ts_ms = r.payload
+            let end_ts_ms = r
+                .payload
                 .get("end_ts")
                 .and_then(|v| v.as_str())
                 .and_then(parse_iso_to_ms);
@@ -185,21 +202,30 @@ pub fn as_of(ts_ms: u64, store: &Store) -> Result<AsOfResult> {
         })
         .map(|r| (*r).clone())
         .collect();
-    active_sessions.sort_by(|a, b| b.ts_ms.cmp(&a.ts_ms));
-    let session_count = visible.iter().filter(|r| r.effect == Effect::AgentSession).count();
+    active_sessions.sort_by_key(|b| Reverse(b.ts_ms));
+    let session_count = visible
+        .iter()
+        .filter(|r| r.effect == Effect::AgentSession)
+        .count();
 
     // Files in flight: union of files_touched across active sessions, deduped.
     // Only keep paths that look like real source files: no flags, globs, or shell fragments.
-    let valid_extensions = [".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock", ".html", ".js", ".ts", ".py"];
+    let valid_extensions = [
+        ".rs", ".ax", ".toml", ".md", ".json", ".jsonl", ".sh", ".lock", ".html", ".js", ".ts",
+        ".py",
+    ];
     let mut files_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     for s in &active_sessions {
         if let Some(arr) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
             for f in arr {
                 if let Some(path) = f.as_str() {
                     // Skip shell artifacts: flags, globs, bash groupings
-                    if path.starts_with('-') || path.starts_with('(')
-                        || path.contains('*') || path.contains('+')
-                        || path.contains('=') || path.contains('[')
+                    if path.starts_with('-')
+                        || path.starts_with('(')
+                        || path.contains('*')
+                        || path.contains('+')
+                        || path.contains('=')
+                        || path.contains('[')
                         || path.contains(' ')
                     {
                         continue;
@@ -284,40 +310,68 @@ pub fn search(query: &str, store: &Store, limit: usize) -> Result<Vec<SearchHit>
     for record in &all {
         // Search commits: message and files
         if record.effect == Effect::GitCommit {
-            let msg = record.payload.get("message").and_then(|v| v.as_str()).unwrap_or("");
-            let sha = record.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
+            let msg = record
+                .payload
+                .get("message")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let sha = record
+                .payload
+                .get("sha")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let files_arr = record.payload.get("files").and_then(|v| v.as_array());
 
             let msg_match = matches_all(&msg.to_lowercase(), &terms);
             let file_match = files_arr.and_then(|arr| {
-                arr.iter()
-                    .find_map(|f| f.as_str().filter(|p| matches_all(&p.to_lowercase(), &terms)))
+                arr.iter().find_map(|f| {
+                    f.as_str()
+                        .filter(|p| matches_all(&p.to_lowercase(), &terms))
+                })
             });
 
             let (matched_field, matched_text) = if msg_match {
-                ("commit.message".to_string(), msg.chars().take(120).collect())
+                (
+                    "commit.message".to_string(),
+                    msg.chars().take(120).collect(),
+                )
             } else if let Some(fp) = file_match {
                 ("commit.file".to_string(), fp.to_string())
             } else {
                 continue;
             };
 
-            let session_goal = commit_to_session.get(sha)
+            let session_goal = commit_to_session
+                .get(sha)
                 .and_then(|sid| session_goals.get(*sid))
                 .map(|g| g.chars().take(120).collect());
 
-            hits.push(SearchHit { record: record.clone(), matched_field, matched_text, session_goal });
+            hits.push(SearchHit {
+                record: record.clone(),
+                matched_field,
+                matched_text,
+                session_goal,
+            });
         }
 
         // Search sessions: goal text and files_touched
         if record.effect == Effect::AgentSession {
-            let goal = record.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
-            let files_arr = record.payload.get("files_touched").and_then(|v| v.as_array());
+            let goal = record
+                .payload
+                .get("goal")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let files_arr = record
+                .payload
+                .get("files_touched")
+                .and_then(|v| v.as_array());
 
             let goal_match = matches_all(&goal.to_lowercase(), &terms);
             let file_match = files_arr.and_then(|arr| {
-                arr.iter()
-                    .find_map(|f| f.as_str().filter(|p| matches_all(&p.to_lowercase(), &terms)))
+                arr.iter().find_map(|f| {
+                    f.as_str()
+                        .filter(|p| matches_all(&p.to_lowercase(), &terms))
+                })
             });
 
             let (matched_field, matched_text) = if goal_match {
@@ -332,13 +386,17 @@ pub fn search(query: &str, store: &Store, limit: usize) -> Result<Vec<SearchHit>
                 record: record.clone(),
                 matched_field,
                 matched_text,
-                session_goal: if goal_match { Some(goal.chars().take(120).collect()) } else { None },
+                session_goal: if goal_match {
+                    Some(goal.chars().take(120).collect())
+                } else {
+                    None
+                },
             });
         }
     }
 
     // Sort by recency (newest first), then deduplicate by record id
-    hits.sort_by(|a, b| b.record.ts_ms.cmp(&a.record.ts_ms));
+    hits.sort_by_key(|b| Reverse(b.record.ts_ms));
     hits.dedup_by_key(|h| h.record.id.clone());
     hits.truncate(limit);
     Ok(hits)
@@ -396,12 +454,14 @@ pub fn history(file_path: &str, store: &Store) -> Result<HistoryResult> {
     };
 
     // ── 1. Find sessions that touched this file ──────────────────────────────
-    let sessions: Vec<&LedgerRecord> = all.iter()
+    let sessions: Vec<&LedgerRecord> = all
+        .iter()
         .filter(|r| r.effect == Effect::AgentSession)
         .filter(|r| {
-            r.payload.get("files_touched")
+            r.payload
+                .get("files_touched")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(|f| file_matches(f)))
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(file_matches))
                 .unwrap_or(false)
         })
         .collect();
@@ -410,15 +470,22 @@ pub fn history(file_path: &str, store: &Store) -> Result<HistoryResult> {
     let mut session_to_edge: std::collections::HashMap<String, &LedgerRecord> =
         std::collections::HashMap::new();
     for r in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
-        let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+        let sid = r
+            .payload
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         session_to_edge.entry(sid.to_string()).or_insert(r);
     }
 
     // Build commit sha → record map
-    let commit_by_sha: std::collections::HashMap<String, &LedgerRecord> = all.iter()
+    let commit_by_sha: std::collections::HashMap<String, &LedgerRecord> = all
+        .iter()
         .filter(|r| r.effect == Effect::GitCommit)
         .filter_map(|r| {
-            r.payload.get("sha").and_then(|v| v.as_str())
+            r.payload
+                .get("sha")
+                .and_then(|v| v.as_str())
                 .map(|sha| (sha.to_string(), r))
         })
         .collect();
@@ -427,39 +494,66 @@ pub fn history(file_path: &str, store: &Store) -> Result<HistoryResult> {
     let mut session_commits: std::collections::HashMap<String, Vec<&LedgerRecord>> =
         std::collections::HashMap::new();
     for edge in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
-        let sid = edge.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-        let sha = edge.payload.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("");
+        let sid = edge
+            .payload
+            .get("session_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let sha = edge
+            .payload
+            .get("commit_sha")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if let Some(&commit) = commit_by_sha.get(sha) {
-            let files_match = commit.payload.get("files")
+            let files_match = commit
+                .payload
+                .get("files")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(|f| file_matches(f)))
+                .map(|arr| arr.iter().filter_map(|v| v.as_str()).any(file_matches))
                 .unwrap_or(false);
             if files_match {
-                session_commits.entry(sid.to_string()).or_default().push(commit);
+                session_commits
+                    .entry(sid.to_string())
+                    .or_default()
+                    .push(commit);
             }
         }
     }
 
     // ── 3. Build chapters ────────────────────────────────────────────────────
-    let mut chapters: Vec<FileChapter> = sessions.iter().map(|s| {
-        let p = &s.payload;
-        let sid = p.get("session_id").and_then(|v| v.as_str()).unwrap_or(&s.id[..s.id.len().min(8)]);
-        let goal = p.get("goal").and_then(|v| v.as_str())
-            .filter(|g| !g.starts_with('<'))
-            .unwrap_or("(no goal recorded)")
-            .to_string();
-        let commits = session_commits.get(sid).cloned().unwrap_or_default()
-            .into_iter().cloned().collect();
-        let edge = session_to_edge.get(sid);
-        let confidence = edge.and_then(|e| e.payload.get("confidence").and_then(|v| v.as_f64()));
-        FileChapter {
-            session: (*s).clone(),
-            goal,
-            commits,
-            confidence,
-            date: ms_to_iso_approx(s.ts_ms),
-        }
-    }).collect();
+    let mut chapters: Vec<FileChapter> = sessions
+        .iter()
+        .map(|s| {
+            let p = &s.payload;
+            let sid = p
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&s.id[..s.id.len().min(8)]);
+            let goal = p
+                .get("goal")
+                .and_then(|v| v.as_str())
+                .filter(|g| !g.starts_with('<'))
+                .unwrap_or("(no goal recorded)")
+                .to_string();
+            let commits = session_commits
+                .get(sid)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .cloned()
+                .collect();
+            let edge = session_to_edge.get(sid);
+            let confidence =
+                edge.and_then(|e| e.payload.get("confidence").and_then(|v| v.as_f64()));
+            FileChapter {
+                session: (*s).clone(),
+                goal,
+                commits,
+                confidence,
+                date: ms_to_iso_approx(s.ts_ms),
+            }
+        })
+        .collect();
 
     // Oldest first
     chapters.sort_by_key(|c| c.session.ts_ms);
@@ -492,7 +586,10 @@ fn ms_to_iso_approx(ms: u64) -> String {
     let day = e - (153 * m_raw + 2) / 5 + 1;
     let month = m_raw + 3 - 12 * (m_raw / 10);
     let year = 100 * b + d - 4800 + m_raw / 10;
-    format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
+    format!(
+        "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+        year, month, day, h, m, s
+    )
 }
 
 #[cfg(test)]
@@ -588,11 +685,7 @@ mod tests {
         let result = why("deadbeef", &store).unwrap();
 
         assert_eq!(
-            result
-                .commit
-                .payload
-                .get("sha")
-                .and_then(|v| v.as_str()),
+            result.commit.payload.get("sha").and_then(|v| v.as_str()),
             Some("deadbeef1234abcd")
         );
         assert!(result.agent_session.is_some(), "Should find agent session");
@@ -621,12 +714,17 @@ mod tests {
             "training_tier": "positive_gold",
             "source": "axon-signal",
         });
-        let outcome_id = record_id("signal:session:score-session-42", &Effect::MetricOutcome, ts + 1, &outcome_payload);
+        let outcome_id = record_id(
+            "signal:session:score-session-42",
+            &Effect::MetricOutcome,
+            ts + 1,
+            &outcome_payload,
+        );
         let outcome = LedgerRecord {
             id: outcome_id,
             principal: "signal:test@example.com".to_string(),
             effect: Effect::MetricOutcome,
-            causal_parent: None,   // ← the key: no direct link to commit
+            causal_parent: None, // ← the key: no direct link to commit
             ts_ms: ts + 1,
             payload: outcome_payload,
             repo: None,
@@ -639,13 +737,23 @@ mod tests {
 
         let result = why("cafecafe", &store).unwrap();
 
-        assert_eq!(result.outcomes.len(), 1, "should find the score write-back via session_id");
         assert_eq!(
-            result.outcomes[0].payload.get("score").and_then(|v| v.as_i64()),
+            result.outcomes.len(),
+            1,
+            "should find the score write-back via session_id"
+        );
+        assert_eq!(
+            result.outcomes[0]
+                .payload
+                .get("score")
+                .and_then(|v| v.as_i64()),
             Some(87)
         );
         assert_eq!(
-            result.outcomes[0].payload.get("training_tier").and_then(|v| v.as_str()),
+            result.outcomes[0]
+                .payload
+                .get("training_tier")
+                .and_then(|v| v.as_str()),
             Some("positive_gold")
         );
     }
@@ -692,9 +800,21 @@ mod tests {
             "turn_count": 10,
             "files_touched": [file],
         });
-        let id = record_id(&format!("session:{sid}"), &Effect::AgentSession, ts_ms, &payload);
-        LedgerRecord { id, principal: format!("session:{sid}"), effect: Effect::AgentSession,
-            causal_parent: None, ts_ms, payload, repo: None }
+        let id = record_id(
+            &format!("session:{sid}"),
+            &Effect::AgentSession,
+            ts_ms,
+            &payload,
+        );
+        LedgerRecord {
+            id,
+            principal: format!("session:{sid}"),
+            effect: Effect::AgentSession,
+            causal_parent: None,
+            ts_ms,
+            payload,
+            repo: None,
+        }
     }
 
     #[test]
@@ -733,12 +853,26 @@ mod tests {
         let mut store = Store::open(&dir).unwrap();
 
         // Insert in reverse order
-        store.append(&make_session_with_file("s2", "second goal", "lib.rs", 2_000_000)).unwrap();
-        store.append(&make_session_with_file("s1", "first goal", "lib.rs", 1_000_000)).unwrap();
+        store
+            .append(&make_session_with_file(
+                "s2",
+                "second goal",
+                "lib.rs",
+                2_000_000,
+            ))
+            .unwrap();
+        store
+            .append(&make_session_with_file(
+                "s1",
+                "first goal",
+                "lib.rs",
+                1_000_000,
+            ))
+            .unwrap();
 
         let r = history("lib.rs", &store).unwrap();
         assert_eq!(r.chapters.len(), 2);
-        assert_eq!(r.chapters[0].goal, "first goal",  "should be oldest first");
+        assert_eq!(r.chapters[0].goal, "first goal", "should be oldest first");
         assert_eq!(r.chapters[1].goal, "second goal");
     }
 }

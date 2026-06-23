@@ -191,7 +191,11 @@ fn ty_cost(t: &AxonType, acc: &mut Acc) {
         AxonType::Named(n) | AxonType::TypeParam(n) | AxonType::DynTrait(n) => {
             acc.add("Type", name_bits(n))
         }
-        AxonType::Option(i) | AxonType::Chan(i) | AxonType::Slice(i) | AxonType::Ref(i) | AxonType::RawPtr(i) => {
+        AxonType::Option(i)
+        | AxonType::Chan(i)
+        | AxonType::Slice(i)
+        | AxonType::Ref(i)
+        | AxonType::RawPtr(i) => {
             acc.add("Type", KIND_BITS);
             ty_cost(i, acc);
         }

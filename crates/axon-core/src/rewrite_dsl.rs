@@ -103,7 +103,11 @@ impl RewriteRule {
 
     /// The comma-separated vocabulary, for error messages.
     pub fn vocabulary() -> String {
-        Self::ALL.iter().map(|r| r.name()).collect::<Vec<_>>().join(", ")
+        Self::ALL
+            .iter()
+            .map(|r| r.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// A stable name (for spec text / manifest / errors).
@@ -167,14 +171,19 @@ impl RewriteRule {
                 None
             }
             RewriteRule::SimplifyBoolNot => {
-                if let Expr::UnaryOp { op: UnaryOp::Not, operand } = e {
+                if let Expr::UnaryOp {
+                    op: UnaryOp::Not,
+                    operand,
+                } = e
+                {
                     match operand.as_ref() {
                         Expr::Literal(Literal::Bool(b)) => {
                             return Some(Expr::Literal(Literal::Bool(!b)))
                         }
-                        Expr::UnaryOp { op: UnaryOp::Not, operand: inner } => {
-                            return Some((**inner).clone())
-                        }
+                        Expr::UnaryOp {
+                            op: UnaryOp::Not,
+                            operand: inner,
+                        } => return Some((**inner).clone()),
                         _ => {}
                     }
                 }
@@ -225,10 +234,16 @@ impl RewriteRule {
                 if let Expr::Call { callee, args, .. } = e {
                     if let Expr::Ident(name) = callee.as_ref() {
                         match (name.as_str(), args.as_slice()) {
-                            ("min_i64", [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))]) => {
+                            (
+                                "min_i64",
+                                [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))],
+                            ) => {
                                 return Some(Expr::Literal(Literal::Int((*a).min(*b))));
                             }
-                            ("max_i64", [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))]) => {
+                            (
+                                "max_i64",
+                                [Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))],
+                            ) => {
                                 return Some(Expr::Literal(Literal::Int((*a).max(*b))));
                             }
                             ("abs_i64", [Expr::Literal(Literal::Int(x))]) => {
@@ -428,7 +443,12 @@ pub fn compile(spec: &RewriteSpec) -> impl Fn(&Program) -> Program {
 pub fn compile_unsound_div_fold_for_redteam() -> impl Fn(&Program) -> Program {
     fn fold(e: &Expr) -> Expr {
         let folded = map_children(e, fold);
-        if let Expr::BinOp { op: BinOp::Div, left, right } = &folded {
+        if let Expr::BinOp {
+            op: BinOp::Div,
+            left,
+            right,
+        } = &folded
+        {
             if let (Expr::Literal(Literal::Int(a)), Expr::Literal(Literal::Int(b))) =
                 (left.as_ref(), right.as_ref())
             {
@@ -489,30 +509,45 @@ fn rewrite_expr(e: &Expr, rules: &[RewriteRule]) -> Expr {
 fn map_children(e: &Expr, f: impl Fn(&Expr) -> Expr) -> Expr {
     let fb = |b: &Expr| Box::new(f(b));
     match e {
-        Expr::BinOp { op, left, right } => {
-            Expr::BinOp { op: op.clone(), left: fb(left), right: fb(right) }
-        }
-        Expr::UnaryOp { op, operand } => Expr::UnaryOp { op: op.clone(), operand: fb(operand) },
+        Expr::BinOp { op, left, right } => Expr::BinOp {
+            op: op.clone(),
+            left: fb(left),
+            right: fb(right),
+        },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp {
+            op: op.clone(),
+            operand: fb(operand),
+        },
         Expr::If { cond, then, else_ } => Expr::If {
             cond: fb(cond),
             then: fb(then),
             else_: else_.as_ref().map(|b| fb(b)),
         },
-        Expr::Let { name, ty, value } => {
-            Expr::Let { name: name.clone(), ty: ty.clone(), value: fb(value) }
-        }
-        Expr::Own { name, ty, value } => {
-            Expr::Own { name: name.clone(), ty: ty.clone(), value: fb(value) }
-        }
-        Expr::RefBind { name, ty, value } => {
-            Expr::RefBind { name: name.clone(), ty: ty.clone(), value: fb(value) }
-        }
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
+        Expr::Own { name, ty, value } => Expr::Own {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
+        Expr::RefBind { name, ty, value } => Expr::RefBind {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
         Expr::Call { callee, args, tier } => Expr::Call {
             callee: fb(callee),
             args: args.iter().map(&f).collect(),
             tier: tier.clone(),
         },
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
             receiver: fb(receiver),
             method: method.clone(),
             args: args.iter().map(&f).collect(),
@@ -539,10 +574,14 @@ fn map_children(e: &Expr, f: impl Fn(&Expr) -> Expr) -> Expr {
                 .collect(),
         },
         Expr::Return(Some(b)) => Expr::Return(Some(fb(b))),
-        Expr::FieldAccess { receiver, field } => {
-            Expr::FieldAccess { receiver: fb(receiver), field: field.clone() }
-        }
-        Expr::Index { receiver, index } => Expr::Index { receiver: fb(receiver), index: fb(index) },
+        Expr::FieldAccess { receiver, field } => Expr::FieldAccess {
+            receiver: fb(receiver),
+            field: field.clone(),
+        },
+        Expr::Index { receiver, index } => Expr::Index {
+            receiver: fb(receiver),
+            index: fb(index),
+        },
         Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(&f).collect()),
         Expr::Array(xs) => Expr::Array(xs.iter().map(&f).collect()),
         Expr::While { cond, body } => Expr::While {
@@ -595,8 +634,13 @@ mod tests {
 
     #[test]
     fn validate_rejects_empty_and_oversized() {
-        assert_eq!(RewriteSpec { rules: vec![] }.validate().unwrap_err().code, E_NONTOTAL);
-        let huge = RewriteSpec { rules: vec![RewriteRule::FoldIntLiteral; 65] };
+        assert_eq!(
+            RewriteSpec { rules: vec![] }.validate().unwrap_err().code,
+            E_NONTOTAL
+        );
+        let huge = RewriteSpec {
+            rules: vec![RewriteRule::FoldIntLiteral; 65],
+        };
         assert_eq!(huge.validate().unwrap_err().code, E_BUDGET);
     }
 
@@ -630,7 +674,10 @@ mod tests {
         let pass = compile(&spec);
         let out = pass(&prog("fn main() -> i64 { 10 / 0 }"));
         // Still a division, not a literal.
-        assert!(matches!(body_tail(&out), Expr::BinOp { .. }), "div-by-zero must NOT be folded");
+        assert!(
+            matches!(body_tail(&out), Expr::BinOp { .. }),
+            "div-by-zero must NOT be folded"
+        );
     }
 
     #[test]
@@ -644,7 +691,9 @@ mod tests {
         .unwrap();
         spec.validate().unwrap();
         let pass = compile(&spec);
-        let out = pass(&prog("fn main() -> i64 { if !(false) { 1 + 0 } else { 2 } }"));
+        let out = pass(&prog(
+            "fn main() -> i64 { if !(false) { 1 + 0 } else { 2 } }",
+        ));
         // The taken branch `{ 1 + 0 }` is a Block; after const-branch + arith
         // folding its tail is the literal 1. Unwrap the (possibly nested) block.
         let mut tail = body_tail(&out);
@@ -661,7 +710,11 @@ mod tests {
 
     /// Build the bare `BinOp` for a logical operator over two raw expr operands.
     fn logical(op: BinOp, l: Expr, r: Expr) -> Expr {
-        Expr::BinOp { op, left: Box::new(l), right: Box::new(r) }
+        Expr::BinOp {
+            op,
+            left: Box::new(l),
+            right: Box::new(r),
+        }
     }
     fn b(v: bool) -> Expr {
         Expr::Literal(Literal::Bool(v))
@@ -680,15 +733,23 @@ mod tests {
             Some(Expr::Literal(Literal::Bool(false)))
         ));
         // true && R → R ; L && true → L
-        assert!(matches!(rule.apply_here(&logical(BinOp::And, b(true), id("r"))), Some(Expr::Ident(n)) if n == "r"));
-        assert!(matches!(rule.apply_here(&logical(BinOp::And, id("l"), b(true))), Some(Expr::Ident(n)) if n == "l"));
+        assert!(
+            matches!(rule.apply_here(&logical(BinOp::And, b(true), id("r"))), Some(Expr::Ident(n)) if n == "r")
+        );
+        assert!(
+            matches!(rule.apply_here(&logical(BinOp::And, id("l"), b(true))), Some(Expr::Ident(n)) if n == "l")
+        );
         // true || R → true ; false || R → R ; L || false → L
         assert!(matches!(
             rule.apply_here(&logical(BinOp::Or, b(true), id("r"))),
             Some(Expr::Literal(Literal::Bool(true)))
         ));
-        assert!(matches!(rule.apply_here(&logical(BinOp::Or, b(false), id("r"))), Some(Expr::Ident(n)) if n == "r"));
-        assert!(matches!(rule.apply_here(&logical(BinOp::Or, id("l"), b(false))), Some(Expr::Ident(n)) if n == "l"));
+        assert!(
+            matches!(rule.apply_here(&logical(BinOp::Or, b(false), id("r"))), Some(Expr::Ident(n)) if n == "r")
+        );
+        assert!(
+            matches!(rule.apply_here(&logical(BinOp::Or, id("l"), b(false))), Some(Expr::Ident(n)) if n == "l")
+        );
     }
 
     #[test]
@@ -698,15 +759,19 @@ mod tests {
         // side effects/panic. The rule returns None (no fold) for these.
         let rule = RewriteRule::FoldLogicalShortCircuit;
         assert!(
-            rule.apply_here(&logical(BinOp::And, id("l"), b(false))).is_none(),
+            rule.apply_here(&logical(BinOp::And, id("l"), b(false)))
+                .is_none(),
             "L && false must NOT fold to false — would drop the evaluated L"
         );
         assert!(
-            rule.apply_here(&logical(BinOp::Or, id("l"), b(true))).is_none(),
+            rule.apply_here(&logical(BinOp::Or, id("l"), b(true)))
+                .is_none(),
             "L || true must NOT fold to true — would drop the evaluated L"
         );
         // A non-constant `a && b` is untouched.
-        assert!(rule.apply_here(&logical(BinOp::And, id("a"), id("b"))).is_none());
+        assert!(rule
+            .apply_here(&logical(BinOp::And, id("a"), id("b")))
+            .is_none());
     }
 
     #[test]
@@ -716,7 +781,9 @@ mod tests {
         let spec = RewriteSpec::parse("fold-logical").unwrap();
         spec.validate().unwrap();
         let pass = compile(&spec);
-        let out = pass(&prog("fn main() -> i64 { if false && (1 > 0) { 1 } else { 0 } }"));
+        let out = pass(&prog(
+            "fn main() -> i64 { if false && (1 > 0) { 1 } else { 0 } }",
+        ));
         // The condition folds to `false`; the if is left for fold-const-branch.
         // We only assert the && collapsed — find the If's condition.
         if let Item::FnDef(f) = &out.items[0] {
@@ -742,14 +809,20 @@ mod tests {
         spec.validate().unwrap();
         let pass = compile(&spec);
         // Literal args fold directly.
-        assert!(matches!(body_tail(&pass(&prog("fn main() -> i64 { max_i64(3, 7) }"))),
-            Expr::Literal(Literal::Int(7))));
-        assert!(matches!(body_tail(&pass(&prog("fn main() -> i64 { min_i64(3, 7) }"))),
-            Expr::Literal(Literal::Int(3))));
+        assert!(matches!(
+            body_tail(&pass(&prog("fn main() -> i64 { max_i64(3, 7) }"))),
+            Expr::Literal(Literal::Int(7))
+        ));
+        assert!(matches!(
+            body_tail(&pass(&prog("fn main() -> i64 { min_i64(3, 7) }"))),
+            Expr::Literal(Literal::Int(3))
+        ));
         // abs needs its arg pre-folded (`0 - 5` → -5) — compose with fold-int-literal.
         let pass2 = compile(&RewriteSpec::parse("fold-int-literal\nfold-bound-builtin").unwrap());
-        assert!(matches!(body_tail(&pass2(&prog("fn main() -> i64 { abs_i64(0 - 5) }"))),
-            Expr::Literal(Literal::Int(5))));
+        assert!(matches!(
+            body_tail(&pass2(&prog("fn main() -> i64 { abs_i64(0 - 5) }"))),
+            Expr::Literal(Literal::Int(5))
+        ));
     }
 
     #[test]
@@ -761,15 +834,19 @@ mod tests {
             "fn main() -> i64 { abs_i64(0 - 9223372036854775807 - 1) }",
         ));
         // The inner arithmetic folds to i64::MIN, but the abs call survives.
-        assert!(matches!(body_tail(&out), Expr::Call { .. }),
-            "abs_i64(i64::MIN) must NOT be folded (preserve the overflow panic)");
+        assert!(
+            matches!(body_tail(&out), Expr::Call { .. }),
+            "abs_i64(i64::MIN) must NOT be folded (preserve the overflow panic)"
+        );
     }
 
     #[test]
     fn fold_bound_builtin_is_capability_free() {
         // It consumes a builtin Call and emits an Int literal — never a Call — so
         // the closed-vocabulary capability-freedom property still holds.
-        assert!(RewriteSpec::parse("fold-bound-builtin").unwrap().cannot_express_capability());
+        assert!(RewriteSpec::parse("fold-bound-builtin")
+            .unwrap()
+            .cannot_express_capability());
     }
 
     // ── fold-comparison-literal (int comparison → bool) ───────────────────────
@@ -785,10 +862,15 @@ mod tests {
             // The if-condition folds to the bool literal `want`.
             let out = pass(&prog(src));
             if let Item::FnDef(f) = &out.items[0] {
-                let body = match &f.body { Expr::Block(s) => s.last().unwrap().expr.clone(), o => o.clone() };
+                let body = match &f.body {
+                    Expr::Block(s) => s.last().unwrap().expr.clone(),
+                    o => o.clone(),
+                };
                 if let Expr::If { cond, .. } = &body {
-                    assert!(matches!(cond.as_ref(), Expr::Literal(Literal::Bool(b)) if *b == want),
-                        "`{src}` cond should fold to {want}: {cond:?}");
+                    assert!(
+                        matches!(cond.as_ref(), Expr::Literal(Literal::Bool(b)) if *b == want),
+                        "`{src}` cond should fold to {want}: {cond:?}"
+                    );
                 } else {
                     panic!("expected an if in {src}");
                 }
@@ -800,22 +882,28 @@ mod tests {
     fn fold_comparison_literal_composes_arith_then_branch() {
         // The full chain it unlocks: `(2+1) < 5` → (int) `3 < 5` → (cmp) `true` →
         // (branch) the taken arm. Reduces `if (2+1) < 5 { 1 } else { 2 }` to 1.
-        let spec = RewriteSpec::parse(
-            "fold-int-literal\nfold-comparison-literal\nfold-const-branch",
-        )
-        .unwrap();
+        let spec =
+            RewriteSpec::parse("fold-int-literal\nfold-comparison-literal\nfold-const-branch")
+                .unwrap();
         spec.validate().unwrap();
-        let out = compile(&spec)(&prog("fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }"));
+        let out = compile(&spec)(&prog(
+            "fn main() -> i64 { if (2 + 1) < 5 { 1 } else { 2 } }",
+        ));
         let mut tail = body_tail(&out);
         while let Expr::Block(stmts) = &tail {
             tail = stmts.last().unwrap().expr.clone();
         }
-        assert!(matches!(tail, Expr::Literal(Literal::Int(1))), "should reduce to 1: {tail:?}");
+        assert!(
+            matches!(tail, Expr::Literal(Literal::Int(1))),
+            "should reduce to 1: {tail:?}"
+        );
     }
 
     #[test]
     fn fold_comparison_literal_is_capability_free() {
-        assert!(RewriteSpec::parse("fold-comparison-literal").unwrap().cannot_express_capability());
+        assert!(RewriteSpec::parse("fold-comparison-literal")
+            .unwrap()
+            .cannot_express_capability());
     }
 
     #[test]
@@ -833,7 +921,9 @@ mod tests {
         uniq.dedup();
         assert_eq!(uniq.len(), names.len(), "ALL has duplicate rule names");
         let vocab = RewriteRule::vocabulary();
-        assert!(vocab.contains("fold-comparison-literal") && vocab.contains("fold-bound-builtin"),
-            "vocabulary must include the newest rules: {vocab}");
+        assert!(
+            vocab.contains("fold-comparison-literal") && vocab.contains("fold-bound-builtin"),
+            "vocabulary must include the newest rules: {vocab}"
+        );
     }
 }

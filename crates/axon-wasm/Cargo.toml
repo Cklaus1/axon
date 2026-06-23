@@ -16,3 +16,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 axon-core = { path = "../axon-core", default-features = false }
+# The prose→AST surface compiler (clap-free lib), so the playground compiles a
+# PROSE goal file in-browser (`axon goal`), not just `.ax`. default-features off
+# drops clap (CLI-only) from the wasm build.
+axon-surface = { path = "../axon-surface", default-features = false }

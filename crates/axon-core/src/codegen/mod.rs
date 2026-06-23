@@ -1591,21 +1591,11 @@ impl<'ctx> Codegen<'ctx> {
         } else {
             // extend (narrow → wider); use zext for unsigned, sext for signed
             if is_unsigned {
-                build_wrappers::w_int_z_extend(
-                    &self.ir.builder,
-                    int_val,
-                    target_llvm,
-                    "zext_fw",
-                )
-                .into()
+                build_wrappers::w_int_z_extend(&self.ir.builder, int_val, target_llvm, "zext_fw")
+                    .into()
             } else {
-                build_wrappers::w_int_s_extend(
-                    &self.ir.builder,
-                    int_val,
-                    target_llvm,
-                    "sext_fw",
-                )
-                .into()
+                build_wrappers::w_int_s_extend(&self.ir.builder, int_val, target_llvm, "sext_fw")
+                    .into()
             }
         }
     }

@@ -82,8 +82,13 @@ fn ms_to_iso_week(ts_ms: u64) -> String {
 fn year_days_since_epoch(year: i64) -> i64 {
     // Days from Unix epoch (1970-01-01) to Jan 1 of `year`.
     let y = year - 1970;
-    let leap_days = (y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400
-                  + if y < 0 { -((-y) / 4 - (-y) / 100 + (-y) / 400) * 2 } else { 0 };
+    let leap_days = (y - 1) / 4 - (y - 1) / 100
+        + (y - 1) / 400
+        + if y < 0 {
+            -((-y) / 4 - (-y) / 100 + (-y) / 400) * 2
+        } else {
+            0
+        };
     y * 365 + leap_days
 }
 
@@ -153,60 +158,101 @@ pub fn compute_trends(store: &Store, weeks_back: usize) -> anyhow::Result<Trends
             .push(s);
     }
 
-    let mut engineers: Vec<EngineerTrend> = by_eng_week.into_iter().map(|(eng, week_map)| {
-        let mut weeks: Vec<WeekSlice> = week_map.into_iter().map(|(week, sessions)| {
-            let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
-            let goal_clarity_avg = sessions.iter().map(|s| s.goal_clarity as f64).sum::<f64>() / sessions.len() as f64;
-            let commits = sessions.iter().map(|s| s.commits_linked).sum();
-            WeekSlice { week, avg_score, sessions: sessions.len(), commits, goal_clarity_avg }
-        }).collect();
-        weeks.sort_by(|a, b| a.week.cmp(&b.week)); // chronological
+    let mut engineers: Vec<EngineerTrend> = by_eng_week
+        .into_iter()
+        .map(|(eng, week_map)| {
+            let mut weeks: Vec<WeekSlice> = week_map
+                .into_iter()
+                .map(|(week, sessions)| {
+                    let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>()
+                        / sessions.len() as f64;
+                    let goal_clarity_avg =
+                        sessions.iter().map(|s| s.goal_clarity as f64).sum::<f64>()
+                            / sessions.len() as f64;
+                    let commits = sessions.iter().map(|s| s.commits_linked).sum();
+                    WeekSlice {
+                        week,
+                        avg_score,
+                        sessions: sessions.len(),
+                        commits,
+                        goal_clarity_avg,
+                    }
+                })
+                .collect();
+            weeks.sort_by(|a, b| a.week.cmp(&b.week)); // chronological
 
-        let (direction, delta) = trend_direction(&weeks);
-        let all_scores: Vec<f64> = weeks.iter().flat_map(|w| {
-            // re-derive from week slices — weighted by session count
-            std::iter::repeat(w.avg_score).take(w.sessions)
-        }).collect();
-        let overall_avg = if all_scores.is_empty() { 0.0 }
-            else { all_scores.iter().sum::<f64>() / all_scores.len() as f64 };
-        let total_sessions = weeks.iter().map(|w| w.sessions).sum();
+            let (direction, delta) = trend_direction(&weeks);
+            let all_scores: Vec<f64> = weeks
+                .iter()
+                .flat_map(|w| {
+                    // re-derive from week slices — weighted by session count
+                    std::iter::repeat_n(w.avg_score, w.sessions)
+                })
+                .collect();
+            let overall_avg = if all_scores.is_empty() {
+                0.0
+            } else {
+                all_scores.iter().sum::<f64>() / all_scores.len() as f64
+            };
+            let total_sessions = weeks.iter().map(|w| w.sessions).sum();
 
-        let mut trend = EngineerTrend {
-            engineer: eng.clone(),
-            weeks,
-            direction,
-            delta,
-            overall_avg,
-            total_sessions,
-            recommendation: String::new(),
-        };
-        trend.recommendation = make_recommendation(&eng, &trend);
-        trend
-    }).collect();
+            let mut trend = EngineerTrend {
+                engineer: eng.clone(),
+                weeks,
+                direction,
+                delta,
+                overall_avg,
+                total_sessions,
+                recommendation: String::new(),
+            };
+            trend.recommendation = make_recommendation(&eng, &trend);
+            trend
+        })
+        .collect();
 
-    engineers.sort_by(|a, b| b.overall_avg.partial_cmp(&a.overall_avg).unwrap_or(std::cmp::Ordering::Equal));
+    engineers.sort_by(|a, b| {
+        b.overall_avg
+            .partial_cmp(&a.overall_avg)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Team week-over-week
     let current_week = ms_to_iso_week(now_ms);
     let last_week_ms = now_ms.saturating_sub(7 * 86_400_000);
     let last_week = ms_to_iso_week(last_week_ms);
 
-    let team_this: Vec<f64> = scores.iter()
+    let team_this: Vec<f64> = scores
+        .iter()
         .filter(|s| ms_to_iso_week(s.ts_ms) == current_week)
-        .map(|s| s.score as f64).collect();
-    let team_last: Vec<f64> = scores.iter()
+        .map(|s| s.score as f64)
+        .collect();
+    let team_last: Vec<f64> = scores
+        .iter()
         .filter(|s| ms_to_iso_week(s.ts_ms) == last_week)
-        .map(|s| s.score as f64).collect();
+        .map(|s| s.score as f64)
+        .collect();
 
-    let team_avg_this = if team_this.is_empty() { 0.0 } else { team_this.iter().sum::<f64>() / team_this.len() as f64 };
-    let team_avg_last = if team_last.is_empty() { 0.0 } else { team_last.iter().sum::<f64>() / team_last.len() as f64 };
+    let team_avg_this = if team_this.is_empty() {
+        0.0
+    } else {
+        team_this.iter().sum::<f64>() / team_this.len() as f64
+    };
+    let team_avg_last = if team_last.is_empty() {
+        0.0
+    } else {
+        team_last.iter().sum::<f64>() / team_last.len() as f64
+    };
 
     let team_delta = team_avg_this - team_avg_last;
     let team_direction = if team_this.is_empty() || team_last.is_empty() {
         TrendDirection::Insufficient
-    } else if team_delta > 5.0 { TrendDirection::Improving }
-    else if team_delta < -5.0 { TrendDirection::Declining }
-    else { TrendDirection::Stable };
+    } else if team_delta > 5.0 {
+        TrendDirection::Improving
+    } else if team_delta < -5.0 {
+        TrendDirection::Declining
+    } else {
+        TrendDirection::Stable
+    };
 
     Ok(TrendsReport {
         engineers,
@@ -246,10 +292,14 @@ pub fn render_trends(report: &TrendsReport) -> String {
 
         // Week-by-week mini chart
         if eng.weeks.len() > 1 {
-            let chart: Vec<String> = eng.weeks.iter().map(|w| {
-                let bar = "█".repeat((w.avg_score / 20.0) as usize).to_string();
-                format!("    {} {:>3.0}  {}", w.week, w.avg_score, bar)
-            }).collect();
+            let chart: Vec<String> = eng
+                .weeks
+                .iter()
+                .map(|w| {
+                    let bar = "█".repeat((w.avg_score / 20.0) as usize).to_string();
+                    format!("    {} {:>3.0}  {}", w.week, w.avg_score, bar)
+                })
+                .collect();
             out.push_str(&chart.join("\n"));
             out.push('\n');
         }
@@ -275,9 +325,27 @@ mod tests {
     #[test]
     fn test_trend_direction_improving() {
         let weeks = vec![
-            WeekSlice { week: "2026-W20".into(), avg_score: 50.0, sessions: 2, commits: 1, goal_clarity_avg: 50.0 },
-            WeekSlice { week: "2026-W21".into(), avg_score: 70.0, sessions: 2, commits: 2, goal_clarity_avg: 60.0 },
-            WeekSlice { week: "2026-W22".into(), avg_score: 80.0, sessions: 3, commits: 3, goal_clarity_avg: 70.0 },
+            WeekSlice {
+                week: "2026-W20".into(),
+                avg_score: 50.0,
+                sessions: 2,
+                commits: 1,
+                goal_clarity_avg: 50.0,
+            },
+            WeekSlice {
+                week: "2026-W21".into(),
+                avg_score: 70.0,
+                sessions: 2,
+                commits: 2,
+                goal_clarity_avg: 60.0,
+            },
+            WeekSlice {
+                week: "2026-W22".into(),
+                avg_score: 80.0,
+                sessions: 3,
+                commits: 3,
+                goal_clarity_avg: 70.0,
+            },
         ];
         let (dir, delta) = trend_direction(&weeks);
         assert_eq!(dir, TrendDirection::Improving);
@@ -287,8 +355,20 @@ mod tests {
     #[test]
     fn test_trend_direction_declining() {
         let weeks = vec![
-            WeekSlice { week: "2026-W20".into(), avg_score: 85.0, sessions: 2, commits: 2, goal_clarity_avg: 80.0 },
-            WeekSlice { week: "2026-W21".into(), avg_score: 60.0, sessions: 1, commits: 1, goal_clarity_avg: 50.0 },
+            WeekSlice {
+                week: "2026-W20".into(),
+                avg_score: 85.0,
+                sessions: 2,
+                commits: 2,
+                goal_clarity_avg: 80.0,
+            },
+            WeekSlice {
+                week: "2026-W21".into(),
+                avg_score: 60.0,
+                sessions: 1,
+                commits: 1,
+                goal_clarity_avg: 50.0,
+            },
         ];
         let (dir, delta) = trend_direction(&weeks);
         assert_eq!(dir, TrendDirection::Declining);
@@ -297,9 +377,13 @@ mod tests {
 
     #[test]
     fn test_trend_direction_insufficient() {
-        let weeks = vec![
-            WeekSlice { week: "2026-W20".into(), avg_score: 70.0, sessions: 1, commits: 1, goal_clarity_avg: 65.0 },
-        ];
+        let weeks = vec![WeekSlice {
+            week: "2026-W20".into(),
+            avg_score: 70.0,
+            sessions: 1,
+            commits: 1,
+            goal_clarity_avg: 65.0,
+        }];
         let (dir, _) = trend_direction(&weeks);
         assert_eq!(dir, TrendDirection::Insufficient);
     }
@@ -310,8 +394,20 @@ mod tests {
             engineers: vec![EngineerTrend {
                 engineer: "alice@example.com".into(),
                 weeks: vec![
-                    WeekSlice { week: "2026-W20".into(), avg_score: 60.0, sessions: 2, commits: 1, goal_clarity_avg: 55.0 },
-                    WeekSlice { week: "2026-W21".into(), avg_score: 75.0, sessions: 3, commits: 2, goal_clarity_avg: 70.0 },
+                    WeekSlice {
+                        week: "2026-W20".into(),
+                        avg_score: 60.0,
+                        sessions: 2,
+                        commits: 1,
+                        goal_clarity_avg: 55.0,
+                    },
+                    WeekSlice {
+                        week: "2026-W21".into(),
+                        avg_score: 75.0,
+                        sessions: 3,
+                        commits: 2,
+                        goal_clarity_avg: 70.0,
+                    },
                 ],
                 direction: TrendDirection::Improving,
                 delta: 15.0,

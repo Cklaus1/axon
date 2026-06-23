@@ -40,53 +40,59 @@ pub enum BenchmarkTier {
 
 impl BenchmarkTier {
     pub fn from_score(score: f64) -> Self {
-        if score >= PLATINUM_THRESHOLD { BenchmarkTier::Platinum }
-        else if score >= GOLD_THRESHOLD { BenchmarkTier::Gold }
-        else if score >= SILVER_THRESHOLD { BenchmarkTier::Silver }
-        else if score >= BRONZE_THRESHOLD { BenchmarkTier::Bronze }
-        else { BenchmarkTier::Developing }
+        if score >= PLATINUM_THRESHOLD {
+            BenchmarkTier::Platinum
+        } else if score >= GOLD_THRESHOLD {
+            BenchmarkTier::Gold
+        } else if score >= SILVER_THRESHOLD {
+            BenchmarkTier::Silver
+        } else if score >= BRONZE_THRESHOLD {
+            BenchmarkTier::Bronze
+        } else {
+            BenchmarkTier::Developing
+        }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            BenchmarkTier::Platinum  => "Platinum",
-            BenchmarkTier::Gold      => "Gold",
-            BenchmarkTier::Silver    => "Silver",
-            BenchmarkTier::Bronze    => "Bronze",
-            BenchmarkTier::Developing=> "Developing",
+            BenchmarkTier::Platinum => "Platinum",
+            BenchmarkTier::Gold => "Gold",
+            BenchmarkTier::Silver => "Silver",
+            BenchmarkTier::Bronze => "Bronze",
+            BenchmarkTier::Developing => "Developing",
         }
     }
 
     /// Approximate industry percentile for a team at this tier.
     pub fn percentile_estimate(&self) -> &'static str {
         match self {
-            BenchmarkTier::Platinum  => "top ~10%",
-            BenchmarkTier::Gold      => "top ~25%",
-            BenchmarkTier::Silver    => "median (~50th percentile)",
-            BenchmarkTier::Bronze    => "bottom ~40%",
-            BenchmarkTier::Developing=> "bottom ~20%",
+            BenchmarkTier::Platinum => "top ~10%",
+            BenchmarkTier::Gold => "top ~25%",
+            BenchmarkTier::Silver => "median (~50th percentile)",
+            BenchmarkTier::Bronze => "bottom ~40%",
+            BenchmarkTier::Developing => "bottom ~20%",
         }
     }
 
     /// Next tier up (None if already Platinum).
     pub fn next(&self) -> Option<BenchmarkTier> {
         match self {
-            BenchmarkTier::Developing=> Some(BenchmarkTier::Bronze),
-            BenchmarkTier::Bronze    => Some(BenchmarkTier::Silver),
-            BenchmarkTier::Silver    => Some(BenchmarkTier::Gold),
-            BenchmarkTier::Gold      => Some(BenchmarkTier::Platinum),
-            BenchmarkTier::Platinum  => None,
+            BenchmarkTier::Developing => Some(BenchmarkTier::Bronze),
+            BenchmarkTier::Bronze => Some(BenchmarkTier::Silver),
+            BenchmarkTier::Silver => Some(BenchmarkTier::Gold),
+            BenchmarkTier::Gold => Some(BenchmarkTier::Platinum),
+            BenchmarkTier::Platinum => None,
         }
     }
 
     /// Points needed to reach the next tier.
     pub fn points_to_next(&self, current_avg: f64) -> Option<f64> {
         let target = match self {
-            BenchmarkTier::Developing=> BRONZE_THRESHOLD,
-            BenchmarkTier::Bronze    => SILVER_THRESHOLD,
-            BenchmarkTier::Silver    => GOLD_THRESHOLD,
-            BenchmarkTier::Gold      => PLATINUM_THRESHOLD,
-            BenchmarkTier::Platinum  => return None,
+            BenchmarkTier::Developing => BRONZE_THRESHOLD,
+            BenchmarkTier::Bronze => SILVER_THRESHOLD,
+            BenchmarkTier::Silver => GOLD_THRESHOLD,
+            BenchmarkTier::Gold => PLATINUM_THRESHOLD,
+            BenchmarkTier::Platinum => return None,
         };
         Some((target - current_avg).max(0.0))
     }
@@ -149,7 +155,9 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
             engineers_analyzed: 0,
             dimensions: vec![],
             engineers: vec![],
-            top_recommendations: vec!["Ingest more sessions to generate benchmark data.".to_string()],
+            top_recommendations: vec![
+                "Ingest more sessions to generate benchmark data.".to_string()
+            ],
             caveats: CAVEATS.to_string(),
         });
     }
@@ -163,15 +171,20 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
     // Per-dimension medians
     let goal_clarity_avg = scores.iter().map(|s| s.goal_clarity as f64).sum::<f64>() / n as f64;
     let turns_per_commit_avg = {
-        let sessions_with_commits: Vec<f64> = scores.iter()
+        let sessions_with_commits: Vec<f64> = scores
+            .iter()
             .filter(|s| s.commits_linked > 0)
             .map(|s| s.turns_per_commit)
             .collect();
-        if sessions_with_commits.is_empty() { 0.0 }
-        else { sessions_with_commits.iter().sum::<f64>() / sessions_with_commits.len() as f64 }
+        if sessions_with_commits.is_empty() {
+            0.0
+        } else {
+            sessions_with_commits.iter().sum::<f64>() / sessions_with_commits.len() as f64
+        }
     };
     let rework_rate = scores.iter().filter(|s| s.rework_signal).count() as f64 / n as f64 * 100.0;
-    let commit_rate = scores.iter().filter(|s| s.commits_linked > 0).count() as f64 / n as f64 * 100.0;
+    let commit_rate =
+        scores.iter().filter(|s| s.commits_linked > 0).count() as f64 / n as f64 * 100.0;
 
     // Industry medians (estimated from score formula analysis)
     // goal_clarity: median ~55 (40 base + occasional file ref or verb)
@@ -227,10 +240,13 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
         )));
     }
     if turns_per_commit_avg > 30.0 {
-        recs.push((turns_per_commit_avg - 22.0, format!(
+        recs.push((
+            turns_per_commit_avg - 22.0,
+            format!(
             "Reduce turns/commit ({:.0} vs median 22): scope sessions to one file or one function.",
             turns_per_commit_avg
-        )));
+        ),
+        ));
     }
     if rework_rate > 25.0 {
         recs.push((rework_rate - 18.0, format!(
@@ -246,7 +262,10 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
     }
     recs.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let top_recommendations: Vec<String> = if recs.is_empty() {
-        vec!["Team is performing above industry medians on all dimensions — maintain cadence.".to_string()]
+        vec![
+            "Team is performing above industry medians on all dimensions — maintain cadence."
+                .to_string(),
+        ]
     } else {
         recs.into_iter().map(|(_, r)| r).take(3).collect()
     };
@@ -256,24 +275,33 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
     for s in &scores {
         by_eng.entry(s.engineer.clone()).or_default().push(s.score);
     }
-    let mut eng_avgs: Vec<(String, f64)> = by_eng.iter().map(|(eng, v)| {
-        let avg = v.iter().map(|&s| s as f64).sum::<f64>() / v.len() as f64;
-        (eng.clone(), avg)
-    }).collect();
+    let mut eng_avgs: Vec<(String, f64)> = by_eng
+        .iter()
+        .map(|(eng, v)| {
+            let avg = v.iter().map(|&s| s as f64).sum::<f64>() / v.len() as f64;
+            (eng.clone(), avg)
+        })
+        .collect();
     eng_avgs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
     let n_engs = eng_avgs.len();
-    let engineers: Vec<EngineerBenchmark> = eng_avgs.iter().enumerate().map(|(i, (eng, avg))| {
-        let pct = if n_engs == 1 { 50u8 } else {
-            ((n_engs - 1 - i) * 100 / (n_engs - 1)) as u8
-        };
-        EngineerBenchmark {
-            engineer: eng.clone(),
-            avg_score: round1(*avg),
-            tier: BenchmarkTier::from_score(*avg),
-            sessions: by_eng[eng].len(),
-            percentile_within_team: pct,
-        }
-    }).collect();
+    let engineers: Vec<EngineerBenchmark> = eng_avgs
+        .iter()
+        .enumerate()
+        .map(|(i, (eng, avg))| {
+            let pct = if n_engs == 1 {
+                50u8
+            } else {
+                ((n_engs - 1 - i) * 100 / (n_engs - 1)) as u8
+            };
+            EngineerBenchmark {
+                engineer: eng.clone(),
+                avg_score: round1(*avg),
+                tier: BenchmarkTier::from_score(*avg),
+                sessions: by_eng[eng].len(),
+                percentile_within_team: pct,
+            }
+        })
+        .collect();
 
     Ok(BenchmarkReport {
         team_avg: round1(team_avg),
@@ -292,11 +320,11 @@ pub fn compute_benchmark(store: &Store, days: Option<u64>) -> anyhow::Result<Ben
 pub fn render_benchmark(r: &BenchmarkReport) -> String {
     let mut out = String::new();
     let tier_color = match r.team_tier {
-        BenchmarkTier::Platinum  => "★★★★",
-        BenchmarkTier::Gold      => "★★★☆",
-        BenchmarkTier::Silver    => "★★☆☆",
-        BenchmarkTier::Bronze    => "★☆☆☆",
-        BenchmarkTier::Developing=> "☆☆☆☆",
+        BenchmarkTier::Platinum => "★★★★",
+        BenchmarkTier::Gold => "★★★☆",
+        BenchmarkTier::Silver => "★★☆☆",
+        BenchmarkTier::Bronze => "★☆☆☆",
+        BenchmarkTier::Developing => "☆☆☆☆",
     };
 
     out.push_str(&format!(
@@ -305,9 +333,12 @@ pub fn render_benchmark(r: &BenchmarkReport) -> String {
          ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n\
          TIER  {} {}  ({} sessions, {} engineers)\n\
          SCORE  {:.0}/100  ·  {}\n",
-        tier_color, r.team_tier.label(),
-        r.sessions_analyzed, r.engineers_analyzed,
-        r.team_avg, r.team_tier.percentile_estimate()
+        tier_color,
+        r.team_tier.label(),
+        r.sessions_analyzed,
+        r.engineers_analyzed,
+        r.team_avg,
+        r.team_tier.percentile_estimate()
     ));
 
     if let (Some(ref next), Some(pts)) = (&r.next_tier, r.points_to_next_tier) {
@@ -335,7 +366,10 @@ pub fn render_benchmark(r: &BenchmarkReport) -> String {
     for e in &r.engineers {
         out.push_str(&format!(
             "  {:35}  {:8}  {:.0}/100  {}th percentile\n",
-            e.engineer, e.tier.label(), e.avg_score, e.percentile_within_team
+            e.engineer,
+            e.tier.label(),
+            e.avg_score,
+            e.percentile_within_team
         ));
     }
 
@@ -344,30 +378,54 @@ pub fn render_benchmark(r: &BenchmarkReport) -> String {
 }
 
 fn goal_clarity_recommendation(avg: f64) -> String {
-    if avg >= 70.0 { "Above median — keep adding file refs and measurable criteria.".to_string() }
-    else if avg >= 55.0 { "Near median — add measurable outcomes ('tests pass', '< 50ms') to push higher.".to_string() }
-    else { format!("Below median ({:.0}/100) — start goals with a specific file name and one verb (fix/add/refactor).", avg) }
+    if avg >= 70.0 {
+        "Above median — keep adding file refs and measurable criteria.".to_string()
+    } else if avg >= 55.0 {
+        "Near median — add measurable outcomes ('tests pass', '< 50ms') to push higher.".to_string()
+    } else {
+        format!("Below median ({:.0}/100) — start goals with a specific file name and one verb (fix/add/refactor).", avg)
+    }
 }
 
 fn turns_recommendation(avg: f64) -> String {
-    if avg <= 15.0 { "Excellent — very tight sessions.".to_string() }
-    else if avg <= 22.0 { "Good — near median efficiency.".to_string() }
-    else { format!("High turns/commit ({:.0} vs median 22) — scope sessions to one function or one file.", avg) }
+    if avg <= 15.0 {
+        "Excellent — very tight sessions.".to_string()
+    } else if avg <= 22.0 {
+        "Good — near median efficiency.".to_string()
+    } else {
+        format!(
+            "High turns/commit ({:.0} vs median 22) — scope sessions to one function or one file.",
+            avg
+        )
+    }
 }
 
 fn rework_recommendation(rate: f64) -> String {
-    if rate <= 10.0 { "Low rework — strong exit criteria discipline.".to_string() }
-    else if rate <= 18.0 { "Near median — acceptable rework rate.".to_string() }
-    else { format!("High rework rate ({:.0}% vs median 18%) — define 'done' before starting each session.", rate) }
+    if rate <= 10.0 {
+        "Low rework — strong exit criteria discipline.".to_string()
+    } else if rate <= 18.0 {
+        "Near median — acceptable rework rate.".to_string()
+    } else {
+        format!(
+            "High rework rate ({:.0}% vs median 18%) — define 'done' before starting each session.",
+            rate
+        )
+    }
 }
 
 fn commit_rate_recommendation(rate: f64) -> String {
-    if rate >= 80.0 { "High commit rate — sessions reliably ship.".to_string() }
-    else if rate >= 70.0 { "Good — near median.".to_string() }
-    else { format!("Low commit rate ({:.0}% vs median 70%) — commit partial progress; don't wait for perfection.", rate) }
+    if rate >= 80.0 {
+        "High commit rate — sessions reliably ship.".to_string()
+    } else if rate >= 70.0 {
+        "Good — near median.".to_string()
+    } else {
+        format!("Low commit rate ({:.0}% vs median 70%) — commit partial progress; don't wait for perfection.", rate)
+    }
 }
 
-fn round1(x: f64) -> f64 { (x * 10.0).round() / 10.0 }
+fn round1(x: f64) -> f64 {
+    (x * 10.0).round() / 10.0
+}
 
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
@@ -424,26 +482,22 @@ mod tests {
             next_tier: Some(BenchmarkTier::Platinum),
             sessions_analyzed: 12,
             engineers_analyzed: 3,
-            dimensions: vec![
-                DimensionBenchmark {
-                    name: "Goal Clarity".to_string(),
-                    team_value: 68.0,
-                    industry_median: 55.0,
-                    unit: "/100".to_string(),
-                    higher_is_better: true,
-                    gap: 13.0,
-                    recommendation: "Above median.".to_string(),
-                },
-            ],
-            engineers: vec![
-                EngineerBenchmark {
-                    engineer: "alice@example.com".to_string(),
-                    avg_score: 78.0,
-                    tier: BenchmarkTier::Gold,
-                    sessions: 5,
-                    percentile_within_team: 100,
-                },
-            ],
+            dimensions: vec![DimensionBenchmark {
+                name: "Goal Clarity".to_string(),
+                team_value: 68.0,
+                industry_median: 55.0,
+                unit: "/100".to_string(),
+                higher_is_better: true,
+                gap: 13.0,
+                recommendation: "Above median.".to_string(),
+            }],
+            engineers: vec![EngineerBenchmark {
+                engineer: "alice@example.com".to_string(),
+                avg_score: 78.0,
+                tier: BenchmarkTier::Gold,
+                sessions: 5,
+                percentile_within_team: 100,
+            }],
             top_recommendations: vec!["Cut rework rate.".to_string()],
             caveats: "Industry medians are estimated.".to_string(),
         };

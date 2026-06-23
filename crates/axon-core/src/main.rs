@@ -625,7 +625,15 @@ fn dispatch(command: Command) {
             no_cache,
             cache_dir,
             freestanding,
-        } => cmd_build(files, out, release, target, no_cache, cache_dir, freestanding),
+        } => cmd_build(
+            files,
+            out,
+            release,
+            target,
+            no_cache,
+            cache_dir,
+            freestanding,
+        ),
         Command::Goal {
             file,
             emit,

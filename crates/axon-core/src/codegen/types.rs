@@ -170,7 +170,13 @@ impl<'ctx> super::Codegen<'ctx> {
             }
             // R17 HAL: `*T` → opaque LLVM `ptr` (LLVM 17 typed-pointer-free model).
             // The element type is tracked at load/store call sites, not in the pointer.
-            Type::RawPtr(_) => Some(self.ir.context.i8_type().ptr_type(inkwell::AddressSpace::default()).into()),
+            Type::RawPtr(_) => Some(
+                self.ir
+                    .context
+                    .i8_type()
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into(),
+            ),
             // R17 HAL: `never` → no BasicTypeEnum (void; functions returning never
             // are emitted as LLVM void functions and marked noreturn by the caller).
             Type::Never => None,

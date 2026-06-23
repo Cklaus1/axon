@@ -72,7 +72,10 @@ impl Verdict {
 
 /// Does any fn in `program` declare a `@[contained]`?
 fn any_contained(program: &Program) -> bool {
-    program.items.iter().any(|it| matches!(it, Item::FnDef(f) if f.contained.is_some()))
+    program
+        .items
+        .iter()
+        .any(|it| matches!(it, Item::FnDef(f) if f.contained.is_some()))
 }
 
 /// Audit a parsed imported module and return its [`Verdict`] (R6 §4.3).
@@ -124,14 +127,19 @@ mod tests {
 
     #[test]
     fn pure_module_is_clear() {
-        assert_eq!(audit_src("fn score(x: i64) -> i64 { x * 2 }\n"), Verdict::Clear);
+        assert_eq!(
+            audit_src("fn score(x: i64) -> i64 { x * 2 }\n"),
+            Verdict::Clear
+        );
     }
 
     #[test]
     fn undeclared_net_is_denied() {
         // A module that makes a network call (the exfiltration channel) with no
         // @[contained] is the highest-risk *detectable* surface → Denied (E1204).
-        let v = audit_src("fn fetch() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n");
+        let v = audit_src(
+            "fn fetch() -> str { match ai_complete(\"x\") { Ok(s) => s  Err(_) => \"\" } }\n",
+        );
         assert_eq!(v, Verdict::Denied, "undeclared net must be denied");
     }
 
@@ -140,14 +148,19 @@ mod tests {
         // A module that spawns a process with no @[contained] is the highest-risk
         // surface the spec names → Denied (E1204). (Now that `exec` is a real
         // builtin classified as IoKind::Exec, this is no longer dead code.)
-        let v = audit_src("fn run() -> i64 { match exec(\"ls\", []) { Ok(_) => 0  Err(_) => 1 } }\n");
+        let v =
+            audit_src("fn run() -> i64 { match exec(\"ls\", []) { Ok(_) => 0  Err(_) => 1 } }\n");
         assert_eq!(v, Verdict::Denied, "undeclared exec must be denied");
     }
 
     #[test]
     fn undeclared_fs_is_flagged() {
         let v = audit_src("fn load(p: str) -> str { read_file(p) }\n");
-        assert_eq!(v, Verdict::Flagged, "undeclared fs-only surface must be flagged");
+        assert_eq!(
+            v,
+            Verdict::Flagged,
+            "undeclared fs-only surface must be flagged"
+        );
     }
 
     #[test]

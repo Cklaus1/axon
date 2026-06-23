@@ -952,8 +952,8 @@ impl<'ctx> super::Codegen<'ctx> {
         let call = build_wrappers::w_call(&self.ir.builder, decl, &[l.into(), r.into()], "ovfn");
         let agg = call.try_as_basic_value().left()?.into_struct_value();
         let result = build_wrappers::w_extract_value(&self.ir.builder, agg, 0, "ovfn_res");
-        let flag = build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovfn_flag")
-            .into_int_value();
+        let flag =
+            build_wrappers::w_extract_value(&self.ir.builder, agg, 1, "ovfn_flag").into_int_value();
         self.emit_arith_guard(flag, 0, op_glyph, l, r);
         Some(result)
     }
@@ -8458,20 +8458,24 @@ impl<'ctx> super::Codegen<'ctx> {
                     // ptrtoint back to i64 so the type system stays uniform.
                     if let Some(addr_val) = self.emit_expr(&args[0], fn_val) {
                         let addr_int = addr_val.into_int_value();
-                        let ptr_val = self.ir.builder
+                        let ptr_val = self
+                            .ir
+                            .builder
                             .build_int_to_ptr(addr_int, ptr_ty_opaque, "hal_ptr")
                             .unwrap();
                         // Return as i64 (our opaque pointer representation)
-                        let as_int = self.ir.builder
+                        let as_int = self
+                            .ir
+                            .builder
                             .build_ptr_to_int(ptr_val, self.ir.context.i64_type(), "hal_addr")
                             .unwrap();
                         return Some(as_int.into());
                     }
                 }
-                "volatile_load_u8"
-                | "volatile_load_u16"
-                | "volatile_load_u32"
-                | "volatile_load_u64" if args.len() == 1 => {
+                "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
+                | "volatile_load_u64"
+                    if args.len() == 1 =>
+                {
                     let bits: u32 = match name.as_str() {
                         "volatile_load_u8" => 8,
                         "volatile_load_u16" => 16,
@@ -8480,26 +8484,32 @@ impl<'ctx> super::Codegen<'ctx> {
                     };
                     if let Some(addr_val) = self.emit_expr(&args[0], fn_val) {
                         let addr_int = addr_val.into_int_value();
-                        let ptr = self.ir.builder
+                        let ptr = self
+                            .ir
+                            .builder
                             .build_int_to_ptr(addr_int, ptr_ty_opaque, "vl_ptr")
                             .unwrap();
                         let elem_ty = self.ir.context.custom_width_int_type(bits);
-                        let load = self.ir.builder
-                            .build_load(elem_ty, ptr, "vload")
-                            .unwrap();
+                        let load = self.ir.builder.build_load(elem_ty, ptr, "vload").unwrap();
                         load.as_instruction_value()
                             .map(|i| i.set_volatile(true).unwrap());
                         // Zero-extend to i64 for the value stack.
-                        let ext = self.ir.builder
-                            .build_int_z_extend(load.into_int_value(), self.ir.context.i64_type(), "vl_ext")
+                        let ext = self
+                            .ir
+                            .builder
+                            .build_int_z_extend(
+                                load.into_int_value(),
+                                self.ir.context.i64_type(),
+                                "vl_ext",
+                            )
                             .unwrap();
                         return Some(ext.into());
                     }
                 }
-                "volatile_store_u8"
-                | "volatile_store_u16"
-                | "volatile_store_u32"
-                | "volatile_store_u64" if args.len() == 2 => {
+                "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32"
+                | "volatile_store_u64"
+                    if args.len() == 2 =>
+                {
                     let bits: u32 = match name.as_str() {
                         "volatile_store_u8" => 8,
                         "volatile_store_u16" => 16,
@@ -8511,17 +8521,19 @@ impl<'ctx> super::Codegen<'ctx> {
                         self.emit_expr(&args[1], fn_val),
                     ) {
                         let addr_int = addr_val.into_int_value();
-                        let ptr = self.ir.builder
+                        let ptr = self
+                            .ir
+                            .builder
                             .build_int_to_ptr(addr_int, ptr_ty_opaque, "vs_ptr")
                             .unwrap();
                         let elem_ty = self.ir.context.custom_width_int_type(bits);
                         // Truncate the i64 data value to the target width.
-                        let trunc = self.ir.builder
+                        let trunc = self
+                            .ir
+                            .builder
                             .build_int_truncate(data_val.into_int_value(), elem_ty, "vs_trunc")
                             .unwrap();
-                        let store = self.ir.builder
-                            .build_store(ptr, trunc)
-                            .unwrap();
+                        let store = self.ir.builder.build_store(ptr, trunc).unwrap();
                         store.set_volatile(true).unwrap();
                         return Some(self.ir.context.i64_type().const_zero().into());
                     }

@@ -313,10 +313,7 @@ pub fn run_lsp() {
             "initialized" => { /* no-op notification */ }
 
             "shutdown" => {
-                send_message(
-                    &mut out,
-                    &json!({"jsonrpc":"2.0","id":id,"result":null}),
-                );
+                send_message(&mut out, &json!({"jsonrpc":"2.0","id":id,"result":null}));
             }
 
             "exit" => break,
@@ -370,13 +367,12 @@ pub fn run_lsp() {
                 let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
                 let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-                let hover_content = if let (Some(src), Some(res)) =
-                    (documents.get(&uri), last_result.get(&uri))
-                {
-                    compute_hover_lsp(res, src, line, character)
-                } else {
-                    None
-                };
+                let hover_content =
+                    if let (Some(src), Some(res)) = (documents.get(&uri), last_result.get(&uri)) {
+                        compute_hover_lsp(res, src, line, character)
+                    } else {
+                        None
+                    };
 
                 let result_val = match hover_content {
                     Some(md) => json!({
@@ -399,13 +395,12 @@ pub fn run_lsp() {
                 let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
                 let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-                let def_location = if let (Some(src), Some(res)) =
-                    (documents.get(&uri), last_result.get(&uri))
-                {
-                    compute_definition_lsp(res, &uri, src, line, character)
-                } else {
-                    None
-                };
+                let def_location =
+                    if let (Some(src), Some(res)) = (documents.get(&uri), last_result.get(&uri)) {
+                        compute_definition_lsp(res, &uri, src, line, character)
+                    } else {
+                        None
+                    };
 
                 let result_val = def_location.unwrap_or(Value::Null);
                 send_message(
@@ -423,22 +418,20 @@ pub fn run_lsp() {
                 let line = params["position"]["line"].as_u64().unwrap_or(0) as u32;
                 let character = params["position"]["character"].as_u64().unwrap_or(0) as u32;
 
-                let items_json: Vec<Value> = if let (Some(src), Some(res)) =
-                    (documents.get(&uri), last_result.get(&uri))
-                {
-                    let byte_offset =
-                        lsp_pos_to_byte_offset(src, line, character).unwrap_or(0);
-                    if let (Some(prog), Some(ctx)) = (&res.program, &res.infer_ctx) {
-                        compute_completions(prog, ctx, src, byte_offset)
-                            .into_iter()
-                            .map(completion_item_to_json)
-                            .collect()
+                let items_json: Vec<Value> =
+                    if let (Some(src), Some(res)) = (documents.get(&uri), last_result.get(&uri)) {
+                        let byte_offset = lsp_pos_to_byte_offset(src, line, character).unwrap_or(0);
+                        if let (Some(prog), Some(ctx)) = (&res.program, &res.infer_ctx) {
+                            compute_completions(prog, ctx, src, byte_offset)
+                                .into_iter()
+                                .map(completion_item_to_json)
+                                .collect()
+                        } else {
+                            vec![]
+                        }
                     } else {
                         vec![]
-                    }
-                } else {
-                    vec![]
-                };
+                    };
 
                 send_message(
                     &mut out,
@@ -635,29 +628,38 @@ fn compute_completions(
     _source: &str,
     _byte_offset: usize,
 ) -> Vec<CompletionItem> {
-    let mut items: Vec<CompletionItem> = ctx.fn_sigs.keys().map(|name| {
-        let sig = ctx.fn_sigs.get(name).unwrap();
-        let detail = {
-            use crate::types::Type;
-            fn fmt(ty: &Type) -> String {
-                match ty {
-                    Type::I64 => "i64".into(),
-                    Type::F64 => "f64".into(),
-                    Type::Str => "str".into(),
-                    Type::Bool => "bool".into(),
-                    Type::Unit => "()".into(),
-                    _ => format!("{:?}", ty),
+    let mut items: Vec<CompletionItem> = ctx
+        .fn_sigs
+        .keys()
+        .map(|name| {
+            let sig = ctx.fn_sigs.get(name).unwrap();
+            let detail = {
+                use crate::types::Type;
+                fn fmt(ty: &Type) -> String {
+                    match ty {
+                        Type::I64 => "i64".into(),
+                        Type::F64 => "f64".into(),
+                        Type::Str => "str".into(),
+                        Type::Bool => "bool".into(),
+                        Type::Unit => "()".into(),
+                        _ => format!("{:?}", ty),
+                    }
                 }
+                let params: Vec<String> = sig.params.iter().map(fmt).collect();
+                Some(format!(
+                    "fn {}({}) -> {}",
+                    name,
+                    params.join(", "),
+                    fmt(&sig.ret)
+                ))
+            };
+            CompletionItem {
+                label: name.clone(),
+                kind: CompletionKind::Function,
+                detail,
             }
-            let params: Vec<String> = sig.params.iter().map(fmt).collect();
-            Some(format!("fn {}({}) -> {}", name, params.join(", "), fmt(&sig.ret)))
-        };
-        CompletionItem {
-            label: name.clone(),
-            kind: CompletionKind::Function,
-            detail,
-        }
-    }).collect();
+        })
+        .collect();
     items.sort_by(|a, b| a.label.cmp(&b.label));
     items
 }
@@ -721,12 +723,7 @@ fn compute_definition_lsp(
 
 // ── Diagnostics push ──────────────────────────────────────────────────────────
 
-fn push_diagnostics(
-    out: &mut impl Write,
-    uri: &str,
-    diagnostics: &[LspDiagnostic],
-    source: &str,
-) {
+fn push_diagnostics(out: &mut impl Write, uri: &str, diagnostics: &[LspDiagnostic], source: &str) {
     let diags: Vec<Value> = diagnostics
         .iter()
         .map(|d| {
@@ -973,11 +970,13 @@ mod tests {
 
     #[test]
     fn lsp_clean_source_no_diagnostics() {
-        let src = "fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\nfn main() -> i64 {\n    add(1, 2)\n}\n";
+        let src =
+            "fn add(a: i64, b: i64) -> i64 {\n    a + b\n}\nfn main() -> i64 {\n    add(1, 2)\n}\n";
         let result = analyse_source(src, "test.ax");
         assert!(
             result.diagnostics.is_empty(),
-            "expected no diagnostics for clean source, got: {:?}", result.diagnostics
+            "expected no diagnostics for clean source, got: {:?}",
+            result.diagnostics
         );
     }
 
@@ -1006,14 +1005,21 @@ mod tests {
     fn lsp_wrong_arity_detected() {
         let src = "fn add(a: i64, b: i64) -> i64 { a + b }\nfn main() -> i64 { add(1) }\n";
         let result = analyse_source(src, "test.ax");
-        let has_arity_err = result.diagnostics.iter()
+        let has_arity_err = result
+            .diagnostics
+            .iter()
             .any(|d| d.code.contains("E0305") || d.message.contains("argument"));
-        assert!(has_arity_err, "expected arity error, got: {:?}", result.diagnostics);
+        assert!(
+            has_arity_err,
+            "expected arity error, got: {:?}",
+            result.diagnostics
+        );
     }
 
     #[test]
     fn lsp_hover_known_fn() {
-        let src = "fn compute(x: i64) -> i64 {\n    x * 2\n}\nfn main() -> i64 {\n    compute(5)\n}\n";
+        let src =
+            "fn compute(x: i64) -> i64 {\n    x * 2\n}\nfn main() -> i64 {\n    compute(5)\n}\n";
         let result = analyse_source(src, "test.ax");
         if let (Some(prog), Some(ctx)) = (&result.program, &result.infer_ctx) {
             // Hover at the start of "compute" in main
@@ -1060,7 +1066,11 @@ mod tests {
         let result = analyse_source(src, "test.ax");
         for d in &result.diagnostics {
             assert!(!d.code.is_empty(), "diagnostic code is empty: {:?}", d);
-            assert!(!d.message.is_empty(), "diagnostic message is empty: {:?}", d);
+            assert!(
+                !d.message.is_empty(),
+                "diagnostic message is empty: {:?}",
+                d
+            );
         }
     }
 
@@ -1068,8 +1078,14 @@ mod tests {
     fn lsp_unknown_type_detected() {
         let src = "fn f(x: BadTypeName) -> i64 { 0 }\nfn main() -> i64 { 0 }\n";
         let result = analyse_source(src, "test.ax");
-        let has_type_err = result.diagnostics.iter()
+        let has_type_err = result
+            .diagnostics
+            .iter()
             .any(|d| d.code.contains("E0308") || d.message.contains("unknown"));
-        assert!(has_type_err, "expected unknown type error, got: {:?}", result.diagnostics);
+        assert!(
+            has_type_err,
+            "expected unknown type error, got: {:?}",
+            result.diagnostics
+        );
     }
 }

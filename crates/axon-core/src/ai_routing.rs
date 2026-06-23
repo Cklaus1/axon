@@ -92,9 +92,9 @@ impl Tier {
     /// more), so a cost budget behaves monotonically across tiers.
     pub fn rate_micro(self) -> i64 {
         match self {
-            Tier::Cheap => 250,      // µ$ / 1k tokens  (e.g. haiku-class)
-            Tier::Balanced => 3000,  // µ$ / 1k tokens  (e.g. sonnet-class)
-            Tier::Strong => 15000,   // µ$ / 1k tokens  (e.g. opus-class)
+            Tier::Cheap => 250,     // µ$ / 1k tokens  (e.g. haiku-class)
+            Tier::Balanced => 3000, // µ$ / 1k tokens  (e.g. sonnet-class)
+            Tier::Strong => 15000,  // µ$ / 1k tokens  (e.g. opus-class)
         }
     }
 
@@ -164,13 +164,28 @@ mod tests {
         assert_eq!(tier_from_attrs(&[]), Ok(DEFAULT_TIER));
         assert_eq!(tier_from_attrs(&[attr("pure", &[])]), Ok(Tier::Balanced));
         // @[ai(policy(tier: X))] flattens to an `ai` attr carrying a `tier:` arg.
-        assert_eq!(tier_from_attrs(&[attr("ai", &["policy", "tier: strong"])]), Ok(Tier::Strong));
-        assert_eq!(tier_from_attrs(&[attr("ai", &["tier:cheap"])]), Ok(Tier::Cheap));
-        assert_eq!(tier_from_attrs(&[attr("ai", &["tier: balanced"])]), Ok(Tier::Balanced));
+        assert_eq!(
+            tier_from_attrs(&[attr("ai", &["policy", "tier: strong"])]),
+            Ok(Tier::Strong)
+        );
+        assert_eq!(
+            tier_from_attrs(&[attr("ai", &["tier:cheap"])]),
+            Ok(Tier::Cheap)
+        );
+        assert_eq!(
+            tier_from_attrs(&[attr("ai", &["tier: balanced"])]),
+            Ok(Tier::Balanced)
+        );
         // An @[ai] with no tier: arg falls back to the default.
-        assert_eq!(tier_from_attrs(&[attr("ai", &["budget: 3"])]), Ok(DEFAULT_TIER));
+        assert_eq!(
+            tier_from_attrs(&[attr("ai", &["budget: 3"])]),
+            Ok(DEFAULT_TIER)
+        );
         // Unknown tier name surfaces the raw name (caller raises E1302).
-        assert_eq!(tier_from_attrs(&[attr("ai", &["tier: turbo"])]), Err("turbo".to_string()));
+        assert_eq!(
+            tier_from_attrs(&[attr("ai", &["tier: turbo"])]),
+            Err("turbo".to_string())
+        );
     }
 
     #[test]
@@ -228,7 +243,10 @@ mod tests {
     #[test]
     fn cost_micro_scales_with_tokens() {
         // 2000 tokens costs 2× 1000 tokens at the same tier.
-        assert_eq!(Tier::Cheap.cost_micro(2000), Tier::Cheap.cost_micro(1000) * 2);
+        assert_eq!(
+            Tier::Cheap.cost_micro(2000),
+            Tier::Cheap.cost_micro(1000) * 2
+        );
         // Balanced rate 3000 µ$/1k → 1000 tokens = 3000 µ$.
         assert_eq!(Tier::Balanced.cost_micro(1000), 3000);
         // Negative clamps to 0.

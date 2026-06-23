@@ -356,6 +356,25 @@ impl<'p> Interp<'p> {
                 }
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
+            "http_sse_post" => {
+                want(4)?;
+                let url = as_str(&args[0])?.to_string();
+                let headers = as_str(&args[1])?.to_string();
+                let body = as_str(&args[2])?.to_string();
+                let callback = args[3].clone();
+                let events =
+                    match crate::host::with_host(|h| h.http_sse_post(&url, &headers, &body)) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            ok!(Value::Err(Box::new(Value::Str(e))))
+                        }
+                    };
+                let count = events.len() as i64;
+                for event in events {
+                    self.call_closure(callback.clone(), vec![Value::Str(event)])?;
+                }
+                ok!(Value::Ok(Box::new(Value::Int(count))))
+            }
 
             // ── Conversion / formatting ─────────────────────────────────────────
             "to_str" => {
@@ -1845,7 +1864,7 @@ impl<'p> Interp<'p> {
                 let n = as_int(&args[0])?;
                 match u32::try_from(n).ok().and_then(char::from_u32) {
                     Some(c) => ok!(Value::Str(c.to_string())),
-                    None => return panic(format!("chr: {n} is not a valid Unicode code point")),
+                    None => panic(format!("chr: {n} is not a valid Unicode code point")),
                 }
             }
 
@@ -1890,7 +1909,11 @@ impl<'p> Interp<'p> {
                         }
                         Some(other) => ok!(Value::Err(Box::new(Value::Str(format!(
                             "key {key:?} is not a string (found {})",
-                            other.is_null().then_some("null").unwrap_or("other type")
+                            if other.is_null() {
+                                "null"
+                            } else {
+                                "other type"
+                            }
                         ))))),
                         None => ok!(Value::Err(Box::new(Value::Str(format!(
                             "key {key:?} not found"
@@ -1925,6 +1948,64 @@ impl<'p> Interp<'p> {
                         "json_get_i64: input is not a JSON object".into()
                     )))),
                     Err(e) => ok!(Value::Err(Box::new(Value::Str(e.to_string())))),
+                }
+            }
+            "json_path_str" => {
+                want(2)?;
+                let json_str = as_str(&args[0])?.to_string();
+                let path = as_str(&args[1])?.to_string();
+                let root: serde_json::Value = match serde_json::from_str(&json_str) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        ok!(Value::Err(Box::new(Value::Str(e.to_string()))))
+                    }
+                };
+                let mut cur = &root;
+                for key in path.split('.') {
+                    match cur {
+                        serde_json::Value::Object(map) => match map.get(key) {
+                            Some(next) => cur = next,
+                            None => {
+                                ok!(Value::Err(Box::new(Value::Str(format!(
+                                    "json_path_str: key {key:?} not found"
+                                )))))
+                            }
+                        },
+                        serde_json::Value::Array(arr) => match key.parse::<usize>() {
+                            Ok(idx) => match arr.get(idx) {
+                                Some(next) => cur = next,
+                                None => {
+                                    ok!(Value::Err(Box::new(Value::Str(format!(
+                                        "json_path_str: array index {idx} out of bounds (len {})",
+                                        arr.len()
+                                    )))))
+                                }
+                            },
+                            Err(_) => {
+                                ok!(Value::Err(Box::new(Value::Str(format!(
+                                    "json_path_str: array requires numeric index, got {key:?}"
+                                )))))
+                            }
+                        },
+                        _ => {
+                            ok!(Value::Err(Box::new(Value::Str(format!(
+                                "json_path_str: cannot index into scalar at key {key:?}"
+                            )))))
+                        }
+                    }
+                }
+                match cur {
+                    serde_json::Value::String(s) => {
+                        ok!(Value::Ok(Box::new(Value::Str(s.clone()))))
+                    }
+                    other => ok!(Value::Err(Box::new(Value::Str(format!(
+                        "json_path_str: leaf is not a string (found {})",
+                        if other.is_null() {
+                            "null"
+                        } else {
+                            "other type"
+                        }
+                    ))))),
                 }
             }
 
@@ -4252,18 +4333,9 @@ impl<'p> Interp<'p> {
             // Raw hardware access cannot be emulated in the tree-walking interpreter;
             // these builtins only run in a compiled freestanding binary.  An honest
             // E0910 abort is safer than a silent wrong result.
-            "ptr_from_addr"
-            | "volatile_load_u8"
-            | "volatile_load_u16"
-            | "volatile_load_u32"
-            | "volatile_load_u64"
-            | "volatile_store_u8"
-            | "volatile_store_u16"
-            | "volatile_store_u32"
-            | "volatile_store_u64"
-            | "hlt"
-            | "cli"
-            | "sti" => {
+            "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
+            | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
+            | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti" => {
                 Err(crate::interp::Flow::Panic(format!(
                     "[E0910] `{name}` is a HAL builtin — it requires native codegen \
                      (`axon build --freestanding`) and cannot run in the interpreter. \

@@ -17,7 +17,11 @@ pub fn provenance_log_path() -> Option<std::path::PathBuf> {
         .ok()
         .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| std::path::PathBuf::from(h).join(".cache")))?;
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".cache"))
+        })?;
     Some(base.join("axon").join("provenance.jsonl"))
 }
 
@@ -52,14 +56,20 @@ pub(super) fn append_provenance_jsonl(
     zone: &str,
     label: Option<&str>,
 ) {
-    let Some(path) = provenance_log_path() else { return };
+    let Some(path) = provenance_log_path() else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
             return;
         }
     }
     let ts = now_ms().max(0) as u64;
-    let s = if score.is_finite() { format!("{score}") } else { "0".to_string() };
+    let s = if score.is_finite() {
+        format!("{score}")
+    } else {
+        "0".to_string()
+    };
     // `input` (the goal-search arg) is an additive field; axon-rt readers ignore it.
     let inp = match input {
         Some(x) => format!(",\"input\":{x}"),
@@ -87,7 +97,11 @@ pub(super) fn append_provenance_jsonl(
         z = json_quote(zone),
         p = json_quote(payload),
     );
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -106,7 +120,9 @@ pub(super) fn append_agent_action_jsonl(
     effect_row: &str,
     principal: &str,
 ) {
-    let Some(path) = provenance_log_path() else { return };
+    let Some(path) = provenance_log_path() else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
             return;
@@ -128,7 +144,11 @@ pub(super) fn append_agent_action_jsonl(
         er = json_quote(effect_row),
         pr = json_quote(principal),
     );
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -165,7 +185,9 @@ pub(super) fn append_ai_call_jsonl(
     effect_row: &str,
     principal: &str,
 ) {
-    let Some(path) = provenance_log_path() else { return };
+    let Some(path) = provenance_log_path() else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
             return;
@@ -183,7 +205,11 @@ pub(super) fn append_ai_call_jsonl(
     } else {
         format!(",\"goal\":{}", json_quote(goal))
     };
-    let cost = if cost_usd.is_finite() { format!("{cost_usd}") } else { "0".to_string() };
+    let cost = if cost_usd.is_finite() {
+        format!("{cost_usd}")
+    } else {
+        "0".to_string()
+    };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"ai_call\",\"tier\":{t},\"model\":{m},\
          \"model_version\":{mv},\"params_hash\":{ph},\"prompt_hash\":{prh},\"mode\":{md},\
@@ -199,7 +225,11 @@ pub(super) fn append_ai_call_jsonl(
         er = json_quote(effect_row),
         pr = json_quote(principal),
     );
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -224,7 +254,9 @@ pub(super) fn json_quote(s: &str) -> String {
 /// Cross-run continuation is opt-in via `AXON_GOAL_CONTINUE` (so default runs —
 /// and tests — stay deterministic, starting each hill-climb from 0).
 pub(super) fn goal_continue_enabled() -> bool {
-    std::env::var("AXON_GOAL_CONTINUE").map(|v| !v.is_empty() && v != "0").unwrap_or(false)
+    std::env::var("AXON_GOAL_CONTINUE")
+        .map(|v| !v.is_empty() && v != "0")
+        .unwrap_or(false)
 }
 
 /// Read the persisted provenance JSONL and return the recorded `input` whose
@@ -240,9 +272,10 @@ pub(super) fn read_best_input(fn_name: &str, target: f64) -> Option<i64> {
         if !line.contains(&needle) {
             continue;
         }
-        let (Some(input), Some(score)) =
-            (extract_json_num(line, "\"input\":"), extract_json_num(line, "\"score\":"))
-        else {
+        let (Some(input), Some(score)) = (
+            extract_json_num(line, "\"input\":"),
+            extract_json_num(line, "\"score\":"),
+        ) else {
             continue;
         };
         let dist = (score - target).abs();
@@ -303,9 +336,10 @@ pub fn read_provenance(path: Option<&std::path::Path>) -> Option<Vec<ProvRecord>
     let content = std::fs::read_to_string(path).ok()?;
     let mut out = Vec::new();
     for line in content.lines() {
-        let (Some(func), Some(score)) =
-            (extract_json_str(line, "\"fn\":"), extract_json_num(line, "\"score\":"))
-        else {
+        let (Some(func), Some(score)) = (
+            extract_json_str(line, "\"fn\":"),
+            extract_json_num(line, "\"score\":"),
+        ) else {
             continue;
         };
         out.push(ProvRecord {
@@ -358,7 +392,9 @@ pub fn read_ai_calls(path: Option<&std::path::Path>) -> Option<Vec<AiCallRecord>
         if extract_json_str(line, "\"event\":").as_deref() != Some("ai_call") {
             continue;
         }
-        let Some(func) = extract_json_str(line, "\"fn\":") else { continue };
+        let Some(func) = extract_json_str(line, "\"fn\":") else {
+            continue;
+        };
         out.push(AiCallRecord {
             func,
             tier: extract_json_str(line, "\"tier\":").unwrap_or_default(),
@@ -367,8 +403,10 @@ pub fn read_ai_calls(path: Option<&std::path::Path>) -> Option<Vec<AiCallRecord>
             cost_usd: extract_json_num(line, "\"cost_usd\":").unwrap_or(0.0),
             goal: extract_json_str(line, "\"goal\":").unwrap_or_default(),
             src: extract_json_str(line, "\"src\":").unwrap_or_default(),
-            effect_row: extract_json_str(line, "\"effect_row\":").unwrap_or_else(|| "AI".to_string()),
-            principal: extract_json_str(line, "\"principal\":").unwrap_or_else(|| "root".to_string()),
+            effect_row: extract_json_str(line, "\"effect_row\":")
+                .unwrap_or_else(|| "AI".to_string()),
+            principal: extract_json_str(line, "\"principal\":")
+                .unwrap_or_else(|| "root".to_string()),
         });
     }
     Some(out)
@@ -454,9 +492,10 @@ pub(super) fn ai_replay_lookup(prompt: &str, model: &str) -> Option<(String, i64
         if k != key {
             continue;
         }
-        if let (Ok(tokens), Some(resp)) =
-            (tok.parse::<i64>(), hex_decode(resp_hex).and_then(|b| String::from_utf8(b).ok()))
-        {
+        if let (Ok(tokens), Some(resp)) = (
+            tok.parse::<i64>(),
+            hex_decode(resp_hex).and_then(|b| String::from_utf8(b).ok()),
+        ) {
             return Some((resp, tokens));
         }
     }
@@ -473,8 +512,16 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
             return;
         }
     }
-    let line = format!("{} {tokens} {}\n", ai_replay_key(prompt, model), hex_encode(response.as_bytes()));
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    let line = format!(
+        "{} {tokens} {}\n",
+        ai_replay_key(prompt, model),
+        hex_encode(response.as_bytes())
+    );
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -492,7 +539,9 @@ pub(super) fn ai_replay_store(prompt: &str, model: &str, response: &str, tokens:
 /// run-id and effective seed that will govern this run.  Best-effort; errors
 /// are silently ignored so a broken provenance path never aborts a user run.
 pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
-    let Some(path) = provenance_log_path() else { return };
+    let Some(path) = provenance_log_path() else {
+        return;
+    };
     if let Some(dir) = path.parent() {
         if std::fs::create_dir_all(dir).is_err() {
             return;
@@ -505,7 +554,11 @@ pub fn append_run_start_jsonl(run_id: &str, seed: u64, src: &str) {
         rid = json_quote(run_id),
         src = json_quote(src),
     );
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = file.write_all(line.as_bytes());
     }
 }
@@ -521,10 +574,7 @@ pub struct RunStartRecord {
 
 /// Find the `run_start` record for `run_id` in the provenance log.  Returns
 /// `None` if the log is absent/unreadable or the run-id is not found.
-pub fn find_run_start(
-    run_id: &str,
-    path: Option<&std::path::Path>,
-) -> Option<RunStartRecord> {
+pub fn find_run_start(run_id: &str, path: Option<&std::path::Path>) -> Option<RunStartRecord> {
     let owned;
     let path = match path {
         Some(p) => p,
@@ -538,14 +588,21 @@ pub fn find_run_start(
         if extract_json_str(line, "\"event\":").as_deref() != Some("run_start") {
             continue;
         }
-        let Some(rid) = extract_json_str(line, "\"run_id\":") else { continue };
+        let Some(rid) = extract_json_str(line, "\"run_id\":") else {
+            continue;
+        };
         if rid != run_id {
             continue;
         }
         let seed = extract_json_num(line, "\"seed\":").unwrap_or(0.0) as u64;
         let src = extract_json_str(line, "\"src\":").unwrap_or_default();
         let ts_ms = extract_json_num(line, "\"ts_ms\":").unwrap_or(0.0) as u64;
-        return Some(RunStartRecord { run_id: rid, seed, src, ts_ms });
+        return Some(RunStartRecord {
+            run_id: rid,
+            seed,
+            src,
+            ts_ms,
+        });
     }
     None
 }

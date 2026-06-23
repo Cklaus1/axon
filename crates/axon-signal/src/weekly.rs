@@ -2,6 +2,7 @@
 ///
 /// Generates a human-readable or JSON report covering a time window.
 /// Requires no LLM calls — all analysis is from ledger + signal data.
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
@@ -48,14 +49,16 @@ pub fn generate_weekly(
     let all_scores = score_sessions(store)?;
 
     // Filter to window
-    let window_scores: Vec<SessionScore> = all_scores.iter()
+    let window_scores: Vec<SessionScore> = all_scores
+        .iter()
         .filter(|s| s.ts_ms >= from_ms && s.ts_ms <= to_ms)
         .cloned()
         .collect();
 
     // Previous window (same duration, immediately before)
     let duration = to_ms.saturating_sub(from_ms);
-    let prev_scores: Vec<SessionScore> = all_scores.iter()
+    let prev_scores: Vec<SessionScore> = all_scores
+        .iter()
         .filter(|s| s.ts_ms >= from_ms.saturating_sub(duration) && s.ts_ms < from_ms)
         .cloned()
         .collect();
@@ -77,28 +80,43 @@ pub fn generate_weekly(
     for s in &window_scores {
         by_engineer.entry(s.engineer.clone()).or_default().push(s);
     }
-    let mut engineers: Vec<EngineerSummary> = by_engineer.iter().map(|(eng, sessions)| {
-        let avg_score = sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
-        let total_commits: usize = sessions.iter().map(|s| s.commits_linked).sum();
-        let total_turns: u64 = sessions.iter().map(|s| s.turns).sum();
-        let avg_tpc = if total_commits > 0 { total_turns as f64 / total_commits as f64 } else { total_turns as f64 };
-        let top_goal = sessions.iter().max_by_key(|s| s.score)
-            .map(|s| crate::display_goal(&s.goal, 120)).unwrap_or_default();
-        EngineerSummary {
-            engineer: eng.clone(),
-            sessions: sessions.len(),
-            commits: total_commits,
-            avg_score,
-            avg_turns_per_commit: avg_tpc,
-            top_goal,
-        }
-    }).collect();
-    engineers.sort_by(|a, b| b.avg_score.partial_cmp(&a.avg_score).unwrap_or(std::cmp::Ordering::Equal));
+    let mut engineers: Vec<EngineerSummary> = by_engineer
+        .iter()
+        .map(|(eng, sessions)| {
+            let avg_score =
+                sessions.iter().map(|s| s.score as f64).sum::<f64>() / sessions.len() as f64;
+            let total_commits: usize = sessions.iter().map(|s| s.commits_linked).sum();
+            let total_turns: u64 = sessions.iter().map(|s| s.turns).sum();
+            let avg_tpc = if total_commits > 0 {
+                total_turns as f64 / total_commits as f64
+            } else {
+                total_turns as f64
+            };
+            let top_goal = sessions
+                .iter()
+                .max_by_key(|s| s.score)
+                .map(|s| crate::display_goal(&s.goal, 120))
+                .unwrap_or_default();
+            EngineerSummary {
+                engineer: eng.clone(),
+                sessions: sessions.len(),
+                commits: total_commits,
+                avg_score,
+                avg_turns_per_commit: avg_tpc,
+                top_goal,
+            }
+        })
+        .collect();
+    engineers.sort_by(|a, b| {
+        b.avg_score
+            .partial_cmp(&a.avg_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Top 3 sessions this week — deduplicate by goal so repeated /loop iterations
     // don't crowd out genuinely distinct sessions.
     let mut top_sessions = window_scores.clone();
-    top_sessions.sort_by(|a, b| b.score.cmp(&a.score));
+    top_sessions.sort_by_key(|b| Reverse(b.score));
     let mut seen_goals = std::collections::HashSet::new();
     top_sessions.retain(|s| seen_goals.insert(s.goal.trim().to_lowercase()));
     top_sessions.truncate(3);
@@ -108,22 +126,27 @@ pub fn generate_weekly(
     let anti = antipatterns(&all_scores, 2);
 
     // Generate recommendations
-    let recommendations = generate_recommendations(
-        &window_scores,
-        &engineers,
-        &hotspots,
-        &anti,
-    );
+    let recommendations = generate_recommendations(&window_scores, &engineers, &hotspots, &anti);
 
     // Coverage: from ledger stats
     let all = store.all().map_err(anyhow::Error::from)?;
     use axon_ledger::model::Effect;
     let git_count = all.iter().filter(|r| r.effect == Effect::GitCommit).count();
-    let linked: std::collections::HashSet<String> = all.iter()
+    let linked: std::collections::HashSet<String> = all
+        .iter()
         .filter(|r| r.effect == Effect::AgentEdge)
-        .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+        .filter_map(|r| {
+            r.payload
+                .get("commit_sha")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
         .collect();
-    let coverage_pct = if git_count > 0 { (linked.len() * 100 / git_count) as u64 } else { 0 };
+    let coverage_pct = linked
+        .len()
+        .checked_mul(100)
+        .and_then(|n| n.checked_div(git_count))
+        .unwrap_or(0) as u64;
 
     Ok(WeeklyReport {
         from_ms,
@@ -152,11 +175,14 @@ fn generate_recommendations(
 
     // 1. Per-engineer: lowest scorer with vague goals
     if let Some(low) = engineers.iter().min_by(|a, b| {
-        a.avg_score.partial_cmp(&b.avg_score).unwrap_or(std::cmp::Ordering::Equal)
+        a.avg_score
+            .partial_cmp(&b.avg_score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }) {
         if low.avg_score < 55.0 {
             // Find their worst goal
-            let vague = scores.iter()
+            let vague = scores
+                .iter()
                 .filter(|s| s.engineer == low.engineer && s.score < 50)
                 .map(|s| s.goal.as_str())
                 .next()
@@ -182,7 +208,8 @@ fn generate_recommendations(
     }
 
     // 3. Loop opportunity: many short repeated turns
-    let repeated_pattern_sessions = scores.iter()
+    let repeated_pattern_sessions = scores
+        .iter()
         .filter(|s| s.turns > 30 && s.commits_linked == 0)
         .count();
     if repeated_pattern_sessions >= 2 {
@@ -225,22 +252,41 @@ pub fn render_text(r: &WeeklyReport) -> String {
     };
 
     let _ = writeln!(out, "TEAM VELOCITY");
-    let _ = writeln!(out, "  Sessions: {}  ·  Commits: {}  ·  Coverage: {}%",
-        r.total_sessions, r.total_commits, r.coverage_pct);
+    let _ = writeln!(
+        out,
+        "  Sessions: {}  ·  Commits: {}  ·  Coverage: {}%",
+        r.total_sessions, r.total_commits, r.coverage_pct
+    );
     let _ = writeln!(out, "  Avg effectiveness: {:.0}{}", r.avg_score, trend);
     let _ = writeln!(out);
 
     // Per-engineer
     let _ = writeln!(out, "ENGINEER BREAKDOWN");
-    let star = r.engineers.iter().max_by(|a, b| {
-        a.avg_score.partial_cmp(&b.avg_score).unwrap_or(std::cmp::Ordering::Equal)
-    }).map(|e| e.engineer.clone()).unwrap_or_default();
+    let star = r
+        .engineers
+        .iter()
+        .max_by(|a, b| {
+            a.avg_score
+                .partial_cmp(&b.avg_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|e| e.engineer.clone())
+        .unwrap_or_default();
     for e in &r.engineers {
-        let bar = "█".repeat((e.avg_score / 10.0) as usize) +
-                  &"░".repeat(10usize.saturating_sub((e.avg_score / 10.0) as usize));
-        let flag = if e.engineer == star { "  ★" } else if e.avg_score < 50.0 { "  ←" } else { "" };
-        let _ = writeln!(out, "  {:<12} {}  {:.0}  {} sessions  {} commits{}",
-            e.engineer, bar, e.avg_score, e.sessions, e.commits, flag);
+        let bar = "█".repeat((e.avg_score / 10.0) as usize)
+            + &"░".repeat(10usize.saturating_sub((e.avg_score / 10.0) as usize));
+        let flag = if e.engineer == star {
+            "  ★"
+        } else if e.avg_score < 50.0 {
+            "  ←"
+        } else {
+            ""
+        };
+        let _ = writeln!(
+            out,
+            "  {:<12} {}  {:.0}  {} sessions  {} commits{}",
+            e.engineer, bar, e.avg_score, e.sessions, e.commits, flag
+        );
     }
     let _ = writeln!(out);
 
@@ -250,8 +296,11 @@ pub fn render_text(r: &WeeklyReport) -> String {
         for s in &r.top_sessions {
             let goal = display_goal(&s.goal, 60);
             let _ = writeln!(out, "  ★ {:?}", goal);
-            let _ = writeln!(out, "    score {}  ·  {} turns  ·  {} commits  ·  {}",
-                s.score, s.turns, s.commits_linked, s.engineer);
+            let _ = writeln!(
+                out,
+                "    score {}  ·  {} turns  ·  {} commits  ·  {}",
+                s.score, s.turns, s.commits_linked, s.engineer
+            );
         }
         let _ = writeln!(out);
     }
@@ -260,8 +309,11 @@ pub fn render_text(r: &WeeklyReport) -> String {
     if !r.top_patterns.is_empty() {
         let _ = writeln!(out, "WHAT WORKED (top goal patterns)");
         for p in r.top_patterns.iter().take(3) {
-            let _ = writeln!(out, "  {:?}  →  avg {:.0}/100, {:.1} commits/session",
-                p.pattern, p.avg_score, p.avg_commits);
+            let _ = writeln!(
+                out,
+                "  {:?}  →  avg {:.0}/100, {:.1} commits/session",
+                p.pattern, p.avg_score, p.avg_commits
+            );
         }
         let _ = writeln!(out);
     }
@@ -270,7 +322,11 @@ pub fn render_text(r: &WeeklyReport) -> String {
     if !r.rework_hotspots.is_empty() {
         let _ = writeln!(out, "REWORK HOTSPOTS");
         for h in &r.rework_hotspots {
-            let _ = writeln!(out, "  ⚠ {}  ({} sessions in {:.0}h)", h.file, h.session_count, h.window_hours);
+            let _ = writeln!(
+                out,
+                "  ⚠ {}  ({} sessions in {:.0}h)",
+                h.file, h.session_count, h.window_hours
+            );
             for g in h.session_goals.iter().take(3) {
                 let _ = writeln!(out, "    → {:?}", g);
             }

@@ -20,10 +20,10 @@ pub enum ComptimeVal {
 impl ComptimeVal {
     pub fn type_name(&self) -> &'static str {
         match self {
-            ComptimeVal::Int(_)   => "i64",
+            ComptimeVal::Int(_) => "i64",
             ComptimeVal::Float(_) => "f64",
-            ComptimeVal::Bool(_)  => "bool",
-            ComptimeVal::Str(_)   => "str",
+            ComptimeVal::Bool(_) => "bool",
+            ComptimeVal::Str(_) => "str",
         }
     }
 }
@@ -49,7 +49,10 @@ pub struct Evaluator<'a> {
 
 impl<'a> Evaluator<'a> {
     pub fn new(fns: &'a HashMap<String, crate::ast::FnDef>) -> Self {
-        Evaluator { env: HashMap::new(), fns }
+        Evaluator {
+            env: HashMap::new(),
+            fns,
+        }
     }
 
     pub fn eval(&self, expr: &Expr) -> Result<ComptimeVal, ComptimeError> {
@@ -57,10 +60,13 @@ impl<'a> Evaluator<'a> {
             Expr::Literal(lit) => self.eval_literal(lit),
 
             Expr::Ident(name) => {
-                self.env.get(name).cloned().ok_or_else(|| ComptimeError::UndefinedIdent {
-                    name: name.clone(),
-                    span: Span::dummy(),
-                })
+                self.env
+                    .get(name)
+                    .cloned()
+                    .ok_or_else(|| ComptimeError::UndefinedIdent {
+                        name: name.clone(),
+                        span: Span::dummy(),
+                    })
             }
 
             Expr::BinOp { op, left, right } => {
@@ -85,14 +91,20 @@ impl<'a> Evaluator<'a> {
                     match &stmt.expr {
                         Expr::Let { name, value, .. } => {
                             let val = {
-                                let sub = Evaluator { env: local_env.clone(), fns: self.fns };
+                                let sub = Evaluator {
+                                    env: local_env.clone(),
+                                    fns: self.fns,
+                                };
                                 sub.eval(value)?
                             };
                             local_env.insert(name.clone(), val.clone());
                             last = Some(val);
                         }
                         other => {
-                            let sub = Evaluator { env: local_env.clone(), fns: self.fns };
+                            let sub = Evaluator {
+                                env: local_env.clone(),
+                                fns: self.fns,
+                            };
                             last = Some(sub.eval(other)?);
                         }
                     }
@@ -159,7 +171,9 @@ impl<'a> Evaluator<'a> {
         };
         match name {
             "str_len" => {
-                if args.len() != 1 { return Err(arity_err(1)); }
+                if args.len() != 1 {
+                    return Err(arity_err(1));
+                }
                 match self.eval(&args[0])? {
                     ComptimeVal::Str(s) => Ok(Some(ComptimeVal::Int(s.len() as i64))),
                     other => Err(ComptimeError::NotEvaluable {
@@ -169,76 +183,96 @@ impl<'a> Evaluator<'a> {
                 }
             }
             "str_concat" => {
-                if args.len() != 2 { return Err(arity_err(2)); }
+                if args.len() != 2 {
+                    return Err(arity_err(2));
+                }
                 let a = self.eval(&args[0])?;
                 let b = self.eval(&args[1])?;
                 match (a, b) {
-                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) =>
-                        Ok(Some(ComptimeVal::Str(s1 + &s2))),
+                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) => {
+                        Ok(Some(ComptimeVal::Str(s1 + &s2)))
+                    }
                     (a, b) => Err(ComptimeError::NotEvaluable {
                         reason: format!(
                             "str_concat expects two strs, got {}/{}",
-                            a.type_name(), b.type_name()
+                            a.type_name(),
+                            b.type_name()
                         ),
                         span: Span::dummy(),
                     }),
                 }
             }
             "str_eq" => {
-                if args.len() != 2 { return Err(arity_err(2)); }
+                if args.len() != 2 {
+                    return Err(arity_err(2));
+                }
                 let a = self.eval(&args[0])?;
                 let b = self.eval(&args[1])?;
                 match (a, b) {
-                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) =>
-                        Ok(Some(ComptimeVal::Bool(s1 == s2))),
+                    (ComptimeVal::Str(s1), ComptimeVal::Str(s2)) => {
+                        Ok(Some(ComptimeVal::Bool(s1 == s2)))
+                    }
                     (a, b) => Err(ComptimeError::NotEvaluable {
                         reason: format!(
                             "str_eq expects two strs, got {}/{}",
-                            a.type_name(), b.type_name()
+                            a.type_name(),
+                            b.type_name()
                         ),
                         span: Span::dummy(),
                     }),
                 }
             }
             "min_i64" => {
-                if args.len() != 2 { return Err(arity_err(2)); }
+                if args.len() != 2 {
+                    return Err(arity_err(2));
+                }
                 let a = self.eval(&args[0])?;
                 let b = self.eval(&args[1])?;
                 match (a, b) {
-                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) =>
-                        Ok(Some(ComptimeVal::Int(x.min(y)))),
+                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) => {
+                        Ok(Some(ComptimeVal::Int(x.min(y))))
+                    }
                     (a, b) => Err(ComptimeError::NotEvaluable {
                         reason: format!(
                             "min_i64 expects two i64s, got {}/{}",
-                            a.type_name(), b.type_name()
+                            a.type_name(),
+                            b.type_name()
                         ),
                         span: Span::dummy(),
                     }),
                 }
             }
             "max_i64" => {
-                if args.len() != 2 { return Err(arity_err(2)); }
+                if args.len() != 2 {
+                    return Err(arity_err(2));
+                }
                 let a = self.eval(&args[0])?;
                 let b = self.eval(&args[1])?;
                 match (a, b) {
-                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) =>
-                        Ok(Some(ComptimeVal::Int(x.max(y)))),
+                    (ComptimeVal::Int(x), ComptimeVal::Int(y)) => {
+                        Ok(Some(ComptimeVal::Int(x.max(y))))
+                    }
                     (a, b) => Err(ComptimeError::NotEvaluable {
                         reason: format!(
                             "max_i64 expects two i64s, got {}/{}",
-                            a.type_name(), b.type_name()
+                            a.type_name(),
+                            b.type_name()
                         ),
                         span: Span::dummy(),
                     }),
                 }
             }
             "abs_i64" => {
-                if args.len() != 1 { return Err(arity_err(1)); }
+                if args.len() != 1 {
+                    return Err(arity_err(1));
+                }
                 match self.eval(&args[0])? {
                     ComptimeVal::Int(n) => n
                         .checked_abs()
                         .map(|v| Some(ComptimeVal::Int(v)))
-                        .ok_or(ComptimeError::Overflow { span: Span::dummy() }),
+                        .ok_or(ComptimeError::Overflow {
+                            span: Span::dummy(),
+                        }),
                     other => Err(ComptimeError::NotEvaluable {
                         reason: format!("abs_i64 expects i64, got {}", other.type_name()),
                         span: Span::dummy(),
@@ -246,7 +280,9 @@ impl<'a> Evaluator<'a> {
                 }
             }
             "i64_to_str" => {
-                if args.len() != 1 { return Err(arity_err(1)); }
+                if args.len() != 1 {
+                    return Err(arity_err(1));
+                }
                 match self.eval(&args[0])? {
                     ComptimeVal::Int(n) => Ok(Some(ComptimeVal::Str(n.to_string()))),
                     other => Err(ComptimeError::NotEvaluable {
@@ -261,28 +297,52 @@ impl<'a> Evaluator<'a> {
 
     fn eval_literal(&self, lit: &Literal) -> Result<ComptimeVal, ComptimeError> {
         match lit {
-            Literal::Int(n)   => Ok(ComptimeVal::Int(*n)),
+            Literal::Int(n) => Ok(ComptimeVal::Int(*n)),
             Literal::Float(f) => Ok(ComptimeVal::Float(*f)),
-            Literal::Bool(b)  => Ok(ComptimeVal::Bool(*b)),
-            Literal::Str(s)   => Ok(ComptimeVal::Str(s.clone())),
+            Literal::Bool(b) => Ok(ComptimeVal::Bool(*b)),
+            Literal::Str(s) => Ok(ComptimeVal::Str(s.clone())),
         }
     }
 
-    fn eval_binop(&self, op: &BinOp, l: ComptimeVal, r: ComptimeVal) -> Result<ComptimeVal, ComptimeError> {
+    fn eval_binop(
+        &self,
+        op: &BinOp,
+        l: ComptimeVal,
+        r: ComptimeVal,
+    ) -> Result<ComptimeVal, ComptimeError> {
         use ComptimeVal::*;
         match (op, l, r) {
-            (BinOp::Add, Int(a), Int(b)) =>
-                a.checked_add(b).map(Int).ok_or(ComptimeError::Overflow { span: Span::dummy() }),
-            (BinOp::Sub, Int(a), Int(b)) =>
-                a.checked_sub(b).map(Int).ok_or(ComptimeError::Overflow { span: Span::dummy() }),
-            (BinOp::Mul, Int(a), Int(b)) =>
-                a.checked_mul(b).map(Int).ok_or(ComptimeError::Overflow { span: Span::dummy() }),
+            (BinOp::Add, Int(a), Int(b)) => {
+                a.checked_add(b).map(Int).ok_or(ComptimeError::Overflow {
+                    span: Span::dummy(),
+                })
+            }
+            (BinOp::Sub, Int(a), Int(b)) => {
+                a.checked_sub(b).map(Int).ok_or(ComptimeError::Overflow {
+                    span: Span::dummy(),
+                })
+            }
+            (BinOp::Mul, Int(a), Int(b)) => {
+                a.checked_mul(b).map(Int).ok_or(ComptimeError::Overflow {
+                    span: Span::dummy(),
+                })
+            }
             (BinOp::Div, Int(a), Int(b)) => {
-                if b == 0 { return Err(ComptimeError::DivByZero { span: Span::dummy() }); }
-                a.checked_div(b).map(Int).ok_or(ComptimeError::Overflow { span: Span::dummy() })
+                if b == 0 {
+                    return Err(ComptimeError::DivByZero {
+                        span: Span::dummy(),
+                    });
+                }
+                a.checked_div(b).map(Int).ok_or(ComptimeError::Overflow {
+                    span: Span::dummy(),
+                })
             }
             (BinOp::Rem, Int(a), Int(b)) => {
-                if b == 0 { return Err(ComptimeError::DivByZero { span: Span::dummy() }); }
+                if b == 0 {
+                    return Err(ComptimeError::DivByZero {
+                        span: Span::dummy(),
+                    });
+                }
                 Ok(Int(a % b))
             }
 
@@ -293,23 +353,25 @@ impl<'a> Evaluator<'a> {
 
             (BinOp::Add, Str(a), Str(b)) => Ok(Str(a + &b)),
 
-            (BinOp::Eq,    Int(a), Int(b)) => Ok(Bool(a == b)),
+            (BinOp::Eq, Int(a), Int(b)) => Ok(Bool(a == b)),
             (BinOp::NotEq, Int(a), Int(b)) => Ok(Bool(a != b)),
-            (BinOp::Lt,    Int(a), Int(b)) => Ok(Bool(a < b)),
-            (BinOp::Gt,    Int(a), Int(b)) => Ok(Bool(a > b)),
-            (BinOp::LtEq,  Int(a), Int(b)) => Ok(Bool(a <= b)),
-            (BinOp::GtEq,  Int(a), Int(b)) => Ok(Bool(a >= b)),
+            (BinOp::Lt, Int(a), Int(b)) => Ok(Bool(a < b)),
+            (BinOp::Gt, Int(a), Int(b)) => Ok(Bool(a > b)),
+            (BinOp::LtEq, Int(a), Int(b)) => Ok(Bool(a <= b)),
+            (BinOp::GtEq, Int(a), Int(b)) => Ok(Bool(a >= b)),
 
             (BinOp::And, Bool(a), Bool(b)) => Ok(Bool(a && b)),
-            (BinOp::Or,  Bool(a), Bool(b)) => Ok(Bool(a || b)),
+            (BinOp::Or, Bool(a), Bool(b)) => Ok(Bool(a || b)),
 
             (BinOp::BitAnd, Int(a), Int(b)) => Ok(Int(a & b)),
-            (BinOp::BitOr,  Int(a), Int(b)) => Ok(Int(a | b)),
+            (BinOp::BitOr, Int(a), Int(b)) => Ok(Int(a | b)),
             (BinOp::BitXor, Int(a), Int(b)) => Ok(Int(a ^ b)),
-            (BinOp::Shl, Int(a), Int(b)) =>
-                Ok(Int(a.checked_shl(b as u32).unwrap_or(0))),
-            (BinOp::Shr, Int(a), Int(b)) =>
-                Ok(Int(a.checked_shr(b as u32).unwrap_or(if a < 0 { -1 } else { 0 }))),
+            (BinOp::Shl, Int(a), Int(b)) => Ok(Int(a.checked_shl(b as u32).unwrap_or(0))),
+            (BinOp::Shr, Int(a), Int(b)) => Ok(Int(a.checked_shr(b as u32).unwrap_or(if a < 0 {
+                -1
+            } else {
+                0
+            }))),
 
             (op, l, r) => Err(ComptimeError::NotEvaluable {
                 reason: format!("cannot apply {op:?} to {}/{}", l.type_name(), r.type_name()),
@@ -321,9 +383,9 @@ impl<'a> Evaluator<'a> {
     fn eval_unary(&self, op: &UnaryOp, v: ComptimeVal) -> Result<ComptimeVal, ComptimeError> {
         use ComptimeVal::*;
         match (op, v) {
-            (UnaryOp::Neg, Int(n))    => Ok(Int(-n)),
-            (UnaryOp::Neg, Float(f))  => Ok(Float(-f)),
-            (UnaryOp::Not, Bool(b))   => Ok(Bool(!b)),
+            (UnaryOp::Neg, Int(n)) => Ok(Int(-n)),
+            (UnaryOp::Neg, Float(f)) => Ok(Float(-f)),
+            (UnaryOp::Not, Bool(b)) => Ok(Bool(!b)),
             (UnaryOp::BitNot, Int(n)) => Ok(Int(!n)),
             (op, v) => Err(ComptimeError::NotEvaluable {
                 reason: format!("cannot apply {op:?} to {}", v.type_name()),
@@ -348,49 +410,52 @@ impl<'a> Evaluator<'a> {
             let val = self.eval(arg)?;
             local_env.insert(param.name.clone(), val);
         }
-        let sub = Evaluator { env: local_env, fns: self.fns };
+        let sub = Evaluator {
+            env: local_env,
+            fns: self.fns,
+        };
         sub.eval(&fndef.body)
     }
 }
 
 fn expr_kind_name(e: &Expr) -> &'static str {
     match e {
-        Expr::Block(_)       => "block",
+        Expr::Block(_) => "block",
         Expr::WithHandler { .. } => "with-handler",
-        Expr::Let { .. }     => "let",
-        Expr::Own { .. }     => "own",
+        Expr::Let { .. } => "let",
+        Expr::Own { .. } => "own",
         Expr::RefBind { .. } => "ref",
-        Expr::Call { .. }    => "call",
+        Expr::Call { .. } => "call",
         Expr::MethodCall { .. } => "method_call",
-        Expr::BinOp { .. }   => "binop",
+        Expr::BinOp { .. } => "binop",
         Expr::UnaryOp { .. } => "unaryop",
-        Expr::Question(_)    => "question",
-        Expr::Match { .. }   => "match",
-        Expr::If { .. }      => "if",
-        Expr::Spawn(_)       => "spawn",
-        Expr::Select(_)      => "select",
-        Expr::Comptime(_)    => "comptime",
-        Expr::Lambda { .. }  => "lambda",
-        Expr::Return(_)      => "return",
+        Expr::Question(_) => "question",
+        Expr::Match { .. } => "match",
+        Expr::If { .. } => "if",
+        Expr::Spawn(_) => "spawn",
+        Expr::Select(_) => "select",
+        Expr::Comptime(_) => "comptime",
+        Expr::Lambda { .. } => "lambda",
+        Expr::Return(_) => "return",
         Expr::FieldAccess { .. } => "field_access",
-        Expr::Index { .. }   => "index",
-        Expr::Ident(_)       => "ident",
-        Expr::Literal(_)     => "literal",
-        Expr::FmtStr { .. }  => "fmt_str",
-        Expr::Ok(_)          => "Ok",
-        Expr::Err(_)         => "Err",
-        Expr::Some(_)        => "Some",
-        Expr::None           => "None",
-        Expr::Array(_)       => "array",
-        Expr::Tuple(_)       => "tuple",
+        Expr::Index { .. } => "index",
+        Expr::Ident(_) => "ident",
+        Expr::Literal(_) => "literal",
+        Expr::FmtStr { .. } => "fmt_str",
+        Expr::Ok(_) => "Ok",
+        Expr::Err(_) => "Err",
+        Expr::Some(_) => "Some",
+        Expr::None => "None",
+        Expr::Array(_) => "array",
+        Expr::Tuple(_) => "tuple",
         Expr::StructLit { .. } => "struct_lit",
-        Expr::While { .. }   => "while",
+        Expr::While { .. } => "while",
         Expr::WhileLet { .. } => "while_let",
-        Expr::Assign { .. }  => "assign",
+        Expr::Assign { .. } => "assign",
         Expr::AssignTo { .. } => "assign",
-        Expr::Break          => "break",
-        Expr::Continue       => "continue",
-        Expr::For { .. }     => "for",
+        Expr::Break => "break",
+        Expr::Continue => "continue",
+        Expr::For { .. } => "for",
     }
 }
 

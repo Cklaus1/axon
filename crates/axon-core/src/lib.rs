@@ -10,14 +10,11 @@ pub mod codegen;
 /// Versioned machine-stable diagnostic JSON (R8): `axon-diag/1` schema.
 pub mod diag_schema;
 pub mod error;
-pub mod infer;
 pub mod host;
 /// Self-improving-compiler pass verification harness (R10): G1 oracle + G2 caps.
 pub mod improve;
 pub mod improve_templates;
-/// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
-/// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
-pub mod rewrite_dsl;
+pub mod infer;
 pub mod lexer;
 /// `axon.lock` content-addressed import lockfile (R6): hash + format.
 pub mod lockfile;
@@ -25,6 +22,9 @@ pub mod lockfile;
 pub mod manifest;
 pub mod parser;
 pub mod resolver;
+/// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
+/// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
+pub mod rewrite_dsl;
 /// SMT-backed `@[verify]` static proof (R9, `smt` feature → Z3).
 #[cfg(feature = "smt")]
 pub mod smt;
@@ -46,8 +46,8 @@ pub mod audit;
 pub mod cache;
 pub mod capabilities;
 pub mod complexity;
-pub mod effects;
 pub mod doc;
+pub mod effects;
 pub mod fmt;
 #[cfg(feature = "serde-json")]
 pub mod lsp;
@@ -109,9 +109,7 @@ pub fn parse_source_located(src: &str) -> Result<ast::Program, (String, usize)> 
 
 /// Parse source and return both the AST and the raw token+span list.
 /// Used by the LSP server and formatter (Phase 4) which need source positions.
-pub fn parse_source_with_spans(
-    src: &str,
-) -> Result<(ast::Program, Vec<TokenSpan>), AxonError> {
+pub fn parse_source_with_spans(src: &str) -> Result<(ast::Program, Vec<TokenSpan>), AxonError> {
     let raw = Lexer::tokenize_with_newlines(src)?;
     let mut tokens = Vec::with_capacity(raw.len());
     let mut spans_ast = Vec::with_capacity(raw.len());
@@ -163,7 +161,10 @@ impl PipelineDiagnostic {
         } else {
             self.file.clone()
         };
-        let mut s = format!("{}: {}[{}]: {}", loc, self.severity, self.code, self.message);
+        let mut s = format!(
+            "{}: {}[{}]: {}",
+            loc, self.severity, self.code, self.message
+        );
         if !self.caret.is_empty() {
             s.push('\n');
             s.push_str(&self.caret);
@@ -342,9 +343,7 @@ pub fn analyse(source: &str, uri: &str) -> AnalysisResult {
 ///
 /// Returns a vec of `(filename, Program)` pairs in the same order as `paths`,
 /// or a vec of error messages if any file fails to read or parse.
-pub fn parse_source_files(
-    paths: &[std::path::PathBuf],
-) -> Result<Vec<NamedProgram>, Vec<String>> {
+pub fn parse_source_files(paths: &[std::path::PathBuf]) -> Result<Vec<NamedProgram>, Vec<String>> {
     use std::sync::{Arc, Mutex};
 
     let errors: Arc<Mutex<Vec<(usize, String)>>> = Arc::new(Mutex::new(Vec::new()));
@@ -363,7 +362,10 @@ pub fn parse_source_files(
                 let src = match std::fs::read_to_string(&path) {
                     Ok(s) => s,
                     Err(e) => {
-                        errors.lock().unwrap().push((idx, format!("cannot read {file}: {e}")));
+                        errors
+                            .lock()
+                            .unwrap()
+                            .push((idx, format!("cannot read {file}: {e}")));
                         return;
                     }
                 };
@@ -396,9 +398,7 @@ pub fn parse_source_files(
 
 // ── Cache re-exports (Phase 4 §4) ────────────────────────────────────────────
 
-pub use cache::{
-    cache_key, cache_path, clean_cache, default_cache_dir, read_axc, write_axc,
-};
+pub use cache::{cache_key, cache_path, clean_cache, default_cache_dir, read_axc, write_axc};
 
 // ── AXON_PATH module loading (Phase 4 §6) ────────────────────────────────────
 
@@ -527,7 +527,9 @@ pub fn resolve_use_files(
     let mut unresolved = Vec::new();
 
     for item in &program.items {
-        let ast::Item::UseDecl(u) = item else { continue };
+        let ast::Item::UseDecl(u) = item else {
+            continue;
+        };
         if u.path.is_empty() {
             continue;
         }
@@ -543,7 +545,11 @@ pub fn resolve_use_files(
         for dir in search_dirs {
             let candidate = dir.join(&rel);
             if let Ok(bytes) = std::fs::read(&candidate) {
-                resolved.push(ResolvedModule { name: name.clone(), path: candidate, bytes });
+                resolved.push(ResolvedModule {
+                    name: name.clone(),
+                    path: candidate,
+                    bytes,
+                });
                 found = true;
                 break;
             }
@@ -589,7 +595,8 @@ pub fn resolve_use_files_transitive(
     let mut seen: HashSet<String> = HashSet::new();
 
     // Worklist seeded with the entry program's direct uses.
-    let mut queue: std::collections::VecDeque<Vec<String>> = use_names(program).into_iter().collect();
+    let mut queue: std::collections::VecDeque<Vec<String>> =
+        use_names(program).into_iter().collect();
 
     while let Some(use_path) = queue.pop_front() {
         let name = use_path.join("::");
@@ -606,7 +613,9 @@ pub fn resolve_use_files_transitive(
         let mut found = false;
         for dir in search_dirs {
             let candidate = dir.join(&rel);
-            let Ok(bytes) = std::fs::read(&candidate) else { continue };
+            let Ok(bytes) = std::fs::read(&candidate) else {
+                continue;
+            };
             found = true;
             // Enqueue this module's own `use`s (the transitive step). A parse
             // failure means we can't see its imports — report it as unresolved
@@ -620,10 +629,16 @@ pub fn resolve_use_files_transitive(
                             }
                         }
                     }
-                    Err(_) => unresolved.push(format!("{name} (unparseable — transitive uses not followed)")),
+                    Err(_) => unresolved.push(format!(
+                        "{name} (unparseable — transitive uses not followed)"
+                    )),
                 }
             }
-            resolved.push(ResolvedModule { name: name.clone(), path: candidate, bytes });
+            resolved.push(ResolvedModule {
+                name: name.clone(),
+                path: candidate,
+                bytes,
+            });
             break;
         }
         if !found {
@@ -733,10 +748,7 @@ fn load_module_recursive(
                 Err(e) => {
                     errors.push(MergeError {
                         code: error::E0901,
-                        message: format!(
-                            "module `{path_str}` at {}: {e}",
-                            candidate.display()
-                        ),
+                        message: format!("module `{path_str}` at {}: {e}", candidate.display()),
                         file: candidate.display().to_string(),
                     });
                     found = true; // file found but broken — don't also report not-found
@@ -808,10 +820,7 @@ fn load_module_recursive(
 
 /// Run the full check pipeline (parse → resolve → infer → check → borrow)
 /// and return all diagnostics with source locations.
-pub fn check_pipeline(
-    source: &str,
-    file: &str,
-) -> Vec<PipelineDiagnostic> {
+pub fn check_pipeline(source: &str, file: &str) -> Vec<PipelineDiagnostic> {
     let source_map = span::SourceMap::new(source.to_string());
     let mut out: Vec<PipelineDiagnostic> = Vec::new();
 
@@ -895,9 +904,18 @@ pub fn check_pipeline(
         });
     }
 
-    let fn_sigs: std::collections::HashMap<String, checker::FnSig> = infer_ctx.fn_sigs
+    let fn_sigs: std::collections::HashMap<String, checker::FnSig> = infer_ctx
+        .fn_sigs
         .iter()
-        .map(|(k, v)| (k.clone(), checker::FnSig { params: v.params.clone(), ret: v.ret.clone() }))
+        .map(|(k, v)| {
+            (
+                k.clone(),
+                checker::FnSig {
+                    params: v.params.clone(),
+                    ret: v.ret.clone(),
+                },
+            )
+        })
         .collect();
     let mut check_ctx = checker::CheckCtx::new(file, fn_sigs, infer_ctx.struct_fields);
     let check_errors = check_ctx.check_program(&program, std::collections::HashMap::new());
@@ -937,7 +955,9 @@ pub fn check_pipeline(
         if let ast::Item::FnDef(fndef) = item {
             let param_types: std::collections::HashMap<String, types::Type> =
                 if let Some(sig) = infer_ctx.fn_sigs.get(&fndef.name) {
-                    fndef.params.iter()
+                    fndef
+                        .params
+                        .iter()
                         .zip(sig.params.iter())
                         .map(|(p, t)| (p.name.clone(), t.clone()))
                         .collect()

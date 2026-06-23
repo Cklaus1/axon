@@ -89,10 +89,7 @@ impl RbacConfig {
         // Member: filter to their own records
         records
             .into_iter()
-            .filter(|r| {
-                r.principal.ends_with(caller)
-                    || r.principal == caller
-            })
+            .filter(|r| r.principal.ends_with(caller) || r.principal == caller)
             .collect()
     }
 
@@ -132,9 +129,9 @@ pub fn resolve_caller(as_flag: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Effect;
     use serde_json::json;
     use tempfile::tempdir;
-    use crate::model::Effect;
 
     fn make_record(principal: &str) -> LedgerRecord {
         LedgerRecord {
@@ -159,7 +156,9 @@ mod tests {
 
     #[test]
     fn test_admin_sees_all() {
-        let config = RbacConfig { admins: vec!["alice@example.com".to_string()] };
+        let config = RbacConfig {
+            admins: vec!["alice@example.com".to_string()],
+        };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("agent:bob@example.com");
         let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"));
@@ -168,7 +167,9 @@ mod tests {
 
     #[test]
     fn test_member_sees_only_own_records() {
-        let config = RbacConfig { admins: vec!["admin@example.com".to_string()] };
+        let config = RbacConfig {
+            admins: vec!["admin@example.com".to_string()],
+        };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("agent:bob@example.com");
         let visible = config.filter_owned(vec![r1, r2], Some("alice@example.com"));
@@ -178,7 +179,9 @@ mod tests {
 
     #[test]
     fn test_no_caller_sees_anonymous_only() {
-        let config = RbacConfig { admins: vec!["admin@example.com".to_string()] };
+        let config = RbacConfig {
+            admins: vec!["admin@example.com".to_string()],
+        };
         let r1 = make_record("agent:alice@example.com");
         let r2 = make_record("unknown");
         let visible = config.filter_owned(vec![r1, r2], None);

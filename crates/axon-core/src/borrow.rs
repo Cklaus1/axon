@@ -58,10 +58,17 @@ enum BindingState {
 fn is_copy(ty: &Type) -> bool {
     matches!(
         ty,
-        Type::I8  | Type::I16 | Type::I32 | Type::I64
-        | Type::U8  | Type::U16 | Type::U32 | Type::U64
-        | Type::F32 | Type::F64
-        | Type::Bool
+        Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::F32
+            | Type::F64
+            | Type::Bool
     )
 }
 
@@ -70,14 +77,14 @@ fn is_copy(ty: &Type) -> bool {
 /// Returns `None` when the type cannot be determined (caller treats as Copy).
 fn infer_expr_type(expr: &Expr, known: &HashMap<String, Type>) -> Option<Type> {
     match expr {
-        Expr::Literal(crate::ast::Literal::Int(_))   => Some(Type::I64),
+        Expr::Literal(crate::ast::Literal::Int(_)) => Some(Type::I64),
         Expr::Literal(crate::ast::Literal::Float(_)) => Some(Type::F64),
-        Expr::Literal(crate::ast::Literal::Bool(_))  => Some(Type::Bool),
-        Expr::Literal(crate::ast::Literal::Str(_))   => Some(Type::Str),
-        Expr::Ident(name)                            => known.get(name).cloned(),
-        Expr::StructLit { name, .. }                 => Some(Type::Struct(name.clone())),
-        Expr::BinOp { left, .. }                     => infer_expr_type(left, known),
-        Expr::Comptime(inner)                        => infer_expr_type(inner, known),
+        Expr::Literal(crate::ast::Literal::Bool(_)) => Some(Type::Bool),
+        Expr::Literal(crate::ast::Literal::Str(_)) => Some(Type::Str),
+        Expr::Ident(name) => known.get(name).cloned(),
+        Expr::StructLit { name, .. } => Some(Type::Struct(name.clone())),
+        Expr::BinOp { left, .. } => infer_expr_type(left, known),
+        Expr::Comptime(inner) => infer_expr_type(inner, known),
         Expr::Block(stmts) if !stmts.is_empty() => {
             infer_expr_type(&stmts.last().unwrap().expr, known)
         }
@@ -145,10 +152,16 @@ impl OwnershipGraph {
     fn move_binding(&mut self, name: &str, span: Span) {
         match self.bindings.get(name).cloned() {
             Some(BindingState::Moved) => {
-                self.errors.push(BorrowError::UseAfterMove { name: name.to_string(), span });
+                self.errors.push(BorrowError::UseAfterMove {
+                    name: name.to_string(),
+                    span,
+                });
             }
             Some(BindingState::Borrowed) => {
-                self.errors.push(BorrowError::MoveBorrowed { name: name.to_string(), span });
+                self.errors.push(BorrowError::MoveBorrowed {
+                    name: name.to_string(),
+                    span,
+                });
             }
             Some(BindingState::Owned) => {
                 let ty = self.types.get(name).cloned();
@@ -218,7 +231,8 @@ impl OwnershipGraph {
                 if let Expr::Ident(src) = value.as_ref() {
                     match self.bindings.get(src).cloned() {
                         Some(BindingState::Owned) => {
-                            self.bindings.insert(src.to_string(), BindingState::Borrowed);
+                            self.bindings
+                                .insert(src.to_string(), BindingState::Borrowed);
                             self.introduce(name, BindingState::Ref(src.clone()), None);
                         }
                         Some(BindingState::Moved) => {
@@ -317,10 +331,14 @@ impl OwnershipGraph {
             Expr::FmtStr { .. } | Expr::Literal(_) | Expr::None => {}
             Expr::Ok(v) | Expr::Err(v) | Expr::Some(v) => self.check_read(v),
             Expr::Array(elems) | Expr::Tuple(elems) => {
-                for e in elems { self.check_read(e); }
+                for e in elems {
+                    self.check_read(e);
+                }
             }
             Expr::StructLit { fields, .. } => {
-                for (_, v) in fields { self.check_read(v); }
+                for (_, v) in fields {
+                    self.check_read(v);
+                }
             }
             Expr::While { cond, body } => {
                 self.check_read(cond);
@@ -344,7 +362,9 @@ impl OwnershipGraph {
                 }
                 self.pop_scope();
             }
-            Expr::For { start, end, body, .. } => {
+            Expr::For {
+                start, end, body, ..
+            } => {
                 self.check_read(start);
                 self.check_read(end);
                 self.push_scope();
@@ -428,11 +448,13 @@ mod tests {
     fn test_move_detected() {
         // own b = s; use s  — should be E0601
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Own { ty: None,
+            Stmt::simple(Expr::Own {
+                ty: None,
                 name: "s".into(),
                 value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
             }),
-            Stmt::simple(Expr::Own { ty: None,
+            Stmt::simple(Expr::Own {
+                ty: None,
                 name: "b".into(),
                 value: Box::new(Expr::Ident("s".into())),
             }),
@@ -451,11 +473,13 @@ mod tests {
     fn test_copy_types_not_moved() {
         // let a = 5; let b = a; use a  — i64 is Copy, no error
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None,
+            Stmt::simple(Expr::Let {
+                ty: None,
                 name: "a".into(),
                 value: Box::new(Expr::Literal(crate::ast::Literal::Int(5))),
             }),
-            Stmt::simple(Expr::Own { ty: None,
+            Stmt::simple(Expr::Own {
+                ty: None,
                 name: "b".into(),
                 value: Box::new(Expr::Ident("a".into())),
             }),
@@ -474,7 +498,8 @@ mod tests {
     fn test_clean_let_no_errors() {
         // let x = 42; x + 1  — i64 Copy, no moves
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None,
+            Stmt::simple(Expr::Let {
+                ty: None,
                 name: "x".into(),
                 value: Box::new(Expr::Literal(crate::ast::Literal::Int(42))),
             }),
@@ -486,62 +511,23 @@ mod tests {
         ]);
         let fndef = make_fn(body);
         let errs = check_fn(&fndef, HashMap::new());
-        assert!(errs.is_empty(), "Clean let-binding should produce no errors: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "Clean let-binding should produce no errors: {errs:?}"
+        );
     }
 
     #[test]
     fn test_own_binding_then_consume_no_error() {
         // own s = "hello"; own b = s  — s moved into b exactly once, no use after
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Own { ty: None,
+            Stmt::simple(Expr::Own {
+                ty: None,
                 name: "s".into(),
                 value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
             }),
-            Stmt::simple(Expr::Own { ty: None,
-                name: "b".into(),
-                value: Box::new(Expr::Ident("s".into())),
-            }),
-        ]);
-        let fndef = make_fn(body);
-        let mut types = HashMap::new();
-        types.insert("s".into(), Type::Str);
-        let errs = check_fn(&fndef, types);
-        assert!(errs.is_empty(), "Single move should not raise an error: {errs:?}");
-    }
-
-    #[test]
-    fn test_ref_binding_no_error() {
-        // own s = "hello"; ref r = s  — borrow without move
-        let body = Expr::Block(vec![
-            Stmt::simple(Expr::Own { ty: None,
-                name: "s".into(),
-                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
-            }),
-            Stmt::simple(Expr::RefBind { ty: None,
-                name: "r".into(),
-                value: Box::new(Expr::Ident("s".into())),
-            }),
-        ]);
-        let fndef = make_fn(body);
-        let mut types = HashMap::new();
-        types.insert("s".into(), Type::Str);
-        let errs = check_fn(&fndef, types);
-        assert!(errs.is_empty(), "ref-binding alone should produce no errors: {errs:?}");
-    }
-
-    #[test]
-    fn test_move_while_borrowed() {
-        // own s = "hello"; ref r = s; own b = s  — moving while borrowed → E0602
-        let body = Expr::Block(vec![
-            Stmt::simple(Expr::Own { ty: None,
-                name: "s".into(),
-                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
-            }),
-            Stmt::simple(Expr::RefBind { ty: None,
-                name: "r".into(),
-                value: Box::new(Expr::Ident("s".into())),
-            }),
-            Stmt::simple(Expr::Own { ty: None,
+            Stmt::simple(Expr::Own {
+                ty: None,
                 name: "b".into(),
                 value: Box::new(Expr::Ident("s".into())),
             }),
@@ -551,7 +537,63 @@ mod tests {
         types.insert("s".into(), Type::Str);
         let errs = check_fn(&fndef, types);
         assert!(
-            errs.iter().any(|e| matches!(e, BorrowError::MoveBorrowed { .. })),
+            errs.is_empty(),
+            "Single move should not raise an error: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_ref_binding_no_error() {
+        // own s = "hello"; ref r = s  — borrow without move
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Own {
+                ty: None,
+                name: "s".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
+            }),
+            Stmt::simple(Expr::RefBind {
+                ty: None,
+                name: "r".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("s".into(), Type::Str);
+        let errs = check_fn(&fndef, types);
+        assert!(
+            errs.is_empty(),
+            "ref-binding alone should produce no errors: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_move_while_borrowed() {
+        // own s = "hello"; ref r = s; own b = s  — moving while borrowed → E0602
+        let body = Expr::Block(vec![
+            Stmt::simple(Expr::Own {
+                ty: None,
+                name: "s".into(),
+                value: Box::new(Expr::Literal(crate::ast::Literal::Str("hello".into()))),
+            }),
+            Stmt::simple(Expr::RefBind {
+                ty: None,
+                name: "r".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+            Stmt::simple(Expr::Own {
+                ty: None,
+                name: "b".into(),
+                value: Box::new(Expr::Ident("s".into())),
+            }),
+        ]);
+        let fndef = make_fn(body);
+        let mut types = HashMap::new();
+        types.insert("s".into(), Type::Str);
+        let errs = check_fn(&fndef, types);
+        assert!(
+            errs.iter()
+                .any(|e| matches!(e, BorrowError::MoveBorrowed { .. })),
             "expected E0602 MoveBorrowed, got {errs:?}",
         );
     }
@@ -560,7 +602,8 @@ mod tests {
     fn test_copy_used_repeatedly_no_error() {
         // let a = 1; a; a; a  — i64 is Copy, multiple uses fine
         let body = Expr::Block(vec![
-            Stmt::simple(Expr::Let { ty: None,
+            Stmt::simple(Expr::Let {
+                ty: None,
                 name: "a".into(),
                 value: Box::new(Expr::Literal(crate::ast::Literal::Int(1))),
             }),
@@ -580,6 +623,9 @@ mod tests {
         // fn test() {}  — empty body, no errors
         let fndef = make_fn(Expr::Block(vec![]));
         let errs = check_fn(&fndef, HashMap::new());
-        assert!(errs.is_empty(), "Empty function should produce no errors: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "Empty function should produce no errors: {errs:?}"
+        );
     }
 }

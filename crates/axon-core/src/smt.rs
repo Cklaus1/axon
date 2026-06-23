@@ -28,7 +28,11 @@ pub enum ProofResult {
     /// Proven: the bound holds for every input in the integer domain.
     Proven { function: String },
     /// Disproven: a concrete input violates the bound (E1102).
-    Counterexample { function: String, inputs: Vec<(String, i64)>, predicate: String },
+    Counterexample {
+        function: String,
+        inputs: Vec<(String, i64)>,
+        predicate: String,
+    },
     /// Outside the provable fragment — the runtime gate still applies (W1103).
     Unsupported { function: String, reason: String },
 }
@@ -50,7 +54,8 @@ pub fn prove_verify_bounds(program: &Program) -> Vec<ProofResult> {
             out.push(ProofResult::Unsupported {
                 function: f.name.clone(),
                 reason: "predicate is not a conjunction of `ident OP K` comparisons \
-                         (disjunctions `||` stay runtime-only)".into(),
+                         (disjunctions `||` stay runtime-only)"
+                    .into(),
             });
             continue;
         };
@@ -64,8 +69,7 @@ pub fn prove_verify_bounds(program: &Program) -> Vec<ProofResult> {
             });
             continue;
         }
-        let value_atoms: Vec<(BinOp, f64)> =
-            atoms.into_iter().map(|(_, op, b)| (op, b)).collect();
+        let value_atoms: Vec<(BinOp, f64)> = atoms.into_iter().map(|(_, op, b)| (op, b)).collect();
         out.push(prove_conjunction(f, &value_atoms));
     }
     out
@@ -91,7 +95,9 @@ fn prove_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
                 other => return other, // Counterexample or Unsupported short-circuits
             }
         }
-        return ProofResult::Proven { function: f.name.clone() };
+        return ProofResult::Proven {
+            function: f.name.clone(),
+        };
     }
     prove_one_int_conjunction(f, atoms)
 }
@@ -128,7 +134,8 @@ fn prove_one_int_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
             return ProofResult::Unsupported {
                 function: f.name.clone(),
                 reason: "body uses a construct outside the straight-line integer fragment \
-                         (loops, calls, float, string, …)".into(),
+                         (loops, calls, float, string, …)"
+                    .into(),
             }
         }
     };
@@ -154,7 +161,10 @@ fn prove_one_int_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
             }
         };
         atom_preds.push(p);
-        atom_strs.push(format!("value {} {bound_i}", crate::verify::binop_to_verify_str(op)));
+        atom_strs.push(format!(
+            "value {} {bound_i}",
+            crate::verify::binop_to_verify_str(op)
+        ));
     }
     // Conjoin: B := A₁ ∧ A₂ ∧ … ; the VC is ¬B.
     let refs: Vec<&z3::ast::Bool> = atom_preds.iter().collect();
@@ -164,7 +174,9 @@ fn prove_one_int_conjunction(f: &FnDef, atoms: &[(BinOp, f64)]) -> ProofResult {
     let solver = Solver::new(&ctx);
     solver.assert(&neg);
     match solver.check() {
-        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Unsat => ProofResult::Proven {
+            function: f.name.clone(),
+        },
         SatResult::Sat => {
             let model = solver.get_model().expect("sat ⇒ a model exists");
             let inputs = params
@@ -215,7 +227,8 @@ fn prove_one_f64(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
             return ProofResult::Unsupported {
                 function: f.name.clone(),
                 reason: "body uses a construct outside the straight-line float fragment \
-                         (loops, calls, div, string, IEEE rounding, …)".into(),
+                         (loops, calls, div, string, IEEE rounding, …)"
+                    .into(),
             }
         }
     };
@@ -239,7 +252,9 @@ fn prove_one_f64(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
     let solver = Solver::new(&ctx);
     solver.assert(&bound_pred.not());
     match solver.check() {
-        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Unsat => ProofResult::Proven {
+            function: f.name.clone(),
+        },
         SatResult::Sat => {
             let model = solver.get_model().expect("sat ⇒ a model exists");
             // Report the violating inputs as the truncated integer part (the
@@ -248,7 +263,8 @@ fn prove_one_f64(f: &FnDef, op: &BinOp, bound: f64) -> ProofResult {
             let inputs = params
                 .iter()
                 .map(|(name, c)| {
-                    let v = model.eval(c, true)
+                    let v = model
+                        .eval(c, true)
                         .and_then(|r| r.as_real())
                         .map(|(num, den)| if den != 0 { num / den } else { 0 })
                         .unwrap_or(0);
@@ -275,23 +291,38 @@ fn f64_to_real(ctx: &Context, x: f64) -> Real<'_> {
     let num = (x * den as f64).round() as i64;
     // Real::from_real takes i32; reduce to keep within range for typical bounds.
     let g = gcd(num.unsigned_abs(), den as u64) as i64;
-    let (n, d) = if g != 0 { (num / g, den / g) } else { (num, den) };
+    let (n, d) = if g != 0 {
+        (num / g, den / g)
+    } else {
+        (num, den)
+    };
     Real::from_real(ctx, n as i32, d as i32)
 }
 
 fn gcd(mut a: u64, mut b: u64) -> u64 {
-    while b != 0 { let t = b; b = a % b; a = t; }
+    while b != 0 {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
     a
 }
 
 /// Encode an `Expr` as a Z3 `Real` term — the float counterpart of
 /// [`encode_expr`]. Same straight-line fragment (`+`/`-`/`*`, `ite`, literals,
 /// params); `Div` stays out (partial). Integer literals coerce to Real.
-fn encode_expr_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)]) -> Option<Real<'c>> {
+fn encode_expr_real<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    params: &[(String, Real<'c>)],
+) -> Option<Real<'c>> {
     match e {
         Expr::Literal(Literal::Float(x)) => Some(f64_to_real(ctx, *x)),
         Expr::Literal(Literal::Int(n)) => Some(f64_to_real(ctx, *n as f64)),
-        Expr::Ident(name) => params.iter().find(|(n, _)| n == name).map(|(_, c)| c.clone()),
+        Expr::Ident(name) => params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| c.clone()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr_real(ctx, left, params)?;
             let r = encode_expr_real(ctx, right, params)?;
@@ -312,12 +343,18 @@ fn encode_expr_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)
         Expr::Block(stmts) => encode_block_real(ctx, stmts, params),
         // Float bound builtins (counterpart of the integer min/max/abs case).
         Expr::Call { callee, args, .. } => {
-            let Expr::Ident(name) = callee.as_ref() else { return None };
+            let Expr::Ident(name) = callee.as_ref() else {
+                return None;
+            };
             match (name.as_str(), args.len()) {
                 ("min_f64", 2) | ("max_f64", 2) => {
                     let a = encode_expr_real(ctx, &args[0], params)?;
                     let b = encode_expr_real(ctx, &args[1], params)?;
-                    let cond = if name == "min_f64" { a.le(&b) } else { a.ge(&b) };
+                    let cond = if name == "min_f64" {
+                        a.le(&b)
+                    } else {
+                        a.ge(&b)
+                    };
                     Some(cond.ite(&a, &b))
                 }
                 ("abs_f64", 1) => {
@@ -343,7 +380,9 @@ fn encode_block_real<'c>(
     let (tail, lets) = stmts.split_last()?;
     let mut env: Vec<(String, Real<'c>)> = params.to_vec();
     for s in lets {
-        let Expr::Let { name, value, .. } = &s.expr else { return None };
+        let Expr::Let { name, value, .. } = &s.expr else {
+            return None;
+        };
         let term = encode_expr_real(ctx, value, &env)?;
         env.push((name.clone(), term));
     }
@@ -352,19 +391,34 @@ fn encode_block_real<'c>(
 
 /// Encode a boolean condition over `Real` terms (float counterpart of
 /// [`encode_bool`]).
-fn encode_bool_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)]) -> Option<Bool<'c>> {
+fn encode_bool_real<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    params: &[(String, Real<'c>)],
+) -> Option<Bool<'c>> {
     match e {
-        Expr::BinOp { op: BinOp::And, left, right } => {
+        Expr::BinOp {
+            op: BinOp::And,
+            left,
+            right,
+        } => {
             let l = encode_bool_real(ctx, left, params)?;
             let r = encode_bool_real(ctx, right, params)?;
             Some(Bool::and(ctx, &[&l, &r]))
         }
-        Expr::BinOp { op: BinOp::Or, left, right } => {
+        Expr::BinOp {
+            op: BinOp::Or,
+            left,
+            right,
+        } => {
             let l = encode_bool_real(ctx, left, params)?;
             let r = encode_bool_real(ctx, right, params)?;
             Some(Bool::or(ctx, &[&l, &r]))
         }
-        Expr::UnaryOp { op: UnaryOp::Not, operand } => Some(encode_bool_real(ctx, operand, params)?.not()),
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            operand,
+        } => Some(encode_bool_real(ctx, operand, params)?.not()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr_real(ctx, left, params)?;
             let r = encode_expr_real(ctx, right, params)?;
@@ -387,7 +441,10 @@ fn encode_bool_real<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Real<'c>)
 fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> Option<Int<'c>> {
     match e {
         Expr::Literal(Literal::Int(n)) => Some(Int::from_i64(ctx, *n)),
-        Expr::Ident(name) => params.iter().find(|(n, _)| n == name).map(|(_, c)| c.clone()),
+        Expr::Ident(name) => params
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, c)| c.clone()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr(ctx, left, params)?;
             let r = encode_expr(ctx, right, params)?;
@@ -415,12 +472,18 @@ fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> 
         // i64 overflow (e.g. abs_i64(i64::MIN)) panics at runtime BEFORE the return
         // check, so eliding a proven check is still observably a no-op (I-2).
         Expr::Call { callee, args, .. } => {
-            let Expr::Ident(name) = callee.as_ref() else { return None };
+            let Expr::Ident(name) = callee.as_ref() else {
+                return None;
+            };
             match (name.as_str(), args.len()) {
                 ("min_i64", 2) | ("max_i64", 2) => {
                     let a = encode_expr(ctx, &args[0], params)?;
                     let b = encode_expr(ctx, &args[1], params)?;
-                    let cond = if name == "min_i64" { a.le(&b) } else { a.ge(&b) };
+                    let cond = if name == "min_i64" {
+                        a.le(&b)
+                    } else {
+                        a.ge(&b)
+                    };
                     Some(cond.ite(&a, &b))
                 }
                 ("abs_i64", 1) => {
@@ -442,11 +505,17 @@ fn encode_expr<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> 
 /// bindings visible so far, then bound to `name`), so multi-line straight-line
 /// bodies like `let d = a - b; d * d` are in-fragment. Any non-`let` statement
 /// before the tail has an effect we don't model → out of fragment.
-fn encode_block<'c>(ctx: &'c Context, stmts: &[Stmt], params: &[(String, Int<'c>)]) -> Option<Int<'c>> {
+fn encode_block<'c>(
+    ctx: &'c Context,
+    stmts: &[Stmt],
+    params: &[(String, Int<'c>)],
+) -> Option<Int<'c>> {
     let (tail, lets) = stmts.split_last()?;
     let mut env: Vec<(String, Int<'c>)> = params.to_vec();
     for s in lets {
-        let Expr::Let { name, value, .. } = &s.expr else { return None };
+        let Expr::Let { name, value, .. } = &s.expr else {
+            return None;
+        };
         let term = encode_expr(ctx, value, &env)?;
         env.push((name.clone(), term));
     }
@@ -458,17 +527,28 @@ fn encode_block<'c>(ctx: &'c Context, stmts: &[Stmt], params: &[(String, Int<'c>
 /// guard like `if x > 0 && x < 10 { … }` is in-fragment.
 fn encode_bool<'c>(ctx: &'c Context, e: &Expr, params: &[(String, Int<'c>)]) -> Option<Bool<'c>> {
     match e {
-        Expr::BinOp { op: BinOp::And, left, right } => {
+        Expr::BinOp {
+            op: BinOp::And,
+            left,
+            right,
+        } => {
             let l = encode_bool(ctx, left, params)?;
             let r = encode_bool(ctx, right, params)?;
             Some(Bool::and(ctx, &[&l, &r]))
         }
-        Expr::BinOp { op: BinOp::Or, left, right } => {
+        Expr::BinOp {
+            op: BinOp::Or,
+            left,
+            right,
+        } => {
             let l = encode_bool(ctx, left, params)?;
             let r = encode_bool(ctx, right, params)?;
             Some(Bool::or(ctx, &[&l, &r]))
         }
-        Expr::UnaryOp { op: UnaryOp::Not, operand } => Some(encode_bool(ctx, operand, params)?.not()),
+        Expr::UnaryOp {
+            op: UnaryOp::Not,
+            operand,
+        } => Some(encode_bool(ctx, operand, params)?.not()),
         Expr::BinOp { op, left, right } => {
             let l = encode_expr(ctx, left, params)?;
             let r = encode_expr(ctx, right, params)?;
@@ -569,7 +649,8 @@ fn solver_config() -> Config {
 fn inline_calls(e: &Expr, fns: &std::collections::HashMap<String, &FnDef>, depth: u32) -> Expr {
     match e {
         Expr::Call { callee, args, tier } => {
-            let inlined_args: Vec<Expr> = args.iter().map(|a| inline_calls(a, fns, depth)).collect();
+            let inlined_args: Vec<Expr> =
+                args.iter().map(|a| inline_calls(a, fns, depth)).collect();
             if depth > 0 {
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Some(f) = fns.get(name) {
@@ -605,12 +686,17 @@ fn inline_calls(e: &Expr, fns: &std::collections::HashMap<String, &FnDef>, depth
         Expr::If { cond, then, else_ } => Expr::If {
             cond: Box::new(inline_calls(cond, fns, depth)),
             then: Box::new(inline_calls(then, fns, depth)),
-            else_: else_.as_ref().map(|e| Box::new(inline_calls(e, fns, depth))),
+            else_: else_
+                .as_ref()
+                .map(|e| Box::new(inline_calls(e, fns, depth))),
         },
         Expr::Block(stmts) => Expr::Block(
             stmts
                 .iter()
-                .map(|s| Stmt { expr: inline_calls(&s.expr, fns, depth), span: s.span })
+                .map(|s| Stmt {
+                    expr: inline_calls(&s.expr, fns, depth),
+                    span: s.span,
+                })
                 .collect(),
         ),
         Expr::Let { name, ty, value } => Expr::Let {
@@ -657,7 +743,10 @@ fn substitute(e: &Expr, subst: &std::collections::HashMap<String, Expr>) -> Expr
                 stmts
                     .iter()
                     .map(|s| {
-                        let out = Stmt { expr: substitute(&s.expr, &local), span: s.span };
+                        let out = Stmt {
+                            expr: substitute(&s.expr, &local),
+                            span: s.span,
+                        };
                         if let Expr::Let { name, .. } = &s.expr {
                             local.remove(name);
                         }
@@ -710,8 +799,12 @@ pub fn prove_refinement_returns(
     for item in &program.items {
         let Item::FnDef(f) = item else { continue };
         // The return type must name a known refinement.
-        let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else { continue };
-        let Some(pred) = refinements.get(rname) else { continue };
+        let Some(crate::ast::AxonType::Named(rname)) = &f.return_type else {
+            continue;
+        };
+        let Some(pred) = refinements.get(rname) else {
+            continue;
+        };
         // β-reduce calls to in-program helpers so the body is straight-line.
         let body = inline_calls(&f.body, &fns, inline_depth());
         // Integer fragment: all params i64.
@@ -787,11 +880,17 @@ pub fn prove_refinement_arg_forwarding(
         let mut calls = Vec::new();
         collect_calls(&f.body, &mut calls);
         for (callee, args) in calls {
-            let Some(callee_slots) = slot_refs.get(&callee) else { continue };
+            let Some(callee_slots) = slot_refs.get(&callee) else {
+                continue;
+            };
             for (i, arg) in args.iter().enumerate() {
                 let Expr::Ident(argname) = arg else { continue };
-                let Some(caller_rname) = caller_param_ref.get(argname) else { continue };
-                let Some(Some(callee_rname)) = callee_slots.get(i) else { continue };
+                let Some(caller_rname) = caller_param_ref.get(argname) else {
+                    continue;
+                };
+                let Some(Some(callee_rname)) = callee_slots.get(i) else {
+                    continue;
+                };
                 if caller_rname == callee_rname {
                     continue; // identical refinement — trivially safe, skip the query.
                 }
@@ -814,7 +913,12 @@ pub fn prove_refinement_arg_forwarding(
 
 /// Prove `∀ _. antecedent(_) ⟹ consequent(_)` over the integer fragment. Used
 /// for refinement subtyping: the binder `_` ranges over the forwarded value.
-fn prove_implies(antecedent: &Expr, consequent: &Expr, site: &str, callee_rname: &str) -> ProofResult {
+fn prove_implies(
+    antecedent: &Expr,
+    consequent: &Expr,
+    site: &str,
+    callee_rname: &str,
+) -> ProofResult {
     let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let x = Int::new_const(&ctx, "_");
@@ -831,7 +935,9 @@ fn prove_implies(antecedent: &Expr, consequent: &Expr, site: &str, callee_rname:
     let solver = Solver::new(&ctx);
     solver.assert(&Bool::and(&ctx, &[&a, &c.not()]));
     match solver.check() {
-        SatResult::Unsat => ProofResult::Proven { function: site.to_string() },
+        SatResult::Unsat => ProofResult::Proven {
+            function: site.to_string(),
+        },
         SatResult::Sat => {
             let v = solver
                 .get_model()
@@ -921,7 +1027,12 @@ fn collect_calls(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
 
 /// Float-fragment analog of `prove_one_refinement_return`: encode the f64 body as
 /// a Z3 Real and prove the predicate (with `_` → body) holds for all inputs.
-fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
+fn prove_one_refinement_return_f64(
+    f: &FnDef,
+    body_ast: &Expr,
+    pred: &Expr,
+    rname: &str,
+) -> ProofResult {
     let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Real)> = f
@@ -951,7 +1062,9 @@ fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rnam
     let solver = Solver::new(&ctx);
     solver.assert(&pred_z3.not());
     match solver.check() {
-        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Unsat => ProofResult::Proven {
+            function: f.name.clone(),
+        },
         SatResult::Sat => {
             let inputs = solver
                 .get_model()
@@ -960,9 +1073,9 @@ fn prove_one_refinement_return_f64(f: &FnDef, body_ast: &Expr, pred: &Expr, rnam
                         .iter()
                         .filter_map(|(n, c)| {
                             // Reals print as rationals; round toward zero for the i64 report.
-                            m.eval(c, true).and_then(|v| v.as_real()).map(|(num, den)| {
-                                (n.clone(), if den != 0 { num / den } else { 0 })
-                            })
+                            m.eval(c, true)
+                                .and_then(|v| v.as_real())
+                                .map(|(num, den)| (n.clone(), if den != 0 { num / den } else { 0 }))
                         })
                         .collect()
                 })
@@ -988,9 +1101,10 @@ fn encode_pred_binder_real<'c>(
     binder_term: &Real<'c>,
 ) -> Option<Bool<'c>> {
     match e {
-        Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
-            Some(encode_pred_binder_real(ctx, operand, binder_term)?.not())
-        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Not,
+            operand,
+        } => Some(encode_pred_binder_real(ctx, operand, binder_term)?.not()),
         Expr::BinOp { op, left, right } => match op {
             BinOp::And => {
                 let l = encode_pred_binder_real(ctx, left, binder_term)?;
@@ -1023,21 +1137,21 @@ fn encode_pred_binder_real<'c>(
 
 /// f64 analog of `encode_pred_int`: a Real-valued predicate sub-expression with
 /// `_` → the body. Float literals come through as `Literal::Float`.
-fn encode_pred_real<'c>(
-    ctx: &'c Context,
-    e: &Expr,
-    binder_term: &Real<'c>,
-) -> Option<Real<'c>> {
+fn encode_pred_real<'c>(ctx: &'c Context, e: &Expr, binder_term: &Real<'c>) -> Option<Real<'c>> {
     match e {
         Expr::Ident(n) if n == "_" => Some(binder_term.clone()),
         Expr::Literal(Literal::Float(v)) => {
             // Z3 Real from a decimal — go through a rational string.
-            Some(Real::from_real_str(ctx, &format!("{v}"), "1").unwrap_or_else(|| Real::from_real(ctx, 0, 1)))
+            Some(
+                Real::from_real_str(ctx, &format!("{v}"), "1")
+                    .unwrap_or_else(|| Real::from_real(ctx, 0, 1)),
+            )
         }
         Expr::Literal(Literal::Int(v)) => Some(Real::from_real(ctx, *v as i32, 1)),
-        Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
-            Some(encode_pred_real(ctx, operand, binder_term)?.unary_minus())
-        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Neg,
+            operand,
+        } => Some(encode_pred_real(ctx, operand, binder_term)?.unary_minus()),
         Expr::BinOp { op, left, right } => {
             let l = encode_pred_real(ctx, left, binder_term)?;
             let r = encode_pred_real(ctx, right, binder_term)?;
@@ -1052,7 +1166,12 @@ fn encode_pred_real<'c>(
     }
 }
 
-fn prove_one_refinement_return(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &str) -> ProofResult {
+fn prove_one_refinement_return(
+    f: &FnDef,
+    body_ast: &Expr,
+    pred: &Expr,
+    rname: &str,
+) -> ProofResult {
     let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let params: Vec<(String, Int)> = f
@@ -1086,14 +1205,20 @@ fn prove_one_refinement_return(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &
     let solver = Solver::new(&ctx);
     solver.assert(&pred_z3.not());
     match solver.check() {
-        SatResult::Unsat => ProofResult::Proven { function: f.name.clone() },
+        SatResult::Unsat => ProofResult::Proven {
+            function: f.name.clone(),
+        },
         SatResult::Sat => {
             let inputs = solver
                 .get_model()
                 .map(|m| {
                     params
                         .iter()
-                        .filter_map(|(n, c)| m.eval(c, true).and_then(|v| v.as_i64()).map(|v| (n.clone(), v)))
+                        .filter_map(|(n, c)| {
+                            m.eval(c, true)
+                                .and_then(|v| v.as_i64())
+                                .map(|v| (n.clone(), v))
+                        })
                         .collect()
                 })
                 .unwrap_or_default();
@@ -1112,15 +1237,12 @@ fn prove_one_refinement_return(f: &FnDef, body_ast: &Expr, pred: &Expr, rname: &
 
 /// Encode a refinement predicate as a Z3 Bool, with the binder `_` mapped to
 /// `binder_term`. Supports comparisons of i64 terms + `&&`/`||`/`!`.
-fn encode_pred_binder<'c>(
-    ctx: &'c Context,
-    e: &Expr,
-    binder_term: &Int<'c>,
-) -> Option<Bool<'c>> {
+fn encode_pred_binder<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> Option<Bool<'c>> {
     match e {
-        Expr::UnaryOp { op: crate::ast::UnaryOp::Not, operand } => {
-            Some(encode_pred_binder(ctx, operand, binder_term)?.not())
-        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Not,
+            operand,
+        } => Some(encode_pred_binder(ctx, operand, binder_term)?.not()),
         Expr::BinOp { op, left, right } => match op {
             BinOp::And => {
                 let l = encode_pred_binder(ctx, left, binder_term)?;
@@ -1152,17 +1274,14 @@ fn encode_pred_binder<'c>(
 }
 
 /// Encode an int sub-expression of a refinement predicate, with `_` → binder.
-fn encode_pred_int<'c>(
-    ctx: &'c Context,
-    e: &Expr,
-    binder_term: &Int<'c>,
-) -> Option<Int<'c>> {
+fn encode_pred_int<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> Option<Int<'c>> {
     match e {
         Expr::Ident(n) if n == "_" => Some(binder_term.clone()),
         Expr::Literal(Literal::Int(v)) => Some(Int::from_i64(ctx, *v)),
-        Expr::UnaryOp { op: crate::ast::UnaryOp::Neg, operand } => {
-            Some(encode_pred_int(ctx, operand, binder_term)?.unary_minus())
-        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Neg,
+            operand,
+        } => Some(encode_pred_int(ctx, operand, binder_term)?.unary_minus()),
         Expr::BinOp { op, left, right } => {
             let l = encode_pred_int(ctx, left, binder_term)?;
             let r = encode_pred_int(ctx, right, binder_term)?;
@@ -1206,8 +1325,15 @@ mod tests {
         match r.as_slice() {
             [ProofResult::Counterexample { inputs, .. }] => {
                 // The model's x must actually violate value >= 0 (i.e. x < 1).
-                let x = inputs.iter().find(|(n, _)| n == "x").map(|(_, v)| *v).unwrap();
-                assert!(x < 1, "counterexample x={x} must violate value>=0 (x-1 < 0)");
+                let x = inputs
+                    .iter()
+                    .find(|(n, _)| n == "x")
+                    .map(|(_, v)| *v)
+                    .unwrap();
+                assert!(
+                    x < 1,
+                    "counterexample x={x} must violate value>=0 (x-1 < 0)"
+                );
             }
             other => panic!("expected a counterexample, got {other:?}"),
         }
@@ -1221,7 +1347,10 @@ mod tests {
             "@[verify(value >= 3)]\n\
              fn k() -> i64 { 3 }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
     }
 
     #[test]
@@ -1250,12 +1379,24 @@ mod tests {
     fn smt_proves_bound_builtins() {
         // max_i64(x, 0) >= 0, abs_i64(x) >= 0, and min_i64(x, 10) <= 10 hold ∀x.
         for (src, what) in [
-            ("@[verify(value >= 0)]\nfn f(x: i64) -> i64 { max_i64(x, 0) }", "max_i64"),
-            ("@[verify(value >= 0)]\nfn f(x: i64) -> i64 { abs_i64(x) }", "abs_i64"),
-            ("@[verify(value <= 10)]\nfn f(x: i64) -> i64 { min_i64(x, 10) }", "min_i64"),
+            (
+                "@[verify(value >= 0)]\nfn f(x: i64) -> i64 { max_i64(x, 0) }",
+                "max_i64",
+            ),
+            (
+                "@[verify(value >= 0)]\nfn f(x: i64) -> i64 { abs_i64(x) }",
+                "abs_i64",
+            ),
+            (
+                "@[verify(value <= 10)]\nfn f(x: i64) -> i64 { min_i64(x, 10) }",
+                "min_i64",
+            ),
         ] {
-            assert!(matches!(prove(src).as_slice(), [ProofResult::Proven { .. }]),
-                "{what} bound must be proven, got {:?}", prove(src));
+            assert!(
+                matches!(prove(src).as_slice(), [ProofResult::Proven { .. }]),
+                "{what} bound must be proven, got {:?}",
+                prove(src)
+            );
         }
     }
 
@@ -1267,7 +1408,10 @@ mod tests {
             "@[verify(value >= 0)]\n\
              fn band(x: i64) -> i64 { if x > 0 && x < 10 { x } else { 0 } }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
     }
 
     #[test]
@@ -1278,8 +1422,10 @@ mod tests {
             "@[verify(value >= 5)]\n\
              fn f(x: i64) -> i64 { max_i64(x, 0) }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
-            "a false bound over max_i64 must be disproven, not proven: got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "a false bound over max_i64 must be disproven, not proven: got {r:?}"
+        );
     }
 
     #[test]
@@ -1288,7 +1434,10 @@ mod tests {
             "@[verify(value >= 0.0)]\n\
              fn fclamp(x: f64) -> f64 { max_f64(x, 0.0) }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
     }
 
     #[test]
@@ -1300,7 +1449,10 @@ mod tests {
              @[verify(value >= 0)]\n\
              fn uses_call(x: i64) -> i64 { helper(x) }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Unsupported { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Unsupported { .. }]),
+            "got {r:?}"
+        );
     }
 
     // ── R9: composite (conjunction) predicates ───────────────────────────────
@@ -1328,7 +1480,10 @@ mod tests {
         );
         match r.as_slice() {
             [ProofResult::Counterexample { predicate, .. }] => {
-                assert!(predicate.contains("&&"), "predicate should show the conjunction: {predicate}");
+                assert!(
+                    predicate.contains("&&"),
+                    "predicate should show the conjunction: {predicate}"
+                );
             }
             other => panic!("expected a counterexample, got {other:?}"),
         }
@@ -1398,7 +1553,10 @@ mod tests {
             "@[verify(value >= 1.0)]\n\
              fn k() -> f64 { 1.5 }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
     }
 
     #[test]
@@ -1408,7 +1566,10 @@ mod tests {
             "@[verify(value >= 0.0)]\n\
              fn absf(x: f64) -> f64 { if x >= 0.0 { x } else { 0.0 - x } }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
     }
 
     // ── Phase 5 §4: refinement-RETURN proofs ─────────────────────────────────
@@ -1437,18 +1598,20 @@ mod tests {
         );
 
         // PROVEN: n*n is always >= 0 — a non-trivial property over all integers.
-        let r = prove_refines(
-            "type NonNeg = i64 where _ >= 0\nfn sq(n: i64) -> NonNeg { n * n }",
+        let r = prove_refines("type NonNeg = i64 where _ >= 0\nfn sq(n: i64) -> NonNeg { n * n }");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "n*n >= 0, got {r:?}"
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "n*n >= 0, got {r:?}");
 
         // COUNTEREXAMPLE: returning n unchanged does NOT guarantee > 0 (n=0).
-        let r = prove_refines(
-            "type Positive = i64 where _ > 0\nfn id(n: i64) -> Positive { n }",
-        );
+        let r = prove_refines("type Positive = i64 where _ > 0\nfn id(n: i64) -> Positive { n }");
         match r.as_slice() {
             [ProofResult::Counterexample { inputs, .. }] => {
-                assert!(inputs.iter().any(|(_, v)| *v <= 0), "counterexample must be <= 0: {inputs:?}");
+                assert!(
+                    inputs.iter().any(|(_, v)| *v <= 0),
+                    "counterexample must be <= 0: {inputs:?}"
+                );
             }
             other => panic!("expected a counterexample, got {other:?}"),
         }
@@ -1461,22 +1624,29 @@ mod tests {
         let r = prove_refines(
             "type NonNeg = i64 where _ >= 0\nfn clamp(x: i64) -> NonNeg { max_i64(x, 0) }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]),
-            "max_i64(x,0) -> NonNeg must be proven, got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "max_i64(x,0) -> NonNeg must be proven, got {r:?}"
+        );
 
         // A `&&` guard in the body, returning a refined value, is also in-fragment.
         let r = prove_refines(
             "type NonNeg = i64 where _ >= 0\n\
              fn g(x: i64) -> NonNeg { if x > 0 && x < 10 { x } else { 0 } }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Proven { .. }]), "got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Proven { .. }]),
+            "got {r:?}"
+        );
 
         // SOUNDNESS: min_i64(x, 5) is NOT always > 0 (x<=0 → result <= 0) → counterexample.
         let r = prove_refines(
             "type Positive = i64 where _ > 0\nfn h(x: i64) -> Positive { min_i64(x, 5) }",
         );
-        assert!(matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
-            "min_i64(x,5) -> Positive must be disproven (x<=0), got {r:?}");
+        assert!(
+            matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
+            "min_i64(x,5) -> Positive must be disproven (x<=0), got {r:?}"
+        );
     }
 
     #[test]
@@ -1492,9 +1662,7 @@ mod tests {
         );
 
         // COUNTEREXAMPLE: the identity does not guarantee strict positivity (x=0.0).
-        let r = prove_refines(
-            "type PosF = f64 where _ > 0.0\nfn idf(x: f64) -> PosF { x }",
-        );
+        let r = prove_refines("type PosF = f64 where _ > 0.0\nfn idf(x: f64) -> PosF { x }");
         assert!(
             matches!(r.as_slice(), [ProofResult::Counterexample { .. }]),
             "idf -> PosF must yield a counterexample, got {r:?}"
@@ -1545,7 +1713,8 @@ mod tests {
              fn wrap(n: i64) -> NonNeg { sq(n) }",
         );
         assert!(
-            r.iter().any(|p| matches!(p, ProofResult::Proven { function } if function == "wrap")),
+            r.iter()
+                .any(|p| matches!(p, ProofResult::Proven { function } if function == "wrap")),
             "inlined sq(n)=n*n >= 0 must prove wrap, got {r:?}"
         );
 
@@ -1556,7 +1725,8 @@ mod tests {
              fn quad(n: i64) -> NonNeg { sq(sq(n)) }",
         );
         assert!(
-            r.iter().any(|p| matches!(p, ProofResult::Proven { function } if function == "quad")),
+            r.iter()
+                .any(|p| matches!(p, ProofResult::Proven { function } if function == "quad")),
             "nested-inlined n^4 >= 0 must prove quad, got {r:?}"
         );
 
@@ -1568,7 +1738,9 @@ mod tests {
              fn pos(n: i64) -> Positive { idh(n) }",
         );
         assert!(
-            r.iter().any(|p| matches!(p, ProofResult::Counterexample { function, .. } if function == "pos")),
+            r.iter().any(
+                |p| matches!(p, ProofResult::Counterexample { function, .. } if function == "pos")
+            ),
             "inlined identity must still be refuted, got {r:?}"
         );
     }
@@ -1596,7 +1768,8 @@ mod tests {
             "Positive ⟹ NonNeg forwarding must be proven safe, got {r:?}"
         );
         assert!(
-            !r.iter().any(|p| matches!(p, ProofResult::Counterexample { .. })),
+            !r.iter()
+                .any(|p| matches!(p, ProofResult::Counterexample { .. })),
             "no counterexample expected for a sound forward, got {r:?}"
         );
 
@@ -1616,9 +1789,15 @@ mod tests {
             }
         }
         let r = prove_refinement_arg_forwarding(&program, &refs);
-        match r.iter().find(|p| matches!(p, ProofResult::Counterexample { .. })) {
+        match r
+            .iter()
+            .find(|p| matches!(p, ProofResult::Counterexample { .. }))
+        {
             Some(ProofResult::Counterexample { inputs, .. }) => {
-                assert!(inputs.iter().any(|(_, v)| *v <= 0), "witness must be <= 0: {inputs:?}");
+                assert!(
+                    inputs.iter().any(|(_, v)| *v <= 0),
+                    "witness must be <= 0: {inputs:?}"
+                );
             }
             _ => panic!("NonNeg ⟹ Positive must yield a counterexample, got {r:?}"),
         }
@@ -1664,10 +1843,16 @@ mod tests {
             .expect("wrap");
         // depth 0: the call survives (the body is a Block wrapping it).
         let kept = inline_calls(&wrap.body, &fns, 0);
-        assert!(format!("{kept:?}").contains("Call"), "depth 0 must keep the call: {kept:?}");
+        assert!(
+            format!("{kept:?}").contains("Call"),
+            "depth 0 must keep the call: {kept:?}"
+        );
         // depth >= 1: the call is gone (expanded to arithmetic).
         let inlined = inline_calls(&wrap.body, &fns, 4);
-        assert!(!format!("{inlined:?}").contains("Call"), "call must be inlined: {inlined:?}");
+        assert!(
+            !format!("{inlined:?}").contains("Call"),
+            "call must be inlined: {inlined:?}"
+        );
     }
 
     // ── Phase 5 §4: discharge() — the bridge into the default pipeline ────────
@@ -1695,7 +1880,10 @@ mod tests {
              fn sq(n: i64) -> NonNeg { n * n }",
         );
         assert!(d.verify_proven("absish"), "absish's bound is ∀-proven");
-        assert!(d.refine_return_proven("sq"), "sq's NonNeg return is ∀-proven");
+        assert!(
+            d.refine_return_proven("sq"),
+            "sq's NonNeg return is ∀-proven"
+        );
         assert_eq!(d.total(), 2);
     }
 
@@ -1711,8 +1899,14 @@ mod tests {
              @[verify(value >= 0)]\n\
              fn uses_call(x: i64) -> i64 { helper(x) }",
         );
-        assert!(!d.verify_proven("dec"), "a violable bound must NOT be discharged");
-        assert!(!d.verify_proven("uses_call"), "an unsupported bound stays runtime-checked");
+        assert!(
+            !d.verify_proven("dec"),
+            "a violable bound must NOT be discharged"
+        );
+        assert!(
+            !d.verify_proven("uses_call"),
+            "an unsupported bound stays runtime-checked"
+        );
         assert_eq!(d.total(), 0, "nothing provable here");
     }
 }

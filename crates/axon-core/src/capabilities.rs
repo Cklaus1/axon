@@ -31,7 +31,11 @@ pub struct CapabilityError {
 
 impl CapabilityError {
     fn new(code: &'static str, message: impl Into<String>, span: Span) -> Self {
-        Self { code, message: message.into(), span }
+        Self {
+            code,
+            message: message.into(),
+            span,
+        }
     }
 }
 
@@ -59,15 +63,17 @@ enum IoKind {
 /// Match a function name to an I/O kind.
 fn classify_call(name: &str) -> Option<IoKind> {
     match name {
-        "read_file"                             => Some(IoKind::FsRead),
-        "write_file"                            => Some(IoKind::FsWrite),
-        "exec"                                  => Some(IoKind::Exec),
+        "read_file" => Some(IoKind::FsRead),
+        "write_file" => Some(IoKind::FsWrite),
+        "exec" => Some(IoKind::Exec),
         // Reading the process environment is an ungrantable ambient channel; a
         // @[contained] fn must not read host secrets it wasn't given.
-        "env_var"                               => Some(IoKind::Env),
+        "env_var" => Some(IoKind::Env),
         // Future net calls (http_get, ai_complete, etc.) — treat as net
         "http_get"
         | "http_post"
+        | "http_sse"
+        | "http_sse_post"
         | "ai_complete"
         | "ai_extract_uncertain_i64"
         | "ai_extract_uncertain_f64" => Some(IoKind::Net),
@@ -446,7 +452,9 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
             collect_caps_expr(expr, caps);
             collect_caps_stmts(body, caps);
         }
-        Expr::For { start, end, body, .. } => {
+        Expr::For {
+            start, end, body, ..
+        } => {
             collect_caps_expr(start, caps);
             collect_caps_expr(end, caps);
             collect_caps_stmts(body, caps);
@@ -565,16 +573,20 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             }
             check_expr(body, ctx);
         }
-        Expr::Let { value, .. }
-        | Expr::Own { value, .. }
-        | Expr::RefBind { value, .. } => check_expr(value, ctx),
+        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+            check_expr(value, ctx)
+        }
         Expr::BinOp { left, right, .. } => {
             check_expr(left, ctx);
             check_expr(right, ctx);
         }
         Expr::UnaryOp { operand, .. } => check_expr(operand, ctx),
         Expr::Question(inner) => check_expr(inner, ctx),
-        Expr::MethodCall { receiver, method, args } => {
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             check_expr(receiver, ctx);
             for arg in args {
                 check_expr(arg, ctx);
@@ -606,7 +618,9 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
         Expr::Match { subject, arms } => {
             check_expr(subject, ctx);
             for arm in arms {
-                if let Some(g) = &arm.guard { check_expr(g, ctx); }
+                if let Some(g) = &arm.guard {
+                    check_expr(g, ctx);
+                }
                 check_expr(&arm.body, ctx);
             }
         }
@@ -618,7 +632,9 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             check_expr(expr, ctx);
             check_stmts(body, ctx);
         }
-        Expr::For { start, end, body, .. } => {
+        Expr::For {
+            start, end, body, ..
+        } => {
             check_expr(start, ctx);
             check_expr(end, ctx);
             check_stmts(body, ctx);
@@ -629,7 +645,9 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             check_expr(value, ctx);
         }
         Expr::Return(inner) => {
-            if let Some(e) = inner { check_expr(e, ctx); }
+            if let Some(e) = inner {
+                check_expr(e, ctx);
+            }
         }
         Expr::FieldAccess { receiver, .. } => check_expr(receiver, ctx),
         Expr::Index { receiver, index } => {
@@ -640,10 +658,14 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             check_expr(inner, ctx);
         }
         Expr::Array(elems) | Expr::Tuple(elems) => {
-            for e in elems { check_expr(e, ctx); }
+            for e in elems {
+                check_expr(e, ctx);
+            }
         }
         Expr::StructLit { fields, .. } => {
-            for (_, v) in fields { check_expr(v, ctx); }
+            for (_, v) in fields {
+                check_expr(v, ctx);
+            }
         }
         Expr::FmtStr { parts } => {
             for part in parts {
@@ -667,12 +689,7 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
 }
 
 /// Validate a single I/O call against the spec.
-fn check_call(
-    name: &str,
-    args: &[Expr],
-    spec: &ContainedSpec,
-    errors: &mut Vec<CapabilityError>,
-) {
+fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
     let kind = match classify_call(name) {
         Some(k) => k,
         None => return, // not an I/O builtin
@@ -739,7 +756,11 @@ fn check_call(
                             "`read_file(\"{path}\")` is not permitted by @[contained] \
                              (allowed prefixes: {})\n  \
                              help: Add `read(\"{pfx}\")` to the existing `fs: [...]` clause",
-                            spec.fs_read.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ")
+                            spec.fs_read
+                                .iter()
+                                .map(|p| format!("\"{p}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ),
                         Span::dummy(),
                     ));
@@ -804,7 +825,11 @@ fn check_call(
                             "`write_file(\"{path}\", ...)` is not permitted by @[contained] \
                              (allowed prefixes: {})\n  \
                              help: Add `write(\"{pfx}\")` to the existing `fs: [...]` clause",
-                            spec.fs_write.iter().map(|p| format!("\"{p}\"")).collect::<Vec<_>>().join(", ")
+                            spec.fs_write
+                                .iter()
+                                .map(|p| format!("\"{p}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ),
                         Span::dummy(),
                     ));
@@ -889,7 +914,11 @@ fn check_call(
                              (allowed: {})\n  \
                              help: Add `\"{host}\"` to the existing `net: [...]` clause",
                             call_display(host),
-                            spec.net_allow.iter().map(|g| format!("\"{g}\"")).collect::<Vec<_>>().join(", ")
+                            spec.net_allow
+                                .iter()
+                                .map(|g| format!("\"{g}\""))
+                                .collect::<Vec<_>>()
+                                .join(", ")
                         ),
                         Span::dummy(),
                     ));
@@ -966,7 +995,11 @@ mod tests {
     use crate::ast::ContainedSpec;
     use crate::span::Span;
 
-    fn make_spec(fs_read: Vec<&str>, fs_write: Vec<&str>, never: Vec<NeverClause>) -> ContainedSpec {
+    fn make_spec(
+        fs_read: Vec<&str>,
+        fs_write: Vec<&str>,
+        never: Vec<NeverClause>,
+    ) -> ContainedSpec {
         ContainedSpec {
             fs_read: fs_read.into_iter().map(String::from).collect(),
             fs_write: fs_write.into_iter().map(String::from).collect(),
@@ -1016,12 +1049,22 @@ mod tests {
         let args = vec![Expr::Literal(crate::ast::Literal::Str("any prompt".into()))];
         let mut errors = Vec::new();
         check_call("ai_complete", &args, &spec, &mut errors);
-        assert_eq!(errors.len(), 1, "ai_complete without anthropic grant must be denied: {errors:?}");
+        assert_eq!(
+            errors.len(),
+            1,
+            "ai_complete without anthropic grant must be denied: {errors:?}"
+        );
         assert_eq!(errors[0].code, E1001);
-        assert!(errors[0].message.contains("api.anthropic.com"),
-            "message should name the implicit host: {}", errors[0].message);
-        assert!(!errors[0].message.contains("any prompt"),
-            "message must NOT print the prompt as the host: {}", errors[0].message);
+        assert!(
+            errors[0].message.contains("api.anthropic.com"),
+            "message should name the implicit host: {}",
+            errors[0].message
+        );
+        assert!(
+            !errors[0].message.contains("any prompt"),
+            "message must NOT print the prompt as the host: {}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1029,21 +1072,37 @@ mod tests {
         // The non-AI net builtins are unchanged: http_get's first arg IS the host.
         let spec = make_net_spec(vec!["api.allowed.com"]);
         let mut errors = Vec::new();
-        check_call("http_get",
-            &[Expr::Literal(crate::ast::Literal::Str("api.allowed.com".into()))],
-            &spec, &mut errors);
+        check_call(
+            "http_get",
+            &[Expr::Literal(crate::ast::Literal::Str(
+                "api.allowed.com".into(),
+            ))],
+            &spec,
+            &mut errors,
+        );
         assert!(errors.is_empty(), "http_get to an allowed host: {errors:?}");
         let mut errors = Vec::new();
-        check_call("http_get",
-            &[Expr::Literal(crate::ast::Literal::Str("api.evil.com".into()))],
-            &spec, &mut errors);
-        assert_eq!(errors.len(), 1, "http_get to a non-allowed host must be denied: {errors:?}");
+        check_call(
+            "http_get",
+            &[Expr::Literal(crate::ast::Literal::Str(
+                "api.evil.com".into(),
+            ))],
+            &spec,
+            &mut errors,
+        );
+        assert_eq!(
+            errors.len(),
+            1,
+            "http_get to a non-allowed host must be denied: {errors:?}"
+        );
     }
 
     #[test]
     fn allowed_read_produces_no_error() {
         let spec = make_spec(vec!["./data/"], vec![], vec![]);
-        let args = vec![Expr::Literal(crate::ast::Literal::Str("./data/x.txt".into()))];
+        let args = vec![Expr::Literal(crate::ast::Literal::Str(
+            "./data/x.txt".into(),
+        ))];
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
         assert!(errors.is_empty(), "Expected no errors, got: {:?}", errors);
@@ -1061,25 +1120,43 @@ mod tests {
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1001);
         // Bug #8: the message suggests the exact least-privilege clause.
-        assert!(errors[0].message.contains("help:"), "no help line: {}", errors[0].message);
-        assert!(errors[0].message.contains("write(\"/etc/\")"), "wrong suggestion: {}", errors[0].message);
+        assert!(
+            errors[0].message.contains("help:"),
+            "no help line: {}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("write(\"/etc/\")"),
+            "wrong suggestion: {}",
+            errors[0].message
+        );
     }
 
     #[test]
     fn never_read_produces_e1004() {
         let spec = make_spec(
-            vec!["./data/", "/etc/"],  // /etc/ is in allowlist but also in never
+            vec!["./data/", "/etc/"], // /etc/ is in allowlist but also in never
             vec![],
             vec![NeverClause::Read("/etc/".into())],
         );
-        let args = vec![Expr::Literal(crate::ast::Literal::Str("/etc/shadow".into()))];
+        let args = vec![Expr::Literal(crate::ast::Literal::Str(
+            "/etc/shadow".into(),
+        ))];
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].code, E1004);
         // Bug #8: never-clause errors explain that no allowlist overrides them.
-        assert!(errors[0].message.contains("help:"), "no help line: {}", errors[0].message);
-        assert!(errors[0].message.contains("remove"), "should suggest removal: {}", errors[0].message);
+        assert!(
+            errors[0].message.contains("help:"),
+            "no help line: {}",
+            errors[0].message
+        );
+        assert!(
+            errors[0].message.contains("remove"),
+            "should suggest removal: {}",
+            errors[0].message
+        );
     }
 
     #[test]
@@ -1105,19 +1182,32 @@ mod tests {
 
         let mut errors = Vec::new();
         check_call("read_file", &args, &spec, &mut errors);
-        assert_eq!(errors.len(), 1, "dynamic read against a non-empty allowlist must fail closed");
+        assert_eq!(
+            errors.len(),
+            1,
+            "dynamic read against a non-empty allowlist must fail closed"
+        );
         assert_eq!(errors[0].code, E1001);
 
         let mut errors = Vec::new();
         check_call("write_file", &args, &spec, &mut errors);
-        assert_eq!(errors.len(), 1, "dynamic write against a non-empty allowlist must fail closed");
+        assert_eq!(
+            errors.len(),
+            1,
+            "dynamic write against a non-empty allowlist must fail closed"
+        );
         assert_eq!(errors[0].code, E1001);
 
         // No false positive: a LITERAL path inside the allowlist still passes.
-        let lit = vec![Expr::Literal(crate::ast::Literal::Str("./data/x.txt".into()))];
+        let lit = vec![Expr::Literal(crate::ast::Literal::Str(
+            "./data/x.txt".into(),
+        ))];
         let mut errors = Vec::new();
         check_call("read_file", &lit, &spec, &mut errors);
-        assert!(errors.is_empty(), "a literal in-allowlist read must still be permitted");
+        assert!(
+            errors.is_empty(),
+            "a literal in-allowlist read must still be permitted"
+        );
     }
 
     #[test]
@@ -1139,7 +1229,11 @@ mod tests {
 
         let mut e = Vec::new();
         check_call("ai_complete", &dyn_arg, &empty, &mut e);
-        assert_eq!(e.len(), 1, "dynamic ai_complete under net:[] must be denied");
+        assert_eq!(
+            e.len(),
+            1,
+            "dynamic ai_complete under net:[] must be denied"
+        );
         assert_eq!(e[0].code, E1001);
     }
 
@@ -1164,8 +1258,16 @@ mod tests {
         let errs = check_import_capabilities(&importer, "evil::net", &imported);
         assert_eq!(errs.len(), 1, "exactly one widening (net): {errs:?}");
         assert_eq!(errs[0].code, E1203);
-        assert!(errs[0].message.contains("net"), "names the widened cap: {}", errs[0].message);
-        assert!(errs[0].message.contains("evil::net"), "names the import: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("net"),
+            "names the widened cap: {}",
+            errs[0].message
+        );
+        assert!(
+            errs[0].message.contains("evil::net"),
+            "names the import: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -1180,7 +1282,10 @@ mod tests {
             "fn load() -> str { match read_file(\"./data/x\") { Ok(s) => s  Err(_) => \"\" } }",
         );
         let errs = check_import_capabilities(&importer, "lib::loader", &imported);
-        assert!(errs.is_empty(), "read within grant must be allowed: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "read within grant must be allowed: {errs:?}"
+        );
     }
 
     #[test]
@@ -1189,11 +1294,13 @@ mod tests {
         // importing a capability-exercising module is not a *widening* — E1203 is
         // opt-in. (This is why existing module-importing examples are unaffected.)
         let importer = parse("fn main() -> i64 { 0 }");
-        let imported = parse(
-            "fn fetch() -> str { match http_get(\"api.x\") { Ok(s) => s  Err(_) => \"\" } }",
-        );
+        let imported =
+            parse("fn fetch() -> str { match http_get(\"api.x\") { Ok(s) => s  Err(_) => \"\" } }");
         let errs = check_import_capabilities(&importer, "any::net", &imported);
-        assert!(errs.is_empty(), "uncontained importer has no ceiling to widen: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "uncontained importer has no ceiling to widen: {errs:?}"
+        );
     }
 
     #[test]
@@ -1215,9 +1322,17 @@ mod tests {
              { match http_get(\"api.evil.com\") { Ok(s) => s  Err(_) => \"\" } } }",
         );
         let errs = check_import_capabilities(&importer, "evil::hidden", &imported);
-        assert_eq!(errs.len(), 1, "net hidden in a with-block must still widen: {errs:?}");
+        assert_eq!(
+            errs.len(),
+            1,
+            "net hidden in a with-block must still widen: {errs:?}"
+        );
         assert_eq!(errs[0].code, E1203);
-        assert!(errs[0].message.contains("net"), "must name the laundered net cap: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("net"),
+            "must name the laundered net cap: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -1240,8 +1355,10 @@ mod tests {
              fn main() -> i64 { 0 }",
         );
         let caps = program_capabilities(&p);
-        assert!(caps.contains("net"),
-            "net call inside an impl method must be visible to G2/import-edge, got: {caps:?}");
+        assert!(
+            caps.contains("net"),
+            "net call inside an impl method must be visible to G2/import-edge, got: {caps:?}"
+        );
     }
 
     #[test]
@@ -1261,8 +1378,10 @@ mod tests {
              }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001),
-            "contained impl method must be enforced (E1001): {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == E1001),
+            "contained impl method must be enforced (E1001): {errs:?}"
+        );
     }
 
     #[test]
@@ -1286,8 +1405,10 @@ mod tests {
              }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001),
-            "exfil via method dispatch must be caught under the caller's spec: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == E1001),
+            "exfil via method dispatch must be caught under the caller's spec: {errs:?}"
+        );
     }
 
     #[test]
@@ -1309,8 +1430,10 @@ mod tests {
              }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.is_empty(),
-            "method call within the granted net allowlist must be allowed: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "method call within the granted net allowlist must be allowed: {errs:?}"
+        );
     }
 
     #[test]
@@ -1329,7 +1452,10 @@ mod tests {
         // Must terminate (the assertion is that this returns at all); no I/O so
         // no errors expected.
         let errs = check_capabilities(&p);
-        assert!(errs.is_empty(), "pure recursive method dispatch: no errors: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "pure recursive method dispatch: no errors: {errs:?}"
+        );
     }
 
     // ── Laundering through deferred / nested control forms ────────────────────
@@ -1346,8 +1472,10 @@ mod tests {
              fn main() -> i64 { s() }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001),
-            "a net call hidden in a lambda body must be caught under the fn's spec: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a lambda body must be caught under the fn's spec: {errs:?}"
+        );
     }
 
     #[test]
@@ -1358,8 +1486,10 @@ mod tests {
              fn main() -> i64 { s() }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.is_empty(),
-            "an ai_complete call in a lambda within the granted net host must be allowed: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "an ai_complete call in a lambda within the granted net host must be allowed: {errs:?}"
+        );
     }
 
     #[test]
@@ -1370,8 +1500,10 @@ mod tests {
              fn main() -> i64 { s() }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001),
-            "a net call hidden in a with-handler body must be caught under the fn's spec: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a with-handler body must be caught under the fn's spec: {errs:?}"
+        );
     }
 
     #[test]
@@ -1382,8 +1514,10 @@ mod tests {
              fn main() -> i64 { s() }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001),
-            "a net call hidden in a spawn body must be caught under the fn's spec: {errs:?}");
+        assert!(
+            errs.iter().any(|e| e.code == E1001),
+            "a net call hidden in a spawn body must be caught under the fn's spec: {errs:?}"
+        );
     }
 
     // ── env_var: ungrantable ambient secret channel inside @[contained] ───────
@@ -1399,8 +1533,11 @@ mod tests {
              fn main() -> i64 { len(evil()) }",
         );
         let errs = check_capabilities(&p);
-        assert!(errs.iter().any(|e| e.code == E1001 && e.message.contains("environment")),
-            "reading env inside @[contained] must be denied (no grant clause exists): {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == E1001 && e.message.contains("environment")),
+            "reading env inside @[contained] must be denied (no grant clause exists): {errs:?}"
+        );
     }
 
     #[test]
@@ -1408,11 +1545,13 @@ mod tests {
         // No false positive: env reads in UNCONTAINED code are unrestricted —
         // containment is opt-in, and a program that declares no boundary keeps
         // full ambient access.
-        let p = parse(
-            "fn main() -> i64 { match env_var(\"HOME\") { Ok(v) => len(v)  Err(_) => 0 } }",
-        );
+        let p =
+            parse("fn main() -> i64 { match env_var(\"HOME\") { Ok(v) => len(v)  Err(_) => 0 } }");
         let errs = check_capabilities(&p);
-        assert!(errs.is_empty(), "env_var outside @[contained] must be allowed: {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "env_var outside @[contained] must be allowed: {errs:?}"
+        );
     }
 
     #[test]
@@ -1442,12 +1581,14 @@ mod tests {
             "@[contained(fs: [read(\"./data/\")], exec: none)]\n\
              fn main() -> i64 { 0 }",
         );
-        let imported = parse(
-            "fn peek() -> str { match env_var(\"SECRET\") { Ok(v) => v  Err(_) => \"\" } }",
-        );
+        let imported =
+            parse("fn peek() -> str { match env_var(\"SECRET\") { Ok(v) => v  Err(_) => \"\" } }");
         let errs = check_import_capabilities(&importer, "mod::peek", &imported);
-        assert!(errs.iter().any(|e| e.code == E1203 && e.message.contains("env")),
-            "an imported env read must widen the contained importer's ceiling: {errs:?}");
+        assert!(
+            errs.iter()
+                .any(|e| e.code == E1203 && e.message.contains("env")),
+            "an imported env read must widen the contained importer's ceiling: {errs:?}"
+        );
     }
 
     #[test]
@@ -1467,9 +1608,17 @@ mod tests {
              }",
         );
         let errs = check_import_capabilities(&importer, "evil::impl", &imported);
-        assert_eq!(errs.len(), 1, "net hidden in an impl method must widen: {errs:?}");
+        assert_eq!(
+            errs.len(),
+            1,
+            "net hidden in an impl method must widen: {errs:?}"
+        );
         assert_eq!(errs[0].code, E1203);
-        assert!(errs[0].message.contains("net"), "must name the laundered net cap: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("net"),
+            "must name the laundered net cap: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -1492,7 +1641,15 @@ mod tests {
         assert_eq!(errs.len(), 2, "two widenings: {errs:?}");
         assert!(errs.iter().all(|e| e.code == E1203));
         // BTreeSet difference is sorted: fs:read before net.
-        assert!(errs[0].message.contains("fs:read"), "first: {}", errs[0].message);
-        assert!(errs[1].message.contains("net"), "second: {}", errs[1].message);
+        assert!(
+            errs[0].message.contains("fs:read"),
+            "first: {}",
+            errs[0].message
+        );
+        assert!(
+            errs[1].message.contains("net"),
+            "second: {}",
+            errs[1].message
+        );
     }
 }

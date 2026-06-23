@@ -1,0 +1,33 @@
+// Anthropic streaming example — call the Messages API with stream=true.
+//
+// Prerequisites:
+//   export ANTHROPIC_API_KEY=sk-ant-...
+//
+// Build and run:
+//   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
+//   ./target/debug/axon-run run examples/anthropic_stream.ax
+//
+// Uses http_sse_post (POST + SSE) because Anthropic's streaming API requires POST.
+// Each SSE event is a JSON object; content_block_delta events carry text tokens.
+// json_path_str navigates the nested delta.text path in one call.
+fn main() -> i64 {
+    match env_var("ANTHROPIC_API_KEY") {
+        Err(_) => {
+            println("error: ANTHROPIC_API_KEY environment variable not set")
+            1
+        }
+        Ok(key) => {
+            let headers = "{{\"x-api-key\":\"{key}\",\"anthropic-version\":\"2023-06-01\",\"content-type\":\"application/json\"}}"
+            let body = "{{\"model\":\"claude-haiku-4-5-20251001\",\"max_tokens\":128,\"stream\":true,\"messages\":[{{\"role\":\"user\",\"content\":\"Count to five, one word per line.\"}}]}}"
+            match http_sse_post("https://api.anthropic.com/v1/messages", headers, body, |event: str| {
+                match json_path_str(event, "delta.text") {
+                    Ok(text) => print(text)
+                    Err(_)   => {}
+                }
+            }) {
+                Ok(_)  => { println("")  0 }
+                Err(e) => { println("stream error: {e}")  1 }
+            }
+        }
+    }
+}

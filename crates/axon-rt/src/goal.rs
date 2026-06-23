@@ -89,7 +89,11 @@ fn is_known_goal_name(name: &str) -> bool {
     if lookup_adaptive_i64(name).is_some() {
         return true;
     }
-    if goal_names().lock().map(|g| g.contains(name)).unwrap_or(false) {
+    if goal_names()
+        .lock()
+        .map(|g| g.contains(name))
+        .unwrap_or(false)
+    {
         return true;
     }
     !provenance::provenance_records_for(name).is_empty()
@@ -157,7 +161,9 @@ pub extern "C" fn __axon_goal_run(
         best_observed(name, target_score, max_evals)
     };
     if !out_score.is_null() {
-        unsafe { *out_score = best; }
+        unsafe {
+            *out_score = best;
+        }
     }
 }
 
@@ -213,7 +219,11 @@ fn hill_climb_i64(
     //  - Continuation / nonzero start: narrow `|x|/4` seed to fine-tune (keeps
     //    the cross-run continuation semantics).
     let mut step: i64 = if cur_input == 0 {
-        if unlimited { 4096 } else { std::cmp::max(16, cap_evals.saturating_mul(4)) }
+        if unlimited {
+            4096
+        } else {
+            std::cmp::max(16, cap_evals.saturating_mul(4))
+        }
     } else {
         std::cmp::max(1, (cur_input.unsigned_abs() as i64) / 4)
     };
@@ -315,7 +325,7 @@ fn slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
 mod tests {
     use super::*;
     use crate::provenance::{
-        __axon_provenance_log_ret_i64, __axon_provenance_log_ret_f64,
+        __axon_provenance_log_ret_f64, __axon_provenance_log_ret_i64,
         __axon_provenance_log_ret_i64_in,
     };
 
@@ -433,7 +443,10 @@ mod tests {
         // `__axon_goal_run` wrapper would abort (exit 101) on this; that path
         // can't run in-process, so we assert the predicate instead. (Before
         // BUG_HUNT #19 a null name silently returned `target`.)
-        assert!(!is_known_goal_name(""), "a null/empty goal name is not known");
+        assert!(
+            !is_known_goal_name(""),
+            "a null/empty goal name is not known"
+        );
     }
 
     // ── Layer-3: live hill-climb tests ────────────────────────────────────
@@ -451,7 +464,9 @@ mod tests {
         d * d
     }
 
-    extern "C" fn linear_2x(x: i64) -> i64 { 2 * x }
+    extern "C" fn linear_2x(x: i64) -> i64 {
+        2 * x
+    }
 
     #[test]
     fn goal_run_hillclimb_finds_minimum_of_quadratic() {
@@ -477,7 +492,11 @@ mod tests {
         // "did we actually call the user fn and improve", not about the
         // exact optimizer policy.
         assert!(out >= 0.0, "score must be non-negative, got {}", out);
-        assert!(out < 4.0, "expected score near 0, got {} (hill-climb stuck?)", out);
+        assert!(
+            out < 4.0,
+            "expected score near 0, got {} (hill-climb stuck?)",
+            out
+        );
     }
 
     #[test]
@@ -508,11 +527,7 @@ mod tests {
     fn goal_run_hillclimb_linear_finds_target_score() {
         // f(x) = 2x.  Target = 100 ⇒ optimum is x = 50, score 100.
         let name = b"goal_hill_linear";
-        __axon_register_adaptive(
-            name.as_ptr(),
-            name.len() as i64,
-            linear_2x as *const c_void,
-        );
+        __axon_register_adaptive(name.as_ptr(), name.len() as i64, linear_2x as *const c_void);
 
         let mut out: f64 = -1.0;
         __axon_goal_run(
@@ -556,7 +571,11 @@ mod tests {
             64,
             &mut out as *mut f64,
         );
-        assert!(out < 100.0, "warm-started climb should beat the 990-seed score of 100, got {}", out);
+        assert!(
+            out < 100.0,
+            "warm-started climb should beat the 990-seed score of 100, got {}",
+            out
+        );
     }
 
     #[test]

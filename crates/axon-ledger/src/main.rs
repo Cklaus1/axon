@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::fs;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,8 +15,9 @@ use axon_ledger::query::{as_of, diff, history, search, why};
 use axon_ledger::rbac::{resolve_caller, RbacConfig};
 use axon_ledger::store::Store;
 use axon_ledger::watch::watch_sessions;
-use axon_ledger::webhook::{add_webhook, fire_webhooks, load_webhooks, remove_webhook,
-                           WebhookEvent, WebhookProvider};
+use axon_ledger::webhook::{
+    add_webhook, fire_webhooks, load_webhooks, remove_webhook, WebhookEvent, WebhookProvider,
+};
 
 #[derive(Parser)]
 #[command(name = "axon-ledger", about = "Provenance ledger for Axon")]
@@ -382,9 +384,7 @@ fn default_ledger_dir() -> PathBuf {
 }
 
 fn ledger_dir(cli_override: Option<&PathBuf>) -> PathBuf {
-    cli_override
-        .cloned()
-        .unwrap_or_else(default_ledger_dir)
+    cli_override.cloned().unwrap_or_else(default_ledger_dir)
 }
 
 fn parse_iso_cli(s: &str) -> Result<u64> {
@@ -421,15 +421,24 @@ fn main() -> Result<()> {
 
     match cli.command {
         Commands::Ingest { source } => match source {
-            IngestSource::Git { repo, since, repo_name } => {
+            IngestSource::Git {
+                repo,
+                since,
+                repo_name,
+            } => {
                 let n = ingest_git(&repo, &mut store, since.as_deref(), repo_name.as_deref())?;
-                let filter_note = since.as_deref()
+                let filter_note = since
+                    .as_deref()
                     .map(|s| format!(" (after {})", s))
                     .unwrap_or_default();
-                let repo_note = repo_name.as_deref()
+                let repo_note = repo_name
+                    .as_deref()
                     .map(|r| format!(" [repo={}]", r))
                     .unwrap_or_default();
-                println!("Ingested {} new git commits{}{}.", n, filter_note, repo_note);
+                println!(
+                    "Ingested {} new git commits{}{}.",
+                    n, filter_note, repo_note
+                );
                 // Always re-infer edges after a git ingest so `why`/`pre-deploy` reflect
                 // the new commits immediately — without this users see 0% coverage until
                 // they remember to run `ingest edges` separately.
@@ -438,15 +447,43 @@ fn main() -> Result<()> {
                     println!("Inferred {} new session→commit edge(s).", edges);
                 }
             }
-            IngestSource::Session { path, gate, axon_bin, gate_script, repo_name, engineer } => {
-                let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
-                match ingest_session(&path, &mut store, &gate_opts, repo_name.as_deref(), engineer.as_deref())? {
+            IngestSource::Session {
+                path,
+                gate,
+                axon_bin,
+                gate_script,
+                repo_name,
+                engineer,
+            } => {
+                let gate_opts = GateOptions {
+                    enabled: gate,
+                    axon_bin,
+                    gate_script,
+                };
+                match ingest_session(
+                    &path,
+                    &mut store,
+                    &gate_opts,
+                    repo_name.as_deref(),
+                    engineer.as_deref(),
+                )? {
                     Some(r) => println!("Ingested session: {}", r.id),
                     None => println!("Session already in ledger, skipped."),
                 }
             }
-            IngestSource::SessionDir { dir: sessions_dir, gate, axon_bin, gate_script, repo_name, engineer } => {
-                let gate_opts = GateOptions { enabled: gate, axon_bin: axon_bin.clone(), gate_script: gate_script.clone() };
+            IngestSource::SessionDir {
+                dir: sessions_dir,
+                gate,
+                axon_bin,
+                gate_script,
+                repo_name,
+                engineer,
+            } => {
+                let gate_opts = GateOptions {
+                    enabled: gate,
+                    axon_bin: axon_bin.clone(),
+                    gate_script: gate_script.clone(),
+                };
                 // If --engineer not given, fall back to git config user.email
                 let resolved_engineer = engineer.or_else(|| {
                     std::process::Command::new("git")
@@ -469,23 +506,41 @@ fn main() -> Result<()> {
                 paths.sort();
                 let n_files = paths.len();
                 for (i, path) in paths.iter().enumerate() {
-                    eprint!("\r  [{}/{}] {}", i + 1, n_files,
-                        path.file_name().unwrap_or_default().to_string_lossy());
-                    match ingest_session(path, &mut store, &gate_opts, repo_name.as_deref(), resolved_engineer.as_deref()) {
+                    eprint!(
+                        "\r  [{}/{}] {}",
+                        i + 1,
+                        n_files,
+                        path.file_name().unwrap_or_default().to_string_lossy()
+                    );
+                    match ingest_session(
+                        path,
+                        &mut store,
+                        &gate_opts,
+                        repo_name.as_deref(),
+                        resolved_engineer.as_deref(),
+                    ) {
                         Ok(Some(_)) => total += 1,
                         Ok(None) => skipped += 1,
                         Err(e) if e.to_string().starts_with("brief gate:") => {
                             rejected += 1;
                         }
-                        Err(e) => { eprintln!(); return Err(e); }
+                        Err(e) => {
+                            eprintln!();
+                            return Err(e);
+                        }
                     }
                 }
-                if n_files > 0 { eprintln!(); }
-                let eng_note = resolved_engineer.as_deref()
+                if n_files > 0 {
+                    eprintln!();
+                }
+                let eng_note = resolved_engineer
+                    .as_deref()
                     .map(|e| format!(" [engineer={}]", e))
                     .unwrap_or_default();
-                println!("Ingested {} new sessions ({} already known, {} rejected by gate){}.",
-                    total, skipped, rejected, eng_note);
+                println!(
+                    "Ingested {} new sessions ({} already known, {} rejected by gate){}.",
+                    total, skipped, rejected, eng_note
+                );
                 // Re-infer edges whenever new sessions land so commits link immediately.
                 if total > 0 {
                     let edges = infer_edges(&mut store)?;
@@ -502,17 +557,28 @@ fn main() -> Result<()> {
                 let r = ingest_outcome(&commit, &file, &mut store)?;
                 println!("Ingested outcome: {} (linked to commit {})", r.id, commit);
             }
-            IngestSource::OutcomeProvider { provider, commit, file, json } => {
+            IngestSource::OutcomeProvider {
+                provider,
+                commit,
+                file,
+                json,
+            } => {
                 use axon_ledger::ingest::provider::{ingest_provider_outcome, Provider};
                 let p = Provider::from_str(&provider)?;
                 let r = ingest_provider_outcome(p, &commit, &file, &mut store)?;
                 if json {
                     println!("{}", serde_json::to_string_pretty(&r)?);
                 } else {
-                    let metric_count = r.payload.get("metrics")
-                        .and_then(|m| m.as_object()).map(|o| o.len()).unwrap_or(0);
-                    println!("Ingested {} outcome: {} metric(s) linked to commit {}",
-                        provider, metric_count, commit);
+                    let metric_count = r
+                        .payload
+                        .get("metrics")
+                        .and_then(|m| m.as_object())
+                        .map(|o| o.len())
+                        .unwrap_or(0);
+                    println!(
+                        "Ingested {} outcome: {} metric(s) linked to commit {}",
+                        provider, metric_count, commit
+                    );
                 }
             }
         },
@@ -521,46 +587,72 @@ fn main() -> Result<()> {
             let result = why(&sha, &store)?;
             if let Some(ref r) = repo {
                 if result.commit.repo.as_deref() != Some(r.as_str()) {
-                    anyhow::bail!("commit {} is not tagged with repo {:?} (actual: {:?})",
-                        &sha, r, result.commit.repo);
+                    anyhow::bail!(
+                        "commit {} is not tagged with repo {:?} (actual: {:?})",
+                        &sha,
+                        r,
+                        result.commit.repo
+                    );
                 }
             }
             if json {
                 println!("{}", serde_json::to_string_pretty(&result)?);
             } else {
                 let p = &result.commit.payload;
-                let commit_sha  = p.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-                let msg         = p.get("message").and_then(|v| v.as_str()).unwrap_or("?");
-                let author      = p.get("author").and_then(|v| v.as_str()).unwrap_or("?");
-                let files: Vec<String> = p.get("files")
+                let commit_sha = p.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
+                let msg = p.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                let author = p.get("author").and_then(|v| v.as_str()).unwrap_or("?");
+                let files: Vec<String> = p
+                    .get("files")
                     .and_then(|v| v.as_array())
-                    .map(|a| a.iter().filter_map(|v| v.as_str()).map(|f| short_path(f, 4)).collect())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|f| short_path(f, 4))
+                            .collect()
+                    })
                     .unwrap_or_default();
 
                 println!("COMMIT   {}", &commit_sha[..commit_sha.len().min(12)]);
                 println!("  msg:   {}", msg);
                 println!("  by:    {}", author);
-                println!("  files: {}", if files.is_empty() { "(none)".to_string() } else { files.join("  ") });
+                println!(
+                    "  files: {}",
+                    if files.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        files.join("  ")
+                    }
+                );
                 println!();
 
                 if let Some(session) = &result.agent_session {
                     let sp = &session.payload;
-                    let sid     = sp.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
-                    let goal    = sp.get("goal").and_then(|v| v.as_str()).unwrap_or("(no goal extracted)");
-                    let start   = sp.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
-                    let turns   = sp.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let sfiles: Vec<String> = sp.get("files_touched")
+                    let sid = sp.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
+                    let goal = sp
+                        .get("goal")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("(no goal extracted)");
+                    let start = sp.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
+                    let turns = sp.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let sfiles: Vec<String> = sp
+                        .get("files_touched")
                         .and_then(|v| v.as_array())
-                        .map(|a| a.iter()
-                            .filter_map(|v| v.as_str())
-                            .filter(|f| {
-                                !f.contains('*') && !f.starts_with('-')
-                                    && !f.ends_with(".jsonl") // session metadata, not source
-                            })
-                            .map(|f| short_path(f, 3))
-                            .collect())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|v| v.as_str())
+                                .filter(|f| {
+                                    !f.contains('*')
+                                        && !f.starts_with('-')
+                                        && !f.ends_with(".jsonl") // session metadata, not source
+                                })
+                                .map(|f| short_path(f, 3))
+                                .collect()
+                        })
                         .unwrap_or_default();
-                    let conf_str = result.edge.as_ref()
+                    let conf_str = result
+                        .edge
+                        .as_ref()
                         .and_then(|e| e.payload.get("confidence"))
                         .map(|v| {
                             if let Some(f) = v.as_f64() {
@@ -571,21 +663,35 @@ fn main() -> Result<()> {
                         })
                         .unwrap_or_else(|| "?".to_string());
 
-                    println!("AGENT SESSION  {} (inferred, confidence {})", &sid[..sid.len().min(8)], conf_str);
+                    println!(
+                        "AGENT SESSION  {} (inferred, confidence {})",
+                        &sid[..sid.len().min(8)],
+                        conf_str
+                    );
                     println!("  goal:   {}", goal);
                     println!("  start:  {}", start);
                     println!("  turns:  {}", turns);
                     if !sfiles.is_empty() {
                         // Dedup after shortening, show up to 6
                         let mut seen = std::collections::HashSet::new();
-                        let deduped: Vec<&String> = sfiles.iter()
+                        let deduped: Vec<&String> = sfiles
+                            .iter()
                             .filter(|f| seen.insert(f.as_str()))
                             .take(6)
                             .collect();
-                        println!("  files:  {}", deduped.iter().map(|s| s.as_str()).collect::<Vec<_>>().join("  "));
+                        println!(
+                            "  files:  {}",
+                            deduped
+                                .iter()
+                                .map(|s| s.as_str())
+                                .collect::<Vec<_>>()
+                                .join("  ")
+                        );
                     }
                 } else {
-                    println!("AGENT SESSION  (none — not found in ledger or outside inference window)");
+                    println!(
+                        "AGENT SESSION  (none — not found in ledger or outside inference window)"
+                    );
                 }
                 println!();
 
@@ -596,13 +702,29 @@ fn main() -> Result<()> {
                     for o in &result.outcomes {
                         // Signal score write-back: has score + training_tier
                         if let Some(score) = o.payload.get("score").and_then(|v| v.as_i64()) {
-                            let tier = o.payload.get("training_tier").and_then(|v| v.as_str()).unwrap_or("?");
-                            let eng = o.payload.get("engineer").and_then(|v| v.as_str()).unwrap_or("");
-                            let eng_part = if eng.is_empty() { String::new() } else { format!("  {}", eng) };
-                            println!("  signal_score={}  tier={}{}",  score, tier, eng_part);
+                            let tier = o
+                                .payload
+                                .get("training_tier")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let eng = o
+                                .payload
+                                .get("engineer")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("");
+                            let eng_part = if eng.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  {}", eng)
+                            };
+                            println!("  signal_score={}  tier={}{}", score, tier, eng_part);
                         } else {
                             // File-linked or generic outcome
-                            let label = o.payload.get("file").and_then(|v| v.as_str()).unwrap_or(&o.id);
+                            let label = o
+                                .payload
+                                .get("file")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(&o.id);
                             println!("  {}", label);
                         }
                     }
@@ -628,14 +750,26 @@ fn main() -> Result<()> {
             use axon_ledger::model::Effect;
             let all = rbac.filter_owned(store.all()?, caller.as_deref());
             let git_count = all.iter().filter(|r| r.effect == Effect::GitCommit).count();
-            let session_count = all.iter().filter(|r| r.effect == Effect::AgentSession).count();
+            let session_count = all
+                .iter()
+                .filter(|r| r.effect == Effect::AgentSession)
+                .count();
             let edge_count = all.iter().filter(|r| r.effect == Effect::AgentEdge).count();
-            let outcome_count = all.iter().filter(|r| r.effect == Effect::MetricOutcome).count();
+            let outcome_count = all
+                .iter()
+                .filter(|r| r.effect == Effect::MetricOutcome)
+                .count();
 
             // Coverage: unique commit SHAs that appear in at least one edge
-            let linked_commit_shas: std::collections::HashSet<String> = all.iter()
+            let linked_commit_shas: std::collections::HashSet<String> = all
+                .iter()
                 .filter(|r| r.effect == Effect::AgentEdge)
-                .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .filter_map(|r| {
+                    r.payload
+                        .get("commit_sha")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
                 .collect();
             let linked_commits = linked_commit_shas.len();
             let coverage_pct = if git_count > 0 {
@@ -662,11 +796,19 @@ fn main() -> Result<()> {
                 println!("  Agent sessions:   {}", session_count);
                 println!("  Agent edges:      {}", edge_count);
                 println!("  Metric outcomes:  {}", outcome_count);
-                println!("  Coverage:         {}/{} commits linked ({}%)", linked_commits, git_count, coverage_pct);
+                println!(
+                    "  Coverage:         {}/{} commits linked ({}%)",
+                    linked_commits, git_count, coverage_pct
+                );
             }
         }
 
-        Commands::Search { terms, limit, repo, json } => {
+        Commands::Search {
+            terms,
+            limit,
+            repo,
+            json,
+        } => {
             let query = terms.join(" ");
             let mut hits = search(&query, &store, limit)?;
             if let Some(ref r) = repo {
@@ -675,7 +817,9 @@ fn main() -> Result<()> {
             // RBAC: member can only see their own session/commit records
             if !rbac.admins.is_empty() {
                 hits.retain(|h| {
-                    rbac.filter_visible(vec![&h.record], caller.as_deref()).len() == 1
+                    rbac.filter_visible(vec![&h.record], caller.as_deref())
+                        .len()
+                        == 1
                 });
             }
             if json {
@@ -687,9 +831,24 @@ fn main() -> Result<()> {
                 for hit in &hits {
                     match hit.record.effect {
                         axon_ledger::model::Effect::GitCommit => {
-                            let sha = hit.record.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-                            let author = hit.record.payload.get("author").and_then(|v| v.as_str()).unwrap_or("?");
-                            let msg = hit.record.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                            let sha = hit
+                                .record
+                                .payload
+                                .get("sha")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let author = hit
+                                .record
+                                .payload
+                                .get("author")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let msg = hit
+                                .record
+                                .payload
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
                             println!("COMMIT  {}  ({})", &sha[..sha.len().min(10)], author);
                             println!("  msg:  {}", msg);
                             if hit.matched_field == "commit.file" {
@@ -700,11 +859,36 @@ fn main() -> Result<()> {
                             }
                         }
                         axon_ledger::model::Effect::AgentSession => {
-                            let sid = hit.record.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
-                            let turns = hit.record.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let start = hit.record.payload.get("start_ts").and_then(|v| v.as_str()).unwrap_or("?");
-                            let goal = hit.record.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");
-                            println!("SESSION {}  ({} turns, {})", &sid[..sid.len().min(8)], turns, &start[..start.len().min(10)]);
+                            let sid = hit
+                                .record
+                                .payload
+                                .get("session_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let turns = hit
+                                .record
+                                .payload
+                                .get("turn_count")
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0);
+                            let start = hit
+                                .record
+                                .payload
+                                .get("start_ts")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            let goal = hit
+                                .record
+                                .payload
+                                .get("goal")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
+                            println!(
+                                "SESSION {}  ({} turns, {})",
+                                &sid[..sid.len().min(8)],
+                                turns,
+                                &start[..start.len().min(10)]
+                            );
                             println!("  goal: {}", goal);
                             if hit.matched_field == "session.file" {
                                 println!("  file: {}", short_path(&hit.matched_text, 3));
@@ -733,7 +917,11 @@ fn main() -> Result<()> {
                 println!("RECENT COMMITS ({}):", result.recent_commits.len());
                 for c in &result.recent_commits {
                     let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-                    let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                    let msg = c
+                        .payload
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     println!("  {}  {}", &sha[..sha.len().min(10)], msg);
                 }
                 println!();
@@ -743,9 +931,21 @@ fn main() -> Result<()> {
                 } else {
                     println!("ACTIVE SESSIONS ({}):", result.active_sessions.len());
                     for s in &result.active_sessions {
-                        let sid = s.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("?");
-                        let goal = s.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");
-                        let turns = s.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let sid = s
+                            .payload
+                            .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let goal = s
+                            .payload
+                            .get("goal")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let turns = s
+                            .payload
+                            .get("turn_count")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                         println!("  {} ({} turns)", &sid[..sid.len().min(8)], turns);
                         println!("    goal: {}", goal);
                     }
@@ -764,7 +964,9 @@ fn main() -> Result<()> {
         Commands::History { file, repo, json } => {
             let mut result = history(&file, &store)?;
             if let Some(ref r) = repo {
-                result.chapters.retain(|ch| ch.session.repo.as_deref() == Some(r.as_str()));
+                result
+                    .chapters
+                    .retain(|ch| ch.session.repo.as_deref() == Some(r.as_str()));
                 result.total_sessions = result.chapters.len();
                 result.total_commits = result.chapters.iter().map(|ch| ch.commits.len()).sum();
             }
@@ -775,18 +977,41 @@ fn main() -> Result<()> {
                 println!("(Try a shorter path suffix, e.g. \"jwt.rs\" instead of the full path)");
             } else {
                 println!("HISTORY  {}", result.file);
-                println!("  {} session(s)  ·  {} linked commit(s)\n", result.total_sessions, result.total_commits);
+                println!(
+                    "  {} session(s)  ·  {} linked commit(s)\n",
+                    result.total_sessions, result.total_commits
+                );
                 for (i, ch) in result.chapters.iter().enumerate() {
-                    let sid = ch.session.payload.get("session_id")
+                    let sid = ch
+                        .session
+                        .payload
+                        .get("session_id")
                         .and_then(|v| v.as_str())
                         .unwrap_or(&ch.session.id[..ch.session.id.len().min(8)]);
-                    let turns = ch.session.payload.get("turn_count")
-                        .and_then(|v| v.as_u64()).unwrap_or(0);
-                    let conf = ch.confidence.map(|c| format!(" confidence {:.2}", c)).unwrap_or_default();
-                    println!("  Chapter {}  [{}]  {}{}",
-                        i + 1, &sid[..sid.len().min(8)], &ch.date[..10], conf);
+                    let turns = ch
+                        .session
+                        .payload
+                        .get("turn_count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
+                    let conf = ch
+                        .confidence
+                        .map(|c| format!(" confidence {:.2}", c))
+                        .unwrap_or_default();
+                    println!(
+                        "  Chapter {}  [{}]  {}{}",
+                        i + 1,
+                        &sid[..sid.len().min(8)],
+                        &ch.date[..10],
+                        conf
+                    );
                     let goal = if ch.goal.chars().count() > 72 {
-                        let end = ch.goal.char_indices().nth(72).map(|(i, _)| i).unwrap_or(ch.goal.len());
+                        let end = ch
+                            .goal
+                            .char_indices()
+                            .nth(72)
+                            .map(|(i, _)| i)
+                            .unwrap_or(ch.goal.len());
                         format!("{}…", &ch.goal[..end])
                     } else {
                         ch.goal.clone()
@@ -798,11 +1023,21 @@ fn main() -> Result<()> {
                     } else {
                         for c in &ch.commits {
                             let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-                            let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                            let msg = c
+                                .payload
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
                             let short_msg = if msg.chars().count() > 60 {
-                                let end = msg.char_indices().nth(60).map(|(i, _)| i).unwrap_or(msg.len());
+                                let end = msg
+                                    .char_indices()
+                                    .nth(60)
+                                    .map(|(i, _)| i)
+                                    .unwrap_or(msg.len());
                                 format!("{}…", &msg[..end])
-                            } else { msg.to_string() };
+                            } else {
+                                msg.to_string()
+                            };
                             println!("  commit: {}  {}", &sha[..sha.len().min(10)], short_msg);
                         }
                     }
@@ -811,58 +1046,113 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::PreDeploy { range, repo, fail_on_unexplained, json } => {
+        Commands::PreDeploy {
+            range,
+            repo,
+            fail_on_unexplained,
+            json,
+        } => {
             let range = range.as_deref().unwrap_or("HEAD~10..HEAD");
             // Get SHAs in range from git
             let git_out = std::process::Command::new("git")
-                .arg("-C").arg(&repo)
+                .arg("-C")
+                .arg(&repo)
                 .args(["log", "--format=%H|%ae|%s", range])
                 .output()
                 .context("Failed to run git log for pre-deploy check")?;
             if !git_out.status.success() {
-                anyhow::bail!("git log failed: {}", String::from_utf8_lossy(&git_out.stderr));
+                anyhow::bail!(
+                    "git log failed: {}",
+                    String::from_utf8_lossy(&git_out.stderr)
+                );
             }
-            let range_commits: Vec<(String, String, String)> = String::from_utf8_lossy(&git_out.stdout)
-                .lines()
-                .filter_map(|l| {
-                    let parts: Vec<&str> = l.splitn(3, '|').collect();
-                    if parts.len() == 3 { Some((parts[0].to_string(), parts[1].to_string(), parts[2].to_string())) }
-                    else { None }
-                })
-                .collect();
+            let range_commits: Vec<(String, String, String)> =
+                String::from_utf8_lossy(&git_out.stdout)
+                    .lines()
+                    .filter_map(|l| {
+                        let parts: Vec<&str> = l.splitn(3, '|').collect();
+                        if parts.len() == 3 {
+                            Some((
+                                parts[0].to_string(),
+                                parts[1].to_string(),
+                                parts[2].to_string(),
+                            ))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
 
             // Build set of explained SHAs (appear in at least one edge)
             let all = store.all()?;
             use axon_ledger::model::Effect;
-            let explained_shas: std::collections::HashSet<String> = all.iter()
+            let explained_shas: std::collections::HashSet<String> = all
+                .iter()
                 .filter(|r| r.effect == Effect::AgentEdge)
-                .filter_map(|r| r.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+                .filter_map(|r| {
+                    r.payload
+                        .get("commit_sha")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
                 .collect();
 
             // Session goals indexed by sha for display
-            let mut sha_to_goal: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut sha_to_goal: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             for edge in all.iter().filter(|r| r.effect == Effect::AgentEdge) {
-                let sha = edge.payload.get("commit_sha").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let sid = edge.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-                if let Some(session) = all.iter().find(|r| r.effect == Effect::AgentSession &&
-                    r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("") == sid)
-                {
-                    let goal = session.payload.get("goal").and_then(|v| v.as_str())
+                let sha = edge
+                    .payload
+                    .get("commit_sha")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let sid = edge
+                    .payload
+                    .get("session_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if let Some(session) = all.iter().find(|r| {
+                    r.effect == Effect::AgentSession
+                        && r.payload
+                            .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            == sid
+                }) {
+                    let goal = session
+                        .payload
+                        .get("goal")
+                        .and_then(|v| v.as_str())
                         .filter(|g| !g.starts_with('<'))
-                        .unwrap_or("(no goal)").to_string();
+                        .unwrap_or("(no goal)")
+                        .to_string();
                     sha_to_goal.entry(sha).or_insert(goal);
                 }
             }
 
-            let explained: Vec<_> = range_commits.iter()
-                .filter(|(sha, _, _)| explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str())))
+            let explained: Vec<_> = range_commits
+                .iter()
+                .filter(|(sha, _, _)| {
+                    explained_shas
+                        .iter()
+                        .any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str()))
+                })
                 .collect();
-            let unexplained: Vec<_> = range_commits.iter()
-                .filter(|(sha, _, _)| !explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str())))
+            let unexplained: Vec<_> = range_commits
+                .iter()
+                .filter(|(sha, _, _)| {
+                    !explained_shas
+                        .iter()
+                        .any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str()))
+                })
                 .collect();
 
-            let coverage = if range_commits.is_empty() { 100u64 }
-                else { (explained.len() * 100 / range_commits.len()) as u64 };
+            let coverage = if range_commits.is_empty() {
+                100u64
+            } else {
+                (explained.len() * 100 / range_commits.len()) as u64
+            };
 
             if json {
                 let out = serde_json::json!({
@@ -884,18 +1174,34 @@ fn main() -> Result<()> {
                 println!("Pre-deploy check  {range}\n");
                 for (sha, _author, msg) in &range_commits {
                     let short = &sha[..sha.len().min(10)];
-                    let is_explained = explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str()));
+                    let is_explained = explained_shas
+                        .iter()
+                        .any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha.as_str()));
                     let msg_trunc = if msg.chars().count() > 55 {
-                        let end = msg.char_indices().nth(55).map(|(i,_)|i).unwrap_or(msg.len());
+                        let end = msg
+                            .char_indices()
+                            .nth(55)
+                            .map(|(i, _)| i)
+                            .unwrap_or(msg.len());
                         format!("{}…", &msg[..end])
-                    } else { msg.clone() };
+                    } else {
+                        msg.clone()
+                    };
                     if is_explained {
-                        let goal = sha_to_goal.get(sha.as_str()).cloned()
+                        let goal = sha_to_goal
+                            .get(sha.as_str())
+                            .cloned()
                             .unwrap_or_else(|| "(goal)".to_string());
                         let goal_trunc = if goal.chars().count() > 50 {
-                            let end = goal.char_indices().nth(50).map(|(i,_)|i).unwrap_or(goal.len());
+                            let end = goal
+                                .char_indices()
+                                .nth(50)
+                                .map(|(i, _)| i)
+                                .unwrap_or(goal.len());
                             format!("{}…", &goal[..end])
-                        } else { goal };
+                        } else {
+                            goal
+                        };
                         println!("  ✓ {short}  {msg_trunc}");
                         println!("         goal: {goal_trunc}");
                     } else {
@@ -903,10 +1209,17 @@ fn main() -> Result<()> {
                         println!("         NO LINKED SESSION");
                     }
                 }
-                println!("\n  {}/{} commits explained  ({}% coverage)",
-                    explained.len(), range_commits.len(), coverage);
+                println!(
+                    "\n  {}/{} commits explained  ({}% coverage)",
+                    explained.len(),
+                    range_commits.len(),
+                    coverage
+                );
                 if !unexplained.is_empty() {
-                    println!("  {} unexplained commit(s) — review before deploy", unexplained.len());
+                    println!(
+                        "  {} unexplained commit(s) — review before deploy",
+                        unexplained.len()
+                    );
                 }
             }
 
@@ -922,7 +1235,11 @@ fn main() -> Result<()> {
                         "sha": sha, "author": author, "message": msg
                     })).collect::<Vec<_>>(),
                 });
-                fire_webhooks(&dir_path, &WebhookEvent::UnexplainedDeploy, &webhook_payload);
+                fire_webhooks(
+                    &dir_path,
+                    &WebhookEvent::UnexplainedDeploy,
+                    &webhook_payload,
+                );
             }
 
             if fail_on_unexplained && !unexplained.is_empty() {
@@ -930,27 +1247,33 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Weekly { from, to, repo, json } => {
-            use axon_ledger::model::Effect;
+        Commands::Weekly {
+            from,
+            to,
+            repo,
+            json,
+        } => {
             use axon_ledger::ingest::session::parse_iso_to_ms;
+            use axon_ledger::model::Effect;
 
             // Parse window bounds (default: last 7 days, auto-expand to 30d if fewer than 3 sessions)
             let now_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as u64;
             let week_ms = 7 * 24 * 60 * 60 * 1000u64;
             let month_ms = 30 * 24 * 60 * 60 * 1000u64;
 
             let explicit_from = from.as_deref().and_then(parse_iso_to_ms);
-            let to_ms = to.as_deref()
-                .and_then(parse_iso_to_ms)
-                .unwrap_or(now_ms);
+            let to_ms = to.as_deref().and_then(parse_iso_to_ms).unwrap_or(now_ms);
 
             // Auto-expand: if no --from given and <3 sessions in last 7d, use last 30d
             let from_ms = if let Some(f) = explicit_from {
                 f
             } else {
                 let all_raw_check = store.all().unwrap_or_default();
-                let sessions_7d = all_raw_check.iter()
+                let sessions_7d = all_raw_check
+                    .iter()
                     .filter(|r| r.effect == Effect::AgentSession)
                     .filter(|r| r.ts_ms >= now_ms.saturating_sub(week_ms) && r.ts_ms <= to_ms)
                     .count();
@@ -963,45 +1286,83 @@ fn main() -> Result<()> {
 
             let all_raw = store.all()?;
             let all = rbac.filter_owned(all_raw, caller.as_deref());
-            let in_window: Vec<_> = all.iter()
+            let in_window: Vec<_> = all
+                .iter()
                 .filter(|r| r.ts_ms >= from_ms && r.ts_ms <= to_ms)
-                .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
+                .filter(|r| {
+                    repo.as_deref()
+                        .map(|rn| r.repo.as_deref() == Some(rn))
+                        .unwrap_or(true)
+                })
                 .collect();
 
-            let sessions: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentSession).collect();
-            let commits: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::GitCommit).collect();
-            let edges: Vec<_> = in_window.iter().filter(|r| r.effect == Effect::AgentEdge).collect();
+            let sessions: Vec<_> = in_window
+                .iter()
+                .filter(|r| r.effect == Effect::AgentSession)
+                .collect();
+            let commits: Vec<_> = in_window
+                .iter()
+                .filter(|r| r.effect == Effect::GitCommit)
+                .collect();
+            let edges: Vec<_> = in_window
+                .iter()
+                .filter(|r| r.effect == Effect::AgentEdge)
+                .collect();
 
             // Goals from sessions, sorted by ts_ms
-            let mut goals: Vec<(u64, String)> = sessions.iter().map(|s| {
-                let goal = s.payload.get("goal").and_then(|v| v.as_str())
-                    .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)").to_string();
-                (s.ts_ms, goal)
-            }).collect();
+            let mut goals: Vec<(u64, String)> = sessions
+                .iter()
+                .map(|s| {
+                    let goal = s
+                        .payload
+                        .get("goal")
+                        .and_then(|v| v.as_str())
+                        .filter(|g| !g.starts_with('<'))
+                        .unwrap_or("(no goal)")
+                        .to_string();
+                    (s.ts_ms, goal)
+                })
+                .collect();
             goals.sort_by_key(|(ts, _)| *ts);
 
             // Files touched (for rework detection — files with 2+ sessions)
-            let mut file_session_count: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut file_session_count: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
             for s in &sessions {
                 if let Some(files) = s.payload.get("files_touched").and_then(|v| v.as_array()) {
                     for f in files {
                         if let Some(fname) = f.as_str() {
-                            *file_session_count.entry(fname.split('/').last().unwrap_or(fname).to_string()).or_insert(0) += 1;
+                            *file_session_count
+                                .entry(fname.split('/').next_back().unwrap_or(fname).to_string())
+                                .or_insert(0) += 1;
                         }
                     }
                 }
             }
-            let mut rework_files: Vec<(String, usize)> = file_session_count.into_iter()
-                .filter(|(_, c)| *c >= 2).collect();
-            rework_files.sort_by(|a, b| b.1.cmp(&a.1));
-
-            let explained_shas: std::collections::HashSet<String> = edges.iter()
-                .filter_map(|e| e.payload.get("commit_sha").and_then(|v| v.as_str()).map(String::from))
+            let mut rework_files: Vec<(String, usize)> = file_session_count
+                .into_iter()
+                .filter(|(_, c)| *c >= 2)
                 .collect();
-            let explained_count = commits.iter().filter(|c| {
-                let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
-                explained_shas.iter().any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha))
-            }).count();
+            rework_files.sort_by_key(|b| Reverse(b.1));
+
+            let explained_shas: std::collections::HashSet<String> = edges
+                .iter()
+                .filter_map(|e| {
+                    e.payload
+                        .get("commit_sha")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                })
+                .collect();
+            let explained_count = commits
+                .iter()
+                .filter(|c| {
+                    let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("");
+                    explained_shas
+                        .iter()
+                        .any(|s| sha.starts_with(s.as_str()) || s.starts_with(sha))
+                })
+                .count();
 
             if json {
                 let out = serde_json::json!({
@@ -1015,15 +1376,28 @@ fn main() -> Result<()> {
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("Weekly digest  ({} sessions, {} commits, {}% explained)\n",
-                    sessions.len(), commits.len(),
-                    if commits.is_empty() { 100usize } else { explained_count * 100 / commits.len() });
+                println!(
+                    "Weekly digest  ({} sessions, {} commits, {}% explained)\n",
+                    sessions.len(),
+                    commits.len(),
+                    if commits.is_empty() {
+                        100usize
+                    } else {
+                        explained_count * 100 / commits.len()
+                    }
+                );
                 println!("Goals shipped:");
                 for (_, goal) in &goals {
                     let trunc = if goal.chars().count() > 72 {
-                        let end = goal.char_indices().nth(72).map(|(i,_)|i).unwrap_or(goal.len());
+                        let end = goal
+                            .char_indices()
+                            .nth(72)
+                            .map(|(i, _)| i)
+                            .unwrap_or(goal.len());
                         format!("{}…", &goal[..end])
-                    } else { goal.clone() };
+                    } else {
+                        goal.clone()
+                    };
                     println!("  • {trunc}");
                 }
                 if !rework_files.is_empty() {
@@ -1035,55 +1409,88 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Audit { module, since, repo, json } => {
-            use axon_ledger::model::Effect;
+        Commands::Audit {
+            module,
+            since,
+            repo,
+            json,
+        } => {
             use axon_ledger::ingest::session::parse_iso_to_ms;
+            use axon_ledger::model::Effect;
 
             let since_ms = since.as_deref().and_then(parse_iso_to_ms).unwrap_or(0);
             let module_lower = module.to_lowercase();
 
             let all_raw = store.all()?;
             let all = rbac.filter_owned(all_raw, caller.as_deref());
-            let in_window: Vec<_> = all.iter()
+            let in_window: Vec<_> = all
+                .iter()
                 .filter(|r| r.ts_ms >= since_ms)
-                .filter(|r| repo.as_deref().map(|rn| r.repo.as_deref() == Some(rn)).unwrap_or(true))
+                .filter(|r| {
+                    repo.as_deref()
+                        .map(|rn| r.repo.as_deref() == Some(rn))
+                        .unwrap_or(true)
+                })
                 .collect();
 
             // Sessions that touched files under the module path
-            let matching_sessions: Vec<_> = in_window.iter()
+            let matching_sessions: Vec<_> = in_window
+                .iter()
                 .filter(|r| r.effect == Effect::AgentSession)
                 .filter(|r| {
-                    r.payload.get("files_touched")
+                    r.payload
+                        .get("files_touched")
                         .and_then(|v| v.as_array())
-                        .map(|files| files.iter().any(|f| {
-                            f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)
-                        }))
+                        .map(|files| {
+                            files.iter().any(|f| {
+                                f.as_str()
+                                    .map(|s| s.to_lowercase().contains(&module_lower))
+                                    .unwrap_or(false)
+                            })
+                        })
                         .unwrap_or(false)
                 })
                 .collect();
 
             // Commits that touched files under the module path
             // Note: git ingest stores files under "files" key (not "files_changed")
-            let matching_commits: Vec<_> = in_window.iter()
+            let matching_commits: Vec<_> = in_window
+                .iter()
                 .filter(|r| r.effect == Effect::GitCommit)
                 .filter(|r| {
-                    let files = r.payload.get("files")
+                    let files = r
+                        .payload
+                        .get("files")
                         .or_else(|| r.payload.get("files_changed"));
-                    files.and_then(|v| v.as_array())
-                        .map(|files| files.iter().any(|f| {
-                            f.as_str().map(|s| s.to_lowercase().contains(&module_lower)).unwrap_or(false)
-                        }))
+                    files
+                        .and_then(|v| v.as_array())
+                        .map(|files| {
+                            files.iter().any(|f| {
+                                f.as_str()
+                                    .map(|s| s.to_lowercase().contains(&module_lower))
+                                    .unwrap_or(false)
+                            })
+                        })
                         .unwrap_or(false)
                 })
                 .collect();
 
             // Edges linking matching sessions to matching commits
-            let matching_edges: Vec<_> = in_window.iter()
+            let matching_edges: Vec<_> = in_window
+                .iter()
                 .filter(|r| r.effect == Effect::AgentEdge)
                 .filter(|r| {
-                    let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+                    let sid = r
+                        .payload
+                        .get("session_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     matching_sessions.iter().any(|s| {
-                        s.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or("") == sid
+                        s.payload
+                            .get("session_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            == sid
                     })
                 })
                 .collect();
@@ -1111,32 +1518,63 @@ fn main() -> Result<()> {
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("Audit: module={module}  sessions={} commits={}\n",
-                    matching_sessions.len(), matching_commits.len());
+                println!(
+                    "Audit: module={module}  sessions={} commits={}\n",
+                    matching_sessions.len(),
+                    matching_commits.len()
+                );
                 for s in &matching_sessions {
-                    let goal = s.payload.get("goal").and_then(|v| v.as_str())
-                        .filter(|g| !g.starts_with('<')).unwrap_or("(no goal)");
+                    let goal = s
+                        .payload
+                        .get("goal")
+                        .and_then(|v| v.as_str())
+                        .filter(|g| !g.starts_with('<'))
+                        .unwrap_or("(no goal)");
                     let trunc = if goal.chars().count() > 60 {
-                        let end = goal.char_indices().nth(60).map(|(i,_)|i).unwrap_or(goal.len());
+                        let end = goal
+                            .char_indices()
+                            .nth(60)
+                            .map(|(i, _)| i)
+                            .unwrap_or(goal.len());
                         format!("{}…", &goal[..end])
-                    } else { goal.to_string() };
-                    let eng = s.principal.trim_start_matches("session:").trim_start_matches("agent:");
+                    } else {
+                        goal.to_string()
+                    };
+                    let eng = s
+                        .principal
+                        .trim_start_matches("session:")
+                        .trim_start_matches("agent:");
                     println!("  [session] {eng}  {trunc}");
                 }
                 for c in &matching_commits {
                     let sha = c.payload.get("sha").and_then(|v| v.as_str()).unwrap_or("?");
-                    let msg = c.payload.get("message").and_then(|v| v.as_str()).unwrap_or("?");
+                    let msg = c
+                        .payload
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("?");
                     let short_sha = &sha[..sha.len().min(10)];
                     let msg_trunc = if msg.chars().count() > 55 {
-                        let end = msg.char_indices().nth(55).map(|(i,_)|i).unwrap_or(msg.len());
+                        let end = msg
+                            .char_indices()
+                            .nth(55)
+                            .map(|(i, _)| i)
+                            .unwrap_or(msg.len());
                         format!("{}…", &msg[..end])
-                    } else { msg.to_string() };
+                    } else {
+                        msg.to_string()
+                    };
                     println!("  [commit]  {short_sha}  {msg_trunc}");
                 }
             }
         }
 
-        Commands::Prune { older_than, dry_run, yes, json } => {
+        Commands::Prune {
+            older_than,
+            dry_run,
+            yes,
+            json,
+        } => {
             use axon_ledger::ingest::session::parse_iso_to_ms;
 
             // Parse the cutoff — try ISO 8601 first, then ask git to interpret it
@@ -1151,7 +1589,9 @@ fn main() -> Result<()> {
                 if !date_out.status.success() {
                     anyhow::bail!("Cannot parse date '{}'. Use ISO 8601 or a GNU date expression like '90 days ago'.", older_than);
                 }
-                String::from_utf8_lossy(&date_out.stdout).trim().parse::<u64>()
+                String::from_utf8_lossy(&date_out.stdout)
+                    .trim()
+                    .parse::<u64>()
                     .context("date output was not a valid millisecond timestamp")?
             };
 
@@ -1170,7 +1610,9 @@ fn main() -> Result<()> {
                     "dry_run": dry_run,
                 });
                 println!("{}", serde_json::to_string_pretty(&out)?);
-                if dry_run { return Ok(()); }
+                if dry_run {
+                    return Ok(());
+                }
             } else {
                 println!("Prune: records older than '{older_than}' (cutoff_ms={cutoff_ms})");
                 println!("  Total records : {}", all.len());
@@ -1225,10 +1667,16 @@ fn main() -> Result<()> {
                 ))?;
 
             let all = store.all()?;
-            let would_update = all.iter().filter(|r| r.principal.starts_with("agent:")).count();
+            let would_update = all
+                .iter()
+                .filter(|r| r.principal.starts_with("agent:"))
+                .count();
 
             if dry_run {
-                println!("Dry run: would backfill {would_update}/{} records → {resolved}", all.len());
+                println!(
+                    "Dry run: would backfill {would_update}/{} records → {resolved}",
+                    all.len()
+                );
                 println!("(no changes made)");
             } else {
                 let mut store_mut = Store::open(&dir_path)?;
@@ -1243,18 +1691,28 @@ fn main() -> Result<()> {
             let existing = store.all()?;
             // Build map: session_id → (record_id, turn_count) for AgentSession records with turn_count=0
             let is_stale = |r: &&axon_ledger::model::LedgerRecord| -> bool {
-                let turn_count = r.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                if turn_count == 0 { return true; }
+                let turn_count = r
+                    .payload
+                    .get("turn_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                if turn_count == 0 {
+                    return true;
+                }
                 let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
                 // Garbled table fallback (fixed in clean_goal_text)
-                if goal.contains('📋') || goal.contains("buildoncerun") || goal.contains("🟢 Strong") {
+                if goal.contains('📋')
+                    || goal.contains("buildoncerun")
+                    || goal.contains("🟢 Strong")
+                {
                     return true;
                 }
                 // "(no user goal found in session)" — now we look past the <caveat> for a real goal
                 goal == "(no user goal found in session)"
             };
             // Include original principal so session-refresh preserves engineer identity
-            let stale: Vec<(String, String, String)> = existing.iter()
+            let stale: Vec<(String, String, String)> = existing
+                .iter()
                 .filter(|r| r.effect == Effect::AgentSession)
                 .filter(is_stale)
                 .filter_map(|r| {
@@ -1263,14 +1721,22 @@ fn main() -> Result<()> {
                 })
                 .collect();
 
-            println!("Stale sessions: {}/{}", stale.len(), existing.iter().filter(|r| r.effect == Effect::AgentSession).count());
+            println!(
+                "Stale sessions: {}/{}",
+                stale.len(),
+                existing
+                    .iter()
+                    .filter(|r| r.effect == Effect::AgentSession)
+                    .count()
+            );
             if stale.is_empty() {
                 println!("Nothing to refresh.");
                 return Ok(());
             }
 
             // Map session_id → .jsonl file path
-            let mut session_files: std::collections::HashMap<String, PathBuf> = std::collections::HashMap::new();
+            let mut session_files: std::collections::HashMap<String, PathBuf> =
+                std::collections::HashMap::new();
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for entry in rd.flatten() {
                     let path = entry.path();
@@ -1292,7 +1758,14 @@ fn main() -> Result<()> {
                     continue;
                 };
                 // Use a throwaway store in a fresh temp dir to re-parse without dedup
-                let tmp_dir = std::env::temp_dir().join(format!("axon_refresh_{}_{}", &session_id[..8], std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos()));
+                let tmp_dir = std::env::temp_dir().join(format!(
+                    "axon_refresh_{}_{}",
+                    &session_id[..8],
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .subsec_nanos()
+                ));
                 let mut tmp_store = Store::open(&tmp_dir)?;
                 match ingest_session(session_path, &mut tmp_store, &gate, None, None) {
                     Ok(Some(mut new_record)) => {
@@ -1300,7 +1773,15 @@ fn main() -> Result<()> {
                         new_record.id = old_id.clone();
                         new_record.principal = original_principal.clone();
                         if dry_run {
-                            println!("  would refresh {} → turn_count={}", &session_id[..8], new_record.payload.get("turn_count").and_then(|v| v.as_u64()).unwrap_or(0));
+                            println!(
+                                "  would refresh {} → turn_count={}",
+                                &session_id[..8],
+                                new_record
+                                    .payload
+                                    .get("turn_count")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(0)
+                            );
                         } else {
                             let mut store_mut = Store::open(&dir_path)?;
                             store_mut.replace_record(old_id, &new_record)?;
@@ -1313,14 +1794,20 @@ fn main() -> Result<()> {
             }
 
             if dry_run {
-                println!("\nDry run: would refresh {refreshed}, skip {not_found} (JSONL not found)");
+                println!(
+                    "\nDry run: would refresh {refreshed}, skip {not_found} (JSONL not found)"
+                );
             } else {
                 println!("Done: refreshed {refreshed}, skipped {not_found} (JSONL not found)");
             }
         }
 
         Commands::Webhook { action } => match action {
-            WebhookAction::Add { event, provider, url } => {
+            WebhookAction::Add {
+                event,
+                provider,
+                url,
+            } => {
                 let ev = WebhookEvent::from_str(&event)?;
                 let prov = WebhookProvider::from_str(&provider)?;
                 let id = add_webhook(&dir_path, ev, prov, &url)?;
@@ -1334,7 +1821,12 @@ fn main() -> Result<()> {
                 } else {
                     println!("{} webhook(s):\n", hooks.len());
                     for h in &hooks {
-                        println!("  {}  event={}  provider={:?}", h.id, h.event.as_str(), h.provider);
+                        println!(
+                            "  {}  event={}  provider={:?}",
+                            h.id,
+                            h.event.as_str(),
+                            h.provider
+                        );
                         println!("       url: {}", h.url);
                     }
                 }
@@ -1383,13 +1875,22 @@ fn main() -> Result<()> {
             }
         },
 
-        Commands::Refresh { repo, session_dir, engineer, since, json } => {
+        Commands::Refresh {
+            repo,
+            session_dir,
+            engineer,
+            since,
+            json,
+        } => {
             let repo_path = repo.unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
 
             // Step 1: ingest git commits
             let mut store_mut = Store::open(&dir_path)?;
             let commits = ingest_git(&repo_path, &mut store_mut, since.as_deref(), None)
-                .unwrap_or_else(|e| { eprintln!("[refresh] git ingest: {e}"); 0 });
+                .unwrap_or_else(|e| {
+                    eprintln!("[refresh] git ingest: {e}");
+                    0
+                });
 
             // Step 2: ingest Claude Code sessions
             // Auto-detect session dir from ~/.claude/projects/ by matching cwd
@@ -1397,8 +1898,15 @@ fn main() -> Result<()> {
                 let cwd = std::env::current_dir().ok()?;
                 let cwd_slug = cwd.to_string_lossy().replace('/', "-");
                 let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-                let candidate = PathBuf::from(home).join(".claude").join("projects").join(&cwd_slug);
-                if candidate.exists() { Some(candidate) } else { None }
+                let candidate = PathBuf::from(home)
+                    .join(".claude")
+                    .join("projects")
+                    .join(&cwd_slug);
+                if candidate.exists() {
+                    Some(candidate)
+                } else {
+                    None
+                }
             });
 
             let resolved_engineer = engineer.or_else(|| {
@@ -1433,15 +1941,21 @@ fn main() -> Result<()> {
             };
 
             // Step 3: infer causal edges
-            let edges = infer_edges(&mut store_mut).unwrap_or_else(|e| { eprintln!("[refresh] edges: {e}"); 0 });
+            let edges = infer_edges(&mut store_mut).unwrap_or_else(|e| {
+                eprintln!("[refresh] edges: {e}");
+                0
+            });
 
             if json {
-                println!("{}", serde_json::json!({
-                    "ok": true,
-                    "commits_ingested": commits,
-                    "sessions_ingested": sessions,
-                    "edges_inferred": edges,
-                }));
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "ok": true,
+                        "commits_ingested": commits,
+                        "sessions_ingested": sessions,
+                        "edges_inferred": edges,
+                    })
+                );
             } else {
                 println!("Refresh complete:");
                 println!("  Git commits ingested : {commits}");
@@ -1457,8 +1971,19 @@ fn main() -> Result<()> {
             run_mcp_server(&dir_path)?;
         }
 
-        Commands::Watch { dir, interval, gate, axon_bin, gate_script, engineer } => {
-            let gate_opts = GateOptions { enabled: gate, axon_bin, gate_script };
+        Commands::Watch {
+            dir,
+            interval,
+            gate,
+            axon_bin,
+            gate_script,
+            engineer,
+        } => {
+            let gate_opts = GateOptions {
+                enabled: gate,
+                axon_bin,
+                gate_script,
+            };
             let resolved_engineer = engineer.or_else(|| {
                 std::process::Command::new("git")
                     .args(["config", "user.email"])
@@ -1468,8 +1993,19 @@ fn main() -> Result<()> {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
             });
-            println!("[ledger-watch] polling {} every {}s  (Ctrl-C to stop)", dir.display(), interval);
-            watch_sessions(&dir, &dir_path, Duration::from_secs(interval), &gate_opts, true, resolved_engineer.as_deref())?;
+            println!(
+                "[ledger-watch] polling {} every {}s  (Ctrl-C to stop)",
+                dir.display(),
+                interval
+            );
+            watch_sessions(
+                &dir,
+                &dir_path,
+                Duration::from_secs(interval),
+                &gate_opts,
+                true,
+                resolved_engineer.as_deref(),
+            )?;
         }
     }
 

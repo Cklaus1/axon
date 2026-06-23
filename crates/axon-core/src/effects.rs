@@ -83,10 +83,7 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
     for item in &program.items {
         if let Item::FnDef(f) = item {
             let (set, is_open) = match &f.effect_row {
-                Some(row) => (
-                    row.effects.iter().cloned().collect(),
-                    row.row_var.is_some(),
-                ),
+                Some(row) => (row.effects.iter().cloned().collect(), row.row_var.is_some()),
                 None => (HashSet::new(), false),
             };
             declared.insert(f.name.clone(), set);
@@ -155,7 +152,15 @@ pub fn check_effects(program: &Program) -> Vec<EffectError> {
         if matches!(allowed, Allowed::Open) {
             continue;
         }
-        check_expr(&f.body, &f.name, &allowed, &HashSet::new(), &inferred, &invoked, &mut errors);
+        check_expr(
+            &f.body,
+            &f.name,
+            &allowed,
+            &HashSet::new(),
+            &inferred,
+            &invoked,
+            &mut errors,
+        );
     }
     errors
 }
@@ -291,8 +296,10 @@ pub fn transitive_builtin_effects(program: &Program) -> HashMap<String, HashSet<
         })
         .collect();
     // Start empty (NO declared-row / contained seed) — only real operations.
-    let mut eff: HashMap<String, HashSet<String>> =
-        fns.iter().map(|f| (f.name.clone(), HashSet::new())).collect();
+    let mut eff: HashMap<String, HashSet<String>> = fns
+        .iter()
+        .map(|f| (f.name.clone(), HashSet::new()))
+        .collect();
     loop {
         let mut changed = false;
         for f in &fns {
@@ -467,7 +474,10 @@ fn handler_intercepts_effect_impl(
 /// by `handler_intercepts_effect`). Anything outside this returns false, so
 /// codegen keeps refusing it (E0910) and never miscompiles; a false negative just
 /// means the program runs under the interpreter instead of building natively.
-pub fn handler_is_tail_resumptive_lowerable(handler: &crate::ast::HandlerExpr, body: &Expr) -> bool {
+pub fn handler_is_tail_resumptive_lowerable(
+    handler: &crate::ast::HandlerExpr,
+    body: &Expr,
+) -> bool {
     let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler else {
         return false;
     };
@@ -658,9 +668,10 @@ fn collect_called_names_ctx(
         }
         return;
     }
-    for_each_child(e, &mut |child| collect_called_names_ctx(child, handled, out));
+    for_each_child(e, &mut |child| {
+        collect_called_names_ctx(child, handled, out)
+    });
 }
-
 
 /// Phase 6 §2 E03 (row-variable closing, higher-order case): map each function
 /// to the indices of the parameters it *invokes* as a callback — a param `f`
@@ -725,7 +736,9 @@ fn callback_arg_effects(
     inferred: &HashMap<String, HashSet<String>>,
 ) -> HashSet<String> {
     let mut extra = HashSet::new();
-    let Some(idxs) = invoked.get(callee) else { return extra };
+    let Some(idxs) = invoked.get(callee) else {
+        return extra;
+    };
     for &i in idxs {
         if let Some(Expr::Ident(g)) = args.get(i) {
             for eff in callee_effects(g, inferred) {
@@ -738,10 +751,7 @@ fn callback_arg_effects(
 
 /// The effects a call to `callee` performs: the builtin catalog row, or the
 /// callee's INFERRED (transitive) effect set, or nothing for an unknown name.
-fn callee_effects(
-    callee: &str,
-    inferred: &HashMap<String, HashSet<String>>,
-) -> Vec<String> {
+fn callee_effects(callee: &str, inferred: &HashMap<String, HashSet<String>>) -> Vec<String> {
     let builtin = crate::builtins::builtin_effect_row(callee);
     if !builtin.is_empty() {
         return builtin.iter().map(|s| s.to_string()).collect();
@@ -819,10 +829,14 @@ fn check_expr(
         check_expr(body, caller, allowed, &inner, inferred, invoked, errors);
         if let crate::ast::HandlerExpr::Inline { arms, return_arm } = handler.as_ref() {
             for arm in arms {
-                check_expr(&arm.body, caller, allowed, handled, inferred, invoked, errors);
+                check_expr(
+                    &arm.body, caller, allowed, handled, inferred, invoked, errors,
+                );
             }
             if let Some(ra) = return_arm {
-                check_expr(&ra.body, caller, allowed, handled, inferred, invoked, errors);
+                check_expr(
+                    &ra.body, caller, allowed, handled, inferred, invoked, errors,
+                );
             }
         }
         return;
@@ -912,7 +926,9 @@ fn for_each_child(e: &Expr, f: &mut dyn FnMut(&Expr)) {
             }
         }
         Expr::Return(Some(inner)) => f(inner),
-        Expr::For { start, end, body, .. } => {
+        Expr::For {
+            start, end, body, ..
+        } => {
             f(start);
             f(end);
             for s in body {
@@ -971,7 +987,11 @@ mod tests {
         let errs = check("fn f(x: i64) -> i64 | {} { println(\"hi\") x }");
         assert_eq!(errs.len(), 1, "expected one E1310, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
-        assert!(errs[0].message.contains("IO"), "must name the IO effect: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("IO"),
+            "must name the IO effect: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -985,12 +1005,19 @@ mod tests {
         assert_eq!(errs.len(), 1, "spawn must not hide IO, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
 
-        let errs = check("fn f() -> i64 | {} { let _ = comptime { 5 }  spawn { println(\"y\") }  0 }");
-        assert!(!errs.is_empty(), "io in spawn (with comptime present) must leak, got {errs:?}");
+        let errs =
+            check("fn f() -> i64 | {} { let _ = comptime { 5 }  spawn { println(\"y\") }  0 }");
+        assert!(
+            !errs.is_empty(),
+            "io in spawn (with comptime present) must leak, got {errs:?}"
+        );
 
         // No false positive: spawn under a {IO} row is fine.
         let errs = check("fn f() -> i64 | {IO} { spawn { println(\"ok\") }  0 }");
-        assert!(errs.is_empty(), "spawn IO under {{IO}} must be accepted, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "spawn IO under {{IO}} must be accepted, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1000,24 +1027,28 @@ mod tests {
         // effects still count toward the enclosing fn's row — otherwise a `| {}`
         // fn could launder IO through a `with` block (the for_each_child walker
         // used to skip WithHandler entirely, so this was a real hole).
-        let errs = check(
-            "fn f() -> i64 | {} { with retry { println(\"hi\") 0 } }",
-        );
+        let errs = check("fn f() -> i64 | {} { with retry { println(\"hi\") 0 } }");
         assert_eq!(errs.len(), 1, "with-block must not hide IO, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
-        assert!(errs[0].message.contains("IO"), "must name IO: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("IO"),
+            "must name IO: {}",
+            errs[0].message
+        );
     }
 
     #[test]
     fn io_inside_a_for_loop_body_still_leaks() {
         // Same laundering class for `for` loops — the walker used to skip the
         // For body, so a `| {}` fn could hide IO inside a loop.
-        let errs = check(
-            "fn f() -> i64 | {} { for i in 0..3 { println(\"hi\") } 0 }",
-        );
+        let errs = check("fn f() -> i64 | {} { for i in 0..3 { println(\"hi\") } 0 }");
         assert_eq!(errs.len(), 1, "for-body must not hide IO, got {errs:?}");
         assert_eq!(errs[0].code, E1310);
-        assert!(errs[0].message.contains("IO"), "must name IO: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("IO"),
+            "must name IO: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -1029,7 +1060,10 @@ mod tests {
             "fn fetch() -> i64 | {Net} { 0 }\n\
              fn safe() -> i64 | {} { with handler { on Net(e) => 0 } { fetch() } }",
         );
-        assert!(errs.is_empty(), "inline handler should discharge Net, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "inline handler should discharge Net, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1041,7 +1075,11 @@ mod tests {
             "fn fetch() -> i64 | {Net} { 0 }\n\
              fn f() -> i64 | {} { with retry { fetch() } }",
         );
-        assert_eq!(errs.len(), 1, "undefined named handler must not discharge, got {errs:?}");
+        assert_eq!(
+            errs.len(),
+            1,
+            "undefined named handler must not discharge, got {errs:?}"
+        );
         assert!(errs[0].message.contains("Net"));
     }
 
@@ -1056,7 +1094,10 @@ mod tests {
              fn fetch() -> i64 | {Net} { 0 }\n\
              fn safe() -> i64 | {} { with retry { fetch() } }",
         );
-        assert!(errs.is_empty(), "defined named handler should discharge Net, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "defined named handler should discharge Net, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1069,7 +1110,10 @@ mod tests {
              fn safe() -> i64 | {} { with h { fetch() } }\n\
              fn caller() -> i64 | {} { safe() }",
         );
-        assert!(clean.is_empty(), "named-handled fn must be pure to callers, got {clean:?}");
+        assert!(
+            clean.is_empty(),
+            "named-handled fn must be pure to callers, got {clean:?}"
+        );
     }
 
     #[test]
@@ -1082,7 +1126,11 @@ mod tests {
              fn f() -> i64 | {} { with handler { on Net(e) => println(\"log\") } { fetch() } }",
         );
         assert_eq!(errs.len(), 1, "arm IO must leak, got {errs:?}");
-        assert!(errs[0].message.contains("IO"), "arm leaks IO not Net: {}", errs[0].message);
+        assert!(
+            errs[0].message.contains("IO"),
+            "arm leaks IO not Net: {}",
+            errs[0].message
+        );
     }
 
     #[test]
@@ -1096,14 +1144,21 @@ mod tests {
              fn safe() -> i64 | {} { with handler { on Net(e) => 0 } { fetch() } }\n\
              fn caller() -> i64 | {} { safe() }",
         );
-        assert!(clean.is_empty(), "handled-internally fn must be pure to callers, got {clean:?}");
+        assert!(
+            clean.is_empty(),
+            "handled-internally fn must be pure to callers, got {clean:?}"
+        );
         // Control: a fn that does NOT handle Net propagates it to its caller.
         let leaks = check(
             "fn fetch() -> i64 | {Net} { 0 }\n\
              fn leaky() -> i64 | {Net} { fetch() }\n\
              fn caller() -> i64 | {} { leaky() }",
         );
-        assert_eq!(leaks.len(), 1, "un-handled Net must reach the caller, got {leaks:?}");
+        assert_eq!(
+            leaks.len(),
+            1,
+            "un-handled Net must reach the caller, got {leaks:?}"
+        );
         assert!(leaks[0].message.contains("Net"));
     }
 
@@ -1111,10 +1166,11 @@ mod tests {
     fn io_inside_a_for_loop_body_is_fine_when_row_admits_it() {
         // Guard against over-correction: a fn that DECLARES {IO} may freely do IO
         // inside a for-loop body — no false positive from the deeper walk.
-        let errs = check(
-            "fn f() -> i64 | {IO} { for i in 0..3 { println(\"hi\") } 0 }",
+        let errs = check("fn f() -> i64 | {IO} { for i in 0..3 { println(\"hi\") } 0 }");
+        assert!(
+            errs.is_empty(),
+            "row {{IO}} should admit loop IO, got {errs:?}"
         );
-        assert!(errs.is_empty(), "row {{IO}} should admit loop IO, got {errs:?}");
     }
 
     #[test]
@@ -1130,14 +1186,20 @@ mod tests {
     fn fn_declaring_the_effect_is_ok() {
         // The same call is fine once the fn declares `| {IO}`.
         let errs = check("fn f(x: i64) -> i64 | {IO} { println(\"hi\") x }");
-        assert!(errs.is_empty(), "declared row should admit the call, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "declared row should admit the call, got {errs:?}"
+        );
     }
 
     #[test]
     fn main_escape_hatch_admits_everything() {
         // `main` with no clause is the top-level escape hatch — IO/AI/etc are OK.
         let errs = check("fn main() { println(\"hi\") }");
-        assert!(errs.is_empty(), "main escape hatch should admit IO, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "main escape hatch should admit IO, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1162,10 +1224,11 @@ mod tests {
     fn open_row_caller_admits_anything() {
         // A caller whose row is open (`...e`) is conservatively allowed to call
         // anything — no false leak (full row-var unification is a later slice).
-        let errs = check(
-            "fn g() -> i64 | {...e} { println(\"hi\") 0 }",
+        let errs = check("fn g() -> i64 | {...e} { println(\"hi\") 0 }");
+        assert!(
+            errs.is_empty(),
+            "open-row caller should not leak, got {errs:?}"
         );
-        assert!(errs.is_empty(), "open-row caller should not leak, got {errs:?}");
     }
 
     #[test]
@@ -1178,7 +1241,8 @@ mod tests {
              fn claims_pure(x: i64) -> i64 | {} { does_io(x) }",
         );
         assert!(
-            errs.iter().any(|e| e.message.contains("claims_pure") && e.message.contains("IO")),
+            errs.iter()
+                .any(|e| e.message.contains("claims_pure") && e.message.contains("IO")),
             "transitive IO must be flagged on claims_pure, got {errs:?}"
         );
     }
@@ -1192,7 +1256,8 @@ mod tests {
              fn pure_c(x: i64) -> i64 | {} { b(x) }",
         );
         assert!(
-            errs.iter().any(|e| e.message.contains("pure_c") && e.message.contains("IO")),
+            errs.iter()
+                .any(|e| e.message.contains("pure_c") && e.message.contains("IO")),
             "IO through a→b→pure_c must be flagged, got {errs:?}"
         );
     }
@@ -1206,7 +1271,10 @@ mod tests {
              fn b(x: i64) -> i64 { a(x) }\n\
              fn io_c(x: i64) -> i64 | {IO} { b(x) }",
         );
-        assert!(errs.is_empty(), "declared {{IO}} should admit the transitive IO, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "declared {{IO}} should admit the transitive IO, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1219,7 +1287,8 @@ mod tests {
              fn caller() -> i64 | {} { fetch(\"x\") }",
         );
         assert!(
-            errs.iter().any(|e| e.message.contains("caller") && e.message.contains("Net")),
+            errs.iter()
+                .any(|e| e.message.contains("caller") && e.message.contains("Net")),
             "contained net cap must surface as a Net effect leak, got {errs:?}"
         );
 
@@ -1229,7 +1298,10 @@ mod tests {
              fn fetch(u: str) -> i64 { 0 }\n\
              fn caller() -> i64 | {Net} { fetch(\"x\") }",
         );
-        assert!(ok.is_empty(), "declared {{Net}} should admit the contained call, got {ok:?}");
+        assert!(
+            ok.is_empty(),
+            "declared {{Net}} should admit the contained call, got {ok:?}"
+        );
     }
 
     #[test]
@@ -1243,10 +1315,12 @@ mod tests {
     fn leak_through_nested_call_position() {
         // The effectful call is buried in an if-branch, not the tail. The fn
         // opts into checking with the explicit empty row.
-        let errs = check(
-            "fn f() -> i64 | {} { if true { println(\"x\") 1 } else { 2 } }",
+        let errs = check("fn f() -> i64 | {} { if true { println(\"x\") 1 } else { 2 } }");
+        assert_eq!(
+            errs.len(),
+            1,
+            "nested IO call should still leak, got {errs:?}"
         );
-        assert_eq!(errs.len(), 1, "nested IO call should still leak, got {errs:?}");
     }
 
     // ── E03: higher-order row closing (forwarded callback effects) ───────────
@@ -1265,7 +1339,8 @@ mod tests {
              fn pure_caller() -> i64 | {} { apply(does_io, 5) }",
         );
         assert!(
-            errs.iter().any(|e| e.code == E1310 && e.message.contains("IO")),
+            errs.iter()
+                .any(|e| e.code == E1310 && e.message.contains("IO")),
             "forwarded callback IO must leak against the empty row, got {errs:?}"
         );
     }
@@ -1279,7 +1354,10 @@ mod tests {
              fn apply(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
              fn io_caller() -> i64 | {IO} { apply(does_io, 5) }",
         );
-        assert!(errs.is_empty(), "{{IO}} row should admit the forwarded callback, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "{{IO}} row should admit the forwarded callback, got {errs:?}"
+        );
     }
 
     #[test]
@@ -1292,7 +1370,10 @@ mod tests {
              fn apply(f: fn(i64) -> i64, x: i64) -> i64 | {...e} { f(x) }\n\
              fn pure_caller() -> i64 | {} { apply(dbl, 5) }",
         );
-        assert!(errs.is_empty(), "a pure callback must not leak, got {errs:?}");
+        assert!(
+            errs.is_empty(),
+            "a pure callback must not leak, got {errs:?}"
+        );
     }
 
     // ── E1316 deprecation notice (Phase 6 §8) ────────────────────────────────
@@ -1300,13 +1381,14 @@ mod tests {
     #[test]
     fn contained_annotation_emits_e1316_in_strict_mode() {
         use crate::error::E1316;
-        let prog = parse_source(
-            "@[contained(net: [\"api.example.com\"])]\nfn fetch(u: str) -> i64 { 0 }",
-        )
-        .unwrap();
+        let prog =
+            parse_source("@[contained(net: [\"api.example.com\"])]\nfn fetch(u: str) -> i64 { 0 }")
+                .unwrap();
         let warns = check_contained_strict(&prog);
         assert!(
-            warns.iter().any(|w| w.code == E1316 && w.message.contains("fetch")),
+            warns
+                .iter()
+                .any(|w| w.code == E1316 && w.message.contains("fetch")),
             "E1316 must fire for a @[contained] fn in strict mode, got {warns:?}"
         );
     }

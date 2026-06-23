@@ -15,6 +15,7 @@
 ///   signal_ab_status        {}                                      → AbReport
 ///   signal_ab_track         { text: str, week?: str, baseline?: f64, engineer?: str } → rec
 ///   signal_export_training  { min_score?: int, format?: str }      → TrainingExport
+use std::cmp::Reverse;
 use std::io::{self, BufRead, Write};
 use std::path::Path;
 
@@ -231,7 +232,10 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
     let result = match tool_name {
         "signal_score" => {
             let days = args.get("days").and_then(|v| v.as_u64());
-            let engineer = args.get("engineer").and_then(|v| v.as_str()).map(String::from);
+            let engineer = args
+                .get("engineer")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             score_sessions(&store).map(|mut scores| {
                 if let Some(d) = days {
                     let cutoff = now_ms().saturating_sub(d * 86_400_000);
@@ -252,16 +256,24 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         }
         "signal_rework" => {
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(14);
-            let min_sessions = args.get("min_sessions").and_then(|v| v.as_u64()).unwrap_or(3) as usize;
-            find_rework_hotspots(&store, days)
-                .map(|all| {
-                    let filtered: Vec<_> = all.into_iter().filter(|h| h.session_count >= min_sessions).collect();
-                    serde_json::to_value(filtered).unwrap_or(json!([]))
-                })
+            let min_sessions = args
+                .get("min_sessions")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3) as usize;
+            find_rework_hotspots(&store, days).map(|all| {
+                let filtered: Vec<_> = all
+                    .into_iter()
+                    .filter(|h| h.session_count >= min_sessions)
+                    .collect();
+                serde_json::to_value(filtered).unwrap_or(json!([]))
+            })
         }
         "signal_patterns" => {
             let min_score = args.get("min_score").and_then(|v| v.as_u64()).unwrap_or(65) as u8;
-            let min_sessions = args.get("min_sessions").and_then(|v| v.as_u64()).unwrap_or(2) as usize;
+            let min_sessions = args
+                .get("min_sessions")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(2) as usize;
             score_sessions(&store).map(|scores| {
                 let top = build_pattern_library(&scores, min_sessions, min_score);
                 let anti = antipatterns(&scores, min_sessions);
@@ -272,22 +284,31 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(30);
             let cutoff = now_ms().saturating_sub(days * 86_400_000);
             score_sessions(&store).map(|scores| {
-                let mut by_eng: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+                let mut by_eng: std::collections::HashMap<String, Vec<u8>> =
+                    std::collections::HashMap::new();
                 for s in scores.iter().filter(|s| s.ts_ms >= cutoff) {
-                    by_eng.entry(s.engineer.clone()).or_default().push(s.goal_clarity);
+                    by_eng
+                        .entry(s.engineer.clone())
+                        .or_default()
+                        .push(s.goal_clarity);
                 }
-                let mut summary: Vec<_> = by_eng.into_iter().map(|(eng, v)| {
-                    let avg = v.iter().map(|&c| c as f64).sum::<f64>() / v.len() as f64;
-                    json!({
-                        "engineer": eng,
-                        "avg_goal_clarity": (avg * 10.0).round() / 10.0,
-                        "sessions": v.len(),
-                        "best": v.iter().copied().max().unwrap_or(0),
-                        "worst": v.iter().copied().min().unwrap_or(0),
+                let mut summary: Vec<_> = by_eng
+                    .into_iter()
+                    .map(|(eng, v)| {
+                        let avg = v.iter().map(|&c| c as f64).sum::<f64>() / v.len() as f64;
+                        json!({
+                            "engineer": eng,
+                            "avg_goal_clarity": (avg * 10.0).round() / 10.0,
+                            "sessions": v.len(),
+                            "best": v.iter().copied().max().unwrap_or(0),
+                            "worst": v.iter().copied().min().unwrap_or(0),
+                        })
                     })
-                }).collect();
+                    .collect();
                 summary.sort_by(|a, b| {
-                    b["avg_goal_clarity"].as_f64().unwrap_or(0.0)
+                    b["avg_goal_clarity"]
+                        .as_f64()
+                        .unwrap_or(0.0)
                         .partial_cmp(&a["avg_goal_clarity"].as_f64().unwrap_or(0.0))
                         .unwrap_or(std::cmp::Ordering::Equal)
                 });
@@ -295,12 +316,15 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
             })
         }
         "signal_loops" => {
-            let threshold = args.get("turns_threshold").and_then(|v| v.as_u64()).unwrap_or(40);
+            let threshold = args
+                .get("turns_threshold")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(40);
             let days = args.get("days").and_then(|v| v.as_u64()).unwrap_or(30);
             let cutoff = now_ms().saturating_sub(days * 86_400_000);
             score_sessions(&store).map(|mut scores| {
                 // Sort by turns desc so highest-turn iteration is kept after goal dedup
-                scores.sort_by(|a, b| b.turns.cmp(&a.turns));
+                scores.sort_by_key(|b| Reverse(b.turns));
                 let mut seen_goals = std::collections::HashSet::new();
                 let candidates: Vec<_> = scores.iter()
                     .filter(|s| s.ts_ms >= cutoff && s.turns >= threshold)
@@ -327,7 +351,10 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         }
         "signal_trends" => {
             let weeks = args.get("weeks").and_then(|v| v.as_u64()).unwrap_or(8) as usize;
-            let engineer = args.get("engineer").and_then(|v| v.as_str()).map(String::from);
+            let engineer = args
+                .get("engineer")
+                .and_then(|v| v.as_str())
+                .map(String::from);
             compute_trends(&store, weeks).map(|mut r| {
                 if let Some(ref eng) = engineer {
                     r.engineers.retain(|e| e.engineer.contains(eng.as_str()));
@@ -337,51 +364,77 @@ fn handle_tools_call(id: &Option<Value>, params: &Value, ledger_dir: &Path) -> V
         }
         "signal_benchmark" => {
             let days = args.get("days").and_then(|v| v.as_u64());
-            compute_benchmark(&store, days)
-                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
+            compute_benchmark(&store, days).map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
-        "signal_ab_status" => {
-            compute_ab_report(ledger_dir, &store)
-                .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
-        }
+        "signal_ab_status" => compute_ab_report(ledger_dir, &store)
+            .map(|r| serde_json::to_value(r).unwrap_or(json!({}))),
         "signal_ab_track" => {
             let text = match args.get("text").and_then(|v| v.as_str()) {
                 Some(t) => t.to_string(),
                 None => return json_error(id.as_ref(), -32602, "signal_ab_track requires 'text'"),
             };
-            let engineer = args.get("engineer").and_then(|v| v.as_str()).map(String::from);
-            let week = args.get("week").and_then(|v| v.as_str())
+            let engineer = args
+                .get("engineer")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let week = args
+                .get("week")
+                .and_then(|v| v.as_str())
                 .map(String::from)
                 .unwrap_or_else(current_iso_week);
-            let baseline = args.get("baseline").and_then(|v| v.as_f64()).unwrap_or_else(|| {
-                score_sessions(&store)
-                    .ok()
-                    .and_then(|scores| {
-                        let cutoff = now_ms().saturating_sub(7 * 86_400_000);
-                        let recent: Vec<_> = scores.iter().filter(|s| s.ts_ms >= cutoff).collect();
-                        if recent.is_empty() { None }
-                        else { Some(recent.iter().map(|s| s.score as f64).sum::<f64>() / recent.len() as f64) }
-                    })
-                    .unwrap_or(0.0)
-            });
+            let baseline = args
+                .get("baseline")
+                .and_then(|v| v.as_f64())
+                .unwrap_or_else(|| {
+                    score_sessions(&store)
+                        .ok()
+                        .and_then(|scores| {
+                            let cutoff = now_ms().saturating_sub(7 * 86_400_000);
+                            let recent: Vec<_> =
+                                scores.iter().filter(|s| s.ts_ms >= cutoff).collect();
+                            if recent.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    recent.iter().map(|s| s.score as f64).sum::<f64>()
+                                        / recent.len() as f64,
+                                )
+                            }
+                        })
+                        .unwrap_or(0.0)
+                });
             record_recommendation(ledger_dir, &week, &text, baseline, engineer.as_deref())
                 .map(|r| serde_json::to_value(r).unwrap_or(json!({})))
         }
         "signal_export_training" => {
             let min_score = args.get("min_score").and_then(|v| v.as_u64()).unwrap_or(75) as u8;
-            let format_str = args.get("format").and_then(|v| v.as_str()).unwrap_or("trainloop");
-            let anonymize = args.get("anonymize").and_then(|v| v.as_bool()).unwrap_or(false);
-            let format = if format_str == "dpo" { ExportFormat::Dpo } else { ExportFormat::Trainloop };
-            let opts = ExportOptions { format, min_score, anonymize, ..ExportOptions::default() };
+            let format_str = args
+                .get("format")
+                .and_then(|v| v.as_str())
+                .unwrap_or("trainloop");
+            let anonymize = args
+                .get("anonymize")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let format = if format_str == "dpo" {
+                ExportFormat::Dpo
+            } else {
+                ExportFormat::Trainloop
+            };
+            let opts = ExportOptions {
+                format,
+                min_score,
+                anonymize,
+                ..ExportOptions::default()
+            };
             let mut buf = Vec::new();
-            export_training(&store, &opts, &mut buf)
-                .map(|count| {
-                    let records: Vec<serde_json::Value> = String::from_utf8_lossy(&buf)
-                        .lines()
-                        .filter_map(|l| serde_json::from_str(l).ok())
-                        .collect();
-                    json!({ "count": count, "format": format_str, "records": records })
-                })
+            export_training(&store, &opts, &mut buf).map(|count| {
+                let records: Vec<serde_json::Value> = String::from_utf8_lossy(&buf)
+                    .lines()
+                    .filter_map(|l| serde_json::from_str(l).ok())
+                    .collect();
+                json!({ "count": count, "format": format_str, "records": records })
+            })
         }
         _ => return json_error(id.as_ref(), -32602, &format!("Unknown tool: {tool_name}")),
     };
@@ -431,12 +484,26 @@ mod tests {
         let id = Some(json!(1));
         let r = handle_tools_list(&id);
         let tools = r["result"]["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 11, "expected 11 MCP tools, got {}", tools.len());
+        assert_eq!(
+            tools.len(),
+            11,
+            "expected 11 MCP tools, got {}",
+            tools.len()
+        );
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
-        for expected in &["signal_score", "signal_weekly", "signal_rework",
-                          "signal_patterns", "signal_goals", "signal_loops",
-                          "signal_trends", "signal_benchmark", "signal_ab_status",
-                          "signal_ab_track", "signal_export_training"] {
+        for expected in &[
+            "signal_score",
+            "signal_weekly",
+            "signal_rework",
+            "signal_patterns",
+            "signal_goals",
+            "signal_loops",
+            "signal_trends",
+            "signal_benchmark",
+            "signal_ab_status",
+            "signal_ab_track",
+            "signal_export_training",
+        ] {
             assert!(names.contains(expected), "missing tool: {expected}");
         }
     }

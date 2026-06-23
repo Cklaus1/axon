@@ -29,9 +29,9 @@ use std::collections::VecDeque;
 use std::ffi::c_void;
 use std::sync::{Arc, Condvar, Mutex};
 
-pub mod provenance;
-pub mod goal;
 pub mod adaptive_registry;
+pub mod goal;
+pub mod provenance;
 
 // ── Axon str ABI — mirrors codegen's { i64 len, i8* ptr } ──────────────────────
 
@@ -187,7 +187,9 @@ pub extern "C" fn __axon_select(chans: *mut *mut c_void, n: i64) -> i64 {
     loop {
         for i in 0..count {
             let ptr = unsafe { *chans.add(i) };
-            if ptr.is_null() { continue; }
+            if ptr.is_null() {
+                continue;
+            }
             let arc = unsafe { Arc::from_raw(ptr as *const Chan) };
             let ready = arc.has_data();
             let _ = Arc::into_raw(arc); // keep alive
@@ -240,7 +242,8 @@ fn dict_abort_if_nonint(guard: &StdMap<String, DictVal>, who: &str) {
     if guard.values().any(|v| !matches!(v, DictVal::Int(_))) {
         eprintln!(
             "axon: panic: {who}: non-int-valued dicts (str/float) are not supported \
-             by native codegen (v1 dict is int-valued) — use `axon run`");
+             by native codegen (v1 dict is int-valued) — use `axon run`"
+        );
         std::process::exit(RUNTIME_PANIC_EXIT_CODE);
     }
 }
@@ -248,7 +251,9 @@ fn dict_abort_if_nonint(guard: &StdMap<String, DictVal>, who: &str) {
 /// Create an empty dict. Opaque handle to an `Arc<Dict>`.
 #[no_mangle]
 pub extern "C" fn __axon_dict_new() -> *mut c_void {
-    let arc = Arc::new(Dict { map: Mutex::new(StdMap::new()) });
+    let arc = Arc::new(Dict {
+        map: Mutex::new(StdMap::new()),
+    });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -275,7 +280,9 @@ pub extern "C" fn __axon_dict_from_pairs(len: i64, data: *const StrI64Pair) -> *
             out.insert(k, DictVal::Int(pair.val));
         }
     }
-    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    let arc = Arc::new(Dict {
+        map: Mutex::new(out),
+    });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -297,7 +304,9 @@ pub extern "C" fn __axon_dict_merge(d1: *mut c_void, d2: *mut c_void) -> *mut c_
             out.insert(k.clone(), v.clone());
         }
     }
-    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    let arc = Arc::new(Dict {
+        map: Mutex::new(out),
+    });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -323,7 +332,8 @@ fn dict_val_of(tag: i64, payload: i64, payload_str: *const u8, payload_str_len: 
             if payload_str.is_null() || payload_str_len < 0 {
                 DictVal::Str(String::new())
             } else {
-                let s = unsafe { std::slice::from_raw_parts(payload_str, payload_str_len as usize) };
+                let s =
+                    unsafe { std::slice::from_raw_parts(payload_str, payload_str_len as usize) };
                 DictVal::Str(String::from_utf8_lossy(s).into_owned())
             }
         }
@@ -333,8 +343,17 @@ fn dict_val_of(tag: i64, payload: i64, payload_str: *const u8, payload_str_len: 
 
 /// Set `key` → tagged value. Str payloads arrive as (ptr,len); int/float in
 /// `payload`. The dict owns its key + Str-value copies.
-fn dict_set_impl(d: *mut c_void, key: AxonStr, tag: i64, payload: i64, payload_str: *const u8, payload_str_len: i64) {
-    if d.is_null() { return; }
+fn dict_set_impl(
+    d: *mut c_void,
+    key: AxonStr,
+    tag: i64,
+    payload: i64,
+    payload_str: *const u8,
+    payload_str_len: i64,
+) {
+    if d.is_null() {
+        return;
+    }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let v = dict_val_of(tag, payload, payload_str, payload_str_len);
@@ -364,7 +383,17 @@ pub extern "C" fn __axon_dict_set(
     payload_str: *const u8,
     payload_str_len: i64,
 ) {
-    dict_set_impl(d, AxonStr { len: key_len, ptr: key_ptr }, tag, payload, payload_str, payload_str_len)
+    dict_set_impl(
+        d,
+        AxonStr {
+            len: key_len,
+            ptr: key_ptr,
+        },
+        tag,
+        payload,
+        payload_str,
+        payload_str_len,
+    )
 }
 
 /// Look up `key`. Returns 1 if found (writing the tag + payload out-params), 0
@@ -377,7 +406,9 @@ fn dict_get_impl(
     out_payload: *mut i64,
     out_str_len: *mut i64,
 ) -> bool {
-    if d.is_null() { return false; }
+    if d.is_null() {
+        return false;
+    }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let guard = dict.map.lock().unwrap();
@@ -386,8 +417,14 @@ fn dict_get_impl(
         Some(v) => {
             unsafe {
                 match v {
-                    DictVal::Int(n) => { *out_tag = 0; *out_payload = *n; }
-                    DictVal::Float(f) => { *out_tag = 1; *out_payload = f.to_bits() as i64; }
+                    DictVal::Int(n) => {
+                        *out_tag = 0;
+                        *out_payload = *n;
+                    }
+                    DictVal::Float(f) => {
+                        *out_tag = 1;
+                        *out_payload = f.to_bits() as i64;
+                    }
                     DictVal::Str(s) => {
                         *out_tag = 2;
                         let len = s.len();
@@ -395,7 +432,9 @@ fn dict_get_impl(
                         std::ptr::copy_nonoverlapping(s.as_ptr(), p, len);
                         *p.add(len) = 0;
                         *out_payload = p as i64;
-                        if !out_str_len.is_null() { *out_str_len = len as i64; }
+                        if !out_str_len.is_null() {
+                            *out_str_len = len as i64;
+                        }
                     }
                 }
             }
@@ -424,12 +463,23 @@ pub extern "C" fn __axon_dict_get(
     out_payload: *mut i64,
     out_str_len: *mut i64,
 ) -> bool {
-    dict_get_impl(d, AxonStr { len: key_len, ptr: key_ptr }, out_tag, out_payload, out_str_len)
+    dict_get_impl(
+        d,
+        AxonStr {
+            len: key_len,
+            ptr: key_ptr,
+        },
+        out_tag,
+        out_payload,
+        out_str_len,
+    )
 }
 
 /// Whether `key` is present.
 fn dict_has_impl(d: *mut c_void, key: AxonStr) -> bool {
-    if d.is_null() { return false; }
+    if d.is_null() {
+        return false;
+    }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let has = dict.map.lock().unwrap().contains_key(&k);
@@ -443,13 +493,21 @@ pub extern "C" fn __axon_dict_has(d: *mut c_void, key: AxonStr) -> bool {
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn __axon_dict_has(d: *mut c_void, key_len: i64, key_ptr: *const u8) -> bool {
-    dict_has_impl(d, AxonStr { len: key_len, ptr: key_ptr })
+    dict_has_impl(
+        d,
+        AxonStr {
+            len: key_len,
+            ptr: key_ptr,
+        },
+    )
 }
 
 /// Number of entries.
 #[no_mangle]
 pub extern "C" fn __axon_dict_len(d: *mut c_void) -> i64 {
-    if d.is_null() { return 0; }
+    if d.is_null() {
+        return 0;
+    }
     let dict = unsafe { dict_borrow(d) };
     let n = dict.map.lock().unwrap().len() as i64;
     n
@@ -465,7 +523,9 @@ fn dict_remove_impl(
     out_payload: *mut i64,
     out_str_len: *mut i64,
 ) -> bool {
-    if d.is_null() { return false; }
+    if d.is_null() {
+        return false;
+    }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let removed = dict.map.lock().unwrap().remove(&k);
@@ -474,8 +534,14 @@ fn dict_remove_impl(
         Some(v) => {
             unsafe {
                 match v {
-                    DictVal::Int(n) => { *out_tag = 0; *out_payload = n; }
-                    DictVal::Float(f) => { *out_tag = 1; *out_payload = f.to_bits() as i64; }
+                    DictVal::Int(n) => {
+                        *out_tag = 0;
+                        *out_payload = n;
+                    }
+                    DictVal::Float(f) => {
+                        *out_tag = 1;
+                        *out_payload = f.to_bits() as i64;
+                    }
                     DictVal::Str(s) => {
                         *out_tag = 2;
                         let len = s.len();
@@ -483,7 +549,9 @@ fn dict_remove_impl(
                         std::ptr::copy_nonoverlapping(s.as_ptr(), p, len);
                         *p.add(len) = 0;
                         *out_payload = p as i64;
-                        if !out_str_len.is_null() { *out_str_len = len as i64; }
+                        if !out_str_len.is_null() {
+                            *out_str_len = len as i64;
+                        }
                     }
                 }
             }
@@ -512,14 +580,25 @@ pub extern "C" fn __axon_dict_remove(
     out_payload: *mut i64,
     out_str_len: *mut i64,
 ) -> bool {
-    dict_remove_impl(d, AxonStr { len: key_len, ptr: key_ptr }, out_tag, out_payload, out_str_len)
+    dict_remove_impl(
+        d,
+        AxonStr {
+            len: key_len,
+            ptr: key_ptr,
+        },
+        out_tag,
+        out_payload,
+        out_str_len,
+    )
 }
 
 /// Atomically bump an i64 counter at `key`: initialize to 1 if absent (or if
 /// the existing value is non-Int — matching the interpreter's get-or-0 + 1),
 /// else previous+1. Returns the new value. The common frequency-table primitive.
 fn dict_inc_impl(d: *mut c_void, key: AxonStr) -> i64 {
-    if d.is_null() { return 0; }
+    if d.is_null() {
+        return 0;
+    }
     let dict = unsafe { dict_borrow(d) };
     let k = dict_key_of(key);
     let mut guard = dict.map.lock().unwrap();
@@ -539,7 +618,13 @@ pub extern "C" fn __axon_dict_inc(d: *mut c_void, key: AxonStr) -> i64 {
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
 pub extern "C" fn __axon_dict_inc(d: *mut c_void, key_len: i64, key_ptr: *const u8) -> i64 {
-    dict_inc_impl(d, AxonStr { len: key_len, ptr: key_ptr })
+    dict_inc_impl(
+        d,
+        AxonStr {
+            len: key_len,
+            ptr: key_ptr,
+        },
+    )
 }
 
 /// Collect the keys into a fresh `[str]` slice (BTreeMap order). Writes the
@@ -547,20 +632,22 @@ pub extern "C" fn __axon_dict_inc(d: *mut c_void, key_len: i64, key_ptr: *const 
 /// malloc'd array of `AxonStr` structs (each key's bytes also malloc'd +
 /// null-terminated). The codegen assembles the `{i64,ptr}` slice from these.
 #[no_mangle]
-pub extern "C" fn __axon_dict_keys(
-    d: *mut c_void,
-    out_len: *mut i64,
-    out_data: *mut *mut u8,
-) {
+pub extern "C" fn __axon_dict_keys(d: *mut c_void, out_len: *mut i64, out_data: *mut *mut u8) {
     if d.is_null() {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let dict = unsafe { dict_borrow(d) };
     let guard = dict.map.lock().unwrap();
     let n = guard.len();
     if n == 0 {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     // Array of AxonStr ({i64,ptr} = 16 bytes each).
@@ -574,7 +661,12 @@ pub extern "C" fn __axon_dict_keys(
             *p.add(len) = 0;
             p
         };
-        unsafe { *arr.add(i) = AxonStr { len: len as i64, ptr: buf }; }
+        unsafe {
+            *arr.add(i) = AxonStr {
+                len: len as i64,
+                ptr: buf,
+            };
+        }
     }
     unsafe {
         *out_len = n as i64;
@@ -589,13 +681,12 @@ pub extern "C" fn __axon_dict_keys(
 /// int-valued case is the supported surface, mirroring `dict_get`. The codegen
 /// assembles the `{i64,ptr}` slice from these out-params.
 #[no_mangle]
-pub extern "C" fn __axon_dict_values(
-    d: *mut c_void,
-    out_len: *mut i64,
-    out_data: *mut *mut u8,
-) {
+pub extern "C" fn __axon_dict_values(d: *mut c_void, out_len: *mut i64, out_data: *mut *mut u8) {
     if d.is_null() {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let dict = unsafe { dict_borrow(d) };
@@ -603,7 +694,10 @@ pub extern "C" fn __axon_dict_values(
     dict_abort_if_nonint(&guard, "dict_values");
     let n = guard.len();
     if n == 0 {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let arr = unsafe { libc_malloc(std::mem::size_of::<i64>() * n) } as *mut i64;
@@ -613,7 +707,9 @@ pub extern "C" fn __axon_dict_values(
             DictVal::Float(f) => f.to_bits() as i64,
             DictVal::Str(s) => s.as_ptr() as i64,
         };
-        unsafe { *arr.add(i) = payload; }
+        unsafe {
+            *arr.add(i) = payload;
+        }
     }
     unsafe {
         *out_len = n as i64;
@@ -634,10 +730,17 @@ pub extern "C" fn __axon_dict_values(
 // and wasm32 ({i64,32-ptr}) — codegen reads it back with the same target str
 // struct, so the layout agrees by construction.
 fn str_split_impl(s: &str, sep: &str, out_len: *mut i64, out_data: *mut *mut u8) {
-    let parts: Vec<&str> = if sep.is_empty() { vec![s] } else { s.split(sep).collect() };
+    let parts: Vec<&str> = if sep.is_empty() {
+        vec![s]
+    } else {
+        s.split(sep).collect()
+    };
     let n = parts.len();
     if n == 0 {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let elem_size = std::mem::size_of::<AxonStr>();
@@ -650,7 +753,12 @@ fn str_split_impl(s: &str, sep: &str, out_len: *mut i64, out_data: *mut *mut u8)
             *p.add(len) = 0;
             p
         };
-        unsafe { *arr.add(i) = AxonStr { len: len as i64, ptr: buf }; }
+        unsafe {
+            *arr.add(i) = AxonStr {
+                len: len as i64,
+                ptr: buf,
+            };
+        }
     }
     unsafe {
         *out_len = n as i64;
@@ -665,7 +773,12 @@ pub extern "C" fn __axon_str_split(
     out_len: *mut i64,
     out_data: *mut *mut u8,
 ) {
-    str_split_impl(unsafe { s.as_str() }, unsafe { sep.as_str() }, out_len, out_data)
+    str_split_impl(
+        unsafe { s.as_str() },
+        unsafe { sep.as_str() },
+        out_len,
+        out_data,
+    )
 }
 // wasm32: codegen expands each by-value AxonStr arg into (i64 len, i32 ptr)
 // scalars (the str_reverse ABI note). Reconstruct and delegate.
@@ -679,9 +792,20 @@ pub extern "C" fn __axon_str_split(
     out_len: *mut i64,
     out_data: *mut *mut u8,
 ) {
-    let s = AxonStr { len: s_len, ptr: s_ptr };
-    let sep = AxonStr { len: sep_len, ptr: sep_ptr };
-    str_split_impl(unsafe { s.as_str() }, unsafe { sep.as_str() }, out_len, out_data)
+    let s = AxonStr {
+        len: s_len,
+        ptr: s_ptr,
+    };
+    let sep = AxonStr {
+        len: sep_len,
+        ptr: sep_ptr,
+    };
+    str_split_impl(
+        unsafe { s.as_str() },
+        unsafe { sep.as_str() },
+        out_len,
+        out_data,
+    )
 }
 
 /// Collect the entries into a fresh `[(str, i64)]` slice (BTreeMap key order) —
@@ -691,13 +815,12 @@ pub extern "C" fn __axon_str_split(
 /// convention). Same out-param shape as dict_keys; codegen wraps it in a
 /// {i64, ptr} slice whose element is the (str,i64) tuple.
 #[no_mangle]
-pub extern "C" fn __axon_dict_to_pairs(
-    d: *mut c_void,
-    out_len: *mut i64,
-    out_data: *mut *mut u8,
-) {
+pub extern "C" fn __axon_dict_to_pairs(d: *mut c_void, out_len: *mut i64, out_data: *mut *mut u8) {
     if d.is_null() {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let dict = unsafe { dict_borrow(d) };
@@ -705,7 +828,10 @@ pub extern "C" fn __axon_dict_to_pairs(
     dict_abort_if_nonint(&guard, "dict_to_pairs");
     let n = guard.len();
     if n == 0 {
-        unsafe { *out_len = 0; *out_data = std::ptr::null_mut(); }
+        unsafe {
+            *out_len = 0;
+            *out_data = std::ptr::null_mut();
+        }
         return;
     }
     let arr = unsafe { libc_malloc(std::mem::size_of::<StrI64Pair>() * n) } as *mut StrI64Pair;
@@ -724,7 +850,10 @@ pub extern "C" fn __axon_dict_to_pairs(
         };
         unsafe {
             *arr.add(i) = StrI64Pair {
-                key: AxonStr { len: klen as i64, ptr: buf },
+                key: AxonStr {
+                    len: klen as i64,
+                    ptr: buf,
+                },
                 val: payload,
             };
         }
@@ -741,11 +870,22 @@ pub extern "C" fn __axon_dict_to_pairs(
 /// by target. Used by dict_filter/dict_each. (map_values' closure takes only
 /// (env, i64) — no AxonStr — so it needs no target split.)
 #[inline]
-unsafe fn call_dict_key_val_closure(fn_ptr: *const c_void, env: *mut c_void, key: AxonStr, val: i64) -> i64 {
+unsafe fn call_dict_key_val_closure(
+    fn_ptr: *const c_void,
+    env: *mut c_void,
+    key: AxonStr,
+    val: i64,
+) -> i64 {
     #[cfg(not(target_arch = "wasm32"))]
-    { let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = std::mem::transmute(fn_ptr); f(env, key, val) }
+    {
+        let f: extern "C" fn(*mut c_void, AxonStr, i64) -> i64 = std::mem::transmute(fn_ptr);
+        f(env, key, val)
+    }
     #[cfg(target_arch = "wasm32")]
-    { let f: extern "C" fn(*mut c_void, i64, *const u8, i64) -> i64 = std::mem::transmute(fn_ptr); f(env, key.len, key.ptr, val) }
+    {
+        let f: extern "C" fn(*mut c_void, i64, *const u8, i64) -> i64 = std::mem::transmute(fn_ptr);
+        f(env, key.len, key.ptr, val)
+    }
 }
 
 /// Apply a closure to each value, returning a FRESH dict with the same keys and
@@ -767,17 +907,26 @@ pub extern "C" fn __axon_dict_map_values(
         // map (and we don't hold the lock across the callback).
         let pairs: Vec<(String, i64)> = {
             let guard = dict.map.lock().unwrap();
-            guard.iter().map(|(k, v)| {
-                let iv = match v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
-                (k.clone(), iv)
-            }).collect()
+            guard
+                .iter()
+                .map(|(k, v)| {
+                    let iv = match v {
+                        DictVal::Int(x) => *x,
+                        DictVal::Float(fl) => fl.to_bits() as i64,
+                        DictVal::Str(s) => s.as_ptr() as i64,
+                    };
+                    (k.clone(), iv)
+                })
+                .collect()
         };
         for (k, v) in pairs {
             let nv = f(env, v);
             out.insert(k, DictVal::Int(nv));
         }
     }
-    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    let arc = Arc::new(Dict {
+        map: Mutex::new(out),
+    });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -787,11 +936,7 @@ pub extern "C" fn __axon_dict_map_values(
 /// the read_file way — via a NEGATIVE out_len, so codegen builds `Err(msg)`;
 /// `out_len >= 0` → `Ok(serialized)`. The string buffer is malloc'd either way.
 #[no_mangle]
-pub extern "C" fn __axon_dict_to_str(
-    d: *mut c_void,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+pub extern "C" fn __axon_dict_to_str(d: *mut c_void, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let mut out = String::new();
     let mut err: Option<String> = None;
     if !d.is_null() {
@@ -858,8 +1003,15 @@ pub extern "C" fn __axon_dict_filter(
             guard.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
         for (k, v) in pairs {
-            let iv = match &v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
-            let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
+            let iv = match &v {
+                DictVal::Int(x) => *x,
+                DictVal::Float(fl) => fl.to_bits() as i64,
+                DictVal::Str(s) => s.as_ptr() as i64,
+            };
+            let key = AxonStr {
+                len: k.len() as i64,
+                ptr: k.as_ptr(),
+            };
             // i1 result is zero-extended to i64 by the lambda's return site;
             // truthy = non-zero. (Closure call is target-ABI-aware.)
             if unsafe { call_dict_key_val_closure(fn_ptr, env, key, iv) } != 0 {
@@ -867,7 +1019,9 @@ pub extern "C" fn __axon_dict_filter(
             }
         }
     }
-    let arc = Arc::new(Dict { map: Mutex::new(out) });
+    let arc = Arc::new(Dict {
+        map: Mutex::new(out),
+    });
     Arc::into_raw(arc) as *mut c_void
 }
 
@@ -878,24 +1032,30 @@ pub extern "C" fn __axon_dict_filter(
 /// bytes. Snapshot-first so a callback that mutates the SAME dict can't perturb
 /// the iteration / deadlock on the lock. Null dict → no-op.
 #[no_mangle]
-pub extern "C" fn __axon_dict_each(
-    d: *mut c_void,
-    fn_ptr: *const c_void,
-    env: *mut c_void,
-) {
+pub extern "C" fn __axon_dict_each(d: *mut c_void, fn_ptr: *const c_void, env: *mut c_void) {
     if d.is_null() {
         return;
     }
     let dict = unsafe { dict_borrow(d) };
     let pairs: Vec<(String, i64)> = {
         let guard = dict.map.lock().unwrap();
-        guard.iter().map(|(k, v)| {
-            let iv = match v { DictVal::Int(x) => *x, DictVal::Float(fl) => fl.to_bits() as i64, DictVal::Str(s) => s.as_ptr() as i64 };
-            (k.clone(), iv)
-        }).collect()
+        guard
+            .iter()
+            .map(|(k, v)| {
+                let iv = match v {
+                    DictVal::Int(x) => *x,
+                    DictVal::Float(fl) => fl.to_bits() as i64,
+                    DictVal::Str(s) => s.as_ptr() as i64,
+                };
+                (k.clone(), iv)
+            })
+            .collect()
     };
     for (k, v) in pairs {
-        let key = AxonStr { len: k.len() as i64, ptr: k.as_ptr() };
+        let key = AxonStr {
+            len: k.len() as i64,
+            ptr: k.as_ptr(),
+        };
         let _ = unsafe { call_dict_key_val_closure(fn_ptr, env, key, v) };
     }
 }
@@ -938,7 +1098,7 @@ fn install_thread_recursion_guard() -> Option<Box<[u8]>> {
 #[no_mangle]
 pub extern "C" fn __axon_spawn(fn_ptr: *const c_void, env: *mut c_void) {
     assert!(!fn_ptr.is_null(), "axon_spawn: null function pointer");
-    let fn_ptr = fn_ptr as usize;  // move into thread
+    let fn_ptr = fn_ptr as usize; // move into thread
     let env = env as usize;
     std::thread::spawn(move || {
         // Give this worker its own alt-stack so a stack overflow (deep recursion)
@@ -1161,9 +1321,26 @@ pub extern "C" fn __axon_str_contains(a: AxonStr, b: AxonStr) -> bool {
 }
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
-pub extern "C" fn __axon_str_contains(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
-    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
-    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
+pub extern "C" fn __axon_str_contains(
+    a_len: i64,
+    a_ptr: *const u8,
+    b_len: i64,
+    b_ptr: *const u8,
+) -> bool {
+    let a = unsafe {
+        AxonStr {
+            len: a_len,
+            ptr: a_ptr,
+        }
+        .as_str()
+    };
+    let b = unsafe {
+        AxonStr {
+            len: b_len,
+            ptr: b_ptr,
+        }
+        .as_str()
+    };
     a.contains(b)
 }
 
@@ -1181,9 +1358,26 @@ pub extern "C" fn __axon_str_starts_with(a: AxonStr, b: AxonStr) -> bool {
 }
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
-pub extern "C" fn __axon_str_starts_with(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
-    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
-    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
+pub extern "C" fn __axon_str_starts_with(
+    a_len: i64,
+    a_ptr: *const u8,
+    b_len: i64,
+    b_ptr: *const u8,
+) -> bool {
+    let a = unsafe {
+        AxonStr {
+            len: a_len,
+            ptr: a_ptr,
+        }
+        .as_str()
+    };
+    let b = unsafe {
+        AxonStr {
+            len: b_len,
+            ptr: b_ptr,
+        }
+        .as_str()
+    };
     a.starts_with(b)
 }
 
@@ -1201,9 +1395,26 @@ pub extern "C" fn __axon_str_ends_with(a: AxonStr, b: AxonStr) -> bool {
 }
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
-pub extern "C" fn __axon_str_ends_with(a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8) -> bool {
-    let a = unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() };
-    let b = unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() };
+pub extern "C" fn __axon_str_ends_with(
+    a_len: i64,
+    a_ptr: *const u8,
+    b_len: i64,
+    b_ptr: *const u8,
+) -> bool {
+    let a = unsafe {
+        AxonStr {
+            len: a_len,
+            ptr: a_ptr,
+        }
+        .as_str()
+    };
+    let b = unsafe {
+        AxonStr {
+            len: b_len,
+            ptr: b_ptr,
+        }
+        .as_str()
+    };
     a.ends_with(b)
 }
 
@@ -1221,9 +1432,26 @@ pub extern "C" fn __axon_str_index_of(hay: AxonStr, needle: AxonStr) -> i64 {
 }
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
-pub extern "C" fn __axon_str_index_of(hay_len: i64, hay_ptr: *const u8, needle_len: i64, needle_ptr: *const u8) -> i64 {
-    let hay = unsafe { AxonStr { len: hay_len, ptr: hay_ptr }.as_str() };
-    let needle = unsafe { AxonStr { len: needle_len, ptr: needle_ptr }.as_str() };
+pub extern "C" fn __axon_str_index_of(
+    hay_len: i64,
+    hay_ptr: *const u8,
+    needle_len: i64,
+    needle_ptr: *const u8,
+) -> i64 {
+    let hay = unsafe {
+        AxonStr {
+            len: hay_len,
+            ptr: hay_ptr,
+        }
+        .as_str()
+    };
+    let needle = unsafe {
+        AxonStr {
+            len: needle_len,
+            ptr: needle_ptr,
+        }
+        .as_str()
+    };
     hay.find(needle).map(|i| i as i64).unwrap_or(-1)
 }
 
@@ -1241,7 +1469,13 @@ pub extern "C" fn __axon_str_len(s: AxonStr) -> i64 {
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn __axon_str_len(s_len: i64, s_ptr: *const u8) -> i64 {
-    let s = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let s = unsafe {
+        AxonStr {
+            len: s_len,
+            ptr: s_ptr,
+        }
+        .as_str()
+    };
     s.len() as i64
 }
 
@@ -1260,7 +1494,13 @@ pub extern "C" fn __axon_char_at(s: AxonStr, i: i64) -> i64 {
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn __axon_char_at(s_len: i64, s_ptr: *const u8, i: i64) -> i64 {
-    let s = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let s = unsafe {
+        AxonStr {
+            len: s_len,
+            ptr: s_ptr,
+        }
+        .as_str()
+    };
     let i = i.max(0) as usize;
     s.as_bytes().get(i).map(|b| *b as i64).unwrap_or(-1)
 }
@@ -1408,7 +1648,9 @@ pub extern "C" fn __axon_read_line(out_len: *mut i64, out_ptr: *mut *mut u8) {
     // Strip trailing newline.
     if line.ends_with('\n') {
         line.pop();
-        if line.ends_with('\r') { line.pop(); }
+        if line.ends_with('\r') {
+            line.pop();
+        }
     }
     let len = line.len();
     let buf = unsafe {
@@ -1446,7 +1688,10 @@ pub extern "C" fn __axon_read_file(
                 *p.add(len) = 0;
                 p
             };
-            unsafe { *out_len = len as i64; *out_ptr = buf; }
+            unsafe {
+                *out_len = len as i64;
+                *out_ptr = buf;
+            }
         }
         Err(e) => {
             let msg = e.to_string();
@@ -1457,7 +1702,10 @@ pub extern "C" fn __axon_read_file(
                 *p.add(len) = 0;
                 p
             };
-            unsafe { *out_len = -(len as i64); *out_ptr = buf; }
+            unsafe {
+                *out_len = -(len as i64);
+                *out_ptr = buf;
+            }
         }
     }
 }
@@ -1478,7 +1726,19 @@ pub extern "C" fn __axon_exec(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_exec_impl(unsafe { AxonStr { len: cmd_len, ptr: cmd_ptr }.as_str() }, args_ptr, args_count, out_len, out_ptr)
+    __axon_exec_impl(
+        unsafe {
+            AxonStr {
+                len: cmd_len,
+                ptr: cmd_ptr,
+            }
+            .as_str()
+        },
+        args_ptr,
+        args_count,
+        out_len,
+        out_ptr,
+    )
 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1489,7 +1749,13 @@ pub extern "C" fn __axon_exec(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_exec_impl(unsafe { cmd.as_str() }, args_ptr, args_count, out_len, out_ptr)
+    __axon_exec_impl(
+        unsafe { cmd.as_str() },
+        args_ptr,
+        args_count,
+        out_len,
+        out_ptr,
+    )
 }
 fn __axon_exec_impl(
     cmd_s: &str,
@@ -1502,16 +1768,26 @@ fn __axon_exec_impl(
         Vec::new()
     } else {
         let slice = unsafe { std::slice::from_raw_parts(args_ptr, args_count as usize) };
-        slice.iter().map(|a| unsafe { a.as_str() }.to_string()).collect()
+        slice
+            .iter()
+            .map(|a| unsafe { a.as_str() }.to_string())
+            .collect()
     };
     let (text, is_err) = match std::process::Command::new(cmd_s).args(&args).output() {
         Ok(output) if output.status.success() => {
             (String::from_utf8_lossy(&output.stdout).into_owned(), false)
         }
         Ok(output) => {
-            let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let code = output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
             let stderr = String::from_utf8_lossy(&output.stderr);
-            (format!("exec `{cmd_s}` exited {code}: {}", stderr.trim()), true)
+            (
+                format!("exec `{cmd_s}` exited {code}: {}", stderr.trim()),
+                true,
+            )
         }
         Err(e) => (format!("exec `{cmd_s}` failed: {e}"), true),
     };
@@ -1545,7 +1821,10 @@ pub extern "C" fn __axon_write_file(
     };
     let content = unsafe { std::slice::from_raw_parts(content_ptr, content_len as usize) };
     match std::fs::write(path, content) {
-        Ok(()) => unsafe { *out_err_len = 0; *out_err_ptr = std::ptr::null_mut(); },
+        Ok(()) => unsafe {
+            *out_err_len = 0;
+            *out_err_ptr = std::ptr::null_mut();
+        },
         Err(e) => {
             let msg = e.to_string();
             let len = msg.len();
@@ -1555,7 +1834,10 @@ pub extern "C" fn __axon_write_file(
                 *p.add(len) = 0;
                 p
             };
-            unsafe { *out_err_len = len as i64; *out_err_ptr = buf; }
+            unsafe {
+                *out_err_len = len as i64;
+                *out_err_ptr = buf;
+            }
         }
     }
 }
@@ -1630,9 +1912,15 @@ pub extern "C" fn __axon_i64_to_str_radix(
     loop {
         pos -= 1;
         let digit = (value % base) as u8;
-        tmp[pos] = if digit < 10 { b'0' + digit } else { b'a' + (digit - 10) };
+        tmp[pos] = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'a' + (digit - 10)
+        };
         value /= base;
-        if value == 0 { break; }
+        if value == 0 {
+            break;
+        }
     }
 
     // Sign.
@@ -1707,11 +1995,7 @@ pub extern "C" fn __axon_f64_to_str(x: f64, out_len: *mut i64, out_ptr: *mut *mu
 /// Write a str result via out-params: malloc a NUL-terminated buffer, copy the
 /// string bytes, set *out_len and *out_ptr.  Caller owns the returned buffer.
 #[inline(never)]
-unsafe fn write_str_out(
-    s: &str,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+unsafe fn write_str_out(s: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let len = s.len();
     let buf = libc_malloc(len + 1);
     unsafe {
@@ -1728,12 +2012,7 @@ unsafe fn write_str_out(
 /// mallocs the result and writes {byte_length, buffer_ptr}.
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
-pub extern "C" fn __axon_str_repeat(
-    s: AxonStr,
-    n: i64,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+pub extern "C" fn __axon_str_repeat(s: AxonStr, n: i64, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let src = unsafe { s.as_str() };
     let count = n.max(0) as usize;
     let result = src.repeat(count);
@@ -1748,7 +2027,13 @@ pub extern "C" fn __axon_str_repeat(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let src = unsafe {
+        AxonStr {
+            len: s_len,
+            ptr: s_ptr,
+        }
+        .as_str()
+    };
     let count = n.max(0) as usize;
     let result = src.repeat(count);
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -1784,7 +2069,13 @@ pub extern "C" fn __axon_str_slice(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
+    let src = unsafe {
+        AxonStr {
+            len: s_len,
+            ptr: s_ptr,
+        }
+        .as_str()
+    };
     let start = (start.max(0) as usize).min(src.len());
     let end = (end.max(0) as usize).min(src.len());
     let start = start.min(end);
@@ -1806,23 +2097,57 @@ fn axon_str_pad(s: &str, width: i64, fill: &str, start: bool) -> String {
         s.to_string()
     } else {
         let pad = fill_char.to_string().repeat(width - s.len());
-        if start { format!("{}{}", pad, s) } else { format!("{}{}", s, pad) }
+        if start {
+            format!("{}{}", pad, s)
+        } else {
+            format!("{}{}", s, pad)
+        }
     }
 }
 macro_rules! axon_str_pad_fn {
     ($name:ident, $start:expr) => {
         #[no_mangle]
         #[cfg(not(target_arch = "wasm32"))]
-        pub extern "C" fn $name(s: AxonStr, width: i64, fill: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
-            let result = axon_str_pad(unsafe { s.as_str() }, width, unsafe { fill.as_str() }, $start);
+        pub extern "C" fn $name(
+            s: AxonStr,
+            width: i64,
+            fill: AxonStr,
+            out_len: *mut i64,
+            out_ptr: *mut *mut u8,
+        ) {
+            let result = axon_str_pad(
+                unsafe { s.as_str() },
+                width,
+                unsafe { fill.as_str() },
+                $start,
+            );
             unsafe { write_str_out(&result, out_len, out_ptr) }
         }
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
-        pub extern "C" fn $name(s_len: i64, s_ptr: *const u8, width: i64, fill_len: i64, fill_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
-            let s = AxonStr { len: s_len, ptr: s_ptr };
-            let fill = AxonStr { len: fill_len, ptr: fill_ptr };
-            let result = axon_str_pad(unsafe { s.as_str() }, width, unsafe { fill.as_str() }, $start);
+        pub extern "C" fn $name(
+            s_len: i64,
+            s_ptr: *const u8,
+            width: i64,
+            fill_len: i64,
+            fill_ptr: *const u8,
+            out_len: *mut i64,
+            out_ptr: *mut *mut u8,
+        ) {
+            let s = AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            };
+            let fill = AxonStr {
+                len: fill_len,
+                ptr: fill_ptr,
+            };
+            let result = axon_str_pad(
+                unsafe { s.as_str() },
+                width,
+                unsafe { fill.as_str() },
+                $start,
+            );
             unsafe { write_str_out(&result, out_len, out_ptr) }
         }
     };
@@ -1843,22 +2168,24 @@ pub extern "C" fn __axon_parse_int_err(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_parse_int_err_impl(unsafe { AxonStr { len: input_len, ptr: input_ptr }.as_str() }, out_len, out_ptr)
+    __axon_parse_int_err_impl(
+        unsafe {
+            AxonStr {
+                len: input_len,
+                ptr: input_ptr,
+            }
+            .as_str()
+        },
+        out_len,
+        out_ptr,
+    )
 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
-pub extern "C" fn __axon_parse_int_err(
-    input: AxonStr,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+pub extern "C" fn __axon_parse_int_err(input: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
     __axon_parse_int_err_impl(unsafe { input.as_str() }, out_len, out_ptr)
 }
-fn __axon_parse_int_err_impl(
-    src: &str,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+fn __axon_parse_int_err_impl(src: &str, out_len: *mut i64, out_ptr: *mut *mut u8) {
     // Mirror the interpreter (interp.rs): a radix-prefixed input gets a hint.
     let lower = src.to_ascii_lowercase();
     let hint = if lower.starts_with("0x") || lower.starts_with("0o") || lower.starts_with("0b") {
@@ -1890,7 +2217,20 @@ pub extern "C" fn __axon_parse_int_radix(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_parse_int_radix_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, base, out_ok, out_val, out_len, out_ptr)
+    __axon_parse_int_radix_impl(
+        unsafe {
+            AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            }
+            .as_str()
+        },
+        base,
+        out_ok,
+        out_val,
+        out_len,
+        out_ptr,
+    )
 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1902,7 +2242,14 @@ pub extern "C" fn __axon_parse_int_radix(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_parse_int_radix_impl(unsafe { s.as_str() }, base, out_ok, out_val, out_len, out_ptr)
+    __axon_parse_int_radix_impl(
+        unsafe { s.as_str() },
+        base,
+        out_ok,
+        out_val,
+        out_len,
+        out_ptr,
+    )
 }
 #[allow(clippy::too_many_arguments)]
 fn __axon_parse_int_radix_impl(
@@ -1962,7 +2309,19 @@ pub extern "C" fn __axon_parse_float(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_parse_float_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, out_ok, out_val, out_len, out_ptr)
+    __axon_parse_float_impl(
+        unsafe {
+            AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            }
+            .as_str()
+        },
+        out_ok,
+        out_val,
+        out_len,
+        out_ptr,
+    )
 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
@@ -1975,7 +2334,13 @@ pub extern "C" fn __axon_parse_float(
 ) {
     __axon_parse_float_impl(unsafe { s.as_str() }, out_ok, out_val, out_len, out_ptr)
 }
-fn __axon_parse_float_impl(src: &str, out_ok: *mut i64, out_val: *mut f64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+fn __axon_parse_float_impl(
+    src: &str,
+    out_ok: *mut i64,
+    out_val: *mut f64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
     match src.trim().parse::<f64>() {
         Ok(f) => unsafe {
             *out_ok = 1;
@@ -1984,7 +2349,11 @@ fn __axon_parse_float_impl(src: &str, out_ok: *mut i64, out_val: *mut f64, out_l
         Err(_) => unsafe {
             *out_ok = 0;
             *out_val = 0.0;
-            write_str_out(&format!("could not parse `{src}` as a float"), out_len, out_ptr);
+            write_str_out(
+                &format!("could not parse `{src}` as a float"),
+                out_len,
+                out_ptr,
+            );
         },
     }
 }
@@ -2004,7 +2373,19 @@ pub extern "C" fn __axon_parse_bool(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    __axon_parse_bool_impl(unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() }, out_ok, out_val, out_len, out_ptr)
+    __axon_parse_bool_impl(
+        unsafe {
+            AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            }
+            .as_str()
+        },
+        out_ok,
+        out_val,
+        out_len,
+        out_ptr,
+    )
 }
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
@@ -2017,7 +2398,13 @@ pub extern "C" fn __axon_parse_bool(
 ) {
     __axon_parse_bool_impl(unsafe { s.as_str() }, out_ok, out_val, out_len, out_ptr)
 }
-fn __axon_parse_bool_impl(src: &str, out_ok: *mut i64, out_val: *mut i64, out_len: *mut i64, out_ptr: *mut *mut u8) {
+fn __axon_parse_bool_impl(
+    src: &str,
+    out_ok: *mut i64,
+    out_val: *mut i64,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
     match src.trim() {
         "true" => unsafe {
             *out_ok = 1;
@@ -2030,7 +2417,11 @@ fn __axon_parse_bool_impl(src: &str, out_ok: *mut i64, out_val: *mut i64, out_le
         _ => unsafe {
             *out_ok = 0;
             *out_val = 0;
-            write_str_out(&format!("could not parse `{src}` as a bool (expected `true` or `false`)"), out_len, out_ptr);
+            write_str_out(
+                &format!("could not parse `{src}` as a bool (expected `true` or `false`)"),
+                out_len,
+                out_ptr,
+            );
         },
     }
 }
@@ -2049,11 +2440,26 @@ pub extern "C" fn __axon_str_count(s: AxonStr, needle: AxonStr) -> i64 {
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn __axon_str_count(
-    s_len: i64, s_ptr: *const u8, n_len: i64, n_ptr: *const u8,
+    s_len: i64,
+    s_ptr: *const u8,
+    n_len: i64,
+    n_ptr: *const u8,
 ) -> i64 {
     __axon_str_count_impl(
-        unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() },
-        unsafe { AxonStr { len: n_len, ptr: n_ptr }.as_str() },
+        unsafe {
+            AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            }
+            .as_str()
+        },
+        unsafe {
+            AxonStr {
+                len: n_len,
+                ptr: n_ptr,
+            }
+            .as_str()
+        },
     )
 }
 fn __axon_str_count_impl(s: &str, needle: &str) -> i64 {
@@ -2067,11 +2473,7 @@ fn __axon_str_count_impl(s: &str, needle: &str) -> i64 {
 /// is the I-2-canonical implementation codegen now calls instead.
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
-pub extern "C" fn __axon_str_reverse(
-    s: AxonStr,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+pub extern "C" fn __axon_str_reverse(s: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let src = unsafe { s.as_str() };
     let result: String = src.chars().rev().collect();
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -2092,7 +2494,10 @@ pub extern "C" fn __axon_str_reverse(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let s = AxonStr {
+        len: s_len,
+        ptr: s_ptr,
+    };
     let src = unsafe { s.as_str() };
     let result: String = src.chars().rev().collect();
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -2114,8 +2519,16 @@ pub extern "C" fn __axon_str_to_upper(s: AxonStr, out_len: *mut i64, out_ptr: *m
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
-pub extern "C" fn __axon_str_to_upper(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
-    let s = AxonStr { len: s_len, ptr: s_ptr };
+pub extern "C" fn __axon_str_to_upper(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let s = AxonStr {
+        len: s_len,
+        ptr: s_ptr,
+    };
     let result = unsafe { s.as_str() }.to_uppercase();
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
@@ -2129,8 +2542,16 @@ pub extern "C" fn __axon_str_to_lower(s: AxonStr, out_len: *mut i64, out_ptr: *m
 
 #[cfg(target_arch = "wasm32")]
 #[no_mangle]
-pub extern "C" fn __axon_str_to_lower(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
-    let s = AxonStr { len: s_len, ptr: s_ptr };
+pub extern "C" fn __axon_str_to_lower(
+    s_len: i64,
+    s_ptr: *const u8,
+    out_len: *mut i64,
+    out_ptr: *mut *mut u8,
+) {
+    let s = AxonStr {
+        len: s_len,
+        ptr: s_ptr,
+    };
     let result = unsafe { s.as_str() }.to_lowercase();
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
@@ -2153,8 +2574,16 @@ macro_rules! axon_str_trim_fn {
         }
         #[cfg(target_arch = "wasm32")]
         #[no_mangle]
-        pub extern "C" fn $name(s_len: i64, s_ptr: *const u8, out_len: *mut i64, out_ptr: *mut *mut u8) {
-            let s = AxonStr { len: s_len, ptr: s_ptr };
+        pub extern "C" fn $name(
+            s_len: i64,
+            s_ptr: *const u8,
+            out_len: *mut i64,
+            out_ptr: *mut *mut u8,
+        ) {
+            let s = AxonStr {
+                len: s_len,
+                ptr: s_ptr,
+            };
             let result = unsafe { s.as_str() }.$method().to_string();
             unsafe { write_str_out(&result, out_len, out_ptr) }
         }
@@ -2170,11 +2599,7 @@ axon_str_trim_fn!(__axon_str_trim_end, trim_end);
 /// form (see the str_reverse ABI note above).
 #[no_mangle]
 #[cfg(not(target_arch = "wasm32"))]
-pub extern "C" fn __axon_str_digits_only(
-    s: AxonStr,
-    out_len: *mut i64,
-    out_ptr: *mut *mut u8,
-) {
+pub extern "C" fn __axon_str_digits_only(s: AxonStr, out_len: *mut i64, out_ptr: *mut *mut u8) {
     let src = unsafe { s.as_str() };
     let result: String = src.chars().filter(|c| c.is_ascii_digit()).collect();
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -2188,7 +2613,10 @@ pub extern "C" fn __axon_str_digits_only(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let s = AxonStr { len: s_len, ptr: s_ptr };
+    let s = AxonStr {
+        len: s_len,
+        ptr: s_ptr,
+    };
     let src = unsafe { s.as_str() };
     let result: String = src.chars().filter(|c| c.is_ascii_digit()).collect();
     unsafe { write_str_out(&result, out_len, out_ptr) }
@@ -2224,7 +2652,13 @@ pub extern "C" fn __axon_str_join(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let sep = unsafe { AxonStr { len: sep_len, ptr: sep_ptr }.as_str() };
+    let sep = unsafe {
+        AxonStr {
+            len: sep_len,
+            ptr: sep_ptr,
+        }
+        .as_str()
+    };
     let result = unsafe { join_axonstr_slice(slice_len, slice_data, sep) };
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
@@ -2278,9 +2712,27 @@ pub extern "C" fn __axon_str_replace(
     out_len: *mut i64,
     out_ptr: *mut *mut u8,
 ) {
-    let src = unsafe { AxonStr { len: s_len, ptr: s_ptr }.as_str() };
-    let from_s = unsafe { AxonStr { len: from_len, ptr: from_ptr }.as_str() };
-    let to_s = unsafe { AxonStr { len: to_len, ptr: to_ptr }.as_str() };
+    let src = unsafe {
+        AxonStr {
+            len: s_len,
+            ptr: s_ptr,
+        }
+        .as_str()
+    };
+    let from_s = unsafe {
+        AxonStr {
+            len: from_len,
+            ptr: from_ptr,
+        }
+        .as_str()
+    };
+    let to_s = unsafe {
+        AxonStr {
+            len: to_len,
+            ptr: to_ptr,
+        }
+        .as_str()
+    };
     let result = src.replace(from_s, to_s);
     unsafe { write_str_out(&result, out_len, out_ptr) }
 }
@@ -2516,11 +2968,26 @@ pub extern "C" fn __axon_assert_eq_str_panic(a: AxonStr, b: AxonStr) -> ! {
 #[no_mangle]
 #[cfg(target_arch = "wasm32")]
 pub extern "C" fn __axon_assert_eq_str_panic(
-    a_len: i64, a_ptr: *const u8, b_len: i64, b_ptr: *const u8,
+    a_len: i64,
+    a_ptr: *const u8,
+    b_len: i64,
+    b_ptr: *const u8,
 ) -> ! {
     __axon_assert_eq_str_panic_impl(
-        unsafe { AxonStr { len: a_len, ptr: a_ptr }.as_str() },
-        unsafe { AxonStr { len: b_len, ptr: b_ptr }.as_str() },
+        unsafe {
+            AxonStr {
+                len: a_len,
+                ptr: a_ptr,
+            }
+            .as_str()
+        },
+        unsafe {
+            AxonStr {
+                len: b_len,
+                ptr: b_ptr,
+            }
+            .as_str()
+        },
     )
 }
 fn __axon_assert_eq_str_panic_impl(a: &str, b: &str) -> ! {
@@ -2613,9 +3080,9 @@ mod verify_panic_tests {
             0.42,
         );
         assert!(msg.contains("safe_extract"), "msg: {msg}");
-        assert!(msg.contains(">="),           "msg: {msg}");
-        assert!(msg.contains("0.8"),          "msg: {msg}");
-        assert!(msg.contains("0.42"),         "msg: {msg}");
+        assert!(msg.contains(">="), "msg: {msg}");
+        assert!(msg.contains("0.8"), "msg: {msg}");
+        assert!(msg.contains("0.42"), "msg: {msg}");
         assert!(msg.contains("verify violation"), "msg: {msg}");
     }
 
@@ -2635,16 +3102,15 @@ mod verify_panic_tests {
             0.6,
         );
         assert!(msg.contains("the deploy gate"), "msg: {msg}");
-        assert!(!msg.contains("assert_deployable"), "internal symbol leaked: {msg}");
+        assert!(
+            !msg.contains("assert_deployable"),
+            "internal symbol leaked: {msg}"
+        );
     }
 
     #[test]
     fn message_handles_null_ptrs_gracefully() {
-        let msg = format_verify_panic(
-            std::ptr::null(), 0,
-            std::ptr::null(), 0,
-            0.5, 0.1,
-        );
+        let msg = format_verify_panic(std::ptr::null(), 0, std::ptr::null(), 0, 0.5, 0.1);
         // Should not panic; should contain placeholder text.
         assert!(msg.contains("<unknown>"), "msg: {msg}");
     }
@@ -2663,8 +3129,18 @@ mod migrated_builtin_tests {
     fn migrated_abs_i64_matches_interpreter() {
         let oracle = |n: i64| n.abs(); // exactly interp.rs's abs_i64
         let sweep = [
-            0i64, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i64::MAX, i64::MAX - 1, i64::MIN + 1,
+            0i64,
+            1,
+            -1,
+            42,
+            -42,
+            7,
+            -7,
+            1000,
+            -1000,
+            i64::MAX,
+            i64::MAX - 1,
+            i64::MIN + 1,
         ];
         for &n in &sweep {
             assert_eq!(
@@ -2692,10 +3168,7 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_min_i64_matches_interpreter() {
         let oracle = |a: i64, b: i64| a.min(b);
-        let vals = [
-            0i64, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i64::MAX, i64::MIN,
-        ];
+        let vals = [0i64, 1, -1, 42, -42, 7, -7, 1000, -1000, i64::MAX, i64::MIN];
         for &a in &vals {
             for &b in &vals {
                 assert_eq!(
@@ -2719,10 +3192,7 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_max_i64_matches_interpreter() {
         let oracle = |a: i64, b: i64| a.max(b);
-        let vals = [
-            0i64, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i64::MAX, i64::MIN,
-        ];
+        let vals = [0i64, 1, -1, 42, -42, 7, -7, 1000, -1000, i64::MAX, i64::MIN];
         for &a in &vals {
             for &b in &vals {
                 assert_eq!(
@@ -2746,7 +3216,17 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_sign_i64_matches_interpreter() {
         let oracle = |n: i64| n.signum();
-        for &n in &[0i64, 1, -1, 42, -42, i64::MAX, i64::MIN, i64::MAX - 1, i64::MIN + 1] {
+        for &n in &[
+            0i64,
+            1,
+            -1,
+            42,
+            -42,
+            i64::MAX,
+            i64::MIN,
+            i64::MAX - 1,
+            i64::MIN + 1,
+        ] {
             assert_eq!(
                 __axon_sign_i64(n),
                 oracle(n),
@@ -2771,7 +3251,9 @@ mod migrated_builtin_tests {
             for &lo in &vals {
                 for &hi in &vals {
                     // Skip cases where lo > hi (clamp has undefined semantics for invalid range).
-                    if lo > hi { continue; }
+                    if lo > hi {
+                        continue;
+                    }
                     assert_eq!(
                         __axon_clamp_i64(n, lo, hi),
                         oracle(n, lo, hi),
@@ -2794,11 +3276,22 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_clamp_f64_matches_interpreter() {
         let oracle = |n: f64, lo: f64, hi: f64| n.max(lo).min(hi);
-        let vals: [f64; 8] = [0.0, 1.0, -1.0, 42.0, -42.0, 100.0, f64::INFINITY, f64::NEG_INFINITY];
+        let vals: [f64; 8] = [
+            0.0,
+            1.0,
+            -1.0,
+            42.0,
+            -42.0,
+            100.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ];
         for &n in &vals {
             for &lo in &vals {
                 for &hi in &vals {
-                    if lo > hi { continue; }
+                    if lo > hi {
+                        continue;
+                    }
                     // NaN propagates naturally in both Rust and the LLVM IR version;
                     // assert_eq handles it since NaN != NaN so both sides diverge equally.
                     let result = __axon_clamp_f64(n, lo, hi);
@@ -2806,10 +3299,7 @@ mod migrated_builtin_tests {
                     if n.is_nan() || lo.is_nan() || hi.is_nan() {
                         assert!(result.is_nan(), "clamp_f64({n}, {lo}, {hi}) expected NaN");
                     } else {
-                        assert_eq!(
-                            result, expected,
-                            "clamp_f64({n}, {lo}, {hi}) diverges"
-                        );
+                        assert_eq!(result, expected, "clamp_f64({n}, {lo}, {hi}) diverges");
                     }
                 }
             }
@@ -2858,7 +3348,10 @@ mod migrated_builtin_tests {
 
     // ── Helper: build an AxonStr from a Rust &str ─────────────────────
     fn s(x: &str) -> AxonStr {
-        AxonStr { len: x.len() as i64, ptr: x.as_ptr() }
+        AxonStr {
+            len: x.len() as i64,
+            ptr: x.as_ptr(),
+        }
     }
 
     // ── parse_int_radix (BUG_HUNT #22): matches interp.rs semantics ───
@@ -2924,10 +3417,10 @@ mod migrated_builtin_tests {
     fn migrated_str_contains_common_cases() {
         assert!(__axon_str_contains(s("hello world"), s("world")));
         assert!(!(__axon_str_contains(s("hello world"), s("xyz"))));
-        assert!(__axon_str_contains(s("hello"), s("")));      // empty needle always matches
-        assert!(__axon_str_contains(s(""), s("")));             // empty haystack, empty needle
-        assert!(!(__axon_str_contains(s(""), s("a"))));           // empty haystack
-        // UTF-8 multibyte: "héllo" contains "él"
+        assert!(__axon_str_contains(s("hello"), s(""))); // empty needle always matches
+        assert!(__axon_str_contains(s(""), s(""))); // empty haystack, empty needle
+        assert!(!(__axon_str_contains(s(""), s("a")))); // empty haystack
+                                                        // UTF-8 multibyte: "héllo" contains "él"
         assert!(__axon_str_contains(s("héllo"), s("él")));
         assert!(!(__axon_str_contains(s("héllo"), s("xyz"))));
     }
@@ -2951,8 +3444,8 @@ mod migrated_builtin_tests {
     fn migrated_str_starts_with_common_cases() {
         assert!(__axon_str_starts_with(s("hello world"), s("hello")));
         assert!(!(__axon_str_starts_with(s("hello world"), s("world"))));
-        assert!(__axon_str_starts_with(s("hello"), s("")));     // empty prefix always matches
-        // UTF-8: "héllo" starts with "hé"
+        assert!(__axon_str_starts_with(s("hello"), s(""))); // empty prefix always matches
+                                                            // UTF-8: "héllo" starts with "hé"
         assert!(__axon_str_starts_with(s("héllo"), s("hé")));
     }
 
@@ -2975,8 +3468,8 @@ mod migrated_builtin_tests {
     fn migrated_str_ends_with_common_cases() {
         assert!(__axon_str_ends_with(s("hello world"), s("world")));
         assert!(!(__axon_str_ends_with(s("hello world"), s("hello"))));
-        assert!(__axon_str_ends_with(s("hello"), s("")));       // empty suffix always matches
-        // UTF-8: "héllo" ends with "llo"
+        assert!(__axon_str_ends_with(s("hello"), s(""))); // empty suffix always matches
+                                                          // UTF-8: "héllo" ends with "llo"
         assert!(__axon_str_ends_with(s("héllo"), s("llo")));
     }
 
@@ -2999,8 +3492,8 @@ mod migrated_builtin_tests {
     fn migrated_str_index_of_common_cases() {
         assert_eq!(__axon_str_index_of(s("hello world"), s("world")), 6);
         assert_eq!(__axon_str_index_of(s("hello world"), s("xyz")), -1);
-        assert_eq!(__axon_str_index_of(s("hello"), s("")), 0);           // empty needle → 0
-        // UTF-8: "héllo" — "l" first at byte 3 (h=0, é=1..2, l=3)
+        assert_eq!(__axon_str_index_of(s("hello"), s("")), 0); // empty needle → 0
+                                                               // UTF-8: "héllo" — "l" first at byte 3 (h=0, é=1..2, l=3)
         assert_eq!(__axon_str_index_of(s("héllo"), s("l")), 3);
         assert_eq!(__axon_str_index_of(s("héllo"), s("xyz")), -1);
     }
@@ -3053,12 +3546,12 @@ mod migrated_builtin_tests {
         // Note: the oracle uses i.max(0) as usize — negative indices clamp to 0
         // (matching interp.rs). Codegen's separate LLVM path does OOB for negative;
         // we match the interpreter as specified in R1 Batch 2.
-        assert_eq!(__axon_char_at(s("hello world"), 0), b'h' as i64);   // 104
-        assert_eq!(__axon_char_at(s("hello world"), 6), b'w' as i64);   // 119
-        assert_eq!(__axon_char_at(s("hello world"), 100), -1);          // OOB
+        assert_eq!(__axon_char_at(s("hello world"), 0), b'h' as i64); // 104
+        assert_eq!(__axon_char_at(s("hello world"), 6), b'w' as i64); // 119
+        assert_eq!(__axon_char_at(s("hello world"), 100), -1); // OOB
         assert_eq!(__axon_char_at(s("hello world"), -1), b'h' as i64); // -1 clamped to 0 → 'h'=104
-        assert_eq!(__axon_char_at(s(""), 0), -1);                       // empty → -1
-        // UTF-8: first byte of 'é' is 0xc3 (195) at position 1
+        assert_eq!(__axon_char_at(s(""), 0), -1); // empty → -1
+                                                  // UTF-8: first byte of 'é' is 0xc3 (195) at position 1
         assert_eq!(__axon_char_at(s("héllo"), 1), 195);
         // Emoji: first byte of '🦀' is 0xf0 (240)
         assert_eq!(__axon_char_at(s("🦀"), 0), 240);
@@ -3161,7 +3654,9 @@ mod migrated_builtin_tests {
         let s_val = "héllo";
         let start: i64 = 0;
         let end: i64 = 2;
-        let oracle = s_val.get(start.max(0) as usize..end.max(0) as usize).unwrap_or("");
+        let oracle = s_val
+            .get(start.max(0) as usize..end.max(0) as usize)
+            .unwrap_or("");
         let got = call_str_ret(|l, p| __axon_str_slice(s(s_val), start, end, l, p));
         assert_eq!(got, oracle, "str_slice unicode mid-codepoint must match");
 
@@ -3170,7 +3665,7 @@ mod migrated_builtin_tests {
             ("hello", 0i64, 5i64, "hello"),
             ("hello", 0i64, 0i64, ""),
             ("hello", -1i64, 3i64, "hel"),  // negative clamped to 0
-            ("hello", 2i64, 100i64, "llo"),  // end clamped to len
+            ("hello", 2i64, 100i64, "llo"), // end clamped to len
         ];
         for (src, start, end, expected) in cases {
             // Interp oracle: end clamped to s.len(), start clamped to 0 then min(end)
@@ -3189,9 +3684,16 @@ mod migrated_builtin_tests {
         let oracle = |x: &str| -> String { x.chars().rev().collect() };
         for &x in &["", "a", "hello", "héllo", "🦀ab", "naïve", "日本語"] {
             let got = call_str_ret(|l, p| __axon_str_reverse(s(x), l, p));
-            assert_eq!(got, oracle(x), "str_reverse({x:?}) must reverse by char, not byte");
+            assert_eq!(
+                got,
+                oracle(x),
+                "str_reverse({x:?}) must reverse by char, not byte"
+            );
             // The result must be valid UTF-8 (the #38 bug produced invalid bytes).
-            assert!(got.chars().count() == x.chars().count(), "char count preserved for {x:?}");
+            assert!(
+                got.chars().count() == x.chars().count(),
+                "char count preserved for {x:?}"
+            );
         }
     }
 
@@ -3200,7 +3702,7 @@ mod migrated_builtin_tests {
     fn str_replace_matches_interpreter_incl_empty_from() {
         let oracle = |x: &str, f: &str, t: &str| -> String { x.replace(f, t) };
         let cases = [
-            ("abc", "", "X"),     // the #39 case: empty from interleaves → "XaXbXcX"
+            ("abc", "", "X"), // the #39 case: empty from interleaves → "XaXbXcX"
             ("abc", "b", "ZZ"),
             ("aaa", "a", ""),
             ("hello world", "o", "0"),
@@ -3222,8 +3724,18 @@ mod migrated_builtin_tests {
         // (n as i64).abs() which is safe because the input is i32-range.
         let oracle = |n: i32| (n as i64).abs() as i32;
         let sweep = [
-            0i32, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i32::MAX, i32::MAX - 1, i32::MIN + 1,
+            0i32,
+            1,
+            -1,
+            42,
+            -42,
+            7,
+            -7,
+            1000,
+            -1000,
+            i32::MAX,
+            i32::MAX - 1,
+            i32::MIN + 1,
         ];
         for &n in &sweep {
             assert_eq!(
@@ -3250,10 +3762,7 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_min_i32_matches_interpreter() {
         let oracle = |a: i32, b: i32| a.min(b);
-        let vals = [
-            0i32, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i32::MAX, i32::MIN,
-        ];
+        let vals = [0i32, 1, -1, 42, -42, 7, -7, 1000, -1000, i32::MAX, i32::MIN];
         for &a in &vals {
             for &b in &vals {
                 assert_eq!(
@@ -3277,10 +3786,7 @@ mod migrated_builtin_tests {
     #[test]
     fn migrated_max_i32_matches_interpreter() {
         let oracle = |a: i32, b: i32| a.max(b);
-        let vals = [
-            0i32, 1, -1, 42, -42, 7, -7,
-            1000, -1000, i32::MAX, i32::MIN,
-        ];
+        let vals = [0i32, 1, -1, 42, -42, 7, -7, 1000, -1000, i32::MAX, i32::MIN];
         for &a in &vals {
             for &b in &vals {
                 assert_eq!(
@@ -3305,9 +3811,18 @@ mod migrated_builtin_tests {
     fn migrated_abs_f64_matches_interpreter() {
         let oracle = |x: f64| x.abs();
         let vals: [f64; 12] = [
-            0.0, -0.0, 1.0, -1.0, 3.5, -3.5,
-            100.0, -100.0, f64::INFINITY, f64::NEG_INFINITY,
-            f64::MAX, f64::MIN,
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            3.5,
+            -3.5,
+            100.0,
+            -100.0,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::MAX,
+            f64::MIN,
         ];
         for &x in &vals {
             assert_eq!(

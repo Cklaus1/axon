@@ -89,10 +89,14 @@ fn provenance_source() -> String {
 /// freely without holding the global lock.
 pub fn provenance_records_for(name: &str) -> Vec<Record> {
     let guard = match store().lock() {
-        Ok(g)  => g,
+        Ok(g) => g,
         Err(p) => p.into_inner(), // recover from poisoning rather than panic
     };
-    guard.iter().filter(|r| r.fn_name == name).cloned().collect()
+    guard
+        .iter()
+        .filter(|r| r.fn_name == name)
+        .cloned()
+        .collect()
 }
 
 fn record(fn_name: &str, score: f64) {
@@ -107,7 +111,12 @@ fn record_with_input(fn_name: &str, score: f64, input: Option<i64>) {
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     if let Ok(mut g) = store().lock() {
-        g.push(Record { fn_name: fn_name.to_string(), score, ts_ms: ts, input });
+        g.push(Record {
+            fn_name: fn_name.to_string(),
+            score,
+            ts_ms: ts,
+            input,
+        });
     }
 }
 
@@ -241,15 +250,14 @@ fn slice_to_str<'a>(ptr: *const u8, len: i64) -> &'a str {
 /// JSON line as `"score":<f64>` so external tooling can read it without
 /// re-parsing the payload.
 fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Result<()> {
-    let dir = provenance_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir")
-    })?;
+    let dir = provenance_dir()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir"))?;
     fs::create_dir_all(&dir)?;
     let path = dir.join("provenance.jsonl");
 
     let (event, body) = match payload {
         "call" | "return" => (payload, ""),
-        other             => ("event", other),
+        other => ("event", other),
     };
 
     let ts = SystemTime::now()
@@ -261,18 +269,18 @@ fn log_event(fn_name: &str, payload: &str, score: Option<f64>) -> std::io::Resul
     let line = match score {
         Some(s) => format!(
             "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":{ev_q},\"payload\":{pl_q},\"score\":{s}}}\n",
-            ts    = ts,
-            fn_q  = json_quote(fn_name),
-            ev_q  = json_quote(event),
-            pl_q  = json_quote(body),
-            s     = format_f64(s),
+            ts = ts,
+            fn_q = json_quote(fn_name),
+            ev_q = json_quote(event),
+            pl_q = json_quote(body),
+            s = format_f64(s),
         ),
         None => format!(
             "{{\"ts_ms\":{ts},\"fn\":{fn_q},\"event\":{ev_q},\"payload\":{pl_q}}}\n",
-            ts    = ts,
-            fn_q  = json_quote(fn_name),
-            ev_q  = json_quote(event),
-            pl_q  = json_quote(body),
+            ts = ts,
+            fn_q = json_quote(fn_name),
+            ev_q = json_quote(event),
+            pl_q = json_quote(body),
         ),
     };
 
@@ -295,9 +303,8 @@ fn log_adaptive_return(
     score: f64,
     input: Option<i64>,
 ) -> std::io::Result<()> {
-    let dir = provenance_dir().ok_or_else(|| {
-        std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir")
-    })?;
+    let dir = provenance_dir()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no cache dir"))?;
     fs::create_dir_all(&dir)?;
     let path = dir.join("provenance.jsonl");
 
@@ -355,11 +362,20 @@ pub extern "C" fn __axon_log_agent_action(
     let action = slice_to_str(action_ptr, action_len);
     let caps = slice_to_str(caps_ptr, caps_len);
     let Some(dir) = provenance_dir() else { return };
-    if fs::create_dir_all(&dir).is_err() { return; }
+    if fs::create_dir_all(&dir).is_err() {
+        return;
+    }
     let path = dir.join("provenance.jsonl");
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
     let src = provenance_source();
-    let src_field = if src.is_empty() { String::new() } else { format!(",\"src\":{}", json_quote(&src)) };
+    let src_field = if src.is_empty() {
+        String::new()
+    } else {
+        format!(",\"src\":{}", json_quote(&src))
+    };
     let line = format!(
         "{{\"ts_ms\":{ts},\"fn\":{f},\"event\":\"agent_action\",\"zone\":\"agent\",\"action\":{a},\"caps_used\":{c}{src_field}}}\n",
         f = json_quote(fn_name),
@@ -396,13 +412,13 @@ fn json_quote(s: &str) -> String {
     out.push('"');
     for c in s.chars() {
         match c {
-            '"'  => out.push_str("\\\""),
+            '"' => out.push_str("\\\""),
             '\\' => out.push_str("\\\\"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
             '\t' => out.push_str("\\t"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c    => out.push(c),
+            c => out.push(c),
         }
     }
     out.push('"');
@@ -452,8 +468,8 @@ mod tests {
 
     #[test]
     fn json_quote_escapes_specials() {
-        assert_eq!(json_quote("a\"b"),  "\"a\\\"b\"");
-        assert_eq!(json_quote("a\nb"),  "\"a\\nb\"");
+        assert_eq!(json_quote("a\"b"), "\"a\\\"b\"");
+        assert_eq!(json_quote("a\nb"), "\"a\\nb\"");
     }
 
     #[test]
@@ -511,8 +527,12 @@ mod tests {
         __axon_provenance_log_ret_i64_in(name.as_ptr(), name.len() as i64, 20, 400);
         let recs = provenance_records_for("f11_test_in_basic");
         assert!(recs.len() >= 2);
-        assert!(recs.iter().any(|r| r.input == Some(10) && (r.score - 100.0).abs() < 1e-9));
-        assert!(recs.iter().any(|r| r.input == Some(20) && (r.score - 400.0).abs() < 1e-9));
+        assert!(recs
+            .iter()
+            .any(|r| r.input == Some(10) && (r.score - 100.0).abs() < 1e-9));
+        assert!(recs
+            .iter()
+            .any(|r| r.input == Some(20) && (r.score - 400.0).abs() < 1e-9));
     }
 
     #[test]

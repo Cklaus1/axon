@@ -23,6 +23,7 @@ pub enum WebhookEvent {
 }
 
 impl WebhookEvent {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         match s {
             "unexplained-deploy" => Ok(Self::UnexplainedDeploy),
@@ -49,6 +50,7 @@ pub enum WebhookProvider {
 }
 
 impl WebhookProvider {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "slack" => Ok(Self::Slack),
@@ -87,10 +89,20 @@ pub fn save_webhooks(ledger_dir: &Path, hooks: &[Webhook]) -> Result<()> {
 }
 
 /// Add a new webhook. Returns the new hook's id.
-pub fn add_webhook(ledger_dir: &Path, event: WebhookEvent, provider: WebhookProvider, url: &str) -> Result<String> {
+pub fn add_webhook(
+    ledger_dir: &Path,
+    event: WebhookEvent,
+    provider: WebhookProvider,
+    url: &str,
+) -> Result<String> {
     let mut hooks = load_webhooks(ledger_dir)?;
     let id = format!("wh_{:08x}", hooks.len() + 1);
-    hooks.push(Webhook { id: id.clone(), event, provider, url: url.to_string() });
+    hooks.push(Webhook {
+        id: id.clone(),
+        event,
+        provider,
+        url: url.to_string(),
+    });
     save_webhooks(ledger_dir, &hooks)?;
     Ok(id)
 }
@@ -113,17 +125,25 @@ pub fn remove_webhook(ledger_dir: &Path, id: &str) -> Result<bool> {
 pub fn fire_webhooks(ledger_dir: &Path, event: &WebhookEvent, payload: &Value) {
     let hooks = match load_webhooks(ledger_dir) {
         Ok(h) => h,
-        Err(e) => { eprintln!("axon-ledger webhook: could not load config: {e}"); return; }
+        Err(e) => {
+            eprintln!("axon-ledger webhook: could not load config: {e}");
+            return;
+        }
     };
 
     for hook in hooks.iter().filter(|h| &h.event == event) {
         match deliver_webhook(hook, payload) {
-            Ok(code) if code == "200" || code == "202" || code == "204" =>
-                eprintln!("axon-ledger webhook: {} fired → HTTP {code}", hook.id),
-            Ok(code) =>
-                eprintln!("axon-ledger webhook: {} returned HTTP {code} — check the URL or key", hook.id),
-            Err(e) =>
-                eprintln!("axon-ledger webhook: {} delivery failed (curl?): {e}", hook.id),
+            Ok(code) if code == "200" || code == "202" || code == "204" => {
+                eprintln!("axon-ledger webhook: {} fired → HTTP {code}", hook.id)
+            }
+            Ok(code) => eprintln!(
+                "axon-ledger webhook: {} returned HTTP {code} — check the URL or key",
+                hook.id
+            ),
+            Err(e) => eprintln!(
+                "axon-ledger webhook: {} delivery failed (curl?): {e}",
+                hook.id
+            ),
         }
     }
 }
@@ -184,14 +204,20 @@ fn format_slack(raw: &Value) -> Value {
     // List unexplained commits
     if let Some(arr) = raw["unexplained_commits"].as_array() {
         if !arr.is_empty() {
-            let lines: Vec<String> = arr.iter().take(5).map(|c| {
-                let sha = c["sha"].as_str().unwrap_or("?");
-                let msg = c["message"].as_str().unwrap_or("?");
-                let author = c["author"].as_str().unwrap_or("?");
-                format!("• `{}` {} — {}", &sha[..sha.len().min(10)], msg, author)
-            }).collect();
+            let lines: Vec<String> = arr
+                .iter()
+                .take(5)
+                .map(|c| {
+                    let sha = c["sha"].as_str().unwrap_or("?");
+                    let msg = c["message"].as_str().unwrap_or("?");
+                    let author = c["author"].as_str().unwrap_or("?");
+                    format!("• `{}` {} — {}", &sha[..sha.len().min(10)], msg, author)
+                })
+                .collect();
             let mut text = lines.join("\n");
-            if arr.len() > 5 { text.push_str(&format!("\n…and {} more", arr.len() - 5)); }
+            if arr.len() > 5 {
+                text.push_str(&format!("\n…and {} more", arr.len() - 5));
+            }
             blocks.push(json!({
                 "type": "section",
                 "text": { "type": "mrkdwn", "text": format!("*Unexplained commits:*\n{text}") }
@@ -212,7 +238,13 @@ fn format_pagerduty(raw: &Value) -> Value {
     let range = raw["range"].as_str().unwrap_or("unknown range");
     let coverage = raw["coverage_pct"].as_u64().unwrap_or(0);
 
-    let severity = if unexplained == 0 { "info" } else if coverage < 50 { "critical" } else { "warning" };
+    let severity = if unexplained == 0 {
+        "info"
+    } else if coverage < 50 {
+        "critical"
+    } else {
+        "warning"
+    };
     let summary = if unexplained == 0 {
         format!("axon-ledger: all commits explained for {range}")
     } else {
@@ -239,23 +271,44 @@ mod tests {
 
     #[test]
     fn test_webhook_event_roundtrip() {
-        assert_eq!(WebhookEvent::from_str("unexplained-deploy").unwrap(), WebhookEvent::UnexplainedDeploy);
+        assert_eq!(
+            WebhookEvent::from_str("unexplained-deploy").unwrap(),
+            WebhookEvent::UnexplainedDeploy
+        );
         assert!(WebhookEvent::from_str("unknown").is_err());
     }
 
     #[test]
     fn test_webhook_provider_roundtrip() {
-        assert_eq!(WebhookProvider::from_str("slack").unwrap(), WebhookProvider::Slack);
-        assert_eq!(WebhookProvider::from_str("pagerduty").unwrap(), WebhookProvider::PagerDuty);
-        assert_eq!(WebhookProvider::from_str("pd").unwrap(), WebhookProvider::PagerDuty);
-        assert_eq!(WebhookProvider::from_str("generic").unwrap(), WebhookProvider::Generic);
+        assert_eq!(
+            WebhookProvider::from_str("slack").unwrap(),
+            WebhookProvider::Slack
+        );
+        assert_eq!(
+            WebhookProvider::from_str("pagerduty").unwrap(),
+            WebhookProvider::PagerDuty
+        );
+        assert_eq!(
+            WebhookProvider::from_str("pd").unwrap(),
+            WebhookProvider::PagerDuty
+        );
+        assert_eq!(
+            WebhookProvider::from_str("generic").unwrap(),
+            WebhookProvider::Generic
+        );
         assert!(WebhookProvider::from_str("unknown").is_err());
     }
 
     #[test]
     fn test_add_and_load_webhooks() {
         let dir = tempdir().unwrap();
-        let id = add_webhook(dir.path(), WebhookEvent::UnexplainedDeploy, WebhookProvider::Slack, "https://hooks.slack.com/test").unwrap();
+        let id = add_webhook(
+            dir.path(),
+            WebhookEvent::UnexplainedDeploy,
+            WebhookProvider::Slack,
+            "https://hooks.slack.com/test",
+        )
+        .unwrap();
         assert!(id.starts_with("wh_"));
         let hooks = load_webhooks(dir.path()).unwrap();
         assert_eq!(hooks.len(), 1);
@@ -266,7 +319,13 @@ mod tests {
     #[test]
     fn test_remove_webhook() {
         let dir = tempdir().unwrap();
-        let id = add_webhook(dir.path(), WebhookEvent::UnexplainedDeploy, WebhookProvider::Generic, "https://example.com").unwrap();
+        let id = add_webhook(
+            dir.path(),
+            WebhookEvent::UnexplainedDeploy,
+            WebhookProvider::Generic,
+            "https://example.com",
+        )
+        .unwrap();
         assert!(remove_webhook(dir.path(), &id).unwrap());
         assert!(!remove_webhook(dir.path(), &id).unwrap()); // already gone
         assert!(load_webhooks(dir.path()).unwrap().is_empty());

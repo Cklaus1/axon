@@ -11,6 +11,9 @@ use std::cell::RefCell;
 // a fixed 0 (no clock there), so the import is native/test-only.
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{SystemTime, UNIX_EPOCH};
+// reqwest blocking client is gated on asi-runtime (same feature that enables axon-ai).
+#[cfg(feature = "asi-runtime")]
+use reqwest;
 
 // ── The trait ────────────────────────────────────────────────────────────────
 
@@ -33,6 +36,71 @@ pub trait AxonHost {
     fn exec(&self, _cmd: &str, _args: &[String]) -> Result<String, String> {
         Err("exec is not permitted by the active host".to_string())
     }
+
+    /// HTTP GET `url` with `headers` (a JSON object string, `"{}"` for none).
+    /// Returns Ok(body) on 2xx, Err("HTTP <status>: <body>") on non-2xx, or
+    /// Err(message) on transport failure. Defaults to **denied** — a virtual
+    /// (wasm/sandbox) host is network-free unless it opts in. `DefaultHost`
+    /// (native, `asi-runtime` feature) overrides this to use a blocking reqwest
+    /// client.
+    fn http_get(&self, _url: &str, _headers: &str) -> Result<String, String> {
+        Err("http_get requires the asi-runtime feature or a network-capable host".to_string())
+    }
+
+    /// HTTP POST `url` with `headers` (JSON object string) and `body`.
+    /// Returns Ok(response_body) on 2xx, Err("HTTP <status>: <body>") on non-2xx,
+    /// or Err(message) on transport failure. Defaults to **denied**.
+    fn http_post(&self, _url: &str, _headers: &str, _body: &str) -> Result<String, String> {
+        Err("http_post requires the asi-runtime feature or a network-capable host".to_string())
+    }
+
+    /// Stream Server-Sent Events from `url`. Sets `Accept: text/event-stream`
+    /// automatically. `headers` is a JSON object string (`""` for none). Blocks
+    /// until the stream closes, collecting each SSE `data:` payload into a
+    /// `Vec<String>` (one entry per event, multiline events joined with `\n`).
+    /// Returns `Ok(events)` or `Err(message)`. Defaults to **denied**.
+    fn http_sse(&self, _url: &str, _headers: &str) -> Result<Vec<String>, String> {
+        Err("http_sse requires the asi-runtime feature or a network-capable host".to_string())
+    }
+
+    /// Like `http_sse` but issues a POST request with `body`. Required by LLM
+    /// provider streaming APIs (Anthropic, OpenAI) which use POST + stream=true.
+    /// Sets `Accept: text/event-stream` automatically. Defaults to **denied**.
+    fn http_sse_post(
+        &self,
+        _url: &str,
+        _headers: &str,
+        _body: &str,
+    ) -> Result<Vec<String>, String> {
+        Err("http_sse_post requires the asi-runtime feature or a network-capable host".to_string())
+    }
+}
+
+// ── SSE parsing ─────────────────────────────────────────────────────────────
+
+/// Collect Server-Sent Events from any `BufRead` source.
+/// One entry per event; multiline events (multiple `data:` fields before the
+/// blank-line boundary) are joined with `\n`.  `event:`, `id:`, and `retry:`
+/// fields are silently ignored — only `data:` payloads are returned.
+#[allow(dead_code)]
+pub(crate) fn collect_sse_events(reader: impl std::io::BufRead) -> Result<Vec<String>, String> {
+    let mut events: Vec<String> = Vec::new();
+    let mut current_data = String::new();
+    for line in reader.lines() {
+        let line = line.map_err(|e| format!("http_sse: read error: {e}"))?;
+        if let Some(data) = line.strip_prefix("data: ") {
+            if !current_data.is_empty() {
+                current_data.push('\n');
+            }
+            current_data.push_str(data);
+        } else if line.is_empty() && !current_data.is_empty() {
+            events.push(std::mem::take(&mut current_data));
+        }
+    }
+    if !current_data.is_empty() {
+        events.push(current_data);
+    }
+    Ok(events)
 }
 
 // ── Default implementation ───────────────────────────────────────────────────
@@ -86,10 +154,113 @@ impl AxonHost for DefaultHost {
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).into_owned())
         } else {
-            let code = output.status.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".to_string());
+            let code = output
+                .status
+                .code()
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "signal".to_string());
             let stderr = String::from_utf8_lossy(&output.stderr);
             Err(format!("exec `{cmd}` exited {code}: {}", stderr.trim()))
         }
+    }
+
+    #[cfg(feature = "asi-runtime")]
+    fn http_get(&self, url: &str, headers: &str) -> Result<String, String> {
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.get(url);
+        if !headers.is_empty() && headers != "{}" {
+            let hmap: std::collections::HashMap<String, String> = serde_json::from_str(headers)
+                .map_err(|e| format!("http_get: invalid headers JSON: {e}"))?;
+            for (k, v) in hmap {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+        let resp = req.send().map_err(|e| format!("http_get: {e}"))?;
+        let status = resp.status();
+        let body = resp
+            .text()
+            .map_err(|e| format!("http_get: body read failed: {e}"))?;
+        if status.is_success() {
+            Ok(body)
+        } else {
+            Err(format!("http_get: HTTP {status}: {body}"))
+        }
+    }
+
+    #[cfg(feature = "asi-runtime")]
+    fn http_post(&self, url: &str, headers: &str, body: &str) -> Result<String, String> {
+        let client = reqwest::blocking::Client::new();
+        let mut req = client.post(url).body(body.to_string());
+        if !headers.is_empty() && headers != "{}" {
+            let hmap: std::collections::HashMap<String, String> = serde_json::from_str(headers)
+                .map_err(|e| format!("http_post: invalid headers JSON: {e}"))?;
+            for (k, v) in hmap {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+        let resp = req.send().map_err(|e| format!("http_post: {e}"))?;
+        let status = resp.status();
+        let resp_body = resp
+            .text()
+            .map_err(|e| format!("http_post: body read failed: {e}"))?;
+        if status.is_success() {
+            Ok(resp_body)
+        } else {
+            Err(format!("http_post: HTTP {status}: {resp_body}"))
+        }
+    }
+
+    #[cfg(feature = "asi-runtime")]
+    fn http_sse(&self, url: &str, headers: &str) -> Result<Vec<String>, String> {
+        use std::io::BufReader;
+        let client = reqwest::blocking::Client::new();
+        let mut req = client
+            .get(url)
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache");
+        if !headers.is_empty() {
+            let hmap: std::collections::HashMap<String, String> = serde_json::from_str(headers)
+                .map_err(|e| format!("http_sse: invalid headers JSON: {e}"))?;
+            for (k, v) in hmap {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+        let resp = req.send().map_err(|e| format!("http_sse: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .map_err(|e| format!("http_sse: body read failed: {e}"))?;
+            return Err(format!("http_sse: HTTP {status}: {body}"));
+        }
+        collect_sse_events(BufReader::new(resp))
+    }
+
+    #[cfg(feature = "asi-runtime")]
+    fn http_sse_post(&self, url: &str, headers: &str, body: &str) -> Result<Vec<String>, String> {
+        use std::io::BufReader;
+        let client = reqwest::blocking::Client::new();
+        let mut req = client
+            .post(url)
+            .header("Accept", "text/event-stream")
+            .header("Cache-Control", "no-cache")
+            .body(body.to_string());
+        if !headers.is_empty() {
+            let hmap: std::collections::HashMap<String, String> = serde_json::from_str(headers)
+                .map_err(|e| format!("http_sse_post: invalid headers JSON: {e}"))?;
+            for (k, v) in hmap {
+                req = req.header(k.as_str(), v.as_str());
+            }
+        }
+        let resp = req.send().map_err(|e| format!("http_sse_post: {e}"))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let err_body = resp
+                .text()
+                .map_err(|e| format!("http_sse_post: body read failed: {e}"))?;
+            return Err(format!("http_sse_post: HTTP {status}: {err_body}"));
+        }
+        collect_sse_events(BufReader::new(resp))
     }
 }
 
@@ -158,16 +329,16 @@ mod tests {
     #[derive(Clone)]
     struct TestHost {
         files: std::sync::Arc<Mutex<HashMap<String, String>>>,
-        env:   std::sync::Arc<Mutex<HashMap<String, String>>>,
-        now:   std::sync::Arc<Mutex<Option<i64>>>,
+        env: std::sync::Arc<Mutex<HashMap<String, String>>>,
+        now: std::sync::Arc<Mutex<Option<i64>>>,
     }
 
     impl TestHost {
         fn new() -> Self {
             Self {
                 files: std::sync::Arc::new(Mutex::new(HashMap::new())),
-                env:   std::sync::Arc::new(Mutex::new(HashMap::new())),
-                now:   std::sync::Arc::new(Mutex::new(None)),
+                env: std::sync::Arc::new(Mutex::new(HashMap::new())),
+                now: std::sync::Arc::new(Mutex::new(None)),
             }
         }
     }
@@ -183,7 +354,10 @@ mod tests {
         }
 
         fn write_file(&self, path: &str, data: &str) -> Result<(), String> {
-            self.files.lock().unwrap().insert(path.to_string(), data.to_string());
+            self.files
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), data.to_string());
             Ok(())
         }
 
@@ -194,7 +368,12 @@ mod tests {
         fn now_ms(&self) -> i64 {
             let mut guard = self.now.lock().unwrap();
             if guard.is_none() {
-                *guard = Some(SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0));
+                *guard = Some(
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0),
+                );
             }
             guard.unwrap()
         }
@@ -239,26 +418,23 @@ mod tests {
         let host = TestHost::new();
 
         // Pre-seed env.
-        host.env.lock().unwrap().insert("MY_KEY".into(), "my_val".into());
+        host.env
+            .lock()
+            .unwrap()
+            .insert("MY_KEY".into(), "my_val".into());
 
         with_host_override(Box::new(host.clone()), || {
             // write_file goes to the in-memory map.
             assert!(with_host(|h| h.write_file("/a", "aaa")).is_ok());
 
             // read_file reads from the in-memory map.
-            assert_eq!(
-                with_host(|h| h.read_file("/a")).unwrap(),
-                "aaa"
-            );
+            assert_eq!(with_host(|h| h.read_file("/a")).unwrap(), "aaa");
 
             // A path not in the map errors.
             assert!(with_host(|h| h.read_file("/notfound")).is_err());
 
             // env_var is intercepted.
-            assert_eq!(
-                with_host(|h| h.env_var("MY_KEY")).unwrap(),
-                "my_val"
-            );
+            assert_eq!(with_host(|h| h.env_var("MY_KEY")).unwrap(), "my_val");
             assert!(with_host(|h| h.env_var("GHOST")).is_none());
         });
 
@@ -288,10 +464,7 @@ mod tests {
         });
 
         // After restore, env_var goes to real std::env.
-        assert_eq!(
-            with_host(|h| h.env_var(&pre_key)).unwrap(),
-            "preset_value"
-        );
+        assert_eq!(with_host(|h| h.env_var(&pre_key)).unwrap(), "preset_value");
     }
 
     /// Now_ms from DefaultHost is a reasonable epoch value.
@@ -331,5 +504,77 @@ mod tests {
                 "inner override must restore the outer host, not the global default"
             );
         });
+    }
+
+    // ── SSE parsing tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn sse_parses_two_simple_events() {
+        let raw = b"data: hello\n\ndata: world\n\n";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert_eq!(events, vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn sse_joins_multiline_event_data() {
+        let raw = b"data: line1\ndata: line2\n\ndata: single\n\n";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert_eq!(events, vec!["line1\nline2", "single"]);
+    }
+
+    #[test]
+    fn sse_skips_event_id_retry_fields() {
+        let raw = b"id: 1\nevent: update\nretry: 3000\ndata: payload\n\n";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert_eq!(events, vec!["payload"]);
+    }
+
+    #[test]
+    fn sse_empty_stream_returns_no_events() {
+        let raw = b"";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn sse_done_sentinel_is_preserved_verbatim() {
+        // LLM providers end streams with `data: [DONE]` — callers filter this.
+        let raw = b"data: {\"delta\":\"hi\"}\n\ndata: [DONE]\n\n";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert_eq!(events, vec!["{\"delta\":\"hi\"}", "[DONE]"]);
+    }
+
+    #[test]
+    fn sse_trailing_data_without_blank_line_flushed() {
+        // Stream closed without a final blank line — partial event still emitted.
+        let raw = b"data: hello\n\ndata: trailing";
+        let events = collect_sse_events(raw.as_ref()).unwrap();
+        assert_eq!(events, vec!["hello", "trailing"]);
+    }
+
+    #[test]
+    fn default_host_http_sse_denied_without_asi_runtime() {
+        // Without the asi-runtime feature, the *trait default* returns Err.
+        // With the feature enabled the DefaultHost override is active, so this
+        // test only validates the deny path via a virtual (non-Default) host.
+        struct DenyHost;
+        impl AxonHost for DenyHost {
+            fn read_file(&self, _: &str) -> Result<String, String> {
+                Ok(String::new())
+            }
+            fn write_file(&self, _: &str, _: &str) -> Result<(), String> {
+                Ok(())
+            }
+            fn env_var(&self, _: &str) -> Option<String> {
+                None
+            }
+            fn now_ms(&self) -> i64 {
+                0
+            }
+            fn sleep_ms(&self, _: u64) {}
+            // http_sse intentionally NOT overridden — inherits the deny default.
+        }
+        let h = DenyHost;
+        assert!(h.http_sse("http://example.com", "").is_err());
     }
 }

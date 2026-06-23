@@ -29,7 +29,10 @@ impl Span {
 
 impl From<std::ops::Range<usize>> for Span {
     fn from(r: std::ops::Range<usize>) -> Self {
-        Span { start: r.start, end: r.end }
+        Span {
+            start: r.start,
+            end: r.end,
+        }
     }
 }
 
@@ -47,7 +50,10 @@ impl SourceMap {
                 line_starts.push(i + 1);
             }
         }
-        SourceMap { line_starts, source }
+        SourceMap {
+            line_starts,
+            source,
+        }
     }
 
     /// Convert byte offset to 1-indexed (line, col).
@@ -60,8 +66,14 @@ impl SourceMap {
     /// Extract the text of the given line (0-indexed).
     pub fn line_text(&self, line_idx: usize) -> &str {
         let start = self.line_starts[line_idx];
-        let end = self.line_starts.get(line_idx + 1).copied().unwrap_or(self.source.len());
-        self.source[start..end].trim_end_matches('\n').trim_end_matches('\r')
+        let end = self
+            .line_starts
+            .get(line_idx + 1)
+            .copied()
+            .unwrap_or(self.source.len());
+        self.source[start..end]
+            .trim_end_matches('\n')
+            .trim_end_matches('\r')
     }
 
     /// Render a diagnostic caret block like rustc.

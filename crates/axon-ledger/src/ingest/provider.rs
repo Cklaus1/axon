@@ -31,13 +31,16 @@ pub enum Provider {
 }
 
 impl Provider {
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "datadog" | "dd" => Ok(Self::Datadog),
             "sentry" => Ok(Self::Sentry),
             "posthog" | "ph" => Ok(Self::PostHog),
             "generic" | "json" => Ok(Self::Generic),
-            other => anyhow::bail!("Unknown provider: {other}. Valid: datadog, sentry, posthog, generic"),
+            other => {
+                anyhow::bail!("Unknown provider: {other}. Valid: datadog, sentry, posthog, generic")
+            }
         }
     }
 
@@ -83,7 +86,10 @@ fn normalize_datadog(raw: &Value) -> Value {
         metrics.insert("alert_triggered".to_string(), json!(status != "recovered"));
     }
     if let Some(status) = raw.get("status").and_then(|v| v.as_str()) {
-        metrics.insert("status_ok".to_string(), json!(status == "OK" || status == "Recovered"));
+        metrics.insert(
+            "status_ok".to_string(),
+            json!(status == "OK" || status == "Recovered"),
+        );
     }
 
     // Series export
@@ -91,7 +97,8 @@ fn normalize_datadog(raw: &Value) -> Value {
         for s in series {
             if let Some(metric) = s.get("metric").and_then(|v| v.as_str()) {
                 // Take the last point value
-                if let Some(last_val) = s.get("points")
+                if let Some(last_val) = s
+                    .get("points")
                     .and_then(|p| p.as_array())
                     .and_then(|pts| pts.last())
                     .and_then(|pt| pt.as_array())
@@ -106,7 +113,8 @@ fn normalize_datadog(raw: &Value) -> Value {
 
     // Tags as metadata
     if let Some(tags) = raw.get("tags").and_then(|v| v.as_array()) {
-        let tag_strs: Vec<String> = tags.iter()
+        let tag_strs: Vec<String> = tags
+            .iter()
             .filter_map(|t| t.as_str().map(String::from))
             .collect();
         metrics.insert("tags".to_string(), json!(tag_strs));
@@ -132,7 +140,10 @@ fn normalize_sentry(raw: &Value) -> Value {
         metrics.insert("affected_users".to_string(), json!(users));
     }
     if let Some(level) = raw.get("level").and_then(|v| v.as_str()) {
-        metrics.insert("is_error".to_string(), json!(level == "error" || level == "fatal"));
+        metrics.insert(
+            "is_error".to_string(),
+            json!(level == "error" || level == "fatal"),
+        );
         metrics.insert("is_fatal".to_string(), json!(level == "fatal"));
         metrics.insert("level".to_string(), json!(level));
     }
@@ -150,11 +161,17 @@ fn normalize_sentry(raw: &Value) -> Value {
     // Nested data.count shape from Sentry API
     if let Some(data) = raw.get("data") {
         if let Some(count) = data.get("count").and_then(|v| v.as_f64()) {
-            metrics.entry("event_count".to_string()).or_insert(json!(count));
+            metrics
+                .entry("event_count".to_string())
+                .or_insert(json!(count));
         }
     }
 
-    if metrics.is_empty() { normalize_generic(raw) } else { Value::Object(metrics) }
+    if metrics.is_empty() {
+        normalize_generic(raw)
+    } else {
+        Value::Object(metrics)
+    }
 }
 
 fn normalize_posthog(raw: &Value) -> Value {
@@ -170,7 +187,9 @@ fn normalize_posthog(raw: &Value) -> Value {
     }
     if let Some(props) = raw.get("properties").and_then(|v| v.as_object()) {
         for (k, v) in props {
-            if k.starts_with('$') { continue; } // skip PostHog internal props
+            if k.starts_with('$') {
+                continue;
+            } // skip PostHog internal props
             if v.is_f64() || v.is_i64() || v.is_u64() || v.is_boolean() {
                 let safe_key = k.replace(['.', '-', ' '], "_");
                 metrics.insert(safe_key, v.clone());
@@ -191,7 +210,11 @@ fn normalize_posthog(raw: &Value) -> Value {
         }
     }
 
-    if metrics.is_empty() { normalize_generic(raw) } else { Value::Object(metrics) }
+    if metrics.is_empty() {
+        normalize_generic(raw)
+    } else {
+        Value::Object(metrics)
+    }
 }
 
 fn normalize_generic(raw: &Value) -> Value {
@@ -216,11 +239,20 @@ pub fn ingest_provider_outcome(
     file: &Path,
     store: &mut Store,
 ) -> Result<LedgerRecord> {
-    let why_result = why(commit_sha_prefix, store)
-        .with_context(|| format!("Commit '{}' not found — run `ingest git` first", commit_sha_prefix))?;
+    let why_result = why(commit_sha_prefix, store).with_context(|| {
+        format!(
+            "Commit '{}' not found — run `ingest git` first",
+            commit_sha_prefix
+        )
+    })?;
     let commit_id = why_result.commit.id.clone();
-    let commit_sha = why_result.commit.payload
-        .get("sha").and_then(|v| v.as_str()).unwrap_or(commit_sha_prefix).to_string();
+    let commit_sha = why_result
+        .commit
+        .payload
+        .get("sha")
+        .and_then(|v| v.as_str())
+        .unwrap_or(commit_sha_prefix)
+        .to_string();
 
     let raw_str = fs::read_to_string(file)
         .with_context(|| format!("Cannot read outcome file: {}", file.display()))?;
@@ -316,7 +348,10 @@ mod tests {
         assert_eq!(m["event_name"], "signup");
         assert_eq!(m["conversion_rate"], 0.42);
         assert_eq!(m["paid"], true);
-        assert!(m.get("$browser").is_none(), "internal props should be skipped");
+        assert!(
+            m.get("$browser").is_none(),
+            "internal props should be skipped"
+        );
     }
 
     #[test]

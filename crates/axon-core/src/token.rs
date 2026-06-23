@@ -2,91 +2,164 @@ use logos::Logos;
 
 #[derive(Logos, Debug, Clone, PartialEq)]
 #[logos(skip r"[ \t\r]+")] // skip non-newline whitespace; \n is emitted as Newline
-#[logos(skip r"//[^\n]*")]   // skip line comments
-// Block comments are NOT skipped — they are emitted as BlockComment tokens so
-// the lexer can detect newlines inside them and propagate ASI boundaries.
+#[logos(skip r"//[^\n]*")] // skip line comments
+                           // Block comments are NOT skipped — they are emitted as BlockComment tokens so
+                           // the lexer can detect newlines inside them and propagate ASI boundaries.
 pub enum Token {
     // Keywords
-    #[token("fn")]    Fn,
-    #[token("let")]   Let,
-    #[token("own")]   Own,
-    #[token("ref")]   Ref,
-    #[token("type")]  Type,
-    #[token("enum")]  Enum,
-    #[token("mod")]   Mod,
-    #[token("use")]   Use,
-    #[token("match")] Match,
-    #[token("spawn")] Spawn,
-    #[token("select")]Select,
-    #[token("comptime")] Comptime,
-    #[token("if")]    If,
-    #[token("else")]  Else,
-    #[token("while")] While,
-    #[token("break")]  Break,
-    #[token("continue")] Continue,
-    #[token("return")]Return,
-    #[token("Ok")]    Ok,
-    #[token("Err")]   Err,
-    #[token("Some")]  Some,
-    #[token("None")]  None,
-    #[token("true")]  True,
-    #[token("false")] False,
-    #[token("pub")]   Pub,
+    #[token("fn")]
+    Fn,
+    #[token("let")]
+    Let,
+    #[token("own")]
+    Own,
+    #[token("ref")]
+    Ref,
+    #[token("type")]
+    Type,
+    #[token("enum")]
+    Enum,
+    #[token("mod")]
+    Mod,
+    #[token("use")]
+    Use,
+    #[token("match")]
+    Match,
+    #[token("spawn")]
+    Spawn,
+    #[token("select")]
+    Select,
+    #[token("comptime")]
+    Comptime,
+    #[token("if")]
+    If,
+    #[token("else")]
+    Else,
+    #[token("while")]
+    While,
+    #[token("break")]
+    Break,
+    #[token("continue")]
+    Continue,
+    #[token("return")]
+    Return,
+    #[token("Ok")]
+    Ok,
+    #[token("Err")]
+    Err,
+    #[token("Some")]
+    Some,
+    #[token("None")]
+    None,
+    #[token("true")]
+    True,
+    #[token("false")]
+    False,
+    #[token("pub")]
+    Pub,
     // Phase 3 keywords
-    #[token("trait")]  Trait,
-    #[token("impl")]   Impl,
-    #[token("dyn")]    Dyn,
-    #[token("for")]    For,
-    #[token("in")]     In,
-    #[token("self")]   SelfKw,
-    #[token("where")]  Where,
-    #[token("chan")]    Chan,
+    #[token("trait")]
+    Trait,
+    #[token("impl")]
+    Impl,
+    #[token("dyn")]
+    Dyn,
+    #[token("for")]
+    For,
+    #[token("in")]
+    In,
+    #[token("self")]
+    SelfKw,
+    #[token("where")]
+    Where,
+    #[token("chan")]
+    Chan,
     /// `expr as Type` — postfix numeric cast (parser sugar over `as_i64` /
     /// `as_f64` / etc., which are polymorphic on the source type).
-    #[token("as")]      As,
+    #[token("as")]
+    As,
 
     // Operators
-    #[token("->")] Arrow,
-    #[token("=>")] FatArrow,
-    #[token("&&")] And,
-    #[token("||")] Or,
-    #[token("?")]  Question,
-    #[token("&")]  Ampersand,
-    #[token("==")]  EqEq,
-    #[token("!=")]  NotEq,
-    #[token("<=")]  LtEq,
-    #[token(">=")]  GtEq,
-    #[token("<<")]  Shl,
-    #[token(">>")]  Shr,
-    #[token("=")]   Eq,
-    #[token("<")]   Lt,
-    #[token(">")]   Gt,
-    #[token("+")]   Plus,
-    #[token("-")]   Minus,
-    #[token("*")]   Star,
-    #[token("/")]   Slash,
-    #[token("%")]   Percent,
-    #[token("!")]   Bang,
-    #[token("|")]   Pipe,
-    #[token("^")]   Caret,
-    #[token("~")]   Tilde,
-    #[token("..=")] DotDotEq,
-    #[token("..")]  DotDot,
-    #[token(".")]   Dot,
-    #[token("@")]   At,
-    #[token("#")]   Hash,
-    #[token("::")] ColonColon,
+    #[token("->")]
+    Arrow,
+    #[token("=>")]
+    FatArrow,
+    #[token("&&")]
+    And,
+    #[token("||")]
+    Or,
+    #[token("?")]
+    Question,
+    #[token("&")]
+    Ampersand,
+    #[token("==")]
+    EqEq,
+    #[token("!=")]
+    NotEq,
+    #[token("<=")]
+    LtEq,
+    #[token(">=")]
+    GtEq,
+    #[token("<<")]
+    Shl,
+    #[token(">>")]
+    Shr,
+    #[token("=")]
+    Eq,
+    #[token("<")]
+    Lt,
+    #[token(">")]
+    Gt,
+    #[token("+")]
+    Plus,
+    #[token("-")]
+    Minus,
+    #[token("*")]
+    Star,
+    #[token("/")]
+    Slash,
+    #[token("%")]
+    Percent,
+    #[token("!")]
+    Bang,
+    #[token("|")]
+    Pipe,
+    #[token("^")]
+    Caret,
+    #[token("~")]
+    Tilde,
+    #[token("..=")]
+    DotDotEq,
+    #[token("..")]
+    DotDot,
+    #[token(".")]
+    Dot,
+    #[token("@")]
+    At,
+    #[token("#")]
+    Hash,
+    #[token("::")]
+    ColonColon,
 
     // Delimiters
-    #[token("{")] LBrace,
-    #[token("}")] RBrace,
-    #[token("(")] LParen,
-    #[token(")")] RParen,
-    #[token("[")] LBracket,
-    #[token("]")] RBracket,
-    #[token(",")] Comma,
-    #[token(":")] Colon,
-    #[token(";")] Semi,
+    #[token("{")]
+    LBrace,
+    #[token("}")]
+    RBrace,
+    #[token("(")]
+    LParen,
+    #[token(")")]
+    RParen,
+    #[token("[")]
+    LBracket,
+    #[token("]")]
+    RBracket,
+    #[token(",")]
+    Comma,
+    #[token(":")]
+    Colon,
+    #[token(";")]
+    Semi,
 
     // Literals — float must be tried before int so `1.0` doesn't lex as Int(1) + Dot + Int(0).
     // Matches: 1.0  1.5e-3  1e10  3.14E+2   (no trailing-dot or leading-dot forms)
@@ -157,12 +230,12 @@ pub enum Token {
 impl std::fmt::Display for Token {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Token::Ident(s)     => write!(f, "{s}"),
-            Token::Int(n)       => write!(f, "{n}"),
-            Token::Float(n)     => write!(f, "{n}"),
-            Token::Str(s)       => write!(f, "\"{s}\""),
+            Token::Ident(s) => write!(f, "{s}"),
+            Token::Int(n) => write!(f, "{n}"),
+            Token::Float(n) => write!(f, "{n}"),
+            Token::Str(s) => write!(f, "\"{s}\""),
             Token::BlockComment => write!(f, "/*...*/"),
-            other               => write!(f, "{other:?}"),
+            other => write!(f, "{other:?}"),
         }
     }
 }

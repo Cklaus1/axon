@@ -251,7 +251,13 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "http_sse",
         params: &[("url", "str"), ("headers", "str"), ("on_event", "fn(str) -> ()")],
         ret: "Result<i64, str>",
-        doc: "Stream Server-Sent Events from `url`. Sets `Accept: text/event-stream` automatically. `headers` is a JSON object string (pass `\"\"` for none). `on_event` is called once per SSE event with the `data:` payload. Returns Ok(event_count) or Err(message). Carries the `Net` effect row. Requires the `asi-runtime` Cargo feature.",
+        doc: "Stream Server-Sent Events from `url` via GET. Sets `Accept: text/event-stream` automatically. `headers` is a JSON object string (pass `\"\"` for none). `on_event` is called once per SSE event with the `data:` payload. Returns Ok(event_count) or Err(message). Carries the `Net` effect row. Requires the `asi-runtime` Cargo feature.",
+    },
+    BuiltinFn {
+        name: "http_sse_post",
+        params: &[("url", "str"), ("headers", "str"), ("body", "str"), ("on_event", "fn(str) -> ()")],
+        ret: "Result<i64, str>",
+        doc: "Stream Server-Sent Events from `url` via POST (required by LLM provider APIs). Sets `Accept: text/event-stream` automatically. `headers` is a JSON object string; `body` is the POST body (typically JSON). `on_event` is called once per SSE event. Returns Ok(event_count) or Err(message). Carries the `Net` effect row. Requires the `asi-runtime` Cargo feature.",
     },
     // ── Phase 4: Time builtins ────────────────────────────────────────────────
     BuiltinFn {
@@ -673,6 +679,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         params: &[("json", "str"), ("key", "str")],
         ret: "Result<i64, str>",
         doc: "Extract an integer field from a JSON object string. Returns Ok(n) or Err(reason).",
+    },
+    BuiltinFn {
+        name: "json_path_str",
+        params: &[("json", "str"), ("path", "str")],
+        ret: "Result<str, str>",
+        doc: "Navigate a dot-separated path into a JSON object and return the string value at the leaf. E.g. `json_path_str(event, \"delta.text\")` navigates `event[\"delta\"][\"text\"]`. Returns Ok(value) or Err(reason).",
     },
     // ── Phase 6: System builtins ──────────────────────────────────────────────
     BuiltinFn {
@@ -1772,7 +1784,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "read_line" | "read_file" | "write_file"
             | "exec"
             // network — raw HTTP
-            | "http_get" | "http_post" | "http_sse"
+            | "http_get" | "http_post" | "http_sse" | "http_sse_post"
             // time / scheduling / randomness — non-deterministic
             | "now_ms" | "sleep_ms" | "random_i64" | "random_f64"
             // environment / process control
@@ -1825,7 +1837,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "exec" => &["IO"],
 
         // Network — raw HTTP calls.
-        "http_get" | "http_post" | "http_sse" => &["Net"],
+        "http_get" | "http_post" | "http_sse" | "http_sse_post" => &["Net"],
 
         // Time / scheduling.
         "now_ms" | "sleep_ms" => &["Time"],
@@ -1873,18 +1885,9 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         // an unannotated context triggers E1310 (effect-row subsumption), and
         // surface files cannot declare `| {Hal}` (E1306), closing the laundering
         // path automatically.
-        "ptr_from_addr"
-        | "volatile_load_u8"
-        | "volatile_load_u16"
-        | "volatile_load_u32"
-        | "volatile_load_u64"
-        | "volatile_store_u8"
-        | "volatile_store_u16"
-        | "volatile_store_u32"
-        | "volatile_store_u64"
-        | "hlt"
-        | "cli"
-        | "sti" => &["Hal"],
+        "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
+        | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
+        | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti" => &["Hal"],
 
         // Everything else is pure.
         _ => &[],

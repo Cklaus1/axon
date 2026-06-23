@@ -13,7 +13,12 @@ use crate::store::Store;
 /// `since`: if provided, passed directly to `git log --after=<since>`.
 /// git accepts ISO 8601 dates ("2026-01-01"), relative times ("30 days ago"),
 /// or Unix epoch prefixed with "@".
-pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>, repo_name: Option<&str>) -> Result<usize> {
+pub fn ingest_git(
+    repo_path: &Path,
+    store: &mut Store,
+    since: Option<&str>,
+    repo_name: Option<&str>,
+) -> Result<usize> {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(repo_path)
@@ -38,7 +43,12 @@ pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>, repo
     let existing = store.find_by_effect(&Effect::GitCommit)?;
     let existing_shas: std::collections::HashSet<String> = existing
         .iter()
-        .filter_map(|r| r.payload.get("sha").and_then(|v| v.as_str()).map(String::from))
+        .filter_map(|r| {
+            r.payload
+                .get("sha")
+                .and_then(|v| v.as_str())
+                .map(String::from)
+        })
         .collect();
 
     let mut added = 0;
@@ -56,7 +66,12 @@ pub fn ingest_git(repo_path: &Path, store: &mut Store, since: Option<&str>, repo
         });
 
         let ts_ms = commit.unix_ts * 1000;
-        let id = record_id(&format!("git:{}", commit.author), &Effect::GitCommit, ts_ms, &payload);
+        let id = record_id(
+            &format!("git:{}", commit.author),
+            &Effect::GitCommit,
+            ts_ms,
+            &payload,
+        );
 
         let record = LedgerRecord {
             id,

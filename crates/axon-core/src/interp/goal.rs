@@ -20,7 +20,12 @@ use super::*;
 const INFEASIBLE_SCORE: f64 = 1e300;
 
 impl<'p> Interp<'p> {
-    pub(super) fn run_goal_warm(&self, name: &str, target: f64, max_evals: i64) -> Result<f64, Flow> {
+    pub(super) fn run_goal_warm(
+        &self,
+        name: &str,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
         let _goal_guard = self.enter_goal(name);
         if !self.goal_name_is_known(name) {
             return Err(Self::unknown_goal_name(name));
@@ -28,12 +33,20 @@ impl<'p> Interp<'p> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
-            let all_i64_params = !f.params.is_empty()
-                && f.params.iter().all(|p| is_i64_type(&p.ty));
-            let all_f64_params = !f.params.is_empty()
-                && f.params.iter().all(|p| is_f64_type(&p.ty));
-            let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
-            let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
+            let all_i64_params =
+                !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
+            let all_f64_params =
+                !f.params.is_empty() && f.params.iter().all(|p| is_f64_type(&p.ty));
+            let i64_ret = f
+                .return_type
+                .as_ref()
+                .map(is_i64_scored_ret)
+                .unwrap_or(false);
+            let f64_ret = f
+                .return_type
+                .as_ref()
+                .map(is_f64_scored_ret)
+                .unwrap_or(false);
             if is_adaptive {
                 if all_i64_params && i64_ret {
                     if f.params.len() == 1 {
@@ -66,8 +79,10 @@ impl<'p> Interp<'p> {
                 // call, so no provenance change is needed.
                 let any_i64 = f.params.iter().any(|p| is_i64_type(&p.ty));
                 let any_f64 = f.params.iter().any(|p| is_f64_type(&p.ty));
-                let all_numeric =
-                    f.params.iter().all(|p| is_i64_type(&p.ty) || is_f64_type(&p.ty));
+                let all_numeric = f
+                    .params
+                    .iter()
+                    .all(|p| is_i64_type(&p.ty) || is_f64_type(&p.ty));
                 if !f.params.is_empty() && all_numeric && any_i64 && any_f64 && (i64_ret || f64_ret)
                 {
                     return self.hill_climb_mixed(f, target, max_evals);
@@ -88,14 +103,12 @@ impl<'p> Interp<'p> {
     /// `goal_run` is byte-identical. The constraint is evaluated as a plain (not
     /// `@[adaptive]`) call, so it never pollutes the provenance trajectory; the
     /// metric's REAL score is what `call_fn` already recorded.
-    pub(super) fn apply_goal_constraint(
-        &self,
-        args: &[Value],
-        score: f64,
-    ) -> Result<f64, Flow> {
+    pub(super) fn apply_goal_constraint(&self, args: &[Value], score: f64) -> Result<f64, Flow> {
         let cname = self.goal_constraint.borrow().clone();
         let Some(cname) = cname else { return Ok(score) };
-        let Some(cf) = self.fns.get(cname.as_str()).copied() else { return Ok(score) };
+        let Some(cf) = self.fns.get(cname.as_str()).copied() else {
+            return Ok(score);
+        };
         match self.call_fn(cf, args.to_vec())? {
             Value::Bool(true) => Ok(score),
             Value::Bool(false) => Ok(INFEASIBLE_SCORE),
@@ -125,7 +138,13 @@ impl<'p> Interp<'p> {
         let mut cur: Vec<Value> = f
             .params
             .iter()
-            .map(|p| if is_i64_type(&p.ty) { Value::Int(0) } else { Value::Float(0.0) })
+            .map(|p| {
+                if is_i64_type(&p.ty) {
+                    Value::Int(0)
+                } else {
+                    Value::Float(0.0)
+                }
+            })
             .collect();
         // Per-dimension step magnitude (a wide first probe, then a halving cascade).
         let mut step: Vec<f64> = vec![if unlimited { 1024.0 } else { 64.0 }; n];
@@ -193,7 +212,11 @@ impl<'p> Interp<'p> {
                 let mut active = false;
                 for (d, s) in step.iter_mut().enumerate() {
                     *s /= 2.0;
-                    let floor = if matches!(cur[d], Value::Int(_)) { 1.0 } else { 1e-6 };
+                    let floor = if matches!(cur[d], Value::Int(_)) {
+                        1.0
+                    } else {
+                        1e-6
+                    };
                     if *s >= floor {
                         active = true;
                     }
@@ -239,9 +262,12 @@ impl<'p> Interp<'p> {
             None => return Err(Self::unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
-        let all_i64_params = !f.params.is_empty()
-            && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+        let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
+        let i64_ret = f
+            .return_type
+            .as_ref()
+            .map(is_i64_scored_ret)
+            .unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, n_samples));
         }
@@ -269,11 +295,13 @@ impl<'p> Interp<'p> {
             // to its inner score, so an AI scorer returning an Uncertain is optimized.
             let score = match numeric_score(&result) {
                 Some(s) => s,
-                None => return panic(format!(
-                    "@[adaptive] fn `{}` must return a number, got {}",
-                    f.name,
-                    result.type_name()
-                )),
+                None => {
+                    return panic(format!(
+                        "@[adaptive] fn `{}` must return a number, got {}",
+                        f.name,
+                        result.type_name()
+                    ))
+                }
             };
             let d = (score - target).abs();
             if d < best_dist {
@@ -327,8 +355,16 @@ impl<'p> Interp<'p> {
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let one_i64_param = f.params.len() == 1 && is_i64_type(&f.params[0].ty);
-        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
-        let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
+        let i64_ret = f
+            .return_type
+            .as_ref()
+            .map(is_i64_scored_ret)
+            .unwrap_or(false);
+        let f64_ret = f
+            .return_type
+            .as_ref()
+            .map(is_f64_scored_ret)
+            .unwrap_or(false);
         if !is_adaptive || !one_i64_param || !(i64_ret || f64_ret) {
             return Ok(self.best_observed(name, target, max_evals));
         }
@@ -415,9 +451,12 @@ impl<'p> Interp<'p> {
             None => return Err(Self::unknown_goal_name(name)),
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
-        let all_i64_params = !f.params.is_empty()
-            && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+        let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
+        let i64_ret = f
+            .return_type
+            .as_ref()
+            .map(is_i64_scored_ret)
+            .unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, 0));
         }
@@ -488,7 +527,11 @@ impl<'p> Interp<'p> {
         };
         let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
         let all_i64_params = !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
-        let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
+        let i64_ret = f
+            .return_type
+            .as_ref()
+            .map(is_i64_scored_ret)
+            .unwrap_or(false);
         if !is_adaptive || !all_i64_params || !i64_ret {
             return Ok(self.best_observed(name, target, 0));
         }
@@ -502,7 +545,8 @@ impl<'p> Interp<'p> {
                 Some(s) => Ok(s),
                 None => panic(format!(
                     "@[adaptive] fn `{}` must return a number, got {}",
-                    f.name, other.type_name()
+                    f.name,
+                    other.type_name()
                 )),
             }
         };
@@ -586,12 +630,20 @@ impl<'p> Interp<'p> {
         if let Some(f) = self.fns.get(name) {
             let f = *f;
             let is_adaptive = f.attrs.iter().any(|a| a.name == "adaptive");
-            let all_i64_params = !f.params.is_empty()
-                && f.params.iter().all(|p| is_i64_type(&p.ty));
-            let all_f64_params = !f.params.is_empty()
-                && f.params.iter().all(|p| is_f64_type(&p.ty));
-            let i64_ret = f.return_type.as_ref().map(is_i64_scored_ret).unwrap_or(false);
-            let f64_ret = f.return_type.as_ref().map(is_f64_scored_ret).unwrap_or(false);
+            let all_i64_params =
+                !f.params.is_empty() && f.params.iter().all(|p| is_i64_type(&p.ty));
+            let all_f64_params =
+                !f.params.is_empty() && f.params.iter().all(|p| is_f64_type(&p.ty));
+            let i64_ret = f
+                .return_type
+                .as_ref()
+                .map(is_i64_scored_ret)
+                .unwrap_or(false);
+            let f64_ret = f
+                .return_type
+                .as_ref()
+                .map(is_f64_scored_ret)
+                .unwrap_or(false);
             if is_adaptive {
                 if all_i64_params && i64_ret {
                     return if f.params.len() == 1 {
@@ -612,7 +664,12 @@ impl<'p> Interp<'p> {
     /// improvement and halving the step on a stall. Direction-agnostic: returns
     /// the observed score closest to `target`. Each callback flows through
     /// [`Interp::call_fn`], so the provenance store accumulates as a side effect.
-    pub(super) fn hill_climb_i64(&self, f: &FnDef, target: f64, max_evals: i64) -> Result<f64, Flow> {
+    pub(super) fn hill_climb_i64(
+        &self,
+        f: &FnDef,
+        target: f64,
+        max_evals: i64,
+    ) -> Result<f64, Flow> {
         let eval_at = |x: i64| -> Result<f64, Flow> {
             let args = vec![Value::Int(x)];
             let other = self.call_fn(f, args.clone())?;
@@ -661,7 +718,11 @@ impl<'p> Interp<'p> {
         //    of 1) so we fine-tune rather than overshoot — preserves the
         //    cross-run continuation semantics tested by `learn-goal.md`.
         let mut step: i64 = if cur_input == 0 {
-            if unlimited { 4096 } else { std::cmp::max(16, max_evals.saturating_mul(4)) }
+            if unlimited {
+                4096
+            } else {
+                std::cmp::max(16, max_evals.saturating_mul(4))
+            }
         } else {
             std::cmp::max(1, (cur_input.unsigned_abs() as i64) / 4)
         };
@@ -769,8 +830,16 @@ impl<'p> Interp<'p> {
         // wide first probe so it can sweep an interval before the halving
         // cascade narrows. We divide the budget across dims so a single
         // sweep stays inside the user's eval cap.
-        let per_dim_budget = if unlimited { 0 } else { std::cmp::max(4, max_evals / (n_dims as i64).max(1)) };
-        let seed_step: i64 = if unlimited { 4096 } else { std::cmp::max(16, per_dim_budget.saturating_mul(4)) };
+        let per_dim_budget = if unlimited {
+            0
+        } else {
+            std::cmp::max(4, max_evals / (n_dims as i64).max(1))
+        };
+        let seed_step: i64 = if unlimited {
+            4096
+        } else {
+            std::cmp::max(16, per_dim_budget.saturating_mul(4))
+        };
 
         let mut steps: Vec<i64> = vec![seed_step; n_dims];
         // Per-dim sweep cap rotates dims fairly so no single dim monopolizes
@@ -946,8 +1015,16 @@ impl<'p> Interp<'p> {
         // Seed step: wide enough to leap across a few-hundred-unit window
         // and let halving zero in. Mirrors the i64 path but scales the
         // budget partition by dim count.
-        let per_dim_budget = if unlimited { 0 } else { std::cmp::max(4, max_evals / (n_dims as i64).max(1)) };
-        let seed_step: f64 = if unlimited { 1024.0 } else { (per_dim_budget as f64 * 4.0).max(16.0) };
+        let per_dim_budget = if unlimited {
+            0
+        } else {
+            std::cmp::max(4, max_evals / (n_dims as i64).max(1))
+        };
+        let seed_step: f64 = if unlimited {
+            1024.0
+        } else {
+            (per_dim_budget as f64 * 4.0).max(16.0)
+        };
         let resolution: f64 = 1e-9;
 
         let mut steps: Vec<f64> = vec![seed_step; n_dims];
@@ -1044,9 +1121,7 @@ impl<'p> Interp<'p> {
                     if !unlimited && evals >= max_evals {
                         return Ok(best_score);
                     }
-                    let probe: Vec<f64> = (0..n_dims)
-                        .map(|d| cur[d] + k * delta[d])
-                        .collect();
+                    let probe: Vec<f64> = (0..n_dims).map(|d| cur[d] + k * delta[d]).collect();
                     let probe_score = eval_at(&probe)?;
                     evals += 1;
                     let probe_dist = (probe_score - target).abs();
@@ -1184,7 +1259,14 @@ impl<'p> Interp<'p> {
     /// were recorded (the fn was never invoked, or it had no i64 args).
     pub(super) fn best_input(&self, name: &str, target: f64) -> i64 {
         self.best_input_index(name, target)
-            .and_then(|i| self.provenance_inputs.borrow().get(name)?.get(i)?.first().copied())
+            .and_then(|i| {
+                self.provenance_inputs
+                    .borrow()
+                    .get(name)?
+                    .get(i)?
+                    .first()
+                    .copied()
+            })
             .unwrap_or(0)
     }
 
@@ -1205,24 +1287,42 @@ impl<'p> Interp<'p> {
         let result = self.call_fn(f, vec![Value::Int(input)]);
         // Restore — the held-out eval must not bias future goal_run.
         match snap_scores {
-            Some(v) => { self.provenance.borrow_mut().insert(name.to_string(), v); }
-            None => { self.provenance.borrow_mut().remove(name); }
+            Some(v) => {
+                self.provenance.borrow_mut().insert(name.to_string(), v);
+            }
+            None => {
+                self.provenance.borrow_mut().remove(name);
+            }
         }
         match snap_inputs {
-            Some(v) => { self.provenance_inputs.borrow_mut().insert(name.to_string(), v); }
-            None => { self.provenance_inputs.borrow_mut().remove(name); }
+            Some(v) => {
+                self.provenance_inputs
+                    .borrow_mut()
+                    .insert(name.to_string(), v);
+            }
+            None => {
+                self.provenance_inputs.borrow_mut().remove(name);
+            }
         }
         match snap_inputs_f64 {
-            Some(v) => { self.provenance_inputs_f64.borrow_mut().insert(name.to_string(), v); }
-            None => { self.provenance_inputs_f64.borrow_mut().remove(name); }
+            Some(v) => {
+                self.provenance_inputs_f64
+                    .borrow_mut()
+                    .insert(name.to_string(), v);
+            }
+            None => {
+                self.provenance_inputs_f64.borrow_mut().remove(name);
+            }
         }
         let metric_result = result?;
         let score = match numeric_score(&metric_result) {
             Some(s) => s,
-            None => return Err(Flow::Panic(format!(
-                "goal_eval: metric `{name}` must return a number, got {}",
-                metric_result.type_name()
-            ))),
+            None => {
+                return Err(Flow::Panic(format!(
+                    "goal_eval: metric `{name}` must return a number, got {}",
+                    metric_result.type_name()
+                )))
+            }
         };
         Ok(score)
     }
@@ -1256,10 +1356,14 @@ impl<'p> Interp<'p> {
                         }
                     }
                     "max_evals" => {
-                        if let Ok(n) = v.parse::<i64>() { max_evals = n; }
+                        if let Ok(n) = v.parse::<i64>() {
+                            max_evals = n;
+                        }
                     }
                     "holdout" => {
-                        if let Ok(n) = v.parse::<i64>() { holdout_set.push(n); }
+                        if let Ok(n) = v.parse::<i64>() {
+                            holdout_set.push(n);
+                        }
                     }
                     // R5: a multi-point held-out test set `test_set: [a, b, c]`,
                     // rendered by the parser as `"a,b,c"`. Each parseable int is
@@ -1281,8 +1385,16 @@ impl<'p> Interp<'p> {
                     "strategy" => {
                         strategy = GoalStrategy::parse(v).unwrap_or(GoalStrategy::HillClimb);
                     }
-                    "lo" => { if let Ok(n) = v.parse::<i64>() { lo = n; } }
-                    "hi" => { if let Ok(n) = v.parse::<i64>() { hi = n; } }
+                    "lo" => {
+                        if let Ok(n) = v.parse::<i64>() {
+                            lo = n;
+                        }
+                    }
+                    "hi" => {
+                        if let Ok(n) = v.parse::<i64>() {
+                            hi = n;
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -1329,5 +1441,4 @@ impl<'p> Interp<'p> {
             .unwrap_or_default();
         Value::Array(dims.into_iter().map(Value::Float).collect())
     }
-
 }

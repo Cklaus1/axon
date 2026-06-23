@@ -38,8 +38,15 @@ pub fn watch_sessions(
     }
 
     if verbose {
-        eprintln!("[ledger-watch] watching {} (interval {}s)", watch_dir.display(), interval.as_secs());
-        eprintln!("[ledger-watch] {} existing session files suppressed", seen.len());
+        eprintln!(
+            "[ledger-watch] watching {} (interval {}s)",
+            watch_dir.display(),
+            interval.as_secs()
+        );
+        eprintln!(
+            "[ledger-watch] {} existing session files suppressed",
+            seen.len()
+        );
     }
 
     loop {
@@ -67,7 +74,11 @@ pub fn watch_sessions(
             match ingest_session(&path, &mut store, gate, None, engineer) {
                 Ok(Some(r)) => {
                     if verbose {
-                        let goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("?");
+                        let goal = r
+                            .payload
+                            .get("goal")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
                         eprintln!("[ledger-watch] ingested {} — goal: {}", &r.id[..8], goal);
                     }
                     new_ingested += 1;

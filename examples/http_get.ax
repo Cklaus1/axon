@@ -1,0 +1,20 @@
+// HTTP GET example — fetch a URL and print the response body.
+//
+// Build and run:
+//   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
+//   ./target/debug/axon-run run examples/http_get.ax
+//
+// The `asi-runtime` feature gates the reqwest-backed DefaultHost. Without it
+// http_get returns Err("requires the asi-runtime feature or a network-capable host").
+fn main() -> i64 {
+    match http_get("https://httpbin.org/get", "") {
+        Ok(body) => {
+            println("response: {body}")
+            0
+        }
+        Err(e) => {
+            println("error: {e}")
+            1
+        }
+    }
+}

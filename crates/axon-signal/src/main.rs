@@ -1,19 +1,20 @@
+use std::cmp::Reverse;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
 use axon_ledger::store::Store;
-use axon_signal::display_goal;
 use axon_signal::ab::{compute_ab_report, record_recommendation, render_ab_report};
 use axon_signal::benchmark::{compute_benchmark, render_benchmark};
 use axon_signal::dashboard::run_dashboard;
+use axon_signal::display_goal;
 use axon_signal::export::{export_dpo, export_training, ExportFormat, ExportOptions};
 use axon_signal::mcp::run_mcp_server;
-use axon_signal::trends::{compute_trends, render_trends};
 use axon_signal::patterns::{antipatterns, build_pattern_library};
 use axon_signal::rework::{find_rework_hotspots, is_continuation_session};
 use axon_signal::score::score_sessions;
+use axon_signal::trends::{compute_trends, render_trends};
 use axon_signal::weekly::{generate_weekly, render_text};
 
 #[derive(Parser)]
@@ -205,7 +206,12 @@ fn main() -> Result<()> {
     let store = Store::open(&ledger_dir)?;
 
     match cli.command {
-        Commands::Score { engineer, week, ingest, json } => {
+        Commands::Score {
+            engineer,
+            week,
+            ingest,
+            json,
+        } => {
             let mut scores = score_sessions(&store)?;
 
             if let Some(eng) = &engineer {
@@ -224,10 +230,14 @@ fn main() -> Result<()> {
                     let bar = "█".repeat(s.score as usize / 10)
                         + &"░".repeat(10usize.saturating_sub(s.score as usize / 10));
                     let goal = display_goal(&s.goal, 55);
-                    println!("  {} {:>3}  {} turns → {} commits  {:?}",
-                        bar, s.score, s.turns, s.commits_linked, goal);
+                    println!(
+                        "  {} {:>3}  {} turns → {} commits  {:?}",
+                        bar, s.score, s.turns, s.commits_linked, goal
+                    );
                 }
-                let avg = if scores.is_empty() { 0.0 } else {
+                let avg = if scores.is_empty() {
+                    0.0
+                } else {
                     scores.iter().map(|s| s.score as f64).sum::<f64>() / scores.len() as f64
                 };
                 println!("\n  Average: {:.1}/100", avg);
@@ -274,22 +284,39 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::Rework { days, top, min_sessions, json } => {
+        Commands::Rework {
+            days,
+            top,
+            min_sessions,
+            json,
+        } => {
             let all_hotspots = find_rework_hotspots(&store, days)?;
             // Filter by minimum session count before display
-            let hotspots: Vec<_> = all_hotspots.into_iter()
+            let hotspots: Vec<_> = all_hotspots
+                .into_iter()
                 .filter(|h| h.session_count >= min_sessions)
                 .collect();
             if json {
                 println!("{}", serde_json::to_string_pretty(&hotspots)?);
             } else if hotspots.is_empty() {
-                println!("No rework hotspots detected (last {} days, ≥{} sessions).", days, min_sessions);
+                println!(
+                    "No rework hotspots detected (last {} days, ≥{} sessions).",
+                    days, min_sessions
+                );
             } else {
                 let shown = hotspots.len().min(top);
-                println!("{} rework hotspot(s) (last {} days, ≥{} sessions) — showing top {}:\n",
-                    hotspots.len(), days, min_sessions, shown);
+                println!(
+                    "{} rework hotspot(s) (last {} days, ≥{} sessions) — showing top {}:\n",
+                    hotspots.len(),
+                    days,
+                    min_sessions,
+                    shown
+                );
                 for h in hotspots.iter().take(top) {
-                    println!("  ⚠ {}  ({} sessions, {:.0}h window)", h.file, h.session_count, h.window_hours);
+                    println!(
+                        "  ⚠ {}  ({} sessions, {:.0}h window)",
+                        h.file, h.session_count, h.window_hours
+                    );
                     for g in h.session_goals.iter().take(3) {
                         println!("    → {}", display_goal(g, 70));
                     }
@@ -299,12 +326,19 @@ fn main() -> Result<()> {
                     println!();
                 }
                 if hotspots.len() > top {
-                    println!("  … and {} more hotspot(s). Use --top N or --json to see all.", hotspots.len() - top);
+                    println!(
+                        "  … and {} more hotspot(s). Use --top N or --json to see all.",
+                        hotspots.len() - top
+                    );
                 }
             }
         }
 
-        Commands::Patterns { min_sessions, min_score, json } => {
+        Commands::Patterns {
+            min_sessions,
+            min_score,
+            json,
+        } => {
             let scores = score_sessions(&store)?;
             let patterns = build_pattern_library(&scores, min_sessions, min_score);
             let anti = antipatterns(&scores, min_sessions);
@@ -313,29 +347,49 @@ fn main() -> Result<()> {
                 let out = serde_json::json!({ "top_patterns": patterns, "antipatterns": anti });
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
-                println!("Top goal patterns (avg score ≥ {min_score}, ≥ {min_sessions} sessions):\n");
+                println!(
+                    "Top goal patterns (avg score ≥ {min_score}, ≥ {min_sessions} sessions):\n"
+                );
                 for (i, p) in patterns.iter().enumerate() {
-                    println!("  {}. {:?}  →  avg {:.0}/100, {:.1} commits/session  ({} sessions)",
-                        i + 1, p.pattern, p.avg_score, p.avg_commits, p.session_count);
+                    println!(
+                        "  {}. {:?}  →  avg {:.0}/100, {:.1} commits/session  ({} sessions)",
+                        i + 1,
+                        p.pattern,
+                        p.avg_score,
+                        p.avg_commits,
+                        p.session_count
+                    );
                     println!("     e.g. {:?}", p.example);
                 }
                 if !anti.is_empty() {
                     println!("\nPatterns to avoid:\n");
                     for p in &anti {
-                        println!("  ✗ {:?}  →  avg {:.0}/100, {:.1} commits/session  ({} sessions)",
-                            p.pattern, p.avg_score, p.avg_commits, p.session_count);
+                        println!(
+                            "  ✗ {:?}  →  avg {:.0}/100, {:.1} commits/session  ({} sessions)",
+                            p.pattern, p.avg_score, p.avg_commits, p.session_count
+                        );
                         println!("    e.g. {:?}", p.example);
                     }
                 }
             }
         }
 
-        Commands::Weekly { from, to, slack_webhook, track, json } => {
-            let to_ms = to.as_deref()
-                .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s))
+        Commands::Weekly {
+            from,
+            to,
+            slack_webhook,
+            track,
+            json,
+        } => {
+            let to_ms = to
+                .as_deref()
+                .and_then(axon_ledger::ingest::session::parse_iso_to_ms)
                 .unwrap_or_else(now_ms);
             // Auto-expand: if --from not specified and <3 sessions in last 7d, use 30d window
-            let from_ms = if let Some(f) = from.as_deref().and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s)) {
+            let from_ms = if let Some(f) = from
+                .as_deref()
+                .and_then(axon_ledger::ingest::session::parse_iso_to_ms)
+            {
                 f
             } else {
                 let all_scores = score_sessions(&store).unwrap_or_default();
@@ -359,9 +413,20 @@ fn main() -> Result<()> {
             if track {
                 if let Some(rec_text) = report.recommendations.first() {
                     let week = axon_signal::ab::current_iso_week();
-                    match record_recommendation(&ledger_dir, &week, rec_text, report.avg_score, None) {
-                        Ok(rec) => eprintln!("A/B tracking: recorded recommendation [{:?}] for {} (baseline {:.1})", rec.rec_type, week, rec.baseline_score),
-                        Err(e) => eprintln!("Warning: could not record recommendation for A/B tracking: {e}"),
+                    match record_recommendation(
+                        &ledger_dir,
+                        &week,
+                        rec_text,
+                        report.avg_score,
+                        None,
+                    ) {
+                        Ok(rec) => eprintln!(
+                            "A/B tracking: recorded recommendation [{:?}] for {} (baseline {:.1})",
+                            rec.rec_type, week, rec.baseline_score
+                        ),
+                        Err(e) => eprintln!(
+                            "Warning: could not record recommendation for A/B tracking: {e}"
+                        ),
                     }
                 }
             }
@@ -372,10 +437,17 @@ fn main() -> Result<()> {
                 let payload_str = serde_json::to_string(&payload)?;
                 let status = std::process::Command::new("curl")
                     .args([
-                        "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                        "-X", "POST",
-                        "-H", "Content-Type: application/json",
-                        "-d", &payload_str,
+                        "-s",
+                        "-o",
+                        "/dev/null",
+                        "-w",
+                        "%{http_code}",
+                        "-X",
+                        "POST",
+                        "-H",
+                        "Content-Type: application/json",
+                        "-d",
+                        &payload_str,
                         &webhook_url,
                     ])
                     .output();
@@ -399,16 +471,24 @@ fn main() -> Result<()> {
             scores.retain(|s| s.ts_ms >= cutoff);
 
             // Group by engineer
-            let mut by_eng: std::collections::HashMap<String, Vec<u8>> = std::collections::HashMap::new();
+            let mut by_eng: std::collections::HashMap<String, Vec<u8>> =
+                std::collections::HashMap::new();
             for s in &scores {
-                by_eng.entry(s.engineer.clone()).or_default().push(s.goal_clarity);
+                by_eng
+                    .entry(s.engineer.clone())
+                    .or_default()
+                    .push(s.goal_clarity);
             }
-            let mut eng_summary: Vec<(String, f64, usize, u8, u8)> = by_eng.into_iter().map(|(eng, clarities)| {
-                let avg = clarities.iter().map(|&c| c as f64).sum::<f64>() / clarities.len() as f64;
-                let max = clarities.iter().copied().max().unwrap_or(0);
-                let min = clarities.iter().copied().min().unwrap_or(0);
-                (eng, avg, clarities.len(), max, min)
-            }).collect();
+            let mut eng_summary: Vec<(String, f64, usize, u8, u8)> = by_eng
+                .into_iter()
+                .map(|(eng, clarities)| {
+                    let avg =
+                        clarities.iter().map(|&c| c as f64).sum::<f64>() / clarities.len() as f64;
+                    let max = clarities.iter().copied().max().unwrap_or(0);
+                    let min = clarities.iter().copied().min().unwrap_or(0);
+                    (eng, avg, clarities.len(), max, min)
+                })
+                .collect();
             eng_summary.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
 
             if json {
@@ -418,8 +498,10 @@ fn main() -> Result<()> {
                 println!("{}", serde_json::to_string_pretty(&out_val)?);
             } else {
                 println!("Goal clarity by engineer (last {} days):\n", days);
-                println!("  {:40}  {:>5}  {:>7}  {:>4}  {:>4}",
-                    "engineer", "avg", "sessions", "best", "worst");
+                println!(
+                    "  {:40}  {:>5}  {:>7}  {:>4}  {:>4}",
+                    "engineer", "avg", "sessions", "best", "worst"
+                );
                 println!("  {}", "-".repeat(67));
                 for (eng, avg, count, max, min) in &eng_summary {
                     let bar = "█".repeat((*avg as usize) / 10)
@@ -428,14 +510,21 @@ fn main() -> Result<()> {
                 }
 
                 // Team recommendation
-                let low: Vec<_> = eng_summary.iter().filter(|(_, avg, _, _, _)| *avg < 50.0).collect();
+                let low: Vec<_> = eng_summary
+                    .iter()
+                    .filter(|(_, avg, _, _, _)| *avg < 50.0)
+                    .collect();
                 if !low.is_empty() {
                     println!("\n  Recommendation: {} engineer(s) avg below 50 — suggest adding file refs and measurable outcomes to session goals.", low.len());
                 }
             }
         }
 
-        Commands::Loops { turns_threshold, days, json } => {
+        Commands::Loops {
+            turns_threshold,
+            days,
+            json,
+        } => {
             let cutoff = now_ms().saturating_sub(days * 24 * 60 * 60 * 1000);
             let scores = score_sessions(&store)?;
 
@@ -444,13 +533,14 @@ fn main() -> Result<()> {
             // commits (those ARE automated loop sessions, not candidates for one).
             // Also deduplicate by goal — multiple iterations of the same goal show up once
             // (the highest-turn instance, as that represents the worst-case cost).
-            let mut candidates: Vec<_> = scores.iter()
+            let mut candidates: Vec<_> = scores
+                .iter()
                 .filter(|s| s.ts_ms >= cutoff)
                 .filter(|s| s.turns >= turns_threshold)
                 .filter(|s| !is_continuation_session(&s.goal))
                 .filter(|s| s.commits_linked <= 100)
                 .collect();
-            candidates.sort_by(|a, b| b.turns.cmp(&a.turns));
+            candidates.sort_by_key(|b| Reverse(b.turns));
             let mut seen_goals = std::collections::HashSet::new();
             candidates.retain(|s| seen_goals.insert(s.goal.trim().to_lowercase()));
 
@@ -473,14 +563,27 @@ fn main() -> Result<()> {
                 })).collect::<Vec<_>>());
                 println!("{}", serde_json::to_string_pretty(&out_val)?);
             } else if candidates.is_empty() {
-                println!("No loop-opportunity sessions found (last {} days, turns > {}).", days, turns_threshold);
+                println!(
+                    "No loop-opportunity sessions found (last {} days, turns > {}).",
+                    days, turns_threshold
+                );
             } else {
-                println!("Loop opportunity candidates (last {} days, turns > {}):\n", days, turns_threshold);
+                println!(
+                    "Loop opportunity candidates (last {} days, turns > {}):\n",
+                    days, turns_threshold
+                );
                 for s in &candidates {
                     let goal_trunc = display_goal(&s.goal, 55);
-                    println!("  {} turns → {} commits  {} turns/commit",
-                        s.turns, s.commits_linked,
-                        if s.commits_linked > 0 { format!("{:.0}", s.turns_per_commit) } else { "∞".to_string() });
+                    println!(
+                        "  {} turns → {} commits  {} turns/commit",
+                        s.turns,
+                        s.commits_linked,
+                        if s.commits_linked > 0 {
+                            format!("{:.0}", s.turns_per_commit)
+                        } else {
+                            "∞".to_string()
+                        }
+                    );
                     println!("  {}", goal_trunc);
                     if s.commits_linked == 0 {
                         println!("  → try: /loop <your-goal>");
@@ -492,14 +595,28 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::ExportTraining { min_score, since, format, anonymize, exclude_code_content, out } => {
-            let since_ms = since.as_deref()
-                .and_then(|s| axon_ledger::ingest::session::parse_iso_to_ms(s));
+        Commands::ExportTraining {
+            min_score,
+            since,
+            format,
+            anonymize,
+            exclude_code_content,
+            out,
+        } => {
+            let since_ms = since
+                .as_deref()
+                .and_then(axon_ledger::ingest::session::parse_iso_to_ms);
             let fmt = match format.as_str() {
                 "dpo" => ExportFormat::Dpo,
                 _ => ExportFormat::Trainloop,
             };
-            let opts = ExportOptions { format: fmt, min_score, since_ms, anonymize, exclude_code_content };
+            let opts = ExportOptions {
+                format: fmt,
+                min_score,
+                since_ms,
+                anonymize,
+                exclude_code_content,
+            };
 
             let mut writer: Box<dyn std::io::Write> = match &out {
                 Some(path) => Box::new(std::fs::File::create(path)?),
@@ -511,13 +628,22 @@ fn main() -> Result<()> {
                 ExportFormat::Trainloop => export_training(&store, &opts, &mut writer)?,
             };
 
-            eprintln!("Exported {} training record(s) (min score: {}, format: {}).", n, min_score, format);
+            eprintln!(
+                "Exported {} training record(s) (min score: {}, format: {}).",
+                n, min_score, format
+            );
         }
 
-        Commands::Trends { weeks, engineer, json } => {
+        Commands::Trends {
+            weeks,
+            engineer,
+            json,
+        } => {
             let mut report = compute_trends(&store, weeks)?;
             if let Some(ref eng) = engineer {
-                report.engineers.retain(|e| e.engineer.contains(eng.as_str()));
+                report
+                    .engineers
+                    .retain(|e| e.engineer.contains(eng.as_str()));
             }
             if json {
                 println!("{}", serde_json::to_string_pretty(&report)?);
@@ -535,7 +661,12 @@ fn main() -> Result<()> {
             }
         }
 
-        Commands::AbTrack { text, engineer, week, baseline } => {
+        Commands::AbTrack {
+            text,
+            engineer,
+            week,
+            baseline,
+        } => {
             let week_str = week.unwrap_or_else(axon_signal::ab::current_iso_week);
             let baseline_score = baseline.unwrap_or_else(|| {
                 // Compute recent avg from last 7 days if not provided
@@ -544,13 +675,28 @@ fn main() -> Result<()> {
                     .and_then(|scores| {
                         let cutoff = now_ms().saturating_sub(7 * 86_400_000);
                         let recent: Vec<_> = scores.iter().filter(|s| s.ts_ms >= cutoff).collect();
-                        if recent.is_empty() { None }
-                        else { Some(recent.iter().map(|s| s.score as f64).sum::<f64>() / recent.len() as f64) }
+                        if recent.is_empty() {
+                            None
+                        } else {
+                            Some(
+                                recent.iter().map(|s| s.score as f64).sum::<f64>()
+                                    / recent.len() as f64,
+                            )
+                        }
                     })
                     .unwrap_or(0.0)
             });
-            let rec = record_recommendation(&ledger_dir, &week_str, &text, baseline_score, engineer.as_deref())?;
-            eprintln!("Recorded: [{:?}] week={} baseline={:.1}", rec.rec_type, rec.week, rec.baseline_score);
+            let rec = record_recommendation(
+                &ledger_dir,
+                &week_str,
+                &text,
+                baseline_score,
+                engineer.as_deref(),
+            )?;
+            eprintln!(
+                "Recorded: [{:?}] week={} baseline={:.1}",
+                rec.rec_type, rec.week, rec.baseline_score
+            );
         }
 
         Commands::AbStatus { json } => {

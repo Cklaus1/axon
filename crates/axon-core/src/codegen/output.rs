@@ -172,7 +172,9 @@ impl<'ctx> super::Codegen<'ctx> {
                 break;
             }
             for func in to_delete {
-                unsafe { func.delete(); }
+                unsafe {
+                    func.delete();
+                }
                 total += 1;
             }
         }

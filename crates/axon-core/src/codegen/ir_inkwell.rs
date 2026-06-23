@@ -34,7 +34,11 @@ impl<'ctx> InkwellBackend<'ctx> {
     /// per codegen run (the single-symbol-table invariant from `IR_REARCH.md`
     /// option (c)).
     pub fn adopt(context: &'ctx Context, module: Module<'ctx>, builder: Builder<'ctx>) -> Self {
-        Self { context, module, builder }
+        Self {
+            context,
+            module,
+            builder,
+        }
     }
 
     /// Convenience constructor for tests / standalone benches that don't have a

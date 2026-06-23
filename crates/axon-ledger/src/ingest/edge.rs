@@ -33,11 +33,7 @@ pub fn infer_edges(store: &mut Store) -> Result<usize> {
     let mut new_edges: Vec<LedgerRecord> = Vec::new();
 
     for session in &sessions {
-        let session_id = match session
-            .payload
-            .get("session_id")
-            .and_then(|v| v.as_str())
-        {
+        let session_id = match session.payload.get("session_id").and_then(|v| v.as_str()) {
             Some(s) => s.to_string(),
             None => continue,
         };
@@ -111,11 +107,7 @@ pub fn infer_edges(store: &mut Store) -> Result<usize> {
                 covered_commit_files as f64 / commit_files.len() as f64
             };
             // time_decay: 1.0 when commit is right at session end, decays to 0.1 at window edge (7h)
-            let gap_ms = if commit.ts_ms >= session_start_ms {
-                commit.ts_ms - session_start_ms
-            } else {
-                session_start_ms - commit.ts_ms
-            };
+            let gap_ms = commit.ts_ms.abs_diff(session_start_ms);
             let decay = 1.0_f64 - 0.9 * (gap_ms as f64 / 25_200_000.0_f64).min(1.0);
             let confidence = (file_ratio * decay * 100.0).round() / 100.0;
 
@@ -164,7 +156,14 @@ fn files_overlap(a: &str, b: &str) -> bool {
     // `crates/axon-ledger/src/main.rs` just because both are named `main.rs`.
     let tail = |s: &str| -> String {
         let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
-        parts.iter().rev().take(2).rev().cloned().collect::<Vec<_>>().join("/")
+        parts
+            .iter()
+            .rev()
+            .take(2)
+            .rev()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("/")
     };
     let ta = tail(a);
     let tb = tail(b);
@@ -188,7 +187,12 @@ mod tests {
             "turn_count": 5,
             "summary": "test session",
         });
-        let rid = record_id(&format!("agent:{}", id), &Effect::AgentSession, start_ms, &payload);
+        let rid = record_id(
+            &format!("agent:{}", id),
+            &Effect::AgentSession,
+            start_ms,
+            &payload,
+        );
         LedgerRecord {
             id: rid,
             principal: format!("agent:{}", id),
@@ -242,7 +246,10 @@ mod tests {
         let month = m_raw + 3 - 12 * (m_raw / 10);
         let year = 100 * b + d - 4800 + m_raw / 10;
 
-        format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", year, month, day, h, m, s)
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            year, month, day, h, m, s
+        )
     }
 
     #[test]
@@ -273,17 +280,11 @@ mod tests {
         let edges = store.find_by_effect(&Effect::AgentEdge).unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(
-            edges[0]
-                .payload
-                .get("session_id")
-                .and_then(|v| v.as_str()),
+            edges[0].payload.get("session_id").and_then(|v| v.as_str()),
             Some("sess-abc")
         );
         assert_eq!(
-            edges[0]
-                .payload
-                .get("commit_sha")
-                .and_then(|v| v.as_str()),
+            edges[0].payload.get("commit_sha").and_then(|v| v.as_str()),
             Some("deadbeef1234")
         );
     }
@@ -295,12 +296,8 @@ mod tests {
         let mut store = Store::open(&dir).unwrap();
 
         let base_ms = 1_000_000_000_000u64;
-        let session = make_session_record(
-            "sess-xyz",
-            vec!["src/lib.rs"],
-            base_ms,
-            base_ms + 3_600_000,
-        );
+        let session =
+            make_session_record("sess-xyz", vec!["src/lib.rs"], base_ms, base_ms + 3_600_000);
         let commit = make_commit_record(
             "cafebabe5678",
             vec!["src/main.rs"], // different file

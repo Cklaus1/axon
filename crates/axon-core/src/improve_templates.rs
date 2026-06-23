@@ -93,7 +93,11 @@ fn program_arith_identity_sites(program: &Program) -> usize {
         .iter()
         .map(|it| match it {
             Item::FnDef(f) => count_arith_identity_sites(&f.body),
-            Item::ImplBlock(b) => b.methods.iter().map(|m| count_arith_identity_sites(&m.body)).sum(),
+            Item::ImplBlock(b) => b
+                .methods
+                .iter()
+                .map(|m| count_arith_identity_sites(&m.body))
+                .sum(),
             _ => 0,
         })
         .sum()
@@ -107,7 +111,11 @@ fn program_constant_fold_sites(program: &Program) -> usize {
         .iter()
         .map(|it| match it {
             Item::FnDef(f) => count_constant_fold_sites(&f.body),
-            Item::ImplBlock(b) => b.methods.iter().map(|m| count_constant_fold_sites(&m.body)).sum(),
+            Item::ImplBlock(b) => b
+                .methods
+                .iter()
+                .map(|m| count_constant_fold_sites(&m.body))
+                .sum(),
             _ => 0,
         })
         .sum()
@@ -121,7 +129,11 @@ fn program_bool_simplify_sites(program: &Program) -> usize {
         .iter()
         .map(|it| match it {
             Item::FnDef(f) => count_bool_simplify_sites(&f.body),
-            Item::ImplBlock(b) => b.methods.iter().map(|m| count_bool_simplify_sites(&m.body)).sum(),
+            Item::ImplBlock(b) => b
+                .methods
+                .iter()
+                .map(|m| count_bool_simplify_sites(&m.body))
+                .sum(),
             _ => 0,
         })
         .sum()
@@ -135,7 +147,11 @@ fn program_redundant_branch_sites(program: &Program) -> usize {
         .iter()
         .map(|it| match it {
             Item::FnDef(f) => count_redundant_branch_sites(&f.body),
-            Item::ImplBlock(b) => b.methods.iter().map(|m| count_redundant_branch_sites(&m.body)).sum(),
+            Item::ImplBlock(b) => b
+                .methods
+                .iter()
+                .map(|m| count_redundant_branch_sites(&m.body))
+                .sum(),
             _ => 0,
         })
         .sum()
@@ -149,7 +165,11 @@ fn program_compare_fold_sites(program: &Program) -> usize {
         .iter()
         .map(|it| match it {
             Item::FnDef(f) => count_compare_fold_sites(&f.body),
-            Item::ImplBlock(b) => b.methods.iter().map(|m| count_compare_fold_sites(&m.body)).sum(),
+            Item::ImplBlock(b) => b
+                .methods
+                .iter()
+                .map(|m| count_compare_fold_sites(&m.body))
+                .sum(),
             _ => 0,
         })
         .sum()

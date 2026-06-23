@@ -2,13 +2,14 @@
 ///
 /// High rework = a file being edited repeatedly without a clear exit criterion.
 /// Signals: scope drift, vague goals, partial fixes, or a genuinely hard problem.
+use std::cmp::Reverse;
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::display_goal;
 use axon_ledger::model::Effect;
 use axon_ledger::store::Store;
-use crate::display_goal;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ReworkHotspot {
@@ -27,17 +28,28 @@ pub struct ReworkHotspot {
 /// CHANGELOG.md, README.md etc. are updated as part of every feature — flagging them
 /// as hotspots just adds noise.
 const REWORK_BLOCKLIST: &[&str] = &[
-    "CHANGELOG.md", "CHANGELOG", "changelog.md",
-    "README.md", "README", "readme.md",
-    "ROADMAP.md", "ROADMAP",
-    "Cargo.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    ".gitignore", ".gitattributes",
-    "Cargo.toml",  // workspace manifest changed by many sessions
+    "CHANGELOG.md",
+    "CHANGELOG",
+    "changelog.md",
+    "README.md",
+    "README",
+    "readme.md",
+    "ROADMAP.md",
+    "ROADMAP",
+    "Cargo.lock",
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    ".gitignore",
+    ".gitattributes",
+    "Cargo.toml", // workspace manifest changed by many sessions
 ];
 
 fn is_blocklisted(path: &str) -> bool {
-    let name = path.split('/').last().unwrap_or(path);
-    REWORK_BLOCKLIST.iter().any(|b| name.eq_ignore_ascii_case(b))
+    let name = path.split('/').next_back().unwrap_or(path);
+    REWORK_BLOCKLIST
+        .iter()
+        .any(|b| name.eq_ignore_ascii_case(b))
 }
 
 /// Goal prefixes that indicate a loop-continuation or autonomous-iteration session
@@ -56,8 +68,7 @@ const CONTINUATION_PREFIXES: &[&str] = &[
 
 pub fn is_continuation_session(goal: &str) -> bool {
     let lower = goal.trim().to_lowercase();
-    CONTINUATION_PREFIXES.iter().any(|p| lower.starts_with(p))
-        || lower.is_empty()
+    CONTINUATION_PREFIXES.iter().any(|p| lower.starts_with(p)) || lower.is_empty()
 }
 
 /// Normalize a file path for cross-session matching.
@@ -88,21 +99,33 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
 
     // Build session_id → (goal, ts_ms, files) from sessions.
     // Skip loop-continuation sessions — they repeat the same work and inflate counts.
-    let sessions: HashMap<String, (String, u64, Vec<String>)> = all.iter()
+    let sessions: HashMap<String, (String, u64, Vec<String>)> = all
+        .iter()
         .filter(|r| r.effect == Effect::AgentSession)
         .filter_map(|r| {
             let id_prefix = &r.id[..r.id.len().min(8)];
-            let sid = r.payload.get("session_id").and_then(|v| v.as_str()).unwrap_or(id_prefix).to_string();
+            let sid = r
+                .payload
+                .get("session_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(id_prefix)
+                .to_string();
             let raw_goal = r.payload.get("goal").and_then(|v| v.as_str()).unwrap_or("");
             let goal = display_goal(raw_goal, 80);
             // Skip continuation/loop sessions — they're not independent rework
-            if is_continuation_session(&goal) { return None; }
-            let files: Vec<String> = r.payload.get("files_touched")
+            if is_continuation_session(&goal) {
+                return None;
+            }
+            let files: Vec<String> = r
+                .payload
+                .get("files_touched")
                 .and_then(|v| v.as_array())
-                .map(|a| a.iter()
-                    .filter_map(|v| v.as_str().map(normalize_path))
-                    .filter(|s| !s.is_empty() && !is_blocklisted(s))
-                    .collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(normalize_path))
+                        .filter(|s| !s.is_empty() && !is_blocklisted(s))
+                        .collect()
+                })
                 .unwrap_or_default();
             Some((sid, (goal, r.ts_ms, files)))
         })
@@ -115,11 +138,16 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
     let mut file_touches: HashMap<String, Vec<(String, String, u64)>> = HashMap::new();
     for (sid, (goal, ts_ms, files)) in &sessions {
         for file in files {
-            if file.is_empty() { continue; }
+            if file.is_empty() {
+                continue;
+            }
             let touches = file_touches.entry(file.clone()).or_default();
             let goal_lower = goal.trim().to_lowercase();
             // Skip if this goal already appears for this file (keep earliest touch)
-            if touches.iter().any(|(_, g, _)| g.trim().to_lowercase() == goal_lower) {
+            if touches
+                .iter()
+                .any(|(_, g, _)| g.trim().to_lowercase() == goal_lower)
+            {
                 continue;
             }
             touches.push((sid.clone(), goal.clone(), *ts_ms));
@@ -132,14 +160,17 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
         // Deduplicate by session_id
         touches.dedup_by(|a, b| a.0 == b.0);
 
-        if touches.len() < 2 { continue; }
+        if touches.len() < 2 {
+            continue;
+        }
 
         // Check if any N consecutive touches fall within the window
         // Use a sliding window over the touch list
         let mut window_start = 0;
         while window_start < touches.len() {
             let start_ts = touches[window_start].2;
-            let in_window: Vec<_> = touches[window_start..].iter()
+            let in_window: Vec<_> = touches[window_start..]
+                .iter()
                 .take_while(|(_, _, ts)| ts - start_ts <= window_ms)
                 .collect();
             if in_window.len() >= 2 {
@@ -161,7 +192,7 @@ pub fn find_rework_hotspots(store: &Store, window_days: u64) -> anyhow::Result<V
     }
 
     // Sort by session_count descending (worst rework first)
-    hotspots.sort_by(|a, b| b.session_count.cmp(&a.session_count));
+    hotspots.sort_by_key(|b| Reverse(b.session_count));
     Ok(hotspots)
 }
 
@@ -171,10 +202,14 @@ pub fn session_triggered_rework(session_id: &str, hotspots: &[ReworkHotspot]) ->
         // A session is a rework trigger if it's NOT the first to touch a hotspot file
         // (the first session started the problem; subsequent ones are the rework signal)
         h.session_count >= 2
-    }) && hotspots.iter().flat_map(|h| h.session_goals.iter().skip(1)).any(|_| {
-        // simplified: if session appears in any hotspot with 2+ sessions, it's a rework signal
-        true
-    }) && !session_id.is_empty()
+    }) && hotspots
+        .iter()
+        .flat_map(|h| h.session_goals.iter().skip(1))
+        .any(|_| {
+            // simplified: if session appears in any hotspot with 2+ sessions, it's a rework signal
+            true
+        })
+        && !session_id.is_empty()
 }
 
 #[cfg(test)]
@@ -185,7 +220,12 @@ mod tests {
     use serde_json::json;
     use tempfile::tempdir;
 
-    fn make_session(sid: &str, goal: &str, files: &[&str], ts_ms: u64) -> axon_ledger::model::LedgerRecord {
+    fn make_session(
+        sid: &str,
+        goal: &str,
+        files: &[&str],
+        ts_ms: u64,
+    ) -> axon_ledger::model::LedgerRecord {
         axon_ledger::model::LedgerRecord {
             id: sid.to_string(),
             principal: format!("session:{sid}"),
@@ -208,8 +248,17 @@ mod tests {
         let day_ms = 86_400_000u64;
 
         // Two sessions both touch auth.rs within 3 days
-        store.append(&make_session("s1", "fix auth bug", &["auth.rs"], 0)).unwrap();
-        store.append(&make_session("s2", "fix auth again", &["auth.rs"], day_ms * 2)).unwrap();
+        store
+            .append(&make_session("s1", "fix auth bug", &["auth.rs"], 0))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s2",
+                "fix auth again",
+                &["auth.rs"],
+                day_ms * 2,
+            ))
+            .unwrap();
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
         assert!(!hotspots.is_empty(), "should detect rework on auth.rs");
@@ -223,11 +272,23 @@ mod tests {
         let mut store = Store::open(dir.path()).unwrap();
         let day_ms = 86_400_000u64;
 
-        store.append(&make_session("s1", "add auth", &["auth.rs"], 0)).unwrap();
-        store.append(&make_session("s2", "update auth", &["auth.rs"], day_ms * 30)).unwrap();
+        store
+            .append(&make_session("s1", "add auth", &["auth.rs"], 0))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s2",
+                "update auth",
+                &["auth.rs"],
+                day_ms * 30,
+            ))
+            .unwrap();
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
-        assert!(hotspots.is_empty(), "sessions 30 days apart should not be rework");
+        assert!(
+            hotspots.is_empty(),
+            "sessions 30 days apart should not be rework"
+        );
     }
 
     #[test]
@@ -237,14 +298,33 @@ mod tests {
         let hour_ms = 3_600_000u64;
 
         // One real session plus two loop-continuation sessions touching the same file
-        store.append(&make_session("s1", "fix JWT clock skew", &["auth.rs"], 0)).unwrap();
-        store.append(&make_session("s2", "keep going with this", &["auth.rs"], hour_ms)).unwrap();
-        store.append(&make_session("s3", "/loop 5m keep going", &["auth.rs"], hour_ms * 2)).unwrap();
+        store
+            .append(&make_session("s1", "fix JWT clock skew", &["auth.rs"], 0))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s2",
+                "keep going with this",
+                &["auth.rs"],
+                hour_ms,
+            ))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s3",
+                "/loop 5m keep going",
+                &["auth.rs"],
+                hour_ms * 2,
+            ))
+            .unwrap();
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
         // Only s1 is a non-continuation session — no rework (need ≥2 non-continuation sessions)
-        assert!(hotspots.is_empty(),
-            "loop-continuation sessions should not count as independent rework; got {:?}", hotspots);
+        assert!(
+            hotspots.is_empty(),
+            "loop-continuation sessions should not count as independent rework; got {:?}",
+            hotspots
+        );
     }
 
     #[test]
@@ -252,9 +332,30 @@ mod tests {
         let dir = tempdir().unwrap();
         let mut store = Store::open(dir.path()).unwrap();
 
-        store.append(&make_session("s1", "add feature A", &["CHANGELOG.md", "auth.rs"], 0)).unwrap();
-        store.append(&make_session("s2", "add feature B", &["CHANGELOG.md", "auth.rs"], 3_600_000)).unwrap();
-        store.append(&make_session("s3", "add feature C", &["CHANGELOG.md"], 7_200_000)).unwrap();
+        store
+            .append(&make_session(
+                "s1",
+                "add feature A",
+                &["CHANGELOG.md", "auth.rs"],
+                0,
+            ))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s2",
+                "add feature B",
+                &["CHANGELOG.md", "auth.rs"],
+                3_600_000,
+            ))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s3",
+                "add feature C",
+                &["CHANGELOG.md"],
+                7_200_000,
+            ))
+            .unwrap();
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
         // CHANGELOG.md should be excluded; auth.rs should appear as rework
@@ -270,14 +371,30 @@ mod tests {
         let mut store = Store::open(dir.path()).unwrap();
 
         // One session stores absolute, another stores relative — same file
-        store.append(&make_session("s1", "fix auth bug",
-            &["/home/user/project/crates/axon-core/src/auth.rs"], 0)).unwrap();
-        store.append(&make_session("s2", "improve auth",
-            &["crates/axon-core/src/auth.rs"], 3_600_000)).unwrap();
+        store
+            .append(&make_session(
+                "s1",
+                "fix auth bug",
+                &["/home/user/project/crates/axon-core/src/auth.rs"],
+                0,
+            ))
+            .unwrap();
+        store
+            .append(&make_session(
+                "s2",
+                "improve auth",
+                &["crates/axon-core/src/auth.rs"],
+                3_600_000,
+            ))
+            .unwrap();
 
         let hotspots = find_rework_hotspots(&store, 7).unwrap();
         // Should produce exactly one hotspot (deduplicated), not two separate entries
-        assert_eq!(hotspots.len(), 1, "absolute and relative paths should normalize to the same file");
+        assert_eq!(
+            hotspots.len(),
+            1,
+            "absolute and relative paths should normalize to the same file"
+        );
         assert_eq!(hotspots[0].session_count, 2);
     }
 
@@ -295,8 +412,17 @@ mod tests {
     #[test]
     fn test_normalize_path() {
         assert_eq!(normalize_path("crates/foo.rs"), "crates/foo.rs");
-        assert_eq!(normalize_path("/home/user/project/crates/foo.rs"), "crates/foo.rs");
-        assert_eq!(normalize_path("/home/user/project/src/main.rs"), "src/main.rs");
-        assert_eq!(normalize_path("/root/project/foo.rs"), "root/project/foo.rs");
+        assert_eq!(
+            normalize_path("/home/user/project/crates/foo.rs"),
+            "crates/foo.rs"
+        );
+        assert_eq!(
+            normalize_path("/home/user/project/src/main.rs"),
+            "src/main.rs"
+        );
+        assert_eq!(
+            normalize_path("/root/project/foo.rs"),
+            "root/project/foo.rs"
+        );
     }
 }

@@ -45,6 +45,27 @@ pub extern "C" fn axon_alloc(len: usize) -> *mut u8 {
     ptr
 }
 
+/// Heuristic: a prose goal file (markdown) opens with a `# ` heading; `.ax`
+/// source never does (`#` is not Axon syntax). So a leading `# ` routes the
+/// input through the surface compiler; anything else is treated as `.ax`.
+#[allow(dead_code)]
+fn is_prose_goal(src: &str) -> bool {
+    src.lines()
+        .find(|l| !l.trim().is_empty())
+        .map(|l| l.trim_start().starts_with("# "))
+        .unwrap_or(false)
+}
+
+/// Compile a prose goal file to `.ax` via the surface compiler — the browser-side
+/// `axon goal`. Returns the generated source, or a formatted error (so an invalid
+/// or uncompilable goal file refuses with a clear message, like the CLI).
+#[allow(dead_code)]
+fn compile_prose(src: &str) -> Result<String, String> {
+    let goal = axon_surface::parser::GoalFile::parse(src)
+        .map_err(|e| format!("axon: goal file invalid: {e}\n"))?;
+    axon_surface::compile::emit(&goal).map_err(|e| format!("axon: goal compilation failed: {e}\n"))
+}
+
 /// Format one check-pipeline diagnostic for the playground console, in the
 /// human-readable shape the CLI uses (`severity[CODE] file:line:col: message`,
 /// the source caret, and a `help:` line when present).

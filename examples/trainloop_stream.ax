@@ -1,0 +1,25 @@
+// TrainLoop vLLM gateway streaming example — OpenAI-compatible chat completions.
+//
+// Prerequisites: TrainLoop vLLM server running at http://127.0.0.1:18306
+//   curl -s http://127.0.0.1:18306/v1/models  # verify it's up
+//
+// Build and run:
+//   cargo build -p axon-core --no-default-features --features asi-runtime --bin axon-run
+//   ./target/debug/axon-run run examples/trainloop_stream.ax
+//
+// Uses http_sse_post (POST + SSE) with OpenAI streaming format.
+// Each chunk event carries choices[0].delta.content for the token text.
+// json_path_str supports numeric array indices: "choices.0.delta.content".
+fn main() -> i64 {
+    let headers = "{{\"content-type\":\"application/json\"}}"
+    let body = "{{\"model\":\"Qwen3.6-35B-A3B-FP8\",\"max_tokens\":128,\"stream\":true,\"chat_template_kwargs\":{{\"enable_thinking\":false}},\"messages\":[{{\"role\":\"user\",\"content\":\"Count to five, one word per line.\"}}]}}"
+    match http_sse_post("http://127.0.0.1:18306/v1/chat/completions", headers, body, |event: str| {
+        match json_path_str(event, "choices.0.delta.content") {
+            Ok(text) => print(text)
+            Err(_)   => {}
+        }
+    }) {
+        Ok(_)  => { println("")  0 }
+        Err(e) => { println("stream error: {e}")  1 }
+    }
+}

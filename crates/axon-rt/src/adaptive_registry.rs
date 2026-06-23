@@ -92,8 +92,7 @@ pub(crate) fn lookup_adaptive_i64(name: &str) -> Option<unsafe extern "C" fn(i64
     // Safety: codegen only registers pointers whose signature matches
     // `extern "C" fn(i64) -> i64` (see emit_register_adaptive).  Any other
     // use is UB and explicitly out of scope for v1.
-    let f: unsafe extern "C" fn(i64) -> i64 =
-        unsafe { std::mem::transmute(raw) };
+    let f: unsafe extern "C" fn(i64) -> i64 = unsafe { std::mem::transmute(raw) };
     Some(f)
 }
 
@@ -101,19 +100,18 @@ pub(crate) fn lookup_adaptive_i64(name: &str) -> Option<unsafe extern "C" fn(i64
 mod tests {
     use super::*;
 
-    extern "C" fn double(x: i64) -> i64 { x * 2 }
-    extern "C" fn add_one(x: i64) -> i64 { x + 1 }
+    extern "C" fn double(x: i64) -> i64 {
+        x * 2
+    }
+    extern "C" fn add_one(x: i64) -> i64 {
+        x + 1
+    }
 
     #[test]
     fn register_and_lookup_calls_through() {
         let name = b"adapt_test_double";
-        __axon_register_adaptive(
-            name.as_ptr(),
-            name.len() as i64,
-            double as *const c_void,
-        );
-        let f = lookup_adaptive_i64("adapt_test_double")
-            .expect("expected registered fn pointer");
+        __axon_register_adaptive(name.as_ptr(), name.len() as i64, double as *const c_void);
+        let f = lookup_adaptive_i64("adapt_test_double").expect("expected registered fn pointer");
         let got = unsafe { f(21) };
         assert_eq!(got, 42);
     }
@@ -128,31 +126,19 @@ mod tests {
     #[test]
     fn re_registration_overwrites() {
         let name = b"adapt_test_overwrite";
-        __axon_register_adaptive(
-            name.as_ptr(),
-            name.len() as i64,
-            double as *const c_void,
-        );
+        __axon_register_adaptive(name.as_ptr(), name.len() as i64, double as *const c_void);
         let f1 = lookup_adaptive_i64("adapt_test_overwrite").unwrap();
         assert_eq!(unsafe { f1(5) }, 10);
 
         // Re-register with a different fn pointer.
-        __axon_register_adaptive(
-            name.as_ptr(),
-            name.len() as i64,
-            add_one as *const c_void,
-        );
+        __axon_register_adaptive(name.as_ptr(), name.len() as i64, add_one as *const c_void);
         let f2 = lookup_adaptive_i64("adapt_test_overwrite").unwrap();
         assert_eq!(unsafe { f2(5) }, 6, "second registration should win");
     }
 
     #[test]
     fn null_name_is_ignored() {
-        __axon_register_adaptive(
-            std::ptr::null(),
-            0,
-            double as *const c_void,
-        );
+        __axon_register_adaptive(std::ptr::null(), 0, double as *const c_void);
         // Nothing observable happened; lookup with empty name fails.
         assert!(lookup_adaptive_i64("").is_none());
     }
@@ -160,11 +146,7 @@ mod tests {
     #[test]
     fn null_fn_ptr_is_ignored() {
         let name = b"adapt_test_null_fn";
-        __axon_register_adaptive(
-            name.as_ptr(),
-            name.len() as i64,
-            std::ptr::null(),
-        );
+        __axon_register_adaptive(name.as_ptr(), name.len() as i64, std::ptr::null());
         assert!(lookup_adaptive_i64("adapt_test_null_fn").is_none());
     }
 }

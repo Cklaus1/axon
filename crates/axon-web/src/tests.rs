@@ -61,7 +61,10 @@ fn get_root_serves_html() {
     start_server_thread(18080);
     let (status, body) = get(18080, "/");
     assert_eq!(status, 200, "expected 200 got {status}");
-    assert!(body.contains("<!DOCTYPE html>"), "expected HTML, got: {body:.200}");
+    assert!(
+        body.contains("<!DOCTYPE html>"),
+        "expected HTML, got: {body:.200}"
+    );
     assert!(body.contains("Axon Goal Approval Flow"), "title missing");
 }
 
@@ -78,8 +81,8 @@ fn unknown_route_returns_404_json() {
     start_server_thread(18082);
     let (status, body) = get(18082, "/not/a/thing");
     assert_eq!(status, 404);
-    let v: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    let v: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
     assert!(v["error"].is_string());
 }
 
@@ -90,8 +93,8 @@ fn post_intent_compile_returns_json() {
     let (status, body) = post_json(18083, "/api/intent/compile", payload);
     assert_eq!(status, 200, "status: {status}, body: {body:.200}");
     // Body must be valid JSON regardless of axon binary availability
-    let _: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    let _: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
 }
 
 #[test]
@@ -100,8 +103,8 @@ fn post_deploy_returns_json() {
     let payload = "{\"content\":\"fn main() { println(\\\"ok\\\") }\",\"risk\":\"low\"}";
     let (status, body) = post_json(18084, "/api/deploy", payload);
     assert_eq!(status, 200, "status: {status}");
-    let _: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    let _: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
 }
 
 #[test]
@@ -109,8 +112,8 @@ fn get_trace_returns_json() {
     start_server_thread(18085);
     let (status, body) = get(18085, "/api/trace");
     assert_eq!(status, 200);
-    let _: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    let _: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
 }
 
 #[test]
@@ -119,15 +122,26 @@ fn post_goal_improve_returns_json() {
     let payload = "{\"content\":\"fn main() { println(\\\"ok\\\") }\"}";
     let (status, body) = post_json(18086, "/api/goal/improve", payload);
     assert_eq!(status, 200, "status: {status}, body: {body:.200}");
-    let v: serde_json::Value = serde_json::from_str(&body)
-        .unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
-    assert_eq!(v["schema"], "axon-goal-improve/1", "wrong schema in goal/improve response");
+    let v: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    assert_eq!(
+        v["schema"], "axon-goal-improve/1",
+        "wrong schema in goal/improve response"
+    );
 }
 
 #[test]
 fn html_contains_all_panes() {
     let html = crate::html::INDEX_HTML;
-    for step in ["Intent", "AST Review", "Approve", "Improve", "Red Team", "Deploy", "Trace"] {
+    for step in [
+        "Intent",
+        "AST Review",
+        "Approve",
+        "Improve",
+        "Red Team",
+        "Deploy",
+        "Trace",
+    ] {
         assert!(html.contains(step), "HTML missing pane: {step}");
     }
     // Every API endpoint referenced in the JS
@@ -153,7 +167,12 @@ fn html_state_machine_lockall_and_unlock() {
     assert!(html.contains("running = true"), "missing running lock");
     assert!(html.contains("running = false"), "missing running unlock");
     // done state flags
-    for flag in ["done.compiled", "done.reviewed", "done.approved", "done.redteamed"] {
+    for flag in [
+        "done.compiled",
+        "done.reviewed",
+        "done.approved",
+        "done.redteamed",
+    ] {
         assert!(html.contains(flag), "missing state flag: {flag}");
     }
 }
@@ -198,7 +217,10 @@ fn e2e_full_flow_with_real_axon_binary() {
         .unwrap_or_else(|| compile_j["stdout"].as_str().unwrap_or(""))
         .to_string();
     // ax_content may be empty if the server reads it from file; just verify JSON shape
-    assert!(compile_j["title"].is_string(), "missing title in compile response");
+    assert!(
+        compile_j["title"].is_string(),
+        "missing title in compile response"
+    );
 
     // Read the .ax file the compile step produced (path is in the response)
     let ax_path = compile_j["path"].as_str().unwrap_or("");
@@ -221,7 +243,10 @@ fn e2e_full_flow_with_real_axon_binary() {
     assert_eq!(status2, 200, "ast/review status");
     let review_j: serde_json::Value = serde_json::from_str(&resp2)
         .unwrap_or_else(|_| panic!("ast/review not JSON: {resp2:.200}"));
-    assert_eq!(review_j["schema"], "axon-ast-review/1", "wrong review schema");
+    assert_eq!(
+        review_j["schema"], "axon-ast-review/1",
+        "wrong review schema"
+    );
     assert!(review_j["fns"].is_array(), "missing fns in review response");
 
     // Step 3: ast approve
@@ -230,13 +255,16 @@ fn e2e_full_flow_with_real_axon_binary() {
     assert_eq!(status3, 200, "ast/approve status");
     let approve_j: serde_json::Value = serde_json::from_str(&resp3)
         .unwrap_or_else(|_| panic!("ast/approve not JSON: {resp3:.200}"));
-    assert!(approve_j["ok"].as_bool().unwrap_or(false), "approve not ok: {approve_j}");
+    assert!(
+        approve_j["ok"].as_bool().unwrap_or(false),
+        "approve not ok: {approve_j}"
+    );
 
     // Step 6: trace (always available)
     let (status6, resp6) = get(18090, "/api/trace");
     assert_eq!(status6, 200, "trace status");
-    let _: serde_json::Value = serde_json::from_str(&resp6)
-        .unwrap_or_else(|_| panic!("trace not JSON: {resp6:.200}"));
+    let _: serde_json::Value =
+        serde_json::from_str(&resp6).unwrap_or_else(|_| panic!("trace not JSON: {resp6:.200}"));
 
     // axon binary is the actual binary
     let _ = axon_bin; // used via env var in start_server_thread

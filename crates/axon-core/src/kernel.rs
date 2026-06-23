@@ -31,11 +31,18 @@ impl Budget {
         Budget { used: 0, cap }
     }
     fn spend(self, amount: i64) -> Self {
-        Budget { used: self.used + amount, cap: self.cap }
+        Budget {
+            used: self.used + amount,
+            cap: self.cap,
+        }
     }
     fn remaining(self) -> i64 {
         let r = self.cap - self.used;
-        if r < 0 { 0 } else { r }
+        if r < 0 {
+            0
+        } else {
+            r
+        }
     }
     fn exhausted(self) -> bool {
         self.used >= self.cap
@@ -77,7 +84,9 @@ pub struct PrincipalRegistry {
 
 impl PrincipalRegistry {
     pub fn new() -> Self {
-        PrincipalRegistry { principals: Vec::new() }
+        PrincipalRegistry {
+            principals: Vec::new(),
+        }
     }
 
     /// Register a ROOT principal — the originating authority. Holds exactly the
@@ -146,7 +155,10 @@ impl PrincipalRegistry {
 
     /// Remaining budget of a principal (0 if unknown).
     pub fn budget_remaining(&self, handle: usize) -> i64 {
-        self.principals.get(handle).map(|p| p.budget.remaining()).unwrap_or(0)
+        self.principals
+            .get(handle)
+            .map(|p| p.budget.remaining())
+            .unwrap_or(0)
     }
 
     /// Debit `amount` from a principal's own budget; returns its new remaining
@@ -170,8 +182,11 @@ impl PrincipalRegistry {
         needs_fs_write: bool,
         needs_exec: bool,
     ) -> bool {
-        let Some(p) = self.principals.get(handle) else { return false };
-        let caps = (!needs_net || p.net) && (!needs_fs_write || p.fs_write) && (!needs_exec || p.exec);
+        let Some(p) = self.principals.get(handle) else {
+            return false;
+        };
+        let caps =
+            (!needs_net || p.net) && (!needs_fs_write || p.fs_write) && (!needs_exec || p.exec);
         caps && !p.budget.exhausted()
     }
 
@@ -186,8 +201,11 @@ impl PrincipalRegistry {
         want_exec: bool,
         budget_grant: i64,
     ) -> bool {
-        let Some(p) = self.principals.get(parent_handle) else { return false };
-        let caps_ok = (!want_net || p.net) && (!want_fs_write || p.fs_write) && (!want_exec || p.exec);
+        let Some(p) = self.principals.get(parent_handle) else {
+            return false;
+        };
+        let caps_ok =
+            (!want_net || p.net) && (!want_fs_write || p.fs_write) && (!want_exec || p.exec);
         let budget_ok = budget_grant > 0 && p.budget.remaining() > 0;
         caps_ok && budget_ok
     }
@@ -245,12 +263,20 @@ pub struct Scheduler {
 
 impl Scheduler {
     pub fn new(seed_offset: usize) -> Self {
-        Scheduler { fibers: Vec::new(), seed_offset, passes: 0 }
+        Scheduler {
+            fibers: Vec::new(),
+            seed_offset,
+            passes: 0,
+        }
     }
 
     /// Spawn a fiber (named fn + arg); returns its fiber id (a stable index).
     pub fn spawn(&mut self, fn_name: String, arg: i64) -> usize {
-        self.fibers.push(Fiber { fn_name, arg, state: FiberState::Ready });
+        self.fibers.push(Fiber {
+            fn_name,
+            arg,
+            state: FiberState::Ready,
+        });
         self.fibers.len() - 1
     }
 
@@ -317,7 +343,10 @@ impl Scheduler {
 
     /// Whether a fiber failed.
     pub fn failed(&self, id: usize) -> bool {
-        matches!(self.fibers.get(id).map(|f| &f.state), Some(FiberState::Failed(_)))
+        matches!(
+            self.fibers.get(id).map(|f| &f.state),
+            Some(FiberState::Failed(_))
+        )
     }
 
     /// Count of fibers in each terminal state (done, failed) — for the run summary.
@@ -388,7 +417,13 @@ pub struct Supervisor {
 
 impl Supervisor {
     pub fn new(strategy: i64, max_restarts: i64) -> Self {
-        Supervisor { strategy, restarts: 0, max_restarts, halted: false, children: Vec::new() }
+        Supervisor {
+            strategy,
+            restarts: 0,
+            max_restarts,
+            halted: false,
+            children: Vec::new(),
+        }
     }
 
     /// Register a supervised child fiber (by scheduler id), in start order.
@@ -452,7 +487,12 @@ pub struct Store {
 
 impl Store {
     pub fn new(consistency: i64) -> Self {
-        Store { value: 0, consistency, seen: Vec::new(), version: 0 }
+        Store {
+            value: 0,
+            consistency,
+            seen: Vec::new(),
+            version: 0,
+        }
     }
 
     pub fn has_applied(&self, id: i64) -> bool {
@@ -510,7 +550,14 @@ pub struct LlmGateway {
 
 impl LlmGateway {
     pub fn new(model: String, rate_micro: i64, principal: usize, fallback: String) -> Self {
-        LlmGateway { model, rate_micro, principal, fallback, halted: false, spent_micro: 0 }
+        LlmGateway {
+            model,
+            rate_micro,
+            principal,
+            fallback,
+            halted: false,
+            spent_micro: 0,
+        }
     }
 
     /// µ$ cost of a call of `tokens` tokens (rate is per 1000 tokens). Negative
@@ -542,7 +589,13 @@ impl KernelGoal {
     pub fn new(principal: usize, name: String, target: f64) -> Self {
         // best_score starts at `target` — the `goal_best_score` convention for a
         // goal with no recorded evaluations yet.
-        KernelGoal { principal, name, target, evals_spent: 0, best_score: target }
+        KernelGoal {
+            principal,
+            name,
+            target,
+            evals_spent: 0,
+            best_score: target,
+        }
     }
 }
 
@@ -615,7 +668,10 @@ mod tests {
         let grand = reg.get(g).unwrap();
         assert!(grand.net, "child had net");
         assert!(grand.fs_write, "child had fs");
-        assert!(!grand.exec, "child never had exec → grandchild can't get it");
+        assert!(
+            !grand.exec,
+            "child never had exec → grandchild can't get it"
+        );
         assert_eq!(grand.budget.cap, 30);
     }
 
@@ -634,11 +690,20 @@ mod tests {
         let mut reg = PrincipalRegistry::new();
         let r = reg.root("root".into(), true, false, false, 100);
         assert!(reg.authorize(r, true, false, false), "has net + budget");
-        assert!(!reg.authorize(r, false, true, false), "needs fs_write, lacks it");
+        assert!(
+            !reg.authorize(r, false, true, false),
+            "needs fs_write, lacks it"
+        );
         assert!(reg.can_mint(r, true, false, false, 10));
-        assert!(!reg.can_mint(r, true, true, false, 10), "wants fs_write, lacks it");
+        assert!(
+            !reg.can_mint(r, true, true, false, 10),
+            "wants fs_write, lacks it"
+        );
         reg.spend(r, 100);
-        assert!(!reg.authorize(r, true, false, false), "budget exhausted → denied");
+        assert!(
+            !reg.authorize(r, true, false, false),
+            "budget exhausted → denied"
+        );
         assert!(!reg.can_mint(r, true, false, false, 10), "no budget left");
     }
 
@@ -670,7 +735,11 @@ mod tests {
             s2.spawn("w".into(), i);
         }
         // offset 2 rotates the start: [2,3,0,1].
-        assert_eq!(s2.ready_order(), vec![2, 3, 0, 1], "offset rotates deterministically");
+        assert_eq!(
+            s2.ready_order(),
+            vec![2, 3, 0, 1],
+            "offset rotates deterministically"
+        );
         // Identical re-run is identical (no Date/random in the order).
         let mut s3 = Scheduler::new(2);
         for i in 0..4 {
@@ -703,7 +772,11 @@ mod tests {
         assert_eq!(s.tally(), (2, 1), "2 done, 1 failed");
         // Only the failed fiber is Ready again after a restart (Slice-3 hook).
         s.restart(b);
-        assert_eq!(s.ready_order(), vec![b], "restart re-queues only the failed fiber");
+        assert_eq!(
+            s.ready_order(),
+            vec![b],
+            "restart re-queues only the failed fiber"
+        );
     }
 
     // ── Slice 3: live supervisor ─────────────────────────────────────────────
@@ -714,9 +787,16 @@ mod tests {
         assert_eq!(restart_set(ONE_FOR_ONE, 1, 4), vec![1]);
         assert_eq!(restart_set(ONE_FOR_ALL, 2, 4), vec![0, 1, 2, 3]);
         assert_eq!(restart_set(REST_FOR_ONE, 2, 5), vec![2, 3, 4]);
-        assert_eq!(restart_set(REST_FOR_ONE, 0, 3), vec![0, 1, 2], "first under rest = all");
+        assert_eq!(
+            restart_set(REST_FOR_ONE, 0, 3),
+            vec![0, 1, 2],
+            "first under rest = all"
+        );
         assert_eq!(restart_set(REST_FOR_ONE, 3, 4), vec![3], "last = just last");
-        assert!(restart_set(ONE_FOR_ONE, 9, 4).is_empty(), "out-of-range = nothing");
+        assert!(
+            restart_set(ONE_FOR_ONE, 9, 4).is_empty(),
+            "out-of-range = nothing"
+        );
         assert!(restart_set(ONE_FOR_ALL, -1, 4).is_empty());
     }
 
@@ -729,7 +809,11 @@ mod tests {
         sup.supervise(11);
         sup.supervise(12);
         let to_restart = sup.on_failure(1);
-        assert_eq!(to_restart, vec![11], "maps child index → scheduler fiber id");
+        assert_eq!(
+            to_restart,
+            vec![11],
+            "maps child index → scheduler fiber id"
+        );
         assert_eq!(sup.restarts, 1);
         assert!(sup.alive());
     }
@@ -768,9 +852,15 @@ mod tests {
 
         let mut l = Store::new(LINEARIZABLE);
         assert!(l.apply(7, 100));
-        assert!(!l.apply(7, 100), "linearizable dedups a retry (apply returns false)");
+        assert!(
+            !l.apply(7, 100),
+            "linearizable dedups a retry (apply returns false)"
+        );
         assert_eq!(l.value, 100);
-        assert_ne!(a.value, l.value, "the divergence is the whole point of the axis");
+        assert_ne!(
+            a.value, l.value,
+            "the divergence is the whole point of the axis"
+        );
     }
 
     #[test]
@@ -820,8 +910,15 @@ mod tests {
         assert_eq!(cost, 10_000);
         assert!(reg.budget_remaining(p) >= cost, "principal can afford it");
         reg.spend(p, cost);
-        assert_eq!(reg.budget_remaining(p), 40_000, "spend debited from the principal");
+        assert_eq!(
+            reg.budget_remaining(p),
+            40_000,
+            "spend debited from the principal"
+        );
         // An overrun call (60000 > 40000 left) is not afforded.
-        assert!(g.call_cost(12000) > reg.budget_remaining(p), "overrun exceeds the budget");
+        assert!(
+            g.call_cost(12000) > reg.budget_remaining(p),
+            "overrun exceeds the budget"
+        );
     }
 }

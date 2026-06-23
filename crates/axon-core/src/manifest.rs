@@ -161,7 +161,11 @@ pub fn graduate(
         corpus_hash: corpus_hash.into(),
         graduated_by: signers.to_vec(),
         perf_status,
-        proposed_by: if proposed_by.is_empty() { "static".to_string() } else { proposed_by },
+        proposed_by: if proposed_by.is_empty() {
+            "static".to_string()
+        } else {
+            proposed_by
+        },
     })
 }
 
@@ -174,7 +178,10 @@ pub struct Manifest {
 
 impl Manifest {
     pub fn new() -> Self {
-        Manifest { version: MANIFEST_VERSION, passes: Vec::new() }
+        Manifest {
+            version: MANIFEST_VERSION,
+            passes: Vec::new(),
+        }
     }
 
     /// Whether a pass id is graduated — i.e. permitted to run. The single
@@ -234,13 +241,19 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
     let mut passes: Vec<PassEntry> = Vec::new();
     let mut cur: Option<PassEntry> = None;
 
-    fn flush(cur: Option<PassEntry>, passes: &mut Vec<PassEntry>) -> Result<(), (&'static str, String)> {
+    fn flush(
+        cur: Option<PassEntry>,
+        passes: &mut Vec<PassEntry>,
+    ) -> Result<(), (&'static str, String)> {
         if let Some(p) = cur {
             if p.id.is_empty() || p.name.is_empty() {
-                return Err((E1405, format!(
-                    "passes.manifest [[pass]] missing required `id`/`name` (got id={:?})",
-                    p.id
-                )));
+                return Err((
+                    E1405,
+                    format!(
+                        "passes.manifest [[pass]] missing required `id`/`name` (got id={:?})",
+                        p.id
+                    ),
+                ));
             }
             passes.push(p);
         }
@@ -266,15 +279,21 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
             continue;
         }
         let Some((key, val)) = line.split_once('=') else {
-            return Err((E1405, format!(
-                "passes.manifest line {}: expected `key = value` or `[[pass]]`, got `{line}`",
-                lineno + 1
-            )));
+            return Err((
+                E1405,
+                format!(
+                    "passes.manifest line {}: expected `key = value` or `[[pass]]`, got `{line}`",
+                    lineno + 1
+                ),
+            ));
         };
         let (key, val) = (key.trim(), val.trim());
         if key == "version" {
             let v: u32 = val.parse().map_err(|_| {
-                (E1405, format!("passes.manifest has a non-numeric version `{val}`"))
+                (
+                    E1405,
+                    format!("passes.manifest has a non-numeric version `{val}`"),
+                )
             })?;
             if v != MANIFEST_VERSION {
                 return Err((E1405, format!(
@@ -285,10 +304,13 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
             continue;
         }
         let Some(p) = cur.as_mut() else {
-            return Err((E1405, format!(
-                "passes.manifest line {}: `{key}` appears before any [[pass]]",
-                lineno + 1
-            )));
+            return Err((
+                E1405,
+                format!(
+                    "passes.manifest line {}: `{key}` appears before any [[pass]]",
+                    lineno + 1
+                ),
+            ));
         };
         match key {
             "id" => p.id = parse_str(val).map_err(tag)?,
@@ -299,17 +321,28 @@ pub fn parse_manifest(text: &str) -> Result<Manifest, (&'static str, String)> {
             "perf_status" => {
                 let s = parse_str(val).map_err(tag)?;
                 p.perf_status = PerfClaim::parse(&s).ok_or_else(|| {
-                    (E1405, format!("unknown perf_status `{s}` (expected unmeasured|faster)"))
+                    (
+                        E1405,
+                        format!("unknown perf_status `{s}` (expected unmeasured|faster)"),
+                    )
                 })?;
             }
             "proposed_by" => p.proposed_by = parse_str(val).map_err(tag)?,
-            other => return Err((E1405, format!("passes.manifest line {}: unknown key `{other}`", lineno + 1))),
+            other => {
+                return Err((
+                    E1405,
+                    format!("passes.manifest line {}: unknown key `{other}`", lineno + 1),
+                ))
+            }
         }
     }
     flush(cur.take(), &mut passes)?;
 
     let Some(version) = version else {
-        return Err((E1405, "passes.manifest is missing a `version` line".to_string()));
+        return Err((
+            E1405,
+            "passes.manifest is missing a `version` line".to_string(),
+        ));
     };
     Ok(Manifest { version, passes })
 }
@@ -441,23 +474,40 @@ mod tests {
         assert_eq!(e.code, E1404);
 
         // One signer — refused (no quorum).
-        let e = graduate(&id, "p", &v, &c, &["principal:root-a".into()], PerfClaim::Unmeasured, "static")
-            .unwrap_err();
+        let e = graduate(
+            &id,
+            "p",
+            &v,
+            &c,
+            &["principal:root-a".into()],
+            PerfClaim::Unmeasured,
+            "static",
+        )
+        .unwrap_err();
         assert_eq!(e.code, E1404);
 
         // Same authority signing twice — still not two DISTINCT principals.
         let e = graduate(
-            &id, "p", &v, &c,
+            &id,
+            "p",
+            &v,
+            &c,
             &["principal:root-a".into(), "principal:root-a".into()],
             PerfClaim::Unmeasured,
             "static",
         )
         .unwrap_err();
-        assert_eq!(e.code, E1404, "self-graduation via a duplicate signer must be refused");
+        assert_eq!(
+            e.code, E1404,
+            "self-graduation via a duplicate signer must be refused"
+        );
 
         // Two distinct root principals — graduates.
         let ok = graduate(
-            &id, "p", &v, &c,
+            &id,
+            "p",
+            &v,
+            &c,
             &["principal:root-a".into(), "principal:root-b".into()],
             PerfClaim::Unmeasured,
             "static",
@@ -470,7 +520,10 @@ mod tests {
         let mut m = Manifest::new();
         let e = entry();
         let id = e.id.clone();
-        assert!(!m.is_graduated(&id), "ungraduated pass must not be permitted");
+        assert!(
+            !m.is_graduated(&id),
+            "ungraduated pass must not be permitted"
+        );
         m.insert(e);
         assert!(m.is_graduated(&id), "graduated pass is permitted");
         // revert removes execution permission (gate-3 reversibility).
@@ -524,7 +577,10 @@ mod tests {
         let mut m = Manifest::new();
         m.insert(e);
         let text = write_manifest(&m);
-        assert!(text.contains("proposed_by = \"ai:claude-opus-4-8\""), "origin serialized: {text}");
+        assert!(
+            text.contains("proposed_by = \"ai:claude-opus-4-8\""),
+            "origin serialized: {text}"
+        );
         let parsed = parse_manifest(&text).expect("round-trips");
         assert_eq!(parsed.passes[0].proposed_by, "ai:claude-opus-4-8");
 
@@ -533,19 +589,30 @@ mod tests {
                    verified = \"axv1:y\"\ncorpus_hash = \"axc1:z\"\n\
                    graduated_by = [\"a\", \"b\"]\nperf_status = \"unmeasured\"\n";
         let p = parse_manifest(old).expect("old manifest still parses");
-        assert_eq!(p.passes[0].proposed_by, "static", "absent proposed_by defaults to static");
+        assert_eq!(
+            p.passes[0].proposed_by, "static",
+            "absent proposed_by defaults to static"
+        );
     }
 
     #[test]
     fn malformed_manifest_is_e1405() {
         use crate::error::E1405;
         assert_eq!(parse_manifest("version = 99\n").unwrap_err().0, E1405);
-        assert_eq!(parse_manifest("[[pass]]\nname = \"x\"\n").unwrap_err().0, E1405); // missing version+id
-        assert_eq!(parse_manifest("version = 1\nid = \"x\"\n").unwrap_err().0, E1405); // key before [[pass]]
         assert_eq!(
-            parse_manifest("version = 1\n[[pass]]\nid = \"a\"\nname = \"n\"\nperf_status = \"bogus\"\n")
-                .unwrap_err()
-                .0,
+            parse_manifest("[[pass]]\nname = \"x\"\n").unwrap_err().0,
+            E1405
+        ); // missing version+id
+        assert_eq!(
+            parse_manifest("version = 1\nid = \"x\"\n").unwrap_err().0,
+            E1405
+        ); // key before [[pass]]
+        assert_eq!(
+            parse_manifest(
+                "version = 1\n[[pass]]\nid = \"a\"\nname = \"n\"\nperf_status = \"bogus\"\n"
+            )
+            .unwrap_err()
+            .0,
             E1405
         );
     }

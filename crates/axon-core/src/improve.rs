@@ -80,7 +80,10 @@ pub struct VerifyOptions {
 
 impl Default for VerifyOptions {
     fn default() -> Self {
-        VerifyOptions { measure_perf: false, perf_trials: 5 }
+        VerifyOptions {
+            measure_perf: false,
+            perf_trials: 5,
+        }
     }
 }
 
@@ -266,7 +269,8 @@ fn test_passes_as_expected(program: &Program, name: &str, should_fail: bool) -> 
 /// `after`, with a human-readable description of the flip. Tests are keyed by
 /// name; a pass that *removes* a test is also a flip (the test no longer runs).
 fn first_test_outcome_flip(before: &Program, after: &Program) -> Option<(String, String)> {
-    let after_tests: std::collections::HashMap<String, bool> = test_fns(after).into_iter().collect();
+    let after_tests: std::collections::HashMap<String, bool> =
+        test_fns(after).into_iter().collect();
     for (name, should_fail) in test_fns(before) {
         let before_ok = test_passes_as_expected(before, &name, should_fail);
         match after_tests.get(&name) {
@@ -324,9 +328,15 @@ fn measure_perf(pass: &Pass, corpus: &[Program], trials: u32) -> PerfStatus {
     }
 
     if regressed == 0 && improved > 0 {
-        PerfStatus::Faster { improved, members: corpus.len() }
+        PerfStatus::Faster {
+            improved,
+            members: corpus.len(),
+        }
     } else {
-        PerfStatus::NotFaster { regressed, improved }
+        PerfStatus::NotFaster {
+            regressed,
+            improved,
+        }
     }
 }
 
@@ -385,7 +395,11 @@ pub fn discover_arith_identities(corpus: &[Program]) -> Option<Proposal> {
             .iter()
             .map(|it| match it {
                 Item::FnDef(f) => count_identities_expr(&f.body),
-                Item::ImplBlock(b) => b.methods.iter().map(|m| count_identities_expr(&m.body)).sum(),
+                Item::ImplBlock(b) => b
+                    .methods
+                    .iter()
+                    .map(|m| count_identities_expr(&m.body))
+                    .sum(),
                 _ => 0,
             })
             .sum();
@@ -502,7 +516,12 @@ pub fn ai_discovery_prompt(corpus: &[Program]) -> String {
     let n_programs = corpus.len();
     let n_fns: usize = corpus
         .iter()
-        .map(|p| p.items.iter().filter(|it| matches!(it, Item::FnDef(_))).count())
+        .map(|p| {
+            p.items
+                .iter()
+                .filter(|it| matches!(it, Item::FnDef(_)))
+                .count()
+        })
         .sum();
     format!(
         "You are an optimization-pass selector for the Axon compiler. You may ONLY \
@@ -529,7 +548,10 @@ fn extract_candidate_names(reply: &str) -> Vec<String> {
             .trim_matches(['"', ',', ' ', '\t']);
         // Pull a bare token or the value of a `template: "x"` / `"template":"x"`.
         let token = if let Some(idx) = t.rfind(':') {
-            t[idx + 1..].trim().trim_matches(['"', ',', ' ']).to_string()
+            t[idx + 1..]
+                .trim()
+                .trim_matches(['"', ',', ' '])
+                .to_string()
         } else {
             t.to_string()
         };
@@ -642,7 +664,10 @@ fn count_identities_expr(e: &Expr) -> usize {
     } else {
         0
     };
-    here + child_exprs(e).into_iter().map(count_identities_expr).sum::<usize>()
+    here + child_exprs(e)
+        .into_iter()
+        .map(count_identities_expr)
+        .sum::<usize>()
 }
 
 /// Direct child expressions of `e` (for the read-only identity scan). Covers the
@@ -650,26 +675,47 @@ fn count_identities_expr(e: &Expr) -> usize {
 fn child_exprs(e: &Expr) -> Vec<&Expr> {
     let mut out: Vec<&Expr> = Vec::new();
     match e {
-        Expr::BinOp { left, right, .. } => { out.push(left); out.push(right); }
+        Expr::BinOp { left, right, .. } => {
+            out.push(left);
+            out.push(right);
+        }
         Expr::UnaryOp { operand, .. } => out.push(operand),
-        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => out.push(value),
-        Expr::Call { callee, args, .. } => { out.push(callee); out.extend(args.iter()); }
-        Expr::MethodCall { receiver, args, .. } => { out.push(receiver); out.extend(args.iter()); }
+        Expr::Let { value, .. } | Expr::Own { value, .. } | Expr::RefBind { value, .. } => {
+            out.push(value)
+        }
+        Expr::Call { callee, args, .. } => {
+            out.push(callee);
+            out.extend(args.iter());
+        }
+        Expr::MethodCall { receiver, args, .. } => {
+            out.push(receiver);
+            out.extend(args.iter());
+        }
         Expr::Question(inner) | Expr::Spawn(inner) | Expr::Comptime(inner) => out.push(inner),
         Expr::Return(Some(inner)) => out.push(inner),
         Expr::FieldAccess { receiver, .. } => out.push(receiver),
-        Expr::Index { receiver, index } => { out.push(receiver); out.push(index); }
+        Expr::Index { receiver, index } => {
+            out.push(receiver);
+            out.push(index);
+        }
         Expr::If { cond, then, else_ } => {
-            out.push(cond); out.push(then);
-            if let Some(e) = else_ { out.push(e); }
+            out.push(cond);
+            out.push(then);
+            if let Some(e) = else_ {
+                out.push(e);
+            }
         }
         Expr::Match { subject, arms } => {
             out.push(subject);
-            for a in arms { out.push(&a.body); }
+            for a in arms {
+                out.push(&a.body);
+            }
         }
         Expr::Tuple(xs) | Expr::Array(xs) => out.extend(xs.iter()),
         Expr::Block(stmts) | Expr::While { body: stmts, .. } => {
-            for s in stmts { out.extend(stmt_exprs(s)); }
+            for s in stmts {
+                out.extend(stmt_exprs(s));
+            }
         }
         Expr::Ok(b) | Expr::Err(b) | Expr::Some(b) => out.push(b),
         Expr::Lambda { body, .. } => out.push(body),
@@ -714,11 +760,15 @@ fn fold_item(item: &Item) -> Item {
         }
         Item::ImplBlock(b) => {
             let mut nb = b.clone();
-            nb.methods = b.methods.iter().map(|m| {
-                let mut nm = m.clone();
-                nm.body = fold_expr(&m.body);
-                nm
-            }).collect();
+            nb.methods = b
+                .methods
+                .iter()
+                .map(|m| {
+                    let mut nm = m.clone();
+                    nm.body = fold_expr(&m.body);
+                    nm
+                })
+                .collect();
             Item::ImplBlock(nb)
         }
         other => other.clone(),
@@ -735,9 +785,21 @@ fn fold_expr(e: &Expr) -> Expr {
         if is_arith_identity(op, left, right) {
             // The surviving operand is whichever side is NOT the identity literal.
             let survivor: &Expr = match op {
-                BinOp::Add => if is_int_lit(right, 0) { left } else { right },
+                BinOp::Add => {
+                    if is_int_lit(right, 0) {
+                        left
+                    } else {
+                        right
+                    }
+                }
                 BinOp::Sub => left, // x - 0 → x
-                BinOp::Mul => if is_int_lit(right, 1) { left } else { right },
+                BinOp::Mul => {
+                    if is_int_lit(right, 1) {
+                        left
+                    } else {
+                        right
+                    }
+                }
                 _ => return folded,
             };
             return survivor.clone();
@@ -754,48 +816,111 @@ fn map_child_exprs(e: &Expr, f: fn(&Expr) -> Expr) -> Expr {
     // `&Box<Expr>` arguments deref-coerce to `&Expr`, so this accepts both.
     let fb = |b: &Expr| Box::new(f(b));
     match e {
-        Expr::BinOp { op, left, right } => Expr::BinOp { op: op.clone(), left: fb(left), right: fb(right) },
-        Expr::UnaryOp { op, operand } => Expr::UnaryOp { op: op.clone(), operand: fb(operand) },
-        Expr::Let { name, ty, value } => Expr::Let { name: name.clone(), ty: ty.clone(), value: fb(value) },
-        Expr::Own { name, ty, value } => Expr::Own { name: name.clone(), ty: ty.clone(), value: fb(value) },
-        Expr::RefBind { name, ty, value } => Expr::RefBind { name: name.clone(), ty: ty.clone(), value: fb(value) },
-        Expr::Call { callee, args, tier } => Expr::Call { callee: fb(callee), args: args.iter().map(&f).collect(), tier: tier.clone() },
-        Expr::MethodCall { receiver, method, args } => Expr::MethodCall { receiver: fb(receiver), method: method.clone(), args: args.iter().map(&f).collect() },
+        Expr::BinOp { op, left, right } => Expr::BinOp {
+            op: op.clone(),
+            left: fb(left),
+            right: fb(right),
+        },
+        Expr::UnaryOp { op, operand } => Expr::UnaryOp {
+            op: op.clone(),
+            operand: fb(operand),
+        },
+        Expr::Let { name, ty, value } => Expr::Let {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
+        Expr::Own { name, ty, value } => Expr::Own {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
+        Expr::RefBind { name, ty, value } => Expr::RefBind {
+            name: name.clone(),
+            ty: ty.clone(),
+            value: fb(value),
+        },
+        Expr::Call { callee, args, tier } => Expr::Call {
+            callee: fb(callee),
+            args: args.iter().map(&f).collect(),
+            tier: tier.clone(),
+        },
+        Expr::MethodCall {
+            receiver,
+            method,
+            args,
+        } => Expr::MethodCall {
+            receiver: fb(receiver),
+            method: method.clone(),
+            args: args.iter().map(&f).collect(),
+        },
         Expr::Question(b) => Expr::Question(fb(b)),
         Expr::Spawn(b) => Expr::Spawn(fb(b)),
         Expr::Comptime(b) => Expr::Comptime(fb(b)),
         Expr::Return(Some(b)) => Expr::Return(Some(fb(b))),
-        Expr::FieldAccess { receiver, field } => Expr::FieldAccess { receiver: fb(receiver), field: field.clone() },
-        Expr::Index { receiver, index } => Expr::Index { receiver: fb(receiver), index: fb(index) },
-        Expr::If { cond, then, else_ } => Expr::If { cond: fb(cond), then: fb(then), else_: else_.as_ref().map(|b| fb(b.as_ref())) },
+        Expr::FieldAccess { receiver, field } => Expr::FieldAccess {
+            receiver: fb(receiver),
+            field: field.clone(),
+        },
+        Expr::Index { receiver, index } => Expr::Index {
+            receiver: fb(receiver),
+            index: fb(index),
+        },
+        Expr::If { cond, then, else_ } => Expr::If {
+            cond: fb(cond),
+            then: fb(then),
+            else_: else_.as_ref().map(|b| fb(b.as_ref())),
+        },
         Expr::Match { subject, arms } => Expr::Match {
             subject: fb(subject),
-            arms: arms.iter().map(|a| {
-                let mut na = a.clone();
-                na.body = f(&a.body);
-                na
-            }).collect(),
+            arms: arms
+                .iter()
+                .map(|a| {
+                    let mut na = a.clone();
+                    na.body = f(&a.body);
+                    na
+                })
+                .collect(),
         },
         Expr::Tuple(xs) => Expr::Tuple(xs.iter().map(&f).collect()),
         Expr::Array(xs) => Expr::Array(xs.iter().map(&f).collect()),
-        Expr::Block(stmts) => Expr::Block(stmts.iter().map(|s| {
-            let mut ns = s.clone();
-            ns.expr = f(&s.expr);
-            ns
-        }).collect()),
+        Expr::Block(stmts) => Expr::Block(
+            stmts
+                .iter()
+                .map(|s| {
+                    let mut ns = s.clone();
+                    ns.expr = f(&s.expr);
+                    ns
+                })
+                .collect(),
+        ),
         Expr::While { cond, body } => Expr::While {
             cond: fb(cond),
-            body: body.iter().map(|s| {
-                let mut ns = s.clone();
-                ns.expr = f(&s.expr);
-                ns
-            }).collect(),
+            body: body
+                .iter()
+                .map(|s| {
+                    let mut ns = s.clone();
+                    ns.expr = f(&s.expr);
+                    ns
+                })
+                .collect(),
         },
         Expr::Ok(b) => Expr::Ok(fb(b)),
         Expr::Err(b) => Expr::Err(fb(b)),
         Expr::Some(b) => Expr::Some(fb(b)),
-        Expr::Lambda { params, body, captures } => Expr::Lambda { params: params.clone(), body: fb(body), captures: captures.clone() },
-        Expr::StructLit { name, fields } => Expr::StructLit { name: name.clone(), fields: fields.iter().map(|(k, v)| (k.clone(), f(v))).collect() },
+        Expr::Lambda {
+            params,
+            body,
+            captures,
+        } => Expr::Lambda {
+            params: params.clone(),
+            body: fb(body),
+            captures: captures.clone(),
+        },
+        Expr::StructLit { name, fields } => Expr::StructLit {
+            name: name.clone(),
+            fields: fields.iter().map(|(k, v)| (k.clone(), f(v))).collect(),
+        },
         // Leaf / not-descended variants: returned unchanged (conservative).
         other => other.clone(),
     }
@@ -910,7 +1035,10 @@ pub fn count_constant_fold_sites(e: &Expr) -> usize {
     } else {
         0
     };
-    here + child_exprs(e).into_iter().map(count_constant_fold_sites).sum::<usize>()
+    here + child_exprs(e)
+        .into_iter()
+        .map(count_constant_fold_sites)
+        .sum::<usize>()
 }
 
 // ── The bool-simplify REWRITE PASS (R10, third template) ──────────────────────
@@ -932,12 +1060,19 @@ pub fn count_constant_fold_sites(e: &Expr) -> usize {
 /// `!literal` or `!(!x)`.
 fn bool_simplify_expr(e: &Expr) -> Expr {
     let folded = map_child_exprs(e, bool_simplify_expr);
-    if let Expr::UnaryOp { op: UnaryOp::Not, operand } = &folded {
+    if let Expr::UnaryOp {
+        op: UnaryOp::Not,
+        operand,
+    } = &folded
+    {
         match operand.as_ref() {
             // !true → false, !false → true
             Expr::Literal(Literal::Bool(b)) => return Expr::Literal(Literal::Bool(!b)),
             // !(!x) → x  (operand preserved; evaluated once either way)
-            Expr::UnaryOp { op: UnaryOp::Not, operand: inner } => return (**inner).clone(),
+            Expr::UnaryOp {
+                op: UnaryOp::Not,
+                operand: inner,
+            } => return (**inner).clone(),
             _ => {}
         }
     }
@@ -980,16 +1115,25 @@ pub fn bool_simplify_pass(program: &Program) -> Program {
 /// Count bool-simplify sites (read-only) — a `!literal` or `!(!x)`. Uses the
 /// SAME shape test as the pass, so detector and rewrite agree exactly.
 pub fn count_bool_simplify_sites(e: &Expr) -> usize {
-    let here = if let Expr::UnaryOp { op: UnaryOp::Not, operand } = e {
+    let here = if let Expr::UnaryOp {
+        op: UnaryOp::Not,
+        operand,
+    } = e
+    {
         match operand.as_ref() {
             Expr::Literal(Literal::Bool(_)) => 1,
-            Expr::UnaryOp { op: UnaryOp::Not, .. } => 1,
+            Expr::UnaryOp {
+                op: UnaryOp::Not, ..
+            } => 1,
             _ => 0,
         }
     } else {
         0
     };
-    here + child_exprs(e).into_iter().map(count_bool_simplify_sites).sum::<usize>()
+    here + child_exprs(e)
+        .into_iter()
+        .map(count_bool_simplify_sites)
+        .sum::<usize>()
 }
 
 // ── The redundant-branch-fold REWRITE PASS (R10, fourth template) ─────────────
@@ -1015,7 +1159,11 @@ fn redundant_branch_fold_expr(e: &Expr) -> Expr {
     let folded = map_child_exprs(e, redundant_branch_fold_expr);
     if let Expr::If { cond, then, else_ } = &folded {
         if let (Expr::Literal(Literal::Bool(b)), Some(else_branch)) = (cond.as_ref(), else_) {
-            return if *b { (**then).clone() } else { (**else_branch).clone() };
+            return if *b {
+                (**then).clone()
+            } else {
+                (**else_branch).clone()
+            };
         }
     }
     folded
@@ -1064,7 +1212,10 @@ pub fn count_redundant_branch_sites(e: &Expr) -> usize {
     } else {
         0
     };
-    here + child_exprs(e).into_iter().map(count_redundant_branch_sites).sum::<usize>()
+    here + child_exprs(e)
+        .into_iter()
+        .map(count_redundant_branch_sites)
+        .sum::<usize>()
 }
 
 // ── The compare-fold REWRITE PASS (R10, fifth template) ───────────────────────
@@ -1154,7 +1305,10 @@ pub fn count_compare_fold_sites(e: &Expr) -> usize {
     } else {
         0
     };
-    here + child_exprs(e).into_iter().map(count_compare_fold_sites).sum::<usize>()
+    here + child_exprs(e)
+        .into_iter()
+        .map(count_compare_fold_sites)
+        .sum::<usize>()
 }
 
 #[cfg(test)]
@@ -1183,7 +1337,11 @@ mod tests {
         // Identity: P(c) == c. Must pass G1 and G2.
         let identity: &Pass = &|p: &Program| p.clone();
         let rec = verify_pass(identity, &c);
-        assert!(rec.passed(), "identity pass must verify: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "identity pass must verify: {:?}",
+            rec.rejection()
+        );
         assert_eq!(rec.members, 3);
 
         // Output-changing: rewrite every `main` to return 0. Changes the exit
@@ -1203,7 +1361,11 @@ mod tests {
         let rec = verify_pass(breaker, &c);
         assert!(!rec.passed(), "an output-changing pass must be rejected");
         let err = rec.rejection().expect("a rejection");
-        assert_eq!(err.code, E1401, "must be G1 correctness failure: {}", err.message);
+        assert_eq!(
+            err.code, E1401,
+            "must be G1 correctness failure: {}",
+            err.message
+        );
     }
 
     /// G2 safety core (R10 §8): a pass that adds a capability the original
@@ -1228,8 +1390,14 @@ mod tests {
                         };
                         let orig = f.body.clone();
                         f.body = Expr::Block(vec![
-                            Stmt { expr: read, span: crate::span::Span::dummy() },
-                            Stmt { expr: orig, span: crate::span::Span::dummy() },
+                            Stmt {
+                                expr: read,
+                                span: crate::span::Span::dummy(),
+                            },
+                            Stmt {
+                                expr: orig,
+                                span: crate::span::Span::dummy(),
+                            },
                         ]);
                     }
                 }
@@ -1239,8 +1407,16 @@ mod tests {
         let rec = verify_pass(exfil, &c);
         assert!(!rec.passed(), "a capability-adding pass must be rejected");
         let err = rec.rejection().expect("a rejection");
-        assert_eq!(err.code, E1402, "must be G2 safety failure: {}", err.message);
-        assert!(err.message.contains("fs:read"), "names the added capability: {}", err.message);
+        assert_eq!(
+            err.code, E1402,
+            "must be G2 safety failure: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("fs:read"),
+            "names the added capability: {}",
+            err.message
+        );
     }
 
     /// Determinism (R10 §4.7): two verify runs of the same (pass, corpus)
@@ -1251,7 +1427,10 @@ mod tests {
         let identity: &Pass = &|p: &Program| p.clone();
         let a = verify_pass(identity, &c);
         let b = verify_pass(identity, &c);
-        assert_eq!(a, b, "verify must be deterministic for a fixed (pass, corpus)");
+        assert_eq!(
+            a, b,
+            "verify must be deterministic for a fixed (pass, corpus)"
+        );
     }
 
     /// An overfit pass — correct on one member, wrong on another — is still
@@ -1260,8 +1439,8 @@ mod tests {
     #[test]
     fn overfit_pass_passing_on_one_member_is_caught() {
         let c = corpus(); // members 0,1 return ints; member 2 prints.
-        // A pass that only rewrites a program returning exactly 42 to return 42
-        // (a no-op on member 0) but corrupts any *other* int-returning main to 0.
+                          // A pass that only rewrites a program returning exactly 42 to return 42
+                          // (a no-op on member 0) but corrupts any *other* int-returning main to 0.
         let overfit: &Pass = &|p: &Program| {
             use crate::ast::{Expr, Item, Literal};
             let (code, _) = run_program_capturing(p);
@@ -1278,7 +1457,10 @@ mod tests {
             np
         };
         let rec = verify_pass(overfit, &c);
-        assert!(!rec.passed(), "overfit pass (correct on member 0, wrong on 1) must be caught");
+        assert!(
+            !rec.passed(),
+            "overfit pass (correct on member 0, wrong on 1) must be caught"
+        );
         assert_eq!(rec.rejection().unwrap().code, E1401);
     }
 
@@ -1308,11 +1490,23 @@ mod tests {
             np
         };
         let rec = verify_pass(breaker, &c);
-        assert!(rec.g1_correctness.is_ok(), "G1 should pass (main unchanged): {:?}", rec.g1_correctness);
+        assert!(
+            rec.g1_correctness.is_ok(),
+            "G1 should pass (main unchanged): {:?}",
+            rec.g1_correctness
+        );
         assert!(!rec.passed(), "a test-breaking pass must be rejected");
         let err = rec.rejection().expect("a rejection");
-        assert_eq!(err.code, E1403, "must be G3 regression failure: {}", err.message);
-        assert!(err.message.contains("test_double"), "names the broken test: {}", err.message);
+        assert_eq!(
+            err.code, E1403,
+            "must be G3 regression failure: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("test_double"),
+            "names the broken test: {}",
+            err.message
+        );
     }
 
     /// G3 passes for an identity pass (every test keeps its outcome), and a
@@ -1327,7 +1521,11 @@ mod tests {
         )];
         let identity: &Pass = &|p: &Program| p.clone();
         let rec = verify_pass(identity, &c);
-        assert!(rec.passed(), "identity must keep every test outcome: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "identity must keep every test outcome: {:?}",
+            rec.rejection()
+        );
         assert!(rec.g3_regression.is_ok());
     }
 
@@ -1359,10 +1557,17 @@ mod tests {
     fn perf_gate_does_not_falsely_claim_faster_for_identity() {
         let c = corpus();
         let identity: &Pass = &|p: &Program| p.clone();
-        let opts = VerifyOptions { measure_perf: true, perf_trials: 9 };
+        let opts = VerifyOptions {
+            measure_perf: true,
+            perf_trials: 9,
+        };
         let rec = verify_pass_with(identity, &c, &opts);
         assert!(rec.passed(), "identity still passes G1–G3");
-        assert!(!rec.is_faster(), "identity is not a speedup: {:?}", rec.g4_perf);
+        assert!(
+            !rec.is_faster(),
+            "identity is not a speedup: {:?}",
+            rec.g4_perf
+        );
     }
 
     /// G4 only runs once G1–G3 hold — timing a miscompiling pass is pointless.
@@ -1381,10 +1586,17 @@ mod tests {
             }
             np
         };
-        let opts = VerifyOptions { measure_perf: true, perf_trials: 3 };
+        let opts = VerifyOptions {
+            measure_perf: true,
+            perf_trials: 3,
+        };
         let rec = verify_pass_with(breaker, &c, &opts);
         assert!(!rec.passed());
-        assert_eq!(rec.g4_perf, PerfStatus::Unmeasured, "no perf claim on a broken pass");
+        assert_eq!(
+            rec.g4_perf,
+            PerfStatus::Unmeasured,
+            "no perf claim on a broken pass"
+        );
     }
 
     // ── R10 discovery (the unprivileged proposal side) ────────────────────────
@@ -1431,16 +1643,24 @@ mod tests {
         // verify harness test below).
         let before = prog("fn f(x: i64) -> i64 { x + 0 }\nfn g(y: i64) -> i64 { 1 * y - 0 }\nfn h(z: i64) -> i64 { z * 2 + 0 }");
         // Before: x+0, 1*y, -0, +0 = 4 sites.
-        let n_before: usize = before.items.iter().map(|it| match it {
-            Item::FnDef(fd) => count_identities_expr(&fd.body),
-            _ => 0,
-        }).sum();
+        let n_before: usize = before
+            .items
+            .iter()
+            .map(|it| match it {
+                Item::FnDef(fd) => count_identities_expr(&fd.body),
+                _ => 0,
+            })
+            .sum();
         assert_eq!(n_before, 4);
         let after = fold_arith_identities_pass(&before);
-        let n_after: usize = after.items.iter().map(|it| match it {
-            Item::FnDef(fd) => count_identities_expr(&fd.body),
-            _ => 0,
-        }).sum();
+        let n_after: usize = after
+            .items
+            .iter()
+            .map(|it| match it {
+                Item::FnDef(fd) => count_identities_expr(&fd.body),
+                _ => 0,
+            })
+            .sum();
         assert_eq!(n_after, 0, "all identities folded away");
     }
 
@@ -1456,8 +1676,16 @@ mod tests {
         ];
         let pass: &Pass = &fold_arith_identities_pass;
         let rec = verify_pass(pass, &c);
-        assert!(rec.g1_correctness.is_ok(), "fold must preserve behavior (G1): {:?}", rec.g1_correctness);
-        assert!(rec.g2_safety.is_ok(), "fold adds no capability (G2): {:?}", rec.g2_safety);
+        assert!(
+            rec.g1_correctness.is_ok(),
+            "fold must preserve behavior (G1): {:?}",
+            rec.g1_correctness
+        );
+        assert!(
+            rec.g2_safety.is_ok(),
+            "fold adds no capability (G2): {:?}",
+            rec.g2_safety
+        );
         assert!(rec.passed(), "the real optimization passes the gates");
     }
 
@@ -1467,10 +1695,14 @@ mod tests {
         // and still verifies clean.
         let c = vec![prog("fn main() -> i64 { 2 + 3 * 4 }")];
         let after = fold_arith_identities_pass(&c[0]);
-        let n: usize = after.items.iter().map(|it| match it {
-            Item::FnDef(fd) => count_identities_expr(&fd.body),
-            _ => 0,
-        }).sum();
+        let n: usize = after
+            .items
+            .iter()
+            .map(|it| match it {
+                Item::FnDef(fd) => count_identities_expr(&fd.body),
+                _ => 0,
+            })
+            .sum();
         assert_eq!(n, 0);
         let pass: &Pass = &fold_arith_identities_pass;
         assert!(verify_pass(pass, &c).passed());
@@ -1495,7 +1727,10 @@ mod tests {
         let out = discover_with_ai(&c, &propose, DiscoveryMode::Mock).expect("ok");
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].template, "fold-arith-identities");
-        assert!(out[0].opportunities >= 2, "should count real sites: {out:?}");
+        assert!(
+            out[0].opportunities >= 2,
+            "should count real sites: {out:?}"
+        );
         assert_eq!(out[0].mode.mode_str(), "mock");
     }
 
@@ -1508,7 +1743,11 @@ mod tests {
         let evil = |_p: &str| "constant-fold-no-bounds-check".to_string();
         let err = discover_with_ai(&c, &evil, DiscoveryMode::Mock).unwrap_err();
         assert_eq!(err.code, crate::error::E1407);
-        assert!(err.message.contains("not in the closed registry"), "{}", err.message);
+        assert!(
+            err.message.contains("not in the closed registry"),
+            "{}",
+            err.message
+        );
     }
 
     /// MUST-FIX (determinism): the same proposer + corpus yields byte-identical
@@ -1548,7 +1787,10 @@ mod tests {
         let pass = crate::improve_templates::get_pass_for_template(&props[0].template)
             .expect("selected name resolves in the registry");
         let rec = verify_pass(pass, &c);
-        assert!(rec.passed(), "AI-selected template must clear G1/G2: {rec:?}");
+        assert!(
+            rec.passed(),
+            "AI-selected template must clear G1/G2: {rec:?}"
+        );
     }
 
     // ── constant-fold pass (second template) ──────────────────────────────────
@@ -1568,7 +1810,11 @@ mod tests {
         assert_eq!(try_fold_int(&BinOp::Sub, i64::MIN, 1), None, "overflow");
         assert_eq!(try_fold_int(&BinOp::Div, 10, 0), None, "div by zero");
         assert_eq!(try_fold_int(&BinOp::Rem, 10, 0), None, "rem by zero");
-        assert_eq!(try_fold_int(&BinOp::Div, i64::MIN, -1), None, "MIN/-1 overflow");
+        assert_eq!(
+            try_fold_int(&BinOp::Div, i64::MIN, -1),
+            None,
+            "MIN/-1 overflow"
+        );
     }
 
     #[test]
@@ -1645,10 +1891,21 @@ mod tests {
     #[test]
     fn count_compare_fold_sites_agrees_with_the_pass() {
         // Only `<int-lit> CMP <int-lit>` counts; a compare over a variable does not.
-        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { if 3 < 5 { 1 } else { 0 } }")), 1);
-        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { let x = 1\n if x < 5 { 1 } else { 0 } }")), 0);
+        assert_eq!(
+            count_compare_fold_sites(&prog_body("fn main() -> i64 { if 3 < 5 { 1 } else { 0 } }")),
+            1
+        );
+        assert_eq!(
+            count_compare_fold_sites(&prog_body(
+                "fn main() -> i64 { let x = 1\n if x < 5 { 1 } else { 0 } }"
+            )),
+            0
+        );
         // A non-comparison literal BinOp is NOT a compare-fold site.
-        assert_eq!(count_compare_fold_sites(&prog_body("fn main() -> i64 { 2 + 3 }")), 0);
+        assert_eq!(
+            count_compare_fold_sites(&prog_body("fn main() -> i64 { 2 + 3 }")),
+            0
+        );
     }
 
     #[test]
@@ -1728,7 +1985,9 @@ mod tests {
         );
         // A negation of a comparison is not simplifiable by this pass → 0 sites.
         assert_eq!(
-            count_bool_simplify_sites(&prog_body("fn f(x: i64) -> i64 { if !(x > 0) { 1 } else { 0 } }")),
+            count_bool_simplify_sites(&prog_body(
+                "fn f(x: i64) -> i64 { if !(x > 0) { 1 } else { 0 } }"
+            )),
             0
         );
     }
@@ -1760,8 +2019,14 @@ mod tests {
                         };
                         let orig = f.body.clone();
                         f.body = Expr::Block(vec![
-                            Stmt { expr: noise, span: crate::span::Span::dummy() },
-                            Stmt { expr: orig, span: crate::span::Span::dummy() },
+                            Stmt {
+                                expr: noise,
+                                span: crate::span::Span::dummy(),
+                            },
+                            Stmt {
+                                expr: orig,
+                                span: crate::span::Span::dummy(),
+                            },
                         ]);
                     }
                 }
@@ -1771,8 +2036,16 @@ mod tests {
         let rec = verify_pass(chatter, &c);
         assert!(!rec.passed(), "a stdout-changing pass must be rejected");
         let err = rec.rejection().expect("a rejection");
-        assert_eq!(err.code, E1401, "stdout change is a G1 failure: {}", err.message);
-        assert!(err.message.contains("stdout"), "names the stdout change: {}", err.message);
+        assert_eq!(
+            err.code, E1401,
+            "stdout change is a G1 failure: {}",
+            err.message
+        );
+        assert!(
+            err.message.contains("stdout"),
+            "names the stdout change: {}",
+            err.message
+        );
     }
 
     /// G2 catches an `exec` injection — the most dangerous capability, distinct
@@ -1794,8 +2067,14 @@ mod tests {
                         };
                         let orig = f.body.clone();
                         f.body = Expr::Block(vec![
-                            Stmt { expr: ex, span: crate::span::Span::dummy() },
-                            Stmt { expr: orig, span: crate::span::Span::dummy() },
+                            Stmt {
+                                expr: ex,
+                                span: crate::span::Span::dummy(),
+                            },
+                            Stmt {
+                                expr: orig,
+                                span: crate::span::Span::dummy(),
+                            },
                         ]);
                     }
                 }
@@ -1809,9 +2088,20 @@ mod tests {
         // catches it on BOTH axes. Assert the G2 safety gate specifically fired
         // (the I-12 property), not merely that *some* gate did. (rejection()
         // reports G1 first by priority, but g2_safety is independently Err here.)
-        let g2 = rec.g2_safety.as_ref().expect_err("G2 must flag the added exec capability");
-        assert_eq!(g2.code, E1402, "exec injection is a G2 safety failure: {}", g2.message);
-        assert!(g2.message.contains("exec"), "names the exec capability: {}", g2.message);
+        let g2 = rec
+            .g2_safety
+            .as_ref()
+            .expect_err("G2 must flag the added exec capability");
+        assert_eq!(
+            g2.code, E1402,
+            "exec injection is a G2 safety failure: {}",
+            g2.message
+        );
+        assert!(
+            g2.message.contains("exec"),
+            "names the exec capability: {}",
+            g2.message
+        );
     }
 
     /// G1 catches PANIC ERASURE — the exact soundness failure the real
@@ -1840,7 +2130,11 @@ mod tests {
         let rec = verify_pass(erase, &c);
         assert!(!rec.passed(), "erasing a runtime panic must be rejected");
         let err = rec.rejection().expect("a rejection");
-        assert_eq!(err.code, E1401, "panic erasure is a G1 failure (exit 101 → 0): {}", err.message);
+        assert_eq!(
+            err.code, E1401,
+            "panic erasure is a G1 failure (exit 101 → 0): {}",
+            err.message
+        );
     }
 
     // ── Corpus breadth: every registry pass must hold across the language ──────
@@ -1908,7 +2202,10 @@ mod tests {
         // The identity pass is the baseline and must also hold (sanity: the corpus
         // itself runs clean under verify, so a real failure above is the pass).
         let identity: &Pass = &|p: &Program| p.clone();
-        assert!(verify_pass(identity, &c).passed(), "identity must hold over the diverse corpus");
+        assert!(
+            verify_pass(identity, &c).passed(),
+            "identity must hold over the diverse corpus"
+        );
     }
 
     // ── redundant-branch-fold pass (fourth template) ──────────────────────────
@@ -1921,27 +2218,39 @@ mod tests {
             then: Box::new(Expr::Literal(Literal::Int(1))),
             else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
         });
-        assert!(matches!(t, Expr::Literal(Literal::Int(1))), "true branch taken: {t:?}");
+        assert!(
+            matches!(t, Expr::Literal(Literal::Int(1))),
+            "true branch taken: {t:?}"
+        );
         let f = redundant_branch_fold_expr(&Expr::If {
             cond: Box::new(Expr::Literal(Literal::Bool(false))),
             then: Box::new(Expr::Literal(Literal::Int(1))),
             else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
         });
-        assert!(matches!(f, Expr::Literal(Literal::Int(2))), "false branch taken: {f:?}");
+        assert!(
+            matches!(f, Expr::Literal(Literal::Int(2))),
+            "false branch taken: {f:?}"
+        );
         // A non-literal condition is left ALONE (not foldable).
         let keep = redundant_branch_fold_expr(&Expr::If {
             cond: Box::new(Expr::Ident("c".into())),
             then: Box::new(Expr::Literal(Literal::Int(1))),
             else_: Some(Box::new(Expr::Literal(Literal::Int(2)))),
         });
-        assert!(matches!(keep, Expr::If { .. }), "non-literal condition must be kept: {keep:?}");
+        assert!(
+            matches!(keep, Expr::If { .. }),
+            "non-literal condition must be kept: {keep:?}"
+        );
         // An if WITHOUT else is conservatively left alone.
         let no_else = redundant_branch_fold_expr(&Expr::If {
             cond: Box::new(Expr::Literal(Literal::Bool(true))),
             then: Box::new(Expr::Literal(Literal::Int(1))),
             else_: None,
         });
-        assert!(matches!(no_else, Expr::If { .. }), "no-else if is kept: {no_else:?}");
+        assert!(
+            matches!(no_else, Expr::If { .. }),
+            "no-else if is kept: {no_else:?}"
+        );
     }
 
     #[test]
@@ -1955,28 +2264,42 @@ mod tests {
         ];
         let pass: &Pass = &redundant_branch_fold_pass;
         let rec = verify_pass(pass, &c);
-        assert!(rec.passed(), "redundant-branch-fold must clear G1/G2/G3: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "redundant-branch-fold must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
     }
 
     #[test]
     fn redundant_branch_fold_does_not_erase_a_panic_in_the_taken_branch() {
         // The TAKEN branch panics (div by zero, exit 101). Folding keeps the taken
         // branch, so the panic is preserved — G1 holds (identity behavior).
-        let c = vec![prog("fn main() -> i64 { if true { let z = 0\n 10 / z } else { 0 } }")];
+        let c = vec![prog(
+            "fn main() -> i64 { if true { let z = 0\n 10 / z } else { 0 } }",
+        )];
         let pass: &Pass = &redundant_branch_fold_pass;
         let rec = verify_pass(pass, &c);
-        assert!(rec.passed(), "folding must preserve a panic in the taken branch: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "folding must preserve a panic in the taken branch: {:?}",
+            rec.rejection()
+        );
     }
 
     #[test]
     fn count_redundant_branch_sites_matches_the_pass() {
         // A constant-condition if/else is a site; a non-literal or no-else is not.
         assert_eq!(
-            count_redundant_branch_sites(&prog_body("fn main() -> i64 { if true { 1 } else { 2 } }")),
+            count_redundant_branch_sites(&prog_body(
+                "fn main() -> i64 { if true { 1 } else { 2 } }"
+            )),
             1
         );
         assert_eq!(
-            count_redundant_branch_sites(&prog_body("fn f(c: bool) -> i64 { if c { 1 } else { 2 } }")),
+            count_redundant_branch_sites(&prog_body(
+                "fn f(c: bool) -> i64 { if c { 1 } else { 2 } }"
+            )),
             0,
             "non-literal condition is not a site"
         );
@@ -2034,7 +2357,11 @@ mod tests {
         let pass = compile(&spec);
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
-        assert!(rec.passed(), "fold-logical must clear G1/G2/G3: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "fold-logical must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
     }
 
     /// The fold-bound-builtin rule through the firewall, with a built-in red-team:
@@ -2060,7 +2387,11 @@ mod tests {
         let pass = compile(&spec);
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
-        assert!(rec.passed(), "fold-bound-builtin must clear G1/G2/G3: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "fold-bound-builtin must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
     }
 
     /// fold-comparison-literal through the firewall: a corpus exercising literal
@@ -2079,12 +2410,18 @@ mod tests {
             // A non-literal comparison (x < 5) must be left intact and still work.
             prog("fn f(x: i64) -> i64 { if x < 5 { 7 } else { 9 } }\nfn main() -> i64 { f(2) }"),
         ];
-        let spec = RewriteSpec::parse("fold-int-literal\nfold-comparison-literal\nfold-const-branch").unwrap();
+        let spec =
+            RewriteSpec::parse("fold-int-literal\nfold-comparison-literal\nfold-const-branch")
+                .unwrap();
         spec.validate().unwrap();
         let pass = compile(&spec);
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
-        assert!(rec.passed(), "fold-comparison-literal must clear G1/G2/G3: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "fold-comparison-literal must clear G1/G2/G3: {:?}",
+            rec.rejection()
+        );
     }
 
     /// RED-TEAM for the new rule: the UNSOUND drop-left variant (`L && false →
@@ -2098,12 +2435,19 @@ mod tests {
         use crate::ast::{Expr, Item, Literal};
         // `(10/0 > 0) && false` — the LEFT operand panics (div by zero, exit 101);
         // the whole `&&` therefore panics. An unsound "fold to false" erases it.
-        let c = vec![prog("fn main() -> i64 { if (10 / 0 > 0) && false { 1 } else { 2 } }")];
+        let c = vec![prog(
+            "fn main() -> i64 { if (10 / 0 > 0) && false { 1 } else { 2 } }",
+        )];
         let drop_left: &Pass = &|p: &Program| {
             fn fold(e: &Expr) -> Expr {
                 // UNSOUND: `_ && false → false`, dropping the (possibly panicking)
                 // left operand. (Mirrors what a buggy fold-logical would do.)
-                if let Expr::BinOp { op: crate::ast::BinOp::And, right, .. } = e {
+                if let Expr::BinOp {
+                    op: crate::ast::BinOp::And,
+                    right,
+                    ..
+                } = e
+                {
                     if matches!(right.as_ref(), Expr::Literal(Literal::Bool(false))) {
                         return Expr::Literal(Literal::Bool(false));
                     }
@@ -2140,8 +2484,15 @@ mod tests {
             np
         };
         let rec = verify_pass(drop_left, &c);
-        assert!(!rec.passed(), "dropping an evaluated (panicking) operand must be rejected");
-        assert_eq!(rec.rejection().unwrap().code, E1401, "G1 catches the erased panic");
+        assert!(
+            !rec.passed(),
+            "dropping an evaluated (panicking) operand must be rejected"
+        );
+        assert_eq!(
+            rec.rejection().unwrap().code,
+            E1401,
+            "G1 catches the erased panic"
+        );
     }
 
     #[test]
@@ -2192,6 +2543,10 @@ mod tests {
         let pass = compile(&spec);
         let boxed: &Pass = &pass;
         let rec = verify_pass(boxed, &c);
-        assert!(rec.passed(), "the sound DSL pass preserves the panic and clears the gates: {:?}", rec.rejection());
+        assert!(
+            rec.passed(),
+            "the sound DSL pass preserves the panic and clears the gates: {:?}",
+            rec.rejection()
+        );
     }
 }
