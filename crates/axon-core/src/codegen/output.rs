@@ -118,6 +118,25 @@ impl<'ctx> super::Codegen<'ctx> {
         emit_object_and_link(&self.ir.module, output_path, release, target_triple)
     }
 
+    /// R14: Compile to a loadable shared library (`.so`) for the given triple.
+    ///
+    /// Used by `--host mobile` to produce the Android `jniLibs/<abi>/lib*.so`
+    /// the generated Kotlin wrapper loads via `System.loadLibrary`. The Axon
+    /// `main`/entry symbols are exported; the run loop lives in the wrapper's
+    /// `AxonRuntime` bridge (R14 §4). Currently wired for the Android triples.
+    pub fn compile_to_shared_lib(
+        &self,
+        output_path: &str,
+        release: bool,
+        target_triple: Option<&str>,
+    ) -> Result<(), String> {
+        self.ir
+            .module
+            .verify()
+            .map_err(|e| format!("IR verification failed: {}", e.to_string()))?;
+        super::link::emit_shared_lib(&self.ir.module, output_path, release, target_triple)
+    }
+
     /// R17: Compile to a freestanding (bare-metal) ELF binary.
     ///
     /// Uses a static/kernel code model, omits axon-rt/libc, and sets the ELF
