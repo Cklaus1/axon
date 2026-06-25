@@ -30,7 +30,7 @@ run_case() {
   local prog="$WORK/$label.ax" bin="$WORK/$label.bin"
   printf '%s\n' "$prog_src" > "$prog"
   local io ie ic no ne nc
-  io="$("$AXON" run "$prog" 2>"$WORK/ie")"; ic=$?; ie="$(cat "$WORK/ie")"
+  io="$("$AXON" run "$prog" 2>"$WORK/ie")"; ic=$?; ie="$(grep -v '^axon: run-id ' "$WORK/ie")"  # strip Phase-9 run-id stamp (native emits none)
   if ! "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
     echo "assert_msg_parity: native build failed for $label — skipping"; exit 0
   fi

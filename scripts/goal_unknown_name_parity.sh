@@ -53,7 +53,14 @@ if ! cargo build -q -p axon-core --bin axon 2>/dev/null; then
 fi
 AXON="target/debug/axon"
 
-run_interp() { AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$1" 2>&1; }
+# Run the interpreter, preserving its exit code, then strip the Phase-9
+# `axon: run-id` stderr stamp (the native binary emits no such line, so leaving
+# it in would be a false divergence). A bare pipe would clobber $? with grep's.
+run_interp() {
+  local out; out="$(AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$1" 2>&1)"; local code=$?
+  printf '%s\n' "$out" | grep -v '^axon: run-id '
+  return $code
+}
 
 build_native() {
   local src="$1" bin="$2"
