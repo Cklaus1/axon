@@ -49,6 +49,13 @@ asi-runtime = ["dep:axon-ai", "dep:reqwest"]
 # asi-runtime / serde-json):
 #   cargo build -p axon-core --no-default-features --features smt --bin axon
 smt = ["dep:z3"]
+# R13 slice 5: back `use native::gfx` with the REAL `axon-gfx` wgpu offscreen
+# renderer instead of the GPU-free mock. OFF by default — pulls in wgpu, so the
+# default `cargo build`/`gate.sh` never compiles it and stays fast. When on, the
+# interpreter routes `gfx::*` to the real headless GPU backend (verified on Mesa
+# lavapipe). Codegen path is unchanged (it links the axon-rt mock symbols).
+#   cargo build -p axon-core --no-default-features --features gfx-wgpu --bin axon-run
+gfx-wgpu = ["dep:axon-gfx"]
 
 [dependencies]
 logos = { workspace = true }
@@ -69,3 +76,5 @@ axon-surface = { path = "../axon-surface" }
 # for codegen, so the interpreter drives the identical Rust dispatch (one impl,
 # two engines, I-2 by construction modulo marshalling).
 axon-gfx-mock = { path = "../axon-gfx-mock" }
+# R13 slice 5: the REAL wgpu offscreen renderer (the `gfx-wgpu` feature only).
+axon-gfx = { path = "../axon-gfx", optional = true }

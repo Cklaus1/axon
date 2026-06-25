@@ -234,6 +234,26 @@ const GFX_FNS: &[NativeFn] = &[
         ret: FfiType::I64,
     },
     NativeFn {
+        name: "read_pixel",
+        symbol: "__axon_gfx_read_pixel",
+        // A pure value-returning probe (joins the differential parity corpus):
+        // the surface's last cleared color, packed 0xRRGGBBAA (see
+        // `axon_gfx_mock::pack_rgba8`). For the REAL wgpu module this is the
+        // pixel read back from the offscreen render target after a clear+
+        // present — the headless render-gate's acceptance check. Borrows the
+        // surface. Model and real GPU return the IDENTICAL value (same packing,
+        // non-sRGB target), so I-2 parity holds for this probe too.
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Surface",
+                resource: true,
+            },
+            ParamMode::Borrow,
+        )],
+        ret: FfiType::I64,
+    },
+    NativeFn {
         name: "surface_close",
         symbol: "__axon_gfx_surface_close",
         // Consumes the Surface handle.
