@@ -1,0 +1,32 @@
+// R20 Slice 2 — user attenuating functions via RELATIONAL refinements.
+//
+// A refinement return type whose predicate relates the result `_` to a function
+// PARAMETER (not just a constant). This generalizes the kernel mint budget-carve
+// obligation to any user-written attenuating function: "the value handed out is
+// never more than what was available."
+//
+// When built with the `smt` feature these contracts are PROVEN for all inputs
+// and the runtime check is elided; without it (or for contracts outside the
+// provable fragment) the predicate is enforced at runtime — a violation exits 6.
+//
+//   axon verify examples/refinement_attenuation.ax   # ✓ proven (smt feature)
+//   axon run    examples/refinement_attenuation.ax   # runs; check elided/enforced
+
+// Never carve out more than is available. `min_i64(g, avail) <= avail` holds for
+// ALL integers, so this is unconditionally provable.
+fn carve(grant: i64, avail: i64) -> (i64 where _ <= avail) {
+    min_i64(grant, avail)
+}
+
+// Clamp a request into [0, cap]. The result is provably within both bounds —
+// a two-sided relational refinement over the parameter `cap`.
+fn clamp_request(req: i64, cap: i64 where _ >= 0) -> (i64 where _ >= 0 && _ <= cap) {
+    min_i64(max_i64(req, 0), cap)
+}
+
+fn main() {
+    println(to_str(carve(200, 50)))          // 50 — clamped to what's available
+    println(to_str(carve(30, 50)))           // 30 — fits, handed out whole
+    println(to_str(clamp_request(999, 100))) // 100
+    println(to_str(clamp_request(0 - 5, 100)))   // 0
+}

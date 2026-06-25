@@ -922,9 +922,11 @@ fn prove_implies(
     let cfg = solver_config();
     let ctx = Context::new(&cfg);
     let x = Int::new_const(&ctx, "_");
+    // Subtyping is over a single value `_` with no fn params in scope.
+    let no_params: &[(String, Int)] = &[];
     let (Some(a), Some(c)) = (
-        encode_pred_binder(&ctx, antecedent, &x),
-        encode_pred_binder(&ctx, consequent, &x),
+        encode_pred_binder(&ctx, antecedent, &x, no_params),
+        encode_pred_binder(&ctx, consequent, &x, no_params),
     ) else {
         return ProofResult::Unsupported {
             function: site.to_string(),
@@ -1225,8 +1227,9 @@ fn prove_one_refinement_return(
         }
     };
 
-    // Encode the predicate with `_` bound to the body term.
-    let pred_z3 = match encode_pred_binder(&ctx, pred, &body) {
+    // Encode the predicate with `_` bound to the body term and the fn's params
+    // in scope (R20 Slice 2: relational refinements relating `_` to a param).
+    let pred_z3 = match encode_pred_binder(&ctx, pred, &body, &params) {
         Some(b) => b,
         None => {
             return ProofResult::Unsupported {
@@ -1271,26 +1274,31 @@ fn prove_one_refinement_return(
 
 /// Encode a refinement predicate as a Z3 Bool, with the binder `_` mapped to
 /// `binder_term`. Supports comparisons of i64 terms + `&&`/`||`/`!`.
-fn encode_pred_binder<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> Option<Bool<'c>> {
+fn encode_pred_binder<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Int<'c>,
+    params: &[(String, Int<'c>)],
+) -> Option<Bool<'c>> {
     match e {
         Expr::UnaryOp {
             op: crate::ast::UnaryOp::Not,
             operand,
-        } => Some(encode_pred_binder(ctx, operand, binder_term)?.not()),
+        } => Some(encode_pred_binder(ctx, operand, binder_term, params)?.not()),
         Expr::BinOp { op, left, right } => match op {
             BinOp::And => {
-                let l = encode_pred_binder(ctx, left, binder_term)?;
-                let r = encode_pred_binder(ctx, right, binder_term)?;
+                let l = encode_pred_binder(ctx, left, binder_term, params)?;
+                let r = encode_pred_binder(ctx, right, binder_term, params)?;
                 Some(Bool::and(ctx, &[&l, &r]))
             }
             BinOp::Or => {
-                let l = encode_pred_binder(ctx, left, binder_term)?;
-                let r = encode_pred_binder(ctx, right, binder_term)?;
+                let l = encode_pred_binder(ctx, left, binder_term, params)?;
+                let r = encode_pred_binder(ctx, right, binder_term, params)?;
                 Some(Bool::or(ctx, &[&l, &r]))
             }
             BinOp::Lt | BinOp::Gt | BinOp::LtEq | BinOp::GtEq | BinOp::Eq | BinOp::NotEq => {
-                let l = encode_pred_int(ctx, left, binder_term)?;
-                let r = encode_pred_int(ctx, right, binder_term)?;
+                let l = encode_pred_int(ctx, left, binder_term, params)?;
+                let r = encode_pred_int(ctx, right, binder_term, params)?;
                 Some(match op {
                     BinOp::Lt => l.lt(&r),
                     BinOp::Gt => l.gt(&r),
@@ -1308,17 +1316,30 @@ fn encode_pred_binder<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> 
 }
 
 /// Encode an int sub-expression of a refinement predicate, with `_` → binder.
-fn encode_pred_int<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> Option<Int<'c>> {
+fn encode_pred_int<'c>(
+    ctx: &'c Context,
+    e: &Expr,
+    binder_term: &Int<'c>,
+    params: &[(String, Int<'c>)],
+) -> Option<Int<'c>> {
     match e {
         Expr::Ident(n) if n == "_" => Some(binder_term.clone()),
+        // R20 Slice 2: a parameter reference resolves to its Z3 const, so a
+        // RELATIONAL refinement predicate (return `_` vs a param, e.g.
+        // `_ <= parent_rem`) becomes statically provable, not just a constant
+        // bound. Unknown idents stay unsupported (→ None → runtime fallback).
+        Expr::Ident(n) => params
+            .iter()
+            .find(|(pn, _)| pn == n)
+            .map(|(_, c)| c.clone()),
         Expr::Literal(Literal::Int(v)) => Some(Int::from_i64(ctx, *v)),
         Expr::UnaryOp {
             op: crate::ast::UnaryOp::Neg,
             operand,
-        } => Some(encode_pred_int(ctx, operand, binder_term)?.unary_minus()),
+        } => Some(encode_pred_int(ctx, operand, binder_term, params)?.unary_minus()),
         Expr::BinOp { op, left, right } => {
-            let l = encode_pred_int(ctx, left, binder_term)?;
-            let r = encode_pred_int(ctx, right, binder_term)?;
+            let l = encode_pred_int(ctx, left, binder_term, params)?;
+            let r = encode_pred_int(ctx, right, binder_term, params)?;
             match op {
                 BinOp::Add => Some(&l + &r),
                 BinOp::Sub => Some(&l - &r),
@@ -2253,6 +2274,37 @@ mod tests {
         assert!(
             check_mint_tcb_obligation().is_ok(),
             "in-tree mint must satisfy its TCB obligation"
+        );
+    }
+
+    // ── R20 Slice 2: relational refinements for user attenuating fns ──────────
+
+    #[test]
+    fn r20_relational_attenuation_refinement_is_discharged() {
+        // A user attenuating fn whose RETURN relates to a PARAMETER:
+        // `carve` never returns more than `avail`, ∀ integers. With params
+        // threaded into the predicate encoder this is now SMT-proven, not just
+        // runtime-checked — the generalization of the mint budget-carve to
+        // user-written functions.
+        let d = discharge_of(
+            "fn carve(grant: i64, avail: i64) -> (i64 where _ <= avail) \
+             { min_i64(grant, avail) }",
+        );
+        assert!(
+            d.refine_return_proven("carve"),
+            "carve's `_ <= avail` relational return refinement must be ∀-proven"
+        );
+    }
+
+    #[test]
+    fn r20_violable_relational_refinement_is_not_discharged() {
+        // SOUNDNESS: an attenuating contract that does NOT hold for all inputs
+        // (returns `grant` unclamped, which can exceed `avail`) must NOT be
+        // discharged — its runtime check (exit 6) stays armed.
+        let d = discharge_of("fn over(grant: i64, avail: i64) -> (i64 where _ <= avail) { grant }");
+        assert!(
+            !d.refine_return_proven("over"),
+            "a violable relational refinement must stay runtime-checked"
         );
     }
 }

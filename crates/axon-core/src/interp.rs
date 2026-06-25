@@ -1950,9 +1950,14 @@ impl<'p> Interp<'p> {
         if !self.refine_preds.is_empty() && !self.discharged.refine_return_proven(&f.name) {
             if let Some(crate::ast::AxonType::Named(rname)) = &f.return_type {
                 if let Some(pred) = self.refine_preds.get(rname.as_str()).copied() {
-                    let mut pred_env = Env::new();
-                    pred_env.define("_".into(), result.clone());
-                    if let Value::Bool(false) = self.eval(pred, &mut pred_env)? {
+                    // R20 Slice 2: evaluate the predicate with `_` bound to the
+                    // return value AND the fn's params still in scope, so a
+                    // RELATIONAL return refinement (e.g.
+                    // `-> (i64 where _ <= parent_rem)`) can reference parameters.
+                    // `env` already holds the param bindings from the body; add
+                    // `_` and evaluate against it instead of a bare env.
+                    env.define("_".into(), result.clone());
+                    if let Value::Bool(false) = self.eval(pred, &mut env)? {
                         return Err(Flow::RefineViolation(format!(
                             "the return value of `{}` (= {}) violates the refinement return \
                              type `{}` — the value does not satisfy the type's predicate",
