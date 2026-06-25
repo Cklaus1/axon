@@ -1,0 +1,48 @@
+// R14 slice 3 — the Android lifecycle round-trip, modeled on the landed
+// Phase-6 `host_await` resume runtime.
+//
+// On a real device the OS owns the run loop (the Android Activity). The
+// hand-written `AxonRuntime` bridge (the generated `Axon.kt` wrapper's support
+// lib, R14 §4) translates each lifecycle/frame event into a resume of THIS
+// program: `host_await(event)` SUSPENDS Axon and hands control back to the OS;
+// when the next event arrives the bridge resumes Axon with it. So one linear
+// Axon function spans the entire init → tick → suspend → resume → teardown
+// lifecycle without a busy-wait — exactly the inverted-control-flow bridge the
+// spec calls the genuinely hard part (R14 §4).
+//
+// This harness is substrate-agnostic: the SAME source runs under `axon run`
+// (the host feeds events on stdin), under the wasm browser host, and — driven
+// by the AxonRuntime bridge — on the device. Run it headless:
+//
+//   printf 'tick\ntick\nsuspend\nresume\ntick\nteardown\n' \
+//     | axon run examples/mobile/lifecycle.ax
+//
+// or via the on-device harness scripts/android_lifecycle.sh (adb shell + a
+// compiled lifecycle stepper).
+
+fn main() -> i64 {
+    println("AxonRuntime: on_start (init)")
+    let frame = 0
+    let suspended = 0
+    let running = 1
+    while running == 1 {
+        // Suspend Axon and yield to the OS run loop; resume with the next event.
+        let ev = host_await("AxonRuntime: awaiting lifecycle event > ")
+        if str_eq(ev, "tick") {
+            frame = frame + 1
+            println("on_frame: frame {to_str(frame)} rendered")
+        } else if str_eq(ev, "suspend") {
+            suspended = suspended + 1
+            println("on_pause: app backgrounded (suspend #{to_str(suspended)})")
+        } else if str_eq(ev, "resume") {
+            println("on_resume: app foregrounded; continuing at frame {to_str(frame)}")
+        } else if str_eq(ev, "teardown") {
+            println("on_destroy: teardown; frames={to_str(frame)} suspends={to_str(suspended)}")
+            running = 0
+        } else {
+            println("on_event: ignored unknown '{ev}'")
+        }
+    }
+    // Exit code = frames rendered (a deterministic round-trip witness).
+    frame
+}
