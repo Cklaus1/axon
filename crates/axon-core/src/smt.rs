@@ -1296,6 +1296,99 @@ fn encode_pred_int<'c>(ctx: &'c Context, e: &Expr, binder_term: &Int<'c>) -> Opt
     }
 }
 
+// ── R20 Slice 0: capability-attenuation spike (mint O1) ──────────────────────
+//
+// The first cut of `R20-smt-capability-proofs.md`. The mint obligation lives
+// OUTSIDE the `body OP constant` fragment the `@[verify]`/refinement provers
+// above target — it is *relational* (output child vs input parent), *boolean*
+// (net/fs/exec are caps, not Int terms), and *struct-valued* (a Principal is a
+// tuple of fields). This spike de-risks that encoder surface by proving the
+// simplest obligation in isolation, via the **direct-prover route** (route B in
+// the spec): we encode `mint`'s FIXED boolean semantics straight into Z3 rather
+// than parsing Axon source, because `mint` is a fixed TCB primitive.
+//
+// Obligation O1 (capability attenuation, invariant I-11):
+//     child.net ⇒ parent.net  ∧  child.fs_write ⇒ parent.fs_write
+//                              ∧  child.exec ⇒ parent.exec
+// where `mint` computes `child.cap = want_cap ∧ parent.cap` for each cap
+// (kernel.rs `mint`). Proving ∀ ≡ asserting ¬O1 is UNSAT — the same
+// negate-and-check shape the Int/Real provers use.
+//
+// `faithful_and` selects the encoding: `true` = the real conjunctive semantics
+// (must PROVE); `false` = a deliberately-weakened `child.net = want_net` that
+// drops the `&& parent.net` guard (must produce a COUNTEREXAMPLE). The latter is
+// the seed of the slice-1 E1610 I-12 tripwire: a mint edit that breaks
+// attenuation must be caught, not silently discharged.
+
+/// Prove mint's capability-attenuation obligation (O1) over all 8 boolean
+/// inputs (3 parent caps × 3 want flags, minus the irrelevant cross terms).
+/// Route B: the `mint` semantics are encoded directly, not lifted from source.
+#[cfg(feature = "smt")]
+pub fn prove_mint_attenuation(faithful_and: bool) -> ProofResult {
+    use z3::ast::Bool;
+
+    let cfg = Config::new();
+    let ctx = Context::new(&cfg);
+
+    // Free boolean inputs: the parent's held caps and the child's requested caps.
+    let p_net = Bool::new_const(&ctx, "parent_net");
+    let p_fs = Bool::new_const(&ctx, "parent_fs_write");
+    let p_exec = Bool::new_const(&ctx, "parent_exec");
+    let w_net = Bool::new_const(&ctx, "want_net");
+    let w_fs = Bool::new_const(&ctx, "want_fs_write");
+    let w_exec = Bool::new_const(&ctx, "want_exec");
+
+    // mint: child.cap = want_cap ∧ parent.cap (kernel.rs:124-126). The `net`
+    // arm is the one the mutation weakens to expose the tripwire.
+    let c_net = if faithful_and {
+        Bool::and(&ctx, &[&w_net, &p_net])
+    } else {
+        w_net.clone() // WEAKENED: drops `&& parent.net` — escalation hole.
+    };
+    let c_fs = Bool::and(&ctx, &[&w_fs, &p_fs]);
+    let c_exec = Bool::and(&ctx, &[&w_exec, &p_exec]);
+
+    // O1: every child cap implies the parent holds it.
+    let o1 = Bool::and(
+        &ctx,
+        &[
+            &c_net.implies(&p_net),
+            &c_fs.implies(&p_fs),
+            &c_exec.implies(&p_exec),
+        ],
+    );
+
+    // ∀ inputs. O1  ⟺  ¬O1 is UNSAT.
+    let solver = Solver::new(&ctx);
+    solver.assert(&o1.not());
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven {
+            function: "principal_mint(O1:attenuation)".into(),
+        },
+        SatResult::Sat => {
+            let model = solver.get_model().expect("sat ⇒ a model exists");
+            let as_int = |b: &Bool| -> i64 {
+                match model.eval(b, true).and_then(|v| v.as_bool()) {
+                    Some(true) => 1,
+                    _ => 0,
+                }
+            };
+            ProofResult::Counterexample {
+                function: "principal_mint(O1:attenuation)".into(),
+                inputs: vec![
+                    ("parent_net".into(), as_int(&p_net)),
+                    ("want_net".into(), as_int(&w_net)),
+                ],
+                predicate: "child.net ⇒ parent.net".into(),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: "principal_mint(O1:attenuation)".into(),
+            reason: "Z3 returned unknown on the attenuation VC".into(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1908,5 +2001,45 @@ mod tests {
             "an unsupported bound stays runtime-checked"
         );
         assert_eq!(d.total(), 0, "nothing provable here");
+    }
+
+    // ── R20 Slice 0: capability-attenuation spike ────────────────────────────
+
+    #[test]
+    fn r20_mint_attenuation_o1_is_proven_for_all_inputs() {
+        // The faithful `child.cap = want ∧ parent.cap` encoding must PROVE O1
+        // (no child cap exceeds the parent) for all 2^6 boolean inputs. This is
+        // the spike's primary signal: the Bool + relational encoder surface the
+        // mint obligation needs is reachable in z3 0.12 from this codebase.
+        match prove_mint_attenuation(true) {
+            ProofResult::Proven { function } => {
+                assert!(function.contains("attenuation"));
+            }
+            other => panic!("faithful mint must prove O1, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r20_weakened_mint_is_caught_not_discharged() {
+        // SOUNDNESS / I-12 tripwire seed: a mint that drops `&& parent.net`
+        // (an escalation hole) must NOT be provable — the encoder must return a
+        // concrete counterexample (want_net ∧ ¬parent.net ⇒ child.net but not
+        // parent.net), which slice 1 turns into E1610.
+        match prove_mint_attenuation(false) {
+            ProofResult::Counterexample {
+                inputs, predicate, ..
+            } => {
+                assert!(predicate.contains("parent.net"));
+                // The witness sets want_net=1 while parent_net=0.
+                let want = inputs.iter().find(|(n, _)| n == "want_net").map(|(_, v)| *v);
+                let parent = inputs
+                    .iter()
+                    .find(|(n, _)| n == "parent_net")
+                    .map(|(_, v)| *v);
+                assert_eq!(want, Some(1), "witness must request net");
+                assert_eq!(parent, Some(0), "witness parent must lack net");
+            }
+            other => panic!("weakened mint must be refuted, got {other:?}"),
+        }
     }
 }
