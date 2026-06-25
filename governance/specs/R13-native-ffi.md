@@ -1,7 +1,7 @@
 # Native FFI — Capability-Gated Native Modules
 
 **Spec ID:** `R13-native-ffi` (ties to `REQUIREMENTS.md` — new row; gates the full-platform vision: UI/GPU/mobile/3D)
-**Status:** Draft
+**Status:** Slices 1–3 landed interp-side (2026-06-25, branch `r13-ffi`); codegen E0910-refused (interp-only); slice 4 (real `axon-gfx` + codegen link) deferred
 **Risk class:** Structural
 **Author / date:** cklaus, 2026-06-07
 
@@ -167,23 +167,28 @@ New surface types, threaded through HM (`infer.rs`) and the checker:
 
 ### 6. Error codes
 
-Band allocation (verified against the live code 2026-06-07): **E13xx** is taken by Phase-6 effects
-(E1300–E1310), **E14xx** by R10 (E1401–E1408), **E15xx** by R4 (E1500–E1505), **E16xx** by R1+R12. The next
-free band is **E17xx** — reserved here for native FFI.
+**⚠ Code-band correction (landed 2026-06-25).** The draft proposed **E1700–E1704**, but R17 (just landed,
+merge `4ed9fcd`) took the entire **E170x** band: E1700 (unsafe-outside-substrate), E1701 (HAL-without-cap),
+E1702 (freestanding-no-entry), E1703 (surface-reaches-Hal), E1704 (`@[no_alloc]` heap), E1706
+(atomic-ordering). R13 therefore uses the next free band, **E18xx**, verified against `error.rs` before
+reserving (I-14). The implemented mapping:
 
 | Code | Trigger | Message shape |
 |---|---|---|
-| E1700 | `use native::M` for an unregistered module name | `unknown native module 'M' — no shim crate registered under that name` |
-| E1701 | native call arg/ret type not FFI-representable | `type 'T' is not FFI-representable at the native boundary (allowed: scalars, str, [scalar], Handle)` |
-| E1702 | handle of module A passed where module B's handle expected | `expected handle 'B::H', found 'A::H' — handles do not cross modules` |
-| E1703 | arithmetic / forging on a `Handle` | `'Handle' is opaque — it cannot be constructed, indexed, or used in arithmetic` |
-| (reuse) E1004 | `use native::M` without a matching capability grant | (existing capability-denied message, extended with the module name) |
-| E1704 | resource `Handle` used after being consumed (move-after-move) | (the existing borrow-checker E06xx "use after move" message, specialized to handles) |
-| (reuse) E06xx | resource `Handle` unconsumed at scope end (leak) | (existing unconsumed-`own`-value diagnostic) |
-| (reuse) E1310 | native module's effect not declared in caller's row | (existing effect-subsumption message) |
+| E1800 | `use native::M` for an unregistered module name | `unknown native module 'M' — no shim crate registered under that name` |
+| E1801 | native call arg/ret type not FFI-representable (also arity) | `type 'T' is not FFI-representable at the native boundary (allowed: scalars, str, [scalar], Handle)` |
+| E1802 | handle of type/module A passed where B's handle expected | `expected handle 'B::H', found 'A::H' — handles do not cross modules` |
+| E1803 | arithmetic / indexing / forging on a `Handle` | `'Handle' is opaque — it cannot be used in arithmetic / indexed` |
+| (reuse) E1004 | `use native::M` call without a matching `@[contained(M: …)]` grant | `'native::M' requires a 'M' capability grant — add @[contained(M: any)]` |
+| (reuse) E0601 | resource `Handle` used after being consumed (move-after-move) | the existing borrow-checker "use after move" message |
+| (gap) | resource `Handle` unconsumed at scope end (leak) | **NOT enforced this slice** — the borrow checker is move-tracking, not linear must-use; an unconsumed handle surfaces only as W0006 (unused binding) + the runtime handle-table backstop drops it. A hard must-consume leak diagnostic is deferred (it would need a new linear-use pass affecting all `own` values, out of R13 scope). |
+| (reuse) E1310 | native module's effect not declared in caller's closed row | (existing effect-subsumption message) |
 
-(Confirm E1700–E1704 are free against `error.rs` before reserving — I-14. E1704 may instead reuse the
-existing borrow-checker code if handle moves go through the standard `own` machinery, which is the intent.)
+The use-after-consume case reuses the existing borrow-checker **E0601** (handle moves go through the
+standard `own`/affine machinery — the spec's preferred option) rather than minting a new code. The
+capability-denied import reuses **E1004**; the effect-not-declared case reuses **E1310** (the existing
+anti-laundering subsumption walker). A native call reaching the codegen pipeline is refused at emit with
+**E0910** (interp-only this slice — see §11; sound-by-refusal, same as `host_await`).
 
 ### 7. Invariants touched
 
@@ -270,15 +275,31 @@ by the same micro-bench harness R10 G4 uses). Handle-table lookup is O(1) (slab 
 
 ### 11. Rollout & rollback
 
-- Behind a `--features native-ffi` flag initially; the `native::` import path is inert without it.
+**Status (landed 2026-06-25, branch `r13-ffi`):** Slices 1–3 LANDED interp-side; codegen is honest-stop
+E0910-refused (interp-only this iteration).
+
 - Ships in slices, each independently revertible:
-  1. **Handle type + `is_ffi_repr` + E17xx codes** (front-end only; no module loads yet). Revertible.
-  2. **`axon_native_module!` macro + registry + mock module** (the dual-engine plumbing, proven on a
-     GPU-free mock). This is the load-bearing slice; everything else is a consumer.
-  3. **Capability/effect bridge** (E1004/E1310 wiring for `native::`).
-  4. **`axon-gfx` shim crate** (wgpu/winit/vello) — the first real module, gated, manual-tier journey test.
+  1. **LANDED — Handle type + `is_ffi_repr` + E18xx codes** (front-end). The opaque nominal `Handle` is
+     carried as `Type::Deferred("native:<module>:<name>:<r|v>")` (nominal-distinct, non-`Copy` for resource
+     handles → affine via the existing borrow checker); `is_ffi_repr` is the E1801 predicate; arithmetic /
+     indexing on a handle is E1803.
+  2. **LANDED — registry + GPU-free `native::gfx` mock + dual-engine plumbing.** The single source of truth
+     is `crates/axon-core/src/native.rs` (a static `NativeModule`/`NativeFn` registry, the generalization of
+     `BUILTIN_EXTERNS`). The interpreter dispatches each `gfx::*` call to the in-process `GfxMock` (a frame
+     counter + per-module slab handle table — NO wgpu/winit/GPU). A full round-trip
+     (`window_open → surface → clear → present → frame_count → surface_close → window_close`) runs under
+     `axon run`. A consuming call moves the handle (affine); a forged/stale slab index is a graceful `Err`,
+     never a host abort (I-4). **Codegen: E0910-refused at emit** (sound-by-refusal, same discipline as
+     `host_await`) — the `axon-rt` mock-symbol link + handle `{i64,i64}` ABI marshalling is a deferred
+     follow-up slice; the interpreter is the reference engine.
+  3. **LANDED — capability + effect bridge.** `use native::gfx` without `@[contained(gfx: any)]` granting the
+     module is **E1004** at check time (fail-closed; the grant is parsed into `ContainedSpec.native_grants`).
+     A native call's `IO` effect bridges into a caller's closed effect row via the existing **E1310**
+     subsumption + anti-laundering walker.
+  4. **DEFERRED — `axon-gfx` shim crate** (wgpu/winit/vello), the first real module, AND the **codegen
+     mock-shim link** (slice-2 codegen half). Gated, manual-tier journey test.
 - Blast radius if wrong: contained to programs that `use native::*`. A bug cannot affect existing pure-Axon
-  programs (the import path is the only entry). `git revert` of slice 1 leaves a clean tree.
+  programs (the import path is the only entry).
 
 ### 12. Open questions
 
