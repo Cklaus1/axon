@@ -2,7 +2,10 @@
 
 **Spec ID:** `R15-resume-runtime` (Phase-6 continuation runtime; gates R7c interactive, R13/R14 UI)
 **Status:** Implementing — **slice-1 v0 LANDED** (`623d1a2`): `host_await(str)->str` via a
-worker-thread substrate (str payloads), B1/B2/B4/B5 green. Remaining slices below.
+worker-thread substrate (str payloads), B1/B2/B4/B5 green; **slice-2 LANDED** (`b097c0e`):
+arbitrary-`Value` payloads (dict/struct/enum/…) survive a suspend via a `Send` deep-clone
+(`SendValue`) across the same worker-thread substrate — the spec's SAFE alternative, no
+coroutine, `Chan` payloads refused (see §11 Slice (2)). Remaining slices below.
 **Risk class:** Structural
 **Author / date:** loop (autonomous), 2026-06-10
 
@@ -170,14 +173,29 @@ Slices:
   payload-agnostic, so the thread substrate handles it; only arbitrary-`Value` payloads
   actually need the coroutine. Demo: `examples/interactive/`. So v0 already covers
   **B1/B2/B3/B4/B5**.
-- **(2) v1 — the coroutine swap.** Replace the thread substrate with a same-thread stackful
-  coroutine (§4) so **arbitrary-`Value` payloads** (dict/struct — they're `!Send`, so can't
-  cross a thread) work, and to drop the per-suspend thread cost. This is the intricate part
-  (the yielder-lifetime plumbing + vendored `unsafe`). *This is the ONLY thing the coroutine
-  is needed for* — str/scalar payloads, loops, and the suspension property all work on the
-  thread substrate today. A safe alternative to evaluate first: **deep-clone Values to a
-  `Send` owned form** across the thread (no `unsafe`, no coroutine) — viable for native
-  hosts, though the browser (single-threaded) still needs the coroutine/Asyncify path.
+- **(2) v1 — arbitrary-`Value` payloads. LANDED (`b097c0e`) via the SAFE alternative
+  (deep-clone-to-`Send`), NOT the coroutine.** The decision point was "evaluate the safe
+  alternative first" — it was found fully sound for the native worker-thread substrate, so the
+  coroutine swap (`corosensei` + vendored `unsafe` + yielder-lifetime plumbing) was NOT needed
+  and is not built. Mechanism: the worker→host channel now carries an owned `Send` deep-clone
+  of the payload (`SendValue`, a mirror of `Value` minus the `Chan` variant) instead of just
+  `String`; the request `Value` is deep-cloned across, and the reply `SendValue` is
+  reconstructed into a fresh `Value` (a `Dict` gets a fresh `Rc<RefCell<…>>` — sound because
+  the program keeps its own `Rc` to the original, so the host receives a snapshot to inspect
+  and a reply has no prior sharing to preserve). **What now survives a suspend on native:** str,
+  scalars, unit, arrays, tuples, structs, enums, Option/Result, **dict**, **struct**, closures.
+  New interp-only builtins `host_await_val` / `host_await_val_opt` (typed `T -> U`, deferred);
+  new driver `run_suspendable_values`; native codegen E0910-refuses the new builtins (I-2).
+  **Soundness boundary (refused, not corrupted):** a `Chan` payload — or any value transitively
+  containing one — is identity-shared mutable state; deep-cloning it would silently break the
+  sharing across the suspend, so `SendValue::from_value` returns `Err` and the builtin raises a
+  clear runtime error (exit 101) naming the path to the offending channel, rather than handing
+  the host a disconnected copy. This is the spec's blessed "identity-shared payloads may be out
+  of scope — refuse them" posture. Gated by 6 new lib tests + `scripts/suspend_resume_parity.sh`
+  (str/loop/EOF + dict/struct/enum + Chan-refusal + codegen-refusal, vacuous-pass-guarded). The
+  per-suspend thread cost (the other coroutine motivation) is unchanged and deferred; the
+  browser (single-threaded) still uses the shipped Asyncify path (§13), not this thread
+  substrate.
 - **(3)** drop/resource (B6) + the kernel-scheduler `Suspended(token)` state.
 - **(4)** the browser binding (single-threaded → Asyncify / JS step-loop; R7c follow-on) and
   the `on_frame`/`fetch` surface (desugar to `host_await`, like Phase-8 `for!`).
