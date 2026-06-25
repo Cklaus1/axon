@@ -138,6 +138,11 @@ enum Command {
         /// The output path is used as-is (e.g. --out kernel.o).
         #[arg(long, help = "Emit .o only, skip link step (R17 Slice 1)")]
         emit_obj: bool,
+
+        /// Emit the LLVM IR as text to the --out path (or stdout) and stop.
+        /// Used for golden-IR inspection of layout/atomic lowering (R17 Slice 2/3).
+        #[arg(long, help = "Emit LLVM IR text and stop (R17 golden-IR tests)")]
+        emit_llvm: bool,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -639,6 +644,7 @@ fn dispatch(command: Command) {
             freestanding,
             linker_script,
             emit_obj,
+            emit_llvm,
         } => cmd_build(
             files,
             out,
@@ -649,6 +655,7 @@ fn dispatch(command: Command) {
             freestanding,
             linker_script,
             emit_obj,
+            emit_llvm,
         ),
         Command::Goal {
             file,
@@ -2384,6 +2391,7 @@ fn cmd_build(
     _freestanding: bool,
     _linker_script: Option<PathBuf>,
     _emit_obj: bool,
+    _emit_llvm: bool,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2407,6 +2415,7 @@ fn cmd_build(
     freestanding: bool,
     linker_script: Option<PathBuf>,
     emit_obj: bool,
+    emit_llvm: bool,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2471,6 +2480,7 @@ fn cmd_build(
         entry_fn: freestanding_entry,
         linker_script: linker_script.map(|p| p.to_string_lossy().into_owned()),
         emit_obj,
+        emit_llvm,
     };
 
     // Warn if cross-compiling without cross.toml configuration.
@@ -2519,6 +2529,7 @@ struct BuildOptions {
     entry_fn: Option<String>,
     linker_script: Option<String>,
     emit_obj: bool,
+    emit_llvm: bool,
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -3979,6 +3990,7 @@ fn run_build_pipeline(
             opts.entry_fn.as_deref(),
             opts.linker_script.as_deref(),
             opts.emit_obj,
+            opts.emit_llvm,
             &mut infer_ctx,
             cache_slot,
         );
@@ -3996,6 +4008,7 @@ fn run_build_pipeline(
         opts.entry_fn.as_deref(),
         opts.linker_script.as_deref(),
         opts.emit_obj,
+            opts.emit_llvm,
         &mut infer_ctx,
         None,
     )
@@ -4014,6 +4027,7 @@ fn build_ir_and_link(
     entry_fn: Option<&str>,
     linker_script: Option<&str>,
     emit_obj: bool,
+    emit_llvm: bool,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -4064,6 +4078,21 @@ fn build_ir_and_link(
             "{} codegen error(s); build aborted",
             cg.codegen_errors().len()
         ));
+    }
+
+    // R17 Slice 2/3: --emit-llvm dumps the IR text and stops (golden-IR tests).
+    if emit_llvm {
+        let ir = cg.emit_llvm_ir();
+        // Heuristic: if --out names a real file path (not the default ./stem),
+        // write there; otherwise print to stdout.
+        let out_str = output.to_string_lossy();
+        if out_str.ends_with(".ll") {
+            std::fs::write(output, &ir).map_err(|e| format!("writing IR: {e}"))?;
+            eprintln!("LLVM IR: {}", output.display());
+        } else {
+            print!("{ir}");
+        }
+        return Ok(());
     }
 
     // Write bitcode to cache before linking (so a link failure doesn't

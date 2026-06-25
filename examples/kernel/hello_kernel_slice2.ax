@@ -1,0 +1,81 @@
+// R17 Slice 2 — SMP atomics + memory ordering
+//
+// Exercises R17 Slice 2 features:
+//   • atomic_fetch_add_i64(ptr, delta, ordering) — the race-free SMP counter
+//   • atomic_load_i64(ptr, ordering)             — atomic read
+//   • atomic_store_i64(ptr, val, ordering)       — atomic write
+//   • atomic_cas_i64(ptr, expected, desired, ordering) — compare-and-swap
+//
+// Memory orderings (compile-time literal, last arg):
+//   0=relaxed  1=acquire  2=release  3=acq_rel  4=seq_cst
+//
+// Each atomic lowers to the corresponding LLVM atomic instruction with the
+// named memory order (golden-IR verified by scripts/atomic_ir_test.sh).
+//
+// Type-checks with:    axon check examples/kernel/hello_kernel_slice2.ax
+// Inspect lowering:    axon build --freestanding --emit-llvm \
+//                          examples/kernel/hello_kernel_slice2.ax --out /tmp/k.ll
+
+substrate
+
+// A shared counter sits at a fixed physical address (set up by the SMP
+// trampoline). Both cores call counter_inc on the SAME address.
+let COUNTER_ADDR = 0x100000
+
+// Atomically increment the shared SMP counter — the headline race-free op.
+// atomicrmw add with seq_cst ordering: no two cores can lose an update.
+@[hal]
+fn counter_inc() | {Hal} {
+    let ptr = ptr_from_addr(COUNTER_ADDR)
+    let _prior = atomic_fetch_add_i64(ptr, 1, 4)   // 4 = seq_cst; discard prior value
+}
+
+// Read the final counter value (acquire ordering: see all prior writes).
+@[hal]
+fn counter_read() -> i64 | {Hal} {
+    let ptr = ptr_from_addr(COUNTER_ADDR)
+    atomic_load_i64(ptr, 1)           // 1 = acquire
+}
+
+// Reset the counter (release ordering: publish to other cores).
+@[hal]
+fn counter_reset() | {Hal} {
+    let ptr = ptr_from_addr(COUNTER_ADDR)
+    atomic_store_i64(ptr, 0, 2)       // 2 = release
+}
+
+// A spinlock acquire via CAS: spin until we swap 0 -> 1.
+@[hal]
+fn lock_acquire(lock_addr: i64) | {Hal} {
+    let ptr = ptr_from_addr(lock_addr)
+    while atomic_cas_i64(ptr, 0, 1, 4) != 0 {
+        // contended — keep spinning (a real kernel would pause())
+    }
+}
+
+// Per-core entry: each core runs this loop incrementing the shared counter.
+@[hal]
+fn core_worker(iterations: i64) | {Hal} {
+    let i = 0
+    while i < iterations {
+        counter_inc()
+        i = i + 1
+    }
+}
+
+@[entry]
+fn kmain() | {Hal} {
+    counter_reset()
+    core_worker(1000)
+    let _total = counter_read()
+    while true {
+        hlt()
+    }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    while true {
+        hlt()
+    }
+}

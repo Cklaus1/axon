@@ -146,6 +146,8 @@ pub const E1700: &str = "E1700"; // raw pointer `*T`, volatile_*, ptr_from_addr,
 pub const E1701: &str = "E1701"; // @[hal] fn body calls hardware primitive without the Hal capability minted to its Principal
 pub const E1702: &str = "E1702"; // freestanding build has no @[entry] or @[panic_handler]
 pub const E1703: &str = "E1703"; // surface caller reaches a Hal-effected fn without declaring | {Hal}
+pub const E1704: &str = "E1704"; // @[no_alloc] fn reaches a heap-allocating builtin (ISR/early-boot alloc-free guarantee)
+pub const E1706: &str = "E1706"; // R17 Slice 2: atomic ordering arg is not a compile-time literal in 0..=4
 
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute

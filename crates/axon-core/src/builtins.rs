@@ -1738,6 +1738,46 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
+    // ── R17 Slice 2: SMP atomics (substrate-only; Hal effect; E0910 in interp) ──
+    // The trailing `ordering` arg is a COMPILE-TIME integer literal selecting the
+    // LLVM memory order: 0=relaxed/monotonic, 1=acquire, 2=release, 3=acq_rel,
+    // 4=seq_cst. Codegen requires it to be a literal (E1706 otherwise) so the
+    // memory order is fixed in the emitted instruction, never a runtime value.
+    BuiltinFn {
+        name: "atomic_load_i64",
+        params: &[("ptr", "i64"), ("ordering", "i64")],
+        ret: "i64",
+        doc: "R17 Slice 2: atomic load of an i64 from `ptr` with the named memory order \
+              (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst). Lowers to LLVM `load atomic`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_store_i64",
+        params: &[("ptr", "i64"), ("val", "i64"), ("ordering", "i64")],
+        ret: "()",
+        doc: "R17 Slice 2: atomic store of `val` to `ptr` with the named memory order. \
+              Lowers to LLVM `store atomic`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_fetch_add_i64",
+        params: &[("ptr", "i64"), ("delta", "i64"), ("ordering", "i64")],
+        ret: "i64",
+        doc: "R17 Slice 2: atomically add `delta` to `*ptr`, returning the PRIOR value, \
+              with the named memory order. Lowers to LLVM `atomicrmw add`. The race-free \
+              SMP counter primitive. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_cas_i64",
+        params: &[
+            ("ptr", "i64"),
+            ("expected", "i64"),
+            ("desired", "i64"),
+            ("ordering", "i64"),
+        ],
+        ret: "i64",
+        doc: "R17 Slice 2: atomic compare-and-swap — if `*ptr == expected`, store `desired`; \
+              returns the value that WAS in memory (== expected iff the swap happened) with the \
+              named memory order. Lowers to LLVM `cmpxchg`. Substrate-only.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1825,6 +1865,9 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
+            // R17 Slice 2: SMP atomics (shared-memory side effects)
+            | "atomic_load_i64" | "atomic_store_i64"
+            | "atomic_fetch_add_i64" | "atomic_cas_i64"
     )
 }
 
@@ -1903,7 +1946,10 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
         | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
-        | "port_out_u8" | "port_in_u8" => &["Hal"],
+        | "port_out_u8" | "port_in_u8"
+        // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
+        | "atomic_load_i64" | "atomic_store_i64"
+        | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
 
         // Everything else is pure.
         _ => &[],

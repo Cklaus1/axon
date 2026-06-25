@@ -4336,7 +4336,10 @@ impl<'p> Interp<'p> {
             "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
             | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
             | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
-            | "port_out_u8" | "port_in_u8" => {
+            | "port_out_u8" | "port_in_u8"
+            // R17 Slice 2: SMP atomics — no shared-memory hardware under `axon run`.
+            | "atomic_load_i64" | "atomic_store_i64"
+            | "atomic_fetch_add_i64" | "atomic_cas_i64" => {
                 Err(crate::interp::Flow::Panic(format!(
                     "[E0910] `{name}` is a HAL builtin — it requires native codegen \
                      (`axon build --freestanding`) and cannot run in the interpreter. \
