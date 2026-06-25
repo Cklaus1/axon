@@ -1389,6 +1389,120 @@ pub fn prove_mint_attenuation(faithful_and: bool) -> ProofResult {
     }
 }
 
+/// R20 Slice 1: prove the FULL mint obligation — O1 (capability attenuation)
+/// AND O2 (budget carve / non-inflation) — for all inputs. Extends the slice-0
+/// spike with the integer budget arithmetic. Route B: `mint`'s fixed semantics
+/// are encoded directly.
+///
+/// O2 (over `parent.cap`, `parent.used`, `grant` ∈ ℤ), faithful to
+/// `Budget::remaining` (clamps at 0) and `mint`'s `clamp(grant, 0, rem)`:
+/// ```text
+///   rem        = max(0, cap − used)
+///   g          = max(0, min(grant, rem))      // child.budget.cap
+///   used'      = used + g
+///   rem_after  = max(0, cap − used')
+///   O2a: g ≥ 0          O2b: g ≤ rem          O2c: rem_after + g = rem
+/// ```
+/// `faithful_caps` / `faithful_budget` select the real semantics (must PROVE)
+/// vs. a weakened encoding (must yield a counterexample — the slice-1 E1610
+/// I-12 tripwire at the *model* level; the kernel-impl tripwire is the
+/// differential property test in `kernel.rs`).
+#[cfg(feature = "smt")]
+pub fn prove_mint_obligations(faithful_caps: bool, faithful_budget: bool) -> ProofResult {
+    use z3::ast::{Bool, Int};
+
+    let cfg = Config::new();
+    let ctx = Context::new(&cfg);
+    let name = "principal_mint(O1:attenuation + O2:budget-carve)".to_string();
+
+    // ── O1: capability attenuation (boolean) ──
+    let p_net = Bool::new_const(&ctx, "parent_net");
+    let p_fs = Bool::new_const(&ctx, "parent_fs_write");
+    let p_exec = Bool::new_const(&ctx, "parent_exec");
+    let w_net = Bool::new_const(&ctx, "want_net");
+    let w_fs = Bool::new_const(&ctx, "want_fs_write");
+    let w_exec = Bool::new_const(&ctx, "want_exec");
+
+    let c_net = if faithful_caps {
+        Bool::and(&ctx, &[&w_net, &p_net])
+    } else {
+        w_net.clone() // WEAKENED: drops `&& parent.net`.
+    };
+    let c_fs = Bool::and(&ctx, &[&w_fs, &p_fs]);
+    let c_exec = Bool::and(&ctx, &[&w_exec, &p_exec]);
+    let o1 = Bool::and(
+        &ctx,
+        &[
+            &c_net.implies(&p_net),
+            &c_fs.implies(&p_fs),
+            &c_exec.implies(&p_exec),
+        ],
+    );
+
+    // ── O2: budget carve (integer, with the remaining()/clamp max-0 logic) ──
+    let zero = Int::from_i64(&ctx, 0);
+    let cap = Int::new_const(&ctx, "parent_cap");
+    let used = Int::new_const(&ctx, "parent_used");
+    let grant = Int::new_const(&ctx, "grant");
+
+    // max0(x) = ite(x >= 0, x, 0);  min(a,b) = ite(a <= b, a, b).
+    // Nested fns (not closures) so the ctx lifetime unifies cleanly.
+    fn max0<'c>(zero: &Int<'c>, x: &Int<'c>) -> Int<'c> {
+        x.ge(zero).ite(x, zero)
+    }
+    fn min2<'c>(a: &Int<'c>, b: &Int<'c>) -> Int<'c> {
+        a.le(b).ite(a, b)
+    }
+
+    let cap_minus_used = &cap - &used;
+    let rem = max0(&zero, &cap_minus_used);
+    let g = if faithful_budget {
+        let clamped = min2(&grant, &rem);
+        max0(&zero, &clamped)
+    } else {
+        grant.clone() // WEAKENED: no clamp — budget can be inflated past rem.
+    };
+    let used_after = &used + &g;
+    let cap_minus_used_after = &cap - &used_after;
+    let rem_after = max0(&zero, &cap_minus_used_after);
+
+    let o2a = g.ge(&zero);
+    let o2b = g.le(&rem);
+    let o2c = (&rem_after + &g)._eq(&rem);
+    let o2 = Bool::and(&ctx, &[&o2a, &o2b, &o2c]);
+
+    // ∀ inputs. (O1 ∧ O2)  ⟺  ¬(O1 ∧ O2) is UNSAT.
+    let obligation = Bool::and(&ctx, &[&o1, &o2]);
+    let solver = Solver::new(&ctx);
+    solver.assert(&obligation.not());
+    match solver.check() {
+        SatResult::Unsat => ProofResult::Proven { function: name },
+        SatResult::Sat => {
+            let model = solver.get_model().expect("sat ⇒ a model exists");
+            let b = |x: &Bool| match model.eval(x, true).and_then(|v| v.as_bool()) {
+                Some(true) => 1,
+                _ => 0,
+            };
+            let i = |x: &Int| model.eval(x, true).and_then(|v| v.as_i64()).unwrap_or(0);
+            ProofResult::Counterexample {
+                function: name,
+                inputs: vec![
+                    ("parent_net".into(), b(&p_net)),
+                    ("want_net".into(), b(&w_net)),
+                    ("parent_cap".into(), i(&cap)),
+                    ("parent_used".into(), i(&used)),
+                    ("grant".into(), i(&grant)),
+                ],
+                predicate: "child.cap <= parent.remaining ∧ child.cap ⇒ parent.cap".into(),
+            }
+        }
+        SatResult::Unknown => ProofResult::Unsupported {
+            function: name,
+            reason: "Z3 returned unknown on the mint obligation VC".into(),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2031,7 +2145,10 @@ mod tests {
             } => {
                 assert!(predicate.contains("parent.net"));
                 // The witness sets want_net=1 while parent_net=0.
-                let want = inputs.iter().find(|(n, _)| n == "want_net").map(|(_, v)| *v);
+                let want = inputs
+                    .iter()
+                    .find(|(n, _)| n == "want_net")
+                    .map(|(_, v)| *v);
                 let parent = inputs
                     .iter()
                     .find(|(n, _)| n == "parent_net")
@@ -2040,6 +2157,56 @@ mod tests {
                 assert_eq!(parent, Some(0), "witness parent must lack net");
             }
             other => panic!("weakened mint must be refuted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r20_mint_full_obligation_o1_and_o2_proven() {
+        // Slice 1: the FULL obligation (attenuation AND budget carve) proves for
+        // all boolean caps × all integer (cap, used, grant).
+        match prove_mint_obligations(true, true) {
+            ProofResult::Proven { .. } => {}
+            other => panic!("faithful mint must prove O1∧O2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r20_budget_weakening_inflation_is_caught() {
+        // Dropping the clamp (`g = grant`) lets a child be granted more than the
+        // parent's remaining — budget inflation. Must be refuted with a witness
+        // where grant exceeds parent.remaining.
+        match prove_mint_obligations(true, false) {
+            ProofResult::Counterexample { inputs, .. } => {
+                let get = |k: &str| {
+                    inputs
+                        .iter()
+                        .find(|(n, _)| n == k)
+                        .map(|(_, v)| *v)
+                        .unwrap()
+                };
+                let (cap, used, grant) = (get("parent_cap"), get("parent_used"), get("grant"));
+                // The witness must actually exercise the dropped clamp: the
+                // unclamped grant differs from the faithful clamp(grant, 0, rem).
+                // (Z3 may refute via O2a negative-grant, O2b over-grant, or O2c
+                // conservation — all are valid; what matters is the clamp mattered.)
+                let rem = (cap - used).max(0);
+                let faithful_g = grant.clamp(0, rem);
+                assert_ne!(
+                    grant, faithful_g,
+                    "witness must exercise the dropped clamp: grant={grant} rem={rem}"
+                );
+            }
+            other => panic!("budget inflation must be refuted, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn r20_cap_weakening_still_caught_with_budget_arith_present() {
+        // Sanity: the O1 mutation is still caught when O2 is also encoded (the
+        // conjunction doesn't mask the attenuation hole).
+        match prove_mint_obligations(false, true) {
+            ProofResult::Counterexample { .. } => {}
+            other => panic!("cap escalation must be refuted, got {other:?}"),
         }
     }
 }

@@ -729,6 +729,74 @@ mod tests {
     }
 
     #[test]
+    fn r20_mint_obligations_hold_on_the_real_impl_over_a_grid() {
+        // R20 Slice 1 — the I-12 tripwire with TEETH. `smt.rs::prove_mint_obligations`
+        // proves O1 (attenuation) + O2 (budget carve) hold for the *model* ∀ inputs;
+        // this test proves the actual `PrincipalRegistry::mint` IMPLEMENTS that model
+        // by running it over a grid that spans the edge cases (over-grant, negative
+        // grant, used > cap, zero budget) and asserting the same two obligations on
+        // the real output. If a future edit weakens `mint`, this fails — the proof
+        // and the impl can no longer silently diverge.
+        let bools = [false, true];
+        let caps = [0i64, 1, 50, 100];
+        let useds = [0i64, 30, 120]; // 120 > some caps → remaining() clamps to 0
+        let grants = [-10i64, 0, 1, 40, 200];
+        for &p_net in &bools {
+            for &p_fs in &bools {
+                for &p_exec in &bools {
+                    for &cap in &caps {
+                        for &pre_used in &useds {
+                            for &w_net in &bools {
+                                for &w_fs in &bools {
+                                    for &w_exec in &bools {
+                                        for &grant in &grants {
+                                            let mut reg = PrincipalRegistry::new();
+                                            let r = reg.root("p".into(), p_net, p_fs, p_exec, cap);
+                                            // Drive the parent's `used` up front so we
+                                            // exercise the remaining()=0 / used>cap arms.
+                                            if pre_used > 0 {
+                                                reg.spend(r, pre_used);
+                                            }
+                                            let rem_before = reg.budget_remaining(r);
+                                            let c = reg
+                                                .mint(r, "c".into(), w_net, w_fs, w_exec, grant)
+                                                .expect("mint is total");
+                                            let child = reg.get(c).unwrap().clone();
+
+                                            // O1: no child cap exceeds the parent's.
+                                            assert!(
+                                                !child.net || p_net,
+                                                "O1 net escalation: cap={cap} used={pre_used} grant={grant}"
+                                            );
+                                            assert!(!child.fs_write || p_fs, "O1 fs escalation");
+                                            assert!(!child.exec || p_exec, "O1 exec escalation");
+
+                                            // O2a/b: 0 ≤ child.cap ≤ parent.remaining_before.
+                                            assert!(child.budget.cap >= 0, "O2a: negative grant");
+                                            assert!(
+                                                child.budget.cap <= rem_before,
+                                                "O2b: budget inflation grant={grant} rem={rem_before} got={}",
+                                                child.budget.cap
+                                            );
+                                            // O2c: budget is conserved across the carve.
+                                            let rem_after = reg.budget_remaining(r);
+                                            assert_eq!(
+                                                rem_after + child.budget.cap,
+                                                rem_before,
+                                                "O2c: budget not conserved (cap={cap} used={pre_used} grant={grant})"
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn kernel_authorize_and_can_mint_gates() {
         let mut reg = PrincipalRegistry::new();
         let r = reg.root("root".into(), true, false, false, 100);
@@ -832,7 +900,11 @@ mod tests {
         let b = s.spawn("w".into(), 2);
         // Park `a` under token 7.
         s.suspend(a, 7);
-        assert_eq!(s.suspended_token(a), Some(7), "a carries its suspension token");
+        assert_eq!(
+            s.suspended_token(a),
+            Some(7),
+            "a carries its suspension token"
+        );
         assert_eq!(
             s.ready_order(),
             vec![b],
@@ -853,9 +925,15 @@ mod tests {
         );
         // A second resume (already Ready) is a no-op false — the §6 "unknown/
         // already-finished token" host-side error, not a panic.
-        assert!(!s.resume(a), "resuming a non-suspended fiber is a no-op false");
+        assert!(
+            !s.resume(a),
+            "resuming a non-suspended fiber is a no-op false"
+        );
         // A resume of an unknown id is likewise a no-op false.
-        assert!(!s.resume(999), "resume of an unknown fiber id is a no-op false");
+        assert!(
+            !s.resume(999),
+            "resume of an unknown fiber id is a no-op false"
+        );
     }
 
     // ── Slice 3: live supervisor ─────────────────────────────────────────────
