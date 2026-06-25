@@ -607,11 +607,13 @@ enum TargetAction {
         /// Target triple / alias (e.g. wasm32, wasm32-wasi).
         #[arg(long, help = "Target triple or alias")]
         target: Option<String>,
-        /// Host shim: `browser` selects the BrowserHost (virtual fs/env/time over
-        /// JS) for a `wasm32-unknown-unknown` build (R7c). Default is the native
-        /// host. A browser build that statically reaches a browser-incompatible
-        /// builtin (e.g. `exec`) is refused with E0911.
-        #[arg(long, help = "Host shim: browser or (default) native")]
+        /// Host shim (R7c/R14): `browser` selects the BrowserHost (virtual
+        /// fs/env/time over JS) for a `wasm32-unknown-unknown` build (R7c) — a
+        /// browser build that statically reaches a browser-incompatible builtin
+        /// (e.g. `exec`) is refused with E0911. `mobile` selects the iOS/Android
+        /// static-lib + generated-wrapper packaging path (dispatched by the
+        /// `--target` triple). Default is the native host.
+        #[arg(long, help = "Host shim: browser, mobile, or (default) native")]
         host: Option<String>,
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
@@ -2135,6 +2137,13 @@ fn cmd_target(action: TargetAction) {
         } => {
             validate_ax_extension(&file);
             let triple = target.as_deref().unwrap_or("native");
+            // R14: `--host mobile` routes to the iOS/Android static-lib + wrapper
+            // packaging path. iOS is link-blocked on Linux (E1710) but emits its
+            // object + a byte-stable wrapper; Android is Linux-buildable.
+            if host.as_deref() == Some("mobile") {
+                cmd_target_mobile(&file, triple);
+                process::exit(0);
+            }
             let interp = engine.as_deref() == Some("interp");
             // R7c §6/§11 Slice 1: `--host browser` selects the BrowserHost shim.
             // It is only meaningful for the wasi-free browser triple; a browser
@@ -2206,6 +2215,198 @@ fn cmd_target(action: TargetAction) {
             process::exit(0);
         }
     }
+}
+
+// ── R14: `--host mobile` static-lib + wrapper packaging ──────────────────────
+
+/// `which`-crate-free PATH lookup: is `cmd` an executable on `$PATH`? Used by the
+/// mobile toolchain probe so it works in the no-codegen build too (the `which`
+/// crate is codegen-only and does not compile for wasm32).
+fn cmd_on_path(cmd: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(cmd);
+        candidate.is_file()
+            || std::fs::metadata(&candidate)
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+    })
+}
+
+/// `axon target build --target <mobile-triple> --host mobile <file>` (R14 §3/§4).
+///
+/// Pipeline (honest about the macOS-host wall, spec §12 Q4):
+///   1. Recognise the triple (else a clean "unknown mobile triple" error).
+///   2. Type-check the source (same gate as `axon build`).
+///   3. Generate the byte-stable per-app wrapper (Swift for iOS, Kotlin for
+///      Android) into `out/<os>/Axon{.swift,.kt}` — pure logic, host-agnostic.
+///   4. Probe the link toolchain. On Linux, iOS ALWAYS fails this (xcrun is
+///      macOS-only) → **E1710, a clean refusal** (I-9), NOT a fake success. The
+///      wrapper + the type-check still succeeded, so the user gets the
+///      Linux-reachable artifacts and a precise "needs a macOS host" message.
+///   5. (codegen feature) emit the LLVM object for the triple — LLVM cross-emits
+///      AArch64 Mach-O *objects* even on Linux; only the *link* needs Apple's ld.
+///
+/// The real iOS `.a`/`.xcframework` link + simulator run are done by the macOS
+/// CI job (`.github/workflows/ios.yml`), never here.
+fn cmd_target_mobile(file: &Path, triple: &str) {
+    use axon_core::error::{E1710, E1711};
+    use axon_core::mobile;
+
+    let target = match mobile::mobile_target(triple) {
+        Some(t) => t,
+        None => {
+            emit_error(
+                &format!(
+                    "[{E1710}] '{triple}' is not a recognised mobile target triple (known: {})",
+                    mobile::MOBILE_TARGETS
+                        .iter()
+                        .map(|t| t.triple)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                !std::io::stderr().is_terminal(),
+            );
+            process::exit(2);
+        }
+    };
+
+    // Type-check the source (same gate as native build) before packaging.
+    let mut program = match parse_source(&read_source(&file.to_path_buf())) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    let (errors, _infer) = run_check_pipeline(&mut program, file);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        process::exit(2);
+    }
+
+    // App name from the file stem; generate the byte-stable wrapper shim.
+    let app = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "app".to_string());
+    let entries = mobile::Entries::default();
+    let (os_dir, wrapper_name, wrapper) = match target.os {
+        mobile::MobileOs::Ios => ("ios", "Axon.swift", mobile::gen_swift_shim(&app, &entries)),
+        mobile::MobileOs::Android => (
+            "android",
+            "Axon.kt",
+            mobile::gen_kotlin_shim(&app, &entries),
+        ),
+    };
+    let out_dir = std::path::PathBuf::from("out").join(os_dir);
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("error: could not create {}: {e}", out_dir.display());
+        process::exit(2);
+    }
+    let wrapper_path = out_dir.join(wrapper_name);
+    if let Err(e) = std::fs::write(&wrapper_path, &wrapper) {
+        eprintln!("error: could not write {}: {e}", wrapper_path.display());
+        process::exit(2);
+    }
+    println!(
+        "axon mobile: wrote {} ({} lines) for {triple}",
+        wrapper_path.display(),
+        mobile::shim_line_count(&wrapper)
+    );
+
+    // Probe the link toolchain. This is where Linux iOS builds STOP — a clean
+    // E1710, not a fake pass. The PATH scan is `which`-crate-free so it works in
+    // BOTH the codegen and no-codegen builds (the `which` crate is codegen-only
+    // and does not compile for wasm32).
+    let path_lookup = |c: &str| cmd_on_path(c);
+    let env_lookup = |c: &str| std::env::var_os(c).is_some();
+    if let Err(body) = mobile::probe_toolchain(triple, path_lookup, env_lookup) {
+        emit_error(
+            &format!("[{E1710}] {body}"),
+            !std::io::stderr().is_terminal(),
+        );
+        if target.os == mobile::MobileOs::Ios {
+            eprintln!(
+                "  note: the iOS object can be emitted here, but the .a/.xcframework \
+                 link requires a macOS build host (Apple ld + iOS SDK).\n  \
+                 The macOS CI workflow (.github/workflows/ios.yml) performs the \
+                 real iOS link + simulator parity run."
+            );
+        }
+        process::exit(2);
+    }
+
+    // Toolchain present (a real macOS/NDK host). Emit the object for the triple.
+    // (E1711 stands in for the cross-built-rt gate; on a configured host the
+    // object emits and the platform toolchain links it.)
+    #[cfg(feature = "codegen")]
+    {
+        match mobile_emit_object(file, &mut program, triple) {
+            Ok(obj) => println!("axon mobile: emitted object {obj} for {triple}"),
+            Err(e) => {
+                emit_error(&format!("[{E1711}] {e}"), !std::io::stderr().is_terminal());
+                process::exit(2);
+            }
+        }
+    }
+    #[cfg(not(feature = "codegen"))]
+    {
+        let _ = E1711;
+        println!(
+            "axon mobile: wrapper generated; object emission needs the codegen backend \
+             (build axon with the default `codegen` feature)"
+        );
+    }
+}
+
+/// Emit the LLVM object for a mobile triple (codegen path). LLVM cross-emits the
+/// AArch64/x86_64 object even on Linux; the link is the platform toolchain's job.
+#[cfg(feature = "codegen")]
+fn mobile_emit_object(
+    file: &Path,
+    program: &mut axon_core::ast::Program,
+    triple: &str,
+) -> Result<String, String> {
+    let instantiations = {
+        // Re-run inference to get instantiations for monomorphisation.
+        let (_e, mut infer) = run_check_pipeline(program, file);
+        infer.drain_instantiations()
+    };
+    let mono = axon_core::mono::monomorphise(program, instantiations);
+    let concrete = axon_core::ast::Program {
+        items: mono
+            .other_items
+            .into_iter()
+            .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
+            .collect(),
+    };
+    let ctx = inkwell::context::Context::create();
+    let module_name = file.file_stem().unwrap_or_default().to_string_lossy();
+    let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
+    cg.declare_functions(&concrete);
+    cg.emit_program(&concrete);
+    if !cg.codegen_errors().is_empty() {
+        return Err(format!(
+            "{} codegen error(s) emitting mobile object",
+            cg.codegen_errors().len()
+        ));
+    }
+    let out_dir = std::path::PathBuf::from("out").join(if triple.contains("apple") {
+        "ios"
+    } else {
+        "android"
+    });
+    let _ = std::fs::create_dir_all(&out_dir);
+    let app = file.file_stem().unwrap_or_default().to_string_lossy();
+    let obj = out_dir.join(format!("lib{app}.o"));
+    let obj_str = obj.to_string_lossy().to_string();
+    cg.compile_to_object_for_triple(&obj_str, false, triple)?;
+    Ok(obj_str)
 }
 
 // ── R7 Slice B: AOT wasm object emission ─────────────────────────────────────

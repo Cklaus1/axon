@@ -156,6 +156,13 @@ pub const E1703: &str = "E1703"; // surface caller reaches a Hal-effected fn wit
 pub const E1704: &str = "E1704"; // @[no_alloc] fn reaches a heap-allocating builtin (ISR/early-boot alloc-free guarantee)
 pub const E1706: &str = "E1706"; // R17 Slice 2: atomic ordering arg is not a compile-time literal in 0..=4
 
+// R14 mobile-target errors (spec §6). Allocated from the free tail of the E17xx
+// band (E1700–E1706 are R17's; E1707–E1709 left as a gap). Mobile reuses E1004
+// (ungranted native::platform/gfx) and the R13 E18xx FFI codes for boundary errors.
+pub const E1710: &str = "E1710"; // --host mobile but the mobile toolchain is absent: the Android NDK (linker on PATH) for an *-android triple, or Xcode `xcrun` for an *-apple-ios triple
+pub const E1711: &str = "E1711"; // axon-rt / a native module not cross-built for the device triple (iOS-specific staging code)
+pub const E1712: &str = "E1712"; // mobile cross-link failed (iOS xcframework or Android jniLibs packaging)
+
 // R13 native FFI errors. The spec proposed E1700–E1704, but R17 (just landed)
 // took the whole E170x band; R13 uses the free E18xx band instead. The spec's
 // §6 table is updated to these codes in the docs commit. Use-after-consume of a
@@ -343,8 +350,8 @@ mod tests {
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302,
             E1306, E1310, E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409,
             E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704,
-            E1706, E1800, E1801, E1802, E1803, E1900, W0001, W0002, W0003, W0004, W0005, W0006,
-            W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E1706, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1900, W0001, W0002, W0003,
+            W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

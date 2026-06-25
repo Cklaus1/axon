@@ -202,6 +202,45 @@ pub fn emit_wasm_object(
     Ok(())
 }
 
+/// R14 (mobile): emit a relocatable **object file** for an arbitrary device
+/// `target_triple` WITHOUT linking. LLVM cross-emits the AArch64/x86_64 object
+/// for an Apple-iOS or Android triple even on a Linux host — only the *link*
+/// into `.a`/`.xcframework` (iOS) or `.so` (Android) needs the platform
+/// toolchain. This is the verifiable in-tree half on Linux; the link is the
+/// macOS/NDK host's job (spec §4 / §12 Q4). PIC reloc + the default code model,
+/// matching a normal mobile static-/shared-lib object.
+pub fn emit_object_for_triple(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: &str,
+) -> Result<(), String> {
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(target_triple);
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
+    })?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
+    module.set_triple(&triple);
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("mobile object emit: {e}"))
+}
+
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
 
 /// Initialize LLVM targets, create a `TargetMachine`, emit an object file, and
