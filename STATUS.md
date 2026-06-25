@@ -322,12 +322,22 @@ struct name is known in `struct_fields`, enabling scope-level tracking of struct
 
 ## Compile Performance
 
-`cargo build --package axon-core` in debug mode takes **25–30 minutes** due to LLVM IR
-generation for `codegen.rs` (5000+ lines using inkwell). The incremental cache helps on
-recompiles that only touch non-codegen files. The `axon-rt` crate compiles in under 30 seconds.
+**RESOLVED (2026-06-25).** `cargo build -p axon-core --bin axon` (with the default
+`codegen` feature) now finishes in **~1.5–2.6s** and peaks at ~725 MB RSS. The historic
+"25–30 minute / never-finishes" debug build was the `serde-json × codegen` default-feature
+collision (recursive AST serde derives × codegen monomorphization), fixed by dropping
+`serde-json` from `default` (`BUILD_RESOLVED.md`) and routing inkwell `.build_*` calls
+through non-generic wrappers (`codegen/build_wrappers.rs`). `codegen.rs` has since been split
+into the `codegen/` module hierarchy. Native ↔ interpreter parity is verified:
+`scripts/all_examples_parity.sh` is 34/38 byte-identical with 0 divergences (the 4 non-builds
+are deliberate E0910 refusals of interp-only net builtins), and every non-wasm
+`scripts/*_parity.sh` harness passes.
 
-**Workaround**: Set `RUST_MIN_STACK=16777216` before cargo commands to avoid SIGSEGV from
-rustc stack overflow on deeply recursive types.
+**Do not** enable `codegen` + `serde-json` together until the AST derives are decoupled — that
+combo reintroduces the stall.
+
+**Workaround (legacy, rarely needed now)**: Set `RUST_MIN_STACK=16777216` before cargo
+commands to avoid SIGSEGV from rustc stack overflow on deeply recursive types.
 
 ---
 
