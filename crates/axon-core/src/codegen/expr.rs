@@ -7076,6 +7076,129 @@ impl<'ctx> super::Codegen<'ctx> {
         None
     }
 
+    /// R13 slice 4 — lower a native-module call `M::fn(args)` to a C-ABI call
+    /// into the linked shim (`axon-rt::gfx_mock_ffi::__axon_*`). One impl, two
+    /// engines: this is the codegen counterpart of `interp::eval_native_call`,
+    /// reaching the SAME shared `axon-gfx-mock` dispatch — across the C ABI here
+    /// vs in-process there. The marshalling boundary (this fn) is the one place
+    /// they differ, so it gets the fuzzer + the call-trace oracle.
+    ///
+    /// The representable arg/ret set is enforced at CHECK time (E1801), so every
+    /// param/ret reaching here is one of: scalar (i64/i32/f64/bool), `str`
+    /// (`{i64,ptr}`), `[scalar]` (`{i64,ptr}`), a `Handle` (`{i64 tag, i64
+    /// payload}`), or `Unit` return. A handle is FORWARDED as the `{tag,payload}`
+    /// struct the shim returned — codegen never constructs a tag (no forging:
+    /// the only source of a handle is a prior native call's return). A
+    /// forged/stale slab index reaching the shim is a graceful exit-101 panic
+    /// (I-4), never a host abort.
+    fn emit_native_call(
+        &mut self,
+        qualified: &str,
+        args: &[ast::Expr],
+        fn_val: FunctionValue<'ctx>,
+    ) -> Option<BasicValueEnum<'ctx>> {
+        let (_module, nf) = crate::native::resolve_call(qualified)?;
+        let i64_ty = self.ir.context.i64_type();
+        let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
+        // The frozen `str`/`[scalar]`/`Handle` aggregate is `{i64, X}`.
+        let str_ty = self
+            .ir
+            .context
+            .struct_type(&[i64_ty.into(), ptr_ty.into()], false);
+        let handle_ty = self
+            .ir
+            .context
+            .struct_type(&[i64_ty.into(), i64_ty.into()], false);
+        let bool_ty = self.ir.context.bool_type();
+        let f64_ty = self.ir.context.f64_type();
+        let void_ty = self.ir.context.void_type();
+
+        // Map one FFI type to its LLVM param/ret shape. Returns None for an
+        // out-of-subset type (which CHECK should have refused — if one slips
+        // through we re-refuse below rather than emit an unsound call). Captures
+        // only the prebuilt LLVM types so it does not hold a `self` borrow.
+        let ffi_basic = |ft: &crate::native::FfiType| -> Option<BasicTypeEnum<'ctx>> {
+            use crate::native::FfiType as F;
+            Some(match ft {
+                F::I64 => i64_ty.as_basic_type_enum(),
+                F::Bool => bool_ty.as_basic_type_enum(),
+                F::F64 => f64_ty.as_basic_type_enum(),
+                F::Str | F::SliceI64 | F::SliceF64 => str_ty.as_basic_type_enum(),
+                F::Handle { .. } => handle_ty.as_basic_type_enum(),
+                F::Unit => return None, // Unit is a RETURN-only marker (void).
+            })
+        };
+
+        // Build the extern fn type from the manifest signature.
+        let mut param_tys: Vec<BasicMetadataTypeEnum<'ctx>> = Vec::with_capacity(nf.params.len());
+        for (ft, _mode) in nf.params {
+            match ffi_basic(ft) {
+                Some(t) => param_tys.push(t.into()),
+                None => {
+                    // A `Unit` PARAM is not in the representable set — refuse.
+                    return Some(self.refuse_native(qualified, "Unit parameter"));
+                }
+            }
+        }
+        let fn_ty = match &nf.ret {
+            crate::native::FfiType::Unit => void_ty.fn_type(&param_tys, false),
+            ret => match ffi_basic(ret) {
+                Some(t) => t.fn_type(&param_tys, false),
+                None => return Some(self.refuse_native(qualified, "unsupported return")),
+            },
+        };
+
+        // Declare (idempotently) the `#[no_mangle] extern "C"` symbol — the
+        // BUILTIN_EXTERNS path generalized to native modules. The matching Rust
+        // impl is linked from axon-rt's staticlib.
+        let callee = self
+            .ir
+            .module
+            .get_function(nf.symbol)
+            .unwrap_or_else(|| self.ir.module.add_function(nf.symbol, fn_ty, None));
+
+        // Marshal each arg. The emitted value already has the right LLVM shape
+        // (a `str` expr yields the `{i64,ptr}` struct; a handle local yields the
+        // `{i64,i64}` struct; scalars are direct), so we forward it as-is. The
+        // CHECK pass guarantees arity + representability.
+        let mut arg_vals: Vec<BasicMetadataValueEnum<'ctx>> = Vec::with_capacity(args.len());
+        for a in args {
+            match self.emit_expr(a, fn_val) {
+                Some(v) => arg_vals.push(v.into()),
+                None => return Some(self.refuse_native(qualified, "unrepresentable argument")),
+            }
+        }
+
+        let call = self
+            .ir
+            .builder
+            .build_call(callee, &arg_vals, "native_call")
+            .ok()?;
+        // Unit return → a placeholder i64 0 (the call's value is never used —
+        // a native `clear`/`present`/`*_close` is a statement). A value/handle
+        // return flows out as the call's basic value.
+        match call.try_as_basic_value().left() {
+            Some(v) => Some(v),
+            None => Some(i64_ty.const_zero().into()),
+        }
+    }
+
+    /// Re-refuse a native call whose marshalling falls outside the lowered
+    /// subset (CHECK should have caught it at E1801; this is the codegen
+    /// backstop — sound-by-refusal, same discipline as host_await's E0910).
+    fn refuse_native(&mut self, qualified: &str, why: &str) -> BasicValueEnum<'ctx> {
+        let msg = format!(
+            "codegen error [E0910]: native FFI call `{qualified}` has a {why} not lowerable to \
+             native codegen — this should have been refused at check time (E1801). Run it under \
+             the interpreter (`axon run`)."
+        );
+        if !self.codegen_errors.iter().any(|e| e == &msg) {
+            eprintln!("{msg}");
+            self.codegen_errors.push(msg);
+        }
+        self.ir.context.i64_type().const_zero().into()
+    }
+
     /// Auto-extracted from `emit_expr` (Phase 3 decomposition).
     pub(super) fn emit_call(
         &mut self,
@@ -7145,27 +7268,14 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Ident(name) => self.functions.get(name.as_str()).copied(),
             // Chan::new / chan<T>() — StructLit callees with known names.
             ast::Expr::StructLit { name, fields } if fields.is_empty() => {
-                // R13 native FFI: a `M::fn(...)` call. Native modules are
-                // interp-only in this slice — codegen REFUSES honestly with
-                // E0910 rather than emitting an incomplete/unsound FFI boundary
-                // (the same sound-by-refusal discipline as host_await). The
-                // interpreter is the reference engine; the codegen mock-shim
-                // link is a deferred follow-up slice.
+                // R13 native FFI: a `M::fn(...)` call. Lower it to a C-ABI call
+                // into the linked shim (slice 4). The representable arg/ret set
+                // is enforced at CHECK time (E1801), so anything reaching here is
+                // marshallable; a non-representable case would have been refused
+                // before codegen. An out-of-subset case re-refuses with E0910
+                // inside the helper rather than emitting an unsound boundary.
                 if crate::native::is_native_call(name) {
-                    let msg = format!(
-                        "codegen error [E0910]: native FFI call `{name}` is interp-only — \
-                         native modules (`use native::*`) are not yet lowered to native \
-                         codegen (the mock-shim link is a deferred slice). Run it under the \
-                         interpreter (`axon run`)."
-                    );
-                    if !self.codegen_errors.iter().any(|e| e == &msg) {
-                        eprintln!("{msg}");
-                        self.codegen_errors.push(msg);
-                    }
-                    // Return a benign placeholder so emit doesn't crash; the
-                    // non-empty `codegen_errors` aborts the build before linking
-                    // (the program never runs natively — sound by refusal).
-                    return Some(self.ir.context.i64_type().const_zero().into());
+                    return self.emit_native_call(name, args, fn_val);
                 } else if name.starts_with("chan::<") {
                     self.functions.get("Chan::new").copied()
                 } else if let Some(inner) = name

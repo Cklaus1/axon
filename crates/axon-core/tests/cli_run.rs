@@ -16825,3 +16825,40 @@ fn r19b_u8_mixed_with_int_literal_in_arithmetic() {
         "fn main() -> i64 {\n  let a: u8 = 10\n  let c = a + 5\n  println(to_str(c))\n  0\n}\n";
     assert_run_ok(prog, "u8_mixed_literal", "15");
 }
+
+/// R13 slice 4 — spec §9 acceptance gate `mock_native_module_interp_codegen_parity`:
+/// the GPU-free `native::gfx` mock module is ONE Rust impl (`axon-gfx-mock`)
+/// driven by BOTH engines, and must produce identical stdout + exit code + the
+/// §4 call-trace oracle on interp vs native-codegen, plus reject a forged handle
+/// across the C ABI with a graceful exit-101 (never a segfault). The whole
+/// contract is asserted by `native_gfx_parity.sh`; this test drives it and skips
+/// cleanly when the LLVM/codegen toolchain is unavailable (interp-only CI).
+#[test]
+fn mock_native_module_interp_codegen_parity() {
+    let script = format!(
+        "{}/../../scripts/native_gfx_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("native_gfx_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run native_gfx_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("codegen toolchain unavailable — native gfx parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "native::gfx mock must be interp↔codegen identical + forge-safe:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("native_gfx_parity: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
+}

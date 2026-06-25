@@ -30,6 +30,12 @@
 #     scalar fuzzer can't wrap them in to_str(); covered by fixed equality cases
 #     here + the dedicated dict_parity / provenance_parity / goal_*_parity
 #     harnesses.
+#   * native::gfx FFI (R13): a native call needs a stateful handle setup
+#     (window_open → surface → … ) that the single-input scalar template can't
+#     express. Its value-returning `frame_count` is the differential-parity
+#     member, fuzzed across inputs in the dedicated native_gfx_parity.sh
+#     (interp↔codegen stdout/exit + the §4 call-trace oracle), plus the
+#     forged-handle soundness gate native_ffi_forge.sh.
 #
 # Skips (exit 0) when the codegen toolchain is absent (same contract as the
 # other harnesses). Exit nonzero on a real divergence.

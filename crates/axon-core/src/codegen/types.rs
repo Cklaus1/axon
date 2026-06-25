@@ -132,6 +132,20 @@ impl<'ctx> super::Codegen<'ctx> {
                     .ptr_type(inkwell::AddressSpace::default())
                     .into(),
             ),
+            // R13: a native FFI `Handle` is the frozen `{i64 tag, i64 payload}`
+            // layout (I-6). `tag` = nominal id, `payload` = slab index — NEVER a
+            // raw pointer. This matches `axon-rt::gfx_mock_ffi::AxonHandle`
+            // (repr(C) `{i64,i64}`), so a handle passes/returns identically
+            // across the C ABI on x86-64/aarch64 SysV (two integer registers).
+            Type::Deferred(name) if crate::native::parse_handle_key(name).is_some() => {
+                let i64_ty = self.ir.context.i64_type();
+                Some(
+                    self.ir
+                        .context
+                        .struct_type(&[i64_ty.into(), i64_ty.into()], false)
+                        .into(),
+                )
+            }
             // Unresolved — skip
             Type::Unknown | Type::Var(_) | Type::Deferred(_) => None,
             // TypeParam should be eliminated by monomorphization.

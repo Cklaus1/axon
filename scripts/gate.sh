@@ -74,7 +74,7 @@ cargo clippy --no-default-features -p axon-core -- -D warnings || fail "lib clip
 # seams carry a documented crate-level allow), so the gate enforces them. They
 # have no codegen feature, so this is cheap and needs no --no-default-features.
 echo "── gate: clippy runtime crates (-D warnings) ─────────────────────"
-cargo clippy -p axon-rt -p axon-ai -p axon-surface --all-targets -- -D warnings \
+cargo clippy -p axon-rt -p axon-ai -p axon-surface -p axon-gfx-mock --all-targets -- -D warnings \
   || fail "runtime-crate clippy"
 
 if [ "$STRICT" = 1 ]; then
