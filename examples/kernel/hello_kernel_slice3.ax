@@ -1,0 +1,76 @@
+// R17 Slice 3 — memory layout (@[repr(C)]/@[packed]/@[align]) + @[no_alloc]
+//
+// Exercises R17 Slice 3 features:
+//   • @[repr(C)] @[packed] — exact byte layout for a hardware descriptor table
+//     entry. A packed struct emits LLVM `<{ … }>` (no inter-field padding), so
+//     the 8-byte GDT entry layout is byte-exact (golden-IR verified by
+//     scripts/gdt_layout_ir_test.sh).
+//   • @[no_alloc] — an ISR / early-boot fn that must not reach any heap
+//     allocation (str/array/dict construction, string interpolation). A
+//     violation is E1704 (enforced like @[pure]/@[total], transitively).
+//
+// Type-checks with:    axon check examples/kernel/hello_kernel_slice3.ax
+// Inspect layout:      axon build --freestanding --emit-llvm \
+//                          examples/kernel/hello_kernel_slice3.ax --out /tmp/k.ll
+
+substrate
+
+// An x86-64 GDT entry: exactly 8 bytes, no padding. Field widths and order are
+// hardware-defined, so the struct must be @[repr(C)] (declaration order) and
+// @[packed] (no padding). LLVM lowers this to `<{ i16, i16, i8, i8, i8, i8 }>`.
+@[repr(C)] @[packed]
+type GdtEntry = {
+    limit_lo: u16,   // bits 0..15 of the segment limit
+    base_lo: u16,    // bits 0..15 of the base address
+    base_mid: u8,    // bits 16..23 of the base
+    access: u8,      // present/DPL/type access byte
+    flags: u8,       // granularity + bits 16..19 of the limit
+    base_hi: u8,     // bits 24..31 of the base
+}
+
+// A null GDT descriptor (entry 0 is always all-zero by the x86 spec).
+@[hal]
+fn gdt_null_entry() -> GdtEntry | {Hal} {
+    GdtEntry {
+        limit_lo: 0, base_lo: 0, base_mid: 0,
+        access: 0, flags: 0, base_hi: 0,
+    }
+}
+
+// A flat 4 GiB code segment descriptor (base=0, limit=0xFFFFF, access=0x9A).
+@[hal]
+fn gdt_code_entry() -> GdtEntry | {Hal} {
+    GdtEntry {
+        limit_lo: 65535,  // 0xFFFF
+        base_lo: 0,
+        base_mid: 0,
+        access: 154,      // 0x9A: present, ring0, code, exec/read
+        flags: 207,       // 0xCF: granularity, 32-bit, limit bits 16..19
+        base_hi: 0,
+    }
+}
+
+// A timer ISR that MUST be allocation-free: it acknowledges the PIC and returns.
+// @[no_alloc] (E1704) guarantees no heap path — only volatile/port/atomic ops.
+@[no_alloc]
+@[interrupt]
+fn isr_timer() | {Hal} {
+    // EOI (end-of-interrupt) to the master PIC command port (0x20).
+    port_out_u8(0x20, 0x20)
+}
+
+@[entry]
+fn kmain() | {Hal} {
+    let _null = gdt_null_entry()
+    let _code = gdt_code_entry()
+    while true {
+        hlt()
+    }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    while true {
+        hlt()
+    }
+}

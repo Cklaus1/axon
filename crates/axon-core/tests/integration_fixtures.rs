@@ -1696,3 +1696,64 @@ fn axon_smp_atomic_counter_is_race_free() {
         out.status.code().unwrap_or(-1),
     );
 }
+
+// ── R17 Slice 3: layout (golden IR) + @[no_alloc] (E1704) ─────────────────────
+
+/// Acceptance gate `axon_repr_c_gdt_layout_byte_exact` (golden IR). A
+/// `@[repr(C)] @[packed]` GDT entry lowers to the byte-exact packed LLVM struct
+/// `<{ i16, i16, i8, i8, i8, i8 }>`. The script SKIPs when codegen is absent.
+#[test]
+fn axon_repr_c_gdt_layout_byte_exact() {
+    use std::process::Command;
+
+    let script = {
+        let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        p.pop();
+        p.pop();
+        p.push("scripts/gdt_layout_ir_test.sh");
+        p
+    };
+    if !script.exists() {
+        panic!("missing scripts/gdt_layout_ir_test.sh — was it deleted?");
+    }
+
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("failed to spawn gdt_layout_ir_test.sh");
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    if out.status.code() == Some(0) {
+        return; // PASS or SKIP
+    }
+
+    panic!(
+        "R17 Slice 3 GDT layout golden-IR test FAILED (exit {})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        out.status.code().unwrap_or(-1),
+    );
+}
+
+/// Acceptance gate `no_alloc_isr_rejects_heap_call_e1704`: a `@[no_alloc]` ISR
+/// that transitively reaches a heap-allocating builtin (via an un-annotated
+/// helper) is rejected with E1704 — the transitive-laundering case. This runs
+/// in-process via the check pipeline (no codegen needed).
+#[test]
+fn no_alloc_isr_rejects_heap_call_e1704() {
+    let errors = check_fixture("r17_no_alloc_e1704.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1704")),
+        "expected E1704 for the @[no_alloc] ISR reaching a heap allocation, got:\n{}",
+        errors.join("\n")
+    );
+    // The diagnostic must name the transitively-allocating helper, not just the
+    // leaf builtin, so the author can find the laundering path.
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("E1704") && e.contains("format_code")),
+        "expected E1704 to name the allocating helper `format_code`, got:\n{}",
+        errors.join("\n")
+    );
+}

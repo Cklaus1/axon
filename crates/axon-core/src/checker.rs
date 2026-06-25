@@ -19,7 +19,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
-use crate::error::{levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505};
+use crate::error::{
+    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704,
+};
 use crate::types::Type;
 
 // ── Error codes ───────────────────────────────────────────────────────────────
@@ -618,6 +620,38 @@ impl CheckCtx {
                 for m in &blk.methods {
                     if m.attrs.iter().any(|a| a.name == "total") {
                         self.check_totality(m);
+                    }
+                }
+            }
+        }
+
+        // R17 Slice 3 (§4 / E1704): a `@[no_alloc]` fn (ISR / early-boot) must
+        // not reach any heap-allocating operation — directly OR transitively.
+        // Compute the set of user fns that (transitively) allocate, to a
+        // fixpoint, then flag each `@[no_alloc]` fn that allocates. The
+        // transitive analysis closes the laundering hole: hiding a `str_concat`
+        // behind an un-annotated helper still trips E1704.
+        let has_no_alloc = program.items.iter().any(|it| match it {
+            Item::FnDef(f) => f.attrs.iter().any(|a| a.name == "no_alloc"),
+            Item::ImplBlock(blk) => blk
+                .methods
+                .iter()
+                .any(|m| m.attrs.iter().any(|a| a.name == "no_alloc")),
+            _ => false,
+        });
+        if has_no_alloc {
+            let allocating = Self::compute_allocating_fns(program);
+            for item in &program.items {
+                if let Item::FnDef(f) = item {
+                    if f.attrs.iter().any(|a| a.name == "no_alloc") {
+                        self.check_no_alloc(f, &allocating);
+                    }
+                }
+                if let Item::ImplBlock(blk) = item {
+                    for m in &blk.methods {
+                        if m.attrs.iter().any(|a| a.name == "no_alloc") {
+                            self.check_no_alloc(m, &allocating);
+                        }
                     }
                 }
             }
@@ -1664,6 +1698,152 @@ impl CheckCtx {
                 )),
             );
         }
+    }
+
+    /// R17 Slice 3 (E1704): compute the set of user-fn names that (transitively)
+    /// allocate on the heap. A fn allocates if it directly calls a
+    /// heap-allocating builtin, builds an interpolated string (`FmtStr`), or
+    /// calls an already-known-allocating user fn. Iterated to a fixpoint so the
+    /// transitive case is closed (an allocator hidden behind an un-annotated
+    /// helper still propagates up). Mirrors `transitive_builtin_effects`.
+    fn compute_allocating_fns(program: &Program) -> HashSet<String> {
+        // Map fn-name → set of called user-fn names + a "directly allocates" bit.
+        let mut direct: HashMap<String, (bool, Vec<String>)> = HashMap::new();
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) => {
+                    direct.insert(f.name.clone(), Self::scan_allocation(&f.body));
+                }
+                Item::ImplBlock(blk) => {
+                    for m in &blk.methods {
+                        // Methods dispatch via MethodCall, not by bare name; we
+                        // index them by their own name for the direct-alloc bit.
+                        direct.insert(m.name.clone(), Self::scan_allocation(&m.body));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut allocating: HashSet<String> = HashSet::new();
+        // Seed with fns that directly allocate.
+        for (name, (d, _)) in &direct {
+            if *d {
+                allocating.insert(name.clone());
+            }
+        }
+        // Propagate: a fn calling a known-allocating user fn also allocates.
+        loop {
+            let mut changed = false;
+            for (name, (_, calls)) in &direct {
+                if allocating.contains(name) {
+                    continue;
+                }
+                if calls.iter().any(|c| allocating.contains(c)) {
+                    allocating.insert(name.clone());
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        allocating
+    }
+
+    /// Scan a fn body for direct allocation. Returns `(directly_allocates,
+    /// called_user_fn_names)`. "Directly allocates" = calls a heap-allocating
+    /// builtin or evaluates an interpolated `FmtStr`. Called user-fn names are
+    /// the Ident callees that are NOT builtins (resolved transitively by the
+    /// fixpoint in `compute_allocating_fns`).
+    fn scan_allocation(body: &Expr) -> (bool, Vec<String>) {
+        let mut allocates = false;
+        let mut calls: Vec<String> = Vec::new();
+        Self::scan_allocation_rec(body, &mut allocates, &mut calls);
+        (allocates, calls)
+    }
+
+    fn scan_allocation_rec(expr: &Expr, allocates: &mut bool, calls: &mut Vec<String>) {
+        match expr {
+            // An interpolated string materialises a fresh heap str via concat.
+            // A single literal segment (no interpolation) does NOT allocate at
+            // runtime — it is a static str — so only flag genuine interpolation
+            // (≥1 Expr part).
+            Expr::FmtStr { parts }
+                if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) =>
+            {
+                *allocates = true;
+            }
+            Expr::Call { callee, .. } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if crate::builtins::is_heap_allocating_builtin(name) {
+                        *allocates = true;
+                    } else if !crate::builtins::is_known_builtin(name) {
+                        calls.push(name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+        Self::for_each_child(expr, &mut |c| {
+            Self::scan_allocation_rec(c, allocates, calls)
+        });
+    }
+
+    /// R17 Slice 3 (E1704): a `@[no_alloc]` fn must not reach a heap allocation.
+    /// Emit E1704 naming the first allocating builtin / interpolation / helper.
+    fn check_no_alloc(&mut self, f: &FnDef, allocating_fns: &HashSet<String>) {
+        let span = f.span;
+        let fname = f.name.clone();
+        let mut violations: Vec<(String, &'static str)> = Vec::new();
+        Self::collect_no_alloc_violations(&f.body, allocating_fns, &mut violations);
+        for (callee, kind) in violations {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1704,
+                    format!(
+                        "`@[no_alloc]` function `{fname}` reaches a heap allocation: {kind} `{callee}` \
+                         — an ISR / early-boot fn must be allocation-free"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "remove `@[no_alloc]` from `{fname}`, or eliminate `{callee}` (avoid str/array/dict \
+                     construction and string interpolation; use fixed scalars / volatile MMIO)"
+                )),
+            );
+        }
+    }
+
+    /// Collect heap-allocation sites inside a `@[no_alloc]` body: allocating
+    /// builtin calls, interpolated `FmtStr`, and calls to (transitively)
+    /// allocating user fns.
+    fn collect_no_alloc_violations(
+        expr: &Expr,
+        allocating_fns: &HashSet<String>,
+        out: &mut Vec<(String, &'static str)>,
+    ) {
+        match expr {
+            Expr::FmtStr { parts }
+                if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) =>
+            {
+                out.push(("string interpolation".to_string(), "heap"));
+            }
+            Expr::Call { callee, .. } => {
+                if let Expr::Ident(name) = callee.as_ref() {
+                    if crate::builtins::is_heap_allocating_builtin(name) {
+                        out.push((name.clone(), "allocating builtin"));
+                    } else if allocating_fns.contains(name) {
+                        out.push((name.clone(), "allocating function"));
+                    }
+                }
+            }
+            _ => {}
+        }
+        Self::for_each_child(expr, &mut |c| {
+            Self::collect_no_alloc_violations(c, allocating_fns, out)
+        });
     }
 
     /// Collect `x.m()` MethodCalls whose method name is in `impure_methods`

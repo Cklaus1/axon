@@ -1,0 +1,29 @@
+// R17 Slice 3: a @[no_alloc] ISR that reaches a heap-allocating builtin must
+// be rejected with E1704 (enforced like @[pure]/@[total], transitively).
+
+substrate
+
+// A helper that allocates (returns a fresh heap str). NOT annotated @[no_alloc].
+fn format_code(code: i64) -> str {
+    str_repeat("x", code)
+}
+
+// The ISR is @[no_alloc] but transitively reaches `format_code`, which calls
+// `str_repeat` (heap). This is the headline E1704 case (laundering through an
+// un-annotated helper is still caught).
+@[no_alloc]
+@[interrupt]
+fn isr_handler() | {Hal} {
+    let _s = format_code(8)
+    port_out_u8(0x20, 0x20)
+}
+
+@[entry]
+fn kmain() | {Hal} {
+    while true { hlt() }
+}
+
+@[panic_handler]
+fn on_panic() | {Hal} {
+    while true { hlt() }
+}
