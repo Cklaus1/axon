@@ -72,6 +72,11 @@ pub struct Discharged {
     pub verify_fns: std::collections::HashSet<String>,
     /// Function names whose refinement-RETURN postcondition is proven ∀-inputs.
     pub refine_return_fns: std::collections::HashSet<String>,
+    /// R20: the kernel capability-mint obligation (O1 attenuation + O2 budget
+    /// carve) is SMT-proven ∀-inputs. A TCB-level lemma about the fixed
+    /// `PrincipalRegistry::mint` primitive — not a per-user-fn obligation — so
+    /// it is tracked separately from the two sets above.
+    pub mint_obligations_proven: bool,
 }
 
 impl Discharged {
@@ -83,7 +88,13 @@ impl Discharged {
     pub fn refine_return_proven(&self, fn_name: &str) -> bool {
         self.refine_return_fns.contains(fn_name)
     }
-    /// Total count of discharged obligations (for the user-facing summary line).
+    /// True iff the kernel mint obligation (R20 O1∧O2) was SMT-proven this build.
+    pub fn mint_proven(&self) -> bool {
+        self.mint_obligations_proven
+    }
+    /// Count of discharged PER-PROGRAM obligations (for the user-facing summary
+    /// line). Excludes the global kernel mint lemma — that is a TCB-level
+    /// invariant, not a per-program obligation, surfaced via `mint_proven()`.
     pub fn total(&self) -> usize {
         self.verify_fns.len() + self.refine_return_fns.len()
     }

@@ -119,6 +119,9 @@ pub const E1306: &str = "E1306"; // raw effect-row syntax `| {…}` used in a `s
 pub const E1310: &str = "E1310"; // effect-row leak: call performs effect E ∉ the caller's declared row
 pub const E1316: &str = "E1316"; // @[contained(...)] deprecation notice; prefer `| {…}` effect-row syntax
 
+// Kernel TCB obligation errors (R20: SMT-proven capability primitives — E16xx band)
+pub const E1610: &str = "E1610"; // a kernel capability-mint obligation (attenuation / budget-carve) is not SMT-discharged — the minter has been weakened (I-12 tripwire)
+
 // Self-improving-compiler errors (R10: pass verification harness)
 pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member
 pub const E1402: &str = "E1402"; // G2 safety: pass adds a capability the original lacked (I-12)

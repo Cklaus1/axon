@@ -988,7 +988,41 @@ pub fn discharge(
             }
         }
     }
+    // R20: discharge the kernel capability-mint obligation (O1 attenuation +
+    // O2 budget carve) once per build. This is a TCB lemma about the fixed
+    // `PrincipalRegistry::mint` primitive, independent of the user program — so
+    // it is proven unconditionally here, not gated on the program using mint.
+    d.mint_obligations_proven = matches!(
+        prove_mint_obligations(true, true),
+        ProofResult::Proven { .. }
+    );
     d
+}
+
+/// R20: the I-12 build-time tripwire. Returns `Err(E1610, message)` iff the
+/// kernel mint obligation is NOT SMT-discharged — which can only happen if the
+/// faithful encoding in `prove_mint_obligations` has been weakened to match a
+/// weakened `mint` (or Z3 is unavailable). For the in-tree minter this is always
+/// `Ok(())`. Pair with the `kernel.rs` differential grid test, which catches the
+/// other half (the Rust impl diverging from the proven model).
+#[cfg(feature = "smt")]
+pub fn check_mint_tcb_obligation() -> Result<(), (&'static str, String)> {
+    match prove_mint_obligations(true, true) {
+        ProofResult::Proven { .. } => Ok(()),
+        ProofResult::Counterexample {
+            inputs, predicate, ..
+        } => Err((
+            crate::error::E1610,
+            format!(
+                "kernel mint obligation not discharged — the minter has been weakened. \
+                 Violated: {predicate}. Counterexample: {inputs:?}"
+            ),
+        )),
+        ProofResult::Unsupported { reason, .. } => Err((
+            crate::error::E1610,
+            format!("kernel mint obligation could not be proven: {reason}"),
+        )),
+    }
 }
 
 /// Collect every `callee_name(args…)` direct call in `e` as (name, args).
@@ -2208,5 +2242,17 @@ mod tests {
             ProofResult::Counterexample { .. } => {}
             other => panic!("cap escalation must be refuted, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn r20_tcb_check_passes_for_the_in_tree_minter() {
+        // The E1610 build-time gate: the faithful minter must discharge cleanly
+        // (Ok). The negative path — Err(E1610, …) when the obligation is broken —
+        // is covered by the mutation tests above, which exercise the same
+        // prove_mint_obligations the check calls.
+        assert!(
+            check_mint_tcb_obligation().is_ok(),
+            "in-tree mint must satisfy its TCB obligation"
+        );
     }
 }

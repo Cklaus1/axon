@@ -3093,12 +3093,22 @@ fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::D
             refinements.insert(r.name.clone(), (*r.predicate).clone());
         }
     }
+    // R20: the kernel mint obligation is a TCB lemma — fail closed (E1610) if it
+    // is not discharged, before running any program. For the in-tree minter this
+    // always passes; it bites only if the minter (and its proof model) is weakened.
+    if let Err((code, msg)) = axon_core::smt::check_mint_tcb_obligation() {
+        eprintln!("{code}: {msg}");
+        process::exit(2);
+    }
     let d = axon_core::smt::discharge(program, &refinements);
     if d.total() > 0 {
         eprintln!(
             "axon: SMT discharged {} runtime obligation(s) statically (checks elided)",
             d.total()
         );
+    }
+    if d.mint_proven() {
+        eprintln!("axon: SMT proved the kernel mint attenuation + budget-carve obligation (R20)");
     }
     d
 }
@@ -4008,7 +4018,7 @@ fn run_build_pipeline(
         opts.entry_fn.as_deref(),
         opts.linker_script.as_deref(),
         opts.emit_obj,
-            opts.emit_llvm,
+        opts.emit_llvm,
         &mut infer_ctx,
         None,
     )
