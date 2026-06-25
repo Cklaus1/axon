@@ -196,7 +196,13 @@ Slices:
   per-suspend thread cost (the other coroutine motivation) is unchanged and deferred; the
   browser (single-threaded) still uses the shipped Asyncify path (§13), not this thread
   substrate.
-- **(3)** drop/resource (B6) + the kernel-scheduler `Suspended(token)` state.
+- **(3)** drop/resource (B6) + the kernel-scheduler `Suspended(token)` state. **Partially
+  landed:** the `FiberState::Suspended(u64)` state + `Scheduler::suspend(id, token)` /
+  `resume(id) -> bool` / `suspended_token(id)` transitions are in `kernel.rs` (a parked fiber
+  leaves the Ready set and is non-terminal; `resume` unparks it back to Ready exactly once — a
+  second/unknown resume is the §6 no-op-false host-side error). Gated by a kernel unit test +
+  `scripts/kernel_suspend_fiber_parity.sh`. So a supervisor can now SEE a fiber parked at a
+  suspension (vs done/failed/runnable). The B6 drop/resource-freeing path is still open.
 - **(4)** the browser binding (single-threaded → Asyncify / JS step-loop; R7c follow-on) and
   the `on_frame`/`fetch` surface (desugar to `host_await`, like Phase-8 `for!`).
 

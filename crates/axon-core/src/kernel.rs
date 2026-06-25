@@ -237,6 +237,16 @@ pub enum FiberState {
     /// Panicked/halted during its run; carries the failure message. Observable
     /// (Slice 3 restarts on it), not a process abort.
     Failed(String),
+    /// R15 Slice 3: PARKED at a `host_await` suspension, waiting for the host to
+    /// resume it. Carries the opaque suspension token (the host-owned handle the
+    /// resume is keyed by, §12 Q2 — an unforgeable `u64`). A Suspended fiber is
+    /// NOT Ready (the scheduler must not re-run it) and NOT terminal (it isn't
+    /// counted in the done/failed tally) — it is waiting off-queue until
+    /// `resume(id)` moves it back to Ready. This is the scheduler-level model of
+    /// the suspend the interpreter's worker-thread substrate realizes; it lets a
+    /// supervisor SEE that a fiber is parked (vs done/failed/runnable) rather than
+    /// the suspension being invisible to the scheduler.
+    Suspended(u64),
 }
 
 /// One fiber: a named user function to call with an i64 argument, plus its state.
@@ -329,6 +339,38 @@ impl Scheduler {
         }
     }
 
+    /// R15 Slice 3: PARK a fiber at a `host_await` suspension under the opaque
+    /// `token` the host will resume it by. It leaves the Ready set (so the
+    /// scheduler won't re-run it) but is not terminal. No-op if id unknown.
+    pub fn suspend(&mut self, id: usize, token: u64) {
+        if let Some(f) = self.fibers.get_mut(id) {
+            f.state = FiberState::Suspended(token);
+        }
+    }
+
+    /// R15 Slice 3: UNPARK a suspended fiber — move it back to Ready so the next
+    /// scheduling pass re-runs it (the resume value is fed by the interpreter's
+    /// substrate, not modeled here). Returns `true` iff the fiber was actually
+    /// Suspended (a resume of a non-suspended / unknown id is a no-op false — the
+    /// host-side "unknown/already-finished token" error of §6).
+    pub fn resume(&mut self, id: usize) -> bool {
+        match self.fibers.get_mut(id) {
+            Some(f) if matches!(f.state, FiberState::Suspended(_)) => {
+                f.state = FiberState::Ready;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The suspension token a fiber is parked under, if it is Suspended.
+    pub fn suspended_token(&self, id: usize) -> Option<u64> {
+        match self.fibers.get(id).map(|f| &f.state) {
+            Some(FiberState::Suspended(t)) => Some(*t),
+            _ => None,
+        }
+    }
+
     pub fn state(&self, id: usize) -> Option<&FiberState> {
         self.fibers.get(id).map(|f| &f.state)
     }
@@ -357,7 +399,8 @@ impl Scheduler {
             match f.state {
                 FiberState::Done(_) => done += 1,
                 FiberState::Failed(_) => failed += 1,
-                FiberState::Ready => {}
+                // Ready and Suspended are non-terminal — neither done nor failed.
+                FiberState::Ready | FiberState::Suspended(_) => {}
             }
         }
         (done, failed)
@@ -777,6 +820,42 @@ mod tests {
             vec![b],
             "restart re-queues only the failed fiber"
         );
+    }
+
+    #[test]
+    fn scheduler_suspend_parks_off_queue_and_resume_requeues() {
+        // R15 Slice 3: a fiber parked at a host_await suspension leaves the Ready
+        // set (the scheduler must not re-run a parked fiber) but is NOT terminal
+        // (not counted done/failed); resume() unparks it back to Ready.
+        let mut s = Scheduler::new(0);
+        let a = s.spawn("w".into(), 1);
+        let b = s.spawn("w".into(), 2);
+        // Park `a` under token 7.
+        s.suspend(a, 7);
+        assert_eq!(s.suspended_token(a), Some(7), "a carries its suspension token");
+        assert_eq!(
+            s.ready_order(),
+            vec![b],
+            "a is parked → only b is Ready (the scheduler won't re-run a)"
+        );
+        assert_eq!(
+            s.tally(),
+            (0, 0),
+            "a Suspended fiber is non-terminal — not done, not failed"
+        );
+        // Resume `a` → back to Ready, both runnable again.
+        assert!(s.resume(a), "resume of a Suspended fiber succeeds");
+        assert_eq!(s.suspended_token(a), None, "no longer parked after resume");
+        assert_eq!(
+            s.ready_order(),
+            vec![a, b],
+            "resume re-queues a into the Ready set (spawn order)"
+        );
+        // A second resume (already Ready) is a no-op false — the §6 "unknown/
+        // already-finished token" host-side error, not a panic.
+        assert!(!s.resume(a), "resuming a non-suspended fiber is a no-op false");
+        // A resume of an unknown id is likewise a no-op false.
+        assert!(!s.resume(999), "resume of an unknown fiber id is a no-op false");
     }
 
     // ── Slice 3: live supervisor ─────────────────────────────────────────────
