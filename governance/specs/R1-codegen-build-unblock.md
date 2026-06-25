@@ -1,19 +1,21 @@
 # Tech Spec — R1 Unblock: Move Inline-IR Builtins into the `axon-rt` Staticlib
 
-> **⚠️ PREMISE CONTRADICTED BY MEASUREMENT (2026-06-25) — needs human review.** This spec's
-> blocker ("the build never finishes") no longer reproduces on current hardware/toolchain:
-> `cargo build -p axon-core --bin axon` (default `codegen`) finishes in **~1.5–2.6s** (verified
-> by touching `codegen/mod.rs` + `codegen/builtins.rs` to force a full codegen recompile, then
-> rebuilding), peak ~725 MB RSS, producing a working 144 MB native compiler; `axon build
-> hello.ax` emits a runnable ELF. Native↔interp parity is confirmed (see ROADMAP §9.6 +
-> `STATUS.md` Compile Performance). The shipped `serde-json`-drop + non-generic
-> `build_wrappers.rs` appear to have already closed the build-time gap this spec exists to fix.
-> **Open question for a human:** is the inline-IR→`axon-rt` migration still wanted on its own
-> merits (IR-volume reduction, wasm-target extern-freedom, single-source authoring per R1d),
-> or should R1 be marked RESOLVED and the migration de-scoped? Do not auto-close — this spec is
-> explicitly human-driven. Everything below is the original Draft.
+> **✅ RESOLVED (2026-06-25, founder decision).** R1's goal — a native build that finishes and
+> produces a working compiler at interp parity — is **met**, by a different (cheaper) route than
+> this spec's planned inline-IR→`axon-rt` migration. `cargo build -p axon-core --bin axon`
+> (default `codegen`) finishes in **~1.5–2.6s** (verified by touching `codegen/mod.rs` +
+> `codegen/builtins.rs` to force a full codegen recompile), ~725 MB peak RSS, producing a working
+> 144 MB native compiler; `axon build hello.ax` → LLVM → runnable ELF. Native↔interp parity
+> confirmed: `scripts/all_examples_parity.sh` is 34/38 byte-identical with **0 divergences** (4
+> non-builds are deliberate E0910 refusals of interp-only net builtins), every non-wasm
+> `scripts/*_parity.sh` passes, and `fuzz_parity.sh` / the wasm parity suite are green. The
+> `serde-json`-drop (`BUILD_RESOLVED.md`) + non-generic `build_wrappers.rs` closed the build-time
+> gap. **The inline-IR→`axon-rt` migration described below is DE-SCOPED as a build-time fix** (no
+> longer needed for R1). Any residual value it carries — single-source builtin authoring,
+> IR-volume reduction, wasm extern-freedom — lives on in **R1b/R1c/R1d** as ordinary refactors,
+> not as a build-unblock emergency. Everything below is retained as the historical Draft.
 
-**Status:** 📝 Draft (2026-06-01) — *the executable checklist for getting past the stalled native build.*
+**Status:** ✅ RESOLVED (2026-06-25) — *build unblocked by the serde-drop + build_wrappers route; the migration below is de-scoped (folded into R1b/R1c/R1d). Original Draft preserved below.*
 **Requirement:** `../REQUIREMENTS.md` R1 — *Native compiler pipeline (parse→typecheck→borrow→LLVM→native).* Currently 40%, ⚠️ Partial: *"LLVM build does not finish (BUILD_DIAGNOSIS.md); native binary not routinely producible."*
 **The blocker, in one line (from `BUILD_DIAGNOSIS.md` §5):** rustc's serial, single-threaded MIR→LLVM-IR lowering of ~158 **hand-emitted inkwell IR function bodies** in `codegen/builtins.rs` is superlinear in IR volume, lands one-giant-function-per-CGU, and never finishes.
 

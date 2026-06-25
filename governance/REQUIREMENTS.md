@@ -56,8 +56,8 @@ Ordered by **(load-bearing × cheapness-to-close)** — the autonomous builder's
 3. **R9 `#[corrigible]`** — small surface, large safety payoff; pairs with existing `@[contained]`.
 4. **R3 AI routing + `#[ai(policy)]`** — the differentiation; needs a spec first (forks on reproducibility).
 5. **R6 capability/registry** — security gate; spec-first, because under-spec = exfiltration risk.
-6. **R1 native build** — high value, high risk; the fix is prototyped but unvalidated. Schedule a focused effort, not a tick.
-7. **R7 targets / R10 self-improving** — largest, most speculative; spec now, build after R1 lands.
+6. **R1 native build** — ✅ RESOLVED (2026-06-25). Build finishes in ~1.5–2.6s and is at verified interp parity (examples + non-wasm + wasm + fuzz harnesses green); closed by the serde-drop + `build_wrappers.rs`, not the planned `axon-rt` migration (de-scoped). No further effort needed; residual refactors fold into R1b/R1c/R1d.
+7. **R7 targets / R10 self-improving** — largest, most speculative; spec now, build now that R1 has landed.
 
 ---
 
