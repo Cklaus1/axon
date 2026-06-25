@@ -3100,6 +3100,12 @@ fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::D
         eprintln!("{code}: {msg}");
         process::exit(2);
     }
+    // R20 Slice 3: boot-time TCB attestation — the proven obligation set + its
+    // verdict must match the pinned manifest, else fail closed (E1611, I-12).
+    if let Err((code, msg)) = axon_core::smt::check_tcb_attestation() {
+        eprintln!("{code}: {msg}");
+        process::exit(2);
+    }
     let d = axon_core::smt::discharge(program, &refinements);
     if d.total() > 0 {
         eprintln!(

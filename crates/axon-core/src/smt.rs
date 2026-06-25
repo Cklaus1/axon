@@ -1027,6 +1027,72 @@ pub fn check_mint_tcb_obligation() -> Result<(), (&'static str, String)> {
     }
 }
 
+// ── R20 Slice 3: TCB attestation ─────────────────────────────────────────────
+//
+// Content-address the kernel TCB obligations into a digest that is PINNED in a
+// manifest and re-checked at boot. The digest folds in BOTH (a) the canonical
+// human-readable obligation spec text and (b) the LIVE proof verdict — so the
+// boot check fails closed (E1611) if either the obligation DEFINITION changes or
+// the PROOF stops holding, without a corresponding manifest update. This makes
+// "self-modification cannot weaken the TCB" (I-12) a boot-time invariant, not
+// only a CI test (the kernel.rs grid test) or a build-time check (E1610).
+//
+// Honest scope: the digest pins the obligation SET, the spec TEXT, and the
+// verdict. It does not hash the Rust AST of `prove_mint_obligations`, so a
+// predicate change that BOTH stays provable AND leaves the spec text unchanged
+// would not be caught here — that is the grid test's job (impl ↔ model) and code
+// review's. The three layers are complementary, not redundant.
+
+/// The canonical, human-readable specification of the kernel mint obligations.
+/// Changing what `prove_mint_obligations` proves MUST be reflected here (or the
+/// attestation is a lie); changing this text changes the digest → boot mismatch.
+pub const MINT_OBLIGATION_SPEC: &str = "R20/principal_mint: \
+    O1 attenuation [child.net⇒parent.net ∧ child.fs_write⇒parent.fs_write ∧ child.exec⇒parent.exec]; \
+    O2 budget-carve [0≤child.cap≤rem ∧ rem_after+child.cap=rem, rem=max(0,cap-used)]";
+
+/// The pinned content address of the all-obligations-proven TCB state. Computed
+/// by `tcb_attestation_digest()` over (spec text ⊕ live verdict). Updating it is
+/// a deliberate, audited manifest change (ROADMAP §7: multi-sig update path).
+pub const TCB_MANIFEST_DIGEST: &str =
+    "axtcb1:38ed24ddd83aa34a87533bc622817e6b8a752f0d3f7530461807ed1c88a77704";
+
+/// Compute the live TCB attestation digest: `sha256(spec ⊕ verdict)`, tagged.
+/// Deterministic (the spec is constant and the proof is deterministic).
+#[cfg(feature = "smt")]
+pub fn tcb_attestation_digest() -> String {
+    use sha2::{Digest, Sha256};
+    let verdict = match prove_mint_obligations(true, true) {
+        ProofResult::Proven { .. } => "Proven",
+        ProofResult::Counterexample { .. } => "Counterexample",
+        ProofResult::Unsupported { .. } => "Unsupported",
+    };
+    let mut h = Sha256::new();
+    h.update(MINT_OBLIGATION_SPEC.as_bytes());
+    h.update(b"\x1f"); // unit separator: spec ⊕ verdict
+    h.update(verdict.as_bytes());
+    format!("axtcb1:{:x}", h.finalize())
+}
+
+/// R20 Slice 3: the boot-time attestation check. Returns `Err(E1611, …)` iff the
+/// live digest ≠ the pinned manifest — the proven TCB changed without a manifest
+/// update. For the in-tree, all-proven obligations this is `Ok(())`.
+#[cfg(feature = "smt")]
+pub fn check_tcb_attestation() -> Result<(), (&'static str, String)> {
+    let live = tcb_attestation_digest();
+    if live == TCB_MANIFEST_DIGEST {
+        Ok(())
+    } else {
+        Err((
+            crate::error::E1611,
+            format!(
+                "TCB attestation mismatch at boot: kernel obligation digest `{live}` \
+                 ≠ pinned manifest `{TCB_MANIFEST_DIGEST}` — the proven TCB changed \
+                 without a manifest update (I-12)"
+            ),
+        ))
+    }
+}
+
 /// Collect every `callee_name(args…)` direct call in `e` as (name, args).
 fn collect_calls(e: &Expr, out: &mut Vec<(String, Vec<Expr>)>) {
     match e {
@@ -2305,6 +2371,46 @@ mod tests {
         assert!(
             !d.refine_return_proven("over"),
             "a violable relational refinement must stay runtime-checked"
+        );
+    }
+
+    // ── R20 Slice 3: TCB attestation ─────────────────────────────────────────
+
+    #[test]
+    fn r20_tcb_attestation_digest_matches_pinned_manifest() {
+        // The live digest of (obligation spec ⊕ proof verdict) must equal the
+        // pinned manifest. If this fails, the TCB changed — either update the
+        // obligation/spec deliberately and re-pin TCB_MANIFEST_DIGEST (an
+        // audited manifest change), or a regression broke the proof.
+        assert_eq!(
+            tcb_attestation_digest(),
+            TCB_MANIFEST_DIGEST,
+            "TCB digest drifted from the pinned manifest"
+        );
+    }
+
+    #[test]
+    fn r20_attestation_check_passes_for_proven_tcb() {
+        assert!(
+            check_tcb_attestation().is_ok(),
+            "the in-tree, all-proven TCB must attest cleanly"
+        );
+    }
+
+    #[test]
+    fn r20_attestation_digest_changes_if_the_verdict_flips() {
+        // Soundness of the boot tripwire: the digest folds in the verdict, so a
+        // weakened proof (verdict ≠ Proven) MUST produce a different digest than
+        // the all-proven manifest — boot would then fail closed (E1611).
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(MINT_OBLIGATION_SPEC.as_bytes());
+        h.update(b"\x1f");
+        h.update(b"Counterexample"); // a weakened/broken proof
+        let weakened = format!("axtcb1:{:x}", h.finalize());
+        assert_ne!(
+            weakened, TCB_MANIFEST_DIGEST,
+            "a flipped verdict must change the digest → boot mismatch"
         );
     }
 }

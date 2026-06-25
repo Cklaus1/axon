@@ -121,6 +121,7 @@ pub const E1316: &str = "E1316"; // @[contained(...)] deprecation notice; prefer
 
 // Kernel TCB obligation errors (R20: SMT-proven capability primitives — E16xx band)
 pub const E1610: &str = "E1610"; // a kernel capability-mint obligation (attenuation / budget-carve) is not SMT-discharged — the minter has been weakened (I-12 tripwire)
+pub const E1611: &str = "E1611"; // TCB attestation mismatch at boot: the kernel obligation digest ≠ the pinned manifest (the proven TCB changed without a manifest update — I-12)
 
 // Self-improving-compiler errors (R10: pass verification harness)
 pub const E1401: &str = "E1401"; // G1 correctness: pass changes observable output on a corpus member

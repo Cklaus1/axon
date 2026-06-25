@@ -1,7 +1,7 @@
 # SMT-Backed Capability Attenuation Proofs (mint / budget)
 
 **Spec ID:** `R20-smt-capability-proofs`
-**Status:** 📝 Draft (2026-06-25)
+**Status:** ✅ Slices 0–3 LANDED (2026-06-25). Slice 0 spike (mint O1), Slice 1 (full O1∧O2 proof + `kernel.rs` differential grid tripwire + `Discharged` wiring + E1610 build gate + `smt_mint_parity.sh`), Slice 2 (relational refinements for user attenuating fns — params threaded into the predicate encoder + runtime param-scope fix; `examples/refinement_attenuation.ax`), Slice 3 (TCB attestation: content-addressed `MINT_OBLIGATION_SPEC ⊕ verdict` digest pinned in `TCB_MANIFEST_DIGEST`, boot-checked → E1611). 12 R20 tests; smt suite green.
 **Risk class:** Structural (extends the SMT encoder; strengthens I-11, mechanizes I-12)
 **Requirement tie:** `REQUIREMENTS.md` R6 (capability/registry) + `governance/specs/R11-capability-minting.md` (the runtime minting this proves) + ROADMAP §7 TCB (`smt_solver`, `capability_minter`).
 **Author / date:** scoped by Claude, 2026-06-25.
