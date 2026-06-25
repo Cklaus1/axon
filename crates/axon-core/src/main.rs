@@ -143,6 +143,12 @@ enum Command {
         /// Used for golden-IR inspection of layout/atomic lowering (R17 Slice 2/3).
         #[arg(long, help = "Emit LLVM IR text and stop (R17 golden-IR tests)")]
         emit_llvm: bool,
+
+        /// Build host preset. `mobile` (with an Android `--target`) emits a
+        /// loadable shared lib into `out/android/jniLibs/<abi>/lib<name>.so`
+        /// plus a generated Kotlin `Axon.kt` wrapper (R14). Default: native.
+        #[arg(long, help = "Build host: mobile (Android jniLibs + Kotlin wrapper)")]
+        host: Option<String>,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -651,6 +657,7 @@ fn dispatch(command: Command) {
             linker_script,
             emit_obj,
             emit_llvm,
+            host,
         } => cmd_build(
             files,
             out,
@@ -662,6 +669,7 @@ fn dispatch(command: Command) {
             linker_script,
             emit_obj,
             emit_llvm,
+            host,
         ),
         Command::Goal {
             file,
@@ -2486,6 +2494,7 @@ fn cmd_build(
     _linker_script: Option<PathBuf>,
     _emit_obj: bool,
     _emit_llvm: bool,
+    _host: Option<String>,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2510,6 +2519,7 @@ fn cmd_build(
     linker_script: Option<PathBuf>,
     emit_obj: bool,
     emit_llvm: bool,
+    host: Option<String>,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2519,11 +2529,55 @@ fn cmd_build(
         validate_ax_extension(f);
     }
 
+    // R14: `--host mobile` requires an Android `--target` on this (Linux) host.
+    let mobile = matches!(host.as_deref(), Some("mobile"));
+    if mobile {
+        match target.as_deref() {
+            Some(t) if t.contains("-android") => {}
+            Some(t) if t.contains("-apple-ios") => {
+                eprintln!(
+                    "error[E1710]: --host mobile target '{t}' (iOS) requires a macOS build host \
+                     (Xcode/iOS SDK); not buildable on this Linux host (R14 §4 / Q4)"
+                );
+                process::exit(1);
+            }
+            _ => {
+                eprintln!(
+                    "error: --host mobile requires an Android --target \
+                     (e.g. --target aarch64-linux-android or x86_64-linux-android)"
+                );
+                process::exit(1);
+            }
+        }
+    } else if let Some(h) = host.as_deref() {
+        eprintln!("error: unknown --host '{h}' (expected: mobile)");
+        process::exit(1);
+    }
+
     let first = &files[0];
+    // The base app name (used for libNAME.so + the Kotlin wrapper).
+    let app_name = first
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let output = out.unwrap_or_else(|| {
-        let stem = first.file_stem().unwrap_or_default().to_string_lossy();
-        PathBuf::from(format!("./{stem}"))
+        if mobile {
+            // out/android/jniLibs/<abi>/lib<name>.so
+            let abi = target
+                .as_deref()
+                .and_then(axon_core::mobile::android_jni_abi)
+                .unwrap_or("arm64-v8a");
+            PathBuf::from(format!("out/android/jniLibs/{abi}/lib{app_name}.so"))
+        } else {
+            PathBuf::from(format!("./{app_name}"))
+        }
     });
+    if mobile {
+        if let Some(parent) = output.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
 
     if files.len() == 1 {
         eprintln!("Compiling {}...", first.display());
@@ -2575,15 +2629,19 @@ fn cmd_build(
         linker_script: linker_script.map(|p| p.to_string_lossy().into_owned()),
         emit_obj,
         emit_llvm,
+        shared: mobile,
     };
 
-    // Warn if cross-compiling without cross.toml configuration.
+    // Warn if cross-compiling without cross.toml configuration. Android
+    // auto-resolves the NDK linker (link.rs::android_linker), so no cross.toml
+    // is required there — skip the warning to avoid a spurious E0905.
     if let Some(ref triple) = opts.target_triple {
+        let is_android = triple.contains("-android");
         let host = inkwell::targets::TargetMachine::get_default_triple()
             .as_str()
             .to_string_lossy()
             .to_string();
-        if !host.starts_with(&triple[..triple.find('-').unwrap_or(triple.len())]) {
+        if !is_android && !host.starts_with(&triple[..triple.find('-').unwrap_or(triple.len())]) {
             // Cross-compiling: check for cross.toml
             let home = std::env::var_os("HOME").unwrap_or_default();
             let cross_toml = std::path::PathBuf::from(home)
@@ -2605,6 +2663,24 @@ fn cmd_build(
         Ok(()) => {
             let elapsed = start.elapsed().as_millis();
             eprintln!("Binary: {} ({elapsed}ms)", output.display());
+            // R14: --host mobile also emits the deterministic Kotlin wrapper next
+            // to the jniLibs/ tree (out/android/Axon.kt).
+            if mobile {
+                let entries = axon_core::mobile::MobileEntries::from_program(&program);
+                let kt = axon_core::mobile::generate_kotlin_wrapper(&app_name, &entries);
+                // out/android/Axon.kt — two levels up from jniLibs/<abi>/lib*.so.
+                let android_root = output
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.parent())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("out/android"));
+                let wrapper_path = android_root.join("Axon.kt");
+                match std::fs::write(&wrapper_path, kt) {
+                    Ok(()) => eprintln!("Wrapper: {}", wrapper_path.display()),
+                    Err(e) => eprintln!("warning: could not write wrapper: {e}"),
+                }
+            }
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -2624,6 +2700,9 @@ struct BuildOptions {
     linker_script: Option<String>,
     emit_obj: bool,
     emit_llvm: bool,
+    /// R14: link a shared library (`.so`) instead of an executable
+    /// (`--host mobile` → Android jniLibs).
+    shared: bool,
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -4070,8 +4149,9 @@ fn run_build_pipeline(
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 
-        // Freestanding builds bypass the cache: linker args differ from hosted builds.
-        if !opts.freestanding {
+        // Freestanding and shared (`--host mobile`) builds bypass the cache:
+        // their linker args differ from the hosted-binary path.
+        if !opts.freestanding && !opts.shared {
             if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
                 // Cache hit — skip IR emission, link from stored bitcode.
                 return axon_core::compile_bitcode_to_binary(
@@ -4084,8 +4164,8 @@ fn run_build_pipeline(
         }
 
         // Cache miss — full compilation then write.
-        // Freestanding builds bypass the cache (linker args differ from hosted).
-        let cache_slot = if opts.freestanding {
+        // Freestanding and shared builds bypass the cache (linker args differ).
+        let cache_slot = if opts.freestanding || opts.shared {
             None
         } else {
             Some((&key as &str, cache_path.as_path(), compiler_version))
@@ -4101,6 +4181,7 @@ fn run_build_pipeline(
             opts.linker_script.as_deref(),
             opts.emit_obj,
             opts.emit_llvm,
+            opts.shared,
             &mut infer_ctx,
             cache_slot,
         );
@@ -4119,6 +4200,7 @@ fn run_build_pipeline(
         opts.linker_script.as_deref(),
         opts.emit_obj,
         opts.emit_llvm,
+        opts.shared,
         &mut infer_ctx,
         None,
     )
@@ -4138,6 +4220,7 @@ fn build_ir_and_link(
     linker_script: Option<&str>,
     emit_obj: bool,
     emit_llvm: bool,
+    shared: bool,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -4229,6 +4312,9 @@ fn build_ir_and_link(
                 linker_script,
             )
         }
+    } else if shared {
+        // R14: --host mobile → a loadable shared library (.so).
+        cg.compile_to_shared_lib(&output.to_string_lossy(), release, target_triple)
     } else {
         cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
     }

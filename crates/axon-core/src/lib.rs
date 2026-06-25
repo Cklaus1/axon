@@ -43,6 +43,9 @@ pub mod interp;
 /// (live principal registry with kernel-enforced attenuation). Interp-driven so
 /// the codegen build is untouched (R12 §9 Q3).
 pub mod kernel;
+/// R14: mobile (`--host mobile`) build support — the deterministic Kotlin/Swift
+/// wrapper generator + Android `jniLibs/` ABI layout.
+pub mod mobile;
 pub mod mono;
 // Phase 4
 pub mod audit;
