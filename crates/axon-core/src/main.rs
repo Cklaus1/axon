@@ -601,6 +601,12 @@ enum TargetAction {
         /// Target triple / alias (e.g. wasm32, wasm32-wasi).
         #[arg(long, help = "Target triple or alias")]
         target: Option<String>,
+        /// Host shim: `browser` selects the BrowserHost (virtual fs/env/time over
+        /// JS) for a `wasm32-unknown-unknown` build (R7c). Default is the native
+        /// host. A browser build that statically reaches a browser-incompatible
+        /// builtin (e.g. `exec`) is refused with E0911.
+        #[arg(long, help = "Host shim: browser or (default) native")]
+        host: Option<String>,
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
     },
@@ -2060,6 +2066,50 @@ fn cmd_verify(file: PathBuf) {
 /// LLVM codegen backend; `wasm32` runs the interpreter compiled to wasm32.
 const TARGETS: &[(&str, &str)] = &[("native", "codegen"), ("wasm32", "interp")];
 
+/// R7c §6/§11 Slice 1 — the `--host browser` E0911 link gate. Parses the source,
+/// collects the builtins it statically reaches (transitively, since every fn body
+/// is walked), and refuses the build if any is browser-incompatible (`exec`, the
+/// R17 bare-metal HAL) — the load-time mirror of codegen's E0910. A clean refusal,
+/// never a bundle that traps in the tab (I-4). Exits 2 on a violation; returns on
+/// a clean program.
+fn gate_browser_incompatible_builtins(file: &Path) {
+    let src = read_source(&file.to_path_buf());
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            // A parse error is reported by the engine path that follows; here we
+            // only gate. Return so the normal pipeline surfaces the parse error
+            // with its full diagnostics rather than a partial one from this gate.
+            let _ = e;
+            return;
+        }
+    };
+    let called = axon_core::effects::collect_called_builtin_names(&program);
+    let bad: Vec<&String> = called
+        .iter()
+        .filter(|n| axon_core::builtins::is_browser_incompatible_builtin(n))
+        .collect();
+    if !bad.is_empty() {
+        let to_stderr = !std::io::stderr().is_terminal();
+        for n in &bad {
+            emit_error(
+                &format!(
+                    "[{}] builtin `{n}` cannot run on the browser host (--host browser): a \
+                     browser tab has no process model / raw hardware access — remove the call \
+                     or build for a non-browser target",
+                    axon_core::error::E0911,
+                ),
+                to_stderr,
+            );
+        }
+        eprintln!(
+            "axon: {} browser-incompatible builtin(s); browser build refused.",
+            bad.len()
+        );
+        process::exit(2);
+    }
+}
+
 /// `axon target list` / `axon target build` (R7 §3/§4.1).
 fn cmd_target(action: TargetAction) {
     match action {
@@ -2072,20 +2122,64 @@ fn cmd_target(action: TargetAction) {
         TargetAction::Build {
             engine,
             target,
+            host,
             file,
         } => {
             validate_ax_extension(&file);
             let triple = target.as_deref().unwrap_or("native");
             let interp = engine.as_deref() == Some("interp");
+            // R7c §6/§11 Slice 1: `--host browser` selects the BrowserHost shim.
+            // It is only meaningful for the wasi-free browser triple; a browser
+            // host with any other triple is a usage error. Before doing anything
+            // else, gate the program against the browser-incompatible builtin set
+            // (E0911) — the load-time mirror of codegen's E0910 — so a browser
+            // bundle that would trap in the tab is refused up front, not shipped.
+            let browser_host = host.as_deref() == Some("browser");
+            if let Some(h) = host.as_deref() {
+                if h != "browser" && h != "native" {
+                    emit_error(
+                        &format!("unknown --host `{h}` (expected `browser` or `native`)"),
+                        !std::io::stderr().is_terminal(),
+                    );
+                    process::exit(2);
+                }
+            }
+            if browser_host {
+                if !triple.contains("unknown-unknown") && triple != "wasm32" {
+                    emit_error(
+                        &format!(
+                            "--host browser requires --target wasm32-unknown-unknown (a browser \
+                             has no wasi); got target={triple}"
+                        ),
+                        !std::io::stderr().is_terminal(),
+                    );
+                    process::exit(2);
+                }
+                gate_browser_incompatible_builtins(&file);
+            }
             if interp {
                 // The interpreter engine runs any target (wasm included) by
                 // construction (I-2). The actual wasm build is a cargo invocation;
                 // this acknowledges the routing and points at it.
-                println!(
-                    "axon target: engine=interp target={triple} — run via the interpreter \
-                     (build: cargo build -p axon-core --no-default-features --bin axon-run \
-                     --target wasm32-wasip1; see scripts/wasm_parity.sh)"
-                );
+                if browser_host {
+                    // R7c: the browser interp bundle is the axon-wasm cdylib
+                    // (axon_alloc/axon_eval/axon_output_*) running under
+                    // wasm32-unknown-unknown — the playground/REPL that eval's .ax
+                    // in the tab. Pure-compute parity is gate-verified in real
+                    // headless Chrome by scripts/browser_compute_parity.sh.
+                    println!(
+                        "axon target: engine=interp host=browser target={triple} — the \
+                         BrowserHost interp bundle is the axon-wasm cdylib (build: cargo build \
+                         -p axon-wasm --target wasm32-unknown-unknown --release; see \
+                         scripts/browser_compute_parity.sh for headless-Chrome parity)"
+                    );
+                } else {
+                    println!(
+                        "axon target: engine=interp target={triple} — run via the interpreter \
+                         (build: cargo build -p axon-core --no-default-features --bin axon-run \
+                         --target wasm32-wasip1; see scripts/wasm_parity.sh)"
+                    );
+                }
                 process::exit(0);
             }
             if triple.contains("wasm") {

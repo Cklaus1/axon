@@ -83,6 +83,9 @@ pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler versio
 pub const E0907: &str = "E0907"; // AOT wasm build needs the native codegen backend (R7)
 pub const E0908: &str = "E0908"; // no engine supports the requested target triple (R7, reserved)
 pub const E0910: &str = "E0910"; // builtin / construct has no native codegen lowering — honest abort, runs under the interpreter
+pub const E0911: &str = "E0911"; // browser target (--host browser): a browser-incompatible builtin can't run in the tab — clean refusal mirroring E0910 (R7c)
+pub const E0912: &str = "E0912"; // browser AOT link failed (wasm-bindgen / export step) (R7c, reserved)
+pub const W0913: &str = "W0913"; // sleep_ms is a no-op on the browser host (main thread can't block) (R7c)
 
 // Capability permission errors (Phase 4: @[contained])
 pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
@@ -336,12 +339,12 @@ mod tests {
             E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401, E0402,
             E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0601, E0602, E0603,
             E0701, E0702, E0703, E0800, E0801, E0802, E0803, E0901, E0902, E0903, E0904, E0905,
-            E0906, E0907, E0908, E0910, E1001, E1002, E1003, E1004, E1101, E1102, E1201, E1202,
-            E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302, E1306, E1310,
-            E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412,
-            E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704, E1706, E1800,
-            E1801, E1802, E1803, E1900, W0001, W0002,
-            W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E0906, E0907, E0908, E0910, E0911, E0912, E1001, E1002, E1003, E1004, E1101, E1102,
+            E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302,
+            E1306, E1310, E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409,
+            E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704,
+            E1706, E1800, E1801, E1802, E1803, E1900, W0001, W0002, W0003, W0004, W0005, W0006,
+            W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

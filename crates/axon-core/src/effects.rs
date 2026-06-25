@@ -690,6 +690,40 @@ fn collect_called_names_ctx(
     });
 }
 
+/// R7c §6 — collect every directly-called *builtin* name reachable in the
+/// program's function bodies (the syntactic call set, walking the full AST via
+/// [`for_each_child`]). Used by the `--host browser` build gate to refuse a
+/// browser bundle that reaches a browser-incompatible builtin (E0911) before any
+/// codegen/link. Only bare `Expr::Ident` callees that are known builtins are
+/// reported — user fn calls are followed transitively because their *bodies* are
+/// walked too (every `FnDef` body is scanned), so a builtin reached via a helper
+/// is still caught (no laundering past one hop, matching the transitive posture
+/// of the effect/capability walkers).
+pub fn collect_called_builtin_names(program: &Program) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let mut walk = |e: &Expr| {
+        let mut names: Vec<(String, HashSet<String>)> = Vec::new();
+        collect_called_names_ctx(e, &HashSet::new(), &mut names);
+        for (name, _) in names {
+            if crate::builtins::is_known_builtin(&name) {
+                out.insert(name);
+            }
+        }
+    };
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => walk(&f.body),
+            Item::ImplBlock(im) => {
+                for m in &im.methods {
+                    walk(&m.body);
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// Phase 6 §2 E03 (row-variable closing, higher-order case): map each function
 /// to the indices of the parameters it *invokes* as a callback — a param `f`
 /// that appears as the callee of a `Call` in the body (`f(...)`). Such a fn is a
@@ -1463,6 +1497,32 @@ mod tests {
             errs.iter().any(|e| e.code == E1310
                 && (e.message.contains("Net") || e.message.contains("AI"))),
             "callback Net/AI must leak to the closed-row caller, got {errs:?}"
+        );
+    }
+
+    #[test]
+    fn collect_called_builtins_follows_helpers() {
+        // R7c §6: the browser gate's builtin collector walks every fn body, so a
+        // builtin reached via a helper is still caught (transitive, no one-hop
+        // laundering). Here `exec` is called from `helper`, not `main`.
+        let p = parse_source(
+            "fn helper() -> i64 { let _ = exec(\"ls\", []) 0 }\nfn main() -> i64 { helper() }",
+        )
+        .expect("parse");
+        let called = collect_called_builtin_names(&p);
+        assert!(
+            called.contains("exec"),
+            "exec reached via a helper must be collected, got {called:?}"
+        );
+        // A user fn name is NOT a builtin and must not appear.
+        assert!(!called.contains("helper"), "user fns are not builtins");
+        // A pure compute program reaches no impure/incompatible builtin.
+        let q = parse_source("fn main() -> i64 { let x = 1 + 2 x }").expect("parse");
+        let c2 = collect_called_builtin_names(&q);
+        assert!(
+            !c2.iter()
+                .any(|n| crate::builtins::is_browser_incompatible_builtin(n)),
+            "pure program reaches no browser-incompatible builtin, got {c2:?}"
         );
     }
 }
