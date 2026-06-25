@@ -218,6 +218,26 @@ same source compiles for every device.)
 - [ ] (Stretch / **manual tier**) `ios_sim_window_clear` and `android_emu_window_clear` render one frame —
       NOT run; the GPU/Vulkan surface bridge (slice 5) and a full NativeActivity GUI app are the manual tier.
 
+**iOS status legend:** ✅ authored + verified on Linux · 🟡 authored on Linux, **verification REMOTE-CI-ONLY**
+(macOS job `.github/workflows/ios.yml`; CANNOT be verified on this Linux/WSL2 host — §12 Q4) · ⬜ not yet built.
+
+- [x] ✅ Test `mobile_wrapper_is_byte_stable` passes (golden Swift+Kotlin wrapper, deterministic generator) —
+      `mobile::tests::swift_shim_is_byte_stable` / `kotlin_shim_is_byte_stable` (Linux gate-green).
+- [x] 🟡 `axon_rt_cross_builds_for_ios` — the iOS-sim + iOS-device `cargo build -p axon-rt --features ios
+      --target aarch64-apple-ios{,-sim}` steps in `ios.yml`. The cross-platform `AxonRuntime` bridge CORE +
+      its tests are Linux-gate-green (`axon-rt --features ios`); the actual iOS-target cross-build + the
+      `axon_ios_*` symbol-export check run REMOTELY on macOS (NOT verifiable on Linux). Android counterpart ⬜.
+- [ ] ⬜ Test `android_so_compute_parity` (Android slice — not in scope of this iOS authoring pass).
+- [x] ✅/🟡 `axon target build --host mobile` emits the byte-stable wrapper + (codegen) the device object;
+      Linux-verified for wrapper emission + the E1710 clean refusal on the iOS link (no Apple toolchain). The
+      `swiftc`-compiles assertion runs REMOTELY on macOS (`ios.yml`).
+- [x] ✅ Generated wrapper is **≤ ~80 lines** each — `mobile::tests::shims_are_under_80_lines` (Linux-green).
+- [ ] 🟡 (Stretch / manual tier) `ios_sim_window_clear` renders one frame — the headless-mock journey runs on
+      the Linux gate (`examples/mobile/ios_window_clear.ax`); the **real Metal-backed** simulator render is the
+      macOS-host-authored remainder (`tools/ios-parity-harness/`, REMOTE-CI-ONLY). `android_emu_window_clear` ⬜.
+- [x] 🟡 iOS compute-parity oracle authored (`examples/mobile/ios_compute_parity.ax`, oracle output pinned in
+      `ios.yml` as `$EXPECTED`); the interpreter oracle is Linux-green, the iOS-Simulator run is REMOTE-CI-ONLY.
+
 ### 10. Performance budget
 
 Binary size mirrors the PRD's ~3.5 MB GPU-stack figure (`AI_Language_Plan.md:288`); the non-UI lib should be
@@ -255,6 +275,25 @@ order as x86-64 native; no mobile-specific hot path). Wrapper generation is buil
   5. **gfx Metal/Vulkan surface bridge** — wgpu surface from the platform view; the UI journey tier. Deferred.
 - Blast radius: confined to mobile builds. `git revert` of any slice leaves a clean tree. Slices 1–2 (headless
   mobile compute) are independently useful even if 4–5 never land.
+
+#### iOS-slice authoring status (this pass — Linux-authored, macOS-CI-verified)
+
+The **iOS** counterparts of slices 1–2 (+ the slice-3 bridge core, the slice-4 `platform` headless stub, and
+the slice-5 journey shape) are **AUTHORED on this Linux host and `cfg`/feature-gated so the Linux `gate.sh`
+stays green**, but their iOS build/run is **VERIFIED ONLY by the remote macOS CI job** — it CANNOT be run on
+this Linux/WSL2 host (Apple SDK/Xcode/Simulator are macOS-only; §12 Q4). Status per slice:
+
+| Slice (iOS) | What landed (Linux-authored) | Verification |
+|---|---|---|
+| 1 (toolchain) | iOS triple recognition + E1710 toolchain probe (`mobile.rs`); `--host mobile` routes iOS → wrapper + clean E1710 on Linux; `emit_object_for_triple` LLVM cross-emits the iOS object | Linux-green for recognition/probe/refusal; the real iOS-target `axon-rt` cross-build is `ios.yml` (REMOTE) |
+| 2 (C-ABI export + shim + parity) | byte-stable Swift `@main` shim generator (`gen_swift_shim`, golden test); compute-parity oracle (`examples/mobile/ios_compute_parity.ax`) | wrapper + oracle Linux-green; iOS-Simulator parity run is `ios.yml` (REMOTE) |
+| 3 (`AxonRuntime` bridge) | the lifecycle state-machine CORE + the `axon_ios_*` `#[no_mangle] extern "C"` entry points (`axon-rt/src/mobile_ios.rs`; core compiles on any host, FFI `cfg(target_os="ios")`) — built on R15 resume | core + transition tests Linux-green under `--features ios`; the iOS-linked symbols verified by `ios.yml` (REMOTE) |
+| 4 (`native::platform`) | the **headless stub** `native::platform` module (`request_permission`→denied, `haptic`→no-op, `is_device`→0); E1004 capability gate | Linux-green (interp run + E1004); the UIKit-backed device impl is the macOS remainder |
+| 5 (gfx Metal bridge) | the `ios_window_clear` journey against the GPU-free mock | headless mock Linux-green; the real Metal `CAMetalLayer` render is `tools/ios-parity-harness/` (REMOTE, macOS-authored) |
+
+**macOS-host remainder (NOT authored here — needs Xcode to author exactly):** the `AxonRuntime` Swift support
+library, the SwiftPM/`.xcodeproj` simulator harness, and `run_on_sim.sh` (scaffolded + contract-documented in
+`tools/ios-parity-harness/README.md`). The CI workflow degrades gracefully (a `::warning::`) until they exist.
 
 ### 12. Open questions
 
