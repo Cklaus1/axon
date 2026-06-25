@@ -626,6 +626,28 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Suspend, yield `req`, resume with `Some(reply)` or `None` at end-of-input (R15).",
     },
     BuiltinFn {
+        // R15 Slice 2: the arbitrary-`Value`-payload forms of `host_await`. The
+        // request `req` and reply may be ANY value (dict/struct/enum/tuple/array/
+        // option/result/closure or a scalar) — they cross the worker-thread
+        // substrate as an owned `Send` deep-clone (`SendValue`) and are reconstructed
+        // on the far side. A `Chan` payload (identity-shared mutable state) is
+        // REFUSED at runtime (deep-clone would lose its sharing). Typed `T -> U`
+        // (deferred), so the program's own annotations / inference name the shapes;
+        // interp-only, native codegen E0910-refuses it like plain `host_await`.
+        name: "host_await_val",
+        params: &[("req", "T")],
+        ret: "U",
+        doc: "Suspend, yield any-typed `req` to the host, resume with its (any-typed) reply. Dict/struct/enum payloads cross via a Send deep-clone; a Chan payload is refused (R15 Slice 2).",
+    },
+    BuiltinFn {
+        // R15 Slice 2: the EOF-aware arbitrary-`Value` form — `Some(reply)` or `None`
+        // at end-of-input, mirroring `host_await_opt` but for any payload type.
+        name: "host_await_val_opt",
+        params: &[("req", "T")],
+        ret: "Option<U>",
+        doc: "Suspend, yield any-typed `req`, resume with `Some(reply)` or `None` at end-of-input. Dict/struct payloads cross via a Send deep-clone (R15 Slice 2).",
+    },
+    BuiltinFn {
         name: "str_trim_start",
         params: &[("s", "str")],
         ret: "str",

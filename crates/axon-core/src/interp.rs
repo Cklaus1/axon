@@ -806,28 +806,265 @@ pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
     })
 }
 
-// ── R15 resume runtime (v0: thread substrate, str payloads) ─────────────────────
+// ── R15 resume runtime ──────────────────────────────────────────────────────────
 //
 // `host_await(req)` suspends the program, yields `req` to the host, and resumes
 // with the host's reply. The interpreter (`Interp`/`Value`) is `!Send` (`Rc`), so
 // it CANNOT cross threads — but the program can run on a worker thread that owns
-// its OWN interp (created there, never moved), and the str payloads cross the
-// channel as `String` (which IS `Send`). The worker BLOCKING on the reply channel
-// is the suspension; the host (this caller's thread) regains control, services the
-// request, and unblocks the worker. No `Flow` plumbing, no `unsafe`, no
-// dependency — additive. v1 (arbitrary-`Value` payloads) needs a same-thread
-// stackful coroutine instead (governance/specs/R15-resume-runtime.md §4).
-// NATIVE substrate: a worker thread blocks in `host_await_yield` on this channel
-// while the host (the caller's thread) services the request. wasm has no threads,
-// so the wasm `host_await_yield` below reads stdin DIRECTLY instead (synchronous,
-// single-stack) — these channel types are native-only.
+// its OWN interp (created there, never moved). The worker BLOCKING on the reply
+// channel is the suspension; the host (this caller's thread) regains control,
+// services the request, and unblocks the worker. No `Flow` plumbing, no `unsafe`,
+// no dependency — additive.
+//
+// SLICE 2 (this revision): the channel now carries an OWNED `Send` deep-clone of
+// the payload (`SendValue`), not just `String`, so **arbitrary `Value` payloads —
+// dict, struct, enum, nested arrays/options/results, tuples, closures — survive a
+// suspend** on the native worker-thread substrate. This is the spec's
+// safe-alternative path (governance/specs/R15-resume-runtime.md §11 Slice (2)):
+// deep-clone Values to a `Send` owned form across the thread, with NO `unsafe` and
+// NO new dependency — the worker-thread substrate stays. `Chan` (and any value
+// transitively containing one) is identity-shared mutable state; deep-cloning it
+// would silently break the sharing across the suspend, so it is REFUSED with a
+// clear runtime error rather than mis-copied (the spec's "identity-shared payloads
+// may be out of scope — refuse them" boundary). `Closure` IS deep-clonable (its
+// `Expr` body + captures are `!Send`-free), so a fn-valued payload crosses fine.
+//
+// wasm has no threads, so the wasm `host_await_yield` variants read stdin / call a
+// JS import on the single stack (synchronous, str-only) — those bindings serialize
+// the request to its `str` form (a non-str payload there is refused).
+
+/// An owned, `Send` deep-clone of a [`Value`], used to cross the worker-thread
+/// channel that drives `host_await`. Mirrors `Value` minus the identity-shared
+/// `Chan` variant: a `Chan` cannot cross (it would lose its sharing) and is refused
+/// at the boundary; a `Dict` crosses as an OWNED snapshot (`Vec<(key, SendValue)>`)
+/// — sound because the program retains its own `Rc` to the original dict, so what
+/// the host receives is a copy to inspect, and a reply dict is freshly constructed
+/// with no prior sharing to preserve.
+#[derive(Debug, Clone)]
+pub enum SendValue {
+    Int(i64),
+    SizedInt { val: i64, ty: crate::types::Type },
+    Float(f64),
+    Bool(bool),
+    Str(String),
+    Unit,
+    Array(Vec<SendValue>),
+    Struct { name: String, fields: Vec<(String, SendValue)> },
+    Enum { enum_name: String, variant: String, fields: Vec<(String, SendValue)> },
+    Some(Box<SendValue>),
+    None,
+    Ok(Box<SendValue>),
+    Err(Box<SendValue>),
+    Closure { params: Vec<String>, body: Box<Expr>, captured: Vec<(String, SendValue)> },
+    Tuple(Vec<SendValue>),
+    /// An owned snapshot of a `Dict`'s entries (sorted key order — the source is a
+    /// `BTreeMap`). Reconstructs into a fresh `Rc<RefCell<…>>` dict.
+    Dict(Vec<(String, SendValue)>),
+}
+
+/// Why a `Value` could not be deep-cloned to a `SendValue` for crossing the
+/// suspend boundary. Today the only case is a `Chan` (identity-shared mutable
+/// state) appearing in the payload.
+#[derive(Debug)]
+pub struct UnsendablePayload {
+    /// A human-readable path to the offending value (e.g. `.q` / `[2]`).
+    pub path: String,
+}
+
+impl SendValue {
+    /// Deep-clone a `Value` into an owned `Send` form. Returns `Err` if the value
+    /// (transitively) contains a `Chan` — identity-shared mutable state that cannot
+    /// cross a suspend without silently losing its sharing.
+    pub fn from_value(v: &Value) -> Result<SendValue, UnsendablePayload> {
+        Self::from_value_at(v, String::new())
+    }
+
+    fn from_value_at(v: &Value, path: String) -> Result<SendValue, UnsendablePayload> {
+        fn arr(xs: &[Value], path: &str) -> Result<Vec<SendValue>, UnsendablePayload> {
+            xs.iter()
+                .enumerate()
+                .map(|(i, x)| SendValue::from_value_at(x, format!("{path}[{i}]")))
+                .collect()
+        }
+        fn fields(
+            m: &HashMap<String, Value>,
+            path: &str,
+        ) -> Result<Vec<(String, SendValue)>, UnsendablePayload> {
+            // Sort keys for a deterministic owned snapshot (HashMap iteration order
+            // is nondeterministic; the parity round-trip must be stable).
+            let mut keys: Vec<&String> = m.keys().collect();
+            keys.sort();
+            keys.into_iter()
+                .map(|k| Ok((k.clone(), SendValue::from_value_at(&m[k], format!("{path}.{k}"))?)))
+                .collect()
+        }
+        Ok(match v {
+            Value::Int(n) => SendValue::Int(*n),
+            Value::SizedInt { val, ty } => SendValue::SizedInt { val: *val, ty: ty.clone() },
+            Value::Float(f) => SendValue::Float(*f),
+            Value::Bool(b) => SendValue::Bool(*b),
+            Value::Str(s) => SendValue::Str(s.clone()),
+            Value::Unit => SendValue::Unit,
+            Value::Array(xs) => SendValue::Array(arr(xs, &path)?),
+            Value::Struct { name, fields: f } => SendValue::Struct {
+                name: name.clone(),
+                fields: fields(f, &path)?,
+            },
+            Value::Enum { enum_name, variant, fields: f } => SendValue::Enum {
+                enum_name: enum_name.clone(),
+                variant: variant.clone(),
+                fields: fields(f, &path)?,
+            },
+            Value::Some(b) => {
+                SendValue::Some(Box::new(Self::from_value_at(b, format!("{path}.Some"))?))
+            }
+            Value::None => SendValue::None,
+            Value::Ok(b) => SendValue::Ok(Box::new(Self::from_value_at(b, format!("{path}.Ok"))?)),
+            Value::Err(b) => {
+                SendValue::Err(Box::new(Self::from_value_at(b, format!("{path}.Err"))?))
+            }
+            Value::Closure { params, body, captured } => {
+                let mut keys: Vec<&String> = captured.keys().collect();
+                keys.sort();
+                let cap: Result<Vec<_>, _> = keys
+                    .into_iter()
+                    .map(|k| {
+                        Ok((
+                            k.clone(),
+                            Self::from_value_at(&captured[k], format!("{path}.capture[{k}]"))?,
+                        ))
+                    })
+                    .collect();
+                SendValue::Closure {
+                    params: params.clone(),
+                    body: body.clone(),
+                    captured: cap?,
+                }
+            }
+            Value::Tuple(xs) => SendValue::Tuple(arr(xs, &path)?),
+            Value::Dict(d) => {
+                let borrowed = d.borrow();
+                let mut out = Vec::with_capacity(borrowed.len());
+                for (k, val) in borrowed.iter() {
+                    out.push((k.clone(), Self::from_value_at(val, format!("{path}.{k}"))?));
+                }
+                SendValue::Dict(out)
+            }
+            Value::Chan(_) => {
+                return Err(UnsendablePayload {
+                    path: if path.is_empty() { "<root>".to_string() } else { path },
+                });
+            }
+        })
+    }
+
+    /// Reconstruct a `Value` from this owned `Send` form, allocating fresh
+    /// `Rc<RefCell<…>>` cells for any `Dict` (there is no prior sharing to preserve
+    /// — a reply value is freshly built by the host).
+    pub fn into_value(self) -> Value {
+        match self {
+            SendValue::Int(n) => Value::Int(n),
+            SendValue::SizedInt { val, ty } => Value::SizedInt { val, ty },
+            SendValue::Float(f) => Value::Float(f),
+            SendValue::Bool(b) => Value::Bool(b),
+            SendValue::Str(s) => Value::Str(s),
+            SendValue::Unit => Value::Unit,
+            SendValue::Array(xs) => Value::Array(xs.into_iter().map(Self::into_value).collect()),
+            SendValue::Struct { name, fields } => Value::Struct {
+                name,
+                fields: fields.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+            },
+            SendValue::Enum { enum_name, variant, fields } => Value::Enum {
+                enum_name,
+                variant,
+                fields: fields.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+            },
+            SendValue::Some(b) => Value::Some(Box::new(b.into_value())),
+            SendValue::None => Value::None,
+            SendValue::Ok(b) => Value::Ok(Box::new(b.into_value())),
+            SendValue::Err(b) => Value::Err(Box::new(b.into_value())),
+            SendValue::Closure { params, body, captured } => Value::Closure {
+                params,
+                body,
+                captured: captured.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+            },
+            SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
+            SendValue::Dict(entries) => {
+                let map: std::collections::BTreeMap<String, Value> =
+                    entries.into_iter().map(|(k, v)| (k, v.into_value())).collect();
+                Value::Dict(Rc::new(RefCell::new(map)))
+            }
+        }
+    }
+
+    /// The `str` projection of a payload, for the str-only wasm bindings (stdin /
+    /// JS import): a `Str` is itself; anything else is `None` (those substrates only
+    /// model a text reply channel, so a non-str request there is refused).
+    #[cfg(target_arch = "wasm32")]
+    fn as_str_payload(&self) -> Option<&str> {
+        match self {
+            SendValue::Str(s) => Some(s),
+            _ => None,
+        }
+    }
+}
+
+/// The str-form `host_await` reply contract: EOF (`None`) → `""`; a `Str` reply →
+/// itself; any other reply Value (a Value-host answering the str form) → its display
+/// rendering. Used by the str-typed `host_await`/`host_await_opt` builtins.
+pub(crate) fn send_reply_to_string(reply: Option<SendValue>) -> String {
+    match reply {
+        None => String::new(),
+        Some(SendValue::Str(s)) => s,
+        Some(other) => send_value_display(&other),
+    }
+}
+
+/// A best-effort text rendering of a `SendValue` (shared by the str reply contract
+/// and the str-host wrapper). Scalars render naturally; composites render a compact
+/// form.
+pub(crate) fn send_value_display(v: &SendValue) -> String {
+    match v {
+        SendValue::Int(n) => n.to_string(),
+        SendValue::SizedInt { val, .. } => val.to_string(),
+        SendValue::Float(f) => f.to_string(),
+        SendValue::Bool(b) => b.to_string(),
+        SendValue::Str(s) => s.clone(),
+        SendValue::Unit => "()".to_string(),
+        SendValue::Array(xs) | SendValue::Tuple(xs) => {
+            let inner: Vec<String> = xs.iter().map(send_value_display).collect();
+            format!("[{}]", inner.join(", "))
+        }
+        SendValue::Struct { name, fields } => {
+            let inner: Vec<String> = fields
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", send_value_display(v)))
+                .collect();
+            format!("{name} {{ {} }}", inner.join(", "))
+        }
+        SendValue::Enum { enum_name, variant, .. } => format!("{enum_name}::{variant}"),
+        SendValue::Some(b) => format!("Some({})", send_value_display(b)),
+        SendValue::None => "None".to_string(),
+        SendValue::Ok(b) => format!("Ok({})", send_value_display(b)),
+        SendValue::Err(b) => format!("Err({})", send_value_display(b)),
+        SendValue::Closure { .. } => "<fn>".to_string(),
+        SendValue::Dict(entries) => {
+            let inner: Vec<String> = entries
+                .iter()
+                .map(|(k, v)| format!("{k}: {}", send_value_display(v)))
+                .collect();
+            format!("{{ {} }}", inner.join(", "))
+        }
+    }
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct HostChannels {
-    req_tx: std::sync::mpsc::Sender<String>,
+    req_tx: std::sync::mpsc::Sender<SendValue>,
     // `None` reply = end-of-input (host has no more to give) — distinct from an
     // empty-string reply (a blank line). `host_await` collapses both to ""; the
     // EOF-aware `host_await_opt` surfaces the distinction as `None`.
-    rep_rx: std::sync::mpsc::Receiver<Option<String>>,
+    rep_rx: std::sync::mpsc::Receiver<Option<SendValue>>,
 }
 #[cfg(not(target_arch = "wasm32"))]
 thread_local! {
@@ -836,9 +1073,13 @@ thread_local! {
 
 /// Reach the active host channels from inside `host_await` (interp/builtins.rs).
 /// Returns `Ok(Some(reply))`, `Ok(None)` at end-of-input, or `Err(())` if there is
-/// no host at all (a bare `axon run`). NATIVE: blocks on the worker channel.
+/// no host at all (a bare `axon run`). NATIVE: the `SendValue` request (an owned
+/// deep-clone of the program's payload — see the builtin dispatch) crosses the
+/// worker→host channel; the worker BLOCKS on the reply channel (that IS the
+/// suspension); the host's `SendValue` reply crosses back and is reconstructed into
+/// a `Value` by the caller.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
+pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> {
     HOST_AWAIT.with(|h| {
         let guard = h.borrow();
         match &*guard {
@@ -860,14 +1101,18 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
 /// reads one line as the reply (trailing newline stripped; EOF → `None`). This
 /// makes interactive Axon programs run on headless wasm.
 #[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
-pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
+pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> {
     use std::io::{BufRead, Write};
+    // str-only substrate: a non-str payload is refused (no value channel here).
+    let req = req.as_str_payload().ok_or(())?;
     print!("{req}");
     let _ = std::io::stdout().flush();
     let mut line = String::new();
     match std::io::stdin().lock().read_line(&mut line) {
         Ok(0) | Err(_) => Ok(None), // EOF / no stdin → end-of-input
-        Ok(_) => Ok(Some(line.trim_end_matches(['\n', '\r']).to_string())),
+        Ok(_) => Ok(Some(SendValue::Str(
+            line.trim_end_matches(['\n', '\r']).to_string(),
+        ))),
     }
 }
 
@@ -881,7 +1126,7 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
 /// --asyncify` lets THIS SAME import suspend the module and resume after a JS
 /// Promise. The axon-wasm cdylib hosts this binding; JS must supply the import.
 #[cfg(all(target_arch = "wasm32", not(target_os = "wasi")))]
-pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
+pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> {
     extern "C" {
         fn axon_host_await(
             req_ptr: *const u8,
@@ -890,6 +1135,8 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
             out_cap: usize,
         ) -> i64;
     }
+    // str-only substrate: a non-str payload is refused (no value channel here).
+    let req = req.as_str_payload().ok_or(())?;
     // A generous fixed reply buffer (the page truncates to fit). 64 KiB covers a
     // prompt reply / tool result; larger payloads should stream (future).
     let mut buf = vec![0u8; 64 * 1024];
@@ -899,25 +1146,31 @@ pub(crate) fn host_await_yield(req: String) -> Result<Option<String>, ()> {
     }
     let n = (n as usize).min(buf.len());
     buf.truncate(n);
-    Ok(Some(String::from_utf8_lossy(&buf).into_owned()))
+    Ok(Some(SendValue::Str(
+        String::from_utf8_lossy(&buf).into_owned(),
+    )))
 }
 
-/// Run `program` with a HOST driving its `host_await` suspensions. `host(req)`
-/// is called once per `host_await`, on THIS thread; its return — `Some(reply)` or
-/// `None` at end-of-input — is fed back as the resume value. Returns the program's
-/// exit code. (R15 v0 — str payloads.)
+/// Run `program` with a `Value`-aware HOST driving its `host_await` suspensions.
+/// `host(req)` is called once per `host_await`, on THIS thread, with the owned
+/// `SendValue` deep-clone of the program's request payload; its return —
+/// `Some(reply)` or `None` at end-of-input — is fed back (reconstructed into a
+/// `Value`) as the resume value. Returns the program's exit code. (R15 Slice 2 —
+/// arbitrary `Value` payloads: dict/struct/enum/tuple/closure all cross.)
 ///
 /// NATIVE-ONLY: the substrate is a worker thread (`std::thread::scope`), which is
 /// unavailable on `wasm32` (`thread::spawn` traps). The browser binding (R7c)
 /// drives `host_await` via Asyncify + a JS import instead (R15 §13), NOT this
-/// thread-based path — so the wasm variant below runs the program with no host
-/// driver (a `host_await` call hits the clean "no host driver" panic, exit 101,
-/// rather than trapping on a thread spawn). Mirrors the `on_deep_stack` cfg split.
+/// thread-based path. The owned `SendValue` deep-clone is what makes a `!Send`
+/// `Value` payload cross the worker channel (§11 Slice (2) safe alternative).
 #[cfg(not(target_arch = "wasm32"))]
-pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
+pub fn run_suspendable_values(
+    program: &Program,
+    mut host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
     use std::sync::mpsc::channel;
-    let (req_tx, req_rx) = channel::<String>(); // worker → host (await requests)
-    let (rep_tx, rep_rx) = channel::<Option<String>>(); // host → worker (replies; None = EOF)
+    let (req_tx, req_rx) = channel::<SendValue>(); // worker → host (await requests)
+    let (rep_tx, rep_rx) = channel::<Option<SendValue>>(); // host → worker (replies; None = EOF)
     std::thread::scope(|scope| {
         let worker = scope.spawn(move || {
             HOST_AWAIT.with(|h| *h.borrow_mut() = Some(HostChannels { req_tx, rep_rx }));
@@ -928,9 +1181,26 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<S
         });
         // Host loop: service each suspension until the worker finishes (req_tx drops).
         while let Ok(req) = req_rx.recv() {
-            let _ = rep_tx.send(host(&req));
+            let _ = rep_tx.send(host(req));
         }
         worker.join().unwrap_or(101)
+    })
+}
+
+/// Run `program` with a str-only HOST driving its `host_await` suspensions — the
+/// interactive-text path (a prompt loop / REPL / the stdio driver). `host(req)` is
+/// called once per `host_await` with the request's `str` projection; its
+/// `Option<String>` reply is fed back. A non-str request payload is rendered to its
+/// `Value` display string for the prompt (text hosts can't carry structured
+/// payloads); use [`run_suspendable_values`] for full `Value` fidelity. (R15.)
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<String>) -> i32 {
+    run_suspendable_values(program, |req| {
+        let s = match &req {
+            SendValue::Str(s) => s.clone(),
+            other => send_value_display(other),
+        };
+        host(&s).map(SendValue::Str)
     })
 }
 
@@ -942,6 +1212,18 @@ pub fn run_suspendable(program: &Program, mut host: impl FnMut(&str) -> Option<S
 /// substrate that replaces this one on wasm, with the same surface + semantics.
 #[cfg(target_arch = "wasm32")]
 pub fn run_suspendable(program: &Program, _host: impl FnMut(&str) -> Option<String>) -> i32 {
+    run_program_inner(program, crate::verify::Discharged::default())
+}
+
+/// wasm `Value`-aware variant — same no-thread story as `run_suspendable`: there is
+/// no worker-thread substrate here, so the program runs with no host driver and a
+/// `host_await` call hits the clean "no host driver" panic. The browser binding
+/// (R7c) drives `host_await` via Asyncify + a JS import (str-only, R15 §13).
+#[cfg(target_arch = "wasm32")]
+pub fn run_suspendable_values(
+    program: &Program,
+    _host: impl FnMut(SendValue) -> Option<SendValue>,
+) -> i32 {
     run_program_inner(program, crate::verify::Discharged::default())
 }
 
@@ -2524,6 +2806,150 @@ mod tests {
         // A bare `run` (no driver) must error gracefully (exit 101), not hang.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("x")  str_len(r) }"#);
         assert_eq!(super::run_program(&prog), 101);
+    }
+
+    // ── R15 Slice 2 — arbitrary-`Value` payloads survive a suspend ─────────────
+
+    #[test]
+    fn r15_slice2_dict_payload_round_trips() {
+        // The case that did NOT work before Slice 2: a DICT crosses the suspend.
+        // The program builds a dict, yields it via host_await_val, the host inspects
+        // the request (a dict), and replies with a (different) dict; the program
+        // reads a key out of the reply. Proves the !Send `Value::Dict` deep-clones
+        // across the worker thread and reconstructs on both directions.
+        let prog = parse(
+            "fn main() -> i64 { let d = dict_new()  dict_set(d, \"a\", 7)  let r = host_await_val(d)  dict_get_or(r, \"b\", 0) }",
+        );
+        let mut saw_request_a = 0;
+        let code = super::run_suspendable_values(&prog, |req| {
+            // The request must be a Dict carrying a=7 (the deep-clone preserved it).
+            if let SendValue::Dict(entries) = &req {
+                for (k, v) in entries {
+                    if k == "a" {
+                        if let SendValue::Int(n) = v {
+                            saw_request_a = *n;
+                        }
+                    }
+                }
+            }
+            // Reply with a fresh dict {b: 42}.
+            Some(SendValue::Dict(vec![("b".to_string(), SendValue::Int(42))]))
+        });
+        assert_eq!(saw_request_a, 7, "host saw the request dict's a=7");
+        assert_eq!(code, 42, "program read b=42 from the reply dict");
+    }
+
+    #[test]
+    fn r15_slice2_struct_payload_round_trips() {
+        // A STRUCT crosses the suspend: the program builds a Point, yields it, the
+        // host reads its fields and replies with a Point whose x is the sum; the
+        // program reads the reply's x field.
+        let prog = parse(
+            "type Point = { x: i64, y: i64 }\nfn main() -> i64 { let p = Point { x: 3, y: 4 }  let r = host_await_val(p)  r.x }",
+        );
+        let mut sum = 0;
+        let code = super::run_suspendable_values(&prog, |req| {
+            if let SendValue::Struct { name, fields } = &req {
+                assert_eq!(name, "Point");
+                let mut x = 0;
+                let mut y = 0;
+                for (k, v) in fields {
+                    if let SendValue::Int(n) = v {
+                        if k == "x" {
+                            x = *n;
+                        } else if k == "y" {
+                            y = *n;
+                        }
+                    }
+                }
+                sum = x + y;
+            }
+            Some(SendValue::Struct {
+                name: "Point".to_string(),
+                fields: vec![
+                    ("x".to_string(), SendValue::Int(sum)),
+                    ("y".to_string(), SendValue::Int(0)),
+                ],
+            })
+        });
+        assert_eq!(sum, 7, "host summed the struct fields");
+        assert_eq!(code, 7, "program read x=7 back from the reply struct");
+    }
+
+    #[test]
+    fn r15_slice2_enum_and_tuple_payload_round_trip() {
+        // Enum + tuple payloads cross too (nested composite). The program yields an
+        // Option (an enum-like sum) and the host replies with Some(99).
+        let prog = parse(
+            "fn main() -> i64 { let r = host_await_val_opt(Some(5))  match r { Some(n) => n  None => -1 } }",
+        );
+        let code = super::run_suspendable_values(&prog, |req| {
+            // Request is Some(5).
+            assert!(matches!(&req, SendValue::Some(b) if matches!(**b, SendValue::Int(5))));
+            Some(SendValue::Int(99))
+        });
+        assert_eq!(code, 99, "program unwrapped Some(99) from the reply");
+    }
+
+    #[test]
+    fn r15_slice2_chan_payload_is_refused_not_corrupted() {
+        // SOUNDNESS BOUNDARY: a Chan (identity-shared mutable state) cannot cross a
+        // suspend without silently losing its sharing, so it is REFUSED (a clean
+        // runtime panic, exit 101) rather than deep-cloned into a disconnected copy.
+        let prog = parse(
+            "fn main() -> i64 { let c = chan<i64>()  let r = host_await_val(c)  0 }",
+        );
+        // The host is never reached (the refusal happens at the boundary, worker-side).
+        let mut host_calls = 0;
+        let code = super::run_suspendable_values(&prog, |_req| {
+            host_calls += 1;
+            Some(SendValue::Int(0))
+        });
+        assert_eq!(code, 101, "Chan payload → clean refusal (exit 101), not corruption");
+        assert_eq!(host_calls, 0, "the refused payload never reached the host");
+    }
+
+    #[test]
+    fn r15_slice2_str_form_still_works_through_value_substrate() {
+        // Regression: the str-typed host_await still works now that the substrate
+        // carries SendValue (str crosses as SendValue::Str). The B1 case, unchanged.
+        let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
+        let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
+        assert_eq!(code, 4, "str host_await round-trips through the SendValue channel");
+    }
+
+    #[test]
+    fn r15_slice2_send_value_round_trip_is_lossless() {
+        // Unit-level: from_value ∘ into_value preserves a deeply nested composite
+        // (dict in struct in array). Chan-free, so it must succeed and reconstruct
+        // an equal-shaped Value.
+        let mut inner = std::collections::BTreeMap::new();
+        inner.insert("k".to_string(), Value::Int(9));
+        let dict = Value::Dict(Rc::new(RefCell::new(inner)));
+        let mut sf = HashMap::new();
+        sf.insert("d".to_string(), dict);
+        sf.insert("n".to_string(), Value::Int(1));
+        let s = Value::Struct { name: "S".to_string(), fields: sf };
+        let v = Value::Array(vec![s, Value::Str("hi".to_string())]);
+        let sv = SendValue::from_value(&v).expect("Chan-free ⇒ sendable");
+        let back = sv.into_value();
+        // Spot-check the reconstructed shape.
+        if let Value::Array(xs) = &back {
+            assert_eq!(xs.len(), 2);
+            if let Value::Struct { name, fields } = &xs[0] {
+                assert_eq!(name, "S");
+                assert!(matches!(fields.get("n"), Some(Value::Int(1))));
+                if let Some(Value::Dict(d)) = fields.get("d") {
+                    assert!(matches!(d.borrow().get("k"), Some(Value::Int(9))));
+                } else {
+                    panic!("dict field lost");
+                }
+            } else {
+                panic!("struct lost");
+            }
+        } else {
+            panic!("array lost");
+        }
     }
 
     #[test]

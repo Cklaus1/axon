@@ -1777,10 +1777,12 @@ impl<'p> Interp<'p> {
             // (that IS the suspension); a bare `axon run` (no host) errors.
             "host_await" => {
                 want(1)?;
-                let req = as_str(&args[0])?.to_string();
+                let req = crate::interp::SendValue::Str(as_str(&args[0])?.to_string());
                 match crate::interp::host_await_yield(req) {
-                    // EOF (`Ok(None)`) collapses to "" for the simple str form.
-                    Ok(reply) => ok!(Value::Str(reply.unwrap_or_default())),
+                    // EOF (`Ok(None)`) collapses to "" for the simple str form. A
+                    // non-str reply (a Value-host returning structured data to the str
+                    // form) collapses to its display string — the str form's contract.
+                    Ok(reply) => ok!(Value::Str(send_reply_to_string(reply))),
                     Err(()) => Err(Flow::Panic(
                         "host_await: called outside a suspendable run (no host driver)".into(),
                     )),
@@ -1790,12 +1792,55 @@ impl<'p> Interp<'p> {
             // instead of spinning on an endless empty reply.
             "host_await_opt" => {
                 want(1)?;
-                let req = as_str(&args[0])?.to_string();
+                let req = crate::interp::SendValue::Str(as_str(&args[0])?.to_string());
                 match crate::interp::host_await_yield(req) {
-                    Ok(Some(reply)) => ok!(Value::Some(Box::new(Value::Str(reply)))),
+                    Ok(Some(reply)) => ok!(Value::Some(Box::new(Value::Str(
+                        send_reply_to_string(Some(reply))
+                    )))),
                     Ok(None) => ok!(Value::None),
                     Err(()) => Err(Flow::Panic(
                         "host_await_opt: called outside a suspendable run (no host driver)".into(),
+                    )),
+                }
+            }
+            // R15 Slice 2: arbitrary-`Value` payload forms. Deep-clone the request
+            // `Value` into an owned `Send` form (`SendValue`) so a dict/struct/enum/
+            // tuple/array/closure payload can cross the worker-thread substrate; a
+            // `Chan` (identity-shared) payload is refused with a clear error rather
+            // than silently losing its sharing. The reply `SendValue` is
+            // reconstructed back into a `Value`.
+            "host_await_val" => {
+                want(1)?;
+                let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
+                    Flow::Panic(format!(
+                        "host_await_val: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
+                        e.path
+                    ))
+                })?;
+                match crate::interp::host_await_yield(req) {
+                    Ok(Some(reply)) => ok!(reply.into_value()),
+                    // EOF on the plain (non-opt) form collapses to Unit — there is no
+                    // meaningful "any-typed default"; programs that care use `_opt`.
+                    Ok(None) => ok!(Value::Unit),
+                    Err(()) => Err(Flow::Panic(
+                        "host_await_val: called outside a suspendable run (no host driver)".into(),
+                    )),
+                }
+            }
+            "host_await_val_opt" => {
+                want(1)?;
+                let req = crate::interp::SendValue::from_value(&args[0]).map_err(|e| {
+                    Flow::Panic(format!(
+                        "host_await_val_opt: payload cannot cross a suspend — it contains a channel (Chan) at {}, which is identity-shared mutable state (R15 Slice 2 refuses Chan payloads)",
+                        e.path
+                    ))
+                })?;
+                match crate::interp::host_await_yield(req) {
+                    Ok(Some(reply)) => ok!(Value::Some(Box::new(reply.into_value()))),
+                    Ok(None) => ok!(Value::None),
+                    Err(()) => Err(Flow::Panic(
+                        "host_await_val_opt: called outside a suspendable run (no host driver)"
+                            .into(),
                     )),
                 }
             }
