@@ -10,6 +10,9 @@ crate-type = ["staticlib"]  # Link into axon binaries as a native static lib.
 name = "axon_rt"
 
 [dependencies]
+# R13 slice 4: the shared `native::gfx` mock impl (one impl, two engines). The
+# `#[no_mangle] extern "C"` `__axon_gfx_*` symbols in gfx_mock_ffi wrap it.
+axon-gfx-mock = { path = "../axon-gfx-mock" }
 
 # Unix-only: the SIGSEGV/altstack handler that turns a stack overflow (deep
 # recursion) into a graceful exit-101 panic instead of a raw SIGSEGV (139). Not

@@ -1,0 +1,18 @@
+[package]
+name = "axon-gfx-mock"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# R13 slice 4: the GPU-FREE `native::gfx` mock shim, authored ONCE in Rust and
+# compiled into BOTH the interpreter (axon-core, via the `GfxMock` struct) AND
+# the native link (axon-rt re-exports the `#[no_mangle] extern "C"` symbols that
+# wrap a process-global instance). One impl, two call sites — I-2 by
+# construction, modulo the marshalling layer (spec §4/§11).
+[lib]
+name = "axon_gfx_mock"
+# Plain rlib: axon-core links it as a normal dependency; axon-rt depends on it
+# and exposes the C symbols from inside its own staticlib.
+
+[dependencies]

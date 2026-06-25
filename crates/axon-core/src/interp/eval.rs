@@ -712,7 +712,13 @@ impl<'p> Interp<'p> {
                             ));
                         }
                     }
-                    crate::native::GfxArg::Handle(*payload)
+                    // Marshal the handle with BOTH its nominal tag (so the
+                    // shared dispatcher's trace/arg-hash matches codegen's,
+                    // which embeds the same frozen tag) and its slab index.
+                    crate::native::GfxArg::Handle {
+                        tag: crate::native::tag_for(hn),
+                        payload: *payload,
+                    }
                 }
                 other => {
                     return panic(format!(

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/axon-core", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal"]
+members = ["crates/axon-core", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal", "crates/axon-gfx-mock"]
 resolver = "2"
 
 [workspace.package]

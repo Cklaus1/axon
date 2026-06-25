@@ -33,6 +33,11 @@ pub mod adaptive_registry;
 pub mod goal;
 pub mod provenance;
 
+// R13 slice 4: the native-link side of the `native::gfx` mock shim — the
+// `#[no_mangle] extern "C"` `__axon_gfx_*` symbols codegen links, wrapping the
+// shared `axon-gfx-mock` impl behind a process-global instance.
+pub mod gfx_mock_ffi;
+
 // ── Axon str ABI — mirrors codegen's { i64 len, i8* ptr } ──────────────────────
 
 /// Mirrors codegen's Axon `str` layout: LLVM `{ i64 len, i8* ptr }` by value.

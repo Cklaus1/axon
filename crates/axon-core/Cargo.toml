@@ -65,3 +65,7 @@ axon-ai = { path = "../axon-ai", optional = true }
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false, optional = true }
 # Phase-10 surface compiler (goal.md → .ax), for the `axon goal` command.
 axon-surface = { path = "../axon-surface" }
+# R13 slice 4: the shared `native::gfx` mock impl — the SAME crate axon-rt links
+# for codegen, so the interpreter drives the identical Rust dispatch (one impl,
+# two engines, I-2 by construction modulo marshalling).
+axon-gfx-mock = { path = "../axon-gfx-mock" }

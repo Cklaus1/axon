@@ -350,178 +350,26 @@ pub fn is_resource_handle(ty: &Type) -> bool {
     matches!(ty, Type::Deferred(k) if matches!(parse_handle_key(k), Some((_, _, true))))
 }
 
-// ── The `native::gfx` GPU-FREE MOCK shim (interp side) ───────────────────────
+// ── The `native::gfx` GPU-FREE MOCK shim (shared, one impl two engines) ──────
 //
-// This is the in-process Rust impl the interpreter dispatches to (spec §3: "the
-// SAME crate is compiled into BOTH the native link and the compiler binary").
-// It is a frame counter + a per-module handle table — NO wgpu/winit/GPU. The
-// codegen side links the matching `__axon_gfx_*` symbols in `axon-rt` (slice 2
-// codegen), so the value-returning `frame_count` is byte-identical across
-// engines (the differential-parity corpus member); the effectful calls share
-// the call-trace oracle (spec §4).
+// The mock impl lives in the `axon-gfx-mock` crate (spec §3/§11: "the SAME crate
+// is compiled into BOTH the native link and the compiler binary"). The
+// interpreter drives a per-`Interp` `GfxMock` instance from that crate; the
+// native link gets the matching `#[no_mangle] extern "C"` `__axon_gfx_*`
+// symbols from `axon-rt::gfx_mock_ffi`, which wrap a process-global instance of
+// the SAME `GfxMock`. So the value-returning `frame_count` is byte-identical
+// across engines (the differential-parity corpus member) and the effectful
+// calls share the call-trace oracle (spec §4).
 //
 // SAFETY / I-4: a handle's `payload` is a SLAB INDEX into a table of live
 // slots, never a raw pointer. A consumed/forged/out-of-range index resolves to
-// a poisoned/absent slot → a graceful `Err`/refusal, NEVER a host abort. This
-// is what makes the handle unforgeable at the boundary even if a bad index
-// somehow reaches it.
+// an absent slot → a graceful `Err`/refusal, NEVER a host abort. This holds
+// across the C ABI because only the i64 index crosses the boundary; the table
+// lives entirely inside the shared Rust crate on both engines.
 
-/// One live slot in a handle table. `None` = freed/never-allocated (a stale or
-/// forged index lands here → graceful error).
-#[derive(Clone, Copy, Debug, Default)]
-struct GfxSlot {
-    live: bool,
-    /// Slot generation — bumped on free so a stale index of a reused slot is
-    /// still detectable (defense in depth; the affine type system is primary).
-    generation: u32,
-}
-
-/// The mock gfx backend state. Per-`Interp` (reset between runs).
-#[derive(Debug, Default)]
-pub struct GfxMock {
-    windows: Vec<GfxSlot>,
-    surfaces: Vec<GfxSlot>,
-    /// How many `present()` calls have happened (the value `frame_count` reads).
-    frames: i64,
-}
-
-/// The outcome of a mock gfx call: either a value, or a graceful error string
-/// (NEVER a host abort — I-4). The interpreter maps `Err` to a graceful panic.
-pub type GfxResult = Result<GfxValue, String>;
-
-/// A value a mock gfx call can return to the interpreter, kept independent of
-/// the interpreter's `Value` enum so `native.rs` has no dependency on `interp`.
-#[derive(Debug, Clone, PartialEq)]
-pub enum GfxValue {
-    Unit,
-    Int(i64),
-    /// A handle `(name, payload)` — the caller wraps it in `Value::Handle`.
-    Handle { name: &'static str, payload: i64 },
-}
-
-impl GfxMock {
-    pub fn new() -> Self {
-        GfxMock::default()
-    }
-
-    /// `window_open(w, h, title) -> Window` — allocates a live Window slot.
-    pub fn window_open(&mut self, _w: i64, _h: i64, _title: &str) -> GfxResult {
-        let idx = self.windows.len() as i64;
-        self.windows.push(GfxSlot {
-            live: true,
-            generation: 0,
-        });
-        Ok(GfxValue::Handle {
-            name: "Window",
-            payload: idx,
-        })
-    }
-
-    /// `surface(ref win) -> Surface` — borrows the window, allocates a Surface.
-    pub fn surface(&mut self, win: i64) -> GfxResult {
-        self.check_window(win)?;
-        let idx = self.surfaces.len() as i64;
-        self.surfaces.push(GfxSlot {
-            live: true,
-            generation: 0,
-        });
-        Ok(GfxValue::Handle {
-            name: "Surface",
-            payload: idx,
-        })
-    }
-
-    /// `clear(ref surf, r,g,b,a)` — effectful no-op (validates the surface).
-    pub fn clear(&mut self, surf: i64, _r: f64, _g: f64, _b: f64, _a: f64) -> GfxResult {
-        self.check_surface(surf)?;
-        Ok(GfxValue::Unit)
-    }
-
-    /// `present(ref surf)` — bumps the frame counter (the observable effect).
-    pub fn present(&mut self, surf: i64) -> GfxResult {
-        self.check_surface(surf)?;
-        self.frames += 1;
-        Ok(GfxValue::Unit)
-    }
-
-    /// `frame_count(ref surf) -> i64` — pure value-returning probe.
-    pub fn frame_count(&self, surf: i64) -> GfxResult {
-        self.check_surface(surf)?;
-        Ok(GfxValue::Int(self.frames))
-    }
-
-    /// `surface_close(surf)` — CONSUMES the surface (frees its slot).
-    pub fn surface_close(&mut self, surf: i64) -> GfxResult {
-        self.check_surface(surf)?;
-        let s = &mut self.surfaces[surf as usize];
-        s.live = false;
-        s.generation = s.generation.wrapping_add(1);
-        Ok(GfxValue::Unit)
-    }
-
-    /// `window_close(win)` — CONSUMES the window (frees its slot).
-    pub fn window_close(&mut self, win: i64) -> GfxResult {
-        self.check_window(win)?;
-        let w = &mut self.windows[win as usize];
-        w.live = false;
-        w.generation = w.generation.wrapping_add(1);
-        Ok(GfxValue::Unit)
-    }
-
-    fn check_window(&self, win: i64) -> Result<(), String> {
-        match self.windows.get(usize::try_from(win).map_err(|_| bad_handle())?) {
-            Some(s) if s.live => Ok(()),
-            _ => Err(bad_handle()),
-        }
-    }
-
-    fn check_surface(&self, surf: i64) -> Result<(), String> {
-        match self
-            .surfaces
-            .get(usize::try_from(surf).map_err(|_| bad_handle())?)
-        {
-            Some(s) if s.live => Ok(()),
-            _ => Err(bad_handle()),
-        }
-    }
-
-    /// Dispatch a resolved `native::gfx` fn by name to its mock impl. `args` are
-    /// the marshalled scalar/handle payloads. The caller (interp) has already
-    /// validated arity & types at check time, but a bad handle index here STILL
-    /// returns a graceful `Err` (I-4 defense in depth), never a panic.
-    pub fn dispatch(&mut self, fnname: &str, args: &[GfxArg]) -> GfxResult {
-        match (fnname, args) {
-            ("window_open", [GfxArg::Int(w), GfxArg::Int(h), GfxArg::Str(t)]) => {
-                self.window_open(*w, *h, t)
-            }
-            ("surface", [GfxArg::Handle(win)]) => self.surface(*win),
-            ("clear", [GfxArg::Handle(s), GfxArg::Float(r), GfxArg::Float(g), GfxArg::Float(b), GfxArg::Float(a)]) => {
-                self.clear(*s, *r, *g, *b, *a)
-            }
-            ("present", [GfxArg::Handle(s)]) => self.present(*s),
-            ("frame_count", [GfxArg::Handle(s)]) => self.frame_count(*s),
-            ("surface_close", [GfxArg::Handle(s)]) => self.surface_close(*s),
-            ("window_close", [GfxArg::Handle(w)]) => self.window_close(*w),
-            _ => Err(format!(
-                "native::gfx: bad call `{fnname}` (wrong argument shape)"
-            )),
-        }
-    }
-}
-
-/// A marshalled argument crossing into the mock gfx dispatcher.
-#[derive(Debug, Clone)]
-pub enum GfxArg {
-    Int(i64),
-    Float(f64),
-    Str(String),
-    /// A handle payload (the slab index).
-    Handle(i64),
-}
-
-fn bad_handle() -> String {
-    "native::gfx: invalid or consumed handle (forged or stale index)".to_string()
-}
+// Re-export the shared mock types so the rest of the compiler (interp dispatch,
+// the codegen lowering's tag helper) refers to one definition.
+pub use axon_gfx_mock::{tag_for, GfxArg, GfxMock, GfxResult, GfxValue};
 
 #[cfg(test)]
 mod tests {
@@ -597,33 +445,73 @@ mod tests {
         assert!(!is_ffi_repr(&Type::Deferred("Dict".into())));
     }
 
+    // Helper: a handle arg with the right nominal tag for the given name.
+    fn h(name: &str, payload: i64) -> GfxArg {
+        GfxArg::Handle {
+            tag: tag_for(name),
+            payload,
+        }
+    }
+
     #[test]
     fn gfx_mock_roundtrip() {
         let mut m = GfxMock::new();
-        let win = match m.window_open(800, 600, "axon").unwrap() {
+        let win = match m
+            .dispatch(
+                "window_open",
+                &[
+                    GfxArg::Int(800),
+                    GfxArg::Int(600),
+                    GfxArg::Str("axon".into()),
+                ],
+            )
+            .unwrap()
+        {
             GfxValue::Handle { payload, .. } => payload,
             _ => panic!("expected handle"),
         };
-        let surf = match m.surface(win).unwrap() {
+        let wh = h("Window", win);
+        let surf = match m.dispatch("surface", std::slice::from_ref(&wh)).unwrap() {
             GfxValue::Handle { payload, .. } => payload,
             _ => panic!("expected handle"),
         };
-        assert_eq!(m.clear(surf, 0.1, 0.1, 0.1, 1.0).unwrap(), GfxValue::Unit);
-        m.present(surf).unwrap();
-        m.present(surf).unwrap();
-        assert_eq!(m.frame_count(surf).unwrap(), GfxValue::Int(2));
-        m.surface_close(surf).unwrap();
-        m.window_close(win).unwrap();
+        let sh = h("Surface", surf);
+        assert_eq!(
+            m.dispatch(
+                "clear",
+                &[
+                    sh.clone(),
+                    GfxArg::Float(0.1),
+                    GfxArg::Float(0.1),
+                    GfxArg::Float(0.1),
+                    GfxArg::Float(1.0)
+                ]
+            )
+            .unwrap(),
+            GfxValue::Unit
+        );
+        m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
+        m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
+        assert_eq!(
+            m.dispatch("frame_count", std::slice::from_ref(&sh)).unwrap(),
+            GfxValue::Int(2)
+        );
+        m.dispatch("surface_close", std::slice::from_ref(&sh))
+            .unwrap();
+        m.dispatch("window_close", std::slice::from_ref(&wh))
+            .unwrap();
     }
 
     #[test]
     fn gfx_mock_bad_handle_is_graceful_err_not_panic() {
-        let m = GfxMock::new();
+        let mut m = GfxMock::new();
         // A forged/out-of-range index → Err, NEVER a panic/abort (I-4).
-        assert!(m.frame_count(9999).is_err());
-        assert!(m.frame_count(-1).is_err());
-        assert!(m.frame_count(i64::MIN).is_err());
-        assert!(m.check_surface(0).is_err());
+        for bad in [9999i64, -1, i64::MIN, i64::MAX, 0] {
+            assert!(
+                m.dispatch("frame_count", &[h("Surface", bad)]).is_err(),
+                "forged index {bad} must be graceful Err"
+            );
+        }
     }
 
     #[test]
@@ -631,14 +519,24 @@ mod tests {
         // (The PRIMARY guarantee is the COMPILE-TIME affine borrow check; this
         // is the runtime defense-in-depth backstop.)
         let mut m = GfxMock::new();
-        let win = match m.window_open(1, 1, "x").unwrap() {
+        let win = match m
+            .dispatch(
+                "window_open",
+                &[GfxArg::Int(1), GfxArg::Int(1), GfxArg::Str("x".into())],
+            )
+            .unwrap()
+        {
             GfxValue::Handle { payload, .. } => payload,
             _ => unreachable!(),
         };
-        m.window_close(win).unwrap();
+        let wh = h("Window", win);
+        m.dispatch("window_close", std::slice::from_ref(&wh))
+            .unwrap();
         // Reusing the freed window index → graceful Err.
-        assert!(m.surface(win).is_err());
-        assert!(m.window_close(win).is_err());
+        assert!(m.dispatch("surface", std::slice::from_ref(&wh)).is_err());
+        assert!(m
+            .dispatch("window_close", std::slice::from_ref(&wh))
+            .is_err());
     }
 
     #[test]
