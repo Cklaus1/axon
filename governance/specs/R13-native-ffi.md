@@ -243,29 +243,36 @@ specifically to bound what that code can reach despite its size.
 
 ### 8. Test plan (maps 1:1 to §4)
 
-- [ ] Unit: `is_ffi_repr` accepts the allowed set, rejects user-struct/Option/closure/generic.
-- [ ] Unit: handle nominal-distinctness in `infer.rs` (gfx::Window ≠ gfx::Surface).
-- [ ] Integration: a **mock native module** (`axon-mock-native`, no GPU — just an in-memory counter) imported
-      and called; both engines produce identical output.
-- [ ] CLI e2e: `axon run` (interp) and `axon build && ./bin` (codegen) on the mock-module program → identical
-      stdout + exit code.
-- [ ] Adversarial: ungranted import → E1004; cross-module handle → E1702; handle arithmetic → E1703;
-      non-repr arg → E1701; use-after-free handle → graceful Err (not segfault).
-- [ ] Property (invariant I-4): fuzz handle payloads with garbage indices → always graceful, never abort.
-- [ ] Parity (interp↔codegen): the mock module joins `scripts/fuzz_parity.sh`'s corpus.
-- [ ] Journey: the `wgpu` proof target (window + clear + present) builds and runs natively (gated; needs a
-      display — runs in the manual/`#[ignore]` tier until CI has a GPU, like the AOT-wasm gates).
-- [ ] Red test that must fail first: `native_call_without_capability_is_E1004`.
+- [x] Unit: `is_ffi_repr` accepts the allowed set, rejects user-struct/Option/closure/generic. (`native.rs`)
+- [x] Unit: handle nominal-distinctness in `infer.rs` (gfx::Window ≠ gfx::Surface). (slice 1)
+- [x] Integration: a **mock native module** (the GPU-free `native::gfx`, an in-memory counter) imported and
+      called; both engines produce identical output. (`mock_native_module_interp_codegen_parity`)
+- [x] CLI e2e: `axon run` (interp) and `axon build && ./bin` (codegen) on the mock-module program → identical
+      stdout + exit code (+ the §4 call-trace). (`scripts/native_gfx_parity.sh`)
+- [x] Adversarial: ungranted import → E1004; cross-module handle → E1802; handle arithmetic → E1803;
+      non-repr arg → E1801; use-after-consume handle → E0601 (compile-time). (integration fixtures, slices 1–3)
+- [x] Property (invariant I-4): fuzz handle payloads with garbage indices → always graceful, never abort —
+      in BOTH the in-process (`axon_gfx_mock` unit tests) AND the NATIVE-LINKED C-ABI path
+      (`scripts/native_ffi_forge.sh`: 8 forged indices incl. i64::MIN/MAX → all graceful exit-101).
+- [x] Parity (interp↔codegen): the mock module is the differential-parity member via the dedicated
+      `scripts/native_gfx_parity.sh` (auto-discovered by `parity_all.sh`); `fuzz_parity.sh`'s scalar template
+      can't carry a stateful handle setup, documented there.
+- [ ] Journey: the `wgpu` proof target (window + clear + present) builds and runs natively. **DEFERRED**
+      (manual tier — needs a GPU/display; would pull heavy wgpu/winit deps that cannot pass a headless gate).
+- [x] Red test that must fail first: `native_call_without_capability_is_E1004` (→ E1004; slice 3).
 
 ### 9. Acceptance criteria (the done gate)
 
-- [ ] Test `mock_native_module_interp_codegen_parity` passes (one impl, two engines, identical output).
-- [ ] Test `native_import_requires_capability` passes (E1004 on ungranted import).
-- [ ] Test `non_ffi_repr_arg_refused` passes (E1701 at check time).
-- [ ] Test `handle_is_unforgeable` passes (E1703 + graceful Err on bad handle, never a segfault).
-- [ ] The mock native module is in the differential parity fuzzer corpus and green.
+- [x] Test `mock_native_module_interp_codegen_parity` passes (one impl, two engines, identical
+      stdout/exit/call-trace; `crates/axon-core/tests/cli_run.rs` → `scripts/native_gfx_parity.sh`).
+- [x] Test `native_import_requires_capability` passes (E1004 on ungranted import).
+- [x] Test `non_ffi_repr_arg_refused` passes (E1801 at check time).
+- [x] `handle_is_unforgeable` passes (E1803 static + graceful exit-101 on a bad handle, never a segfault —
+      proven across the NATIVE C ABI by `scripts/native_ffi_forge.sh`, not just interp).
+- [x] The mock native module is the differential parity member and green (`scripts/native_gfx_parity.sh`).
 - [ ] (Stretch / manual tier) `examples/gfx/window_clear.ax` opens a wgpu window and clears one frame on
-      native, behind a `#[ignore]`d journey test until CI has a GPU.
+      native. **DEFERRED** — wgpu/winit need a GPU/display and pull heavy deps; cannot pass a headless gate.
+      The gated lowering above is built against the GPU-free mock so the real shim is a drop-in registry row.
 
 ### 10. Performance budget
 
@@ -275,8 +282,9 @@ by the same micro-bench harness R10 G4 uses). Handle-table lookup is O(1) (slab 
 
 ### 11. Rollout & rollback
 
-**Status (landed 2026-06-25, branch `r13-ffi`):** Slices 1–3 LANDED interp-side; codegen is honest-stop
-E0910-refused (interp-only this iteration).
+**Status (landed 2026-06-25):** Slices 1–3 LANDED interp-side (branch `r13-ffi`). **Slice 4 LANDED** (branch
+`r13-slice4`): the native-codegen FFI lowering + a real linked shim staticlib — codegen now LOWERS native
+calls (no longer E0910-refused), forge-safe across the C ABI, interp↔codegen identical.
 
 - Ships in slices, each independently revertible:
   1. **LANDED — Handle type + `is_ffi_repr` + E18xx codes** (front-end). The opaque nominal `Handle` is
@@ -289,15 +297,27 @@ E0910-refused (interp-only this iteration).
      counter + per-module slab handle table — NO wgpu/winit/GPU). A full round-trip
      (`window_open → surface → clear → present → frame_count → surface_close → window_close`) runs under
      `axon run`. A consuming call moves the handle (affine); a forged/stale slab index is a graceful `Err`,
-     never a host abort (I-4). **Codegen: E0910-refused at emit** (sound-by-refusal, same discipline as
-     `host_await`) — the `axon-rt` mock-symbol link + handle `{i64,i64}` ABI marshalling is a deferred
-     follow-up slice; the interpreter is the reference engine.
+     never a host abort (I-4). The mock impl now lives in the shared `crates/axon-gfx-mock` leaf crate so it
+     is genuinely ONE Rust impl driven by both engines (interp instance + the codegen-linked C symbols).
   3. **LANDED — capability + effect bridge.** `use native::gfx` without `@[contained(gfx: any)]` granting the
      module is **E1004** at check time (fail-closed; the grant is parsed into `ContainedSpec.native_grants`).
      A native call's `IO` effect bridges into a caller's closed effect row via the existing **E1310**
      subsumption + anti-laundering walker.
-  4. **DEFERRED — `axon-gfx` shim crate** (wgpu/winit/vello), the first real module, AND the **codegen
-     mock-shim link** (slice-2 codegen half). Gated, manual-tier journey test.
+  4. **LANDED (slice 4) — native-codegen FFI lowering + real linked shim.** `codegen/expr.rs::emit_native_call`
+     declares each manifest `__axon_gfx_*` symbol as an extern (the `BUILTIN_EXTERNS` path generalized) and
+     marshals the representable set across the C ABI: scalars by value, `str`/`[scalar]` via the frozen
+     `{i64,ptr}` ABI, `Handle` via a new frozen `{i64 tag, i64 payload}` LLVM struct (matching
+     `axon-rt::gfx_mock_ffi::AxonHandle`, two integer registers on x86-64/aarch64 SysV), `Unit` → void. The
+     shim staticlib links via `axon-rt` (already linked into every native binary). A handle is FORWARDED,
+     never constructed by codegen — no forging path. SOUNDNESS: only the i64 slab index crosses the boundary,
+     so a forged/stale/`i64::MIN` index is a graceful exit-101, NEVER a host abort (I-4) — proven in the
+     native-linked C-ABI path by `scripts/native_ffi_forge.sh`. PARITY: `scripts/native_gfx_parity.sh`
+     asserts interp↔codegen identical stdout + exit + the §4 call-trace oracle (effectful calls have no
+     diffable stdout, so both engines emit byte-identical `native-trace:` lines). Out-of-subset marshalling
+     re-refuses E0910 (CHECK already rejects non-repr at E1801).
+  5. **DEFERRED — `axon-gfx` shim crate** (wgpu/winit/vello), the first REAL module. Manual-tier journey test
+     (needs a GPU/display; heavy deps incompatible with a headless gate). The gated lowering is built against
+     the GPU-free mock, so a real module is a drop-in registry row + its own `#[no_mangle] extern "C"` shim.
 - Blast radius if wrong: contained to programs that `use native::*`. A bug cannot affect existing pure-Axon
   programs (the import path is the only entry).
 
