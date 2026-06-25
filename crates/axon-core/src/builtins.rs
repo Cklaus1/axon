@@ -1760,6 +1760,46 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
+    // ── R17 Slice 2: SMP atomics (substrate-only; Hal effect; E0910 in interp) ──
+    // The trailing `ordering` arg is a COMPILE-TIME integer literal selecting the
+    // LLVM memory order: 0=relaxed/monotonic, 1=acquire, 2=release, 3=acq_rel,
+    // 4=seq_cst. Codegen requires it to be a literal (E1706 otherwise) so the
+    // memory order is fixed in the emitted instruction, never a runtime value.
+    BuiltinFn {
+        name: "atomic_load_i64",
+        params: &[("ptr", "i64"), ("ordering", "i64")],
+        ret: "i64",
+        doc: "R17 Slice 2: atomic load of an i64 from `ptr` with the named memory order \
+              (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst). Lowers to LLVM `load atomic`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_store_i64",
+        params: &[("ptr", "i64"), ("val", "i64"), ("ordering", "i64")],
+        ret: "()",
+        doc: "R17 Slice 2: atomic store of `val` to `ptr` with the named memory order. \
+              Lowers to LLVM `store atomic`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_fetch_add_i64",
+        params: &[("ptr", "i64"), ("delta", "i64"), ("ordering", "i64")],
+        ret: "i64",
+        doc: "R17 Slice 2: atomically add `delta` to `*ptr`, returning the PRIOR value, \
+              with the named memory order. Lowers to LLVM `atomicrmw add`. The race-free \
+              SMP counter primitive. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "atomic_cas_i64",
+        params: &[
+            ("ptr", "i64"),
+            ("expected", "i64"),
+            ("desired", "i64"),
+            ("ordering", "i64"),
+        ],
+        ret: "i64",
+        doc: "R17 Slice 2: atomic compare-and-swap — if `*ptr == expected`, store `desired`; \
+              returns the value that WAS in memory (== expected iff the swap happened) with the \
+              named memory order. Lowers to LLVM `cmpxchg`. Substrate-only.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1798,6 +1838,49 @@ pub fn is_prob_pred_ident(name: &str) -> bool {
 /// `ai_complete -> Result<str,str>`) must stay E0910-refused.
 pub fn builtin_ret(name: &str) -> Option<&'static str> {
     BUILTINS.iter().find(|b| b.name == name).map(|b| b.ret)
+}
+
+/// R17 Slice 3 (§4 / E1704): true if calling `name` may allocate on the heap.
+///
+/// `@[no_alloc]` functions (ISRs / early-boot code) may not reach any of these.
+/// The predicate is a CONSERVATIVE OVER-APPROXIMATION (sound for the
+/// allocation-free guarantee): a builtin counts as heap-allocating if EITHER
+///   (a) its declared return type materialises a heap-backed value — `str`,
+///       any array `[…]`, a `Dict`, a channel, or a `Result`/`Option` wrapping
+///       one of those (an `str`/array/dict result is freshly heap-allocated); OR
+///   (b) it is a known in-place mutator that grows a heap structure without a
+///       heap-typed return (`dict_set`/`dict_remove`, channel sends).
+///
+/// Over-approximating is the safe direction: flagging a non-allocating builtin
+/// as allocating only costs an unnecessary E1704 (the author drops `@[no_alloc]`
+/// or avoids the call), whereas MISSING an allocator would silently break the
+/// guarantee. The kernel/HAL builtin surface (ptr/volatile/port/atomic/hlt) is
+/// all scalar→scalar and is correctly classified non-allocating.
+pub fn is_heap_allocating_builtin(name: &str) -> bool {
+    // (b) explicit heap mutators whose return type is not itself heap-typed.
+    if matches!(
+        name,
+        "dict_set" | "dict_remove" | "chan_send"
+    ) {
+        return true;
+    }
+    // (a) heap-typed return value.
+    match builtin_ret(name) {
+        Some(ret) => {
+            let r = ret.trim();
+            r == "str"
+                || r == "Dict"
+                || r.starts_with('[') // any array/slice type `[T]`, `[i64]`, `[(…)]`
+                || r.starts_with("Chan")
+                || r.starts_with("Result<str")
+                || r.starts_with("Result<Dict")
+                || r.starts_with("Option<str")
+                // a Result/Option whose Ok/Some payload is an array
+                || r.contains("Result<[")
+                || r.contains("Option<[")
+        }
+        None => false,
+    }
 }
 
 /// Phase 5 §2 P04 — builtins that are IMPURE: they do I/O, AI calls, touch the
@@ -1847,6 +1930,9 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
+            // R17 Slice 2: SMP atomics (shared-memory side effects)
+            | "atomic_load_i64" | "atomic_store_i64"
+            | "atomic_fetch_add_i64" | "atomic_cas_i64"
     )
 }
 
@@ -1925,7 +2011,10 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "ptr_from_addr" | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32"
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
         | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
-        | "port_out_u8" | "port_in_u8" => &["Hal"],
+        | "port_out_u8" | "port_in_u8"
+        // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
+        | "atomic_load_i64" | "atomic_store_i64"
+        | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
 
         // Everything else is pure.
         _ => &[],
@@ -2017,6 +2106,78 @@ mod tests {
                 "builtin `{}` is missing a doc string",
                 b.name
             );
+        }
+    }
+
+    #[test]
+    fn r17_atomics_carry_hal_effect_and_are_impure() {
+        for name in [
+            "atomic_load_i64",
+            "atomic_store_i64",
+            "atomic_fetch_add_i64",
+            "atomic_cas_i64",
+        ] {
+            assert!(is_known_builtin(name), "{name} must be a known builtin");
+            assert!(is_impure_builtin(name), "{name} must be impure");
+            assert_eq!(
+                builtin_effect_row(name),
+                &["Hal"],
+                "{name} must carry the Hal effect row"
+            );
+            // Atomics touch shared memory but do not themselves allocate a heap
+            // str/array/dict, so they are allocation-free (usable in @[no_alloc]).
+            assert!(
+                !is_heap_allocating_builtin(name),
+                "{name} must not be classified heap-allocating"
+            );
+        }
+    }
+
+    #[test]
+    fn r17_heap_alloc_classifier_is_sound_for_hal_and_strings() {
+        // HAL leaf builtins are scalar→scalar and must NOT count as allocating.
+        for name in [
+            "ptr_from_addr",
+            "volatile_load_u8",
+            "volatile_store_u8",
+            "port_out_u8",
+            "port_in_u8",
+            "hlt",
+            "cli",
+            "sti",
+        ] {
+            assert!(
+                !is_heap_allocating_builtin(name),
+                "{name} (HAL leaf) must be allocation-free"
+            );
+        }
+        // str / array / dict constructors+mutators MUST count as allocating.
+        for name in [
+            "to_str",       // i64 → str (fresh heap str)
+            "str_repeat",   // → str
+            "str_concat" ,  // (if present) → str
+            "arr_range",    // → [i64]
+            "arr_push",     // → [i64]
+            "dict_new",     // → Dict
+            "dict_set",     // () but grows the dict (explicit mutator)
+            "dict_remove",  // () mutator
+        ] {
+            // Only assert for builtins that actually exist in the table.
+            if is_known_builtin(name) {
+                assert!(
+                    is_heap_allocating_builtin(name),
+                    "{name} must be classified heap-allocating"
+                );
+            }
+        }
+        // Pure scalar projections must be allocation-free.
+        for name in ["str_len", "str_eq", "abs_i64", "min_i64"] {
+            if is_known_builtin(name) {
+                assert!(
+                    !is_heap_allocating_builtin(name),
+                    "{name} (scalar projection) must be allocation-free"
+                );
+            }
         }
     }
 

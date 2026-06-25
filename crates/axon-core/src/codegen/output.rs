@@ -212,6 +212,13 @@ impl<'ctx> super::Codegen<'ctx> {
         self.ir.module.write_bitcode_to_memory().as_slice().to_vec()
     }
 
+    /// R17 Slice 2/3: serialize the compiled LLVM IR as human-readable text
+    /// (the `.ll` form). Used by `axon build --emit-llvm` for golden-IR tests
+    /// of atomic memory orders and `@[repr(C)]`/`@[packed]`/`@[align]` layout.
+    pub fn emit_llvm_ir(&self) -> String {
+        self.ir.module.print_to_string().to_string()
+    }
+
     /// R7 Slice B (AOT wasm, object half): verify the IR and emit a WebAssembly
     /// **object** at `output_path` via the inkwell `wasm32` backend (no link).
     /// The runnable-`.wasm` link needs a wasm sysroot + `wasm-ld` (the deferred

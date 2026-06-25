@@ -1,7 +1,7 @@
 # R17 — Freestanding Substrate + Trusted HAL (bare-metal Axon)
 
 **Spec ID:** `R17-freestanding-substrate` (new requirement row; depends on `R13-native-ffi.md`, `R7-targets.md`; extends ROADMAP §3 substrate/surface + §7 TCB; **reverses ROADMAP §2.3** — see §12 Q1)
-**Status:** Draft — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. Remaining: QEMU timer-interrupt boot test (Slice 1 acceptance gate), Slice 2 (SMP/atomics), Slice 3 (layout/no_alloc).
+**Status:** Draft — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. **Slice 2 LANDED (a7b262c):** SMP atomics `atomic_{load,store,fetch_add,cas}_i64` with a compile-time memory-order literal (0=relaxed…4=seq_cst) → real LLVM atomics (`atomicrmw add … seq_cst` etc.); golden-IR gate `axon_smp_atomic_counter_is_race_free`; new `axon build --emit-llvm`. **Slice 3 LANDED:** `@[repr(C)]`/`@[packed]`/`@[align]` struct layout (golden-IR `axon_repr_c_gdt_layout_byte_exact` → `<{ i16, i16, i8, i8, i8, i8 }>`) + `@[no_alloc]`→E1704 (transitive). Demos: `examples/kernel/hello_kernel_slice2.ax`, `hello_kernel_slice3.ax`. Remaining: the full 2-core QEMU SMP harness (deferred — the golden-IR proxy stands as the unit gate per §9) and `axon_kernel_handles_timer_interrupt` (now unblocked by `@[repr(C)]` for IDT entries; deferred to a wiring slice).
 **Risk class:** Structural (introduces the language's *only* `unsafe` surface; amends I-3/I-4/I-5/I-6, extends I-11/I-12)
 **Author / date:** cklaus, 2026-06-12
 
@@ -147,6 +147,7 @@ New block **E17xx / W17xx** (E16xx is R16 UI; 17xx is clear).
 | E1703 | surface fn transitively reaches a `Hal` fn without declaring `\| {Hal}` | `fn `f` reaches Hal effect via `g` but its row omits {Hal}` |
 | E1704 | `@[no_alloc]` fn reaches a heap-allocating builtin | `fn `isr_handler` is `@[no_alloc]` but calls `str_concat` (heap); ISR-unsafe` |
 | E1705 | inline `asm` constraint/clobber malformed | `asm clobber `xyz` is not a known register` |
+| E1706 | atomic builtin `ordering` arg is not a compile-time literal in 0..=4 (Slice 2) | `atomic_load_i64 ordering must be a compile-time literal (0=relaxed…4=seq_cst), not a runtime expr` |
 | W1710 | `@[hal]` fn / `@[unsafe]` region containing no unsafe operation | `unnecessary `@[hal]` — `f` performs no hardware access` |
 | E0910 (reuse) | a substrate unsafe primitive reached by the **interpreter** (no hardware) | `bare-metal substrate primitives require a freestanding codegen build; not available under `axon run`` |
 
@@ -207,11 +208,13 @@ gated to `substrate` files + the `Hal` capability + the TCB, so no `surface` cod
 - [x] `r17_slice1_qemu_boot_writes_axon_s1` — kernel boots under QEMU and writes "axon s1" to debugcon (76860bc). Uses multiboot1 + boot_stub.asm (32→64 mode switch) + port_out_u8 for QEMU debugcon; test skips gracefully if nasm/qemu absent.
 - [ ] `axon_kernel_handles_timer_interrupt` — full IDT + PIC + timer ISR fires under QEMU (deferred to Slice 2; requires port_in_u8 for PIC mask reads, @[repr(C)] for IDT entries).
 
-**Slice 2 (SMP + atomics):**
-- [ ] `axon_smp_atomic_counter_is_race_free` — two cores increment an atomic; final value is exact.
+**Slice 2 (SMP + atomics):** ✅ LANDED (a7b262c).
+- [x] `atomic_load_i64`/`atomic_store_i64`/`atomic_fetch_add_i64`/`atomic_cas_i64` (substrate-only, Hal effect, E0910 in interp). The trailing `ordering` arg is a compile-time integer literal (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst); non-literal/out-of-range → E1706 (codegen). Each lowers to the real LLVM atomic with the named order (`atomicrmw add … seq_cst`, `load atomic … acquire`, `store atomic … release`, `cmpxchg … seq_cst monotonic`). `Send`/`Sync` cross-core sharing is governed by the same Hal effect-subsumption walker (E1310; surface files can't declare `| {Hal}`, E1306).
+- [x] `axon_smp_atomic_counter_is_race_free` — **golden-IR proxy** (`scripts/atomic_ir_test.sh`): the SMP counter increment lowers to a single `atomicrmw add … seq_cst`, the load-bearing race-freedom property. A full 2-core QEMU SMP boot harness (boot the APs, both hammer a shared counter, assert the exact final value) is heavier infra and is **deliberately deferred**; the golden-IR check proves the property directly off the emitted instruction (per §9: "a pure-codegen golden-IR test is acceptable as the unit gate"). New `axon build --emit-llvm` (IR-text dump) added for the golden inspection. Demo: `examples/kernel/hello_kernel_slice2.ax`.
 
-**Slice 3 (layout + no_alloc):**
-- [ ] `axon_repr_c_gdt_layout_byte_exact` (golden) + `no_alloc_isr_rejects_heap_call_e1704`.
+**Slice 3 (layout + no_alloc):** ✅ LANDED.
+- [x] `@[repr(C)]`/`@[packed]`/`@[align(N)]` drive struct layout: `@[packed]` lowers to LLVM's packed-struct form (`<{ … }>`, no inter-field padding), `@[repr(C)]` keeps declaration-order C layout. Golden-IR `axon_repr_c_gdt_layout_byte_exact` (`scripts/gdt_layout_ir_test.sh`): the GDT entry lowers byte-exact to `%GdtEntry = type <{ i16, i16, i8, i8, i8, i8 }>`. `@[align(N)]` is parsed/accepted; the LLVM struct *type* carries only the packed bit, so explicit alignment applies at allocation sites (the struct-type golden is the load-bearing layout check).
+- [x] `@[no_alloc]` fn reaching a heap-allocating builtin / string interpolation / a transitively-allocating helper → **E1704** (enforced like `@[pure]`/`@[total]`, transitive — closes the laundering hole). `no_alloc_isr_rejects_heap_call_e1704` passes. Heap classification (`is_heap_allocating_builtin`) is a conservative over-approximation (heap-typed return OR known mutator); HAL/atomic leaves classify allocation-free. Demo: `examples/kernel/hello_kernel_slice3.ax`.
 
 ### 10. Performance budget
 

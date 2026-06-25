@@ -633,6 +633,51 @@ impl<'ctx> super::Codegen<'ctx> {
             .unwrap();
     }
 
+    /// R17 Slice 2: resolve an atomic builtin's `ordering` argument — which MUST
+    /// be a compile-time integer literal (0=relaxed,1=acquire,2=release,
+    /// 3=acq_rel,4=seq_cst) — to its LLVM `AtomicOrdering`. A non-literal or
+    /// out-of-range value is an E1706 codegen error (returns `None`); the memory
+    /// order is fixed in the emitted instruction and is never a runtime value.
+    fn atomic_ordering_arg(
+        &mut self,
+        arg: &ast::Expr,
+        builtin: &str,
+    ) -> Option<inkwell::AtomicOrdering> {
+        use inkwell::AtomicOrdering as O;
+        if let ast::Expr::Literal(ast::Literal::Int(n)) = arg {
+            let ord = match n {
+                0 => O::Monotonic, // relaxed
+                1 => O::Acquire,
+                2 => O::Release,
+                3 => O::AcquireRelease,
+                4 => O::SequentiallyConsistent,
+                _ => {
+                    let msg = format!(
+                        "codegen error [E1706]: `{builtin}` ordering argument {n} is out of range \
+                         — must be 0=relaxed, 1=acquire, 2=release, 3=acq_rel, or 4=seq_cst"
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    return None;
+                }
+            };
+            Some(ord)
+        } else {
+            let msg = format!(
+                "codegen error [E1706]: `{builtin}` ordering argument must be a compile-time \
+                 integer literal (0=relaxed,1=acquire,2=release,3=acq_rel,4=seq_cst), not a \
+                 runtime expression — the memory order is fixed in the emitted instruction"
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                eprintln!("{msg}");
+                self.codegen_errors.push(msg);
+            }
+            None
+        }
+    }
+
     // ── Literal emission ──────────────────────────────────────────────────────
 
     pub(super) fn comptime_val_to_llvm(
@@ -8688,6 +8733,136 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         return Some(ext.into());
                     }
+                }
+                // ── R17 Slice 2: SMP atomics ───────────────────────────────────
+                // Each lowers to the real LLVM atomic with the named memory order.
+                // The ordering arg MUST be a compile-time integer literal (the
+                // memory order is fixed in the instruction, never a runtime value)
+                // → E1706 otherwise.
+                "atomic_load_i64" if args.len() == 2 => {
+                    if let Some(ord) = self.atomic_ordering_arg(&args[1], name) {
+                        if let Some(addr_val) = self.emit_expr(&args[0], fn_val) {
+                            let i64_ty = self.ir.context.i64_type();
+                            let ptr = self
+                                .ir
+                                .builder
+                                .build_int_to_ptr(
+                                    addr_val.into_int_value(),
+                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    "atomic_ptr",
+                                )
+                                .unwrap();
+                            let load =
+                                self.ir.builder.build_load(i64_ty, ptr, "atomic_load").unwrap();
+                            if let Some(inst) = load.as_instruction_value() {
+                                inst.set_alignment(8).unwrap();
+                                inst.set_atomic_ordering(ord).unwrap();
+                            }
+                            return Some(load);
+                        }
+                    }
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                }
+                "atomic_store_i64" if args.len() == 3 => {
+                    if let Some(ord) = self.atomic_ordering_arg(&args[2], name) {
+                        if let (Some(addr_val), Some(data_val)) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            let i64_ty = self.ir.context.i64_type();
+                            let ptr = self
+                                .ir
+                                .builder
+                                .build_int_to_ptr(
+                                    addr_val.into_int_value(),
+                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    "atomic_ptr",
+                                )
+                                .unwrap();
+                            let store = self
+                                .ir
+                                .builder
+                                .build_store(ptr, data_val.into_int_value())
+                                .unwrap();
+                            store.set_alignment(8).unwrap();
+                            store.set_atomic_ordering(ord).unwrap();
+                        }
+                    }
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                }
+                "atomic_fetch_add_i64" if args.len() == 3 => {
+                    if let Some(ord) = self.atomic_ordering_arg(&args[2], name) {
+                        if let (Some(addr_val), Some(delta_val)) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                        ) {
+                            let i64_ty = self.ir.context.i64_type();
+                            let ptr = self
+                                .ir
+                                .builder
+                                .build_int_to_ptr(
+                                    addr_val.into_int_value(),
+                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    "atomic_ptr",
+                                )
+                                .unwrap();
+                            let prior = self
+                                .ir
+                                .builder
+                                .build_atomicrmw(
+                                    inkwell::AtomicRMWBinOp::Add,
+                                    ptr,
+                                    delta_val.into_int_value(),
+                                    ord,
+                                )
+                                .unwrap();
+                            return Some(prior.into());
+                        }
+                    }
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                }
+                "atomic_cas_i64" if args.len() == 4 => {
+                    if let Some(ord) = self.atomic_ordering_arg(&args[3], name) {
+                        if let (Some(addr_val), Some(exp_val), Some(des_val)) = (
+                            self.emit_expr(&args[0], fn_val),
+                            self.emit_expr(&args[1], fn_val),
+                            self.emit_expr(&args[2], fn_val),
+                        ) {
+                            let i64_ty = self.ir.context.i64_type();
+                            let ptr = self
+                                .ir
+                                .builder
+                                .build_int_to_ptr(
+                                    addr_val.into_int_value(),
+                                    i64_ty.ptr_type(AddressSpace::default()),
+                                    "atomic_ptr",
+                                )
+                                .unwrap();
+                            // cmpxchg requires the failure ordering to be no
+                            // stronger than success and not release/acq_rel; use
+                            // Monotonic as the conservative failure order.
+                            let res = self
+                                .ir
+                                .builder
+                                .build_cmpxchg(
+                                    ptr,
+                                    exp_val.into_int_value(),
+                                    des_val.into_int_value(),
+                                    ord,
+                                    inkwell::AtomicOrdering::Monotonic,
+                                )
+                                .unwrap();
+                            // cmpxchg yields { iN old, i1 success }; return the
+                            // OLD value (== expected iff the swap happened).
+                            let old = self
+                                .ir
+                                .builder
+                                .build_extract_value(res, 0, "cas_old")
+                                .unwrap();
+                            return Some(old);
+                        }
+                    }
+                    return Some(self.ir.context.i64_type().const_zero().into());
                 }
                 _ => {}
             }

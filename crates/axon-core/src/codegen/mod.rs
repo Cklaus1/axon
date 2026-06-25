@@ -660,8 +660,16 @@ impl<'ctx> Codegen<'ctx> {
                     .iter()
                     .filter_map(|f| self.llvm_type_from_axon(&f.ty))
                     .collect();
+                // R17 Slice 3: `@[packed]` lays the struct out with NO inter-field
+                // padding (alignment 1) — exact byte layout for a hardware
+                // descriptor (GDT/IDT entry). `@[repr(C)]` keeps the natural C
+                // layout (the default field order is already declaration order),
+                // and `@[align(N)]` raises the whole-struct alignment at its
+                // allocation sites (the LLVM struct type itself only carries the
+                // packed bit). So packed drives the struct body's packed flag.
+                let packed = td.attrs.iter().any(|a| a.name == "packed");
                 let named_struct = self.ir.context.opaque_struct_type(&td.name);
-                named_struct.set_body(&field_types, false);
+                named_struct.set_body(&field_types, packed);
                 let field_names: Vec<String> = td.fields.iter().map(|f| f.name.clone()).collect();
                 self.struct_fields.insert(td.name.clone(), field_names);
                 let field_sem_types: Vec<Type> = td
