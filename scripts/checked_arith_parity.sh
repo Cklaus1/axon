@@ -103,9 +103,14 @@ for label in "${!CASES[@]}"; do
     echo "}"
   } > "$PROG"
 
-  # Interpreter (oracle).
-  iout="$("$AXON" run "$PROG" 2>&1)"
+  # Interpreter (oracle). Capture stderr too (panic messages go there), but
+  # strip the Phase-9 `axon: run-id <id>` provenance stamp the interpreter
+  # prints to stderr at startup — the native binary emits no such line, so
+  # leaving it in would be a false divergence. iexit must come from `axon run`,
+  # not the filter, so grab it before filtering.
+  iraw="$("$AXON" run "$PROG" 2>&1)"
   iexit=$?
+  iout="$(printf '%s\n' "$iraw" | grep -v '^axon: run-id ')"
 
   # Native.
   BIN="$WORK/${label}_bin"

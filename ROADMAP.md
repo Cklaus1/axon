@@ -267,6 +267,13 @@ boundary: TCB stops at the Axon process; we trust the host kernel and hypervisor
 
 ## 7.5 Compile-time Engineering Followups
 
+> **SUPERSEDED / RESOLVED (2026-06-25).** The build-time problem this section chronicles is
+> fixed — native `cargo build -p axon-core --bin axon` finishes in ~1.5–2.6s and is at
+> verified native↔interp parity. See the "Native codegen build — RESOLVED" note in §9.6.
+> Everything below is kept as the historical debugging record; its "the inkwell shim is the
+> only remaining lever" conclusion no longer holds (the non-generic `build_wrappers.rs`
+> approach + dropping `serde-json` from default closed it).
+
 These don't change semantics but are blocking developer ergonomics and CI throughput.
 
 ### Split `crates/axon-core/src/codegen.rs` into a module hierarchy
@@ -568,7 +575,19 @@ forward task, not a status note. Companion docs: `BUILD_DIAGNOSIS.md`,
 `CODEGEN_WRAPPER_PROTOTYPE.md`, `SESSION_STATUS.md`. Verifiable in git
 (`0fb49c0..800d219`).
 
-### Native codegen build — diagnosed, fix applied, validation pending
+### Native codegen build — RESOLVED + parity-verified (2026-06-25)
+
+> **CLOSED.** The "remaining work" below is done. A finishing native build now completes in
+> **~1.5–2.6s** (`cargo build -p axon-core --bin axon`, default `codegen`), ~725 MB peak RSS,
+> producing a 144 MB binary; `axon build hello.ax` → LLVM → linked ELF → runs. Native ↔
+> interpreter parity is verified: `scripts/all_examples_parity.sh` is 34/38 byte-identical
+> with **0 divergences** (the 4 non-builds are deliberate E0910 refusals of interp-only net
+> builtins), and every non-wasm `scripts/*_parity.sh` harness passes (8 that reported false
+> failures were stale — they leaked the Phase-9 `axon: run-id` stderr stamp into the diff;
+> fixed). Decision (c) below resolved: **keep native** — it builds in seconds and is at parity,
+> so it is a real AOT target, not just a release artifact. The §7.5 "inkwell shim is the only
+> lever" conclusion is fully superseded.
+
 
 - **Root cause pinned** (`BUILD_DIAGNOSIS.md`): the multi-hour `cargo build` stall is
   **100% LLVM-IR generation** of monomorphized inkwell generics in `codegen::builtins`

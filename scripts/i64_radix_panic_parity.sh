@@ -31,6 +31,7 @@ run_case() {
   printf '%s\n' "$prog_src" > "$prog"
   local i_out i_code n_out n_code
   i_out="$("$AXON" run "$prog" 2>&1)"; i_code=$?
+  i_out="$(printf '%s\n' "$i_out" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   if ! "$AXON" build "$prog" -o "$bin" --no-cache >/dev/null 2>&1; then
     echo "i64_radix_panic_parity: native build failed for $label — skipping"; exit 0
   fi

@@ -68,7 +68,7 @@ fi
 # on stdout, stderr, and exit (101) — not just "non-zero". The interp prints
 # "axon: panic: random_i64: inverted bounds — lo (20) must be <= hi (10); …" to
 # STDERR; native used to printf a generic, value-less message to STDOUT.
-i_out="$("$AXON" run "$WORK/inv.ax" 2>"$WORK/inv.ie")"; i_code=$?; i_err="$(cat "$WORK/inv.ie")"
+i_out="$("$AXON" run "$WORK/inv.ax" 2>"$WORK/inv.ie")"; i_code=$?; i_err="$(grep -v '^axon: run-id ' "$WORK/inv.ie")"  # strip Phase-9 run-id stamp (native emits none)
 n_out="$("$WORK/inv" 2>"$WORK/inv.ne")"; n_code=$?; n_err="$(cat "$WORK/inv.ne")"
 if [ "$i_out" != "$n_out" ] || [ "$i_err" != "$n_err" ] || [ "$i_code" != "$n_code" ]; then
   echo "random_i64_parity: FAIL — inverted-bounds output differs interp vs native:"

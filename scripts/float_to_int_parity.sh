@@ -53,6 +53,7 @@ for label in "${!CASES[@]}"; do
   { echo "fn main() {"; echo "    ${CASES[$label]}"; echo "}"; } > "$PROG"
 
   iout="$("$AXON" run "$PROG" 2>&1)"; iexit=$?
+  iout="$(printf '%s\n' "$iout" | grep -v '^axon: run-id ')"  # strip Phase-9 run-id stamp (native emits none)
   BIN="$WORK/${label}_bin"
   if ! "$AXON" build "$PROG" -o "$BIN" --no-cache >/dev/null 2>&1; then
     echo "float_to_int_parity: native build failed for $label — skipping"; exit 0
