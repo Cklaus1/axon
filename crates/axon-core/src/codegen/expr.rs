@@ -7145,8 +7145,28 @@ impl<'ctx> super::Codegen<'ctx> {
             ast::Expr::Ident(name) => self.functions.get(name.as_str()).copied(),
             // Chan::new / chan<T>() — StructLit callees with known names.
             ast::Expr::StructLit { name, fields } if fields.is_empty() => {
-                // chan::<T> → alias to Chan::new
-                if name.starts_with("chan::<") {
+                // R13 native FFI: a `M::fn(...)` call. Native modules are
+                // interp-only in this slice — codegen REFUSES honestly with
+                // E0910 rather than emitting an incomplete/unsound FFI boundary
+                // (the same sound-by-refusal discipline as host_await). The
+                // interpreter is the reference engine; the codegen mock-shim
+                // link is a deferred follow-up slice.
+                if crate::native::is_native_call(name) {
+                    let msg = format!(
+                        "codegen error [E0910]: native FFI call `{name}` is interp-only — \
+                         native modules (`use native::*`) are not yet lowered to native \
+                         codegen (the mock-shim link is a deferred slice). Run it under the \
+                         interpreter (`axon run`)."
+                    );
+                    if !self.codegen_errors.iter().any(|e| e == &msg) {
+                        eprintln!("{msg}");
+                        self.codegen_errors.push(msg);
+                    }
+                    // Return a benign placeholder so emit doesn't crash; the
+                    // non-empty `codegen_errors` aborts the build before linking
+                    // (the program never runs natively — sound by refusal).
+                    return Some(self.ir.context.i64_type().const_zero().into());
+                } else if name.starts_with("chan::<") {
                     self.functions.get("Chan::new").copied()
                 } else if let Some(inner) = name
                     .strip_prefix("ai_extract::<")

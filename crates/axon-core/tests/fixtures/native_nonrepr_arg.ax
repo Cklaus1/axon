@@ -1,0 +1,9 @@
+use native::gfx
+type Big = { a: i64, b: str }
+@[contained(gfx: any)]
+fn main() -> i64 {
+    let b = Big { a: 1, b: "x" }
+    let w = gfx::window_open(b, 600, "title")
+    gfx::window_close(w)
+    0
+}

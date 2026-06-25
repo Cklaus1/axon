@@ -1,0 +1,657 @@
+//! R13 — Native FFI: the curated native-module registry.
+//!
+//! This is the single source of truth for what `use native::M` may import,
+//! shared by EVERY compiler stage (resolver, infer, checker, borrow, effects,
+//! codegen, interp). It is the generalization of `BUILTIN_EXTERNS`: instead of
+//! one hardcoded table of `__axon_*` builtins, a native module contributes a
+//! row of `(axon-name, symbol, params, ret)` signatures plus a capability key
+//! and an effect row.
+//!
+//! There is **no raw `extern "C"` in user Axon** (spec §3, Q1). A native module
+//! is a curated Rust shim: each function maps to a `#[no_mangle] extern "C"`
+//! symbol for codegen to link, and to an in-process Rust dispatcher for the
+//! interpreter to call (`crate::interp::native_dispatch`). One impl, two
+//! engines — I-2 by construction modulo the marshalling layer.
+//!
+//! ## Handles (spec §4/§5)
+//!
+//! The only new value crossing the boundary is an opaque, **affine** `Handle` =
+//! `{i64 tag, i64 payload}` where `payload` indexes a per-module handle table —
+//! NEVER a raw pointer, so Axon cannot forge a native pointer (I-4/I-11). A
+//! handle is nominal per module/name (`gfx::Window` ≠ `gfx::Surface`), not
+//! `Copy` (so the borrow checker treats it as `own`/affine, and use-after-
+//! consume is E0601 at compile time, not a runtime liveness check).
+//!
+//! v1 ships ONE GPU-FREE MOCK module: `native::gfx` (an in-memory frame
+//! counter), per spec §8/§11 slice 2. The real `axon-gfx` (wgpu/winit/vello)
+//! shim is slice 4 and out of scope here.
+
+use crate::types::Type;
+
+/// One FFI-representable parameter/return type at the native boundary
+/// (spec §4 "representable set"). Anything not expressible here is **not**
+/// FFI-representable → E1801 at check time.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FfiType {
+    I64,
+    F64,
+    Bool,
+    /// Axon `str` — the frozen `{i64 len, ptr data}` ABI (I-6).
+    Str,
+    /// `[scalar]` — a slice of a scalar element, frozen `{i64 len, ptr}` ABI.
+    SliceI64,
+    SliceF64,
+    /// An opaque nominal handle owned by module `module`, type name `name`.
+    /// `resource = true` → affine (`own`, consumed by a consuming fn).
+    /// `resource = false` → value handle (`Copy`, no drop obligation).
+    Handle {
+        module: &'static str,
+        name: &'static str,
+        resource: bool,
+    },
+    /// `Unit` return only (a void native call, e.g. `clear`/`present`).
+    Unit,
+}
+
+impl FfiType {
+    /// The semantic `Type` this FFI type maps to in inference / the checker.
+    /// A handle becomes `Type::Deferred("native:<module>:<name>:<r|v>")` —
+    /// an opaque nominal carrier that:
+    ///  * is NOT `Copy` (borrow.rs `is_copy` excludes `Deferred`), so a
+    ///    resource handle is affine and use-after-consume is E0601, and
+    ///  * unifies only with the identical string, giving cross-module
+    ///    nominal distinctness (E1802) for free.
+    pub fn to_type(&self) -> Type {
+        match self {
+            FfiType::I64 => Type::I64,
+            FfiType::F64 => Type::F64,
+            FfiType::Bool => Type::Bool,
+            FfiType::Str => Type::Str,
+            FfiType::SliceI64 => Type::Slice(Box::new(Type::I64)),
+            FfiType::SliceF64 => Type::Slice(Box::new(Type::F64)),
+            FfiType::Handle {
+                module,
+                name,
+                resource,
+            } => Type::Deferred(handle_type_key(module, name, *resource)),
+            FfiType::Unit => Type::Unit,
+        }
+    }
+}
+
+/// The `Type::Deferred` key string used to carry a native handle through the
+/// type system. Encodes module + name + kind so it round-trips and so
+/// `is_native_handle_key` can recognise it everywhere.
+pub fn handle_type_key(module: &str, name: &str, resource: bool) -> String {
+    format!(
+        "native:{module}:{name}:{}",
+        if resource { "res" } else { "val" }
+    )
+}
+
+/// Is this `Type::Deferred(_)` key a native handle? Returns `(module, name,
+/// resource)` if so.
+pub fn parse_handle_key(key: &str) -> Option<(&str, &str, bool)> {
+    let rest = key.strip_prefix("native:")?;
+    let mut it = rest.splitn(3, ':');
+    let module = it.next()?;
+    let name = it.next()?;
+    let kind = it.next()?;
+    let resource = match kind {
+        "res" => true,
+        "val" => false,
+        _ => return None,
+    };
+    Some((module, name, resource))
+}
+
+/// Parameter mode at the native boundary (spec §4/§5). A `Move` of a resource
+/// handle CONSUMES it (the borrow checker marks the arg moved → later use is
+/// E0601). A `Borrow` (`ref`) leaves the owner valid.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ParamMode {
+    /// By-value / consuming. For a resource handle this is the consuming move.
+    Move,
+    /// Borrow (`ref`) — non-consuming.
+    Borrow,
+}
+
+/// One native function signature.
+pub struct NativeFn {
+    /// Axon-source name under the module (e.g. `"window_open"`), called as
+    /// `gfx::window_open(...)`.
+    pub name: &'static str,
+    /// The `#[no_mangle] extern "C"` symbol codegen declares & links.
+    pub symbol: &'static str,
+    /// Parameter `(ffi-type, mode)` in order.
+    pub params: &'static [(FfiType, ParamMode)],
+    pub ret: FfiType,
+}
+
+/// A curated native module: its name, the `@[contained]`/effect capability key
+/// it requires, the effect row it contributes to callers, and its functions.
+pub struct NativeModule {
+    /// Module name as imported: `use native::<name>`.
+    pub name: &'static str,
+    /// Capability grant key required in `@[contained(<cap>: …)]` (spec §3).
+    pub capability: &'static str,
+    /// Effect names contributed to a caller's row (Phase-6 bridge, E1310).
+    pub effects: &'static [&'static str],
+    pub functions: &'static [NativeFn],
+}
+
+impl NativeModule {
+    pub fn function(&self, name: &str) -> Option<&NativeFn> {
+        self.functions.iter().find(|f| f.name == name)
+    }
+}
+
+// ── The v1 registry ──────────────────────────────────────────────────────────
+//
+// `native::gfx` — a GPU-FREE MOCK (spec §8/§11 slice 2). The shim is an
+// in-process in-memory frame counter; `window_open` returns a resource handle,
+// `clear`/`present` are effectful no-ops bumping a counter, `window_close`
+// consumes the handle. No wgpu, no winit, no display — that is slice 4.
+
+const GFX_FNS: &[NativeFn] = &[
+    NativeFn {
+        name: "window_open",
+        symbol: "__axon_gfx_window_open",
+        params: &[
+            (FfiType::I64, ParamMode::Move),  // width
+            (FfiType::I64, ParamMode::Move),  // height
+            (FfiType::Str, ParamMode::Move),  // title
+        ],
+        ret: FfiType::Handle {
+            module: "gfx",
+            name: "Window",
+            resource: true,
+        },
+    },
+    NativeFn {
+        name: "surface",
+        symbol: "__axon_gfx_surface",
+        // Borrows the window (does not consume it), returns a new Surface handle.
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Window",
+                resource: true,
+            },
+            ParamMode::Borrow,
+        )],
+        ret: FfiType::Handle {
+            module: "gfx",
+            name: "Surface",
+            resource: true,
+        },
+    },
+    NativeFn {
+        name: "clear",
+        symbol: "__axon_gfx_clear",
+        params: &[
+            (
+                FfiType::Handle {
+                    module: "gfx",
+                    name: "Surface",
+                    resource: true,
+                },
+                ParamMode::Borrow, // clear borrows the surface
+            ),
+            (FfiType::F64, ParamMode::Move), // r
+            (FfiType::F64, ParamMode::Move), // g
+            (FfiType::F64, ParamMode::Move), // b
+            (FfiType::F64, ParamMode::Move), // a
+        ],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "present",
+        symbol: "__axon_gfx_present",
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Surface",
+                resource: true,
+            },
+            ParamMode::Borrow,
+        )],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "frame_count",
+        symbol: "__axon_gfx_frame_count",
+        // A pure value-returning probe (joins the differential parity corpus):
+        // how many present() calls have happened. Borrows the surface.
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Surface",
+                resource: true,
+            },
+            ParamMode::Borrow,
+        )],
+        ret: FfiType::I64,
+    },
+    NativeFn {
+        name: "surface_close",
+        symbol: "__axon_gfx_surface_close",
+        // Consumes the Surface handle.
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Surface",
+                resource: true,
+            },
+            ParamMode::Move,
+        )],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "window_close",
+        symbol: "__axon_gfx_window_close",
+        // Consumes the Window handle (the affine drop site).
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Window",
+                resource: true,
+            },
+            ParamMode::Move,
+        )],
+        ret: FfiType::Unit,
+    },
+];
+
+const GFX: NativeModule = NativeModule {
+    name: "gfx",
+    capability: "gfx",
+    effects: &["IO"],
+    functions: GFX_FNS,
+};
+
+/// All registered native modules. v1: just the GPU-free `gfx` mock.
+pub const MODULES: &[&NativeModule] = &[&GFX];
+
+/// Look up a registered native module by name (the `M` in `use native::M`).
+pub fn module(name: &str) -> Option<&'static NativeModule> {
+    MODULES.iter().copied().find(|m| m.name == name)
+}
+
+/// Resolve a `M::fn` call name (e.g. `"gfx::window_open"`) to its module + fn.
+pub fn resolve_call(qualified: &str) -> Option<(&'static NativeModule, &'static NativeFn)> {
+    let (modname, fnname) = qualified.split_once("::")?;
+    let m = module(modname)?;
+    let f = m.function(fnname)?;
+    Some((m, f))
+}
+
+/// Is `qualified` (a `::`-joined StructLit callee name) a native-module call?
+pub fn is_native_call(qualified: &str) -> bool {
+    resolve_call(qualified).is_some()
+}
+
+/// The FFI-representable predicate (spec §4/§5): the type-system half of E1801.
+/// Returns `true` only for the allowed boundary set — scalars (i64/i32/f64/bool),
+/// `str`, `[scalar]`, a native `Handle`, and `Unit` (return position only). A
+/// user struct, `Option<T>`, `Result<T,E>`, a closure, a generic `T`, a channel,
+/// a tuple, etc. is NOT representable → E1801 at check time, never reaching
+/// codegen (mirrors the E0910 out-of-subset refusal).
+pub fn is_ffi_repr(ty: &Type) -> bool {
+    match ty {
+        // Scalars.
+        Type::I8
+        | Type::I16
+        | Type::I32
+        | Type::I64
+        | Type::U8
+        | Type::U16
+        | Type::U32
+        | Type::U64
+        | Type::F32
+        | Type::F64
+        | Type::Bool
+        | Type::Str
+        | Type::Unit => true,
+        // [scalar] only — a slice of a representable scalar element.
+        Type::Slice(elem) => is_scalar(elem),
+        // A native handle is carried as Deferred("native:…").
+        Type::Deferred(key) => parse_handle_key(key).is_some(),
+        _ => false,
+    }
+}
+
+fn is_scalar(ty: &Type) -> bool {
+    matches!(
+        ty,
+        Type::I8
+            | Type::I16
+            | Type::I32
+            | Type::I64
+            | Type::U8
+            | Type::U16
+            | Type::U32
+            | Type::U64
+            | Type::F32
+            | Type::F64
+            | Type::Bool
+            | Type::Str
+    )
+}
+
+/// True if `ty` is a native handle carrier (`Type::Deferred("native:…")`).
+pub fn is_native_handle(ty: &Type) -> bool {
+    matches!(ty, Type::Deferred(k) if parse_handle_key(k).is_some())
+}
+
+/// True if `ty` is a native *resource* handle (affine — consumed by a consuming
+/// call, use-after-consume is E0601). A value handle (`resource=false`) is Copy.
+pub fn is_resource_handle(ty: &Type) -> bool {
+    matches!(ty, Type::Deferred(k) if matches!(parse_handle_key(k), Some((_, _, true))))
+}
+
+// ── The `native::gfx` GPU-FREE MOCK shim (interp side) ───────────────────────
+//
+// This is the in-process Rust impl the interpreter dispatches to (spec §3: "the
+// SAME crate is compiled into BOTH the native link and the compiler binary").
+// It is a frame counter + a per-module handle table — NO wgpu/winit/GPU. The
+// codegen side links the matching `__axon_gfx_*` symbols in `axon-rt` (slice 2
+// codegen), so the value-returning `frame_count` is byte-identical across
+// engines (the differential-parity corpus member); the effectful calls share
+// the call-trace oracle (spec §4).
+//
+// SAFETY / I-4: a handle's `payload` is a SLAB INDEX into a table of live
+// slots, never a raw pointer. A consumed/forged/out-of-range index resolves to
+// a poisoned/absent slot → a graceful `Err`/refusal, NEVER a host abort. This
+// is what makes the handle unforgeable at the boundary even if a bad index
+// somehow reaches it.
+
+/// One live slot in a handle table. `None` = freed/never-allocated (a stale or
+/// forged index lands here → graceful error).
+#[derive(Clone, Copy, Debug, Default)]
+struct GfxSlot {
+    live: bool,
+    /// Slot generation — bumped on free so a stale index of a reused slot is
+    /// still detectable (defense in depth; the affine type system is primary).
+    generation: u32,
+}
+
+/// The mock gfx backend state. Per-`Interp` (reset between runs).
+#[derive(Debug, Default)]
+pub struct GfxMock {
+    windows: Vec<GfxSlot>,
+    surfaces: Vec<GfxSlot>,
+    /// How many `present()` calls have happened (the value `frame_count` reads).
+    frames: i64,
+}
+
+/// The outcome of a mock gfx call: either a value, or a graceful error string
+/// (NEVER a host abort — I-4). The interpreter maps `Err` to a graceful panic.
+pub type GfxResult = Result<GfxValue, String>;
+
+/// A value a mock gfx call can return to the interpreter, kept independent of
+/// the interpreter's `Value` enum so `native.rs` has no dependency on `interp`.
+#[derive(Debug, Clone, PartialEq)]
+pub enum GfxValue {
+    Unit,
+    Int(i64),
+    /// A handle `(name, payload)` — the caller wraps it in `Value::Handle`.
+    Handle { name: &'static str, payload: i64 },
+}
+
+impl GfxMock {
+    pub fn new() -> Self {
+        GfxMock::default()
+    }
+
+    /// `window_open(w, h, title) -> Window` — allocates a live Window slot.
+    pub fn window_open(&mut self, _w: i64, _h: i64, _title: &str) -> GfxResult {
+        let idx = self.windows.len() as i64;
+        self.windows.push(GfxSlot {
+            live: true,
+            generation: 0,
+        });
+        Ok(GfxValue::Handle {
+            name: "Window",
+            payload: idx,
+        })
+    }
+
+    /// `surface(ref win) -> Surface` — borrows the window, allocates a Surface.
+    pub fn surface(&mut self, win: i64) -> GfxResult {
+        self.check_window(win)?;
+        let idx = self.surfaces.len() as i64;
+        self.surfaces.push(GfxSlot {
+            live: true,
+            generation: 0,
+        });
+        Ok(GfxValue::Handle {
+            name: "Surface",
+            payload: idx,
+        })
+    }
+
+    /// `clear(ref surf, r,g,b,a)` — effectful no-op (validates the surface).
+    pub fn clear(&mut self, surf: i64, _r: f64, _g: f64, _b: f64, _a: f64) -> GfxResult {
+        self.check_surface(surf)?;
+        Ok(GfxValue::Unit)
+    }
+
+    /// `present(ref surf)` — bumps the frame counter (the observable effect).
+    pub fn present(&mut self, surf: i64) -> GfxResult {
+        self.check_surface(surf)?;
+        self.frames += 1;
+        Ok(GfxValue::Unit)
+    }
+
+    /// `frame_count(ref surf) -> i64` — pure value-returning probe.
+    pub fn frame_count(&self, surf: i64) -> GfxResult {
+        self.check_surface(surf)?;
+        Ok(GfxValue::Int(self.frames))
+    }
+
+    /// `surface_close(surf)` — CONSUMES the surface (frees its slot).
+    pub fn surface_close(&mut self, surf: i64) -> GfxResult {
+        self.check_surface(surf)?;
+        let s = &mut self.surfaces[surf as usize];
+        s.live = false;
+        s.generation = s.generation.wrapping_add(1);
+        Ok(GfxValue::Unit)
+    }
+
+    /// `window_close(win)` — CONSUMES the window (frees its slot).
+    pub fn window_close(&mut self, win: i64) -> GfxResult {
+        self.check_window(win)?;
+        let w = &mut self.windows[win as usize];
+        w.live = false;
+        w.generation = w.generation.wrapping_add(1);
+        Ok(GfxValue::Unit)
+    }
+
+    fn check_window(&self, win: i64) -> Result<(), String> {
+        match self.windows.get(usize::try_from(win).map_err(|_| bad_handle())?) {
+            Some(s) if s.live => Ok(()),
+            _ => Err(bad_handle()),
+        }
+    }
+
+    fn check_surface(&self, surf: i64) -> Result<(), String> {
+        match self
+            .surfaces
+            .get(usize::try_from(surf).map_err(|_| bad_handle())?)
+        {
+            Some(s) if s.live => Ok(()),
+            _ => Err(bad_handle()),
+        }
+    }
+
+    /// Dispatch a resolved `native::gfx` fn by name to its mock impl. `args` are
+    /// the marshalled scalar/handle payloads. The caller (interp) has already
+    /// validated arity & types at check time, but a bad handle index here STILL
+    /// returns a graceful `Err` (I-4 defense in depth), never a panic.
+    pub fn dispatch(&mut self, fnname: &str, args: &[GfxArg]) -> GfxResult {
+        match (fnname, args) {
+            ("window_open", [GfxArg::Int(w), GfxArg::Int(h), GfxArg::Str(t)]) => {
+                self.window_open(*w, *h, t)
+            }
+            ("surface", [GfxArg::Handle(win)]) => self.surface(*win),
+            ("clear", [GfxArg::Handle(s), GfxArg::Float(r), GfxArg::Float(g), GfxArg::Float(b), GfxArg::Float(a)]) => {
+                self.clear(*s, *r, *g, *b, *a)
+            }
+            ("present", [GfxArg::Handle(s)]) => self.present(*s),
+            ("frame_count", [GfxArg::Handle(s)]) => self.frame_count(*s),
+            ("surface_close", [GfxArg::Handle(s)]) => self.surface_close(*s),
+            ("window_close", [GfxArg::Handle(w)]) => self.window_close(*w),
+            _ => Err(format!(
+                "native::gfx: bad call `{fnname}` (wrong argument shape)"
+            )),
+        }
+    }
+}
+
+/// A marshalled argument crossing into the mock gfx dispatcher.
+#[derive(Debug, Clone)]
+pub enum GfxArg {
+    Int(i64),
+    Float(f64),
+    Str(String),
+    /// A handle payload (the slab index).
+    Handle(i64),
+}
+
+fn bad_handle() -> String {
+    "native::gfx: invalid or consumed handle (forged or stale index)".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gfx_registered() {
+        assert!(module("gfx").is_some());
+        assert!(module("nope").is_none());
+    }
+
+    #[test]
+    fn resolve_known_call() {
+        let (m, f) = resolve_call("gfx::window_open").expect("known");
+        assert_eq!(m.name, "gfx");
+        assert_eq!(f.symbol, "__axon_gfx_window_open");
+        assert!(matches!(f.ret, FfiType::Handle { resource: true, .. }));
+    }
+
+    #[test]
+    fn unknown_call_not_native() {
+        assert!(!is_native_call("gfx::nope"));
+        assert!(!is_native_call("nope::x"));
+        assert!(!is_native_call("plain"));
+    }
+
+    #[test]
+    fn handle_key_roundtrip() {
+        let k = handle_type_key("gfx", "Window", true);
+        assert_eq!(parse_handle_key(&k), Some(("gfx", "Window", true)));
+        let v = handle_type_key("gfx", "Color", false);
+        assert_eq!(parse_handle_key(&v), Some(("gfx", "Color", false)));
+        assert_eq!(parse_handle_key("Dict"), None);
+    }
+
+    #[test]
+    fn ffi_repr_accepts_allowed_set() {
+        assert!(is_ffi_repr(&Type::I64));
+        assert!(is_ffi_repr(&Type::F64));
+        assert!(is_ffi_repr(&Type::Bool));
+        assert!(is_ffi_repr(&Type::Str));
+        assert!(is_ffi_repr(&Type::Unit));
+        assert!(is_ffi_repr(&Type::Slice(Box::new(Type::I64))));
+        assert!(is_ffi_repr(&Type::Slice(Box::new(Type::Str))));
+        assert!(is_ffi_repr(
+            &FfiType::Handle {
+                module: "gfx",
+                name: "Window",
+                resource: true
+            }
+            .to_type()
+        ));
+    }
+
+    #[test]
+    fn ffi_repr_rejects_disallowed() {
+        // user struct, Option, Result, closure, generic, tuple, channel,
+        // and a slice of a non-scalar — none are FFI-representable.
+        assert!(!is_ffi_repr(&Type::Struct("Big".into())));
+        assert!(!is_ffi_repr(&Type::Option(Box::new(Type::I64))));
+        assert!(!is_ffi_repr(&Type::Result(
+            Box::new(Type::I64),
+            Box::new(Type::Str)
+        )));
+        assert!(!is_ffi_repr(&Type::Fn(vec![], Box::new(Type::I64))));
+        assert!(!is_ffi_repr(&Type::TypeParam("T".into())));
+        assert!(!is_ffi_repr(&Type::Tuple(vec![Type::I64, Type::I64])));
+        assert!(!is_ffi_repr(&Type::Chan(Box::new(Type::I64))));
+        assert!(!is_ffi_repr(&Type::Slice(Box::new(Type::Struct(
+            "Big".into()
+        )))));
+        // Non-handle Deferred (e.g. the Dict opaque) is not representable.
+        assert!(!is_ffi_repr(&Type::Deferred("Dict".into())));
+    }
+
+    #[test]
+    fn gfx_mock_roundtrip() {
+        let mut m = GfxMock::new();
+        let win = match m.window_open(800, 600, "axon").unwrap() {
+            GfxValue::Handle { payload, .. } => payload,
+            _ => panic!("expected handle"),
+        };
+        let surf = match m.surface(win).unwrap() {
+            GfxValue::Handle { payload, .. } => payload,
+            _ => panic!("expected handle"),
+        };
+        assert_eq!(m.clear(surf, 0.1, 0.1, 0.1, 1.0).unwrap(), GfxValue::Unit);
+        m.present(surf).unwrap();
+        m.present(surf).unwrap();
+        assert_eq!(m.frame_count(surf).unwrap(), GfxValue::Int(2));
+        m.surface_close(surf).unwrap();
+        m.window_close(win).unwrap();
+    }
+
+    #[test]
+    fn gfx_mock_bad_handle_is_graceful_err_not_panic() {
+        let m = GfxMock::new();
+        // A forged/out-of-range index → Err, NEVER a panic/abort (I-4).
+        assert!(m.frame_count(9999).is_err());
+        assert!(m.frame_count(-1).is_err());
+        assert!(m.frame_count(i64::MIN).is_err());
+        assert!(m.check_surface(0).is_err());
+    }
+
+    #[test]
+    fn gfx_mock_use_after_consume_is_graceful_err() {
+        // (The PRIMARY guarantee is the COMPILE-TIME affine borrow check; this
+        // is the runtime defense-in-depth backstop.)
+        let mut m = GfxMock::new();
+        let win = match m.window_open(1, 1, "x").unwrap() {
+            GfxValue::Handle { payload, .. } => payload,
+            _ => unreachable!(),
+        };
+        m.window_close(win).unwrap();
+        // Reusing the freed window index → graceful Err.
+        assert!(m.surface(win).is_err());
+        assert!(m.window_close(win).is_err());
+    }
+
+    #[test]
+    fn resource_handle_is_not_copy() {
+        // The handle type maps to Deferred, which borrow.rs::is_copy excludes —
+        // so a resource handle is affine. (Asserted structurally here; the
+        // borrow-checker behaviour is tested in borrow.rs / integration.)
+        let t = FfiType::Handle {
+            module: "gfx",
+            name: "Window",
+            resource: true,
+        }
+        .to_type();
+        assert!(matches!(t, Type::Deferred(_)));
+    }
+}

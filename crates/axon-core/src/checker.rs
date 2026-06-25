@@ -2742,6 +2742,15 @@ impl CheckCtx {
                 for (i, arg) in args.iter().enumerate() {
                     self.check_expr(arg, &format!("{node_path}.arg_{i}"), scope);
                 }
+                // R13 native FFI: `M::fn(...)` argument boundary checks
+                // (E1801 non-representable, E1802 cross-module handle).
+                if let Expr::StructLit { name, fields } = callee.as_ref() {
+                    if fields.is_empty() {
+                        if let Some((_m, nf)) = crate::native::resolve_call(name) {
+                            self.check_native_call_args(nf, args, node_path, scope);
+                        }
+                    }
+                }
                 // PRD §4 (privacy): a `@[sensitive]` value may not cross the
                 // program boundary. Catches an arg to an EXFILTRATION sink — an
                 // AI call (to a model), `write_file` (to disk), or `exec` (to a
@@ -2996,6 +3005,11 @@ impl CheckCtx {
                     op,
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
                 ) {
+                    // R13 E1803: arithmetic on a native handle is forbidden
+                    // (opaque, unforgeable). Checked BEFORE check_numeric_operand,
+                    // which short-circuits on Deferred (handles are Deferred).
+                    self.check_handle_not_arithmetic(&lty, &lpath, "used in arithmetic");
+                    self.check_handle_not_arithmetic(&rty, &rpath, "used in arithmetic");
                     self.check_numeric_operand(&lty, &lpath);
                     self.check_numeric_operand(&rty, &rpath);
                 }
@@ -3038,6 +3052,8 @@ impl CheckCtx {
                 self.check_not_option_used_as_value(&ty, &opath);
                 // Fix #14: unary negation requires a numeric operand.
                 if matches!(op, UnaryOp::Neg) {
+                    // R13 E1803: cannot negate a native handle.
+                    self.check_handle_not_arithmetic(&ty, &opath, "used in arithmetic");
                     self.check_numeric_operand(&ty, &opath);
                 }
                 // `Not` already constrained to Bool via inference.
@@ -3182,6 +3198,10 @@ impl CheckCtx {
                 // E0402. Skip Unknown/Var/Deferred (let inference own those) and
                 // tuples (those are accessed via `.0`/`.1`, reported elsewhere).
                 let recv_ty = self.resolve_expr_type(receiver, &recv_path, scope);
+                // R13 E1803: indexing a native handle is forging — forbidden.
+                // (Checked before the `is_deferred()` indexable short-circuit,
+                // which would otherwise silently accept `handle[i]`.)
+                self.check_handle_not_arithmetic(&recv_ty, &recv_path, "indexed");
                 let indexable = matches!(recv_ty, Type::Slice(_))
                     || recv_ty.is_deferred()
                     || matches!(recv_ty, Type::Unknown | Type::Var(_));
@@ -3498,6 +3518,126 @@ impl CheckCtx {
     // ─────────────────────────────────────────────────────────────────────────
     // Fix #4 — arithmetic operands must be numeric
     // ─────────────────────────────────────────────────────────────────────────
+
+    /// R13 E1803: a native `Handle` is opaque — it cannot be constructed,
+    /// indexed, or used in arithmetic. Fires when an operand at an arithmetic /
+    /// index / negation site resolves to a native handle carrier. This is what
+    /// makes a handle UNFORGEABLE at the surface: there is no operation that
+    /// turns an i64 into a handle or pulls an index out of one.
+    fn check_handle_not_arithmetic(&mut self, ty: &Type, node_path: &str, verb: &str) {
+        if crate::native::is_native_handle(ty) {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    crate::error::E1803,
+                    format!(
+                        "`Handle` is opaque — it cannot be {verb}; a native handle is an \
+                         unforgeable token, not a number"
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0)
+                .fix(
+                    "pass the handle to the native function that consumes or borrows it; \
+                     do not do arithmetic on it"
+                        .to_string(),
+                ),
+            );
+        }
+    }
+
+    /// R13: validate the arguments of a native `M::fn(...)` call against its
+    /// FFI signature. Emits E1801 (a non-FFI-representable arg type) and E1802
+    /// (a handle from a different module than the param expects). Arity is
+    /// checked too (reusing the generic too-few/too-many message shape).
+    fn check_native_call_args(
+        &mut self,
+        nf: &crate::native::NativeFn,
+        args: &[Expr],
+        node_path: &str,
+        scope: &mut HashMap<String, Type>,
+    ) {
+        let file = self.file.clone();
+        if args.len() != nf.params.len() {
+            self.errors.push(
+                CheckError::new(
+                    crate::error::E1801,
+                    format!(
+                        "native fn `{}` takes {} argument(s), but {} were supplied",
+                        nf.name,
+                        nf.params.len(),
+                        args.len()
+                    ),
+                )
+                .node(node_path)
+                .at(&file, 0, 0),
+            );
+            return;
+        }
+        for (i, arg) in args.iter().enumerate() {
+            let apath = format!("{node_path}.arg_{i}");
+            let arg_ty = self.resolve_expr_type(arg, &apath, scope);
+            // Unknown/Var: inference hasn't resolved it — let other passes own it.
+            if matches!(arg_ty, Type::Unknown | Type::Var(_)) {
+                continue;
+            }
+            // E1801: the arg type must be FFI-representable. A user struct,
+            // Option, Result, closure, generic, tuple, etc. is refused HERE at
+            // check time — it never reaches codegen (mirrors E0910).
+            if !crate::native::is_ffi_repr(&arg_ty) {
+                self.errors.push(
+                    CheckError::new(
+                        crate::error::E1801,
+                        format!(
+                            "type `{}` is not FFI-representable at the native boundary \
+                             (allowed: scalars, str, [scalar], Handle)",
+                            arg_ty.display()
+                        ),
+                    )
+                    .node(&apath)
+                    .at(&file, 0, 0)
+                    .found(arg_ty.display())
+                    .fix(
+                        "pass only scalars, str, a [scalar] slice, or a native Handle \
+                         across the FFI boundary"
+                            .to_string(),
+                    ),
+                );
+                continue;
+            }
+            // E1802: a handle arg must be the same module+name the param expects
+            // — handles do not cross modules.
+            let (expected_ty, _mode) = &nf.params[i];
+            let expected = expected_ty.to_type();
+            if crate::native::is_native_handle(&expected) && crate::native::is_native_handle(&arg_ty)
+            {
+                if let (Type::Deferred(ek), Type::Deferred(ak)) = (&expected, &arg_ty) {
+                    if ek != ak {
+                        // Extract a readable B::H / A::H label.
+                        let exp_lbl = crate::native::parse_handle_key(ek)
+                            .map(|(m, n, _)| format!("{m}::{n}"))
+                            .unwrap_or_else(|| ek.clone());
+                        let got_lbl = crate::native::parse_handle_key(ak)
+                            .map(|(m, n, _)| format!("{m}::{n}"))
+                            .unwrap_or_else(|| ak.clone());
+                        self.errors.push(
+                            CheckError::new(
+                                crate::error::E1802,
+                                format!(
+                                    "expected handle `{exp_lbl}`, found `{got_lbl}` — handles \
+                                     do not cross modules"
+                                ),
+                            )
+                            .node(&apath)
+                            .at(&file, 0, 0)
+                            .expected(exp_lbl)
+                            .found(got_lbl),
+                        );
+                    }
+                }
+            }
+        }
+    }
 
     fn check_numeric_operand(&mut self, ty: &Type, node_path: &str) {
         // Skip unknowns, vars, deferred — only fire on concrete non-numeric types.
@@ -4793,6 +4933,15 @@ impl CheckCtx {
                 }
             }
             Expr::Call { callee, .. } => {
+                // R13: a native `M::fn(...)` call resolves to its FFI return type
+                // (the StructLit-callee `::`-name resolves in the registry).
+                if let Expr::StructLit { name, fields } = callee.as_ref() {
+                    if fields.is_empty() {
+                        if let Option::Some((_m, nf)) = crate::native::resolve_call(name) {
+                            return nf.ret.to_type();
+                        }
+                    }
+                }
                 if let Expr::Ident(name) = callee.as_ref() {
                     if let Option::Some(sig) = self.fn_sigs.get(name.as_str()) {
                         if type_contains_unresolved(&sig.ret) {

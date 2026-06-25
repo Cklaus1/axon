@@ -576,6 +576,11 @@ pub struct ContainedSpec {
     pub exec_allowed: bool,
     /// Hard-deny rules that override the allowlists above.
     pub never: Vec<NeverClause>,
+    /// R13 native FFI: names of native modules this fn is granted to call
+    /// (`@[contained(gfx: any)]` → `["gfx"]`). A `gfx::*` call without a
+    /// matching grant here is E1004 (capability acquisition, fail-closed).
+    #[cfg_attr(feature = "serde-json", serde(default))]
+    pub native_grants: Vec<String>,
     pub span: Span,
 }
 

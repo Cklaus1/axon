@@ -83,7 +83,9 @@ impl SourceMap {
         }
         let (line, col) = self.line_col(span.start);
         let line_text = self.line_text(line - 1);
-        let caret_len = (span.end - span.start).max(1);
+        // Defensive: a malformed span (end < start) or a one-past-EOF span must
+        // not panic the diagnostic renderer (saturating, not wrapping).
+        let caret_len = span.end.saturating_sub(span.start).max(1);
         let padding = " ".repeat(col - 1);
         let carets = "^".repeat(caret_len.min(line_text.len().saturating_sub(col - 1) + 1));
         format!("{line:4} │ {line_text}\n     │ {padding}{carets}")

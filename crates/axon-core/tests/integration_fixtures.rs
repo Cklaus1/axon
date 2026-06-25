@@ -1757,3 +1757,114 @@ fn no_alloc_isr_rejects_heap_call_e1704() {
         errors.join("\n")
     );
 }
+
+// ── R13 native FFI acceptance tests (spec §9) ───────────────────────────────
+//
+// These use the FULL check pipeline (`axon_core::check_pipeline`) because the
+// capability gate (E1004) runs there, not in the lighter `check_fixture`
+// harness above. Each maps 1:1 to a §9 acceptance criterion.
+
+fn native_fixture_codes(name: &str) -> Vec<String> {
+    let path = fixtures_dir().join(name);
+    let source =
+        std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
+    axon_core::check_pipeline(&source, &path.display().to_string())
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+/// RED test written FIRST (spec §8/§9): an ungranted `use native::M` call is
+/// E1004. This must FAIL before the gate wiring and PASS after.
+#[test]
+fn native_call_without_capability_is_e1004() {
+    let codes = native_fixture_codes("native_no_cap.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1004"),
+        "ungranted native::gfx call must be E1004, got: {codes:?}"
+    );
+}
+
+/// §9: `native_import_requires_capability` — same property, the §9-named gate.
+#[test]
+fn native_import_requires_capability() {
+    let codes = native_fixture_codes("native_no_cap.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1004"),
+        "ungranted native import must be E1004, got: {codes:?}"
+    );
+}
+
+/// §9: `non_ffi_repr_arg_refused` — a user struct arg at the native boundary is
+/// E1801 at check time (never reaches codegen).
+#[test]
+fn non_ffi_repr_arg_refused() {
+    let codes = native_fixture_codes("native_nonrepr_arg.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1801"),
+        "non-FFI-representable arg must be E1801, got: {codes:?}"
+    );
+}
+
+/// §9: `handle_is_unforgeable` (static half) — arithmetic on a handle is E1803.
+/// The runtime half (graceful Err on a bad handle, never a segfault) is covered
+/// by the `native::tests::gfx_mock_*` unit tests.
+#[test]
+fn handle_is_unforgeable_arithmetic_is_e1803() {
+    let codes = native_fixture_codes("native_handle_arith.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1803"),
+        "arithmetic on a native handle must be E1803, got: {codes:?}"
+    );
+}
+
+/// §4/§5: a resource handle used after being consumed is a COMPILE-TIME borrow
+/// error (E0601), not a runtime liveness check (I-5).
+#[test]
+fn native_use_after_consume_is_e0601() {
+    let codes = native_fixture_codes("native_use_after_consume.ax");
+    assert!(
+        codes.iter().any(|c| c == "E0601"),
+        "use-after-consume of a native handle must be E0601, got: {codes:?}"
+    );
+}
+
+/// §4: a handle of module/type A passed where B's is expected is E1802.
+#[test]
+fn native_cross_module_handle_is_e1802() {
+    let codes = native_fixture_codes("native_cross_module.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1802"),
+        "cross-type handle must be E1802, got: {codes:?}"
+    );
+}
+
+/// §6: `use native::M` for an unregistered module is E1800.
+#[test]
+fn native_unknown_module_is_e1800() {
+    let codes = native_fixture_codes("native_unknown_module.ax");
+    assert!(
+        codes.iter().any(|c| c == "E1800"),
+        "unknown native module must be E1800, got: {codes:?}"
+    );
+}
+
+/// §9: a correct, granted native program type-checks clean (no native FFI
+/// diagnostics).
+#[test]
+fn native_ok_program_is_clean() {
+    let codes = native_fixture_codes("native_ok.ax");
+    let bad: Vec<&String> = codes
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.as_str(),
+                "E1004" | "E1800" | "E1801" | "E1802" | "E1803" | "E0601"
+            )
+        })
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "a correct granted native program must be clean, got native errors: {bad:?} (all: {codes:?})"
+    );
+}

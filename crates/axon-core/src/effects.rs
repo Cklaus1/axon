@@ -255,6 +255,14 @@ fn infer_effects(program: &Program) -> HashMap<String, HashSet<String>> {
                         acc.insert((*eff).to_string());
                     }
                 }
+                // R13: native `M::fn` calls contribute module `M`'s effects.
+                if let Some((m, _f)) = crate::native::resolve_call(name) {
+                    for eff in m.effects {
+                        if !handled.contains(*eff) {
+                            acc.insert((*eff).to_string());
+                        }
+                    }
+                }
                 if let Some(callee_set) = inferred.get(name) {
                     for eff in callee_set {
                         if !handled.contains(eff) {
@@ -644,8 +652,17 @@ fn collect_called_names_ctx(
     out: &mut Vec<(String, HashSet<String>)>,
 ) {
     if let Expr::Call { callee, .. } = e {
-        if let Expr::Ident(name) = callee.as_ref() {
-            out.push((name.clone(), handled.clone()));
+        match callee.as_ref() {
+            Expr::Ident(name) => out.push((name.clone(), handled.clone())),
+            // R13: a native `M::fn(...)` call — record the qualified name so the
+            // effect-inference fixpoint attributes module `M`'s effects to the
+            // caller (resolved by `callee_effects` / `infer_effects`).
+            Expr::StructLit { name, fields }
+                if fields.is_empty() && crate::native::is_native_call(name) =>
+            {
+                out.push((name.clone(), handled.clone()))
+            }
+            _ => {}
         }
     }
     if let Expr::WithHandler { handler, body } = e {
@@ -756,6 +773,10 @@ fn callee_effects(callee: &str, inferred: &HashMap<String, HashSet<String>>) -> 
     if !builtin.is_empty() {
         return builtin.iter().map(|s| s.to_string()).collect();
     }
+    // R13: a native `M::fn` call carries module `M`'s declared effects.
+    if let Some((m, _f)) = crate::native::resolve_call(callee) {
+        return m.effects.iter().map(|s| s.to_string()).collect();
+    }
     if let Some(set) = inferred.get(callee) {
         return set.iter().cloned().collect();
     }
@@ -814,6 +835,29 @@ fn check_expr(
                         ),
                         span: Span::dummy(),
                     });
+                }
+            }
+        } else if let Expr::StructLit { name, fields } = callee.as_ref() {
+            // R13: a native `M::fn(...)` call contributes module `M`'s declared
+            // effects (e.g. gfx → IO) to the caller's required row — an
+            // un-annotated/closed-row caller that does not admit them is E1310
+            // (the Phase-6 effect bridge, no new mechanism).
+            if fields.is_empty() {
+                if let Some((m, _f)) = crate::native::resolve_call(name) {
+                    for eff in m.effects {
+                        if !allowed.admits(eff) && !handled.contains(*eff) {
+                            errors.push(EffectError {
+                                code: E1310,
+                                message: format!(
+                                    "`{caller}` calls `{name}` (native module `{}`), which \
+                                     performs effect `{eff}`, but `{caller}`'s declared effect \
+                                     row does not include `{eff}` (add `{eff}` to the row)",
+                                    m.name
+                                ),
+                                span: Span::dummy(),
+                            });
+                        }
+                    }
                 }
             }
         }

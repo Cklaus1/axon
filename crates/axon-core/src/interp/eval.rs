@@ -338,6 +338,11 @@ impl<'p> Interp<'p> {
                     if name.starts_with("chan::<") {
                         return Ok(Value::Chan(Rc::new(RefCell::new(VecDeque::new()))));
                     }
+                    // R13 native FFI: a native `M::fn(...)` call dispatches to the
+                    // in-process mock shim (one impl, two engines — I-2).
+                    if crate::native::is_native_call(name) {
+                        return self.eval_native_call(name, args, env);
+                    }
                 }
                 self.eval_call(callee, args, tier.as_deref(), env)
             }
@@ -658,6 +663,86 @@ impl<'p> Interp<'p> {
         }
         env.pop();
         Ok(LoopStep::Continue)
+    }
+
+    /// R13 native FFI: dispatch a `M::fn(...)` call to the in-process native
+    /// shim. Evaluates args, marshals them across the boundary (extracting
+    /// handle payloads — never raw pointers), dispatches to the registered Rust
+    /// impl, and wraps the result. A bad/forged/consumed handle returns a
+    /// graceful panic (exit 101, I-4), NEVER a host abort. v1 has one module:
+    /// the GPU-free `gfx` mock.
+    fn eval_native_call(&self, qualified: &str, args: &[Expr], env: &mut Env) -> R {
+        let (module, nf) = match crate::native::resolve_call(qualified) {
+            Some(pair) => pair,
+            None => return panic(format!("call to unknown native function `{qualified}`")),
+        };
+        // Evaluate args left-to-right.
+        let mut argv = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(self.eval(a, env)?);
+        }
+        // Marshal each Value to a GfxArg. A handle is unwrapped to its payload
+        // index, and its module/name are verified against the param's expected
+        // handle type (runtime defense in depth beneath the static E1802 check).
+        let mut margs = Vec::with_capacity(argv.len());
+        for (i, v) in argv.iter().enumerate() {
+            let expected = nf.params.get(i).map(|(t, _)| t);
+            let marshalled = match v {
+                Value::Int(n) => crate::native::GfxArg::Int(*n),
+                Value::SizedInt { val, .. } => crate::native::GfxArg::Int(*val),
+                Value::Float(f) => crate::native::GfxArg::Float(*f),
+                Value::Str(s) => crate::native::GfxArg::Str(s.clone()),
+                Value::Handle {
+                    module: hm,
+                    name: hn,
+                    payload,
+                    ..
+                } => {
+                    // Verify the handle belongs to the expected module+name.
+                    if let Some(crate::native::FfiType::Handle {
+                        module: em,
+                        name: en,
+                        ..
+                    }) = expected
+                    {
+                        if hm != em || hn != en {
+                            return panic(format!(
+                                "native::{} expected handle `{em}::{en}`, found `{hm}::{hn}`",
+                                module.name
+                            ));
+                        }
+                    }
+                    crate::native::GfxArg::Handle(*payload)
+                }
+                other => {
+                    return panic(format!(
+                        "native::{} arg {i} is not FFI-representable at runtime ({})",
+                        module.name,
+                        other.type_name()
+                    ));
+                }
+            };
+            margs.push(marshalled);
+        }
+        // Dispatch to the module's mock backend. v1: only `gfx`.
+        let result = match module.name {
+            "gfx" => self.gfx_mock.borrow_mut().dispatch(nf.name, &margs),
+            _ => Err(format!("native module `{}` has no interp backend", module.name)),
+        };
+        match result {
+            Ok(crate::native::GfxValue::Unit) => Ok(Value::Unit),
+            Ok(crate::native::GfxValue::Int(n)) => Ok(Value::Int(n)),
+            Ok(crate::native::GfxValue::Handle { name, payload }) => Ok(Value::Handle {
+                module: module.name.to_string(),
+                name: name.to_string(),
+                payload,
+                resource: matches!(
+                    nf.ret,
+                    crate::native::FfiType::Handle { resource: true, .. }
+                ),
+            }),
+            Err(msg) => panic(msg),
+        }
     }
 
     pub(super) fn eval_call(

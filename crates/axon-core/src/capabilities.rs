@@ -182,6 +182,22 @@ pub fn check_capabilities(program: &Program) -> Vec<CapabilityError> {
             }
         }
     }
+    // R13 native FFI: the import/call capability gate (fail-closed, I-11). Any
+    // fn whose body calls a native module `M::*` must declare a matching
+    // `@[contained(M: …)]` grant; an ungranted call is E1004. This is checked
+    // per-fn on the DIRECT call sites: a helper that hides a `gfx::*` call is
+    // itself ungranted → E1004 on the helper (no laundering past the boundary).
+    for item in &program.items {
+        match item {
+            Item::FnDef(f) => check_native_grants(f, &mut errors),
+            Item::ImplBlock(b) => {
+                for m in &b.methods {
+                    check_native_grants(m, &mut errors);
+                }
+            }
+            _ => {}
+        }
+    }
     for item in &program.items {
         match item {
             Item::FnDef(fndef) => check_fn(fndef, &fn_map, &method_map, &mut errors),
@@ -225,6 +241,41 @@ fn check_fn<'a>(
         errors,
     };
     check_expr(&fndef.body, &mut ctx);
+}
+
+/// R13 native FFI: enforce that every native `M::*` call in `fndef`'s body is
+/// covered by a `@[contained(M: …)]` grant on this fn (E1004, fail-closed).
+/// Reuses the single exhaustive, laundering-closed `collect_caps_expr` walker
+/// (which records native calls as `native:M`), so there is no second walk to
+/// drift out of sync.
+fn check_native_grants(fndef: &FnDef, errors: &mut Vec<CapabilityError>) {
+    let mut caps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    collect_caps_expr(&fndef.body, &mut caps);
+    let called: Vec<&str> = caps
+        .iter()
+        .filter_map(|c| c.strip_prefix("native:"))
+        .collect();
+    if called.is_empty() {
+        return;
+    }
+    let granted: std::collections::BTreeSet<&str> = fndef
+        .contained
+        .as_ref()
+        .map(|s| s.native_grants.iter().map(String::as_str).collect())
+        .unwrap_or_default();
+    for module in called {
+        if !granted.contains(module) {
+            errors.push(CapabilityError::new(
+                E1004,
+                format!(
+                    "`native::{module}` requires a `{module}` capability grant — add \
+                     `@[contained({module}: any)]` to `{}` to permit it",
+                    fndef.name
+                ),
+                fndef.span,
+            ));
+        }
+    }
 }
 
 /// Threaded state for the transitive `@[contained]` walk: the spec being
@@ -405,6 +456,13 @@ fn collect_caps_expr(expr: &Expr, caps: &mut std::collections::BTreeSet<String>)
             if let Some(n) = name {
                 if let Some(kind) = classify_call(n) {
                     caps.insert(cap_label(&kind).to_string());
+                }
+                // R13: a native `M::*` call is a capability — record it as
+                // `native:M` so the import-edge (E1203) and grant (E1004) checks
+                // both see it through this single exhaustive, laundering-closed
+                // walker.
+                if let Some((m, _f)) = crate::native::resolve_call(n) {
+                    caps.insert(format!("native:{}", m.name));
                 }
             }
             collect_caps_expr(callee, caps);
@@ -1011,6 +1069,7 @@ mod tests {
             net_allow: Vec::new(),
             exec_allowed: false,
             never,
+            native_grants: Vec::new(),
             span: Span::dummy(),
         }
     }
@@ -1023,6 +1082,7 @@ mod tests {
             net_allow: net_allow.into_iter().map(String::from).collect(),
             exec_allowed: false,
             never: Vec::new(),
+            native_grants: Vec::new(),
             span: Span::dummy(),
         }
     }

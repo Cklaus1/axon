@@ -1,0 +1,6 @@
+use native::gfx
+fn main() -> i64 {
+    let win = gfx::window_open(1, 1, "x")
+    gfx::window_close(win)
+    0
+}

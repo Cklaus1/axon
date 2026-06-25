@@ -1,0 +1,8 @@
+use native::gfx
+@[contained(gfx: any)]
+fn main() -> i64 {
+    let win = gfx::window_open(1, 1, "x")
+    gfx::clear(win, 0.1, 0.1, 0.1, 1.0)
+    gfx::window_close(win)
+    0
+}

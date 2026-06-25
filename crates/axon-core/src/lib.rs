@@ -20,6 +20,9 @@ pub mod lexer;
 pub mod lockfile;
 /// Graduated-pass manifest (R10): multi-sig graduation gate + format.
 pub mod manifest;
+/// R13 native FFI: the curated native-module registry (single source of truth
+/// shared by resolver/infer/checker/borrow/effects/codegen/interp).
+pub mod native;
 pub mod parser;
 pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
@@ -533,6 +536,12 @@ pub fn resolve_use_files(
         if u.path.is_empty() {
             continue;
         }
+        // R13: `use native::M` is a curated native-module import, not a `.ax`
+        // file — it is resolved by the in-compiler registry (and gated by
+        // E1800/E1004), never loaded from AXON_PATH. Skip it here.
+        if u.path.first().map(String::as_str) == Some("native") {
+            continue;
+        }
         let name = u.path.join("::");
         // `a::b::c` → `a/b/c.ax`.
         let mut rel = std::path::PathBuf::new();
@@ -599,6 +608,10 @@ pub fn resolve_use_files_transitive(
         use_names(program).into_iter().collect();
 
     while let Some(use_path) = queue.pop_front() {
+        // R13: `use native::M` is a registry import, not a `.ax` file — skip.
+        if use_path.first().map(String::as_str) == Some("native") {
+            continue;
+        }
         let name = use_path.join("::");
         if !seen.insert(name.clone()) {
             continue; // already resolved (diamond / cycle)
@@ -661,6 +674,12 @@ fn load_module_recursive(
     loaded_items: &mut Vec<ast::Item>,
     errors: &mut Vec<MergeError>,
 ) {
+    // R13: `use native::M` is a curated registry import, not a `.ax` file — it
+    // is never loaded/merged from disk (the registry + E1800/E1004 own it).
+    if use_path.first().map(String::as_str) == Some("native") {
+        return;
+    }
+
     let path_str = use_path.join("::");
 
     // Already fully loaded — nothing to do.

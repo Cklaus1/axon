@@ -620,6 +620,7 @@ impl Parser {
             net_allow: Vec::new(),
             exec_allowed: false,
             never: Vec::new(),
+            native_grants: Vec::new(),
             span: crate::span::Span::dummy(),
         };
 
@@ -703,9 +704,30 @@ impl Parser {
                     }
                     self.expect(&Token::RBracket)?;
                 }
+                // R13 native FFI: a native-module grant — `gfx: any` or
+                // `gfx: [present, clear]` (subcap list; v1 records the module
+                // name only, sub-cap attenuation is deferred per spec §5). Any
+                // other key is an unknown clause.
+                _ if crate::native::module(&key).is_some() => {
+                    self.expect(&Token::Colon)?;
+                    if self.at(&Token::LBracket) {
+                        // Subcap list: consume idents but only record the module.
+                        self.expect(&Token::LBracket)?;
+                        while !self.at(&Token::RBracket) {
+                            let _subcap = self.expect_ident()?;
+                            self.eat(&Token::Comma);
+                        }
+                        self.expect(&Token::RBracket)?;
+                    } else {
+                        // `gfx: any` (or any bare ident shorthand).
+                        let _grant = self.expect_ident()?;
+                    }
+                    spec.native_grants.push(key.clone());
+                }
                 _ => {
                     return Err(ParseError::Other(format!(
-                        "@[contained] unknown clause `{key}`, expected fs/net/exec/never"
+                        "@[contained] unknown clause `{key}`, expected fs/net/exec/never \
+                         or a registered native module (e.g. gfx)"
                     )));
                 }
             }

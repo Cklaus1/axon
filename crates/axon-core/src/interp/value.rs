@@ -870,6 +870,9 @@ pub(super) fn display(v: &Value) -> String {
                 .collect();
             format!("{{{}}}", parts.join(", "))
         }
+        // R13: a handle is opaque — render its nominal identity, never its
+        // payload index (which is an internal slab slot, not user-meaningful).
+        Value::Handle { module, name, .. } => format!("<native {module}::{name}>"),
     }
 }
 

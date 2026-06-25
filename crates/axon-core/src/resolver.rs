@@ -643,6 +643,38 @@ impl<'a> Resolver<'a> {
     }
 
     fn resolve_use(&mut self, u: &UseDecl) {
+        // R13 native FFI: `use native::M` imports a curated native module. The
+        // root `native` is not an ordinary module symbol — validate against the
+        // native registry instead. An unregistered module name is E1800; the
+        // capability/effect gate (E1004/E1310) is enforced by the checker.
+        if u.path.first().map(String::as_str) == Some("native") {
+            match u.path.get(1) {
+                Some(m) if crate::native::module(m).is_some() => {}
+                Some(m) => {
+                    self.emit_error(
+                        Diagnostic::error(
+                            crate::error::E1800,
+                            format!(
+                                "unknown native module `{m}` — no shim crate registered under \
+                                 that name"
+                            ),
+                        )
+                        .with_file(self.file),
+                    );
+                }
+                None => {
+                    self.emit_error(
+                        Diagnostic::error(
+                            crate::error::E1800,
+                            "`use native::M` requires a module name (e.g. `use native::gfx`)"
+                                .to_string(),
+                        )
+                        .with_file(self.file),
+                    );
+                }
+            }
+            return;
+        }
         // The first element of `path` must name a known module.
         if let Some(root) = u.path.first() {
             match self.table.lookup(root) {

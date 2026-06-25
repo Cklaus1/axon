@@ -872,6 +872,27 @@ impl InferCtx {
                     }
                 }
 
+                // R13 native FFI: `M::fn(...)` (a StructLit-callee call whose
+                // `::`-joined name resolves in the native registry). Constrain
+                // each arg to its FFI param type and return the FFI return type.
+                // Cross-module handle mismatch (E1802) and non-representable args
+                // (E1801) are diagnosed in the checker; here we just thread types.
+                if let Some(ref name) = fn_name {
+                    if let Some((_m, nf)) = crate::native::resolve_call(name) {
+                        for (i, arg) in args.iter().enumerate() {
+                            let arg_ty = self.infer_expr(arg, scope, ret_ty);
+                            if let Some((pty, _mode)) = nf.params.get(i) {
+                                self.constrain(
+                                    arg_ty,
+                                    pty.to_type(),
+                                    "native FFI argument",
+                                );
+                            }
+                        }
+                        return nf.ret.to_type();
+                    }
+                }
+
                 // Handle `ai_extract::<T>(prompt)` lowered form (Layer-3 ASI):
                 //   "ai_extract::<T>" → Result<T, str>, taking a single str arg.
                 // Mirrors the chan decode just above.  v1 T set is enforced

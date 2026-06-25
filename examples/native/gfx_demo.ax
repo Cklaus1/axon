@@ -1,0 +1,31 @@
+// R13 native FFI — the GPU-FREE `native::gfx` mock round-trip.
+//
+// `native::gfx` is a mock shim (an in-memory frame counter, NO wgpu/winit/GPU)
+// that proves the dual-engine FFI boundary end-to-end: `window_open` returns an
+// opaque affine resource Handle; `surface` borrows it and returns a Surface
+// handle; `clear`/`present` are effectful calls borrowing the surface;
+// `frame_count` is a pure value-returning probe; the `*_close` calls CONSUME
+// the handles (the affine drop sites — a use-after-consume would be E0601 at
+// compile time). The `@[contained(gfx: any)]` grant is REQUIRED: without it the
+// `gfx::*` calls are E1004 (capability acquisition, fail-closed).
+//
+// Lives in examples/native/ (a subdir) so the examples/*.ax parity sweeps do
+// not try to build it standalone — native modules link a shim, like the
+// host_await examples in examples/interactive/.
+
+use native::gfx
+
+@[contained(gfx: any)]
+fn main() -> i64 {
+    let win = gfx::window_open(800, 600, "axon")
+    let surf = gfx::surface(win)
+    gfx::clear(surf, 0.1, 0.1, 0.12, 1.0)
+    gfx::present(surf)
+    gfx::clear(surf, 0.2, 0.2, 0.20, 1.0)
+    gfx::present(surf)
+    let frames = gfx::frame_count(surf)
+    println("rendered {to_str(frames)} frame(s)")
+    gfx::surface_close(surf)
+    gfx::window_close(win)
+    frames
+}

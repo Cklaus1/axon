@@ -56,6 +56,11 @@ enum BindingState {
 
 /// Types that are `Copy` — assignment copies the value instead of moving it.
 fn is_copy(ty: &Type) -> bool {
+    // R13: a native *value* handle (`resource = false`) is Copy; a *resource*
+    // handle is affine (NOT Copy) so use-after-consume is E0601 at compile time.
+    if crate::native::is_native_handle(ty) {
+        return !crate::native::is_resource_handle(ty);
+    }
     matches!(
         ty,
         Type::I8
@@ -83,6 +88,19 @@ fn infer_expr_type(expr: &Expr, known: &HashMap<String, Type>) -> Option<Type> {
         Expr::Literal(crate::ast::Literal::Str(_)) => Some(Type::Str),
         Expr::Ident(name) => known.get(name).cloned(),
         Expr::StructLit { name, .. } => Some(Type::Struct(name.clone())),
+        // R13: a native `M::fn(...)` call binds its FFI return type — a resource
+        // handle is non-Copy here, so `let win = gfx::window_open(...)` makes
+        // `win` affine and use-after-consume is E0601 at compile time.
+        Expr::Call { callee, .. } => {
+            if let Expr::StructLit { name, fields } = callee.as_ref() {
+                if fields.is_empty() {
+                    if let Some((_m, nf)) = crate::native::resolve_call(name) {
+                        return Some(nf.ret.to_type());
+                    }
+                }
+            }
+            None
+        }
         Expr::BinOp { left, .. } => infer_expr_type(left, known),
         Expr::Comptime(inner) => infer_expr_type(inner, known),
         Expr::Block(stmts) if !stmts.is_empty() => {
@@ -300,8 +318,31 @@ impl OwnershipGraph {
 
             Expr::Call { callee, args, .. } => {
                 self.check_read(callee);
-                for arg in args {
-                    self.check_read(arg);
+                // R13: a native `M::fn(...)` consumes resource-handle args passed
+                // in `Move` mode (e.g. `window_close(win)`) — this is the affine
+                // drop site. A `Borrow` (ref) param leaves the owner valid. A
+                // later use of a consumed handle is the existing E0601 move check.
+                let native = if let Expr::StructLit { name, fields } = callee.as_ref() {
+                    if fields.is_empty() {
+                        crate::native::resolve_call(name).map(|(_m, nf)| nf)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                for (i, arg) in args.iter().enumerate() {
+                    let consumes = native
+                        .and_then(|nf| nf.params.get(i))
+                        .map(|(_ty, mode)| *mode == crate::native::ParamMode::Move)
+                        .unwrap_or(false);
+                    if consumes {
+                        // Move position: consume the arg (only matters for a
+                        // non-Copy resource handle; Copy args are no-ops).
+                        self.check_move_expr(arg);
+                    } else {
+                        self.check_read(arg);
+                    }
                 }
             }
 

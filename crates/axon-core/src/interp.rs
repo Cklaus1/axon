@@ -86,6 +86,18 @@ pub enum Value {
     /// (not arbitrary `Value`) — covers 95% of ASI use cases without
     /// requiring `Hash + Eq` on the full Value enum.
     Dict(Rc<RefCell<std::collections::BTreeMap<String, Value>>>),
+    /// R13 native FFI: an opaque, affine native `Handle` = `{tag, payload}`
+    /// where `payload` indexes a per-module handle table — NEVER a raw pointer,
+    /// so Axon cannot forge a native pointer (I-4/I-11). `module`/`name` give
+    /// nominal identity (`gfx::Window` ≠ `gfx::Surface`); `resource` marks an
+    /// affine handle (consumed by a consuming native fn). The handle is opaque
+    /// at the surface — no field access, no arithmetic (E1803).
+    Handle {
+        module: String,
+        name: String,
+        payload: i64,
+        resource: bool,
+    },
 }
 
 impl Value {
@@ -106,6 +118,7 @@ impl Value {
             Value::Chan(_) => "chan".into(),
             Value::Tuple(_) => "tuple".into(),
             Value::Dict(_) => "dict".into(),
+            Value::Handle { module, name, .. } => format!("{module}::{name}"),
         }
     }
 }
@@ -471,6 +484,12 @@ pub struct Interp<'p> {
     /// pipeline built with the `smt` feature), keeping the default run path
     /// byte-identical to pre-discharge behaviour.
     discharged: crate::verify::Discharged,
+    /// R13 native FFI: the GPU-FREE `native::gfx` mock's in-process state — a
+    /// per-module handle table + a frame counter. The shim is in-memory (no
+    /// wgpu/winit/GPU); this is the interp-side realization of the dual-engine
+    /// boundary (the codegen side links the `axon-rt` mock symbols, byte-
+    /// identical observable behaviour for the value-returning calls).
+    gfx_mock: RefCell<crate::native::GfxMock>,
 }
 
 /// One active effect-handler frame: the inline-handler arms in scope for the
@@ -951,6 +970,15 @@ impl SendValue {
                 SendValue::Dict(out)
             }
             Value::Chan(_) => {
+                return Err(UnsendablePayload {
+                    path: if path.is_empty() { "<root>".to_string() } else { path },
+                });
+            }
+            // R13: a native handle is identity-bound to the in-process handle
+            // table (like a Chan) — it cannot cross a suspend boundary. Refuse
+            // rather than corrupt (the table index would be meaningless on the
+            // other side).
+            Value::Handle { .. } => {
                 return Err(UnsendablePayload {
                     path: if path.is_empty() { "<root>".to_string() } else { path },
                 });
@@ -1499,6 +1527,7 @@ impl<'p> Interp<'p> {
             active_sandbox: Cell::new(-1),
             refine_preds,
             discharged: crate::verify::Discharged::default(),
+            gfx_mock: RefCell::new(crate::native::GfxMock::new()),
         }
     }
 

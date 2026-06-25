@@ -1,0 +1,2 @@
+use native::nope
+fn main() -> i64 { 0 }
