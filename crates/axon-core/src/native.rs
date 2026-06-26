@@ -158,9 +158,9 @@ const GFX_FNS: &[NativeFn] = &[
         name: "window_open",
         symbol: "__axon_gfx_window_open",
         params: &[
-            (FfiType::I64, ParamMode::Move),  // width
-            (FfiType::I64, ParamMode::Move),  // height
-            (FfiType::Str, ParamMode::Move),  // title
+            (FfiType::I64, ParamMode::Move), // width
+            (FfiType::I64, ParamMode::Move), // height
+            (FfiType::Str, ParamMode::Move), // title
         ],
         ret: FfiType::Handle {
             module: "gfx",
@@ -270,8 +270,216 @@ const GFX: NativeModule = NativeModule {
     functions: GFX_FNS,
 };
 
-/// All registered native modules. v1: just the GPU-free `gfx` mock.
-pub const MODULES: &[&NativeModule] = &[&GFX];
+// ── R22 — domain-interop native modules ──────────────────────────────────────
+//
+// `native::modbus` (industrial), `native::fhir` (healthtech), `native::fix`
+// (fintech). Built on the SAME registry machinery as `gfx`: a row here wires
+// capability gating (E1004), the effect row (E1310), infer, the checker, and
+// the borrow checker automatically. The impls live in the `axon-domain` crate
+// (interp-only — codegen E0910-refuses the network ones; see `is_codegen_refused`).
+//
+// `modbus`/`fhir` declare `Net` (they open TCP / make HTTP requests) so an
+// un-annotated caller must add `@[contained(modbus: any, net: ["host"])]`;
+// `fix` is a pure codec and declares no effect.
+
+const CONN: FfiType = FfiType::Handle {
+    module: "modbus",
+    name: "Conn",
+    resource: true,
+};
+
+const MODBUS_FNS: &[NativeFn] = &[
+    NativeFn {
+        name: "modbus_connect",
+        symbol: "__axon_modbus_connect",
+        params: &[
+            (FfiType::Str, ParamMode::Move), // host
+            (FfiType::I64, ParamMode::Move), // port
+        ],
+        ret: CONN,
+    },
+    NativeFn {
+        name: "modbus_read_holding",
+        symbol: "__axon_modbus_read_holding",
+        params: &[
+            (CONN, ParamMode::Borrow),
+            (FfiType::I64, ParamMode::Move), // addr
+            (FfiType::I64, ParamMode::Move), // count
+        ],
+        ret: FfiType::SliceI64,
+    },
+    NativeFn {
+        name: "modbus_write_register",
+        symbol: "__axon_modbus_write_register",
+        params: &[
+            (CONN, ParamMode::Borrow),
+            (FfiType::I64, ParamMode::Move), // addr
+            (FfiType::I64, ParamMode::Move), // val
+        ],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "modbus_read_coils",
+        symbol: "__axon_modbus_read_coils",
+        params: &[
+            (CONN, ParamMode::Borrow),
+            (FfiType::I64, ParamMode::Move),
+            (FfiType::I64, ParamMode::Move),
+        ],
+        ret: FfiType::SliceI64,
+    },
+    NativeFn {
+        name: "modbus_write_coil",
+        symbol: "__axon_modbus_write_coil",
+        params: &[
+            (CONN, ParamMode::Borrow),
+            (FfiType::I64, ParamMode::Move),
+            (FfiType::I64, ParamMode::Move), // on (0/1)
+        ],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "modbus_close",
+        symbol: "__axon_modbus_close",
+        params: &[(CONN, ParamMode::Move)], // consumes the connection
+        ret: FfiType::Unit,
+    },
+];
+
+const MODBUS: NativeModule = NativeModule {
+    name: "modbus",
+    capability: "modbus",
+    effects: &["Net"],
+    functions: MODBUS_FNS,
+};
+
+const FHIR_CONN: FfiType = FfiType::Handle {
+    module: "fhir",
+    name: "FhirConn",
+    resource: true,
+};
+
+const FHIR_FNS: &[NativeFn] = &[
+    NativeFn {
+        name: "fhir_connect",
+        symbol: "__axon_fhir_connect",
+        params: &[(FfiType::Str, ParamMode::Move)], // base_url
+        ret: FHIR_CONN,
+    },
+    NativeFn {
+        name: "fhir_read",
+        symbol: "__axon_fhir_read",
+        params: &[
+            (FHIR_CONN, ParamMode::Borrow),
+            (FfiType::Str, ParamMode::Move), // resource type
+            (FfiType::Str, ParamMode::Move), // id
+        ],
+        ret: FfiType::Str, // the JSON body (PHI — pair with the Secret lattice)
+    },
+    NativeFn {
+        name: "fhir_search",
+        symbol: "__axon_fhir_search",
+        params: &[
+            (FHIR_CONN, ParamMode::Borrow),
+            (FfiType::Str, ParamMode::Move), // resource type
+            (FfiType::Str, ParamMode::Move), // query string
+        ],
+        ret: FfiType::Str, // the Bundle JSON
+    },
+    NativeFn {
+        name: "fhir_json_get",
+        symbol: "__axon_fhir_json_get",
+        // Pure dotted-path extract over a JSON string — no network, no handle.
+        params: &[
+            (FfiType::Str, ParamMode::Move), // json
+            (FfiType::Str, ParamMode::Move), // path
+        ],
+        ret: FfiType::Str,
+    },
+    NativeFn {
+        name: "fhir_close",
+        symbol: "__axon_fhir_close",
+        params: &[(FHIR_CONN, ParamMode::Move)],
+        ret: FfiType::Unit,
+    },
+];
+
+const FHIR: NativeModule = NativeModule {
+    name: "fhir",
+    capability: "fhir",
+    effects: &["Net"],
+    functions: FHIR_FNS,
+};
+
+const FIX_MSG: FfiType = FfiType::Handle {
+    module: "fix",
+    name: "FixMsg",
+    resource: true,
+};
+
+const FIX_FNS: &[NativeFn] = &[
+    NativeFn {
+        name: "fix_new_order_single",
+        symbol: "__axon_fix_new_order_single",
+        params: &[
+            (FfiType::Str, ParamMode::Move), // sender comp id
+            (FfiType::Str, ParamMode::Move), // target comp id
+            (FfiType::Str, ParamMode::Move), // clordid
+            (FfiType::Str, ParamMode::Move), // symbol
+            (FfiType::I64, ParamMode::Move), // side (1=Buy 2=Sell)
+            (FfiType::I64, ParamMode::Move), // qty
+            (FfiType::I64, ParamMode::Move), // price
+        ],
+        ret: FfiType::Str, // the SOH-delimited FIX 4.4 message
+    },
+    NativeFn {
+        name: "fix_parse",
+        symbol: "__axon_fix_parse",
+        params: &[(FfiType::Str, ParamMode::Move)],
+        ret: FIX_MSG,
+    },
+    NativeFn {
+        name: "fix_get",
+        symbol: "__axon_fix_get",
+        params: &[
+            (FIX_MSG, ParamMode::Borrow),
+            (FfiType::I64, ParamMode::Move), // tag
+        ],
+        ret: FfiType::Str,
+    },
+    NativeFn {
+        name: "fix_valid",
+        symbol: "__axon_fix_valid",
+        // Pure: 1 if BodyLength+CheckSum check out, else 0. No handle.
+        params: &[(FfiType::Str, ParamMode::Move)],
+        ret: FfiType::I64,
+    },
+    NativeFn {
+        name: "fix_close",
+        symbol: "__axon_fix_close",
+        params: &[(FIX_MSG, ParamMode::Move)],
+        ret: FfiType::Unit,
+    },
+];
+
+const FIX: NativeModule = NativeModule {
+    name: "fix",
+    capability: "fix",
+    effects: &[], // pure codec — no effect row
+    functions: FIX_FNS,
+};
+
+/// All registered native modules: the GPU-free `gfx` mock plus the R22
+/// domain-interop modules (`modbus`/`fhir`/`fix`).
+pub const MODULES: &[&NativeModule] = &[&GFX, &MODBUS, &FHIR, &FIX];
+
+/// R22: is this native module INTERP-ONLY (codegen must E0910-refuse a call to
+/// it)? The domain modules do live network I/O (`modbus`/`fhir`) or are kept
+/// interp-only for a uniform domain story (`fix`) — the `host_await`/native
+/// precedent (sound-by-refusal). `gfx` is the only codegen-lowered module.
+pub fn is_codegen_refused(module: &str) -> bool {
+    matches!(module, "modbus" | "fhir" | "fix")
+}
 
 /// Look up a registered native module by name (the `M` in `use native::M`).
 pub fn module(name: &str) -> Option<&'static NativeModule> {
@@ -493,7 +701,8 @@ mod tests {
         m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
         m.dispatch("present", std::slice::from_ref(&sh)).unwrap();
         assert_eq!(
-            m.dispatch("frame_count", std::slice::from_ref(&sh)).unwrap(),
+            m.dispatch("frame_count", std::slice::from_ref(&sh))
+                .unwrap(),
             GfxValue::Int(2)
         );
         m.dispatch("surface_close", std::slice::from_ref(&sh))

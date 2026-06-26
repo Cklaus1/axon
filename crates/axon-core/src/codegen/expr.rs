@@ -7111,6 +7111,13 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let (_module, nf) = crate::native::resolve_call(qualified)?;
+        // R22: the domain-interop modules (`modbus`/`fhir`/`fix`) are INTERP-ONLY
+        // — they do live network I/O (`modbus`/`fhir`) or are kept interp-only
+        // for a uniform domain story (`fix`). Codegen E0910-refuses them (the
+        // `host_await`/native precedent — sound-by-refusal). Run under `axon run`.
+        if crate::native::is_codegen_refused(_module.name) {
+            return Some(self.refuse_native(qualified, "domain-interop module (interp-only)"));
+        }
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         // The frozen `str`/`[scalar]`/`Handle` aggregate is `{i64, X}`.
@@ -8864,11 +8871,7 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_indirect_call(fn_ty, asm_ptr, &[port_t.into()], "inb")
                             .unwrap();
-                        let i8_result = call
-                            .try_as_basic_value()
-                            .left()
-                            .unwrap()
-                            .into_int_value();
+                        let i8_result = call.try_as_basic_value().left().unwrap().into_int_value();
                         let ext = self
                             .ir
                             .builder
@@ -8895,8 +8898,11 @@ impl<'ctx> super::Codegen<'ctx> {
                                     "atomic_ptr",
                                 )
                                 .unwrap();
-                            let load =
-                                self.ir.builder.build_load(i64_ty, ptr, "atomic_load").unwrap();
+                            let load = self
+                                .ir
+                                .builder
+                                .build_load(i64_ty, ptr, "atomic_load")
+                                .unwrap();
                             if let Some(inst) = load.as_instruction_value() {
                                 inst.set_alignment(8).unwrap();
                                 inst.set_atomic_ordering(ord).unwrap();

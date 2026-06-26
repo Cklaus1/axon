@@ -751,8 +751,122 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
     }
 }
 
+/// Enforce a net `host` against the spec: a `never: [net(...)]` hard-deny
+/// (E1004), then the `net: [...]` allowlist (E1001 when empty or unmatched).
+/// Factored out so BOTH the builtin net calls (`http_get`/`ai_complete`) AND
+/// the R22 native-module connect calls (`modbus_connect`/`fhir_connect`) pin to
+/// the ACTUAL connect host through one mechanism (the `ai-complete host check`
+/// lesson: the net cap checks the real host, not a prompt).
+fn check_net_host(
+    host: &str,
+    call_display: &dyn Fn(&str) -> String,
+    spec: &ContainedSpec,
+    errors: &mut Vec<CapabilityError>,
+) {
+    // 1. never: net check.
+    for clause in &spec.never {
+        if let NeverClause::Net(glob) = clause {
+            if host_matches_glob(host, glob) {
+                errors.push(CapabilityError::new(
+                    E1004,
+                    format!(
+                        "`{}` is forbidden by `never: [net(\"{glob}\")]`\n  \
+                         help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override",
+                        call_display(host)
+                    ),
+                    Span::dummy(),
+                ));
+                return;
+            }
+        }
+    }
+    // 2. Allowlist check.
+    if spec.net_allow.is_empty() {
+        errors.push(CapabilityError::new(
+            E1001,
+            format!(
+                "`{}` is not permitted: no `net: [...]` in @[contained]\n  \
+                 help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)",
+                call_display(host)
+            ),
+            Span::dummy(),
+        ));
+    } else if !spec.net_allow.iter().any(|g| host_matches_glob(host, g)) {
+        errors.push(CapabilityError::new(
+            E1001,
+            format!(
+                "`{}` is not permitted by @[contained] (allowed: {})\n  \
+                 help: Add `\"{host}\"` to the existing `net: [...]` clause",
+                call_display(host),
+                spec.net_allow
+                    .iter()
+                    .map(|g| format!("\"{g}\""))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Span::dummy(),
+        ));
+    }
+}
+
+/// R22: the host literal of a native connect call. A native module that
+/// declares the `Net` effect and whose fn takes a leading `str` host param
+/// (`modbus_connect(host, port)`, `fhir_connect(base_url)`) must pin that host
+/// against the `net` allowlist — reusing the existing host-pinning mechanism.
+/// Returns the host string for such a call (the first str arg, with any
+/// `scheme://` and `:port/path` stripped for a base-URL form), else `None`.
+fn native_net_host(name: &str, args: &[Expr]) -> Option<String> {
+    let (module, _nf) = crate::native::resolve_call(name)?;
+    if !module.effects.contains(&"Net") {
+        return None;
+    }
+    // The host is the first `str` literal arg of a *connect* fn.
+    if !name.ends_with("_connect") {
+        return None;
+    }
+    let lit = match args.first()? {
+        Expr::Literal(crate::ast::Literal::Str(s)) => s.as_str(),
+        // A dynamically-built host can't be statically verified → fail closed.
+        _ => return Some(String::from("\u{0}dynamic")),
+    };
+    Some(host_of(lit))
+}
+
+/// Extract the bare host from a literal that may be a plain host or a base URL
+/// (`http://host:port/path` → `host`).
+fn host_of(s: &str) -> String {
+    let after_scheme = s.split_once("://").map(|(_, rest)| rest).unwrap_or(s);
+    let host_port = after_scheme.split('/').next().unwrap_or(after_scheme);
+    host_port
+        .rsplit_once(':')
+        .map(|(h, _)| h)
+        .unwrap_or(host_port)
+        .to_string()
+}
+
 /// Validate a single I/O call against the spec.
 fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
+    // R22: a native net-connect call pins its host against the `net` allowlist
+    // (the same mechanism as builtin net calls). This runs IN ADDITION to the
+    // `native:M` grant gate (E1004 in `check_native_grants`).
+    if let Some(host) = native_net_host(name, args) {
+        let display_name = name.to_string();
+        if host == "\u{0}dynamic" {
+            let help = if spec.net_allow.is_empty() {
+                "no network capability is granted; add a `net: [\"...\"]` clause and use a LITERAL host"
+            } else {
+                "a dynamically-built host cannot be statically verified against the sandbox; use a literal host"
+            };
+            errors.push(CapabilityError::new(
+                E1001,
+                format!("`{display_name}(<dynamic host>, ...)` is not permitted by @[contained]\n  help: {help}"),
+                Span::dummy(),
+            ));
+        } else {
+            let display = move |h: &str| format!("{display_name}(\"{h}\", ...)");
+            check_net_host(&host, &display, spec, errors);
+        }
+    }
     let kind = match classify_call(name) {
         Some(k) => k,
         None => return, // not an I/O builtin
@@ -941,51 +1055,7 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
                 }
             };
             if let Some(host) = effective_host {
-                // 1. never: net check.
-                for clause in &spec.never {
-                    if let NeverClause::Net(glob) = clause {
-                        if host_matches_glob(host, glob) {
-                            errors.push(CapabilityError::new(
-                                E1004,
-                                format!(
-                                    "`{}` is forbidden by `never: [net(\"{glob}\")]`\n  \
-                                     help: remove the `never: [net(\"{glob}\")]` clause, or remove the network call — a `never` rule is a hard deny that no allowlist can override",
-                                    call_display(host)
-                                ),
-                                Span::dummy(),
-                            ));
-                            return;
-                        }
-                    }
-                }
-                // 2. Allowlist check.
-                if spec.net_allow.is_empty() {
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`{}` is not permitted: no `net: [...]` in @[contained]\n  \
-                             help: Add `net: [\"{host}\"]` to the @[contained(...)] attribute to allow this call (or `net: [\"*.example.com\"]` for a host glob)",
-                            call_display(host)
-                        ),
-                        Span::dummy(),
-                    ));
-                } else if !spec.net_allow.iter().any(|g| host_matches_glob(host, g)) {
-                    errors.push(CapabilityError::new(
-                        E1001,
-                        format!(
-                            "`{}` is not permitted by @[contained] \
-                             (allowed: {})\n  \
-                             help: Add `\"{host}\"` to the existing `net: [...]` clause",
-                            call_display(host),
-                            spec.net_allow
-                                .iter()
-                                .map(|g| format!("\"{g}\""))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        Span::dummy(),
-                    ));
-                }
+                check_net_host(host, &call_display, spec, errors);
             } else {
                 // Dynamic host (a non-AI net call like `http_get(url)` with a
                 // computed URL — AI builtins have a fixed `ai_host`, so they took

@@ -676,6 +676,25 @@ impl<'p> Interp<'p> {
             Some(pair) => pair,
             None => return panic(format!("call to unknown native function `{qualified}`")),
         };
+        // R22: the domain-interop modules (`modbus`/`fhir`/`fix`) marshal through
+        // a richer DomainArg/DomainValue layer (str + [i64] returns), so they
+        // take a separate path. `gfx` keeps the original GfxArg path below.
+        if matches!(module.name, "modbus" | "fhir" | "fix") {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                return self.eval_domain_native_call(module, nf, args, env);
+            }
+            // On the in-browser wasm target the domain backends (TCP/HTTP) are
+            // not available — a clean refusal, never a silent success (I-9).
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = (nf, args, env);
+                return panic(format!(
+                    "native::{} is unavailable on the wasm32 (browser) target",
+                    module.name
+                ));
+            }
+        }
         // Evaluate args left-to-right.
         let mut argv = Vec::with_capacity(args.len());
         for a in args {
@@ -733,12 +752,119 @@ impl<'p> Interp<'p> {
         // Dispatch to the module's mock backend. v1: only `gfx`.
         let result = match module.name {
             "gfx" => self.gfx_mock.borrow_mut().dispatch(nf.name, &margs),
-            _ => Err(format!("native module `{}` has no interp backend", module.name)),
+            _ => Err(format!(
+                "native module `{}` has no interp backend",
+                module.name
+            )),
         };
         match result {
             Ok(crate::native::GfxValue::Unit) => Ok(Value::Unit),
             Ok(crate::native::GfxValue::Int(n)) => Ok(Value::Int(n)),
             Ok(crate::native::GfxValue::Handle { name, payload }) => Ok(Value::Handle {
+                module: module.name.to_string(),
+                name: name.to_string(),
+                payload,
+                resource: matches!(
+                    nf.ret,
+                    crate::native::FfiType::Handle { resource: true, .. }
+                ),
+            }),
+            Err(msg) => panic(msg),
+        }
+    }
+
+    /// R22: dispatch a `modbus::*` / `fhir::*` / `fix::*` call. Marshals
+    /// `Value`→`DomainArg` (handle → its slab-index payload, never a raw
+    /// pointer), dispatches to the in-process `axon-domain` backend, and wraps
+    /// the `DomainValue` result (str, `[i64]`, Int, Unit, Handle). A bad/forged/
+    /// consumed handle → a graceful panic (exit 101, I-4), NEVER a host abort.
+    /// Gated to non-wasm targets (the domain backends are native-host-only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn eval_domain_native_call(
+        &self,
+        module: &'static crate::native::NativeModule,
+        nf: &'static crate::native::NativeFn,
+        args: &[Expr],
+        env: &mut Env,
+    ) -> R {
+        use axon_domain::{DomainArg, DomainValue};
+        // Evaluate args left-to-right.
+        let mut argv = Vec::with_capacity(args.len());
+        for a in args {
+            argv.push(self.eval(a, env)?);
+        }
+        // Marshal each Value to a DomainArg, verifying handle module/name
+        // against the param's expected handle type (runtime defense beneath the
+        // static E1802 nominal check).
+        let mut margs = Vec::with_capacity(argv.len());
+        for (i, v) in argv.iter().enumerate() {
+            let expected = nf.params.get(i).map(|(t, _)| t);
+            let marshalled = match v {
+                Value::Int(n) => DomainArg::Int(*n),
+                Value::SizedInt { val, .. } => DomainArg::Int(*val),
+                Value::Float(f) => DomainArg::Float(*f),
+                Value::Str(s) => DomainArg::Str(s.clone()),
+                Value::Array(items) => {
+                    // Only `[i64]` is representable at the boundary.
+                    let mut ints = Vec::with_capacity(items.len());
+                    for it in items {
+                        match it {
+                            Value::Int(n) => ints.push(*n),
+                            Value::SizedInt { val, .. } => ints.push(*val),
+                            other => {
+                                return panic(format!(
+                                    "native::{} arg {i}: only `[i64]` arrays are FFI-representable, found element {}",
+                                    module.name,
+                                    other.type_name()
+                                ));
+                            }
+                        }
+                    }
+                    DomainArg::IntArray(ints)
+                }
+                Value::Handle {
+                    module: hm,
+                    name: hn,
+                    payload,
+                    ..
+                } => {
+                    if let Some(crate::native::FfiType::Handle {
+                        module: em,
+                        name: en,
+                        ..
+                    }) = expected
+                    {
+                        if hm != em || hn != en {
+                            return panic(format!(
+                                "native::{} expected handle `{em}::{en}`, found `{hm}::{hn}`",
+                                module.name
+                            ));
+                        }
+                    }
+                    DomainArg::Handle {
+                        tag: axon_domain::tag_for(hn),
+                        payload: *payload,
+                    }
+                }
+                other => {
+                    return panic(format!(
+                        "native::{} arg {i} is not FFI-representable at runtime ({})",
+                        module.name,
+                        other.type_name()
+                    ));
+                }
+            };
+            margs.push(marshalled);
+        }
+        let result = axon_domain::dispatch(module.name, &self.domain, nf.name, &margs);
+        match result {
+            Ok(DomainValue::Unit) => Ok(Value::Unit),
+            Ok(DomainValue::Int(n)) => Ok(Value::Int(n)),
+            Ok(DomainValue::Str(s)) => Ok(Value::Str(s)),
+            Ok(DomainValue::IntArray(ns)) => {
+                Ok(Value::Array(ns.into_iter().map(Value::Int).collect()))
+            }
+            Ok(DomainValue::Handle { name, payload }) => Ok(Value::Handle {
                 module: module.name.to_string(),
                 name: name.to_string(),
                 payload,

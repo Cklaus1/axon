@@ -1,0 +1,31 @@
+[package]
+name = "axon-domain"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# R22 — domain-interop native modules (`native::modbus` / `native::fhir` /
+# `native::fix`), built on the R13 native-FFI machinery. These are INTERP-SIDE
+# native modules (like `axon-gfx-mock`): one in-process Rust dispatch driven by
+# the interpreter. The network-touching ones (`modbus`/`fhir`) are codegen
+# E0910-refused (live I/O — the `host_await`/native precedent), so this crate is
+# NOT linked into axon-rt and contributes no `#[no_mangle] extern "C"` symbols.
+#
+# The new heavy deps (tokio-modbus / reqwest / serde_json) live HERE, not in
+# axon-core's default features — the default codegen/interp build stays lean and
+# the gate stays green offline.
+[lib]
+name = "axon_domain"
+
+[dependencies]
+# Industrial: Modbus TCP client + (test-only) server.
+tokio-modbus = { version = "0.16", default-features = false, features = ["tcp", "tcp-server"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
+# Healthtech: FHIR R4 REST client.
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false }
+serde_json = "1"
+
+[dev-dependencies]
+# In-test mock HTTP server for the FHIR round-trip (same crate axon-web uses).
+tiny_http = "0.12"
