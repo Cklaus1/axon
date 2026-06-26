@@ -8881,7 +8881,7 @@ impl<'ctx> super::Codegen<'ctx> {
                         return Some(ext.into());
                     }
                 }
-                // ── R21: Zephyr console hook ──────────────────────────────────
+                // ── R25: Zephyr console hook ──────────────────────────────────
                 // `zephyr_console_putc(b)` lowers to a call to the extern C symbol
                 // `void axon_console_putc(int)` which the Zephyr application
                 // provides (typically a `printk("%c", b)` wrapper). This is the

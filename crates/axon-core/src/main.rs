@@ -2594,7 +2594,7 @@ struct BuildOptions {
     emit_llvm: bool,
 }
 
-/// R21: expand friendly `--target` aliases to full LLVM triples.
+/// R25: expand friendly `--target` aliases to full LLVM triples.
 ///
 /// `zephyr` / `arm-zephyr` → `thumbv7m-none-eabi` (ARM Cortex-M3, the
 /// `qemu_cortex_m3` board's ISA). Used with `--freestanding --emit-obj` so the
@@ -4955,11 +4955,11 @@ mod tests {
         assert_eq!(trend_label(&[4.0, 3.0, 2.0, 1.0]), "regressing");
     }
 
-    // R21: the friendly `--target zephyr` family expands to the ARM Cortex-M3
+    // R25: the friendly `--target zephyr` family expands to the ARM Cortex-M3
     // LLVM triple; an arbitrary triple is passed through unchanged.
     #[cfg(feature = "codegen")]
     #[test]
-    fn r21_zephyr_target_alias_expands_to_thumbv7m() {
+    fn r25_zephyr_target_alias_expands_to_thumbv7m() {
         for alias in ["zephyr", "arm-zephyr", "cortex-m", "cortex-m3"] {
             assert_eq!(resolve_target_alias(alias), "thumbv7m-none-eabi");
         }

@@ -1,5 +1,5 @@
 /*
- * R21 — Zephyr application entry that hands off to Axon.
+ * R25 — Zephyr application entry that hands off to Axon.
  *
  * This is the C `main()` of a normal Zephyr app. It does two things:
  *   1. Provides `axon_console_putc(int)` — the extern C hook the Axon program

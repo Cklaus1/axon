@@ -1,4 +1,4 @@
-# R21 — minimal Zephyr application that links an Axon freestanding object.
+# R25 — minimal Zephyr application that links an Axon freestanding object.
 #
 # The Axon program is compiled separately to an arm-zephyr-eabi object
 # (`axon build --freestanding --target zephyr --emit-obj app.ax --out axon_app.o`)

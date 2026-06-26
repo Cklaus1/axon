@@ -253,7 +253,7 @@ pub(super) fn emit_freestanding_obj(
     let target = Target::from_triple(&triple).map_err(|e| {
         format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
     })?;
-    // R21 (Zephyr/ARM): the `Kernel` code model is x86-64-specific and is
+    // R25 (Zephyr/ARM): the `Kernel` code model is x86-64-specific and is
     // rejected by the ARM/thumb backend. A bare-metal ARM Cortex-M object that
     // links into a Zephyr app uses the default (small) code model. Select the
     // code model by target architecture.
@@ -267,7 +267,7 @@ pub(super) fn emit_freestanding_obj(
         .map_err(|e| format!("freestanding object emit: {e}"))
 }
 
-/// R21: select `(RelocMode, CodeModel)` for a freestanding target by its triple.
+/// R25: select `(RelocMode, CodeModel)` for a freestanding target by its triple.
 ///
 /// x86_64 bare-metal kernels load at a high fixed address and use the `Kernel`
 /// code model with static relocations (the R17 default). ARM/thumb targets

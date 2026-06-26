@@ -1,4 +1,4 @@
-// R21 TEE / confidential-computing demo — "compute on data you can't read."
+// R24 TEE / confidential-computing demo — "compute on data you can't read."
 //
 // The story: two parties each hold a CONFIDENTIAL salary. They want the AVERAGE
 // without revealing either salary to the other party or to the host OS. The

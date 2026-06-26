@@ -1,6 +1,6 @@
-# R21 — Zephyr RTOS Target (Axon-as-a-Zephyr-app on ARM Cortex-M)
+# R25 — Zephyr RTOS Target (Axon-as-a-Zephyr-app on ARM Cortex-M)
 
-**Spec ID:** `R21-zephyr-target` (new requirement row; depends on `R17-freestanding-substrate.md`)
+**Spec ID:** `R25-zephyr-target` (new requirement row; depends on `R17-freestanding-substrate.md`)
 **Status:** Slice 1 LANDED — an Axon program runs AS a Zephyr application on an ARM Cortex-M3 target,
 verified headlessly under QEMU (`scripts/zephyr_qemu_gate.sh`).
 **Risk class:** Additive (a new build target + one HAL builtin; behind `--freestanding`, no surface impact)
@@ -25,7 +25,7 @@ Axon contributes the verified compute, with its refinement contracts and effect 
 
 ### 2. Requirement link
 
-New `REQUIREMENTS.md` row R21 under the platform/substrate bucket; **depends on R17** (reuses the freestanding
+New `REQUIREMENTS.md` row R25 under the platform/substrate bucket; **depends on R17** (reuses the freestanding
 codegen, `@[entry]`/`@[panic_handler]`, the `Hal` effect tag, `@[no_alloc]`). Headline acceptance: *an Axon
 `.ax` program, built for an ARM Cortex-M Zephyr target, runs as a Zephyr app under QEMU and produces correct
 console output.*

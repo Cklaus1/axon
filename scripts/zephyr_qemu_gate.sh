@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# R21 acceptance gate: an Axon program runs AS a Zephyr application on an ARM
+# R25 acceptance gate: an Axon program runs AS a Zephyr application on an ARM
 # Cortex-M target, verified headlessly under QEMU.
 #
 # Pipeline:
@@ -81,7 +81,7 @@ APP_AX="$REPO/examples/zephyr/app.ax"
 AXON_OBJ="$TMPDIR_LOCAL/axon_app.o"
 ZBUILD="$TMPDIR_LOCAL/zb"
 
-echo "=== R21: Axon-on-Zephyr QEMU gate ===" >&2
+echo "=== R25: Axon-on-Zephyr QEMU gate ===" >&2
 echo "  axon:   $AXON_BIN" >&2
 echo "  zephyr: $ZEPHYR_BASE" >&2
 echo "  sdk:    $ZEPHYR_SDK_INSTALL_DIR" >&2

@@ -1,4 +1,4 @@
-// R21 — Axon running AS a Zephyr application on an ARM Cortex-M target.
+// R25 — Axon running AS a Zephyr application on an ARM Cortex-M target.
 //
 // This is a *freestanding* Axon object (no libc, no axon-rt) that links into a
 // minimal Zephyr application. The Zephyr C `main()` calls the Axon `@[entry]`

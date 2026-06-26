@@ -1,6 +1,6 @@
-# R21 — TEE / Confidential-Computing Target (enclave-gated Secret declassification)
+# R24 — TEE / Confidential-Computing Target (enclave-gated Secret declassification)
 
-**Spec ID:** `R21-tee-target` (new requirement row; depends on `examples/stdlib/tainted.ax` info-flow lattice, `R6-capability-security.md`, Phase 6 effect rows; extends ROADMAP §6 Containment pillar)
+**Spec ID:** `R24-tee-target` (new requirement row; depends on `examples/stdlib/tainted.ax` info-flow lattice, `R6-capability-security.md`, Phase 6 effect rows; extends ROADMAP §6 Containment pillar)
 **Error code:** `E1810` (first free code after the E1800–E1803 R13-FFI block; E1700–E1712 and E1900 avoided)
 **Status:** Draft — **All three slices LANDED.** Slice 1 (type rule, E1810 + gate test), Slice 2 (`scripts/tee_sim_run.sh` gramine-direct simulated run, SKIP-guarded — gramine absent on this host), Slice 3 (`.github/workflows/tee.yml` SGX-DCAP attestation, YAML-valid, runs remotely on a confidential runner). See §6.
 **Risk class:** Additive (a new effect `Tee` + one checker rule + four interp-only builtins; no existing behaviour changed)
@@ -23,7 +23,7 @@ attestation quote proves to a remote party *which exact image* is running before
 Axon already has the *type-level* half of this story: the info-flow lattice in `examples/stdlib/tainted.ax`
 (`Secret`/`Public` confidentiality axis, `Tainted`/`Trusted` integrity axis). What was missing is the
 **boundary**: a place where a `Secret` may be declassified, and a compile-time guarantee that declassification
-happens **only** there. R21 adds that boundary as the `@[enclave]` region and makes the rule a checker rule —
+happens **only** there. R24 adds that boundary as the `@[enclave]` region and makes the rule a checker rule —
 so it is enforceable and testable on a host with **no TEE hardware**, which is exactly the honest-boundary
 constraint (this host exposes only `sme`; there are no `/dev/sev`, `/dev/sgx_enclave`, `/dev/tdx_guest` nodes).
 
@@ -79,12 +79,12 @@ unseal — no laundering hole. Implemented in `checker.rs::check_enclave_unseal`
 mirroring the `@[no_alloc]`/E1704 walker.
 
 **Gate test (LANDED):** `tee_unseal_outside_enclave_rejected_e1810` (`tests/integration_fixtures.rs`,
-fixture `r21_tee_unseal_e1810.ax`) asserts exactly 2 E1810 (a direct leak + a laundering helper) and that
+fixture `r24_tee_unseal_e1810.ax`) asserts exactly 2 E1810 (a direct leak + a laundering helper) and that
 the `@[enclave]` fn is clean. Passes under `scripts/gate.sh`.
 
 ### 5. Why this is sound with no hardware
 
-The guarantee R21 makes locally is **not** "the host can't read the data" (that needs hardware). It is:
+The guarantee R24 makes locally is **not** "the host can't read the data" (that needs hardware). It is:
 "in this program, a sealed Secret is only ever *unsealed in source positions the author marked `@[enclave]`*."
 That is a property of the AST, checkable statically, and it is the property that *composes* with hardware:
 when you later run the `@[enclave]` fn inside a real SEV-SNP guest, you know — by the type system — that the
@@ -107,7 +107,7 @@ system enforces that declassification is confined to the enclave. Together they 
 
 - No hardware attestation is produced on this host. None.
 - `tee_seal`/`tee_unseal` are NOT encryption in the simulation — they are the identity on the payload. The
-  value-level confidentiality contract is the `Secret` lattice in `tainted.ax`; R21 adds the *enclave
+  value-level confidentiality contract is the `Secret` lattice in `tainted.ax`; R24 adds the *enclave
   boundary* and its *compile-time confinement*, not a crypto implementation.
 - Codegen does not lower the `tee_*` builtins (E0910-refused) — interp-only, same discipline as
   `host_await`/kernel/sandbox builtins.

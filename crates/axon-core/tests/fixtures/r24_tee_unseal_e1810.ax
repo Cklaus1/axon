@@ -1,4 +1,4 @@
-// R21 TEE: `tee_unseal` (declassifying a sealed Secret) may ONLY be called from
+// R24 TEE: `tee_unseal` (declassifying a sealed Secret) may ONLY be called from
 // inside an `@[enclave]` fn. Calling it from a NON-enclave fn is E1810 — a pure
 // type/checker rule, enforced with no TEE hardware. This fixture has BOTH:
 //   - `leak_secret` is NOT @[enclave] yet calls tee_unseal  → E1810 (the headline)

@@ -2176,7 +2176,7 @@ impl<'p> Interp<'p> {
                 Err(Flow::Exit(as_int(&args[0])? as i32))
             }
 
-            // ── R21 TEE: confidential-computing boundary ────────────────────
+            // ── R24 TEE: confidential-computing boundary ────────────────────
             // The compile-time guarantee (a Secret may only be unsealed in an
             // `@[enclave]` fn) is the E1810 checker rule. These runtime arms make
             // the workload EXECUTABLE so the gramine-direct simulation can run it.
@@ -4481,7 +4481,7 @@ impl<'p> Interp<'p> {
             | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
             | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
-            // R21: Zephyr console hook — no Zephyr host device under `axon run`.
+            // R25: Zephyr console hook — no Zephyr host device under `axon run`.
             | "zephyr_console_putc"
             // R17 Slice 2: SMP atomics — no shared-memory hardware under `axon run`.
             | "atomic_load_i64" | "atomic_store_i64"

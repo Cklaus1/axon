@@ -1797,7 +1797,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
-    // ── R21: Zephyr RTOS console hook (HAL; Hal effect; E0910 in interp) ──────
+    // ── R25: Zephyr RTOS console hook (HAL; Hal effect; E0910 in interp) ──────
     // Architecture-neutral console output for an Axon program running AS a Zephyr
     // application on an ARM Cortex-M (or any Zephyr) target. Lowers in codegen to
     // a call to the extern C symbol `axon_console_putc(int)` which the Zephyr app
@@ -1808,7 +1808,7 @@ pub const BUILTINS: &[BuiltinFn] = &[
         name: "zephyr_console_putc",
         params: &[("byte", "i64")],
         ret: "()",
-        doc: "R21 HAL: write one byte to the Zephyr console by calling the host-provided \
+        doc: "R25 HAL: write one byte to the Zephyr console by calling the host-provided \
               extern C hook `axon_console_putc(int)` (e.g. a `printk` wrapper). \
               Architecture-neutral — used when an Axon object links into a Zephyr app on \
               ARM Cortex-M / RISC-V / x86. Substrate-only; codegen-only (E0910 in interp).",
@@ -2049,7 +2049,7 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
-            // R21: Zephyr console hook (host-driven device I/O)
+            // R25: Zephyr console hook (host-driven device I/O)
             | "zephyr_console_putc"
             // R17 Slice 2: SMP atomics (shared-memory side effects)
             | "atomic_load_i64" | "atomic_store_i64"
@@ -2140,7 +2140,7 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
         | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
         | "port_out_u8" | "port_in_u8"
-        // R21: Zephyr console hook — device I/O via the host RTOS, Hal-gated.
+        // R25: Zephyr console hook — device I/O via the host RTOS, Hal-gated.
         | "zephyr_console_putc"
         // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
         | "atomic_load_i64" | "atomic_store_i64"
@@ -2365,7 +2365,7 @@ mod tests {
     }
 
     #[test]
-    fn r21_zephyr_console_putc_is_hal_impure_alloc_free() {
+    fn r25_zephyr_console_putc_is_hal_impure_alloc_free() {
         let name = "zephyr_console_putc";
         assert!(is_known_builtin(name), "{name} must be a known builtin");
         assert!(is_impure_builtin(name), "{name} must be impure");

@@ -1758,7 +1758,7 @@ fn no_alloc_isr_rejects_heap_call_e1704() {
     );
 }
 
-// ── R21 TEE: enclave-gated Secret unseal (E1810) ────────────────────────────
+// ── R24 TEE: enclave-gated Secret unseal (E1810) ────────────────────────────
 //
 /// `tee_unseal` (Secret declassification) called outside an `@[enclave]` fn is
 /// E1810. The fixture has two non-enclave callers (`leak_secret`, `launder`) —
@@ -1766,8 +1766,8 @@ fn no_alloc_isr_rejects_heap_call_e1704() {
 /// (`in_enclave_ok`) that unseals cleanly. Pure type/checker rule, no TEE
 /// hardware needed; this is the locally-verifiable confidential-computing core.
 #[test]
-fn tee_unseal_outside_enclave_rejected_e1810() {
-    let errors = check_fixture("r21_tee_unseal_e1810.ax");
+fn r24_tee_unseal_outside_enclave_rejected_e1810() {
+    let errors = check_fixture("r24_tee_unseal_e1810.ax");
     let e1810: Vec<_> = errors.iter().filter(|e| e.contains("E1810")).collect();
     // Both non-enclave callers must be flagged; the in-enclave one must NOT.
     assert_eq!(

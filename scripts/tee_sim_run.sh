@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tee_sim_run.sh — R21 Slice 2: run the Axon confidential workload inside a
+# tee_sim_run.sh — R24 Slice 2: run the Axon confidential workload inside a
 # SIMULATED trusted execution environment using `gramine-direct` (no SGX/SEV
 # hardware required — gramine-direct runs an unmodified binary as if in an
 # enclave on ANY CPU).
@@ -83,7 +83,7 @@ trap 'rm -rf "$WORK"' EXIT
 # workload's tee_in_enclave()/tee_attest_measurement() report the simulated TEE.
 MANIFEST="$WORK/axon_tee.manifest"
 cat > "$MANIFEST" <<MANIFEST_EOF
-# Gramine manifest for the R21 Axon confidential workload (gramine-direct).
+# Gramine manifest for the R24 Axon confidential workload (gramine-direct).
 # This is the SIMULATED enclave: gramine-direct provides the enclave loader on a
 # CPU with no SGX/SEV. It does NOT produce a hardware attestation quote.
 loader.entrypoint.uri = "file:$AXON"

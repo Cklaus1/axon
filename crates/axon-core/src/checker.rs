@@ -666,7 +666,7 @@ impl CheckCtx {
             }
         }
 
-        // R21 TEE (§2 / E1810): `tee_unseal` — declassifying a sealed Secret —
+        // R24 TEE (§2 / E1810): `tee_unseal` — declassifying a sealed Secret —
         // may ONLY be called from inside an `@[enclave]`-annotated fn. Scan every
         // NON-enclave fn (and impl method) body for a `tee_unseal` call and emit
         // E1810 for each. The rule is lexical-by-design (no laundering hole: a
@@ -1976,7 +1976,7 @@ impl CheckCtx {
         });
     }
 
-    /// R21 TEE (E1810): a NON-`@[enclave]` fn body may not call `tee_unseal`.
+    /// R24 TEE (E1810): a NON-`@[enclave]` fn body may not call `tee_unseal`.
     /// `tee_unseal` is the in-enclave Secret-declassification primitive — it is
     /// the boundary where data you "can't read" outside the TEE becomes readable.
     /// Unsealing OUTSIDE the enclave region defeats the whole point, so the

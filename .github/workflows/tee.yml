@@ -1,6 +1,6 @@
 name: TEE attestation (confidential runner)
 
-# ── R21 Slice 3: REAL hardware attestation — runs REMOTELY, not on the dev host ─
+# ── R24 Slice 3: REAL hardware attestation — runs REMOTELY, not on the dev host ─
 #
 # THE HONESTY BOUNDARY (read this before trusting any green check from this file):
 #   - The dev host has NO TEE hardware, so it CANNOT produce a genuine attestation
