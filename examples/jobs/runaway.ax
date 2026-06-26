@@ -1,0 +1,8 @@
+// A runaway: an infinite loop. Under axon-os it is killed at the hard timeout
+// (AXON_OS_TIMEOUT_MS) → Denied(time) — hermetic, no leaked process (A4).
+fn main() -> i64 {
+    let i = 0
+    while i == 0 {
+    }
+    0
+}

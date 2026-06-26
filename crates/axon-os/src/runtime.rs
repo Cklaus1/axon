@@ -80,14 +80,28 @@ impl AxonCoreRuntime {
             .and_then(|s| s.parse::<u64>().ok())
             .unwrap_or(30_000);
         AxonCoreRuntime {
-            axon_bin,
+            axon_bin: absolutize(axon_bin),
             timeout: Duration::from_millis(ms),
         }
     }
 
     pub fn with_bin_and_timeout(axon_bin: PathBuf, timeout: Duration) -> Self {
-        AxonCoreRuntime { axon_bin, timeout }
+        AxonCoreRuntime {
+            axon_bin: absolutize(axon_bin),
+            timeout,
+        }
     }
+}
+
+/// Resolve a possibly-relative entrypoint to an absolute path NOW (against the
+/// current dir), so a later `current_dir` change on the child can't break the
+/// interpreter lookup (hermetic — no ambient PATH search at spawn time).
+fn absolutize(p: PathBuf) -> PathBuf {
+    if p.is_absolute() {
+        return p;
+    }
+    std::fs::canonicalize(&p)
+        .unwrap_or_else(|_| std::env::current_dir().map(|d| d.join(&p)).unwrap_or(p))
 }
 
 /// Outcome of a bounded subprocess: the exit code (None ⇒ killed by timeout).
@@ -221,6 +235,13 @@ impl Runtime for AxonCoreRuntime {
         if let Some(p) = std::env::var_os("PATH") {
             cmd.env("PATH", p); // cc/linker discovery for the interpreter
         }
+        // Relative paths in the program resolve against the job's directory, so
+        // an example runs the same wherever it is invoked from (hermetic).
+        if let Some(dir) = program.parent() {
+            if !dir.as_os_str().is_empty() {
+                cmd.current_dir(dir);
+            }
+        }
 
         let proc = match run_bounded(&mut cmd, self.timeout) {
             Ok(p) => p,
@@ -306,6 +327,28 @@ impl MockRuntime {
     }
 }
 
+#[cfg(any(test, feature = "mock"))]
+impl Runtime for MockRuntime {
+    fn declared_effects(&self, _program: &Path) -> DeclaredEffects {
+        self.declared
+    }
+    fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
+        self.mint_calls.set(self.mint_calls.get() + 1);
+        PrincipalHandle(0)
+    }
+    fn run_sandboxed(
+        &self,
+        _program: &Path,
+        _principal: &PrincipalHandle,
+        _ceiling: EffectSet,
+        _budget: &Budget,
+        _seed: u64,
+    ) -> RunOutcome {
+        self.run_calls.set(self.run_calls.get() + 1);
+        self.outcome.clone()
+    }
+}
+
 #[cfg(test)]
 mod runtime_tests {
     use super::*;
@@ -333,27 +376,5 @@ mod runtime_tests {
         let out = run_bounded(&mut cmd, Duration::from_secs(5)).expect("spawn sh");
         assert!(!out.timed_out);
         assert_eq!(out.code, Some(0));
-    }
-}
-
-#[cfg(any(test, feature = "mock"))]
-impl Runtime for MockRuntime {
-    fn declared_effects(&self, _program: &Path) -> DeclaredEffects {
-        self.declared
-    }
-    fn mint_principal(&self, _grant: &Grant) -> PrincipalHandle {
-        self.mint_calls.set(self.mint_calls.get() + 1);
-        PrincipalHandle(0)
-    }
-    fn run_sandboxed(
-        &self,
-        _program: &Path,
-        _principal: &PrincipalHandle,
-        _ceiling: EffectSet,
-        _budget: &Budget,
-        _seed: u64,
-    ) -> RunOutcome {
-        self.run_calls.set(self.run_calls.get() + 1);
-        self.outcome.clone()
     }
 }

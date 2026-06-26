@@ -109,7 +109,6 @@ mod tests {
                 fs_write: false,
                 net,
                 exec: false,
-                ..Default::default()
             },
             max_label: label,
         }

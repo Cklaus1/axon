@@ -1,0 +1,15 @@
+// An admissible, capability-bounded job: read one file, write one file, no net.
+// Its declared effects (read_file → fs_read, write_file → fs_write) are within
+// the grant in summarize.axjob, so the supervisor ADMITS and runs it.
+fn main() -> i64 {
+    match read_file("./data/report.txt") {
+        Ok(text) => {
+            let n = len(text)
+            match write_file("./out/summary.txt", "report length: {to_str(n)} bytes") {
+                Ok(_) => 0
+                Err(_) => 1
+            }
+        }
+        Err(_) => 2
+    }
+}

@@ -1,0 +1,10 @@
+program = "runaway.ax"
+intent  = "A runaway loop — must be killed at the timeout."
+seed    = 42
+[grant]
+exec      = "none"
+max_label = "internal"
+[grant.budget]
+calls = 10
+tokens = 10
+cost_micro = 10

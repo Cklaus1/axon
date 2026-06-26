@@ -1,0 +1,13 @@
+program = "overreach.ax"
+intent  = "Summarize a file — but the program also tries to reach the network."
+seed    = 42
+[grant]
+fs_read   = ["./data/"]
+fs_write  = ["./out/"]
+net       = []
+exec      = "none"
+max_label = "internal"
+[grant.budget]
+calls       = 100
+tokens      = 50000
+cost_micro  = 1000000

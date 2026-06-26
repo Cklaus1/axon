@@ -80,7 +80,15 @@ fn read_manifest(path: &Path) -> Result<JobManifest, String> {
     let src = std::fs::read_to_string(path)
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let base = path.parent().unwrap_or(Path::new("."));
-    parse_manifest(&src, base).map_err(|v| v.legible())
+    let mut m = parse_manifest(&src, base).map_err(|v| v.legible())?;
+    // Absolutize the program path so the run event + saved manifest + replay
+    // all reference the SAME path regardless of cwd (deterministic replay).
+    m.program = std::fs::canonicalize(&m.program).unwrap_or_else(|_| {
+        std::env::current_dir()
+            .map(|d| d.join(&m.program))
+            .unwrap_or(m.program.clone())
+    });
+    Ok(m)
 }
 
 /// Entry point. Returns the process exit code.
