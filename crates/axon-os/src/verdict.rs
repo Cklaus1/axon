@@ -7,7 +7,8 @@
 //! error — the reason is always carried.
 
 /// The sealing outcome of a supervised run (or a pre-run denial).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind")]
 pub enum Verdict {
     /// The program ran to completion with this i64 result. → exit 0.
     Completed { value: i64 },

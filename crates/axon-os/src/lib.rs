@@ -12,9 +12,13 @@
 pub mod gate;
 pub mod grant;
 pub mod manifest;
+pub mod record;
 pub mod verdict;
 
 pub use gate::{admit, Admission, DeclaredEffects};
 pub use grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
 pub use manifest::{parse as parse_manifest, JobManifest};
+pub use record::{
+    build as build_record, verify as verify_record, AuditEvent, RawEvent, RunRecord, VerifyMismatch,
+};
 pub use verdict::Verdict;
