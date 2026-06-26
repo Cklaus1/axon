@@ -189,10 +189,12 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     }
     let rec_path = out.join(format!("{run_id}.json"));
     let _ = std::fs::write(&rec_path, to_json(&rec));
-    // Save a manifest copy alongside so `replay` can reproduce without the original.
-    if let Ok(src) = std::fs::read_to_string(job_path) {
-        let _ = std::fs::write(out.join(format!("{run_id}.axjob")), src);
-    }
+    // Save a manifest copy with the ABSOLUTE program path so `replay` reproduces
+    // it regardless of the store directory (deterministic replay).
+    let _ = std::fs::write(
+        out.join(format!("{run_id}.axjob")),
+        crate::manifest::to_axjob(&manifest),
+    );
     println!(
         "{}  (run-id: {run_id}, record: {})",
         rec.verdict.legible(),

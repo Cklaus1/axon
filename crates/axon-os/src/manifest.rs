@@ -139,6 +139,34 @@ pub fn parse(src: &str, base_dir: &Path) -> Result<JobManifest, Verdict> {
     })
 }
 
+/// Serialize a manifest back to `.axjob`, with `program` as its (already
+/// resolved, absolute) path — so a saved copy re-parses to the SAME program
+/// regardless of the directory it is later read from (deterministic replay).
+/// Lossy on `intent` only (quotes → apostrophes); intent is not hashed.
+pub fn to_axjob(m: &JobManifest) -> String {
+    let g = &m.grant;
+    let list = |xs: &[String]| {
+        xs.iter()
+            .map(|s| format!("\"{s}\""))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!(
+        "program = \"{}\"\nintent = \"{}\"\nseed = {}\n[grant]\nfs_read = [{}]\nfs_write = [{}]\nnet = [{}]\nexec = \"{}\"\nmax_label = \"{}\"\n[grant.budget]\ncalls = {}\ntokens = {}\ncost_micro = {}\n",
+        m.program.display(),
+        m.intent.replace('"', "'"),
+        m.seed,
+        list(&g.fs_read),
+        list(&g.fs_write),
+        list(&g.net),
+        g.exec.as_str(),
+        g.max_label.as_str(),
+        g.budget.calls,
+        g.budget.tokens,
+        g.budget.cost_micro,
+    )
+}
+
 // ── small pure helpers ──────────────────────────────────────────────────────
 
 fn strip_comment(line: &str) -> &str {

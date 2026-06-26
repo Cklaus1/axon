@@ -93,22 +93,24 @@ impl AxonCoreRuntime {
 /// Outcome of a bounded subprocess: the exit code (None ⇒ killed by timeout).
 struct ProcOutcome {
     code: Option<i32>,
-    last_stdout_line: String,
+    stderr: String,
     timed_out: bool,
 }
 
 /// Run a command with a hard wall-clock timeout. On expiry the child is killed
 /// and reaped (no leaked handle/zombie). Hermetic: a minimal explicit env.
+/// stdout + stderr are captured (the interpreter prints fault diagnostics to
+/// stderr, which is how we distinguish a FAULT exit from a program that simply
+/// `return`s an integer — the two would otherwise collide on the exit code).
 fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutcome> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()?;
 
-    // Take stdout now; read it after the wait decision. Bound the wait by
-    // polling try_wait so the child can be killed on timeout.
     let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
     let start = std::time::Instant::now();
     let code = loop {
         match child.try_wait()? {
@@ -124,20 +126,40 @@ fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutc
         }
     };
 
-    let last_stdout_line = stdout
-        .map(|mut s| {
-            use std::io::Read;
-            let mut buf = String::new();
+    let read_all = |s: Option<std::process::ChildStdout>| -> String {
+        use std::io::Read;
+        let mut buf = String::new();
+        if let Some(mut s) = s {
             let _ = s.read_to_string(&mut buf);
-            buf.lines().last().unwrap_or("").to_string()
-        })
-        .unwrap_or_default();
+        }
+        buf
+    };
+    let read_err = |s: Option<std::process::ChildStderr>| -> String {
+        use std::io::Read;
+        let mut buf = String::new();
+        if let Some(mut s) = s {
+            let _ = s.read_to_string(&mut buf);
+        }
+        buf
+    };
+    let _ = read_all(stdout); // drained so the child isn't blocked on a full pipe
+    let stderr = read_err(stderr);
 
     Ok(ProcOutcome {
         code,
-        last_stdout_line,
+        stderr,
         timed_out: code.is_none(),
     })
+}
+
+/// Extract the first `axon:` diagnostic line from stderr (the human-facing
+/// fault reason), filtering the run-id stamp; fall back to `default`.
+fn first_axon_line(stderr: &str, default: &str) -> String {
+    stderr
+        .lines()
+        .find(|l| l.starts_with("axon:") && !l.starts_with("axon: run-id"))
+        .map(|l| l.trim_start_matches("axon:").trim().to_string())
+        .unwrap_or_else(|| default.to_string())
 }
 
 /// Over-approximate a program's declared effects by scanning its source for
@@ -213,35 +235,42 @@ impl Runtime for AxonCoreRuntime {
             }
         };
 
-        // Map the interpreter's fail-closed exit scheme back to a verdict.
+        // Map the run to a verdict. Faults are detected by the interpreter's
+        // STDERR diagnostics, NOT by the raw exit code — because `axon run`
+        // propagates `main`'s integer return value as the exit code, which would
+        // otherwise collide with the carved fault codes (a program returning 7
+        // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
+        let err = &proc.stderr;
         let verdict = if proc.timed_out {
             Verdict::Denied {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
             }
+        } else if err.contains("SandboxViolation")
+            || err.contains("not permitted by @[contained]")
+            || err.contains("capability")
+        {
+            Verdict::Denied {
+                reason: first_axon_line(err, "runtime capability/sandbox violation"),
+                axis: "sandbox".into(),
+            }
+        } else if err.contains("budget") && (err.contains("exhaust") || err.contains("exceeded")) {
+            Verdict::BudgetExhausted {
+                axis: "budget".into(),
+            }
+        } else if err.contains("refinement violated") || err.contains("REFINE") {
+            Verdict::RefineViolation {
+                reason: first_axon_line(err, "refinement contract violated"),
+            }
+        } else if err.contains("axon: panic") {
+            Verdict::Denied {
+                reason: first_axon_line(err, "interpreter panic"),
+                axis: "runtime".into(),
+            }
         } else {
-            match proc.code {
-                Some(0) => Verdict::Completed {
-                    value: proc.last_stdout_line.trim().parse::<i64>().unwrap_or(0),
-                },
-                Some(6) => Verdict::RefineViolation {
-                    reason: "refinement contract violated".into(),
-                },
-                Some(7) => Verdict::BudgetExhausted {
-                    axis: "budget".into(),
-                },
-                Some(8) => Verdict::Denied {
-                    reason: "runtime sandbox/capability violation".into(),
-                    axis: "sandbox".into(),
-                },
-                Some(code) => Verdict::Denied {
-                    reason: format!("interpreter exited {code}"),
-                    axis: "runtime".into(),
-                },
-                None => Verdict::Denied {
-                    reason: "killed".into(),
-                    axis: "time".into(),
-                },
+            // No fault diagnostic ⇒ a clean run; the exit code is main's return.
+            Verdict::Completed {
+                value: proc.code.unwrap_or(0) as i64,
             }
         };
 
@@ -304,7 +333,6 @@ mod runtime_tests {
         let out = run_bounded(&mut cmd, Duration::from_secs(5)).expect("spawn sh");
         assert!(!out.timed_out);
         assert_eq!(out.code, Some(0));
-        assert_eq!(out.last_stdout_line.trim(), "41");
     }
 }
 
