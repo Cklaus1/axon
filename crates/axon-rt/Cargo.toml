@@ -9,6 +9,15 @@ license.workspace = true
 crate-type = ["staticlib"]  # Link into axon binaries as a native static lib.
 name = "axon_rt"
 
+[features]
+# R14 iOS slices: opt-in marker that the `axon-rt` build is targeting iOS. The
+# cross-platform `AxonRuntime` lifecycle CORE (`mobile_ios::runtime`) compiles on
+# EVERY host (so its tests run on the Linux gate); only the `#[no_mangle] extern
+# "C"` entry points the Swift app calls are additionally `cfg(target_os="ios")`-
+# gated, so Linux never emits them. This feature is OFF by default — the Linux
+# `gate.sh` never sets it, so it cannot regress the Linux build.
+ios = []
+
 [dependencies]
 # R13 slice 4: the shared `native::gfx` mock impl (one impl, two engines). The
 # `#[no_mangle] extern "C"` `__axon_gfx_*` symbols in gfx_mock_ffi wrap it.

@@ -1,9 +1,9 @@
 # Browser Host — `wasm32-unknown-unknown` + WebGPU canvas
 
 **Spec ID:** `R7c-browser-host` (extends `R7-targets.md` / `R7b-axonhost.md`; ties to `REQUIREMENTS.md` R7)
-**Status:** Draft
+**Status:** Slices 1–2 LANDED + gate-verified in real headless Chrome; Slice 3 (WebGPU) substrate gate-verified, Axon-driven frame gated on R16; Slice 3-AOT (codegen browser link) remaining
 **Risk class:** Structural
-**Author / date:** cklaus, 2026-06-07
+**Author / date:** cklaus, 2026-06-07 (browser-host slices gate-verified 2026-06-25)
 
 ---
 
@@ -123,12 +123,12 @@ the same source compiles unchanged.)
 
 | Code | Trigger | Message shape |
 |---|---|---|
-| E0911 | `--target wasm32-unknown-unknown` build where the interpreter crate has a residual direct `std::fs`/`std::thread` call (won't link) | `target wasm32-unknown-unknown requires all host access via AxonHost; direct std::<x> call at <site>` |
-| E0912 | browser AOT link failed (wasm-bindgen / export step) | `browser wasm link failed: <lld/wasm-bindgen detail>` |
-| W0913 | `sleep_ms` called under `BrowserHost` | `sleep_ms is a no-op on the browser host (main thread cannot block); use the frame loop` |
+| E0911 | **[LANDED]** `axon target build --host browser` where the program statically reaches a **browser-incompatible builtin** (`exec` — no process model; the R17 bare-metal HAL — no raw hardware) | `builtin `<x>` cannot run on the browser host (--host browser): a browser tab has no process model / raw hardware access` — the load-time mirror of codegen's E0910 (clean refusal, never a tab-killing trap, I-4). The interpreter's `std::*`-free cleanliness for `unknown-unknown` is enforced separately by `scripts/wasm_unknown_interp_builds.sh` (a `cargo check` compile gate). |
+| E0912 | browser AOT link failed (wasm-bindgen / export step) — **reserved** (used by the AOT-codegen browser link mode, Slice 3) | `browser wasm link failed: <lld/wasm-bindgen detail>` |
+| W0913 | `sleep_ms` called under `BrowserHost` — **reserved** (the no-op is in place via `DefaultHost::sleep_ms` `#[cfg(wasm32)]`; the diagnostic surface is the interactive follow-on) | `sleep_ms is a no-op on the browser host (main thread cannot block); use the frame loop` |
 | (reuse) E0907/E0908/E0909 | wasm codegen unsupported construct / link failed / axon-rt unavailable (existing wasm bands) | (existing) |
 
-(Confirm E0911/E0912/W0913 are free in the E09xx wasm band against `error.rs` before reserving — I-14.)
+(E0911/E0912/W0913 confirmed free in the E09xx band against `error.rs` and reserved — I-14; all three are in the `error_codes_are_unique` registry.)
 
 ### 7. Invariants touched
 
@@ -164,13 +164,28 @@ the same source compiles unchanged.)
 
 ### 9. Acceptance criteria (the done gate)
 
-- [ ] Test `interp_builds_for_unknown_unknown` passes (no residual std host call; E0911 guards regressions).
-- [ ] Test `browser_pure_compute_parity` passes: `examples/hello.ax` returns `42` via `run()` in headless
-      Chrome, == the interpreter oracle.
-- [ ] Test `browser_host_fs_returns_err_not_trap` passes (graceful degradation).
-- [ ] `axon target build --host browser` emits a loadable bundle, asserted by a CLI e2e test.
-- [ ] (Stretch / manual tier) `browser_window_clear_renders_frame` — one WebGPU frame on a canvas, behind a
-      guarded journey test.
+- [x] `interp_builds_for_unknown_unknown` — the interpreter compiles for
+      `wasm32-unknown-unknown` with no residual std host call (`on_deep_stack` + the 5 host builtins routed
+      through `AxonHost`). **GATE-VERIFIED** by `scripts/wasm_unknown_interp_builds.sh` (landed via R7b/R15).
+      E0911 (`--host browser` + a browser-incompatible builtin → clean refusal, the load-time mirror of E0910)
+      guards regressions of the browser-target surface — covered by `builtins.rs` + `effects.rs` unit tests
+      and the `axon target build --host browser` CLI gate.
+- [x] `browser_pure_compute_parity` — the wasm interpreter runs the pure-compute corpus (8 `examples/*.ax`,
+      incl. `hello.ax`) via `run()` (the `axon_eval` ABI) in **REAL headless Chrome** and returns a result
+      **byte-identical to the native oracle** (exit code + stdout). Plus `browser_returns_42` (a program
+      returning 42 returns 42 in the tab — the §9 headline). **GATE-VERIFIED** by
+      `scripts/browser_compute_parity.sh` (Chrome 149 + chromedriver 149; `test result: ok. 3 passed`).
+- [x] `browser_host_fs_returns_err_not_trap` — an ungranted `read_file` in the tab surfaces an `Err`
+      (exit 7), never a wasm trap (I-4). **GATE-VERIFIED** (third `#[wasm_bindgen_test]` in the parity run).
+- [x] `axon target build --host browser` selects the BrowserHost shim and refuses a browser-incompatible
+      program (E0911) — CLI behavior gate-checked (`exec`-via-helper → E0911 exit 2; a non-`unknown-unknown`
+      triple → usage error). The loadable-bundle/`wasm-opt -Oz` size assertion (§10) remains a follow-on.
+- [x] **(was Stretch / manual tier — NOW AUTOMATED)** `browser_window_clear_renders_frame` — a WebGPU frame
+      is cleared to a known color and read back byte-exact (`CLEAR_RGBA=51,102,204,255`) in **headless Chrome**
+      (Chrome 149 SwiftShader-Vulkan). **GATE-VERIFIED** by `scripts/browser_webgpu_clear.sh`. This verifies the
+      WebGPU *substrate*; the Axon-`gfx`-DRIVEN frame (`mount()` an Axon program) awaits **R16** (Axon's `gfx`
+      is a mock today — no real wgpu backend), so that path is the remaining `#[ignore]` tier. The finding that
+      matters: headless-Chrome WebGPU is **not** the blocker (it works here) — R16's real wgpu backend is.
 
 ### 10. Performance budget
 
@@ -188,13 +203,23 @@ interpreter is small Rust); **AOT-per-program bundle ≤ 200 KB gzipped** for a 
   exposure of host selection) + a `--features browser` build feature. Inert without it; wasip1/native
   untouched.
 - Slices, each revertible:
-  1. **Interpreter `unknown-unknown` cleanliness** — route the last `std::*` host calls (incl.
-     `on_deep_stack`) through `AxonHost`; add the E0911 link gate. (Finishes R7b's deferred half.) Revertible.
-  2. **`BrowserHost` + wasm-bindgen glue + `--host browser` CLI** — virtual fs/env/time, `run()` API,
-     pure-compute parity in headless Chrome. The load-bearing slice.
-  3. **AOT browser link mode** — `--engine codegen` for `unknown-unknown` (export `main`, no wasi libc).
-  4. **Canvas/WebGPU bridge** (`mount()`, `requestAnimationFrame` loop) — depends on R13 `native::gfx` and
-     wgpu's WebGPU backend. The UI slice; manual journey tier.
+  1. **[LANDED] Interpreter `unknown-unknown` cleanliness** — `on_deep_stack` + the 5 host builtins route
+     through `AxonHost` (R7b/R15); the E0911 gate (`--host browser` + a browser-incompatible builtin → clean
+     refusal) lands here. `scripts/wasm_unknown_interp_builds.sh` + the `--host browser` CLI gate are green.
+  2. **[LANDED — gate-verified] `BrowserHost` + `--host browser` CLI + pure-compute parity in headless
+     Chrome** — the load-bearing slice. `--host browser` selects the shim; `scripts/browser_compute_parity.sh`
+     runs the wasm interpreter via `wasm-bindgen-test` in **real headless Chrome** and asserts byte-identical
+     parity with the native oracle (3 tests green). The standalone wasm-bindgen glue is the existing
+     `axon-wasm` cdylib (`axon_eval`); the BrowserHost virtual-fs/env map is `DefaultHost`-on-wasm today
+     (a fetch-backed/JS-provided map is the interactive follow-on, Q4).
+  3. **AOT browser link mode** — `--engine codegen` for `unknown-unknown` (export `main`, no wasi libc). The
+     link path already special-cases the browser triple (`main.rs try_link_wasm` `is_browser`); the full
+     `--host browser --engine codegen` round-trip is the remaining work. Not yet gated.
+  4. **[substrate gate-verified; Axon-driven awaits R16] Canvas/WebGPU bridge** — `scripts/browser_webgpu_clear.sh`
+     proves a WebGPU frame clears + reads back byte-exact in **headless Chrome** (the substrate works here). The
+     `mount()` / `requestAnimationFrame` loop driving it FROM Axon depends on R13's `native::gfx` being a REAL
+     wgpu backend (it is a **mock** today — `axon-gfx-mock`), so the Axon-driven frame is gated on **R16**, not
+     on browser WebGPU availability.
 - Blast radius: confined to browser builds. A bug cannot affect native or wasip1 (separate target + feature).
   `git revert` of any slice leaves a clean tree; slices 1–2 are independently useful (headless compute in the
   browser) even if 3–4 never land.
@@ -212,9 +237,17 @@ interpreter is small Rust); **AOT-per-program bundle ≤ 200 KB gzipped** for a 
 - **Q2 (interp vs AOT as the primary browser path).** Lean **interp-first** (Slice A): it's the shipped,
   parity-by-construction path and lets a page run *arbitrary* `.ax` (a playground). AOT (Slice 3) is the
   size/perf path for a *fixed* shipped app. Both ship; interp is the default.
-- **Q3 (headless browser in CI).** The parity + journey tests need headless Chrome with WebGPU. Until CI has
-  it, these are manual/`#[ignore]` tier (same posture as the native GPU journey test in R13). The
-  *pure-compute* browser parity can run under `wasm-bindgen-test` + headless Chrome without WebGPU.
+- **Q3 (headless browser in CI).** ~~Until CI has headless Chrome these are manual/`#[ignore]` tier.~~
+  **RESOLVED on this host:** headless Chrome 149 + a version-matched chromedriver 149 are installed, and Chrome's
+  bundled SwiftShader-Vulkan provides software WebGPU. So BOTH the pure-compute parity AND the WebGPU clear
+  journey now run **headlessly and automated**: `scripts/browser_compute_parity.sh` (3 `wasm-bindgen-test`s,
+  green) and `scripts/browser_webgpu_clear.sh` (`CLEAR_RGBA=51,102,204,255`, green). Both are OPT-IN
+  (`BROWSER_PARITY=1` / `BROWSER_WEBGPU_REQUIRE=1`) and SKIP-guard when the browser toolchain is absent, so the
+  default `gate.sh` stays green and Chrome-free. The one residual `#[ignore]` is the Axon-`gfx`-DRIVEN frame
+  (Q: it needs R16's real wgpu backend, NOT browser WebGPU — which works). GOTCHA worth recording: a
+  `wasm-bindgen-test` binary that links axon-core leaves axon-core's `extern "C" axon_host_await` as an
+  unresolved `env` import, which wasm-bindgen turns into an unsatisfiable `import 'env'` that SIGKILLs Chrome's
+  renderer on instantiate — the test must define a no-op `axon_host_await` to satisfy the link.
 - **Q4 (async — the gating dependency, shared with R13 Q3 and R14 Q3).** Real browser I/O is async:
   `fetch`-backed fs, `@[contained(net)]`→`fetch`, WebGPU `requestAdapter`, and *any* interactive frame loop
   all require Axon to **suspend and resume** on an external event without blocking the main thread. Axon's

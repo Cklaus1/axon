@@ -1,0 +1,32 @@
+// R13 slice 5 — the REAL wgpu offscreen render gate.
+//
+// Opens an offscreen render target, clears it to a KNOWN color
+// (r=0, g=128/255≈0.502, b=1.0, a=1.0), presents the frame, then reads back the
+// pixel and asserts it equals the cleared color packed as 0xRRGGBBAA = 0x0080FFFF.
+//
+// When axon-core is built with `--features gfx-wgpu`, `gfx::*` is backed by the
+// REAL `axon-gfx` wgpu module rendering to an offscreen texture — headlessly,
+// on Mesa lavapipe (software Vulkan), no window or display. WITHOUT the feature
+// the same program runs against the GPU-free mock (which models the framebuffer
+// holding the last clear color) and returns the IDENTICAL value — the I-2
+// parity contract for the `read_pixel` value-returning probe.
+//
+// Exit 0 = the readback matched (gate PASS). Exit 1 (assert) = mismatch.
+
+use native::gfx
+
+@[contained(gfx: any)]
+fn main() -> i64 {
+    let win = gfx::window_open(64, 64, "axon-render-gate")
+    let surf = gfx::surface(win)
+    // Clear to the known color: r=0.0, g=0.50196 (=128/255), b=1.0, a=1.0.
+    gfx::clear(surf, 0.0, 0.50196078431, 1.0, 1.0)
+    gfx::present(surf)
+    let px = gfx::read_pixel(surf)
+    println("read_pixel = {to_str(px)} (want 8454143 = 0x0080FFFF)")
+    // 0x0080FFFF = 8454143  (r=0x00, g=0x80, b=0xFF, a=0xFF).
+    assert_eq(px, 8454143)
+    gfx::surface_close(surf)
+    gfx::window_close(win)
+    0
+}

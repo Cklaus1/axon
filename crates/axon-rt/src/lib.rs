@@ -38,6 +38,15 @@ pub mod provenance;
 // shared `axon-gfx-mock` impl behind a process-global instance.
 pub mod gfx_mock_ffi;
 
+// R14 (iOS slices 1–2): the iOS `AxonRuntime` lifecycle bridge. Behind the
+// off-by-default `ios` feature so the standard Linux `gate.sh` never builds it;
+// inside, the cross-platform lifecycle CORE compiles on any host (tested on the
+// gate when `--features ios` is passed) and only the `#[no_mangle] extern "C"`
+// entry points are additionally `cfg(target_os="ios")`-gated. See the macOS CI
+// workflow `.github/workflows/ios.yml` for the real iOS-simulator verification.
+#[cfg(feature = "ios")]
+pub mod mobile_ios;
+
 // ── Axon str ABI — mirrors codegen's { i64 len, i8* ptr } ──────────────────────
 
 /// Mirrors codegen's Axon `str` layout: LLVM `{ i64 len, i8* ptr }` by value.

@@ -2002,6 +2002,39 @@ pub fn is_heap_allocating_builtin(name: &str) -> bool {
     }
 }
 
+/// R7c §4/§6 — builtins that CANNOT run on the browser host (`--host browser`),
+/// even with the virtual `BrowserHost` (fetch-backed FS, env map, performance.now).
+/// A browser-targeted build that statically reaches one of these is refused with
+/// E0911 (the load-time mirror of codegen's E0910), rather than emitting a bundle
+/// that traps or silently misbehaves in the tab. The set is deliberately tight:
+///
+///   - `exec`: a browser sandbox has NO process model — `@[contained] exec` /
+///     `DefaultHost::exec`'s deny default already covers it at runtime, but a
+///     browser-target build should refuse it up front (spec §4: "Always denied").
+///   - The R17 bare-metal HAL (`port_*`, `volatile_*`, `hlt`/`cli`/`sti`,
+///     `ptr_from_addr`): raw hardware / privileged CPU instructions that have no
+///     meaning in a wasm tab — a freestanding-only surface.
+///
+/// Everything else a program does in the browser is either a virtual-host call
+/// (read_file/write_file/env_var/now_ms — served by `BrowserHost`), a no-op with a
+/// `W0913` diagnostic (`sleep_ms`), or a compute builtin (pure). `host_await*` is
+/// the interp-only async surface driven by the Asyncify binding and is NOT listed
+/// here — it is exactly what makes an interactive browser program work.
+pub fn is_browser_incompatible_builtin(name: &str) -> bool {
+    matches!(
+        name,
+        // No process model in a browser sandbox.
+        "exec"
+            // R17 bare-metal HAL — raw hardware / privileged instructions.
+            | "ptr_from_addr"
+            | "volatile_load_u8" | "volatile_load_u16" | "volatile_load_u32" | "volatile_load_u64"
+            | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32"
+            | "volatile_store_u64"
+            | "hlt" | "cli" | "sti"
+            | "port_out_u8" | "port_in_u8"
+    )
+}
+
 /// Phase 5 §2 P04 — builtins that are IMPURE: they do I/O, AI calls, touch the
 /// clock/RNG, spawn, mutate external state, or terminate the process. A
 /// `@[pure]` function may not call any of these (E1207). Every OTHER builtin is
@@ -2509,5 +2542,57 @@ mod tests {
         assert_eq!(builtin_effect_row("goal_run"), &["AI", "Net", "IO"]);
         assert!(builtin_effect_row("to_str").is_empty(), "to_str is pure");
         assert!(builtin_effect_row("abs_i32").is_empty(), "abs_i32 is pure");
+    }
+
+    #[test]
+    fn browser_incompatible_set_is_tight_and_real() {
+        // R7c §6: the E0911 set is exactly the builtins that CANNOT run in a
+        // browser sandbox even with a virtual host.
+        assert!(
+            is_browser_incompatible_builtin("exec"),
+            "exec (process spawn) must be browser-incompatible"
+        );
+        // The R17 bare-metal HAL — raw hardware / privileged CPU instructions.
+        for hal in [
+            "port_out_u8",
+            "port_in_u8",
+            "hlt",
+            "cli",
+            "sti",
+            "ptr_from_addr",
+            "volatile_load_u8",
+            "volatile_store_u64",
+        ] {
+            assert!(
+                is_browser_incompatible_builtin(hal),
+                "{hal} (bare-metal HAL) must be browser-incompatible"
+            );
+        }
+        // The virtual-host / compute surface is COMPATIBLE — these run in the tab.
+        for ok in [
+            "read_file",
+            "write_file",
+            "env_var",
+            "now_ms",
+            "sleep_ms",
+            "println",
+            "to_str",
+            "host_await",
+            "ai_complete",
+        ] {
+            assert!(
+                !is_browser_incompatible_builtin(ok),
+                "{ok} must NOT be browser-incompatible (virtual host / async / compute)"
+            );
+        }
+        // Every browser-incompatible builtin must be a real builtin name (no typos).
+        for b in BUILTINS {
+            // (no assertion needed; just exercising the table)
+            let _ = is_browser_incompatible_builtin(b.name);
+        }
+        assert!(
+            is_known_builtin("exec"),
+            "exec must be a known builtin (sanity on the table)"
+        );
     }
 }

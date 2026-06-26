@@ -83,6 +83,9 @@ pub const E0906: &str = "E0906"; // cache entry corrupt or wrong compiler versio
 pub const E0907: &str = "E0907"; // AOT wasm build needs the native codegen backend (R7)
 pub const E0908: &str = "E0908"; // no engine supports the requested target triple (R7, reserved)
 pub const E0910: &str = "E0910"; // builtin / construct has no native codegen lowering — honest abort, runs under the interpreter
+pub const E0911: &str = "E0911"; // browser target (--host browser): a browser-incompatible builtin can't run in the tab — clean refusal mirroring E0910 (R7c)
+pub const E0912: &str = "E0912"; // browser AOT link failed (wasm-bindgen / export step) (R7c, reserved)
+pub const W0913: &str = "W0913"; // sleep_ms is a no-op on the browser host (main thread can't block) (R7c)
 
 // Capability permission errors (Phase 4: @[contained])
 pub const E1001: &str = "E1001"; // I/O call not permitted by @[contained] spec
@@ -152,6 +155,13 @@ pub const E1702: &str = "E1702"; // freestanding build has no @[entry] or @[pani
 pub const E1703: &str = "E1703"; // surface caller reaches a Hal-effected fn without declaring | {Hal}
 pub const E1704: &str = "E1704"; // @[no_alloc] fn reaches a heap-allocating builtin (ISR/early-boot alloc-free guarantee)
 pub const E1706: &str = "E1706"; // R17 Slice 2: atomic ordering arg is not a compile-time literal in 0..=4
+
+// R14 mobile-target errors (spec §6). Allocated from the free tail of the E17xx
+// band (E1700–E1706 are R17's; E1707–E1709 left as a gap). Mobile reuses E1004
+// (ungranted native::platform/gfx) and the R13 E18xx FFI codes for boundary errors.
+pub const E1710: &str = "E1710"; // --host mobile but the mobile toolchain is absent: the Android NDK (linker on PATH) for an *-android triple, or Xcode `xcrun` for an *-apple-ios triple
+pub const E1711: &str = "E1711"; // axon-rt / a native module not cross-built for the device triple (iOS-specific staging code)
+pub const E1712: &str = "E1712"; // mobile cross-link failed (iOS xcframework or Android jniLibs packaging)
 
 // R13 native FFI errors. The spec proposed E1700–E1704, but R17 (just landed)
 // took the whole E170x band; R13 uses the free E18xx band instead. The spec's
@@ -348,12 +358,13 @@ mod tests {
             E0306, E0307, E0308, E0309, E0310, E0311, E0312, E0313, E0314, E0315, E0401, E0402,
             E0403, E0404, E0405, E0406, E0407, E0501, E0502, E0503, E0504, E0601, E0602, E0603,
             E0701, E0702, E0703, E0800, E0801, E0802, E0803, E0901, E0902, E0903, E0904, E0905,
-            E0906, E0907, E0908, E0910, E1001, E1002, E1003, E1004, E1101, E1102, E1201, E1202,
-            E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302, E1306, E1310,
-            E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409, E1411, E1412,
-            E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704, E1706, E1800,
-            E1801, E1802, E1803, E1810, E1900, E2300, E2301, E2302, W0001, W0002,
-            W0003, W0004, W0005, W0006, W0701, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E0906, E0907, E0908, E0910, E0911, E0912, E1001, E1002, E1003, E1004, E1101, E1102,
+            E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302,
+            E1306, E1310, E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409,
+            E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704,
+            E1706, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1810, E1900, E2300, E2301,
+            E2302, W0001, W0002, W0003, W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310,
+            W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

@@ -1,0 +1,39 @@
+[package]
+name = "axon-gfx"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+# R13 slice 5 — the FIRST REAL native module: a headless wgpu offscreen renderer.
+#
+# This crate is the real backing for `use native::gfx` when axon-core is built
+# with the `gfx-wgpu` feature. It renders to an OFFSCREEN texture (no winit
+# window, no display) so it is HEADLESSLY gate-verifiable on a software Vulkan
+# backend (Mesa lavapipe). It exposes the SAME in-process `dispatch(fnname,
+# &[GfxArg]) -> GfxResult` interface as the GPU-free `axon-gfx-mock`, so the
+# interpreter routes to it with zero surface change — the dual-engine "one
+# interface, two backends" discipline of R13. The SAME forge-safe handle ABI is
+# preserved: only a slab INDEX ever crosses the boundary, never a raw GPU
+# pointer (I-4/I-11); a forged/stale index is a graceful Err, never a segfault.
+#
+# It is OFF by default — axon-core only pulls it via its `gfx-wgpu` feature — so
+# the default `cargo build`/`gate.sh` never compiles wgpu and stays fast.
+
+[lib]
+name = "axon_gfx"
+path = "src/lib.rs"
+
+[dependencies]
+# Reuse the shared boundary value types (GfxArg / GfxValue / GfxResult / the
+# frozen tags + pack_rgba8) so the real backend speaks the EXACT same marshalled
+# vocabulary as the mock — that is what makes interp routing a drop-in.
+axon-gfx-mock = { path = "../axon-gfx-mock" }
+# Real GPU, headless offscreen. On Linux wgpu's Vulkan backend (lavapipe-capable)
+# is enabled automatically by the platform cfg — there is no `vulkan` cargo
+# feature to request. We only need `wgsl` (the shader frontend) and drop the
+# macOS/Windows backends (metal/dx12) + the browser `webgpu` path. No winit /
+# surface features: we never open a window (offscreen only).
+wgpu = { version = "22", default-features = false, features = ["wgsl"] }
+pollster = "0.3"
+bytemuck = "1"

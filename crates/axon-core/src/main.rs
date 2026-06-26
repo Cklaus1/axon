@@ -143,6 +143,12 @@ enum Command {
         /// Used for golden-IR inspection of layout/atomic lowering (R17 Slice 2/3).
         #[arg(long, help = "Emit LLVM IR text and stop (R17 golden-IR tests)")]
         emit_llvm: bool,
+
+        /// Build host preset. `mobile` (with an Android `--target`) emits a
+        /// loadable shared lib into `out/android/jniLibs/<abi>/lib<name>.so`
+        /// plus a generated Kotlin `Axon.kt` wrapper (R14). Default: native.
+        #[arg(long, help = "Build host: mobile (Android jniLibs + Kotlin wrapper)")]
+        host: Option<String>,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -601,6 +607,14 @@ enum TargetAction {
         /// Target triple / alias (e.g. wasm32, wasm32-wasi).
         #[arg(long, help = "Target triple or alias")]
         target: Option<String>,
+        /// Host shim (R7c/R14): `browser` selects the BrowserHost (virtual
+        /// fs/env/time over JS) for a `wasm32-unknown-unknown` build (R7c) — a
+        /// browser build that statically reaches a browser-incompatible builtin
+        /// (e.g. `exec`) is refused with E0911. `mobile` selects the iOS/Android
+        /// static-lib + generated-wrapper packaging path (dispatched by the
+        /// `--target` triple). Default is the native host.
+        #[arg(long, help = "Host shim: browser, mobile, or (default) native")]
+        host: Option<String>,
         #[arg(help = "Path to .ax source file")]
         file: PathBuf,
     },
@@ -645,6 +659,7 @@ fn dispatch(command: Command) {
             linker_script,
             emit_obj,
             emit_llvm,
+            host,
         } => cmd_build(
             files,
             out,
@@ -656,6 +671,7 @@ fn dispatch(command: Command) {
             linker_script,
             emit_obj,
             emit_llvm,
+            host,
         ),
         Command::Goal {
             file,
@@ -2060,6 +2076,50 @@ fn cmd_verify(file: PathBuf) {
 /// LLVM codegen backend; `wasm32` runs the interpreter compiled to wasm32.
 const TARGETS: &[(&str, &str)] = &[("native", "codegen"), ("wasm32", "interp")];
 
+/// R7c §6/§11 Slice 1 — the `--host browser` E0911 link gate. Parses the source,
+/// collects the builtins it statically reaches (transitively, since every fn body
+/// is walked), and refuses the build if any is browser-incompatible (`exec`, the
+/// R17 bare-metal HAL) — the load-time mirror of codegen's E0910. A clean refusal,
+/// never a bundle that traps in the tab (I-4). Exits 2 on a violation; returns on
+/// a clean program.
+fn gate_browser_incompatible_builtins(file: &Path) {
+    let src = read_source(&file.to_path_buf());
+    let program = match parse_source(&src) {
+        Ok(p) => p,
+        Err(e) => {
+            // A parse error is reported by the engine path that follows; here we
+            // only gate. Return so the normal pipeline surfaces the parse error
+            // with its full diagnostics rather than a partial one from this gate.
+            let _ = e;
+            return;
+        }
+    };
+    let called = axon_core::effects::collect_called_builtin_names(&program);
+    let bad: Vec<&String> = called
+        .iter()
+        .filter(|n| axon_core::builtins::is_browser_incompatible_builtin(n))
+        .collect();
+    if !bad.is_empty() {
+        let to_stderr = !std::io::stderr().is_terminal();
+        for n in &bad {
+            emit_error(
+                &format!(
+                    "[{}] builtin `{n}` cannot run on the browser host (--host browser): a \
+                     browser tab has no process model / raw hardware access — remove the call \
+                     or build for a non-browser target",
+                    axon_core::error::E0911,
+                ),
+                to_stderr,
+            );
+        }
+        eprintln!(
+            "axon: {} browser-incompatible builtin(s); browser build refused.",
+            bad.len()
+        );
+        process::exit(2);
+    }
+}
+
 /// `axon target list` / `axon target build` (R7 §3/§4.1).
 fn cmd_target(action: TargetAction) {
     match action {
@@ -2072,20 +2132,71 @@ fn cmd_target(action: TargetAction) {
         TargetAction::Build {
             engine,
             target,
+            host,
             file,
         } => {
             validate_ax_extension(&file);
             let triple = target.as_deref().unwrap_or("native");
+            // R14: `--host mobile` routes to the iOS/Android static-lib + wrapper
+            // packaging path. iOS is link-blocked on Linux (E1710) but emits its
+            // object + a byte-stable wrapper; Android is Linux-buildable.
+            if host.as_deref() == Some("mobile") {
+                cmd_target_mobile(&file, triple);
+                process::exit(0);
+            }
             let interp = engine.as_deref() == Some("interp");
+            // R7c §6/§11 Slice 1: `--host browser` selects the BrowserHost shim.
+            // It is only meaningful for the wasi-free browser triple; a browser
+            // host with any other triple is a usage error. Before doing anything
+            // else, gate the program against the browser-incompatible builtin set
+            // (E0911) — the load-time mirror of codegen's E0910 — so a browser
+            // bundle that would trap in the tab is refused up front, not shipped.
+            let browser_host = host.as_deref() == Some("browser");
+            if let Some(h) = host.as_deref() {
+                if h != "browser" && h != "native" {
+                    emit_error(
+                        &format!("unknown --host `{h}` (expected `browser` or `native`)"),
+                        !std::io::stderr().is_terminal(),
+                    );
+                    process::exit(2);
+                }
+            }
+            if browser_host {
+                if !triple.contains("unknown-unknown") && triple != "wasm32" {
+                    emit_error(
+                        &format!(
+                            "--host browser requires --target wasm32-unknown-unknown (a browser \
+                             has no wasi); got target={triple}"
+                        ),
+                        !std::io::stderr().is_terminal(),
+                    );
+                    process::exit(2);
+                }
+                gate_browser_incompatible_builtins(&file);
+            }
             if interp {
                 // The interpreter engine runs any target (wasm included) by
                 // construction (I-2). The actual wasm build is a cargo invocation;
                 // this acknowledges the routing and points at it.
-                println!(
-                    "axon target: engine=interp target={triple} — run via the interpreter \
-                     (build: cargo build -p axon-core --no-default-features --bin axon-run \
-                     --target wasm32-wasip1; see scripts/wasm_parity.sh)"
-                );
+                if browser_host {
+                    // R7c: the browser interp bundle is the axon-wasm cdylib
+                    // (axon_alloc/axon_eval/axon_output_*) running under
+                    // wasm32-unknown-unknown — the playground/REPL that eval's .ax
+                    // in the tab. Pure-compute parity is gate-verified in real
+                    // headless Chrome by scripts/browser_compute_parity.sh.
+                    println!(
+                        "axon target: engine=interp host=browser target={triple} — the \
+                         BrowserHost interp bundle is the axon-wasm cdylib (build: cargo build \
+                         -p axon-wasm --target wasm32-unknown-unknown --release; see \
+                         scripts/browser_compute_parity.sh for headless-Chrome parity)"
+                    );
+                } else {
+                    println!(
+                        "axon target: engine=interp target={triple} — run via the interpreter \
+                         (build: cargo build -p axon-core --no-default-features --bin axon-run \
+                         --target wasm32-wasip1; see scripts/wasm_parity.sh)"
+                    );
+                }
                 process::exit(0);
             }
             if triple.contains("wasm") {
@@ -2104,6 +2215,198 @@ fn cmd_target(action: TargetAction) {
             process::exit(0);
         }
     }
+}
+
+// ── R14: `--host mobile` static-lib + wrapper packaging ──────────────────────
+
+/// `which`-crate-free PATH lookup: is `cmd` an executable on `$PATH`? Used by the
+/// mobile toolchain probe so it works in the no-codegen build too (the `which`
+/// crate is codegen-only and does not compile for wasm32).
+fn cmd_on_path(cmd: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| {
+        let candidate = dir.join(cmd);
+        candidate.is_file()
+            || std::fs::metadata(&candidate)
+                .map(|m| m.is_file())
+                .unwrap_or(false)
+    })
+}
+
+/// `axon target build --target <mobile-triple> --host mobile <file>` (R14 §3/§4).
+///
+/// Pipeline (honest about the macOS-host wall, spec §12 Q4):
+///   1. Recognise the triple (else a clean "unknown mobile triple" error).
+///   2. Type-check the source (same gate as `axon build`).
+///   3. Generate the byte-stable per-app wrapper (Swift for iOS, Kotlin for
+///      Android) into `out/<os>/Axon{.swift,.kt}` — pure logic, host-agnostic.
+///   4. Probe the link toolchain. On Linux, iOS ALWAYS fails this (xcrun is
+///      macOS-only) → **E1710, a clean refusal** (I-9), NOT a fake success. The
+///      wrapper + the type-check still succeeded, so the user gets the
+///      Linux-reachable artifacts and a precise "needs a macOS host" message.
+///   5. (codegen feature) emit the LLVM object for the triple — LLVM cross-emits
+///      AArch64 Mach-O *objects* even on Linux; only the *link* needs Apple's ld.
+///
+/// The real iOS `.a`/`.xcframework` link + simulator run are done by the macOS
+/// CI job (`.github/workflows/ios.yml`), never here.
+fn cmd_target_mobile(file: &Path, triple: &str) {
+    use axon_core::error::{E1710, E1711};
+    use axon_core::mobile;
+
+    let target = match mobile::mobile_target(triple) {
+        Some(t) => t,
+        None => {
+            emit_error(
+                &format!(
+                    "[{E1710}] '{triple}' is not a recognised mobile target triple (known: {})",
+                    mobile::MOBILE_TARGETS
+                        .iter()
+                        .map(|t| t.triple)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+                !std::io::stderr().is_terminal(),
+            );
+            process::exit(2);
+        }
+    };
+
+    // Type-check the source (same gate as native build) before packaging.
+    let mut program = match parse_source(&read_source(&file.to_path_buf())) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("error: {e}");
+            process::exit(2);
+        }
+    };
+    let (errors, _infer) = run_check_pipeline(&mut program, file);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        process::exit(2);
+    }
+
+    // App name from the file stem; generate the byte-stable wrapper shim.
+    let app = file
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "app".to_string());
+    let entries = mobile::Entries::default();
+    let (os_dir, wrapper_name, wrapper) = match target.os {
+        mobile::MobileOs::Ios => ("ios", "Axon.swift", mobile::gen_swift_shim(&app, &entries)),
+        mobile::MobileOs::Android => (
+            "android",
+            "Axon.kt",
+            mobile::gen_kotlin_shim(&app, &entries),
+        ),
+    };
+    let out_dir = std::path::PathBuf::from("out").join(os_dir);
+    if let Err(e) = std::fs::create_dir_all(&out_dir) {
+        eprintln!("error: could not create {}: {e}", out_dir.display());
+        process::exit(2);
+    }
+    let wrapper_path = out_dir.join(wrapper_name);
+    if let Err(e) = std::fs::write(&wrapper_path, &wrapper) {
+        eprintln!("error: could not write {}: {e}", wrapper_path.display());
+        process::exit(2);
+    }
+    println!(
+        "axon mobile: wrote {} ({} lines) for {triple}",
+        wrapper_path.display(),
+        mobile::shim_line_count(&wrapper)
+    );
+
+    // Probe the link toolchain. This is where Linux iOS builds STOP — a clean
+    // E1710, not a fake pass. The PATH scan is `which`-crate-free so it works in
+    // BOTH the codegen and no-codegen builds (the `which` crate is codegen-only
+    // and does not compile for wasm32).
+    let path_lookup = |c: &str| cmd_on_path(c);
+    let env_lookup = |c: &str| std::env::var_os(c).is_some();
+    if let Err(body) = mobile::probe_toolchain(triple, path_lookup, env_lookup) {
+        emit_error(
+            &format!("[{E1710}] {body}"),
+            !std::io::stderr().is_terminal(),
+        );
+        if target.os == mobile::MobileOs::Ios {
+            eprintln!(
+                "  note: the iOS object can be emitted here, but the .a/.xcframework \
+                 link requires a macOS build host (Apple ld + iOS SDK).\n  \
+                 The macOS CI workflow (.github/workflows/ios.yml) performs the \
+                 real iOS link + simulator parity run."
+            );
+        }
+        process::exit(2);
+    }
+
+    // Toolchain present (a real macOS/NDK host). Emit the object for the triple.
+    // (E1711 stands in for the cross-built-rt gate; on a configured host the
+    // object emits and the platform toolchain links it.)
+    #[cfg(feature = "codegen")]
+    {
+        match mobile_emit_object(file, &mut program, triple) {
+            Ok(obj) => println!("axon mobile: emitted object {obj} for {triple}"),
+            Err(e) => {
+                emit_error(&format!("[{E1711}] {e}"), !std::io::stderr().is_terminal());
+                process::exit(2);
+            }
+        }
+    }
+    #[cfg(not(feature = "codegen"))]
+    {
+        let _ = E1711;
+        println!(
+            "axon mobile: wrapper generated; object emission needs the codegen backend \
+             (build axon with the default `codegen` feature)"
+        );
+    }
+}
+
+/// Emit the LLVM object for a mobile triple (codegen path). LLVM cross-emits the
+/// AArch64/x86_64 object even on Linux; the link is the platform toolchain's job.
+#[cfg(feature = "codegen")]
+fn mobile_emit_object(
+    file: &Path,
+    program: &mut axon_core::ast::Program,
+    triple: &str,
+) -> Result<String, String> {
+    let instantiations = {
+        // Re-run inference to get instantiations for monomorphisation.
+        let (_e, mut infer) = run_check_pipeline(program, file);
+        infer.drain_instantiations()
+    };
+    let mono = axon_core::mono::monomorphise(program, instantiations);
+    let concrete = axon_core::ast::Program {
+        items: mono
+            .other_items
+            .into_iter()
+            .chain(mono.fns.into_iter().map(axon_core::ast::Item::FnDef))
+            .collect(),
+    };
+    let ctx = inkwell::context::Context::create();
+    let module_name = file.file_stem().unwrap_or_default().to_string_lossy();
+    let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
+    cg.declare_functions(&concrete);
+    cg.emit_program(&concrete);
+    if !cg.codegen_errors().is_empty() {
+        return Err(format!(
+            "{} codegen error(s) emitting mobile object",
+            cg.codegen_errors().len()
+        ));
+    }
+    let out_dir = std::path::PathBuf::from("out").join(if triple.contains("apple") {
+        "ios"
+    } else {
+        "android"
+    });
+    let _ = std::fs::create_dir_all(&out_dir);
+    let app = file.file_stem().unwrap_or_default().to_string_lossy();
+    let obj = out_dir.join(format!("lib{app}.o"));
+    let obj_str = obj.to_string_lossy().to_string();
+    cg.compile_to_object_for_triple(&obj_str, false, triple)?;
+    Ok(obj_str)
 }
 
 // ── R7 Slice B: AOT wasm object emission ─────────────────────────────────────
@@ -2392,6 +2695,7 @@ fn cmd_build(
     _linker_script: Option<PathBuf>,
     _emit_obj: bool,
     _emit_llvm: bool,
+    _host: Option<String>,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2416,6 +2720,7 @@ fn cmd_build(
     linker_script: Option<PathBuf>,
     emit_obj: bool,
     emit_llvm: bool,
+    host: Option<String>,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2425,19 +2730,61 @@ fn cmd_build(
         validate_ax_extension(f);
     }
 
+    // R14: `--host mobile` requires an Android `--target` on this (Linux) host.
+    let mobile = matches!(host.as_deref(), Some("mobile"));
+    if mobile {
+        match target.as_deref() {
+            Some(t) if t.contains("-android") => {}
+            Some(t) if t.contains("-apple-ios") => {
+                eprintln!(
+                    "error[E1710]: --host mobile target '{t}' (iOS) requires a macOS build host \
+                     (Xcode/iOS SDK); not buildable on this Linux host (R14 §4 / Q4)"
+                );
+                process::exit(1);
+            }
+            _ => {
+                eprintln!(
+                    "error: --host mobile requires an Android --target \
+                     (e.g. --target aarch64-linux-android or x86_64-linux-android)"
+                );
+                process::exit(1);
+            }
+        }
+    } else if let Some(h) = host.as_deref() {
+        eprintln!("error: unknown --host '{h}' (expected: mobile)");
+        process::exit(1);
+    }
+
     let first = &files[0];
 
     // R23 eBPF: `--target bpf` defaults the output to `<stem>.bpf.o` (not the
     // bare-stem hosted-binary default).
     let is_bpf_target = matches!(target.as_deref(), Some("bpf" | "bpfel" | "bpfeb"));
+    // The base app name (used for libNAME.so + the Kotlin wrapper).
+    let app_name = first
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
     let output = out.unwrap_or_else(|| {
-        let stem = first.file_stem().unwrap_or_default().to_string_lossy();
         if is_bpf_target {
-            PathBuf::from(format!("./{stem}.bpf.o"))
+            PathBuf::from(format!("./{app_name}.bpf.o"))
+        } else if mobile {
+            // out/android/jniLibs/<abi>/lib<name>.so
+            let abi = target
+                .as_deref()
+                .and_then(axon_core::mobile::android_jni_abi)
+                .unwrap_or("arm64-v8a");
+            PathBuf::from(format!("out/android/jniLibs/{abi}/lib{app_name}.so"))
         } else {
-            PathBuf::from(format!("./{stem}"))
+            PathBuf::from(format!("./{app_name}"))
         }
     });
+    if mobile {
+        if let Some(parent) = output.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
 
     if files.len() == 1 {
         eprintln!("Compiling {}...", first.display());
@@ -2511,15 +2858,19 @@ fn cmd_build(
         linker_script: linker_script.map(|p| p.to_string_lossy().into_owned()),
         emit_obj,
         emit_llvm,
+        shared: mobile,
     };
 
-    // Warn if cross-compiling without cross.toml configuration.
+    // Warn if cross-compiling without cross.toml configuration. Android
+    // auto-resolves the NDK linker (link.rs::android_linker), so no cross.toml
+    // is required there — skip the warning to avoid a spurious E0905.
     if let Some(ref triple) = opts.target_triple {
+        let is_android = triple.contains("-android");
         let host = inkwell::targets::TargetMachine::get_default_triple()
             .as_str()
             .to_string_lossy()
             .to_string();
-        if !host.starts_with(&triple[..triple.find('-').unwrap_or(triple.len())]) {
+        if !is_android && !host.starts_with(&triple[..triple.find('-').unwrap_or(triple.len())]) {
             // Cross-compiling: check for cross.toml
             let home = std::env::var_os("HOME").unwrap_or_default();
             let cross_toml = std::path::PathBuf::from(home)
@@ -2541,6 +2892,24 @@ fn cmd_build(
         Ok(()) => {
             let elapsed = start.elapsed().as_millis();
             eprintln!("Binary: {} ({elapsed}ms)", output.display());
+            // R14: --host mobile also emits the deterministic Kotlin wrapper next
+            // to the jniLibs/ tree (out/android/Axon.kt).
+            if mobile {
+                let entries = axon_core::mobile::MobileEntries::from_program(&program);
+                let kt = axon_core::mobile::generate_kotlin_wrapper(&app_name, &entries);
+                // out/android/Axon.kt — two levels up from jniLibs/<abi>/lib*.so.
+                let android_root = output
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.parent())
+                    .map(PathBuf::from)
+                    .unwrap_or_else(|| PathBuf::from("out/android"));
+                let wrapper_path = android_root.join("Axon.kt");
+                match std::fs::write(&wrapper_path, kt) {
+                    Ok(()) => eprintln!("Wrapper: {}", wrapper_path.display()),
+                    Err(e) => eprintln!("warning: could not write wrapper: {e}"),
+                }
+            }
         }
         Err(e) => {
             eprintln!("error: {e}");
@@ -2592,6 +2961,9 @@ struct BuildOptions {
     linker_script: Option<String>,
     emit_obj: bool,
     emit_llvm: bool,
+    /// R14: link a shared library (`.so`) instead of an executable
+    /// (`--host mobile` → Android jniLibs).
+    shared: bool,
 }
 
 /// R25: expand friendly `--target` aliases to full LLVM triples.
@@ -4052,8 +4424,9 @@ fn run_build_pipeline(
         let key = axon_core::cache_key(&hasher_input, compiler_version);
         let cache_path = axon_core::cache_path(&key, &cache_dir);
 
-        // Freestanding builds bypass the cache: linker args differ from hosted builds.
-        if !opts.freestanding {
+        // Freestanding and shared (`--host mobile`) builds bypass the cache:
+        // their linker args differ from the hosted-binary path.
+        if !opts.freestanding && !opts.shared {
             if let Some(bitcode) = axon_core::read_axc(&cache_path, compiler_version) {
                 // Cache hit — skip IR emission, link from stored bitcode.
                 return axon_core::compile_bitcode_to_binary(
@@ -4066,8 +4439,8 @@ fn run_build_pipeline(
         }
 
         // Cache miss — full compilation then write.
-        // Freestanding builds bypass the cache (linker args differ from hosted).
-        let cache_slot = if opts.freestanding {
+        // Freestanding and shared builds bypass the cache (linker args differ).
+        let cache_slot = if opts.freestanding || opts.shared {
             None
         } else {
             Some((&key as &str, cache_path.as_path(), compiler_version))
@@ -4083,6 +4456,7 @@ fn run_build_pipeline(
             opts.linker_script.as_deref(),
             opts.emit_obj,
             opts.emit_llvm,
+            opts.shared,
             &mut infer_ctx,
             cache_slot,
         );
@@ -4101,6 +4475,7 @@ fn run_build_pipeline(
         opts.linker_script.as_deref(),
         opts.emit_obj,
         opts.emit_llvm,
+        opts.shared,
         &mut infer_ctx,
         None,
     )
@@ -4120,6 +4495,7 @@ fn build_ir_and_link(
     linker_script: Option<&str>,
     emit_obj: bool,
     emit_llvm: bool,
+    shared: bool,
     infer_ctx: &mut axon_core::infer::InferCtx,
     cache_write: Option<(&str, &std::path::Path, &str)>, // (key, path, version)
 ) -> Result<(), String> {
@@ -4211,6 +4587,9 @@ fn build_ir_and_link(
                 linker_script,
             )
         }
+    } else if shared {
+        // R14: --host mobile → a loadable shared library (.so).
+        cg.compile_to_shared_lib(&output.to_string_lossy(), release, target_triple)
     } else {
         cg.compile_to_binary_target(&output.to_string_lossy(), release, target_triple)
     }

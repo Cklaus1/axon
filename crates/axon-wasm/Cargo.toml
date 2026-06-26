@@ -20,3 +20,18 @@ axon-core = { path = "../axon-core", default-features = false }
 # PROSE goal file in-browser (`axon goal`), not just `.ax`. default-features off
 # drops clap (CLI-only) from the wasm build.
 axon-surface = { path = "../axon-surface", default-features = false }
+
+# R7c Slice 2: the browser pure-compute PARITY test runs the wasm interpreter's
+# `axon_eval` ABI in REAL headless Chrome via wasm-bindgen-test and asserts the
+# exit code + captured stdout match the native/interp oracle (recorded into the
+# .ax source as a `// EXPECT:` comment so the wasm test is oracle-free). Pinned to
+# match the installed `wasm-bindgen` CLI 0.2.122 (the crate + CLI versions MUST
+# agree or wasm-bindgen-test-runner refuses). dev-only — never in the cdylib.
+[dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+[features]
+# Inert by default; the parity test is `#[cfg(feature = "browser-test")]`-free
+# (wasm-bindgen-test attributes only run under the test harness anyway), so this
+# feature exists purely as a documented opt-in flag for the parity script.
+browser-test = []

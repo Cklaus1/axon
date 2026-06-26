@@ -493,6 +493,9 @@ pub struct Interp<'p> {
     /// wgpu/winit/GPU); this is the interp-side realization of the dual-engine
     /// boundary (the codegen side links the `axon-rt` mock symbols, byte-
     /// identical observable behaviour for the value-returning calls).
+    // Under `gfx-wgpu` the real backend is used instead, so the mock field is
+    // unread there — keep it (cheap, always-constructed) and silence dead_code.
+    #[cfg_attr(feature = "gfx-wgpu", allow(dead_code))]
     gfx_mock: RefCell<crate::native::GfxMock>,
     /// R22 domain-interop native modules (`native::modbus`/`fhir`/`fix`) —
     /// per-`Interp` backend state (one slab table per module). Interp-only; the
@@ -502,6 +505,14 @@ pub struct Interp<'p> {
     /// call is a clean "unavailable on this target" refusal.
     #[cfg(not(target_arch = "wasm32"))]
     domain: axon_domain::Registry,
+    /// R13 slice 5: the REAL wgpu offscreen-render backend for `native::gfx`,
+    /// present only under the `gfx-wgpu` feature. When set, `eval_native_call`
+    /// routes `gfx::*` here (a real headless GPU render) instead of the mock —
+    /// the same `dispatch` interface, a drop-in backend (one interface, two
+    /// backends). The value-returning `read_pixel`/`frame_count` are byte-
+    /// identical to the mock (same packing), so I-2 parity holds.
+    #[cfg(feature = "gfx-wgpu")]
+    gfx_real: RefCell<axon_gfx::GfxReal>,
 }
 
 /// One active effect-handler frame: the inline-handler arms in scope for the
@@ -1605,6 +1616,8 @@ impl<'p> Interp<'p> {
             gfx_mock: RefCell::new(crate::native::GfxMock::new()),
             #[cfg(not(target_arch = "wasm32"))]
             domain: axon_domain::Registry::new(),
+            #[cfg(feature = "gfx-wgpu")]
+            gfx_real: RefCell::new(axon_gfx::GfxReal::new()),
         }
     }
 

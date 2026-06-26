@@ -41,6 +41,8 @@ axon deploy        examples/goals/hello-goal.ax    # safety-gate pipeline → ru
 axon redteam       examples/goals/hello-goal.ax    # run redteam_check fn (--json → axon-redteam/1)
 ```
 
+> Platform-target verification: `ENVIRONMENTS.md` + `scripts/setup-environments.sh` reproduce the GPU (lavapipe/wgpu), browser (headless Chrome), Android (NDK+emulator), and iOS (macOS-CI) gate environments.
+
 **Execution is interpreter-first.** `run`/`goal`/`test`/`check` work without the
 `codegen` feature via the tree-walking interpreter (`interp.rs`). The native
 LLVM/inkwell `codegen` feature is **on by default and now builds in ~3s** —

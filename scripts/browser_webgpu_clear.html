@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>PENDING</title></head>
+<body>
+<!--
+  R7c Slice 3 — the WebGPU "clear a frame" acceptance fixture.
+
+  A WebGPU program renders to an offscreen 4x4 texture, CLEARS it to a known
+  color (0.2, 0.4, 0.8, 1.0), copies it back, and reads the actual pixel bytes —
+  proving the GPU pipeline (adapter → device → render pass → clear → readback)
+  works end to end in the browser. We read the texture back (rather than
+  screenshot the canvas) so the assertion tests WebGPU itself, not the page
+  compositor. The result is exposed via window.__done / document.title so a
+  headless driver can assert it.
+
+  This is the SUBSTRATE the Axon `native::gfx` WebGPU backend will sit on
+  (window_open → attach canvas; clear → this render pass; present → submit). The
+  Axon-gfx-DRIVEN version is gated on R16 (the real wgpu backend; gfx is a mock
+  today, see scripts/browser_webgpu_clear.sh).
+-->
+<canvas id="c" width="64" height="64"></canvas>
+<script>
+window.__done = "PENDING";
+async function run() {
+  const set = (m) => { window.__done = m; document.title = m; };
+  if (!navigator.gpu) { set("NO_WEBGPU"); return; }
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) { set("NO_ADAPTER"); return; }
+  const device = await adapter.requestDevice();
+  const W = 4, H = 4;
+  const tex = device.createTexture({
+    size: { width: W, height: H },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+  });
+  const enc = device.createCommandEncoder();
+  const pass = enc.beginRenderPass({
+    colorAttachments: [{
+      view: tex.createView(), loadOp: "clear", storeOp: "store",
+      clearValue: { r: 0.2, g: 0.4, b: 0.8, a: 1.0 },
+    }],
+  });
+  pass.end();
+  const bytesPerRow = 256; // 256-byte row alignment required by WebGPU.
+  const buf = device.createBuffer({
+    size: bytesPerRow * H,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow },
+                          { width: W, height: H });
+  device.queue.submit([enc.finish()]);
+  await buf.mapAsync(GPUMapMode.READ);
+  const px = new Uint8Array(buf.getMappedRange()).slice(0, 4);
+  set("CLEAR_RGBA=" + px[0] + "," + px[1] + "," + px[2] + "," + px[3]);
+}
+run().catch(e => { window.__done = "FATAL:" + (e.message || e);
+                   document.title = window.__done; });
+</script>
+</body></html>

@@ -234,6 +234,26 @@ const GFX_FNS: &[NativeFn] = &[
         ret: FfiType::I64,
     },
     NativeFn {
+        name: "read_pixel",
+        symbol: "__axon_gfx_read_pixel",
+        // A pure value-returning probe (joins the differential parity corpus):
+        // the surface's last cleared color, packed 0xRRGGBBAA (see
+        // `axon_gfx_mock::pack_rgba8`). For the REAL wgpu module this is the
+        // pixel read back from the offscreen render target after a clear+
+        // present — the headless render-gate's acceptance check. Borrows the
+        // surface. Model and real GPU return the IDENTICAL value (same packing,
+        // non-sRGB target), so I-2 parity holds for this probe too.
+        params: &[(
+            FfiType::Handle {
+                module: "gfx",
+                name: "Surface",
+                resource: true,
+            },
+            ParamMode::Borrow,
+        )],
+        ret: FfiType::I64,
+    },
+    NativeFn {
         name: "surface_close",
         symbol: "__axon_gfx_surface_close",
         // Consumes the Surface handle.
@@ -469,10 +489,6 @@ const FIX: NativeModule = NativeModule {
     functions: FIX_FNS,
 };
 
-/// All registered native modules: the GPU-free `gfx` mock plus the R22
-/// domain-interop modules (`modbus`/`fhir`/`fix`).
-pub const MODULES: &[&NativeModule] = &[&GFX, &MODBUS, &FHIR, &FIX];
-
 /// R22: is this native module INTERP-ONLY (codegen must E0910-refuse a call to
 /// it)? The domain modules do live network I/O (`modbus`/`fhir`) or are kept
 /// interp-only for a uniform domain story (`fix`) — the `host_await`/native
@@ -480,6 +496,84 @@ pub const MODULES: &[&NativeModule] = &[&GFX, &MODBUS, &FHIR, &FIX];
 pub fn is_codegen_refused(module: &str) -> bool {
     matches!(module, "modbus" | "fhir" | "fix")
 }
+
+// ── `native::platform` — the R14 mobile platform shim (HEADLESS STUB) ─────────
+//
+// Spec §3/§7: the `std.platform.*` surface (lifecycle / permissions / haptics /
+// notifications / biometrics) is delivered as a `native::platform` native module.
+// On a device the iOS half calls UIKit/AVFoundation/LocalAuthentication; the
+// interpreter (a dev laptop, no device) returns CLEAN REFUSALS / stubs — exactly
+// like R13's headless gfx handling (I-9: clean refusal, not silent success). So
+// `axon run app.ax` on Linux type-checks and runs the non-device logic, stubbing
+// the device calls. The REAL UIKit-backed impl is iOS-only and lives behind
+// `cfg(target_os="ios")` in the device build, NOT in this interp shim.
+//
+// v1 surfaces three representative entries:
+//   * request_permission(name) -> i64   (a Result-shaped status; headless = DENIED)
+//   * haptic(style)            -> Unit   (no-op off-device)
+//   * is_device()             -> i64    (0 = headless/no device, 1 = on device)
+
+const PLATFORM_FNS: &[NativeFn] = &[
+    NativeFn {
+        name: "request_permission",
+        symbol: "__axon_platform_request_permission",
+        // permission name (e.g. "Camera"); returns a status code.
+        params: &[(FfiType::Str, ParamMode::Move)],
+        // 0 = denied, 1 = granted, 2 = pending. Headless always returns 0.
+        ret: FfiType::I64,
+    },
+    NativeFn {
+        name: "haptic",
+        symbol: "__axon_platform_haptic",
+        // haptic style (e.g. "Light"); a no-op off-device.
+        params: &[(FfiType::Str, ParamMode::Move)],
+        ret: FfiType::Unit,
+    },
+    NativeFn {
+        name: "is_device",
+        symbol: "__axon_platform_is_device",
+        // 0 = headless (interp / no device), 1 = on a real device.
+        params: &[],
+        ret: FfiType::I64,
+    },
+];
+
+const PLATFORM: NativeModule = NativeModule {
+    name: "platform",
+    capability: "platform",
+    // Lifecycle/permission calls are IO-effected (Phase-6 row → caller's row).
+    effects: &["IO"],
+    functions: PLATFORM_FNS,
+};
+
+/// Permission status returned by the headless `platform::request_permission`
+/// stub: 0 = denied (the off-device default — a graceful Result, never a crash;
+/// spec §7 "permission denied → graceful Result").
+pub const PERMISSION_DENIED: i64 = 0;
+
+/// Headless dispatch for `native::platform` (interp side, no device). Mirrors
+/// `GfxMock::dispatch` but is stateless: every device-touching call returns its
+/// clean off-device stub (I-9). The on-device behaviour is the iOS build's job.
+pub fn platform_dispatch_headless(fnname: &str, args: &[GfxArg]) -> GfxResult {
+    match (fnname, args) {
+        // Off-device: every permission request is DENIED (a graceful status,
+        // never a host abort). The user's `@[contained(platform:...)]` grant is a
+        // SEPARATE compile-time gate (E1004); this is the runtime OS-grant layer.
+        ("request_permission", [GfxArg::Str(_name)]) => Ok(GfxValue::Int(PERMISSION_DENIED)),
+        // Haptics are a no-op with no hardware.
+        ("haptic", [GfxArg::Str(_style)]) => Ok(GfxValue::Unit),
+        // No device under the interpreter.
+        ("is_device", []) => Ok(GfxValue::Int(0)),
+        _ => Err(format!(
+            "native::platform: bad call `{fnname}` (wrong argument shape)"
+        )),
+    }
+}
+
+/// All registered native modules: the GPU-free `gfx` mock, the R14 headless
+/// mobile `platform` shim, plus the R22 domain-interop modules
+/// (`modbus`/`fhir`/`fix`).
+pub const MODULES: &[&NativeModule] = &[&GFX, &PLATFORM, &MODBUS, &FHIR, &FIX];
 
 /// Look up a registered native module by name (the `M` in `use native::M`).
 pub fn module(name: &str) -> Option<&'static NativeModule> {
@@ -587,6 +681,39 @@ mod tests {
     fn gfx_registered() {
         assert!(module("gfx").is_some());
         assert!(module("nope").is_none());
+    }
+
+    #[test]
+    fn platform_registered() {
+        // R14: the `native::platform` mobile shim is a registered native module.
+        let m = module("platform").expect("platform registered");
+        assert_eq!(m.capability, "platform");
+        assert!(m.function("request_permission").is_some());
+        assert!(m.function("haptic").is_some());
+        assert!(m.function("is_device").is_some());
+        let (m2, f) = resolve_call("platform::is_device").expect("resolves");
+        assert_eq!(m2.name, "platform");
+        assert_eq!(f.ret, FfiType::I64);
+    }
+
+    #[test]
+    fn platform_headless_stub_is_clean_refusal() {
+        // Spec §7: off-device, permission is DENIED, haptic is a no-op, no device.
+        assert_eq!(
+            platform_dispatch_headless("request_permission", &[GfxArg::Str("Camera".into())]),
+            Ok(GfxValue::Int(PERMISSION_DENIED))
+        );
+        assert_eq!(
+            platform_dispatch_headless("haptic", &[GfxArg::Str("Light".into())]),
+            Ok(GfxValue::Unit)
+        );
+        assert_eq!(
+            platform_dispatch_headless("is_device", &[]),
+            Ok(GfxValue::Int(0))
+        );
+        // A wrong-shape call is a graceful Err, never a panic (I-4).
+        assert!(platform_dispatch_headless("request_permission", &[]).is_err());
+        assert!(platform_dispatch_headless("nope", &[]).is_err());
     }
 
     #[test]
