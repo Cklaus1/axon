@@ -9,10 +9,12 @@
 //! gate (S3), record (S4), supervisor over a `Runtime` seam (S5), the real
 //! `AxonCoreRuntime` (S6), and the CLI (S7).
 
+pub mod gate;
 pub mod grant;
 pub mod manifest;
 pub mod verdict;
 
+pub use gate::{admit, Admission, DeclaredEffects};
 pub use grant::{Budget, EffectSet, ExecPolicy, Grant, Label};
 pub use manifest::{parse as parse_manifest, JobManifest};
 pub use verdict::Verdict;
