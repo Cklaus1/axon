@@ -20,7 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E2300, E2302,
+    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E1810, E2300,
+    E2302,
 };
 use crate::types::Type;
 
@@ -662,6 +663,30 @@ impl CheckCtx {
                         }
                     }
                 }
+            }
+        }
+
+        // R21 TEE (§2 / E1810): `tee_unseal` — declassifying a sealed Secret —
+        // may ONLY be called from inside an `@[enclave]`-annotated fn. Scan every
+        // NON-enclave fn (and impl method) body for a `tee_unseal` call and emit
+        // E1810 for each. The rule is lexical-by-design (no laundering hole: a
+        // helper that calls `tee_unseal` must itself carry `@[enclave]`, or it
+        // trips E1810 — there is no un-annotated fn that may unseal). This is a
+        // pure type/checker rule, enforced with NO TEE hardware; it is the real,
+        // locally-verifiable differentiator of the confidential-computing target.
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) if !f.attrs.iter().any(|a| a.name == "enclave") => {
+                    self.check_enclave_unseal(&f.name, &f.body, f.span);
+                }
+                Item::ImplBlock(blk) => {
+                    for m in &blk.methods {
+                        if !m.attrs.iter().any(|a| a.name == "enclave") {
+                            self.check_enclave_unseal(&m.name, &m.body, m.span);
+                        }
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -1953,6 +1978,51 @@ impl CheckCtx {
         Self::for_each_child(expr, &mut |c| {
             Self::collect_no_alloc_violations(c, allocating_fns, out)
         });
+    }
+
+    /// R21 TEE (E1810): a NON-`@[enclave]` fn body may not call `tee_unseal`.
+    /// `tee_unseal` is the in-enclave Secret-declassification primitive — it is
+    /// the boundary where data you "can't read" outside the TEE becomes readable.
+    /// Unsealing OUTSIDE the enclave region defeats the whole point, so the
+    /// checker refuses it. Emits one E1810 per `tee_unseal` call site, naming the
+    /// enclosing fn and pointing the author at `@[enclave]`.
+    fn check_enclave_unseal(&mut self, fname: &str, body: &Expr, span: crate::span::Span) {
+        let mut sites: usize = 0;
+        Self::count_tee_unseal(body, &mut sites);
+        for _ in 0..sites {
+            let file = self.file.clone();
+            self.errors.push(
+                CheckError::new(
+                    E1810,
+                    format!(
+                        "`tee_unseal` (Secret declassification) called from `{fname}`, which is not \
+                         an `@[enclave]` function — a sealed Secret may only be unsealed INSIDE the \
+                         trusted execution environment"
+                    ),
+                )
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(format!(
+                    "annotate `{fname}` with `@[enclave]` so the unseal runs in-enclave, or move the \
+                     `tee_unseal` call into an `@[enclave]` fn and pass the unsealed value out as a \
+                     non-Secret result (the TEE boundary is the declassification point)"
+                )),
+            );
+        }
+    }
+
+    /// Count direct `tee_unseal(...)` call sites in an expression tree. Lexical
+    /// by design: a `tee_unseal` reached through a helper still trips E1810 on the
+    /// HELPER (which must itself be `@[enclave]`), so there is no laundering path.
+    fn count_tee_unseal(expr: &Expr, count: &mut usize) {
+        if let Expr::Call { callee, .. } = expr {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == "tee_unseal" {
+                    *count += 1;
+                }
+            }
+        }
+        Self::for_each_child(expr, &mut |c| Self::count_tee_unseal(c, count));
     }
 
     /// Collect `x.m()` MethodCalls whose method name is in `impure_methods`

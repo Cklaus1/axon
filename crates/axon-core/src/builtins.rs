@@ -1867,6 +1867,45 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i64",
         doc: "R23 eBPF: the current CPU id. Lowers to BPF `call 8`. Substrate-only.",
     },
+    // ── R24: TEE / confidential-computing primitives ────────────────────────────
+    // The Secret info-flow lattice (examples/stdlib/tainted.ax) composes with the
+    // enclave boundary: a sealed Secret may only be DECLASSIFIED (unsealed) inside
+    // an `@[enclave]`-annotated fn. `tee_unseal` is the in-enclave declassification
+    // primitive — calling it OUTSIDE an `@[enclave]` context is E1810 (a pure
+    // type/checker rule, enforced on THIS host with no TEE hardware). Sealing is
+    // unrestricted; only unsealing is enclave-gated. See governance/specs/R24-tee-target.md.
+    BuiltinFn {
+        name: "tee_seal",
+        params: &[("val", "i64"), ("level", "i64")],
+        ret: "i64",
+        doc: "R24 TEE: seal a value at confidentiality `level` (0=public..3=secret). Sealing is \
+              allowed anywhere — only UNSEALING is enclave-gated. Returns the sealed payload \
+              (identity in the simulation; the type story is the Secret-lattice + E1810 rule).",
+    },
+    BuiltinFn {
+        name: "tee_unseal",
+        params: &[("sealed", "i64"), ("level", "i64")],
+        ret: "i64",
+        doc: "R24 TEE: UNSEAL (declassify) a sealed Secret value INSIDE the enclave. May ONLY be \
+              called from within an `@[enclave]` fn — calling it outside an enclave context is \
+              E1810. This is the 'compute on data you can't read' boundary, enforced by types.",
+    },
+    BuiltinFn {
+        name: "tee_in_enclave",
+        params: &[],
+        ret: "bool",
+        doc: "R24 TEE: true iff the workload is executing inside a TEE/enclave region. In the \
+              gramine-direct simulation this is signalled by the AXON_TEE_ENCLAVE=1 env var the \
+              manifest sets. (Runtime probe; the compile-time guarantee is the E1810 rule.)",
+    },
+    BuiltinFn {
+        name: "tee_attest_measurement",
+        params: &[],
+        ret: "str",
+        doc: "R24 TEE: the enclave LAUNCH MEASUREMENT (a deterministic hash of the loaded \
+              image). SIMULATED locally (returns AXON_TEE_MEASUREMENT or a stub) — a genuine \
+              hardware-rooted attestation QUOTE is produced only on confidential hardware (tee.yml).",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -2003,6 +2042,10 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // R23 eBPF helpers (kernel side effects; Bpf effect row)
             | "bpf_map_lookup_elem" | "bpf_map_value_add"
             | "bpf_ktime_get_ns" | "bpf_get_smp_processor_id"
+            // R24 TEE: confidential-computing boundary (Tee effect). Sealing,
+            // in-enclave unsealing, the enclave probe, and the measurement are all
+            // boundary-effectful (interact with the TEE runtime / its env signal).
+            | "tee_seal" | "tee_unseal" | "tee_in_enclave" | "tee_attest_measurement"
     )
 }
 
@@ -2091,6 +2134,12 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
         | "bpf_get_smp_processor_id" => &["Bpf"],
 
+        // R24 TEE — the confidential-computing boundary. `tee_unseal` declassifies
+        // a sealed Secret INSIDE the enclave (and is E1810 outside an `@[enclave]`
+        // fn). The `Tee` effect makes the boundary visible to the effect checker;
+        // it cannot leak into a pure context unannotated (E1310).
+        "tee_seal" | "tee_unseal" | "tee_in_enclave" | "tee_attest_measurement" => &["Tee"],
+
         // Everything else is pure.
         _ => &[],
     }
@@ -2162,6 +2211,12 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     // fn as an eBPF program. Substrate-only; `axon build --target bpf` lowers it
     // to a kernel-verifier-accepted .bpf.o. Auto-implies @[no_alloc] + @[total].
     "bpf",
+    // R24 TEE: `@[enclave]` marks a fn as running inside the trusted execution
+    // environment. It is the ONLY context in which `tee_unseal` (Secret
+    // declassification) is permitted — calling `tee_unseal` from a non-enclave
+    // fn is E1810. The checker (`check_enclave_unseal`) enforces the rule; the
+    // attribute is known here so it doesn't warn (W0001).
+    "enclave",
 ];
 
 /// R23 eBPF: the BPF helper capability allowlist. A `@[bpf]` program may only

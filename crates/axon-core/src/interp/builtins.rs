@@ -2176,6 +2176,47 @@ impl<'p> Interp<'p> {
                 Err(Flow::Exit(as_int(&args[0])? as i32))
             }
 
+            // ── R21 TEE: confidential-computing boundary ────────────────────
+            // The compile-time guarantee (a Secret may only be unsealed in an
+            // `@[enclave]` fn) is the E1810 checker rule. These runtime arms make
+            // the workload EXECUTABLE so the gramine-direct simulation can run it.
+            // `tee_seal`/`tee_unseal` are the identity on the payload (the value
+            // story is the Secret lattice + the enclave type rule, not encryption);
+            // `tee_in_enclave` reads the AXON_TEE_ENCLAVE=1 signal the manifest
+            // sets; `tee_attest_measurement` returns the SIMULATED launch
+            // measurement (a real hardware quote is produced only remotely).
+            "tee_seal" => {
+                want(2)?;
+                // Seal is unrestricted; payload passes through (level is the
+                // lattice tag, carried by the Secret value type in userland).
+                ok!(Value::Int(as_int(&args[0])?));
+            }
+            "tee_unseal" => {
+                want(2)?;
+                // Declassify: only reachable from an `@[enclave]` fn (E1810 guards
+                // every other call site at check time), so by the time we get here
+                // we are in-enclave. Return the cleartext payload.
+                ok!(Value::Int(as_int(&args[0])?));
+            }
+            "tee_in_enclave" => {
+                want(0)?;
+                let inside = crate::host::with_host(|h| h.env_var("AXON_TEE_ENCLAVE"))
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                ok!(Value::Bool(inside));
+            }
+            "tee_attest_measurement" => {
+                want(0)?;
+                let m = crate::host::with_host(|h| h.env_var("AXON_TEE_MEASUREMENT"))
+                    .unwrap_or_else(|| {
+                        // SIMULATED measurement — clearly marked as not a real,
+                        // hardware-rooted quote. A genuine quote comes from tee.yml
+                        // on confidential hardware.
+                        "SIMULATED-MEASUREMENT-no-tee-hardware".to_string()
+                    });
+                ok!(Value::Str(m));
+            }
+
             // ── ASI: numeric conversions ────────────────────────────────────
             "f64_to_i64" => {
                 want(1)?;
