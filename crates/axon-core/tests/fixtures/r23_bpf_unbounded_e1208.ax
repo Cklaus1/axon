@@ -1,0 +1,17 @@
+// R23 adversarial: a @[bpf] program with an unbounded `while` loop.
+// `@[bpf]` implies `@[total]`, so the unbounded loop is E1208 (a termination
+// obligation Axon cannot discharge) — refused BEFORE codegen, NOT at kernel
+// load time. The whole point: Axon catches it earlier and with a clearer error.
+//
+// Expected:  axon check examples/bpf/bad_unbounded.ax  → error[E1208]
+
+substrate
+
+@[bpf(kind: socket_filter)]
+fn spin(ctx: i64) -> i64 {
+    let i = 0
+    while i < ctx {
+        i = i + 1
+    }
+    0
+}

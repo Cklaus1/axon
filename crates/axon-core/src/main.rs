@@ -2426,9 +2426,17 @@ fn cmd_build(
     }
 
     let first = &files[0];
+
+    // R23 eBPF: `--target bpf` defaults the output to `<stem>.bpf.o` (not the
+    // bare-stem hosted-binary default).
+    let is_bpf_target = matches!(target.as_deref(), Some("bpf" | "bpfel" | "bpfeb"));
     let output = out.unwrap_or_else(|| {
         let stem = first.file_stem().unwrap_or_default().to_string_lossy();
-        PathBuf::from(format!("./{stem}"))
+        if is_bpf_target {
+            PathBuf::from(format!("./{stem}.bpf.o"))
+        } else {
+            PathBuf::from(format!("./{stem}"))
+        }
     });
 
     if files.len() == 1 {
@@ -2456,6 +2464,26 @@ fn cmd_build(
             eprintln!("error[{}]: {}", e.code, e.message);
         }
         process::exit(2);
+    }
+
+    // R23 eBPF: `--target bpf` (or `bpfel`/`bpfeb`) takes a dedicated, focused
+    // path — the hosted IR pipeline (provenance hooks, main wrapper, host
+    // runtime) doesn't apply to a kernel BPF program.
+    if is_bpf_target {
+        match cmd_build_bpf(&mut program, first, &output) {
+            Ok(section) => {
+                let elapsed = start.elapsed().as_millis();
+                eprintln!(
+                    "BPF object: {} (section `{section}`) ({elapsed}ms)",
+                    output.display()
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        }
     }
 
     // Freestanding: resolve entry fn from @[entry]-annotated fn, force target.
@@ -2517,6 +2545,38 @@ fn cmd_build(
             process::exit(1);
         }
     }
+}
+
+/// R23 eBPF: type-check the program (so E2300/E2302/E1208/E1704 fire) then emit
+/// a `.bpf.o` via the focused BPF backend. Returns the ELF section name on
+/// success. Honest failure: an unsupported construct surfaces as E2301.
+#[cfg(feature = "codegen")]
+fn cmd_build_bpf(
+    program: &mut axon_core::ast::Program,
+    source_path: &Path,
+    output: &Path,
+) -> Result<String, String> {
+    // Full check pipeline first — this runs the BPF-specific gates (the helper
+    // allowlist E2300, the kind check E2302) AND the auto-implied @[total]
+    // (E1208) / @[no_alloc] (E1704) gates, so an unbounded loop / heap touch /
+    // un-granted helper is refused BEFORE codegen.
+    let (errors, _infer) = run_check_pipeline(program, source_path);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        return Err(format!("{} error(s); BPF build aborted", errors.len()));
+    }
+    // Require a @[bpf]-annotated fn.
+    let has_bpf = program.items.iter().any(|it| {
+        matches!(it, axon_core::ast::Item::FnDef(f) if f.attrs.iter().any(|a| a.name == "bpf"))
+    });
+    if !has_bpf {
+        return Err(
+            "error: `--target bpf` requires a `@[bpf(kind: …)]`-annotated function".to_string(),
+        );
+    }
+    axon_core::codegen::bpf::emit_bpf_object(program, &output.to_string_lossy())
 }
 
 #[cfg(feature = "codegen")]

@@ -37,6 +37,7 @@ use crate::types::Type;
 // because the bigger remaining splits will involve cross-cutting field-access
 // pub(super) decisions.
 pub mod asi;
+pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;

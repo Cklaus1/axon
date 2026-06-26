@@ -1868,3 +1868,65 @@ fn native_ok_program_is_clean() {
         "a correct granted native program must be clean, got native errors: {bad:?} (all: {codes:?})"
     );
 }
+
+// ── R23 eBPF target — capability + determinism gates ──────────────────────────
+
+/// A clean `@[bpf]` counter program type-checks without the R23 / determinism
+/// gates firing (no E2300/E2301/E2302; no E1208/E1704 from the auto-implied
+/// @[total]/@[no_alloc]). This is the program that the kernel verifier ACCEPTS.
+#[test]
+fn r23_bpf_counter_clean() {
+    let errors = check_fixture("r23_bpf_counter_clean.ax");
+    let bad: Vec<&String> = errors
+        .iter()
+        .filter(|e| {
+            e.contains("E2300")
+                || e.contains("E2301")
+                || e.contains("E2302")
+                || e.contains("E1208")
+                || e.contains("E1704")
+        })
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "a clean @[bpf] counter must not trip R23/determinism gates, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Determinism gate: a `@[bpf]` program with an unbounded `while` is E1208
+/// (`@[bpf]` implies `@[total]`) — refused BEFORE codegen, not at kernel load.
+#[test]
+fn r23_bpf_unbounded_while_is_e1208() {
+    let errors = check_fixture("r23_bpf_unbounded_e1208.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1208")),
+        "an unbounded `while` in a @[bpf] program must be E1208, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// No-heap gate: a `@[bpf]` program that allocates (string from `to_str`) is
+/// E1704 (`@[bpf]` implies `@[no_alloc]`).
+#[test]
+fn r23_bpf_heap_alloc_is_e1704() {
+    let errors = check_fixture("r23_bpf_heap_e1704.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1704")),
+        "a heap allocation in a @[bpf] program must be E1704, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Capability gate (the novelty): a `@[bpf]` program calling a BPF helper NOT on
+/// the allowlist is E2300 — a clean Axon error at CHECK time, never a kernel
+/// load-time verifier reject.
+#[test]
+fn r23_bpf_ungranted_helper_is_e2300() {
+    let errors = check_fixture("r23_bpf_helper_e2300.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E2300")),
+        "an un-allowlisted BPF helper must be E2300, got:\n{}",
+        errors.join("\n")
+    );
+}

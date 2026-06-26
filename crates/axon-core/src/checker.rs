@@ -20,7 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704,
+    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E2300, E2302,
 };
 use crate::types::Type;
 
@@ -602,12 +602,19 @@ impl CheckCtx {
             }
         }
 
+        // R23 eBPF: a `@[bpf]` program is deterministic-by-construction. Validate
+        // its kind (E2302) and its helper calls against the capability allowlist
+        // (E2300) here; the auto-implied @[total]/@[no_alloc] gates below pick up
+        // @[bpf] fns via `fn_is_total`/`fn_is_no_alloc`.
+        self.check_bpf_programs(program);
+
         // Phase 5 §3: a @[total] fn must terminate. For a recursive @[total] fn,
         // require a strictly-decreasing well-founded measure at every recursive
         // call; a non-recursive @[total] fn passes silently. E1208 otherwise.
+        // R23: `@[bpf]` implies `@[total]`.
         for item in &program.items {
             if let Item::FnDef(f) = item {
-                if f.attrs.iter().any(|a| a.name == "total") {
+                if Self::fn_is_total(f) {
                     self.check_totality(f);
                 }
             }
@@ -631,8 +638,9 @@ impl CheckCtx {
         // fixpoint, then flag each `@[no_alloc]` fn that allocates. The
         // transitive analysis closes the laundering hole: hiding a `str_concat`
         // behind an un-annotated helper still trips E1704.
+        // R23: `@[bpf]` implies `@[no_alloc]`.
         let has_no_alloc = program.items.iter().any(|it| match it {
-            Item::FnDef(f) => f.attrs.iter().any(|a| a.name == "no_alloc"),
+            Item::FnDef(f) => Self::fn_is_no_alloc(f),
             Item::ImplBlock(blk) => blk
                 .methods
                 .iter()
@@ -643,7 +651,7 @@ impl CheckCtx {
             let allocating = Self::compute_allocating_fns(program);
             for item in &program.items {
                 if let Item::FnDef(f) = item {
-                    if f.attrs.iter().any(|a| a.name == "no_alloc") {
+                    if Self::fn_is_no_alloc(f) {
                         self.check_no_alloc(f, &allocating);
                     }
                 }
@@ -1814,6 +1822,107 @@ impl CheckCtx {
                 )),
             );
         }
+    }
+
+    /// R23 eBPF: a fn is treated as `@[total]` if it is explicitly annotated
+    /// `@[total]` OR it is a `@[bpf]` program (BPF programs are bounded by
+    /// construction — the verifier rejects unbounded loops, so Axon enforces
+    /// `@[total]` up front to refuse them BEFORE codegen).
+    fn fn_is_total(f: &FnDef) -> bool {
+        f.attrs
+            .iter()
+            .any(|a| a.name == "total" || a.name == "bpf")
+    }
+
+    /// R23 eBPF: a fn is treated as `@[no_alloc]` if explicitly annotated OR it
+    /// is a `@[bpf]` program (eBPF has no heap, so `@[bpf]` implies `@[no_alloc]`).
+    fn fn_is_no_alloc(f: &FnDef) -> bool {
+        f.attrs
+            .iter()
+            .any(|a| a.name == "no_alloc" || a.name == "bpf")
+    }
+
+    /// R23 eBPF: validate each `@[bpf(kind: K)]` program — the kind is one of the
+    /// supported program types (E2302), and every BPF helper it calls is on the
+    /// capability allowlist (E2300). The allowlist check is the novelty: an
+    /// un-granted helper is refused at CHECK TIME with a clean Axon error, never
+    /// at kernel load time. (`@[total]`/`@[no_alloc]` are auto-implied and
+    /// enforced by the existing E1208/E1704 gates via `fn_is_total`/`fn_is_no_alloc`.)
+    fn check_bpf_programs(&mut self, program: &Program) {
+        for item in &program.items {
+            let Item::FnDef(f) = item else { continue };
+            let Some(bpf_attr) = f.attrs.iter().find(|a| a.name == "bpf") else {
+                continue;
+            };
+            // Validate the program kind (default socket_filter if unspecified).
+            let kind = bpf_attr
+                .args
+                .iter()
+                .find_map(|a| {
+                    a.strip_prefix("kind:")
+                        .map(|s| s.trim().to_string())
+                        .or_else(|| {
+                            // bare arg form `@[bpf(xdp)]`
+                            if !a.contains(':') {
+                                Some(a.trim().to_string())
+                            } else {
+                                None
+                            }
+                        })
+                })
+                .unwrap_or_else(|| "socket_filter".to_string());
+            if crate::builtins::bpf_kind_section(&kind).is_none() {
+                let file = self.file.clone();
+                self.errors.push(
+                    CheckError::new(
+                        E2302,
+                        format!(
+                            "unknown `@[bpf]` kind `{kind}`; supported: socket_filter, xdp, \
+                             tracepoint, kprobe"
+                        ),
+                    )
+                    .at(&file, 0, 0)
+                    .with_span(f.span),
+                );
+            }
+            // Every called builtin whose name starts with `bpf_` must be on the
+            // capability allowlist. A non-allowlisted `bpf_*` helper is E2300.
+            let mut bad_helpers: Vec<String> = Vec::new();
+            Self::collect_bad_bpf_helpers(&f.body, &mut bad_helpers);
+            for helper in bad_helpers {
+                let file = self.file.clone();
+                let allowed = crate::builtins::BPF_HELPER_BUILTINS.join(", ");
+                self.errors.push(
+                    CheckError::new(
+                        E2300,
+                        format!(
+                            "BPF helper `{helper}` is not in the Axon capability allowlist; \
+                             allowed: {allowed}"
+                        ),
+                    )
+                    .at(&file, 0, 0)
+                    .with_span(f.span)
+                    .fix(format!(
+                        "remove the call to `{helper}`, or add it to the BPF capability allowlist \
+                         (BPF_HELPER_BUILTINS) with its helper id"
+                    )),
+                );
+            }
+        }
+    }
+
+    /// Collect calls in `expr` to a `bpf_*`-named function that is NOT on the
+    /// allowlist (E2300). A `bpf_*` name that is not a known builtin at all is
+    /// still flagged — it cannot be lowered to a verifiable BPF helper.
+    fn collect_bad_bpf_helpers(expr: &Expr, out: &mut Vec<String>) {
+        if let Expr::Call { callee, .. } = expr {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name.starts_with("bpf_") && !crate::builtins::is_bpf_helper(name) {
+                    out.push(name.clone());
+                }
+            }
+        }
+        Self::for_each_child(expr, &mut |c| Self::collect_bad_bpf_helpers(c, out));
     }
 
     /// Collect heap-allocation sites inside a `@[no_alloc]` body: allocating

@@ -4450,6 +4450,18 @@ impl<'p> Interp<'p> {
                 )))
             }
 
+            // R23 eBPF helpers — there is no kernel under the tree-walking
+            // interpreter, so these only run inside a compiled .bpf.o. Refuse
+            // cleanly (E0910), exactly like the R17 HAL leaves.
+            "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
+            | "bpf_get_smp_processor_id" => {
+                Err(crate::interp::Flow::Panic(format!(
+                    "[E0910] `{name}` is a BPF helper — it requires `axon build --target bpf` \
+                     (there is no kernel under `axon run`). Use `axon check` to type-check the \
+                     eBPF program source without running it."
+                )))
+            }
+
             _ => Ok(None),
         }
     }

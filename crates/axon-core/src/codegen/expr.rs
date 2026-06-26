@@ -8744,8 +8744,9 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         let elem_ty = self.ir.context.custom_width_int_type(bits);
                         let load = self.ir.builder.build_load(elem_ty, ptr, "vload").unwrap();
-                        load.as_instruction_value()
-                            .map(|i| i.set_volatile(true).unwrap());
+                        if let Some(i) = load.as_instruction_value() {
+                            i.set_volatile(true).unwrap();
+                        }
                         // Zero-extend to i64 for the value stack.
                         let ext = self
                             .ir

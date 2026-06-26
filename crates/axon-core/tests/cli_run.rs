@@ -1964,6 +1964,12 @@ fn all_examples_typecheck_clean() {
         "agent_task_evil.ax",
         "agent_task_subtle.ax",
         "agent_task_secrets.ax",
+        // R23 eBPF adversarial examples — DESIGNED to fail check (E1208 unbounded
+        // loop, E1704 heap, E2300 un-allowlisted helper). Guarded by their own
+        // tests in integration_fixtures.rs (r23_bpf_*).
+        "bad_unbounded.ax",
+        "bad_heap.ax",
+        "bad_helper.ax",
     ];
     for f in &files {
         if f.file_name()
@@ -16174,7 +16180,13 @@ fn r1e_direct_ir_emission_stays_confined() {
     // and the ir_inkwell holder's own inherent-API test. A NEW file growing a
     // direct `.builder.build_` call is a second IR path spreading — fail it here
     // so it converges onto w_* instead.
-    let allow: &[&str] = &["expr.rs", "build_wrappers.rs", "ir_inkwell.rs"];
+    //
+    // R23 `bpf.rs` is an INDEPENDENT, self-contained backend: it builds its own
+    // inkwell Context+Module+Builder (NOT the hosted `Codegen.ir` the w_*
+    // wrappers thread through), so the wrappers do not apply to it. It is a
+    // separate emission target, not a second path spreading through the hosted
+    // pipeline — allowlisted on that basis.
+    let allow: &[&str] = &["expr.rs", "build_wrappers.rs", "ir_inkwell.rs", "bpf.rs"];
     let cg = codegen_dir();
     let mut offenders = Vec::new();
     for entry in std::fs::read_dir(&cg).unwrap() {

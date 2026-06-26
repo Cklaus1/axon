@@ -163,6 +163,11 @@ pub const E1801: &str = "E1801"; // native call arg/ret type not FFI-representab
 pub const E1802: &str = "E1802"; // handle of module A passed where module B's handle expected
 pub const E1803: &str = "E1803"; // arithmetic / forging on a `Handle` (opaque, unconstructable)
 
+// R23 eBPF target errors.
+pub const E2300: &str = "E2300"; // a BPF helper not on the Axon capability allowlist is called from a @[bpf] program
+pub const E2301: &str = "E2301"; // a construct outside the BPF-lowerable subset appears in a @[bpf] body
+pub const E2302: &str = "E2302"; // @[bpf(kind: K)] has an unknown program kind
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing

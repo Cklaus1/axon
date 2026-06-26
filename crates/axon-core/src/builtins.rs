@@ -1837,6 +1837,36 @@ pub const BUILTINS: &[BuiltinFn] = &[
               returns the value that WAS in memory (== expected iff the swap happened) with the \
               named memory order. Lowers to LLVM `cmpxchg`. Substrate-only.",
     },
+    // ── R23 eBPF helpers (substrate-only; Bpf effect row; E0910 in interp) ──────
+    // These lower to a BPF `call <id>` (or atomicrmw add) only under
+    // `axon build --target bpf`. They are the capability allowlist; an
+    // un-allowlisted BPF helper is E2300 at check time.
+    BuiltinFn {
+        name: "bpf_map_lookup_elem",
+        params: &[("map", "i64"), ("key", "i64")],
+        ret: "i64", // opaque value pointer (0 = NULL/miss)
+        doc: "R23 eBPF: look up `key` in BPF map handle `map` (Slice 1: handle 0 = the single \
+              ARRAY map). Returns the value pointer as i64 (0 = miss). Lowers to BPF `call 1`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_map_value_add",
+        params: &[("value_ptr", "i64"), ("delta", "i64")],
+        ret: "()",
+        doc: "R23 eBPF: atomically add `delta` to the i64 a map value pointer refers to \
+              (the race-free counter increment). Lowers to BPF `atomicrmw add`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_ktime_get_ns",
+        params: &[],
+        ret: "i64",
+        doc: "R23 eBPF: nanoseconds since boot (CLOCK_MONOTONIC). Lowers to BPF `call 5`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_get_smp_processor_id",
+        params: &[],
+        ret: "i64",
+        doc: "R23 eBPF: the current CPU id. Lowers to BPF `call 8`. Substrate-only.",
+    },
 ];
 
 // ── BuiltinSig (consumed by infer.rs) ────────────────────────────────────────
@@ -1970,6 +2000,9 @@ pub fn is_impure_builtin(name: &str) -> bool {
             // R17 Slice 2: SMP atomics (shared-memory side effects)
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64"
+            // R23 eBPF helpers (kernel side effects; Bpf effect row)
+            | "bpf_map_lookup_elem" | "bpf_map_value_add"
+            | "bpf_ktime_get_ns" | "bpf_get_smp_processor_id"
     )
 }
 
@@ -2053,6 +2086,11 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "atomic_load_i64" | "atomic_store_i64"
         | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
 
+        // R23 eBPF helpers — the `Bpf` capability axis, gated like Hal: only a
+        // @[bpf] substrate program may call them, and only the allowlisted set.
+        "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
+        | "bpf_get_smp_processor_id" => &["Bpf"],
+
         // Everything else is pure.
         _ => &[],
     }
@@ -2120,7 +2158,50 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     "align",
     "naked",
     "interrupt",
+    // R23 eBPF target: `@[bpf(kind: socket_filter|xdp|tracepoint|kprobe)]` marks a
+    // fn as an eBPF program. Substrate-only; `axon build --target bpf` lowers it
+    // to a kernel-verifier-accepted .bpf.o. Auto-implies @[no_alloc] + @[total].
+    "bpf",
 ];
+
+/// R23 eBPF: the BPF helper capability allowlist. A `@[bpf]` program may only
+/// call a builtin in this set; an un-allowlisted helper is E2300 at check time
+/// (a clean Axon error, NOT a kernel load-time verifier reject). Each lowers to
+/// a BPF `call <id>` (or, for the map-value increment, an `atomicrmw add`).
+pub const BPF_HELPER_BUILTINS: &[&str] = &[
+    "bpf_map_lookup_elem",
+    "bpf_map_value_add",
+    "bpf_ktime_get_ns",
+    "bpf_get_smp_processor_id",
+];
+
+/// Is `name` an allowlisted BPF helper builtin (R23)?
+pub fn is_bpf_helper(name: &str) -> bool {
+    BPF_HELPER_BUILTINS.contains(&name)
+}
+
+/// R23 eBPF: the supported `@[bpf(kind: K)]` program kinds and their libbpf ELF
+/// section names. Unknown kinds are E2302.
+pub fn bpf_kind_section(kind: &str) -> Option<&'static str> {
+    match kind {
+        "socket_filter" => Some("socket"),
+        "xdp" => Some("xdp"),
+        "tracepoint" => Some("tracepoint"),
+        "kprobe" => Some("kprobe"),
+        _ => None,
+    }
+}
+
+/// R23 eBPF: the BPF helper id used in the emitted `call <id>` instruction.
+/// `bpf_map_value_add` is special (lowered to `atomicrmw add`, no helper call).
+pub fn bpf_helper_id(name: &str) -> Option<u64> {
+    match name {
+        "bpf_map_lookup_elem" => Some(1),
+        "bpf_ktime_get_ns" => Some(5),
+        "bpf_get_smp_processor_id" => Some(8),
+        _ => None,
+    }
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -2144,6 +2225,47 @@ mod tests {
                 b.name
             );
         }
+    }
+
+    #[test]
+    fn r23_bpf_helpers_are_known_impure_and_carry_bpf_effect() {
+        for name in BPF_HELPER_BUILTINS {
+            assert!(is_known_builtin(name), "{name} must be a known builtin");
+            assert!(is_bpf_helper(name), "{name} must be an allowlisted BPF helper");
+            assert!(is_impure_builtin(name), "{name} must be impure");
+            assert_eq!(
+                builtin_effect_row(name),
+                &["Bpf"],
+                "{name} must carry the Bpf effect row"
+            );
+            // BPF helpers are scalar/ptr leaves — they do NOT allocate a heap
+            // str/array/dict, so a @[bpf] (@[no_alloc]) program may call them.
+            assert!(
+                !is_heap_allocating_builtin(name),
+                "{name} (BPF helper) must be allocation-free"
+            );
+        }
+    }
+
+    #[test]
+    fn r23_bpf_helper_ids_are_consistent() {
+        // bpf_map_value_add is special (atomicrmw add, no helper call) → no id.
+        assert_eq!(bpf_helper_id("bpf_map_value_add"), None);
+        // The call-emitting helpers have their canonical Linux helper ids.
+        assert_eq!(bpf_helper_id("bpf_map_lookup_elem"), Some(1));
+        assert_eq!(bpf_helper_id("bpf_ktime_get_ns"), Some(5));
+        assert_eq!(bpf_helper_id("bpf_get_smp_processor_id"), Some(8));
+        // An un-allowlisted helper is not recognized at all.
+        assert!(!is_bpf_helper("bpf_probe_read"));
+    }
+
+    #[test]
+    fn r23_bpf_kind_sections() {
+        assert_eq!(bpf_kind_section("socket_filter"), Some("socket"));
+        assert_eq!(bpf_kind_section("xdp"), Some("xdp"));
+        assert_eq!(bpf_kind_section("tracepoint"), Some("tracepoint"));
+        assert_eq!(bpf_kind_section("kprobe"), Some("kprobe"));
+        assert_eq!(bpf_kind_section("nonsense"), None);
     }
 
     #[test]
