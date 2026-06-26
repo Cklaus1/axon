@@ -1,0 +1,32 @@
+// R14 (iOS slice 5 journey / manual tier) — the Metal `window_clear` frame
+// journey, expressed against the SAME `native::gfx` shim as desktop/browser.
+//
+// Spec §8 journey (UI): build this for the iOS simulator and render one cleared
+// frame via wgpu's Metal backend. It is the iOS twin of examples/native/gfx_demo.ax.
+//
+// HONEST TIER (spec §11 slice 5, §12 Q4): under the INTERPRETER (a dev laptop)
+// this runs against the GPU-FREE mock — a frame counter, no real Metal surface —
+// so `axon run` here type-checks + exercises the handle lifecycle headlessly. The
+// REAL Metal surface acquisition (a `CAMetalLayer` handed in by the AxonRuntime
+// Swift bridge) is the device build's job and is verified ONLY by the macOS CI
+// job on an iOS Simulator (`ios_sim_window_clear`), never on Linux.
+//
+// `@[contained(gfx: any)]` is REQUIRED — without it the gfx::* calls are E1004.
+
+use native::gfx
+
+@[contained(gfx: any)]
+fn main() -> i64 {
+    // On a device, window_open(0, 0, ...) = full-screen (no OS window concept on
+    // mobile — spec §3); the mock ignores the dims.
+    let win = gfx::window_open(0, 0, "axon-ios")
+    let surf = gfx::surface(win)
+    // Clear to a deep blue and present one frame (the journey's observable).
+    gfx::clear(surf, 0.0, 0.0, 0.3, 1.0)
+    gfx::present(surf)
+    let frames = gfx::frame_count(surf)
+    println("ios-window-clear rendered {to_str(frames)} frame(s)")
+    gfx::surface_close(surf)
+    gfx::window_close(win)
+    frames
+}

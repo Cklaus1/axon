@@ -28,6 +28,114 @@ use inkwell::targets::{
 };
 use inkwell::OptimizationLevel;
 
+// ── R14 Android cross-link support ────────────────────────────────────────────
+
+/// True when `triple` names an Android (bionic) target.
+///
+/// R14 slice 1: Android is the Linux-buildable mobile target. iOS
+/// (`*-apple-ios`) is specified but gated on a macOS host (R14 §4 / Q4) and is
+/// NOT handled here — it would need the Xcode `ld` + iOS SDK.
+pub(super) fn is_android_triple(triple: &str) -> bool {
+    triple.contains("-android")
+}
+
+/// Map an Android LLVM triple to (its NDK clang basename, the cargo target env
+/// infix used by `CARGO_TARGET_<INFIX>_LINKER` / `CC_<rust_target>`).
+///
+/// Returns `None` for an unrecognized android arch.
+fn android_ndk_clang(triple: &str, api: u32) -> Option<(String, String)> {
+    // The NDK toolchain ships per-(arch,api) clang wrappers, e.g.
+    // `aarch64-linux-android34-clang`. armv7 uses the `armv7a-linux-androideabi`
+    // clang basename but the rust target is `armv7-linux-androideabi`.
+    let (clang_prefix, rust_target) = if triple.starts_with("aarch64") {
+        ("aarch64-linux-android", "aarch64-linux-android")
+    } else if triple.starts_with("x86_64") {
+        ("x86_64-linux-android", "x86_64-linux-android")
+    } else if triple.starts_with("armv7") || triple.starts_with("arm-") {
+        ("armv7a-linux-androideabi", "armv7-linux-androideabi")
+    } else if triple.starts_with("i686") {
+        ("i686-linux-android", "i686-linux-android")
+    } else {
+        return None;
+    };
+    Some((
+        format!("{clang_prefix}{api}-clang"),
+        rust_target.to_string(),
+    ))
+}
+
+/// Locate the Android NDK toolchain `bin/` directory.
+///
+/// Order: `$ANDROID_NDK_HOME`, `$ANDROID_NDK_ROOT`, then the highest-numbered
+/// `$ANDROID_HOME/ndk/<version>`. Returns the absolute `…/bin` path.
+fn android_ndk_bin() -> Option<std::path::PathBuf> {
+    let host_tag = "linux-x86_64"; // this build host is Linux/WSL2 (R14 §1).
+    let try_root = |root: &Path| -> Option<std::path::PathBuf> {
+        let bin = root
+            .join("toolchains/llvm/prebuilt")
+            .join(host_tag)
+            .join("bin");
+        if bin.is_dir() {
+            Some(bin)
+        } else {
+            None
+        }
+    };
+    for var in ["ANDROID_NDK_HOME", "ANDROID_NDK_ROOT", "NDK_HOME"] {
+        if let Some(p) = std::env::var_os(var) {
+            if let Some(bin) = try_root(Path::new(&p)) {
+                return Some(bin);
+            }
+        }
+    }
+    // $ANDROID_HOME/ndk/<version> — pick the lexically-highest version dir.
+    let sdk = std::env::var_os("ANDROID_HOME").or_else(|| std::env::var_os("ANDROID_SDK_ROOT"))?;
+    let ndk_root = Path::new(&sdk).join("ndk");
+    let mut versions: Vec<std::path::PathBuf> = std::fs::read_dir(&ndk_root)
+        .ok()?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    versions.sort();
+    for v in versions.into_iter().rev() {
+        if let Some(bin) = try_root(&v) {
+            return Some(bin);
+        }
+    }
+    None
+}
+
+/// Resolve the NDK clang to use as the Android linker for `triple`.
+///
+/// Precedence: an explicit `[target.<triple>] linker = …` in
+/// `~/.config/axon/cross.toml` wins; otherwise auto-detect the NDK
+/// (`android_ndk_bin`) and pick the per-arch clang at API `api`.
+fn android_linker(triple: &str, api: u32) -> Result<std::path::PathBuf, String> {
+    if let Some(l) = read_cross_linker(triple) {
+        return Ok(std::path::PathBuf::from(l));
+    }
+    let (clang_name, _rust) = android_ndk_clang(triple, api).ok_or_else(|| {
+        format!("[E1710] mobile target '{triple}' is not a recognized Android arch")
+    })?;
+    let bin = android_ndk_bin().ok_or_else(|| {
+        format!(
+            "[E1710] mobile target '{triple}' requires the Android NDK; not found \
+             (set ANDROID_NDK_HOME or ANDROID_HOME, or add [target.{triple}] linker=… \
+             to ~/.config/axon/cross.toml)"
+        )
+    })?;
+    let clang = bin.join(&clang_name);
+    if clang.exists() {
+        Ok(clang)
+    } else {
+        Err(format!(
+            "[E1710] mobile target '{triple}' requires '{}' in the NDK toolchain ({}); not found",
+            clang_name,
+            bin.display()
+        ))
+    }
+}
+
 // ── Public surface ────────────────────────────────────────────────────────────
 
 /// Load LLVM bitcode bytes into a fresh context and compile to a binary.
@@ -92,6 +200,45 @@ pub fn emit_wasm_object(
         .write_to_file(module, FileType::Object, Path::new(output_path))
         .map_err(|e| format!("wasm object emit: {e}"))?;
     Ok(())
+}
+
+/// R14 (mobile): emit a relocatable **object file** for an arbitrary device
+/// `target_triple` WITHOUT linking. LLVM cross-emits the AArch64/x86_64 object
+/// for an Apple-iOS or Android triple even on a Linux host — only the *link*
+/// into `.a`/`.xcframework` (iOS) or `.so` (Android) needs the platform
+/// toolchain. This is the verifiable in-tree half on Linux; the link is the
+/// macOS/NDK host's job (spec §4 / §12 Q4). PIC reloc + the default code model,
+/// matching a normal mobile static-/shared-lib object.
+pub fn emit_object_for_triple(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: &str,
+) -> Result<(), String> {
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(target_triple);
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{target_triple}' not supported by this LLVM build: {e}")
+    })?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{target_triple}'"))?;
+    module.set_triple(&triple);
+    machine
+        .write_to_file(module, FileType::Object, Path::new(output_path))
+        .map_err(|e| format!("mobile object emit: {e}"))
 }
 
 // ── Crate-private surface (callable from super::Codegen) ─────────────────────
@@ -168,6 +315,19 @@ pub(super) fn emit_object_and_link(
         .write_to_file(module, FileType::Object, Path::new(&obj_path))
         .map_err(|e| format!("object emit: {e}"))?;
 
+    // R14 slice 1/2: Android (bionic) cross-link via the NDK clang. Android
+    // ELFs are PIE and link bionic libc, not glibc — the host `-no-pie`/`-lm`
+    // recipe does not apply. The axon-rt staticlib must be the ANDROID-triple
+    // cross-build, not the host one. Handled in a dedicated path so the host
+    // link recipe below stays exactly as it was.
+    if let Some(triple_str) = target_triple {
+        if is_android_triple(triple_str) {
+            let res = android_link(&obj_path, output_path, release, triple_str, false);
+            let _ = std::fs::remove_file(&obj_path);
+            return res;
+        }
+    }
+
     // Build axon-rt static library so channel/spawn builtins are available.
     let rt_lib = build_axon_rt(release);
     // Build axon-ai static library so ai_complete is available.
@@ -231,6 +391,60 @@ pub(super) fn emit_object_and_link(
             status
         ))
     }
+}
+
+/// R14: emit an object and link it as a loadable shared library (`.so`).
+///
+/// Currently wired for the Android triples (the `--host mobile` jniLibs path).
+/// A non-Android shared-lib request is refused with a clear error rather than
+/// silently producing a host-shaped `.so`.
+pub(super) fn emit_shared_lib(
+    module: &inkwell::module::Module<'_>,
+    output_path: &str,
+    release: bool,
+    target_triple: Option<&str>,
+) -> Result<(), String> {
+    let triple_str = target_triple.ok_or_else(|| {
+        "[E1710] --host mobile requires an Android --target (e.g. aarch64-linux-android)"
+            .to_string()
+    })?;
+    if !is_android_triple(triple_str) {
+        return Err(format!(
+            "[E1710] --host mobile shared-lib output is only wired for Android triples; \
+             '{triple_str}' is not Android (iOS is gated on a macOS host, R14 §4/Q4)"
+        ));
+    }
+
+    let opt = if release {
+        OptimizationLevel::Default
+    } else {
+        OptimizationLevel::None
+    };
+    Target::initialize_all(&InitializationConfig::default());
+    let triple = TargetTriple::create(triple_str);
+    let target = Target::from_triple(&triple).map_err(|e| {
+        format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
+    })?;
+    let machine = target
+        .create_target_machine(
+            &triple,
+            "generic",
+            "",
+            opt,
+            RelocMode::PIC,
+            CodeModel::Default,
+        )
+        .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
+    module.set_triple(&triple);
+
+    let obj_path = format!("{output_path}.o");
+    machine
+        .write_to_file(module, FileType::Object, Path::new(&obj_path))
+        .map_err(|e| format!("object emit: {e}"))?;
+
+    let res = android_link(&obj_path, output_path, release, triple_str, true);
+    let _ = std::fs::remove_file(&obj_path);
+    res
 }
 
 /// Emit just the object file for a freestanding build (no linking step).
@@ -418,6 +632,19 @@ pub(super) fn read_cross_linker(target: &str) -> Option<String> {
 /// the linker step still attempts to proceed (channel/spawn functions will
 /// simply be missing symbols if the rt wasn't linked).
 pub(super) fn build_axon_rt(release: bool) -> Option<String> {
+    build_crate_staticlib("axon-rt", "libaxon_rt.a", release, None)
+}
+
+/// Build a workspace staticlib crate (`axon-rt`/`axon-ai`) and return the path
+/// to the produced `.a`. When `target` is `Some(triple)` the crate is
+/// cross-built for that triple (R14: the Android cross-build of axon-rt) and the
+/// artifact is read from `target/<triple>/<profile>/`.
+fn build_crate_staticlib(
+    pkg: &str,
+    libname: &str,
+    release: bool,
+    target: Option<&str>,
+) -> Option<String> {
     let cargo = std::env::var("CARGO")
         .ok()
         .unwrap_or_else(|| "cargo".into());
@@ -428,9 +655,41 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
         .map(|d| format!("{d}/../../../Cargo.toml"))
         .unwrap_or_else(|_| "Cargo.toml".into());
 
-    let status = Command::new(&cargo)
-        .args(["build", "-p", "axon-rt", "--manifest-path", &manifest])
-        .args(if release { &["--release"][..] } else { &[][..] })
+    let mut cmd = Command::new(&cargo);
+    cmd.args(["build", "-p", pkg, "--manifest-path", &manifest])
+        .args(if release { &["--release"][..] } else { &[][..] });
+    if let Some(t) = target {
+        cmd.args(["--target", t]);
+        // R14: when cross-building for Android, point cargo + cc-rs at the NDK
+        // clang/ar so the staticlib's C shims and the rust object both target
+        // bionic. Only set vars the caller hasn't already overridden.
+        if is_android_triple(t) {
+            let api: u32 = std::env::var("AXON_ANDROID_API")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(34);
+            if let (Some((clang_name, rust_target)), Some(bin)) =
+                (android_ndk_clang(t, api), android_ndk_bin())
+            {
+                let clang = bin.join(&clang_name);
+                let ar = bin.join("llvm-ar");
+                let upper = rust_target.to_uppercase().replace('-', "_");
+                let set = |cmd: &mut Command, k: String, v: &std::ffi::OsStr| {
+                    if std::env::var_os(&k).is_none() {
+                        cmd.env(k, v);
+                    }
+                };
+                set(
+                    &mut cmd,
+                    format!("CARGO_TARGET_{upper}_LINKER"),
+                    clang.as_os_str(),
+                );
+                set(&mut cmd, format!("CC_{rust_target}"), clang.as_os_str());
+                set(&mut cmd, format!("AR_{rust_target}"), ar.as_os_str());
+            }
+        }
+    }
+    let status = cmd
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
@@ -448,11 +707,85 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
             .unwrap_or_else(|_| "target".into())
     });
 
-    let lib_path = format!("{target_dir}/{profile}/libaxon_rt.a");
+    // Cross-built artifacts live under target/<triple>/<profile>/.
+    let lib_path = match target {
+        Some(t) => format!("{target_dir}/{t}/{profile}/{libname}"),
+        None => format!("{target_dir}/{profile}/{libname}"),
+    };
     if std::path::Path::new(&lib_path).exists() {
         Some(lib_path)
     } else {
         None
+    }
+}
+
+/// R14 slice 1/2: link an Android object into a runnable bionic ELF executable.
+///
+/// Uses the NDK clang as the linker (cross.toml override or NDK auto-detect),
+/// links the Android-triple cross-build of axon-rt, and produces a PIE ELF (the
+/// Android ABI requirement). Produces an E1710 if the NDK is absent and E1712
+/// if the link fails.
+fn android_link(
+    obj_path: &str,
+    output_path: &str,
+    release: bool,
+    triple: &str,
+    shared: bool,
+) -> Result<(), String> {
+    // Default NDK API level. The minSdk for Axon mobile artifacts; overridable
+    // via $AXON_ANDROID_API.
+    let api: u32 = std::env::var("AXON_ANDROID_API")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(34);
+
+    let linker = android_linker(triple, api)?;
+
+    // Cross-build axon-rt + axon-ai for the Android triple. Channel/spawn/
+    // gfx-mock builtins resolve to axon-rt; ai_complete/ai_extract_* resolve to
+    // axon-ai. Without them the link fails with a clear "undefined symbol
+    // __axon_*" rather than a silent wrong result.
+    let rt_lib = build_crate_staticlib("axon-rt", "libaxon_rt.a", release, Some(triple));
+    let ai_lib = build_crate_staticlib("axon-ai", "libaxon_ai.a", release, Some(triple));
+
+    // The NDK clang already knows the bionic sysroot, PIE, and libm. We do NOT
+    // pass -no-pie (Android requires PIE) and let clang supply libc.
+    let mut args: Vec<String> = vec![
+        obj_path.to_string(),
+        "-o".to_string(),
+        output_path.to_string(),
+        "-lm".to_string(),
+        // Both axon-rt and axon-ai are Rust staticlibs that each embed their own
+        // copy of `core`; allow the duplicate to resolve to the first (same
+        // rustc core) — the host link uses the same remedy.
+        "-Wl,--allow-multiple-definition".to_string(),
+    ];
+    if shared {
+        // R14: a loadable JNI shared object. Keep the Axon entry symbols
+        // (`main`/on_start/…) globally visible so the Kotlin wrapper can bind
+        // them; the staticlibs are linked whole so __axon_* resolve.
+        args.push("-shared".to_string());
+        args.push("-Wl,--export-dynamic".to_string());
+    }
+    if let Some(ref lib) = rt_lib {
+        args.push(lib.clone());
+    }
+    if let Some(ref lib) = ai_lib {
+        args.push(lib.clone());
+    }
+
+    let status = Command::new(&linker)
+        .args(&args)
+        .status()
+        .map_err(|e| format!("[E1712] mobile link failed for '{triple}': linker spawn: {e}"))?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "[E1712] mobile link failed for '{triple}': {} exited with {status}",
+            linker.display()
+        ))
     }
 }
 
@@ -464,39 +797,5 @@ pub(super) fn build_axon_rt(release: bool) -> Option<String> {
 /// the linker step still attempts to proceed (ai_complete will be a missing
 /// symbol only when actually called).
 pub(super) fn build_axon_ai(release: bool) -> Option<String> {
-    let cargo = std::env::var("CARGO")
-        .ok()
-        .unwrap_or_else(|| "cargo".into());
-    let profile = if release { "release" } else { "debug" };
-
-    // Locate the workspace root relative to this binary.
-    let manifest = std::env::var("CARGO_MANIFEST_DIR")
-        .map(|d| format!("{d}/../../../Cargo.toml"))
-        .unwrap_or_else(|_| "Cargo.toml".into());
-
-    let status = Command::new(&cargo)
-        .args(["build", "-p", "axon-ai", "--manifest-path", &manifest])
-        .args(if release { &["--release"][..] } else { &[][..] })
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .ok()?;
-
-    if !status.success() {
-        return None;
-    }
-
-    // Resolve the target directory from CARGO_TARGET_DIR or adjacent to manifest.
-    let target_dir = std::env::var("CARGO_TARGET_DIR").unwrap_or_else(|_| {
-        std::env::var("CARGO_MANIFEST_DIR")
-            .map(|d| format!("{d}/../../../target"))
-            .unwrap_or_else(|_| "target".into())
-    });
-
-    let lib_path = format!("{target_dir}/{profile}/libaxon_ai.a");
-    if std::path::Path::new(&lib_path).exists() {
-        Some(lib_path)
-    } else {
-        None
-    }
+    build_crate_staticlib("axon-ai", "libaxon_ai.a", release, None)
 }

@@ -1,0 +1,30 @@
+// R14 slice 1/2 — a pure-compute Axon program built for Android.
+//
+// The load-bearing compute slice: the SAME source runs byte-identically on the
+// host interpreter and on an Android device (I-2). Build + run:
+//
+//   axon run examples/mobile/compute.ax                          # interp oracle
+//   axon build --target x86_64-linux-android examples/mobile/compute.ax -o compute
+//   adb push compute /data/local/tmp/ && adb shell /data/local/tmp/compute
+//   # → identical stdout + exit code (scripts/android_compute_parity.sh)
+//
+// Or as a loadable JNI lib + Kotlin wrapper:
+//   axon build --host mobile --target aarch64-linux-android examples/mobile/compute.ax
+//   # → out/android/jniLibs/arm64-v8a/libcompute.so + out/android/Axon.kt
+
+fn fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+fn main() -> i64 {
+    let total = 0
+    let i = 0
+    while i < 15 {
+        let f = fib(i)
+        println("fib({to_str(i)}) = {to_str(f)}")
+        total = total + f
+        i = i + 1
+    }
+    println("sum = {to_str(total)}")
+    total % 256
+}

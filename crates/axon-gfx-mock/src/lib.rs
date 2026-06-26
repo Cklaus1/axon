@@ -45,6 +45,28 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub const TAG_GFX_WINDOW: i64 = 0x6766_7801; // "gfx" + Window
 pub const TAG_GFX_SURFACE: i64 = 0x6766_7802; // "gfx" + Surface
 
+/// Pack an `(r,g,b,a)` clear color of `[0.0, 1.0]` floats into a single i64 as
+/// `0xRRGGBBAA` (each channel an 8-bit `round(c * 255)`, clamped to `[0,255]`).
+///
+/// This is the FROZEN color encoding shared by EVERY gfx backend (the mock here
+/// AND the real wgpu module in `axon-gfx`): the mock computes it directly and
+/// the real GPU reads back the rendered pixel and packs it the SAME way, so
+/// `read_pixel` is byte-identical across the model and the real render (the I-2
+/// parity contract for the value-returning probe). The real renderer therefore
+/// uses a NON-sRGB (`Rgba8Unorm`) target so a clear value maps linearly to the
+/// stored byte — matching this `round(c*255)` exactly.
+pub fn pack_rgba8(r: f64, g: f64, b: f64, a: f64) -> i64 {
+    fn ch(c: f64) -> i64 {
+        // NaN → 0; clamp to [0,1] then round to nearest byte.
+        if c.is_nan() {
+            return 0;
+        }
+        let c = c.clamp(0.0, 1.0);
+        (c * 255.0).round() as i64
+    }
+    (ch(r) << 24) | (ch(g) << 16) | (ch(b) << 8) | ch(a)
+}
+
 /// Map a `gfx` handle *name* to its frozen nominal tag.
 pub fn tag_for(name: &str) -> i64 {
     match name {
@@ -73,6 +95,13 @@ struct GfxSlot {
 pub struct GfxMock {
     windows: Vec<GfxSlot>,
     surfaces: Vec<GfxSlot>,
+    /// The last color each surface was cleared to, packed `0xRRGGBBAA`
+    /// ([`pack_rgba8`]) — what `read_pixel` returns. Parallel to `surfaces`;
+    /// the model of "the framebuffer holds the last clear color". A surface
+    /// never cleared reads back `0` (transparent black). This is exactly what
+    /// the real wgpu offscreen render produces after a clear (same packing,
+    /// non-sRGB target), so `read_pixel` is parity-identical model↔GPU.
+    surface_color: Vec<i64>,
     /// How many `present()` calls have happened (what `frame_count` reads).
     frames: i64,
 }
@@ -141,15 +170,25 @@ impl GfxMock {
             live: true,
             generation: 0,
         });
+        self.surface_color.push(0);
         Ok(GfxValue::Handle {
             name: "Surface",
             payload: idx,
         })
     }
 
-    fn clear(&mut self, surf: i64, _r: f64, _g: f64, _b: f64, _a: f64) -> GfxResult {
+    fn clear(&mut self, surf: i64, r: f64, g: f64, b: f64, a: f64) -> GfxResult {
         self.check_surface(surf)?;
+        // Record the cleared color so `read_pixel` can return it — the model of
+        // "the framebuffer now holds this color". The packing is the shared
+        // FROZEN encoding the real GPU readback also uses.
+        self.surface_color[surf as usize] = pack_rgba8(r, g, b, a);
         Ok(GfxValue::Unit)
+    }
+
+    fn read_pixel(&self, surf: i64) -> GfxResult {
+        self.check_surface(surf)?;
+        Ok(GfxValue::Int(self.surface_color[surf as usize]))
     }
 
     fn present(&mut self, surf: i64) -> GfxResult {
@@ -215,6 +254,7 @@ impl GfxMock {
             ) => self.clear(*payload, *r, *g, *b, *a),
             ("present", [GfxArg::Handle { payload, .. }]) => self.present(*payload),
             ("frame_count", [GfxArg::Handle { payload, .. }]) => self.frame_count(*payload),
+            ("read_pixel", [GfxArg::Handle { payload, .. }]) => self.read_pixel(*payload),
             ("surface_close", [GfxArg::Handle { payload, .. }]) => self.surface_close(*payload),
             ("window_close", [GfxArg::Handle { payload, .. }]) => self.window_close(*payload),
             _ => Err(format!(
@@ -410,6 +450,66 @@ mod tests {
         assert!(m
             .dispatch("window_close", std::slice::from_ref(&wh))
             .is_err());
+    }
+
+    #[test]
+    fn pack_rgba8_frozen_encoding() {
+        // Opaque black / white.
+        assert_eq!(pack_rgba8(0.0, 0.0, 0.0, 1.0), 0x0000_00FF);
+        assert_eq!(pack_rgba8(1.0, 1.0, 1.0, 1.0), 0xFFFF_FFFF);
+        // The gate's known color r=0.0, g=128/255≈0.502, b=1.0, a=1.0 packs to
+        // 0x0080FFFF (g rounds back to 128).
+        assert_eq!(pack_rgba8(0.0, 128.0 / 255.0, 1.0, 1.0), 0x0080_FFFF);
+        // Clamp + NaN.
+        assert_eq!(pack_rgba8(2.0, -1.0, f64::NAN, 1.0), 0xFF00_00FF);
+    }
+
+    #[test]
+    fn read_pixel_returns_last_cleared_color() {
+        let mut m = GfxMock::new();
+        let win = match m
+            .dispatch(
+                "window_open",
+                &[GfxArg::Int(4), GfxArg::Int(4), GfxArg::Str("x".into())],
+            )
+            .unwrap()
+        {
+            GfxValue::Handle { payload, .. } => payload,
+            _ => unreachable!(),
+        };
+        let wh = GfxArg::Handle {
+            tag: TAG_GFX_WINDOW,
+            payload: win,
+        };
+        let surf = match m.dispatch("surface", std::slice::from_ref(&wh)).unwrap() {
+            GfxValue::Handle { payload, .. } => payload,
+            _ => unreachable!(),
+        };
+        let sh = GfxArg::Handle {
+            tag: TAG_GFX_SURFACE,
+            payload: surf,
+        };
+        // Before any clear: transparent black.
+        assert_eq!(
+            m.dispatch("read_pixel", std::slice::from_ref(&sh)).unwrap(),
+            GfxValue::Int(0)
+        );
+        // Clear to the gate color and read it back.
+        m.dispatch(
+            "clear",
+            &[
+                sh.clone(),
+                GfxArg::Float(0.0),
+                GfxArg::Float(128.0 / 255.0),
+                GfxArg::Float(1.0),
+                GfxArg::Float(1.0),
+            ],
+        )
+        .unwrap();
+        assert_eq!(
+            m.dispatch("read_pixel", std::slice::from_ref(&sh)).unwrap(),
+            GfxValue::Int(0x0080_FFFF)
+        );
     }
 
     #[test]

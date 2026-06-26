@@ -730,9 +730,19 @@ impl<'p> Interp<'p> {
             };
             margs.push(marshalled);
         }
-        // Dispatch to the module's mock backend. v1: only `gfx`.
+        // Dispatch to the module's backend. v1: `gfx` and the R14 `platform`
+        // headless stub (clean off-device refusals, spec §7). For `gfx`, under the
+        // `gfx-wgpu` feature this is the REAL wgpu offscreen renderer (R13 slice
+        // 5); without it, the GPU-free mock. SAME `dispatch` interface either way —
+        // a drop-in backend swap, no surface change. The value-returning probes
+        // (`frame_count`/`read_pixel`) return byte-identical values across the two
+        // (same packing), so I-2 parity holds.
         let result = match module.name {
+            #[cfg(feature = "gfx-wgpu")]
+            "gfx" => self.gfx_real.borrow_mut().dispatch(nf.name, &margs),
+            #[cfg(not(feature = "gfx-wgpu"))]
             "gfx" => self.gfx_mock.borrow_mut().dispatch(nf.name, &margs),
+            "platform" => crate::native::platform_dispatch_headless(nf.name, &margs),
             _ => Err(format!("native module `{}` has no interp backend", module.name)),
         };
         match result {

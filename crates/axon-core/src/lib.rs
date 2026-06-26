@@ -20,6 +20,11 @@ pub mod lexer;
 pub mod lockfile;
 /// Graduated-pass manifest (R10): multi-sig graduation gate + format.
 pub mod manifest;
+/// R14 — Mobile targets (iOS/Android): host-agnostic triple recognition, the
+/// deterministic Swift/Kotlin wrapper generator, and the E1710 toolchain probe.
+/// Pure logic — compiles on every host; the iOS-specific link/FFI lives behind
+/// `cfg(target_os="ios")` in `axon-rt`, not here.
+pub mod mobile;
 /// R13 native FFI: the curated native-module registry (single source of truth
 /// shared by resolver/infer/checker/borrow/effects/codegen/interp).
 pub mod native;

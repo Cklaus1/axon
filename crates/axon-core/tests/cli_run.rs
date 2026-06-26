@@ -203,6 +203,80 @@ fn interp_compiles_for_wasm32_unknown_unknown_r7c() {
 }
 
 #[test]
+fn android_compute_parity_r14() {
+    // R14 slice 2 (THE load-bearing compute slice): the SAME `.ax` program, run
+    // by the host interpreter vs. the LLVM-codegen Android ELF run on a device
+    // (KVM x86_64 emulator natively + aarch64 via the emulator's arm64 native
+    // bridge / qemu-user), must be byte-identical (I-2). This is the
+    // `android_so_compute_parity` acceptance gate (R14 §9). The harness
+    // SELF-SKIPS when the NDK or a booted emulator/qemu is absent, so the
+    // default gate stays safe on a host without Android tooling.
+    let script = format!(
+        "{}/../../scripts/android_compute_parity.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("android_compute_parity.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run android_compute_parity.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("SKIP") || stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("Android NDK/emulator unavailable — compute parity skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "Android compute must be byte-identical to the interpreter:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("android_compute_parity: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
+fn android_lifecycle_adapter_r14() {
+    // R14 slice 3: the AxonRuntime lifecycle adapter. Verified headless in two
+    // halves (scripts/android_lifecycle.sh): (A) the host `host_await` resume
+    // round-trip (init→tick→suspend→resume→teardown as one linear Axon fn — the
+    // landed Phase-6 resume runtime the on-device bridge depends on), and (B)
+    // the on-device load→bind→invoke boundary (dlopen+dlsym(main)+call of the
+    // Axon `.so` on the emulator == interp oracle). Self-skips when the NDK is
+    // absent; (B) is skipped (A still asserted) when no emulator is booted.
+    let script = format!(
+        "{}/../../scripts/android_lifecycle.sh",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    if !std::path::Path::new(&script).exists() {
+        eprintln!("android_lifecycle.sh not found — skipping");
+        return;
+    }
+    let out = Command::new("bash")
+        .arg(&script)
+        .output()
+        .expect("run android_lifecycle.sh");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if stdout.contains("SKIP") || stdout.contains("skipping") || stderr.contains("skipping") {
+        eprintln!("Android NDK unavailable — lifecycle adapter skipped:\n{stdout}{stderr}");
+        return;
+    }
+    assert!(
+        out.status.success(),
+        "Android lifecycle adapter round-trip must pass:\n{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("android_lifecycle: PASS"),
+        "expected PASS:\n{stdout}{stderr}"
+    );
+}
+
+#[test]
 fn r15_host_await_interactive_via_axon_run_reads_stdin() {
     // R15 resume runtime (v0): a program that suspends via `host_await` runs under
     // `axon run`'s stdin/stdout host — the request is written as a prompt, and a

@@ -149,6 +149,15 @@ pub extern "C" fn __axon_gfx_frame_count(s: AxonHandle) -> i64 {
     expect_int(r, "frame_count")
 }
 
+/// `read_pixel(ref s: Surface) -> i64` — the surface's last cleared color,
+/// packed `0xRRGGBBAA`. (Mock backend: the recorded clear color; the real wgpu
+/// module reads it back from the offscreen target.)
+#[no_mangle]
+pub extern "C" fn __axon_gfx_read_pixel(s: AxonHandle) -> i64 {
+    let r = with_gfx(|m| m.dispatch("read_pixel", &[s.as_arg()]));
+    expect_int(r, "read_pixel")
+}
+
 /// `surface_close(s: Surface) -> Unit` — consumes the Surface.
 #[no_mangle]
 pub extern "C" fn __axon_gfx_surface_close(s: AxonHandle) {

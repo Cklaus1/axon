@@ -1,7 +1,7 @@
 # Native FFI — Capability-Gated Native Modules
 
 **Spec ID:** `R13-native-ffi` (ties to `REQUIREMENTS.md` — new row; gates the full-platform vision: UI/GPU/mobile/3D)
-**Status:** Slices 1–3 landed interp-side (2026-06-25, branch `r13-ffi`); codegen E0910-refused (interp-only); slice 4 (real `axon-gfx` + codegen link) deferred
+**Status:** COMPLETE (headless-verifiable extent) — slices 1–3 interp-side + slice 4 (native-codegen FFI lowering, forge-safe C ABI) + slice 5 (the first REAL native module: `crates/axon-gfx`, a headless wgpu offscreen renderer behind the off-by-default `gfx-wgpu` feature, gate-verified on Mesa lavapipe by offscreen pixel read-back). On-screen winit window remains manual.
 **Risk class:** Structural
 **Author / date:** cklaus, 2026-06-07
 
@@ -257,8 +257,13 @@ specifically to bound what that code can reach despite its size.
 - [x] Parity (interp↔codegen): the mock module is the differential-parity member via the dedicated
       `scripts/native_gfx_parity.sh` (auto-discovered by `parity_all.sh`); `fuzz_parity.sh`'s scalar template
       can't carry a stateful handle setup, documented there.
-- [ ] Journey: the `wgpu` proof target (window + clear + present) builds and runs natively. **DEFERRED**
-      (manual tier — needs a GPU/display; would pull heavy wgpu/winit deps that cannot pass a headless gate).
+- [x] Journey: the `wgpu` proof target (open + clear + present + **pixel read-back**) builds and runs — **as a
+      HEADLESS OFFSCREEN render** (slice 5, `crates/axon-gfx`). The "manual tier — needs a GPU/display" caveat
+      is **obsolete on a host with Mesa lavapipe** (software Vulkan): `scripts/gfx_wgpu_render_gate.sh` clears
+      an offscreen texture to a known color and asserts the read-back pixel == `0x0080FFFF` on
+      `llvmpipe (Cpu, Vulkan)`. wgpu is behind the OFF-by-default `gfx-wgpu` feature so the default gate stays
+      wgpu-free; the script SKIPs gracefully where no Vulkan ICD exists (like the QEMU gates). An on-screen
+      winit window stays manual (cannot be headless-verified, and is not needed for the proof).
 - [x] Red test that must fail first: `native_call_without_capability_is_E1004` (→ E1004; slice 3).
 
 ### 9. Acceptance criteria (the done gate)
@@ -270,9 +275,12 @@ specifically to bound what that code can reach despite its size.
 - [x] `handle_is_unforgeable` passes (E1803 static + graceful exit-101 on a bad handle, never a segfault —
       proven across the NATIVE C ABI by `scripts/native_ffi_forge.sh`, not just interp).
 - [x] The mock native module is the differential parity member and green (`scripts/native_gfx_parity.sh`).
-- [ ] (Stretch / manual tier) `examples/gfx/window_clear.ax` opens a wgpu window and clears one frame on
-      native. **DEFERRED** — wgpu/winit need a GPU/display and pull heavy deps; cannot pass a headless gate.
-      The gated lowering above is built against the GPU-free mock so the real shim is a drop-in registry row.
+- [x] (Now headless-verifiable) `examples/native/gfx_render.ax` opens a REAL wgpu **offscreen** render target,
+      clears one frame to a known color, presents, and reads back the pixel — `scripts/gfx_wgpu_render_gate.sh`
+      asserts the read-back == `0x0080FFFF` on `llvmpipe (Cpu, Vulkan)` (Mesa lavapipe). The real `axon-gfx`
+      module is, as predicted, a drop-in: a new registry probe (`read_pixel`) + its own backend behind the
+      same `dispatch` interface, no surface change. An on-screen **winit window** is still manual (out of
+      scope; it cannot be headless-verified, and the offscreen render is the gate-verifiable proof).
 
 ### 10. Performance budget
 
@@ -284,7 +292,11 @@ by the same micro-bench harness R10 G4 uses). Handle-table lookup is O(1) (slab 
 
 **Status (landed 2026-06-25):** Slices 1–3 LANDED interp-side (branch `r13-ffi`). **Slice 4 LANDED** (branch
 `r13-slice4`): the native-codegen FFI lowering + a real linked shim staticlib — codegen now LOWERS native
-calls (no longer E0910-refused), forge-safe across the C ABI, interp↔codegen identical.
+calls (no longer E0910-refused), forge-safe across the C ABI, interp↔codegen identical. **Slice 5 LANDED**
+(branch `r13-slice5`): the FIRST REAL native module — `crates/axon-gfx`, a headless wgpu offscreen renderer
+behind the off-by-default `gfx-wgpu` feature, **headlessly gate-verified on Mesa lavapipe** (a real cleared
+frame confirmed by offscreen pixel read-back; `scripts/gfx_wgpu_render_gate.sh`). On-screen winit window
+remains manual. **R13 is now complete to its headless-verifiable extent.**
 
 - Ships in slices, each independently revertible:
   1. **LANDED — Handle type + `is_ffi_repr` + E18xx codes** (front-end). The opaque nominal `Handle` is
@@ -315,9 +327,28 @@ calls (no longer E0910-refused), forge-safe across the C ABI, interp↔codegen i
      asserts interp↔codegen identical stdout + exit + the §4 call-trace oracle (effectful calls have no
      diffable stdout, so both engines emit byte-identical `native-trace:` lines). Out-of-subset marshalling
      re-refuses E0910 (CHECK already rejects non-repr at E1801).
-  5. **DEFERRED — `axon-gfx` shim crate** (wgpu/winit/vello), the first REAL module. Manual-tier journey test
-     (needs a GPU/display; heavy deps incompatible with a headless gate). The gated lowering is built against
-     the GPU-free mock, so a real module is a drop-in registry row + its own `#[no_mangle] extern "C"` shim.
+  5. **LANDED (slice 5) — the FIRST REAL native module: `crates/axon-gfx` on wgpu 22, headless.** It backs
+     `use native::gfx` when axon-core is built with the OFF-by-default **`gfx-wgpu`** feature (so the default
+     `cargo build`/`gate.sh` never pull wgpu and stay fast). It renders to an **OFFSCREEN texture** (no winit
+     window, no display) — `window_open(w,h)` makes a `w×h` non-sRGB `Rgba8Unorm` render target; `clear`
+     records a real clear render pass + submits it; `present` bumps the frame counter; a new
+     **`read_pixel(ref surf) -> i64`** registry probe copies the target into a mappable buffer, maps it, and
+     packs the top-left texel `0xRRGGBBAA` with the SAME `axon_gfx_mock::pack_rgba8` encoding the mock uses —
+     so the value is byte-identical model↔GPU (I-2 parity for the value-returning probe). It exposes the
+     EXACT same `dispatch(fnname, &[GfxArg]) -> GfxResult` interface as `axon-gfx-mock`, so the interpreter
+     swaps backends as a **drop-in** (one interface, two backends; `eval_native_call` routes `gfx::*` to
+     `gfx_real` under the feature, the mock otherwise) — confirming slice 4's "a real module is a drop-in
+     registry row + its own backend, no surface change" claim. **Forge-safety UNCHANGED:** a handle's
+     `payload` is a slab index into a per-table `Vec`, never a raw GPU pointer or `wgpu::Texture` address; a
+     forged/stale/`i64::MIN` index → graceful `Err`, never a wild deref or host abort (I-4/I-11). **Headless
+     gate:** `scripts/gfx_wgpu_render_gate.sh` builds the feature, renders the offscreen frame on Mesa
+     lavapipe (`VK_ICD_FILENAMES=…/lvp_icd.json WGPU_BACKEND=vulkan` → `llvmpipe (Cpu, Vulkan)`), and asserts
+     the read-back pixel == `0x0080FFFF`; it SKIPs gracefully if no Vulkan ICD exists (the default gate never
+     breaks). **Codegen path is unchanged** (it links the `axon-rt` mock symbols; the real GPU backend is
+     interp-side, which is the reference engine). **TCB delta:** wgpu + wgpu-hal/core + naga + the Vulkan
+     loader now sit inside the boundary when the feature is on — accounted per §7. **DEFERRED still:** the
+     on-screen **winit window** (cannot be headless-verified; gated behind a future manual feature) and
+     vello. The static-frame offscreen render is the gate-verifiable proof and is now landed.
 - Blast radius if wrong: contained to programs that `use native::*`. A bug cannot affect existing pure-Axon
   programs (the import path is the only entry).
 
