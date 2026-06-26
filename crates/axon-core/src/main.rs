@@ -2493,10 +2493,12 @@ fn cmd_build(
             eprintln!("error[E1702]: --freestanding build has no @[entry]-annotated function");
             process::exit(1);
         }
-        let t = target.unwrap_or_else(|| "x86_64-unknown-none".to_string());
+        let t = target
+            .map(|t| resolve_target_alias(&t))
+            .unwrap_or_else(|| "x86_64-unknown-none".to_string());
         (entry, Some(t))
     } else {
-        (None, target)
+        (None, target.map(|t| resolve_target_alias(&t)))
     };
 
     let opts = BuildOptions {
@@ -2590,6 +2592,20 @@ struct BuildOptions {
     linker_script: Option<String>,
     emit_obj: bool,
     emit_llvm: bool,
+}
+
+/// R21: expand friendly `--target` aliases to full LLVM triples.
+///
+/// `zephyr` / `arm-zephyr` → `thumbv7m-none-eabi` (ARM Cortex-M3, the
+/// `qemu_cortex_m3` board's ISA). Used with `--freestanding --emit-obj` so the
+/// emitted object links into a Zephyr application via the arm-zephyr-eabi
+/// toolchain. Any other value is passed through unchanged (a raw LLVM triple).
+#[cfg(feature = "codegen")]
+fn resolve_target_alias(target: &str) -> String {
+    match target {
+        "zephyr" | "arm-zephyr" | "cortex-m" | "cortex-m3" => "thumbv7m-none-eabi".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -4937,6 +4953,25 @@ mod tests {
     #[test]
     fn monotonic_decline_is_regressing() {
         assert_eq!(trend_label(&[4.0, 3.0, 2.0, 1.0]), "regressing");
+    }
+
+    // R21: the friendly `--target zephyr` family expands to the ARM Cortex-M3
+    // LLVM triple; an arbitrary triple is passed through unchanged.
+    #[cfg(feature = "codegen")]
+    #[test]
+    fn r21_zephyr_target_alias_expands_to_thumbv7m() {
+        for alias in ["zephyr", "arm-zephyr", "cortex-m", "cortex-m3"] {
+            assert_eq!(resolve_target_alias(alias), "thumbv7m-none-eabi");
+        }
+        // A raw LLVM triple is left untouched.
+        assert_eq!(
+            resolve_target_alias("x86_64-unknown-linux-gnu"),
+            "x86_64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            resolve_target_alias("thumbv7em-none-eabihf"),
+            "thumbv7em-none-eabihf"
+        );
     }
 
     #[test]

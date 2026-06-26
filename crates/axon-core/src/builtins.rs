@@ -1797,6 +1797,22 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
+    // ── R21: Zephyr RTOS console hook (HAL; Hal effect; E0910 in interp) ──────
+    // Architecture-neutral console output for an Axon program running AS a Zephyr
+    // application on an ARM Cortex-M (or any Zephyr) target. Lowers in codegen to
+    // a call to the extern C symbol `axon_console_putc(int)` which the Zephyr app
+    // provides (typically a `printk("%c", b)` wrapper). Unlike `port_out_u8`
+    // (x86 I/O ports), this works on ARM where the console is a Zephyr driver,
+    // not a fixed I/O port. Substrate-only; the Zephyr app owns the device.
+    BuiltinFn {
+        name: "zephyr_console_putc",
+        params: &[("byte", "i64")],
+        ret: "()",
+        doc: "R21 HAL: write one byte to the Zephyr console by calling the host-provided \
+              extern C hook `axon_console_putc(int)` (e.g. a `printk` wrapper). \
+              Architecture-neutral — used when an Axon object links into a Zephyr app on \
+              ARM Cortex-M / RISC-V / x86. Substrate-only; codegen-only (E0910 in interp).",
+    },
     // ── R17 Slice 2: SMP atomics (substrate-only; Hal effect; E0910 in interp) ──
     // The trailing `ordering` arg is a COMPILE-TIME integer literal selecting the
     // LLVM memory order: 0=relaxed/monotonic, 1=acquire, 2=release, 3=acq_rel,
@@ -1964,10 +1980,7 @@ pub fn builtin_ret(name: &str) -> Option<&'static str> {
 /// all scalar→scalar and is correctly classified non-allocating.
 pub fn is_heap_allocating_builtin(name: &str) -> bool {
     // (b) explicit heap mutators whose return type is not itself heap-typed.
-    if matches!(
-        name,
-        "dict_set" | "dict_remove" | "chan_send"
-    ) {
+    if matches!(name, "dict_set" | "dict_remove" | "chan_send") {
         return true;
     }
     // (a) heap-typed return value.
@@ -2036,6 +2049,8 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
+            // R21: Zephyr console hook (host-driven device I/O)
+            | "zephyr_console_putc"
             // R17 Slice 2: SMP atomics (shared-memory side effects)
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64"
@@ -2125,6 +2140,8 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
         | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
         | "port_out_u8" | "port_in_u8"
+        // R21: Zephyr console hook — device I/O via the host RTOS, Hal-gated.
+        | "zephyr_console_putc"
         // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
         | "atomic_load_i64" | "atomic_store_i64"
         | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
@@ -2348,6 +2365,22 @@ mod tests {
     }
 
     #[test]
+    fn r21_zephyr_console_putc_is_hal_impure_alloc_free() {
+        let name = "zephyr_console_putc";
+        assert!(is_known_builtin(name), "{name} must be a known builtin");
+        assert!(is_impure_builtin(name), "{name} must be impure");
+        assert_eq!(
+            builtin_effect_row(name),
+            &["Hal"],
+            "{name} must carry the Hal effect row (substrate-only, surface-refused)"
+        );
+        assert!(
+            !is_heap_allocating_builtin(name),
+            "{name} (HAL console leaf) must be allocation-free (usable in @[no_alloc])"
+        );
+    }
+
+    #[test]
     fn r17_heap_alloc_classifier_is_sound_for_hal_and_strings() {
         // HAL leaf builtins are scalar→scalar and must NOT count as allocating.
         for name in [
@@ -2356,6 +2389,7 @@ mod tests {
             "volatile_store_u8",
             "port_out_u8",
             "port_in_u8",
+            "zephyr_console_putc",
             "hlt",
             "cli",
             "sti",
@@ -2367,14 +2401,14 @@ mod tests {
         }
         // str / array / dict constructors+mutators MUST count as allocating.
         for name in [
-            "to_str",       // i64 → str (fresh heap str)
-            "str_repeat",   // → str
-            "str_concat" ,  // (if present) → str
-            "arr_range",    // → [i64]
-            "arr_push",     // → [i64]
-            "dict_new",     // → Dict
-            "dict_set",     // () but grows the dict (explicit mutator)
-            "dict_remove",  // () mutator
+            "to_str",      // i64 → str (fresh heap str)
+            "str_repeat",  // → str
+            "str_concat",  // (if present) → str
+            "arr_range",   // → [i64]
+            "arr_push",    // → [i64]
+            "dict_new",    // → Dict
+            "dict_set",    // () but grows the dict (explicit mutator)
+            "dict_remove", // () mutator
         ] {
             // Only assert for builtins that actually exist in the table.
             if is_known_builtin(name) {

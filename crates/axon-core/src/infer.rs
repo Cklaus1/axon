@@ -883,11 +883,7 @@ impl InferCtx {
                         for (i, arg) in args.iter().enumerate() {
                             let arg_ty = self.infer_expr(arg, scope, ret_ty);
                             if let Some((pty, _mode)) = nf.params.get(i) {
-                                self.constrain(
-                                    arg_ty,
-                                    pty.to_type(),
-                                    "native FFI argument",
-                                );
+                                self.constrain(arg_ty, pty.to_type(), "native FFI argument");
                             }
                         }
                         return nf.ret.to_type();

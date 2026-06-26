@@ -8881,6 +8881,41 @@ impl<'ctx> super::Codegen<'ctx> {
                         return Some(ext.into());
                     }
                 }
+                // ── R21: Zephyr console hook ──────────────────────────────────
+                // `zephyr_console_putc(b)` lowers to a call to the extern C symbol
+                // `void axon_console_putc(int)` which the Zephyr application
+                // provides (typically a `printk("%c", b)` wrapper). This is the
+                // architecture-neutral console primitive used when an Axon
+                // freestanding object links INTO a Zephyr app on ARM Cortex-M
+                // (or any Zephyr target) — the console is a Zephyr driver, not a
+                // fixed x86 I/O port. The i64 byte is truncated to i32 for the C
+                // `int` ABI.
+                "zephyr_console_putc" if args.len() == 1 => {
+                    if let Some(byte_v) = self.emit_expr(&args[0], fn_val) {
+                        let i32_ty = self.ir.context.i32_type();
+                        let void_ty = self.ir.context.void_type();
+                        let putc_fn = self
+                            .ir
+                            .module
+                            .get_function("axon_console_putc")
+                            .unwrap_or_else(|| {
+                                let fn_ty = void_ty.fn_type(&[i32_ty.into()], false);
+                                self.ir
+                                    .module
+                                    .add_function("axon_console_putc", fn_ty, None)
+                            });
+                        let byte_i32 = self
+                            .ir
+                            .builder
+                            .build_int_truncate(byte_v.into_int_value(), i32_ty, "putc_b")
+                            .unwrap();
+                        self.ir
+                            .builder
+                            .build_call(putc_fn, &[byte_i32.into()], "putc")
+                            .unwrap();
+                        return Some(self.ir.context.i64_type().const_zero().into());
+                    }
+                }
                 // ── R17 Slice 2: SMP atomics ───────────────────────────────────
                 // Each lowers to the real LLVM atomic with the named memory order.
                 // The ordering arg MUST be a compile-time integer literal (the

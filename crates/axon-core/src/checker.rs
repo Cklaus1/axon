@@ -1801,9 +1801,7 @@ impl CheckCtx {
             // A single literal segment (no interpolation) does NOT allocate at
             // runtime — it is a static str — so only flag genuine interpolation
             // (≥1 Expr part).
-            Expr::FmtStr { parts }
-                if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) =>
-            {
+            Expr::FmtStr { parts } if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) => {
                 *allocates = true;
             }
             Expr::Call { callee, .. } => {
@@ -1959,9 +1957,7 @@ impl CheckCtx {
         out: &mut Vec<(String, &'static str)>,
     ) {
         match expr {
-            Expr::FmtStr { parts }
-                if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) =>
-            {
+            Expr::FmtStr { parts } if parts.iter().any(|p| matches!(p, FmtPart::Expr(_))) => {
                 out.push(("string interpolation".to_string(), "heap"));
             }
             Expr::Call { callee, .. } => {
@@ -3788,7 +3784,8 @@ impl CheckCtx {
             // — handles do not cross modules.
             let (expected_ty, _mode) = &nf.params[i];
             let expected = expected_ty.to_type();
-            if crate::native::is_native_handle(&expected) && crate::native::is_native_handle(&arg_ty)
+            if crate::native::is_native_handle(&expected)
+                && crate::native::is_native_handle(&arg_ty)
             {
                 if let (Type::Deferred(ek), Type::Deferred(ak)) = (&expected, &arg_ty) {
                     if ek != ak {
