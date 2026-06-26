@@ -12,6 +12,11 @@ path = "src/main.rs"
 name = "axon_os"
 path = "src/lib.rs"
 
+[features]
+# Exposes `MockRuntime` to integration tests / external callers (the unit
+# tests get it via cfg(test) automatically).
+mock = []
+
 [dependencies]
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }

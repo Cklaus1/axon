@@ -13,6 +13,8 @@ pub mod gate;
 pub mod grant;
 pub mod manifest;
 pub mod record;
+pub mod runtime;
+pub mod supervisor;
 pub mod verdict;
 
 pub use gate::{admit, Admission, DeclaredEffects};
@@ -21,4 +23,6 @@ pub use manifest::{parse as parse_manifest, JobManifest};
 pub use record::{
     build as build_record, verify as verify_record, AuditEvent, RawEvent, RunRecord, VerifyMismatch,
 };
+pub use runtime::{PrincipalHandle, RunOutcome, Runtime};
+pub use supervisor::run as supervise;
 pub use verdict::Verdict;
