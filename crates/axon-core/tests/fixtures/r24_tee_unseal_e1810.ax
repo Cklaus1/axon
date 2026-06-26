@@ -1,0 +1,27 @@
+// R24 TEE: `tee_unseal` (declassifying a sealed Secret) may ONLY be called from
+// inside an `@[enclave]` fn. Calling it from a NON-enclave fn is E1810 — a pure
+// type/checker rule, enforced with no TEE hardware. This fixture has BOTH:
+//   - `leak_secret` is NOT @[enclave] yet calls tee_unseal  → E1810 (the headline)
+//   - `launder` is NOT @[enclave] and reaches tee_unseal too → E1810 (no laundering
+//     hole: the helper itself must be @[enclave], or it trips E1810)
+//   - `in_enclave_ok` IS @[enclave] and unseals cleanly → no error
+
+// VIOLATION: unsealing outside the enclave.
+fn leak_secret(sealed: i64) -> i64 | {Tee} {
+    tee_unseal(sealed, 2)
+}
+
+// VIOLATION: a non-enclave helper that unseals is ALSO E1810 — there is no
+// un-annotated fn that may unseal, so a Secret can't be laundered out.
+fn launder(sealed: i64) -> i64 | {Tee} {
+    let v = tee_unseal(sealed, 3)
+    v + 1
+}
+
+// OK: declassification happens INSIDE the trusted execution environment.
+@[enclave]
+fn in_enclave_ok(sealed: i64) -> i64 | {Tee} {
+    tee_unseal(sealed, 2)
+}
+
+fn main() -> i64 { 0 }

@@ -1,0 +1,62 @@
+// R24 TEE / confidential-computing demo — "compute on data you can't read."
+//
+// The story: two parties each hold a CONFIDENTIAL salary. They want the AVERAGE
+// without revealing either salary to the other party or to the host OS. The
+// computation runs INSIDE a trusted execution environment (an `@[enclave]` fn).
+// Only the AGGREGATE leaves the enclave; the raw salaries never do.
+//
+// THE TYPE STORY (enforced on THIS host, no TEE hardware needed):
+//   - `tee_seal(v, level)` seals a salary at a confidentiality level. Sealing is
+//     allowed ANYWHERE.
+//   - `tee_unseal(sealed, level)` DECLASSIFIES a sealed value. It may ONLY be
+//     called from inside an `@[enclave]` fn — calling it outside is E1810. So the
+//     compiler GUARANTEES the raw salaries are only ever readable in-enclave.
+//   - The enclave returns only the average (a non-secret aggregate) + a launch
+//     measurement. The salaries cannot escape.
+//
+// Run it:   axon run examples/tee/confidential_score.ax
+// Under the gramine-direct simulation:   scripts/tee_sim_run.sh
+//
+// HONESTY: under `axon run` (and gramine-direct) the seal/unseal are the IDENTITY
+// on the payload and the measurement is SIMULATED — there is no TEE hardware on
+// this host. The REAL, locally-verifiable guarantee is the TYPE RULE (E1810): a
+// sealed Secret is only ever unsealed in-enclave. A genuine hardware-rooted
+// attestation quote is produced only on a confidential runner (.github/workflows/tee.yml).
+
+fn cl_confidential() -> i64 { 2 }
+
+// ── INSIDE the enclave ────────────────────────────────────────────────────────
+// This is the ONLY place a sealed salary may be unsealed. The compiler refuses
+// `tee_unseal` anywhere else (E1810). The two raw salaries are visible here, but
+// only their average flows out.
+@[enclave]
+fn enclave_average(sealed_a: i64, sealed_b: i64) -> i64 | {Tee} {
+    let a = tee_unseal(sealed_a, cl_confidential())
+    let b = tee_unseal(sealed_b, cl_confidential())
+    (a + b) / 2
+}
+
+fn main() -> i64 {
+    // Each party seals its salary OUTSIDE the enclave (sealing is unrestricted).
+    let party_a = tee_seal(120000, cl_confidential())
+    let party_b = tee_seal(140000, cl_confidential())
+
+    // Attest the enclave image BEFORE trusting it with the secrets.
+    let measurement = tee_attest_measurement()
+    println("enclave measurement: {measurement}")
+    if tee_in_enclave() {
+        println("running INSIDE a TEE/enclave region (simulation signalled it)")
+    } else {
+        println("running OUTSIDE a TEE (no enclave region active)")
+    }
+
+    // Compute the average INSIDE the enclave. Only the aggregate comes back.
+    let avg = enclave_average(party_a, party_b)
+    println("confidential average salary: {to_str(avg)}")
+
+    // NOTE: there is NO way to print party_a / party_b's raw salaries here —
+    // `tee_unseal(party_a, ...)` in THIS fn would be a compile error (E1810).
+    // The raw salaries are sealed and only readable in `enclave_average`.
+
+    0
+}

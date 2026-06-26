@@ -1,0 +1,15 @@
+// R23 adversarial: a @[bpf] program calling a BPF helper that is NOT on the
+// Axon capability allowlist. `bpf_probe_read` is a real BPF helper, but it is
+// not granted — so this is E2300 at CHECK TIME (a clean Axon error), NOT a
+// kernel load-time verifier reject. This is the capability angle: privilege is
+// granted by construction, not discovered at load.
+//
+// Expected:  axon check examples/bpf/bad_helper.ax  → error[E2300]
+
+substrate
+
+@[bpf(kind: socket_filter)]
+fn snoop(ctx: i64) -> i64 {
+    let x = bpf_probe_read(ctx, 8)   // not on the allowlist
+    0
+}

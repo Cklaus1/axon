@@ -147,6 +147,43 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i32",
         doc: "Return the greater of two integers (truncated to i32 range).",
     },
+    // ── R21 — Decimal (exact fixed-point money) ──────────────────────────────
+    BuiltinFn {
+        name: "decimal_from_str",
+        params: &[("s", "str")],
+        ret: "Result<Decimal,str>",
+        doc: "Parse `s` (e.g. \"1.50\", \"-0.25\", \"100\") into an exact fixed-point `Decimal` at scale 9. `Err(str)` on malformed input or excess precision (>9 fractional digits). The input-side inverse of `decimal_to_str` — round-trips exactly.",
+    },
+    BuiltinFn {
+        name: "decimal_to_str",
+        params: &[("d", "Decimal")],
+        ret: "str",
+        doc: "Render a `Decimal` to its canonical exact string (trailing zeros stripped; whole numbers print with no point). Exact inverse of `decimal_from_str`.",
+    },
+    BuiltinFn {
+        name: "decimal_round",
+        params: &[("d", "Decimal"), ("dp", "i64"), ("mode", "str")],
+        ret: "Decimal",
+        doc: "Round `d` to `dp` fractional digits (0–9) using rounding `mode` (\"half_even\" [banker's], \"half_up\", \"down\", \"up\"). The result stays at scale 9. Unknown mode or dp>9 is a graceful panic.",
+    },
+    BuiltinFn {
+        name: "decimal_div",
+        params: &[("a", "Decimal"), ("b", "Decimal"), ("mode", "str")],
+        ret: "Decimal",
+        doc: "Divide `a / b` to scale 9 with an EXPLICIT rounding `mode` (money division must specify rounding). Division by zero is a graceful panic. The `/` operator uses the half_even default; this builtin lets you pick the mode.",
+    },
+    BuiltinFn {
+        name: "decimal_abs",
+        params: &[("d", "Decimal")],
+        ret: "Decimal",
+        doc: "Absolute value of a `Decimal`. Overflow (at the i128 minimum) is a graceful panic, never a wrap.",
+    },
+    BuiltinFn {
+        name: "decimal_neg",
+        params: &[("d", "Decimal")],
+        ret: "Decimal",
+        doc: "Negate a `Decimal`. Overflow (at the i128 minimum) is a graceful panic.",
+    },
     // ── Channels ────────────────────────────────────────────────────────────
     BuiltinFn {
         name: "Chan::new",
@@ -1760,6 +1797,22 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 HAL: read one byte from an x86 I/O port (`inb port` → zero-extended i64). \
               Used for polling UART LSR, reading keyboard status, etc. Substrate-only.",
     },
+    // ── R25: Zephyr RTOS console hook (HAL; Hal effect; E0910 in interp) ──────
+    // Architecture-neutral console output for an Axon program running AS a Zephyr
+    // application on an ARM Cortex-M (or any Zephyr) target. Lowers in codegen to
+    // a call to the extern C symbol `axon_console_putc(int)` which the Zephyr app
+    // provides (typically a `printk("%c", b)` wrapper). Unlike `port_out_u8`
+    // (x86 I/O ports), this works on ARM where the console is a Zephyr driver,
+    // not a fixed I/O port. Substrate-only; the Zephyr app owns the device.
+    BuiltinFn {
+        name: "zephyr_console_putc",
+        params: &[("byte", "i64")],
+        ret: "()",
+        doc: "R25 HAL: write one byte to the Zephyr console by calling the host-provided \
+              extern C hook `axon_console_putc(int)` (e.g. a `printk` wrapper). \
+              Architecture-neutral — used when an Axon object links into a Zephyr app on \
+              ARM Cortex-M / RISC-V / x86. Substrate-only; codegen-only (E0910 in interp).",
+    },
     // ── R17 Slice 2: SMP atomics (substrate-only; Hal effect; E0910 in interp) ──
     // The trailing `ordering` arg is a COMPILE-TIME integer literal selecting the
     // LLVM memory order: 0=relaxed/monotonic, 1=acquire, 2=release, 3=acq_rel,
@@ -1799,6 +1852,75 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "R17 Slice 2: atomic compare-and-swap — if `*ptr == expected`, store `desired`; \
               returns the value that WAS in memory (== expected iff the swap happened) with the \
               named memory order. Lowers to LLVM `cmpxchg`. Substrate-only.",
+    },
+    // ── R23 eBPF helpers (substrate-only; Bpf effect row; E0910 in interp) ──────
+    // These lower to a BPF `call <id>` (or atomicrmw add) only under
+    // `axon build --target bpf`. They are the capability allowlist; an
+    // un-allowlisted BPF helper is E2300 at check time.
+    BuiltinFn {
+        name: "bpf_map_lookup_elem",
+        params: &[("map", "i64"), ("key", "i64")],
+        ret: "i64", // opaque value pointer (0 = NULL/miss)
+        doc: "R23 eBPF: look up `key` in BPF map handle `map` (Slice 1: handle 0 = the single \
+              ARRAY map). Returns the value pointer as i64 (0 = miss). Lowers to BPF `call 1`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_map_value_add",
+        params: &[("value_ptr", "i64"), ("delta", "i64")],
+        ret: "()",
+        doc: "R23 eBPF: atomically add `delta` to the i64 a map value pointer refers to \
+              (the race-free counter increment). Lowers to BPF `atomicrmw add`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_ktime_get_ns",
+        params: &[],
+        ret: "i64",
+        doc: "R23 eBPF: nanoseconds since boot (CLOCK_MONOTONIC). Lowers to BPF `call 5`. Substrate-only.",
+    },
+    BuiltinFn {
+        name: "bpf_get_smp_processor_id",
+        params: &[],
+        ret: "i64",
+        doc: "R23 eBPF: the current CPU id. Lowers to BPF `call 8`. Substrate-only.",
+    },
+    // ── R24: TEE / confidential-computing primitives ────────────────────────────
+    // The Secret info-flow lattice (examples/stdlib/tainted.ax) composes with the
+    // enclave boundary: a sealed Secret may only be DECLASSIFIED (unsealed) inside
+    // an `@[enclave]`-annotated fn. `tee_unseal` is the in-enclave declassification
+    // primitive — calling it OUTSIDE an `@[enclave]` context is E1810 (a pure
+    // type/checker rule, enforced on THIS host with no TEE hardware). Sealing is
+    // unrestricted; only unsealing is enclave-gated. See governance/specs/R24-tee-target.md.
+    BuiltinFn {
+        name: "tee_seal",
+        params: &[("val", "i64"), ("level", "i64")],
+        ret: "i64",
+        doc: "R24 TEE: seal a value at confidentiality `level` (0=public..3=secret). Sealing is \
+              allowed anywhere — only UNSEALING is enclave-gated. Returns the sealed payload \
+              (identity in the simulation; the type story is the Secret-lattice + E1810 rule).",
+    },
+    BuiltinFn {
+        name: "tee_unseal",
+        params: &[("sealed", "i64"), ("level", "i64")],
+        ret: "i64",
+        doc: "R24 TEE: UNSEAL (declassify) a sealed Secret value INSIDE the enclave. May ONLY be \
+              called from within an `@[enclave]` fn — calling it outside an enclave context is \
+              E1810. This is the 'compute on data you can't read' boundary, enforced by types.",
+    },
+    BuiltinFn {
+        name: "tee_in_enclave",
+        params: &[],
+        ret: "bool",
+        doc: "R24 TEE: true iff the workload is executing inside a TEE/enclave region. In the \
+              gramine-direct simulation this is signalled by the AXON_TEE_ENCLAVE=1 env var the \
+              manifest sets. (Runtime probe; the compile-time guarantee is the E1810 rule.)",
+    },
+    BuiltinFn {
+        name: "tee_attest_measurement",
+        params: &[],
+        ret: "str",
+        doc: "R24 TEE: the enclave LAUNCH MEASUREMENT (a deterministic hash of the loaded \
+              image). SIMULATED locally (returns AXON_TEE_MEASUREMENT or a stub) — a genuine \
+              hardware-rooted attestation QUOTE is produced only on confidential hardware (tee.yml).",
     },
 ];
 
@@ -1960,9 +2082,18 @@ pub fn is_impure_builtin(name: &str) -> bool {
             | "volatile_store_u8" | "volatile_store_u16" | "volatile_store_u32" | "volatile_store_u64"
             | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
+            // R25: Zephyr console hook (host-driven device I/O)
+            | "zephyr_console_putc"
             // R17 Slice 2: SMP atomics (shared-memory side effects)
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64"
+            // R23 eBPF helpers (kernel side effects; Bpf effect row)
+            | "bpf_map_lookup_elem" | "bpf_map_value_add"
+            | "bpf_ktime_get_ns" | "bpf_get_smp_processor_id"
+            // R24 TEE: confidential-computing boundary (Tee effect). Sealing,
+            // in-enclave unsealing, the enclave probe, and the measurement are all
+            // boundary-effectful (interact with the TEE runtime / its env signal).
+            | "tee_seal" | "tee_unseal" | "tee_in_enclave" | "tee_attest_measurement"
     )
 }
 
@@ -2042,9 +2173,22 @@ pub fn builtin_effect_row(name: &str) -> &'static [&'static str] {
         | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
         | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
         | "port_out_u8" | "port_in_u8"
+        // R25: Zephyr console hook — device I/O via the host RTOS, Hal-gated.
+        | "zephyr_console_putc"
         // R17 Slice 2: SMP atomics — shared-memory hardware access, Hal-gated.
         | "atomic_load_i64" | "atomic_store_i64"
         | "atomic_fetch_add_i64" | "atomic_cas_i64" => &["Hal"],
+
+        // R23 eBPF helpers — the `Bpf` capability axis, gated like Hal: only a
+        // @[bpf] substrate program may call them, and only the allowlisted set.
+        "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
+        | "bpf_get_smp_processor_id" => &["Bpf"],
+
+        // R24 TEE — the confidential-computing boundary. `tee_unseal` declassifies
+        // a sealed Secret INSIDE the enclave (and is E1810 outside an `@[enclave]`
+        // fn). The `Tee` effect makes the boundary visible to the effect checker;
+        // it cannot leak into a pure context unannotated (E1310).
+        "tee_seal" | "tee_unseal" | "tee_in_enclave" | "tee_attest_measurement" => &["Tee"],
 
         // Everything else is pure.
         _ => &[],
@@ -2113,7 +2257,56 @@ pub const DEFERRED_ATTRS: &[&str] = &[
     "align",
     "naked",
     "interrupt",
+    // R23 eBPF target: `@[bpf(kind: socket_filter|xdp|tracepoint|kprobe)]` marks a
+    // fn as an eBPF program. Substrate-only; `axon build --target bpf` lowers it
+    // to a kernel-verifier-accepted .bpf.o. Auto-implies @[no_alloc] + @[total].
+    "bpf",
+    // R24 TEE: `@[enclave]` marks a fn as running inside the trusted execution
+    // environment. It is the ONLY context in which `tee_unseal` (Secret
+    // declassification) is permitted — calling `tee_unseal` from a non-enclave
+    // fn is E1810. The checker (`check_enclave_unseal`) enforces the rule; the
+    // attribute is known here so it doesn't warn (W0001).
+    "enclave",
 ];
+
+/// R23 eBPF: the BPF helper capability allowlist. A `@[bpf]` program may only
+/// call a builtin in this set; an un-allowlisted helper is E2300 at check time
+/// (a clean Axon error, NOT a kernel load-time verifier reject). Each lowers to
+/// a BPF `call <id>` (or, for the map-value increment, an `atomicrmw add`).
+pub const BPF_HELPER_BUILTINS: &[&str] = &[
+    "bpf_map_lookup_elem",
+    "bpf_map_value_add",
+    "bpf_ktime_get_ns",
+    "bpf_get_smp_processor_id",
+];
+
+/// Is `name` an allowlisted BPF helper builtin (R23)?
+pub fn is_bpf_helper(name: &str) -> bool {
+    BPF_HELPER_BUILTINS.contains(&name)
+}
+
+/// R23 eBPF: the supported `@[bpf(kind: K)]` program kinds and their libbpf ELF
+/// section names. Unknown kinds are E2302.
+pub fn bpf_kind_section(kind: &str) -> Option<&'static str> {
+    match kind {
+        "socket_filter" => Some("socket"),
+        "xdp" => Some("xdp"),
+        "tracepoint" => Some("tracepoint"),
+        "kprobe" => Some("kprobe"),
+        _ => None,
+    }
+}
+
+/// R23 eBPF: the BPF helper id used in the emitted `call <id>` instruction.
+/// `bpf_map_value_add` is special (lowered to `atomicrmw add`, no helper call).
+pub fn bpf_helper_id(name: &str) -> Option<u64> {
+    match name {
+        "bpf_map_lookup_elem" => Some(1),
+        "bpf_ktime_get_ns" => Some(5),
+        "bpf_get_smp_processor_id" => Some(8),
+        _ => None,
+    }
+}
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
@@ -2137,6 +2330,47 @@ mod tests {
                 b.name
             );
         }
+    }
+
+    #[test]
+    fn r23_bpf_helpers_are_known_impure_and_carry_bpf_effect() {
+        for name in BPF_HELPER_BUILTINS {
+            assert!(is_known_builtin(name), "{name} must be a known builtin");
+            assert!(is_bpf_helper(name), "{name} must be an allowlisted BPF helper");
+            assert!(is_impure_builtin(name), "{name} must be impure");
+            assert_eq!(
+                builtin_effect_row(name),
+                &["Bpf"],
+                "{name} must carry the Bpf effect row"
+            );
+            // BPF helpers are scalar/ptr leaves — they do NOT allocate a heap
+            // str/array/dict, so a @[bpf] (@[no_alloc]) program may call them.
+            assert!(
+                !is_heap_allocating_builtin(name),
+                "{name} (BPF helper) must be allocation-free"
+            );
+        }
+    }
+
+    #[test]
+    fn r23_bpf_helper_ids_are_consistent() {
+        // bpf_map_value_add is special (atomicrmw add, no helper call) → no id.
+        assert_eq!(bpf_helper_id("bpf_map_value_add"), None);
+        // The call-emitting helpers have their canonical Linux helper ids.
+        assert_eq!(bpf_helper_id("bpf_map_lookup_elem"), Some(1));
+        assert_eq!(bpf_helper_id("bpf_ktime_get_ns"), Some(5));
+        assert_eq!(bpf_helper_id("bpf_get_smp_processor_id"), Some(8));
+        // An un-allowlisted helper is not recognized at all.
+        assert!(!is_bpf_helper("bpf_probe_read"));
+    }
+
+    #[test]
+    fn r23_bpf_kind_sections() {
+        assert_eq!(bpf_kind_section("socket_filter"), Some("socket"));
+        assert_eq!(bpf_kind_section("xdp"), Some("xdp"));
+        assert_eq!(bpf_kind_section("tracepoint"), Some("tracepoint"));
+        assert_eq!(bpf_kind_section("kprobe"), Some("kprobe"));
+        assert_eq!(bpf_kind_section("nonsense"), None);
     }
 
     #[test]
@@ -2164,6 +2398,22 @@ mod tests {
     }
 
     #[test]
+    fn r25_zephyr_console_putc_is_hal_impure_alloc_free() {
+        let name = "zephyr_console_putc";
+        assert!(is_known_builtin(name), "{name} must be a known builtin");
+        assert!(is_impure_builtin(name), "{name} must be impure");
+        assert_eq!(
+            builtin_effect_row(name),
+            &["Hal"],
+            "{name} must carry the Hal effect row (substrate-only, surface-refused)"
+        );
+        assert!(
+            !is_heap_allocating_builtin(name),
+            "{name} (HAL console leaf) must be allocation-free (usable in @[no_alloc])"
+        );
+    }
+
+    #[test]
     fn r17_heap_alloc_classifier_is_sound_for_hal_and_strings() {
         // HAL leaf builtins are scalar→scalar and must NOT count as allocating.
         for name in [
@@ -2172,6 +2422,7 @@ mod tests {
             "volatile_store_u8",
             "port_out_u8",
             "port_in_u8",
+            "zephyr_console_putc",
             "hlt",
             "cli",
             "sti",

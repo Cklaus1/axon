@@ -1,0 +1,149 @@
+name: TEE attestation (confidential runner)
+
+# ── R24 Slice 3: REAL hardware attestation — runs REMOTELY, not on the dev host ─
+#
+# THE HONESTY BOUNDARY (read this before trusting any green check from this file):
+#   - The dev host has NO TEE hardware, so it CANNOT produce a genuine attestation
+#     quote. This workflow therefore does NOT run on `ubuntu-latest`. It is gated
+#     to a SELF-HOSTED CONFIDENTIAL RUNNER (an Intel SGX-DCAP machine, e.g. an
+#     Azure `DCsv3`/`DCdsv3` confidential VM, or an on-prem SGX box) that exposes
+#     /dev/sgx_enclave + /dev/sgx_provision and has the DCAP quote-generation
+#     stack installed. Without that runner this job will simply not pick up work.
+#   - On that runner it builds the Axon confidential workload, runs it under
+#     Gramine-SGX (a REAL enclave), generates a DCAP quote, and VERIFIES the quote
+#     against Intel's Provisioning Certification Service. THAT is real attestation.
+#   - We deliberately do NOT stub/mock the quote. If the runner can't attest, the
+#     job fails loudly rather than printing a fake "attested ✓".
+#
+# PREREQUISITE to actually run this (one-time, by a maintainer):
+#   1. Provision a confidential VM with SGX-DCAP (e.g. Azure DCsv3) and register
+#      it as a self-hosted runner with the labels: [self-hosted, sgx, confidential].
+#   2. Install Gramine + the SGX driver + the DCAP libs (libsgx-dcap-ql,
+#      libsgx-dcap-default-qpl) and configure the PCCS URL.
+#   3. Generate an enclave signing key:  gramine-sgx-gen-private-key
+#
+# Trigger: manual only (workflow_dispatch) so it never blocks PR CI and only
+# runs when a confidential runner is available.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Why run the TEE attestation now"
+        required: false
+        default: "manual confidential-computing verification"
+
+permissions:
+  contents: read
+
+jobs:
+  sgx-attest:
+    name: Build + attest under Gramine-SGX (real enclave)
+    # Gate to a confidential SGX-DCAP self-hosted runner. ubuntu-latest CANNOT
+    # attest — it has no SGX hardware — so it is intentionally excluded.
+    runs-on: [self-hosted, sgx, confidential]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Confirm SGX hardware is present (fail honestly if not)
+        run: |
+          set -euo pipefail
+          if [ ! -e /dev/sgx_enclave ]; then
+            echo "::error::No /dev/sgx_enclave — this runner is not a confidential SGX host."
+            echo "This job must run on an SGX-DCAP confidential runner. Refusing to fake attestation."
+            exit 1
+          fi
+          echo "SGX device nodes:"; ls -l /dev/sgx_enclave /dev/sgx_provision || true
+          gramine-sgx --version || true
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build the interpreter axon binary
+        # The tee_* builtins are interpreter-only; the workload runs via `axon
+        # run` inside the SGX enclave that Gramine establishes.
+        run: cargo build --no-default-features -p axon-core --bin axon
+
+      - name: Type-check the confidential workload (the E1810 guarantee)
+        # The compile-time half: a sealed Secret is unsealed only in an @[enclave]
+        # fn. This is the property that COMPOSES with the hardware enclave.
+        run: ./target/debug/axon check examples/tee/confidential_score.ax
+
+      - name: Render the Gramine-SGX manifest
+        env:
+          AXON: ${{ github.workspace }}/target/debug/axon
+          WORKLOAD: ${{ github.workspace }}/examples/tee/confidential_score.ax
+        run: |
+          set -euo pipefail
+          ARCH_LIBDIR=/lib/$(gcc -dumpmachine)
+          cat > axon_tee.manifest.template <<'TMPL'
+          loader.entrypoint.uri = "file:{{ axon }}"
+          libos.entrypoint = "{{ axon }}"
+          loader.argv = ["axon", "run", "{{ workload }}"]
+          loader.env.AXON_TEE_ENCLAVE = "1"
+          loader.env.LD_LIBRARY_PATH = "{{ arch_libdir }}:/usr/lib"
+          loader.env.PATH = "/usr/bin:/bin"
+
+          sgx.debug = false
+          sgx.enclave_size = "512M"
+          sgx.max_threads = 8
+          # Generate a DCAP quote that embeds a freshly supplied report-data nonce
+          # so the verifier can bind the quote to this run.
+          sgx.remote_attestation = "dcap"
+
+          sgx.trusted_files = [
+            "file:{{ axon }}",
+            "file:{{ workload }}",
+            "file:{{ arch_libdir }}/",
+            "file:/usr/lib/",
+          ]
+
+          fs.mounts = [
+            { uri = "file:{{ arch_libdir }}", path = "{{ arch_libdir }}" },
+            { uri = "file:/usr/lib", path = "/usr/lib" },
+            { uri = "file:{{ github_workspace }}", path = "{{ github_workspace }}" },
+          ]
+          TMPL
+
+          gramine-manifest \
+            -Daxon="$AXON" \
+            -Dworkload="$WORKLOAD" \
+            -Darch_libdir="$ARCH_LIBDIR" \
+            -Dgithub_workspace="${{ github.workspace }}" \
+            axon_tee.manifest.template axon_tee.manifest
+
+      - name: Sign the enclave (produces the measurement MRENCLAVE)
+        run: |
+          set -euo pipefail
+          # The signing key is provisioned on the runner (gramine-sgx-gen-private-key).
+          gramine-sgx-sign \
+            --manifest axon_tee.manifest \
+            --output axon_tee.manifest.sgx
+          echo "Enclave measurement (MRENCLAVE / MRSIGNER):"
+          gramine-sgx-sigstruct-view axon_tee.sig
+
+      - name: Run the workload inside the SGX enclave
+        run: |
+          set -euo pipefail
+          out="$(gramine-sgx axon_tee 2>&1)"
+          echo "$out"
+          echo "$out" | grep -qF "confidential average salary: 130000" \
+            || { echo "::error::workload did not produce the expected aggregate inside the enclave"; exit 1; }
+
+      - name: Generate + VERIFY a DCAP attestation quote (the real thing)
+        run: |
+          set -euo pipefail
+          # Generate a quote bound to a fresh nonce (report-data), then verify it
+          # against Intel's PCS via the DCAP quote-verification library. A genuine
+          # quote is rooted in the CPU's provisioning key and proves MRENCLAVE.
+          NONCE="$(head -c 32 /dev/urandom | xxd -p -c 64)"
+          gramine-sgx-quote-dump \
+            --quote <(gramine-sgx-attest --nonce "$NONCE") \
+            > quote.dump
+          echo "── DCAP quote ──"; cat quote.dump
+          # Verify: non-zero exit if the quote is invalid / not rooted in real HW.
+          gramine-sgx-quote-verify --quote quote.dump --nonce "$NONCE"
+          echo "Attestation VERIFIED: the workload ran in a genuine SGX enclave whose"
+          echo "measurement matches the signed image. This is REAL hardware attestation."

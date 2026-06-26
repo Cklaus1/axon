@@ -467,20 +467,36 @@ pub(super) fn emit_freestanding_obj(
     let target = Target::from_triple(&triple).map_err(|e| {
         format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
     })?;
+    // R25 (Zephyr/ARM): the `Kernel` code model is x86-64-specific and is
+    // rejected by the ARM/thumb backend. A bare-metal ARM Cortex-M object that
+    // links into a Zephyr app uses the default (small) code model. Select the
+    // code model by target architecture.
+    let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
     let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt,
-            RelocMode::Static,
-            CodeModel::Kernel,
-        )
+        .create_target_machine(&triple, "generic", "", opt, reloc, code_model)
         .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
     module.set_triple(&triple);
     machine
         .write_to_file(module, FileType::Object, Path::new(output_path))
         .map_err(|e| format!("freestanding object emit: {e}"))
+}
+
+/// R25: select `(RelocMode, CodeModel)` for a freestanding target by its triple.
+///
+/// x86_64 bare-metal kernels load at a high fixed address and use the `Kernel`
+/// code model with static relocations (the R17 default). ARM/thumb targets
+/// (Cortex-M, e.g. a Zephyr app object) reject the `Kernel` code model — they
+/// use the default (small) code model. Both stay static (no PIC) for a no-host
+/// image.
+fn freestanding_reloc_codemodel(triple_str: &str) -> (RelocMode, CodeModel) {
+    let is_arm = triple_str.starts_with("thumb")
+        || triple_str.starts_with("arm")
+        || triple_str.starts_with("aarch64");
+    if is_arm {
+        (RelocMode::Static, CodeModel::Default)
+    } else {
+        (RelocMode::Static, CodeModel::Kernel)
+    }
 }
 
 /// Emit an object file and link it as a freestanding (bare-metal) ELF binary.
@@ -510,15 +526,9 @@ pub(super) fn emit_freestanding_binary(
     let target = Target::from_triple(&triple).map_err(|e| {
         format!("[E0904] target '{triple_str}' not supported by this LLVM build: {e}")
     })?;
+    let (reloc, code_model) = freestanding_reloc_codemodel(triple_str);
     let machine = target
-        .create_target_machine(
-            &triple,
-            "generic",
-            "",
-            opt,
-            RelocMode::Static,
-            CodeModel::Kernel,
-        )
+        .create_target_machine(&triple, "generic", "", opt, reloc, code_model)
         .ok_or_else(|| format!("[E0904] could not create target machine for '{triple_str}'"))?;
 
     module.set_triple(&triple);

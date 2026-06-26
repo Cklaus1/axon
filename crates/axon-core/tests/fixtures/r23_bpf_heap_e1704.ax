@@ -1,0 +1,14 @@
+// R23 adversarial: a @[bpf] program that allocates on the heap (string
+// interpolation). `@[bpf]` implies `@[no_alloc]`, so this is E1704 — eBPF has
+// no heap, and Axon refuses it BEFORE codegen rather than emitting bytecode the
+// verifier would reject.
+//
+// Expected:  axon check examples/bpf/bad_heap.ax  → error[E1704]
+
+substrate
+
+@[bpf(kind: socket_filter)]
+fn logit(ctx: i64) -> i64 {
+    let s = to_str(ctx)   // i64 -> str: a fresh heap allocation
+    0
+}

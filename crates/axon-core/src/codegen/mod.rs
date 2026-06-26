@@ -37,6 +37,7 @@ use crate::types::Type;
 // because the bigger remaining splits will involve cross-cutting field-access
 // pub(super) decisions.
 pub mod asi;
+pub mod bpf;
 pub mod build_wrappers;
 pub mod builtin_externs;
 pub mod builtins;
@@ -160,6 +161,33 @@ fn expr_calls(e: &ast::Expr, target: &str) -> bool {
 /// Recursively: does `e` (or any sub-expression) call `goal_run`?
 fn expr_calls_goal_run(e: &ast::Expr) -> bool {
     expr_calls(e, "goal_run")
+}
+
+/// R21 — does `f` touch the `Decimal` fixed-point type anywhere (signature,
+/// body literal, or `decimal_*` builtin)? Used by `emit_fn` to E0910-refuse
+/// the function (Decimal is interp-only in this slice). This is a deliberately
+/// CONSERVATIVE over-approximation: it scans the function's debug rendering for
+/// the `Decimal` AST tags / `decimal_` builtin prefix, so it can only ever
+/// OVER-refuse (refuse a fn that doesn't really need Decimal) — never UNDER-
+/// refuse and let subtly-wrong money IR through (sound-by-refusal, I-2). A real
+/// per-op walker would risk missing an Expr variant; the string scan cannot.
+fn fn_uses_decimal(f: &ast::FnDef) -> bool {
+    // Signature: a `Decimal` param or return type.
+    let sig_decimal = f.return_type.as_ref().map(type_mentions_decimal).unwrap_or(false)
+        || f.params.iter().any(|p| type_mentions_decimal(&p.ty));
+    if sig_decimal {
+        return true;
+    }
+    // Body: any `Literal::Decimal(...)` node or `decimal_*` builtin call. The
+    // debug format embeds `Decimal(` for the literal and the call ident for the
+    // builtin; either signals Decimal usage.
+    let dbg = format!("{:?}", f.body);
+    dbg.contains("Decimal(") || dbg.contains("decimal_")
+}
+
+/// True if an `AxonType` (including nested positions) names `Decimal`.
+fn type_mentions_decimal(ty: &AxonType) -> bool {
+    format!("{ty:?}").contains("Decimal")
 }
 
 // ── Public surface ────────────────────────────────────────────────────────────
@@ -1101,6 +1129,31 @@ impl<'ctx> Codegen<'ctx> {
         let entry = self.ir.context.append_basic_block(llvm_fn, "entry");
         self.ir.builder.position_at_end(entry);
 
+        // ── R21 — Decimal is interp-only in this slice (sound-by-refusal). ─────
+        // Exact money arithmetic (i128 mantissa, banker's-rounding mul/div) is
+        // fully wired in the tree-walking interpreter. Native i128 codegen for
+        // the rounding-bearing ops (mul rescale, div) is NOT yet implemented, so
+        // rather than emit subtly-wrong money IR we REFUSE any function that
+        // touches a `Decimal` (literal, signature, or `decimal_*` builtin) with a
+        // clear E0910 — exactly like host_await / kernel / sandbox (I-2:
+        // refuse, never silently miscompile). `axon run` (interp) is unaffected.
+        if fn_uses_decimal(f) {
+            let msg = format!(
+                "codegen error [E0910]: native codegen cannot yet lower the `Decimal` \
+                 fixed-point type used by `{}` — run it on the interpreter (`axon run`); \
+                 exact Decimal arithmetic is interp-only in this slice (R21)",
+                f.name
+            );
+            if !self.codegen_errors.iter().any(|e| e == &msg) {
+                self.codegen_errors.push(msg);
+            }
+            // Emit a trivial body so IR generation doesn't crash before the
+            // pipeline checks codegen_errors() and aborts. Route through the w_*
+            // wrapper (R1e: one IR path — no raw builder calls in mod.rs).
+            build_wrappers::w_ret_void(&self.ir.builder);
+            return;
+        }
+
         // Save outer locals/types; reset for this function scope.
         let saved_locals = std::mem::take(&mut self.locals);
         let saved_local_types = std::mem::take(&mut self.local_types);
@@ -1689,6 +1742,7 @@ impl<'ctx> Codegen<'ctx> {
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::Int(_) => Some(Type::I64),
                 ast::Literal::Float(_) => Some(Type::F64),
+                ast::Literal::Decimal(_) => Some(Type::Decimal),
                 ast::Literal::Bool(_) => Some(Type::Bool),
                 ast::Literal::Str(_) => Some(Type::Str),
             },

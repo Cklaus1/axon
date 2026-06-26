@@ -1,0 +1,100 @@
+// R25 — Axon running AS a Zephyr application on an ARM Cortex-M target.
+//
+// This is a *freestanding* Axon object (no libc, no axon-rt) that links into a
+// minimal Zephyr application. The Zephyr C `main()` calls the Axon `@[entry]`
+// function `axon_main`, which computes something real and prints it to the
+// Zephyr console via the host-provided hook `zephyr_console_putc` (lowers to an
+// extern C `axon_console_putc(int)` that the Zephyr app wires to `printk`).
+//
+// It deliberately uses ONLY scalar arithmetic + the console-byte HAL hook — no
+// `str`/array builtins, because those pull in axon-rt runtime externs that a
+// freestanding (no-host) image does not link. Output is emitted byte by byte,
+// the same discipline as the R17 x86 kernel demo.
+//
+// Build the object:
+//   axon build --freestanding --target zephyr --emit-obj examples/zephyr/app.ax \
+//       --out /tmp/axon_app.o
+//
+// Then link it into the Zephyr app (examples/zephyr/CMakeLists.txt) and run
+// under QEMU (`west build -t run`). See scripts/zephyr_qemu_gate.sh.
+//
+// The headline: a real Axon computation (a refinement-checked sensor average)
+// runs on a Cortex-M RTOS under QEMU and produces verifiable console output.
+
+substrate
+
+// ── HAL: the console boundary (the only impure surface) ──────────────────────
+
+// Write one byte to the Zephyr console. Lowers to extern C axon_console_putc.
+@[hal]
+@[no_alloc]
+fn putc(b: i64) | {Hal} {
+    zephyr_console_putc(b)
+}
+
+// Print a non-negative integer in decimal, then a newline (no heap, no str).
+// Emits digits high-to-low using a fixed divisor ladder; leading zeros are
+// suppressed. ISR/early-boot-safe (@[no_alloc]).
+@[hal]
+@[no_alloc]
+fn put_uint(v: i64) | {Hal} {
+    let started = false
+    let div = 1000000000
+    while div > 0 {
+        let d = (v / div) % 10
+        if d != 0 {
+            started = true
+        }
+        if started {
+            putc(48 + d)   // '0' + d
+        }
+        div = div / 10
+    }
+    if started == false {
+        putc(48)           // value was 0 → print a single '0'
+    }
+    putc(10)               // '\n'
+}
+
+// ── The real computation: an average bounded by a refinement contract ────────
+
+// Average of four sensor readings. The return carries a refinement contract:
+// the mean of readings is non-negative — the "sensor-bound" guarantee a
+// medical/industrial device cares about, enforced by the type system, not a
+// runtime assert the optimizer could drop.
+@[no_alloc]
+fn sensor_avg(a: i64, b: i64, c: i64, d: i64) -> (i64 where _ >= 0) {
+    (a + b + c + d) / 4
+}
+
+// ── Entry: called by the Zephyr app's main() ─────────────────────────────────
+
+// Banner "AXON\n" emitted byte by byte (no str builtin in a freestanding image).
+@[hal]
+@[no_alloc]
+fn banner() | {Hal} {
+    putc(65)  // A
+    putc(88)  // X
+    putc(79)  // O
+    putc(78)  // N
+    putc(10)  // \n
+}
+
+@[entry]
+fn axon_main() | {Hal} {
+    banner()
+    // Four plausible sensor readings → refinement-bounded average.
+    let avg = sensor_avg(21, 23, 22, 26)
+    put_uint(avg)          // expect 23
+    // A second, independent computation to prove arithmetic ran on-target.
+    let answer = 2 + 2 * 20 // 42
+    put_uint(answer)       // expect 42
+}
+
+// A freestanding image needs a panic handler even when linked into a host RTOS;
+// on Zephyr a panic just reports a byte and returns (Zephyr owns reboot).
+@[panic_handler]
+fn on_panic() | {Hal} {
+    putc(33)  // '!'
+    putc(10)  // \n
+}

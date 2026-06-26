@@ -47,6 +47,9 @@ pub enum Value {
         ty: crate::types::Type,
     },
     Float(f64),
+    /// R21 — exact fixed-point decimal: i128 mantissa at `decimal::SCALE` (9 dp).
+    /// Money-safe: exact arithmetic, no binary floating error.
+    Decimal(i128),
     Bool(bool),
     Str(String),
     Unit,
@@ -106,6 +109,7 @@ impl Value {
             Value::Int(_) => "i64".into(),
             Value::SizedInt { ty, .. } => ty.display(),
             Value::Float(_) => "f64".into(),
+            Value::Decimal(_) => "Decimal".into(),
             Value::Bool(_) => "bool".into(),
             Value::Str(_) => "str".into(),
             Value::Unit => "()".into(),
@@ -493,6 +497,14 @@ pub struct Interp<'p> {
     // unread there — keep it (cheap, always-constructed) and silence dead_code.
     #[cfg_attr(feature = "gfx-wgpu", allow(dead_code))]
     gfx_mock: RefCell<crate::native::GfxMock>,
+    /// R22 domain-interop native modules (`native::modbus`/`fhir`/`fix`) —
+    /// per-`Interp` backend state (one slab table per module). Interp-only; the
+    /// network ones are codegen-refused (the `host_await`/native precedent).
+    /// Gated to non-wasm targets (its tokio/reqwest deps don't build for the
+    /// in-browser wasm32-unknown-unknown interpreter, R7c); on wasm a domain
+    /// call is a clean "unavailable on this target" refusal.
+    #[cfg(not(target_arch = "wasm32"))]
+    domain: axon_domain::Registry,
     /// R13 slice 5: the REAL wgpu offscreen-render backend for `native::gfx`,
     /// present only under the `gfx-wgpu` feature. When set, `eval_native_call`
     /// routes `gfx::*` here (a real headless GPU render) instead of the mock —
@@ -873,19 +885,34 @@ pub fn run_named_fn_as_bool(program: &Program, fn_name: &str) -> Option<i32> {
 #[derive(Debug, Clone)]
 pub enum SendValue {
     Int(i64),
-    SizedInt { val: i64, ty: crate::types::Type },
+    SizedInt {
+        val: i64,
+        ty: crate::types::Type,
+    },
     Float(f64),
+    Decimal(i128),
     Bool(bool),
     Str(String),
     Unit,
     Array(Vec<SendValue>),
-    Struct { name: String, fields: Vec<(String, SendValue)> },
-    Enum { enum_name: String, variant: String, fields: Vec<(String, SendValue)> },
+    Struct {
+        name: String,
+        fields: Vec<(String, SendValue)>,
+    },
+    Enum {
+        enum_name: String,
+        variant: String,
+        fields: Vec<(String, SendValue)>,
+    },
     Some(Box<SendValue>),
     None,
     Ok(Box<SendValue>),
     Err(Box<SendValue>),
-    Closure { params: Vec<String>, body: Box<Expr>, captured: Vec<(String, SendValue)> },
+    Closure {
+        params: Vec<String>,
+        body: Box<Expr>,
+        captured: Vec<(String, SendValue)>,
+    },
     Tuple(Vec<SendValue>),
     /// An owned snapshot of a `Dict`'s entries (sorted key order — the source is a
     /// `BTreeMap`). Reconstructs into a fresh `Rc<RefCell<…>>` dict.
@@ -925,13 +952,22 @@ impl SendValue {
             let mut keys: Vec<&String> = m.keys().collect();
             keys.sort();
             keys.into_iter()
-                .map(|k| Ok((k.clone(), SendValue::from_value_at(&m[k], format!("{path}.{k}"))?)))
+                .map(|k| {
+                    Ok((
+                        k.clone(),
+                        SendValue::from_value_at(&m[k], format!("{path}.{k}"))?,
+                    ))
+                })
                 .collect()
         }
         Ok(match v {
             Value::Int(n) => SendValue::Int(*n),
-            Value::SizedInt { val, ty } => SendValue::SizedInt { val: *val, ty: ty.clone() },
+            Value::SizedInt { val, ty } => SendValue::SizedInt {
+                val: *val,
+                ty: ty.clone(),
+            },
             Value::Float(f) => SendValue::Float(*f),
+            Value::Decimal(m) => SendValue::Decimal(*m),
             Value::Bool(b) => SendValue::Bool(*b),
             Value::Str(s) => SendValue::Str(s.clone()),
             Value::Unit => SendValue::Unit,
@@ -940,7 +976,11 @@ impl SendValue {
                 name: name.clone(),
                 fields: fields(f, &path)?,
             },
-            Value::Enum { enum_name, variant, fields: f } => SendValue::Enum {
+            Value::Enum {
+                enum_name,
+                variant,
+                fields: f,
+            } => SendValue::Enum {
                 enum_name: enum_name.clone(),
                 variant: variant.clone(),
                 fields: fields(f, &path)?,
@@ -953,7 +993,11 @@ impl SendValue {
             Value::Err(b) => {
                 SendValue::Err(Box::new(Self::from_value_at(b, format!("{path}.Err"))?))
             }
-            Value::Closure { params, body, captured } => {
+            Value::Closure {
+                params,
+                body,
+                captured,
+            } => {
                 let mut keys: Vec<&String> = captured.keys().collect();
                 keys.sort();
                 let cap: Result<Vec<_>, _> = keys
@@ -982,7 +1026,11 @@ impl SendValue {
             }
             Value::Chan(_) => {
                 return Err(UnsendablePayload {
-                    path: if path.is_empty() { "<root>".to_string() } else { path },
+                    path: if path.is_empty() {
+                        "<root>".to_string()
+                    } else {
+                        path
+                    },
                 });
             }
             // R13: a native handle is identity-bound to the in-process handle
@@ -991,7 +1039,11 @@ impl SendValue {
             // other side).
             Value::Handle { .. } => {
                 return Err(UnsendablePayload {
-                    path: if path.is_empty() { "<root>".to_string() } else { path },
+                    path: if path.is_empty() {
+                        "<root>".to_string()
+                    } else {
+                        path
+                    },
                 });
             }
         })
@@ -1005,32 +1057,52 @@ impl SendValue {
             SendValue::Int(n) => Value::Int(n),
             SendValue::SizedInt { val, ty } => Value::SizedInt { val, ty },
             SendValue::Float(f) => Value::Float(f),
+            SendValue::Decimal(m) => Value::Decimal(m),
             SendValue::Bool(b) => Value::Bool(b),
             SendValue::Str(s) => Value::Str(s),
             SendValue::Unit => Value::Unit,
             SendValue::Array(xs) => Value::Array(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Struct { name, fields } => Value::Struct {
                 name,
-                fields: fields.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+                fields: fields
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_value()))
+                    .collect(),
             },
-            SendValue::Enum { enum_name, variant, fields } => Value::Enum {
+            SendValue::Enum {
                 enum_name,
                 variant,
-                fields: fields.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+                fields,
+            } => Value::Enum {
+                enum_name,
+                variant,
+                fields: fields
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_value()))
+                    .collect(),
             },
             SendValue::Some(b) => Value::Some(Box::new(b.into_value())),
             SendValue::None => Value::None,
             SendValue::Ok(b) => Value::Ok(Box::new(b.into_value())),
             SendValue::Err(b) => Value::Err(Box::new(b.into_value())),
-            SendValue::Closure { params, body, captured } => Value::Closure {
+            SendValue::Closure {
                 params,
                 body,
-                captured: captured.into_iter().map(|(k, v)| (k, v.into_value())).collect(),
+                captured,
+            } => Value::Closure {
+                params,
+                body,
+                captured: captured
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_value()))
+                    .collect(),
             },
             SendValue::Tuple(xs) => Value::Tuple(xs.into_iter().map(Self::into_value).collect()),
             SendValue::Dict(entries) => {
-                let map: std::collections::BTreeMap<String, Value> =
-                    entries.into_iter().map(|(k, v)| (k, v.into_value())).collect();
+                let map: std::collections::BTreeMap<String, Value> = entries
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into_value()))
+                    .collect();
                 Value::Dict(Rc::new(RefCell::new(map)))
             }
         }
@@ -1067,6 +1139,7 @@ pub(crate) fn send_value_display(v: &SendValue) -> String {
         SendValue::Int(n) => n.to_string(),
         SendValue::SizedInt { val, .. } => val.to_string(),
         SendValue::Float(f) => f.to_string(),
+        SendValue::Decimal(m) => crate::decimal::format_decimal(*m),
         SendValue::Bool(b) => b.to_string(),
         SendValue::Str(s) => s.clone(),
         SendValue::Unit => "()".to_string(),
@@ -1081,7 +1154,9 @@ pub(crate) fn send_value_display(v: &SendValue) -> String {
                 .collect();
             format!("{name} {{ {} }}", inner.join(", "))
         }
-        SendValue::Enum { enum_name, variant, .. } => format!("{enum_name}::{variant}"),
+        SendValue::Enum {
+            enum_name, variant, ..
+        } => format!("{enum_name}::{variant}"),
         SendValue::Some(b) => format!("Some({})", send_value_display(b)),
         SendValue::None => "None".to_string(),
         SendValue::Ok(b) => format!("Ok({})", send_value_display(b)),
@@ -1539,6 +1614,8 @@ impl<'p> Interp<'p> {
             refine_preds,
             discharged: crate::verify::Discharged::default(),
             gfx_mock: RefCell::new(crate::native::GfxMock::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            domain: axon_domain::Registry::new(),
             #[cfg(feature = "gfx-wgpu")]
             gfx_real: RefCell::new(axon_gfx::GfxReal::new()),
         }
@@ -2281,6 +2358,7 @@ fn lit_to_val(lit: &Literal) -> Value {
         Literal::Float(f) => Value::Float(*f),
         Literal::Bool(b) => Value::Bool(*b),
         Literal::Str(s) => Value::Str(s.clone()),
+        Literal::Decimal(m) => Value::Decimal(*m),
     }
 }
 
@@ -2323,6 +2401,12 @@ fn as_float(v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Float(f) => Ok(*f),
         other => panic(format!("expected f64, got {}", other.type_name())),
+    }
+}
+fn as_decimal(v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Decimal(m) => Ok(*m),
+        other => panic(format!("expected Decimal, got {}", other.type_name())),
     }
 }
 fn as_bool(v: &Value) -> Result<bool, Flow> {
@@ -2943,16 +3027,17 @@ mod tests {
         // SOUNDNESS BOUNDARY: a Chan (identity-shared mutable state) cannot cross a
         // suspend without silently losing its sharing, so it is REFUSED (a clean
         // runtime panic, exit 101) rather than deep-cloned into a disconnected copy.
-        let prog = parse(
-            "fn main() -> i64 { let c = chan<i64>()  let r = host_await_val(c)  0 }",
-        );
+        let prog = parse("fn main() -> i64 { let c = chan<i64>()  let r = host_await_val(c)  0 }");
         // The host is never reached (the refusal happens at the boundary, worker-side).
         let mut host_calls = 0;
         let code = super::run_suspendable_values(&prog, |_req| {
             host_calls += 1;
             Some(SendValue::Int(0))
         });
-        assert_eq!(code, 101, "Chan payload → clean refusal (exit 101), not corruption");
+        assert_eq!(
+            code, 101,
+            "Chan payload → clean refusal (exit 101), not corruption"
+        );
         assert_eq!(host_calls, 0, "the refused payload never reached the host");
     }
 
@@ -2962,7 +3047,10 @@ mod tests {
         // carries SendValue (str crosses as SendValue::Str). The B1 case, unchanged.
         let prog = parse(r#"fn main() -> i64 { let r = host_await("ab")  str_len(r) }"#);
         let code = super::run_suspendable(&prog, |req| Some(format!("{req}{req}")));
-        assert_eq!(code, 4, "str host_await round-trips through the SendValue channel");
+        assert_eq!(
+            code, 4,
+            "str host_await round-trips through the SendValue channel"
+        );
     }
 
     #[test]
@@ -2976,7 +3064,10 @@ mod tests {
         let mut sf = HashMap::new();
         sf.insert("d".to_string(), dict);
         sf.insert("n".to_string(), Value::Int(1));
-        let s = Value::Struct { name: "S".to_string(), fields: sf };
+        let s = Value::Struct {
+            name: "S".to_string(),
+            fields: sf,
+        };
         let v = Value::Array(vec![s, Value::Str("hi".to_string())]);
         let sv = SendValue::from_value(&v).expect("Chan-free ⇒ sendable");
         let back = sv.into_value();

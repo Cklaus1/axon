@@ -332,9 +332,21 @@ impl OwnershipGraph {
                     None
                 };
                 for (i, arg) in args.iter().enumerate() {
+                    // A `Move`-mode param consumes the arg ONLY when it is a
+                    // resource handle (the affine drop site). A `Move` scalar /
+                    // `str` / `[scalar]` is passed by value (the frozen ABI copies
+                    // the descriptor) and must NOT consume the Axon binding —
+                    // otherwise `let s = ...; native::f(s); native::g(s)` would
+                    // wrongly E0601 on a plain str (R22).
                     let consumes = native
                         .and_then(|nf| nf.params.get(i))
-                        .map(|(_ty, mode)| *mode == crate::native::ParamMode::Move)
+                        .map(|(ty, mode)| {
+                            *mode == crate::native::ParamMode::Move
+                                && matches!(
+                                    ty,
+                                    crate::native::FfiType::Handle { resource: true, .. }
+                                )
+                        })
                         .unwrap_or(false);
                     if consumes {
                         // Move position: consume the arg (only matters for a

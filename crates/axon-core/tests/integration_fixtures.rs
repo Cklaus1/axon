@@ -1758,6 +1758,48 @@ fn no_alloc_isr_rejects_heap_call_e1704() {
     );
 }
 
+// ── R24 TEE: enclave-gated Secret unseal (E1810) ────────────────────────────
+//
+/// `tee_unseal` (Secret declassification) called outside an `@[enclave]` fn is
+/// E1810. The fixture has two non-enclave callers (`leak_secret`, `launder`) —
+/// BOTH must trip E1810 (no laundering hole) — and one `@[enclave]` fn
+/// (`in_enclave_ok`) that unseals cleanly. Pure type/checker rule, no TEE
+/// hardware needed; this is the locally-verifiable confidential-computing core.
+#[test]
+fn r24_tee_unseal_outside_enclave_rejected_e1810() {
+    let errors = check_fixture("r24_tee_unseal_e1810.ax");
+    let e1810: Vec<_> = errors.iter().filter(|e| e.contains("E1810")).collect();
+    // Both non-enclave callers must be flagged; the in-enclave one must NOT.
+    assert_eq!(
+        e1810.len(),
+        2,
+        "expected exactly 2 E1810 (leak_secret + launder); the @[enclave] fn must be clean. got:\n{}",
+        errors.join("\n")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("E1810") && e.contains("leak_secret")),
+        "expected E1810 to name `leak_secret`, got:\n{}",
+        errors.join("\n")
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|e| e.contains("E1810") && e.contains("launder")),
+        "expected E1810 on the laundering helper `launder`, got:\n{}",
+        errors.join("\n")
+    );
+    // The clean @[enclave] fn must produce NO E1810.
+    assert!(
+        !errors
+            .iter()
+            .any(|e| e.contains("E1810") && e.contains("in_enclave_ok")),
+        "an @[enclave] fn must be allowed to unseal; got an E1810 for it:\n{}",
+        errors.join("\n")
+    );
+}
+
 // ── R13 native FFI acceptance tests (spec §9) ───────────────────────────────
 //
 // These use the FULL check pipeline (`axon_core::check_pipeline`) because the
@@ -1866,5 +1908,67 @@ fn native_ok_program_is_clean() {
     assert!(
         bad.is_empty(),
         "a correct granted native program must be clean, got native errors: {bad:?} (all: {codes:?})"
+    );
+}
+
+// ── R23 eBPF target — capability + determinism gates ──────────────────────────
+
+/// A clean `@[bpf]` counter program type-checks without the R23 / determinism
+/// gates firing (no E2300/E2301/E2302; no E1208/E1704 from the auto-implied
+/// @[total]/@[no_alloc]). This is the program that the kernel verifier ACCEPTS.
+#[test]
+fn r23_bpf_counter_clean() {
+    let errors = check_fixture("r23_bpf_counter_clean.ax");
+    let bad: Vec<&String> = errors
+        .iter()
+        .filter(|e| {
+            e.contains("E2300")
+                || e.contains("E2301")
+                || e.contains("E2302")
+                || e.contains("E1208")
+                || e.contains("E1704")
+        })
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "a clean @[bpf] counter must not trip R23/determinism gates, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Determinism gate: a `@[bpf]` program with an unbounded `while` is E1208
+/// (`@[bpf]` implies `@[total]`) — refused BEFORE codegen, not at kernel load.
+#[test]
+fn r23_bpf_unbounded_while_is_e1208() {
+    let errors = check_fixture("r23_bpf_unbounded_e1208.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1208")),
+        "an unbounded `while` in a @[bpf] program must be E1208, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// No-heap gate: a `@[bpf]` program that allocates (string from `to_str`) is
+/// E1704 (`@[bpf]` implies `@[no_alloc]`).
+#[test]
+fn r23_bpf_heap_alloc_is_e1704() {
+    let errors = check_fixture("r23_bpf_heap_e1704.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1704")),
+        "a heap allocation in a @[bpf] program must be E1704, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+/// Capability gate (the novelty): a `@[bpf]` program calling a BPF helper NOT on
+/// the allowlist is E2300 — a clean Axon error at CHECK time, never a kernel
+/// load-time verifier reject.
+#[test]
+fn r23_bpf_ungranted_helper_is_e2300() {
+    let errors = check_fixture("r23_bpf_helper_e2300.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E2300")),
+        "an un-allowlisted BPF helper must be E2300, got:\n{}",
+        errors.join("\n")
     );
 }

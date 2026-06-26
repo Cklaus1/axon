@@ -385,12 +385,14 @@ impl<'p> Interp<'p> {
                 // respectively (display() shares fmt_g + "true"/"false").
                 // R19 Slice B: SizedInt also renders via display().
                 ok!(Value::Str(match &args[0] {
-                    Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::SizedInt { .. } => {
-                        display(&args[0])
-                    }
+                    Value::Int(_)
+                    | Value::Float(_)
+                    | Value::Bool(_)
+                    | Value::SizedInt { .. }
+                    | Value::Decimal(_) => display(&args[0]),
                     other =>
                         return panic(format!(
-                            "to_str: expected a scalar (i64/f64/bool), got {}",
+                            "to_str: expected a scalar (i64/f64/bool/Decimal), got {}",
                             other.type_name()
                         )),
                 }));
@@ -408,6 +410,62 @@ impl<'p> Interp<'p> {
             "i64_to_str" => {
                 want(1)?;
                 ok!(Value::Str(as_int(&args[0])?.to_string()));
+            }
+            // ── R21 — Decimal builtins ────────────────────────────────────────
+            "decimal_from_str" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                ok!(match crate::decimal::parse_decimal(s) {
+                    Ok(m) => Value::Ok(Box::new(Value::Decimal(m))),
+                    Err(e) => Value::Err(Box::new(Value::Str(e))),
+                });
+            }
+            "decimal_to_str" => {
+                want(1)?;
+                ok!(Value::Str(crate::decimal::format_decimal(as_decimal(&args[0])?)));
+            }
+            "decimal_round" => {
+                want(3)?;
+                let d = as_decimal(&args[0])?;
+                let dp = as_int(&args[1])?;
+                let mode_s = as_str(&args[2])?;
+                let Some(mode) = crate::decimal::RoundMode::from_name(mode_s) else {
+                    return panic(format!("decimal_round: unknown rounding mode {mode_s:?} (want half_even/half_up/down/up)"));
+                };
+                if dp < 0 {
+                    return panic(format!("decimal_round: dp must be 0..=9, got {dp}"));
+                }
+                ok!(match crate::decimal::round_dp(d, dp as u32, mode) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_div" => {
+                want(3)?;
+                let a = as_decimal(&args[0])?;
+                let b = as_decimal(&args[1])?;
+                let mode_s = as_str(&args[2])?;
+                let Some(mode) = crate::decimal::RoundMode::from_name(mode_s) else {
+                    return panic(format!("decimal_div: unknown rounding mode {mode_s:?} (want half_even/half_up/down/up)"));
+                };
+                ok!(match crate::decimal::div(a, b, mode) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_abs" => {
+                want(1)?;
+                ok!(match crate::decimal::abs(as_decimal(&args[0])?) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_neg" => {
+                want(1)?;
+                ok!(match crate::decimal::neg(as_decimal(&args[0])?) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
             }
             "format" => {
                 want(1)?;
@@ -2116,6 +2174,47 @@ impl<'p> Interp<'p> {
             "exit" => {
                 want(1)?;
                 Err(Flow::Exit(as_int(&args[0])? as i32))
+            }
+
+            // ── R24 TEE: confidential-computing boundary ────────────────────
+            // The compile-time guarantee (a Secret may only be unsealed in an
+            // `@[enclave]` fn) is the E1810 checker rule. These runtime arms make
+            // the workload EXECUTABLE so the gramine-direct simulation can run it.
+            // `tee_seal`/`tee_unseal` are the identity on the payload (the value
+            // story is the Secret lattice + the enclave type rule, not encryption);
+            // `tee_in_enclave` reads the AXON_TEE_ENCLAVE=1 signal the manifest
+            // sets; `tee_attest_measurement` returns the SIMULATED launch
+            // measurement (a real hardware quote is produced only remotely).
+            "tee_seal" => {
+                want(2)?;
+                // Seal is unrestricted; payload passes through (level is the
+                // lattice tag, carried by the Secret value type in userland).
+                ok!(Value::Int(as_int(&args[0])?));
+            }
+            "tee_unseal" => {
+                want(2)?;
+                // Declassify: only reachable from an `@[enclave]` fn (E1810 guards
+                // every other call site at check time), so by the time we get here
+                // we are in-enclave. Return the cleartext payload.
+                ok!(Value::Int(as_int(&args[0])?));
+            }
+            "tee_in_enclave" => {
+                want(0)?;
+                let inside = crate::host::with_host(|h| h.env_var("AXON_TEE_ENCLAVE"))
+                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                    .unwrap_or(false);
+                ok!(Value::Bool(inside));
+            }
+            "tee_attest_measurement" => {
+                want(0)?;
+                let m = crate::host::with_host(|h| h.env_var("AXON_TEE_MEASUREMENT"))
+                    .unwrap_or_else(|| {
+                        // SIMULATED measurement — clearly marked as not a real,
+                        // hardware-rooted quote. A genuine quote comes from tee.yml
+                        // on confidential hardware.
+                        "SIMULATED-MEASUREMENT-no-tee-hardware".to_string()
+                    });
+                ok!(Value::Str(m));
             }
 
             // ── ASI: numeric conversions ────────────────────────────────────
@@ -4382,6 +4481,8 @@ impl<'p> Interp<'p> {
             | "volatile_load_u64" | "volatile_store_u8" | "volatile_store_u16"
             | "volatile_store_u32" | "volatile_store_u64" | "hlt" | "cli" | "sti"
             | "port_out_u8" | "port_in_u8"
+            // R25: Zephyr console hook — no Zephyr host device under `axon run`.
+            | "zephyr_console_putc"
             // R17 Slice 2: SMP atomics — no shared-memory hardware under `axon run`.
             | "atomic_load_i64" | "atomic_store_i64"
             | "atomic_fetch_add_i64" | "atomic_cas_i64" => {
@@ -4389,6 +4490,18 @@ impl<'p> Interp<'p> {
                     "[E0910] `{name}` is a HAL builtin — it requires native codegen \
                      (`axon build --freestanding`) and cannot run in the interpreter. \
                      Use `axon check` to type-check the kernel source without running it."
+                )))
+            }
+
+            // R23 eBPF helpers — there is no kernel under the tree-walking
+            // interpreter, so these only run inside a compiled .bpf.o. Refuse
+            // cleanly (E0910), exactly like the R17 HAL leaves.
+            "bpf_map_lookup_elem" | "bpf_map_value_add" | "bpf_ktime_get_ns"
+            | "bpf_get_smp_processor_id" => {
+                Err(crate::interp::Flow::Panic(format!(
+                    "[E0910] `{name}` is a BPF helper — it requires `axon build --target bpf` \
+                     (there is no kernel under `axon run`). Use `axon check` to type-check the \
+                     eBPF program source without running it."
                 )))
             }
 

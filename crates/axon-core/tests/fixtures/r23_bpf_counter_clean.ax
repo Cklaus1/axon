@@ -1,0 +1,33 @@
+// R23 — a real, kernel-verifier-accepted eBPF program: a packet/event counter.
+//
+// Each time the program runs (e.g. on a socket-filter hook), it looks up slot 0
+// of a single BPF array map and atomically increments the i64 counter there.
+//
+// The Axon angle (the novelty):
+//   • DETERMINISTIC BY CONSTRUCTION — `@[bpf]` implies `@[total]` (no unbounded
+//     loop; an unbounded `while` here would be E1208 BEFORE codegen) and
+//     `@[no_alloc]` (no heap; any str/array would be E1704). So the program is
+//     verifiable before the kernel ever sees it.
+//   • CAPABILITY-TYPED HELPERS — `bpf_map_lookup_elem` / `bpf_map_value_add` are
+//     on the Axon BPF helper allowlist. Calling an un-granted helper (e.g.
+//     `bpf_probe_read`) is a clean Axon error (E2300) at check time, NOT a
+//     kernel load-time verifier reject.
+//
+// Build + verify (the in-kernel verifier ACCEPTS it):
+//   axon build --target bpf examples/bpf/counter.ax --out /tmp/counter.bpf.o
+//   bash scripts/ebpf_verify.sh        # creates the map, loads, asserts ACCEPT
+//
+// Type-check only (no kernel needed):  axon check examples/bpf/counter.ax
+
+substrate
+
+@[bpf(kind: socket_filter)]
+fn count(ctx: i64) -> i64 {
+    // Look up slot 0 of map handle 0 (the single ARRAY map). 0 = miss.
+    let v = bpf_map_lookup_elem(0, 0)
+    if v != 0 {
+        bpf_map_value_add(v, 1)
+    }
+    // socket_filter: returning 0 lets the packet pass (SK_PASS for our purposes).
+    0
+}

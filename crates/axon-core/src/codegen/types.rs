@@ -28,6 +28,8 @@ impl<'ctx> super::Codegen<'ctx> {
             Type::I64 | Type::U64 => Some(self.ir.context.i64_type().into()),
             Type::F32 => Some(self.ir.context.f32_type().into()),
             Type::F64 => Some(self.ir.context.f64_type().into()),
+            // R21 — Decimal is an i128 mantissa (LLVM has native i128).
+            Type::Decimal => Some(self.ir.context.i128_type().into()),
             Type::Bool => Some(self.ir.context.bool_type().into()),
 
             // Str → struct { i64, ptr }

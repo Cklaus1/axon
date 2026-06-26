@@ -7,6 +7,8 @@ pub mod builtins;
 pub mod checker;
 #[cfg(feature = "codegen")]
 pub mod codegen;
+/// R21 — exact base-10 fixed-point `Decimal` arithmetic (money-safe, i128-backed).
+pub mod decimal;
 /// Versioned machine-stable diagnostic JSON (R8): `axon-diag/1` schema.
 pub mod diag_schema;
 pub mod error;

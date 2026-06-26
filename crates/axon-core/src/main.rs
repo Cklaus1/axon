@@ -2756,6 +2756,10 @@ fn cmd_build(
     }
 
     let first = &files[0];
+
+    // R23 eBPF: `--target bpf` defaults the output to `<stem>.bpf.o` (not the
+    // bare-stem hosted-binary default).
+    let is_bpf_target = matches!(target.as_deref(), Some("bpf" | "bpfel" | "bpfeb"));
     // The base app name (used for libNAME.so + the Kotlin wrapper).
     let app_name = first
         .file_stem()
@@ -2763,7 +2767,9 @@ fn cmd_build(
         .to_string_lossy()
         .to_string();
     let output = out.unwrap_or_else(|| {
-        if mobile {
+        if is_bpf_target {
+            PathBuf::from(format!("./{app_name}.bpf.o"))
+        } else if mobile {
             // out/android/jniLibs/<abi>/lib<name>.so
             let abi = target
                 .as_deref()
@@ -2807,6 +2813,26 @@ fn cmd_build(
         process::exit(2);
     }
 
+    // R23 eBPF: `--target bpf` (or `bpfel`/`bpfeb`) takes a dedicated, focused
+    // path — the hosted IR pipeline (provenance hooks, main wrapper, host
+    // runtime) doesn't apply to a kernel BPF program.
+    if is_bpf_target {
+        match cmd_build_bpf(&mut program, first, &output) {
+            Ok(section) => {
+                let elapsed = start.elapsed().as_millis();
+                eprintln!(
+                    "BPF object: {} (section `{section}`) ({elapsed}ms)",
+                    output.display()
+                );
+                return;
+            }
+            Err(e) => {
+                eprintln!("{e}");
+                process::exit(1);
+            }
+        }
+    }
+
     // Freestanding: resolve entry fn from @[entry]-annotated fn, force target.
     let (freestanding_entry, effective_target) = if freestanding {
         let entry = find_entry_fn(&program);
@@ -2814,10 +2840,12 @@ fn cmd_build(
             eprintln!("error[E1702]: --freestanding build has no @[entry]-annotated function");
             process::exit(1);
         }
-        let t = target.unwrap_or_else(|| "x86_64-unknown-none".to_string());
+        let t = target
+            .map(|t| resolve_target_alias(&t))
+            .unwrap_or_else(|| "x86_64-unknown-none".to_string());
         (entry, Some(t))
     } else {
-        (None, target)
+        (None, target.map(|t| resolve_target_alias(&t)))
     };
 
     let opts = BuildOptions {
@@ -2890,6 +2918,38 @@ fn cmd_build(
     }
 }
 
+/// R23 eBPF: type-check the program (so E2300/E2302/E1208/E1704 fire) then emit
+/// a `.bpf.o` via the focused BPF backend. Returns the ELF section name on
+/// success. Honest failure: an unsupported construct surfaces as E2301.
+#[cfg(feature = "codegen")]
+fn cmd_build_bpf(
+    program: &mut axon_core::ast::Program,
+    source_path: &Path,
+    output: &Path,
+) -> Result<String, String> {
+    // Full check pipeline first — this runs the BPF-specific gates (the helper
+    // allowlist E2300, the kind check E2302) AND the auto-implied @[total]
+    // (E1208) / @[no_alloc] (E1704) gates, so an unbounded loop / heap touch /
+    // un-granted helper is refused BEFORE codegen.
+    let (errors, _infer) = run_check_pipeline(program, source_path);
+    if !errors.is_empty() {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        return Err(format!("{} error(s); BPF build aborted", errors.len()));
+    }
+    // Require a @[bpf]-annotated fn.
+    let has_bpf = program.items.iter().any(|it| {
+        matches!(it, axon_core::ast::Item::FnDef(f) if f.attrs.iter().any(|a| a.name == "bpf"))
+    });
+    if !has_bpf {
+        return Err(
+            "error: `--target bpf` requires a `@[bpf(kind: …)]`-annotated function".to_string(),
+        );
+    }
+    axon_core::codegen::bpf::emit_bpf_object(program, &output.to_string_lossy())
+}
+
 #[cfg(feature = "codegen")]
 struct BuildOptions {
     release: bool,
@@ -2904,6 +2964,20 @@ struct BuildOptions {
     /// R14: link a shared library (`.so`) instead of an executable
     /// (`--host mobile` → Android jniLibs).
     shared: bool,
+}
+
+/// R25: expand friendly `--target` aliases to full LLVM triples.
+///
+/// `zephyr` / `arm-zephyr` → `thumbv7m-none-eabi` (ARM Cortex-M3, the
+/// `qemu_cortex_m3` board's ISA). Used with `--freestanding --emit-obj` so the
+/// emitted object links into a Zephyr application via the arm-zephyr-eabi
+/// toolchain. Any other value is passed through unchanged (a raw LLVM triple).
+#[cfg(feature = "codegen")]
+fn resolve_target_alias(target: &str) -> String {
+    match target {
+        "zephyr" | "arm-zephyr" | "cortex-m" | "cortex-m3" => "thumbv7m-none-eabi".to_string(),
+        other => other.to_string(),
+    }
 }
 
 /// Scan `program` for a function annotated `@[entry]` and return its name.
@@ -5258,6 +5332,25 @@ mod tests {
     #[test]
     fn monotonic_decline_is_regressing() {
         assert_eq!(trend_label(&[4.0, 3.0, 2.0, 1.0]), "regressing");
+    }
+
+    // R25: the friendly `--target zephyr` family expands to the ARM Cortex-M3
+    // LLVM triple; an arbitrary triple is passed through unchanged.
+    #[cfg(feature = "codegen")]
+    #[test]
+    fn r25_zephyr_target_alias_expands_to_thumbv7m() {
+        for alias in ["zephyr", "arm-zephyr", "cortex-m", "cortex-m3"] {
+            assert_eq!(resolve_target_alias(alias), "thumbv7m-none-eabi");
+        }
+        // A raw LLVM triple is left untouched.
+        assert_eq!(
+            resolve_target_alias("x86_64-unknown-linux-gnu"),
+            "x86_64-unknown-linux-gnu"
+        );
+        assert_eq!(
+            resolve_target_alias("thumbv7em-none-eabihf"),
+            "thumbv7em-none-eabihf"
+        );
     }
 
     #[test]

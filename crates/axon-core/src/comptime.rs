@@ -301,6 +301,12 @@ impl<'a> Evaluator<'a> {
             Literal::Float(f) => Ok(ComptimeVal::Float(*f)),
             Literal::Bool(b) => Ok(ComptimeVal::Bool(*b)),
             Literal::Str(s) => Ok(ComptimeVal::Str(s.clone())),
+            // R21 — Decimal is not comptime-foldable (no ComptimeVal variant);
+            // it is a runtime/codegen value type. Reject cleanly.
+            Literal::Decimal(_) => Err(ComptimeError::NotEvaluable {
+                reason: "Decimal literals are not comptime-evaluable".to_string(),
+                span: Span::dummy(),
+            }),
         }
     }
 

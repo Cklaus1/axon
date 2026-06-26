@@ -730,6 +730,19 @@ impl<'ctx> super::Codegen<'ctx> {
                     .into()
             }
             ast::Literal::Float(f) => self.ir.context.f64_type().const_float(*f).into(),
+            // R21 — Decimal literal: a full i128 mantissa. const_int only takes a
+            // u64, so build the 128-bit value from its two 64-bit halves via the
+            // arbitrary-precision constructor (low word, high word).
+            ast::Literal::Decimal(m) => {
+                let bits = *m as u128;
+                let lo = bits as u64;
+                let hi = (bits >> 64) as u64;
+                self.ir
+                    .context
+                    .i128_type()
+                    .const_int_arbitrary_precision(&[lo, hi])
+                    .into()
+            }
             ast::Literal::Bool(b) => self
                 .ir
                 .context
@@ -7098,6 +7111,13 @@ impl<'ctx> super::Codegen<'ctx> {
         fn_val: FunctionValue<'ctx>,
     ) -> Option<BasicValueEnum<'ctx>> {
         let (_module, nf) = crate::native::resolve_call(qualified)?;
+        // R22: the domain-interop modules (`modbus`/`fhir`/`fix`) are INTERP-ONLY
+        // — they do live network I/O (`modbus`/`fhir`) or are kept interp-only
+        // for a uniform domain story (`fix`). Codegen E0910-refuses them (the
+        // `host_await`/native precedent — sound-by-refusal). Run under `axon run`.
+        if crate::native::is_codegen_refused(_module.name) {
+            return Some(self.refuse_native(qualified, "domain-interop module (interp-only)"));
+        }
         let i64_ty = self.ir.context.i64_type();
         let ptr_ty = self.ir.context.i8_type().ptr_type(AddressSpace::default());
         // The frozen `str`/`[scalar]`/`Handle` aggregate is `{i64, X}`.
@@ -8724,8 +8744,9 @@ impl<'ctx> super::Codegen<'ctx> {
                             .unwrap();
                         let elem_ty = self.ir.context.custom_width_int_type(bits);
                         let load = self.ir.builder.build_load(elem_ty, ptr, "vload").unwrap();
-                        load.as_instruction_value()
-                            .map(|i| i.set_volatile(true).unwrap());
+                        if let Some(i) = load.as_instruction_value() {
+                            i.set_volatile(true).unwrap();
+                        }
                         // Zero-extend to i64 for the value stack.
                         let ext = self
                             .ir
@@ -8851,17 +8872,48 @@ impl<'ctx> super::Codegen<'ctx> {
                             .builder
                             .build_indirect_call(fn_ty, asm_ptr, &[port_t.into()], "inb")
                             .unwrap();
-                        let i8_result = call
-                            .try_as_basic_value()
-                            .left()
-                            .unwrap()
-                            .into_int_value();
+                        let i8_result = call.try_as_basic_value().left().unwrap().into_int_value();
                         let ext = self
                             .ir
                             .builder
                             .build_int_z_extend(i8_result, i64_ty, "port_in_ext")
                             .unwrap();
                         return Some(ext.into());
+                    }
+                }
+                // ── R25: Zephyr console hook ──────────────────────────────────
+                // `zephyr_console_putc(b)` lowers to a call to the extern C symbol
+                // `void axon_console_putc(int)` which the Zephyr application
+                // provides (typically a `printk("%c", b)` wrapper). This is the
+                // architecture-neutral console primitive used when an Axon
+                // freestanding object links INTO a Zephyr app on ARM Cortex-M
+                // (or any Zephyr target) — the console is a Zephyr driver, not a
+                // fixed x86 I/O port. The i64 byte is truncated to i32 for the C
+                // `int` ABI.
+                "zephyr_console_putc" if args.len() == 1 => {
+                    if let Some(byte_v) = self.emit_expr(&args[0], fn_val) {
+                        let i32_ty = self.ir.context.i32_type();
+                        let void_ty = self.ir.context.void_type();
+                        let putc_fn = self
+                            .ir
+                            .module
+                            .get_function("axon_console_putc")
+                            .unwrap_or_else(|| {
+                                let fn_ty = void_ty.fn_type(&[i32_ty.into()], false);
+                                self.ir
+                                    .module
+                                    .add_function("axon_console_putc", fn_ty, None)
+                            });
+                        let byte_i32 = self
+                            .ir
+                            .builder
+                            .build_int_truncate(byte_v.into_int_value(), i32_ty, "putc_b")
+                            .unwrap();
+                        self.ir
+                            .builder
+                            .build_call(putc_fn, &[byte_i32.into()], "putc")
+                            .unwrap();
+                        return Some(self.ir.context.i64_type().const_zero().into());
                     }
                 }
                 // ── R17 Slice 2: SMP atomics ───────────────────────────────────
@@ -8882,8 +8934,11 @@ impl<'ctx> super::Codegen<'ctx> {
                                     "atomic_ptr",
                                 )
                                 .unwrap();
-                            let load =
-                                self.ir.builder.build_load(i64_ty, ptr, "atomic_load").unwrap();
+                            let load = self
+                                .ir
+                                .builder
+                                .build_load(i64_ty, ptr, "atomic_load")
+                                .unwrap();
                             if let Some(inst) = load.as_instruction_value() {
                                 inst.set_alignment(8).unwrap();
                                 inst.set_atomic_ordering(ord).unwrap();

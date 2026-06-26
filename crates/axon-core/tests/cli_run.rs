@@ -2038,6 +2038,12 @@ fn all_examples_typecheck_clean() {
         "agent_task_evil.ax",
         "agent_task_subtle.ax",
         "agent_task_secrets.ax",
+        // R23 eBPF adversarial examples — DESIGNED to fail check (E1208 unbounded
+        // loop, E1704 heap, E2300 un-allowlisted helper). Guarded by their own
+        // tests in integration_fixtures.rs (r23_bpf_*).
+        "bad_unbounded.ax",
+        "bad_heap.ax",
+        "bad_helper.ax",
     ];
     for f in &files {
         if f.file_name()
@@ -16248,7 +16254,13 @@ fn r1e_direct_ir_emission_stays_confined() {
     // and the ir_inkwell holder's own inherent-API test. A NEW file growing a
     // direct `.builder.build_` call is a second IR path spreading — fail it here
     // so it converges onto w_* instead.
-    let allow: &[&str] = &["expr.rs", "build_wrappers.rs", "ir_inkwell.rs"];
+    //
+    // R23 `bpf.rs` is an INDEPENDENT, self-contained backend: it builds its own
+    // inkwell Context+Module+Builder (NOT the hosted `Codegen.ir` the w_*
+    // wrappers thread through), so the wrappers do not apply to it. It is a
+    // separate emission target, not a second path spreading through the hosted
+    // pipeline — allowlisted on that basis.
+    let allow: &[&str] = &["expr.rs", "build_wrappers.rs", "ir_inkwell.rs", "bpf.rs"];
     let cg = codegen_dir();
     let mut offenders = Vec::new();
     for entry in std::fs::read_dir(&cg).unwrap() {
@@ -16934,5 +16946,52 @@ fn mock_native_module_interp_codegen_parity() {
     assert!(
         stdout.contains("native_gfx_parity: PASS"),
         "expected PASS:\n{stdout}{stderr}"
+    );
+}
+
+// ── R21 — Decimal (exact fixed-point money) ──────────────────────────────────
+
+#[test]
+fn r21_decimal_ledger_tests_pass() {
+    // The fintech ledger @[test] suite — exact add/sub/mul, rounding modes,
+    // parse/format round-trip, comparison, double-entry-sums-to-zero, and a
+    // legal-withdrawal refinement — all pass on the interpreter.
+    let demo = ex("fintech/ledger.ax");
+    let out = axon().arg("test").arg(&demo).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("test result: ok."),
+        "ledger @[test] suite must be green:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("11 passed"),
+        "expected 11 passing decimal tests:\n{stdout}"
+    );
+}
+
+#[test]
+fn r21_decimal_exact_arithmetic_and_overdraft() {
+    // 0.1d + 0.2d == 0.3d EXACTLY (the headline), and an overdraft against a
+    // `where _ >= 0d` refinement exits 6 (REFINE_VIOLATION).
+    let demo = ex("fintech/ledger.ax");
+    let run = axon().arg("run").arg(&demo).output().unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("(== 0.3d ? true)"),
+        "0.1d + 0.2d must equal 0.3d exactly:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("zero ? true"),
+        "balanced double-entry journal must sum to exactly zero:\n{stdout}"
+    );
+
+    // Overdraft demo: withdraw 150 from 100 → refinement violation, exit 6.
+    let od = ex("fintech/overdraft.ax");
+    let bad = axon().arg("run").arg(&od).output().unwrap();
+    assert_eq!(
+        bad.status.code(),
+        Some(6),
+        "overdraft must exit 6 (REFINE_VIOLATION), got {:?}",
+        bad.status.code()
     );
 }

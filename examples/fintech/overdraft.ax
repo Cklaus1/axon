@@ -1,0 +1,17 @@
+// R21 — overdraft rejection demo: the `where _ >= 0d` balance refinement
+// REFUSES to let a negative balance exist. Withdrawing more than the balance
+// triggers the runtime refinement violation and exits 6 (REFINE_VIOLATION).
+//
+//   axon run examples/fintech/overdraft.ax   ; echo $?   →  6
+
+fn withdraw(balance: Decimal, amount: Decimal) -> Decimal {
+    let new_balance: Decimal where _ >= 0d = balance - amount
+    new_balance
+}
+
+fn main() {
+    println("balance: 100.00d")
+    println("withdrawing 150.00d (overdraft) ...")
+    let bal = withdraw(100.00d, 150.00d)  // -50.00d violates `_ >= 0d` → exit 6
+    println("new balance: {decimal_to_str(bal)}")  // never reached
+}

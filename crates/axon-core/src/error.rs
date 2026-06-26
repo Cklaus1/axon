@@ -173,6 +173,18 @@ pub const E1801: &str = "E1801"; // native call arg/ret type not FFI-representab
 pub const E1802: &str = "E1802"; // handle of module A passed where module B's handle expected
 pub const E1803: &str = "E1803"; // arithmetic / forging on a `Handle` (opaque, unconstructable)
 
+// R24 TEE / confidential-computing errors. The Secret info-flow lattice composes
+// with the enclave boundary: a sealed Secret may only be DECLASSIFIED (unsealed)
+// inside an `@[enclave]` fn. This is a pure type/checker rule — enforceable on a
+// host with NO TEE hardware. (Hardware attestation is produced only on a
+// confidential runner; see governance/specs/R24-tee-target.md.)
+pub const E1810: &str = "E1810"; // `tee_unseal` (Secret declassification) called outside an `@[enclave]` fn
+
+// R23 eBPF target errors.
+pub const E2300: &str = "E2300"; // a BPF helper not on the Axon capability allowlist is called from a @[bpf] program
+pub const E2301: &str = "E2301"; // a construct outside the BPF-lowerable subset appears in a @[bpf] body
+pub const E2302: &str = "E2302"; // @[bpf(kind: K)] has an unknown program kind
+
 // Warning codes
 pub const W0001: &str = "W0001"; // unknown attribute
 pub const W0002: &str = "W0002"; // variable shadowing
@@ -350,8 +362,9 @@ mod tests {
             E1201, E1202, E1203, E1204, E1205, E1206, E1207, E1208, E1209, E1300, E1301, E1302,
             E1306, E1310, E1316, E1401, E1402, E1403, E1404, E1405, E1406, E1407, E1408, E1409,
             E1411, E1412, E1413, E1500, E1503, E1504, E1505, E1700, E1701, E1702, E1703, E1704,
-            E1706, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1900, W0001, W0002, W0003,
-            W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310, W1311, W1410, W2001, I0001,
+            E1706, E1710, E1711, E1712, E1800, E1801, E1802, E1803, E1810, E1900, E2300, E2301,
+            E2302, W0001, W0002, W0003, W0004, W0005, W0006, W0701, W0913, W1103, W1210, W1310,
+            W1311, W1410, W2001, I0001,
         ];
         let mut seen = std::collections::HashSet::new();
         for code in &codes {

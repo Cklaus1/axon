@@ -1,0 +1,31 @@
+// R22 native FFI — `native::modbus` Modbus TCP client (industrial).
+//
+// Connect to a Modbus TCP server, write a holding register, read it back, and
+// toggle a coil — a real protocol round-trip. `modbus` declares the `Net`
+// effect, so the caller needs BOTH the module grant AND a host-pinned `net`
+// allowlist: `@[contained(modbus: any, net: ["127.0.0.1"])]`. The net cap is
+// checked against the ACTUAL connect host (the `modbus_connect` literal), not
+// the prompt — reusing the existing net-cap host-pinning mechanism.
+//
+// The connection is an affine resource handle, consumed by `modbus_close`.
+// Codegen E0910-refuses this (interp-only — live network I/O). Run the gate
+// script `scripts/modbus_roundtrip.sh`, which stands up an in-process server
+// and points this demo at it.
+//
+// In examples/domain/ (a subdir) so the examples/*.ax parity sweeps skip it.
+
+use native::modbus
+
+@[contained(modbus: any, net: ["127.0.0.1"])]
+fn main() -> i64 {
+    let h = modbus::modbus_connect("127.0.0.1", 15502)
+    modbus::modbus_write_register(h, 3, 4660)
+    let regs = modbus::modbus_read_holding(h, 3, 1)
+    let v = regs[0]
+    println("holding[3] = {to_str(v)}")
+    modbus::modbus_write_coil(h, 5, 1)
+    let coils = modbus::modbus_read_coils(h, 5, 1)
+    println("coil[5] = {to_str(coils[0])}")
+    modbus::modbus_close(h)
+    v
+}

@@ -78,3 +78,16 @@ axon-surface = { path = "../axon-surface" }
 axon-gfx-mock = { path = "../axon-gfx-mock" }
 # R13 slice 5: the REAL wgpu offscreen renderer (the `gfx-wgpu` feature only).
 axon-gfx = { path = "../axon-gfx", optional = true }
+
+# R22 — domain-interop native modules (`native::modbus`/`fhir`/`fix`). These are
+# INTERP-SIDE only (codegen E0910-refuses the network ones), so axon-domain is a
+# plain interp dependency; it is NOT in axon-rt and contributes no extern
+# symbols. Its heavy deps (tokio-modbus/reqwest/socket2/serde_json) DO NOT build
+# for wasm32-unknown-unknown (the in-browser interpreter target, R7c), so the
+# dep is gated to non-wasm targets — keeping the browser interp build clean,
+# exactly as `which` rides only with codegen. The interp wiring in `interp.rs`/
+# `eval.rs` is `#[cfg(not(target_arch = "wasm32"))]`; on wasm a `native::modbus`
+# call surfaces as a clean "unavailable on this target" runtime refusal (the
+# modules are native-host-only by nature — no TCP/HTTP in the browser sandbox).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+axon-domain = { path = "../axon-domain" }
