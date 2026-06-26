@@ -42,9 +42,15 @@ rm -f /tmp/mb_$$.log
 echo "modbus_roundtrip: building interpreter + test server…"
 if cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
    && cargo build -q -p axon-domain --example modbus_test_server 2>/dev/null; then
-  MODBUS_PORT="$PORT" cargo run -q -p axon-domain --example modbus_test_server >/dev/null 2>&1 &
+  # Launch the PRE-BUILT example binary directly (not `cargo run`, whose re-link
+  # latency made a fixed sleep racy under load) and poll the port until it binds.
+  SRV_BIN="$(find target/debug/examples -maxdepth 1 -name 'modbus_test_server' -type f | head -1)"
+  MODBUS_PORT="$PORT" "$SRV_BIN" >/dev/null 2>&1 &
   SRV_PID=$!
-  sleep 1.5
+  for _ in $(seq 1 60); do
+    (echo > "/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break
+    sleep 0.25
+  done
   echo "modbus_roundtrip: running examples/domain/modbus_demo.ax against 127.0.0.1:$PORT…"
   # The demo hardcodes port 15502; only run the demo leg when PORT matches.
   if [ "$PORT" = "15502" ]; then

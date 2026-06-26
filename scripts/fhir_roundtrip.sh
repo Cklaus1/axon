@@ -40,9 +40,15 @@ rm -f /tmp/fhir_$$.log
 echo "fhir_roundtrip: building interpreter + mock server…"
 if cargo build -q -p axon-core --no-default-features --bin axon 2>/dev/null \
    && cargo build -q -p axon-domain --example fhir_test_server 2>/dev/null; then
-  FHIR_PORT="$PORT" cargo run -q -p axon-domain --example fhir_test_server >/dev/null 2>&1 &
+  # Launch the PRE-BUILT example binary directly (not `cargo run`, whose re-link
+  # latency made a fixed sleep racy under load) and poll the port until it binds.
+  SRV_BIN="$(find target/debug/examples -maxdepth 1 -name 'fhir_test_server' -type f | head -1)"
+  FHIR_PORT="$PORT" "$SRV_BIN" >/dev/null 2>&1 &
   SRV_PID=$!
-  sleep 1.0
+  for _ in $(seq 1 60); do
+    (echo > "/dev/tcp/127.0.0.1/$PORT") 2>/dev/null && break
+    sleep 0.25
+  done
   if [ "$PORT" = "18080" ]; then
     echo "fhir_roundtrip: running examples/domain/fhir_demo.ax against 127.0.0.1:$PORT…"
     OUT="$(target/debug/axon run examples/domain/fhir_demo.ax 2>&1)"
