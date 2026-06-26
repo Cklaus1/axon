@@ -1,0 +1,32 @@
+// R22 native FFI — `native::fix` FIX 4.4 message codec (fintech).
+//
+// Build a valid FIX 4.4 NewOrderSingle (SOH-delimited, correct BodyLength(9)
+// and CheckSum(10)), validate it, then parse it and read fields back by tag.
+// `fix` is a PURE codec (no effect row) so no `net` grant is needed — but it is
+// still a `native::` module, so `@[contained(fix: any)]` is REQUIRED (an
+// ungranted `use native::fix` call is E1004, fail-closed). The parsed message
+// is an affine resource handle, consumed by `fix_close` (a use-after-consume
+// would be E0601 at compile time).
+//
+// Codegen E0910-refuses this (interp-only domain module). Run with `axon run`.
+//
+// In examples/domain/ (a subdir) so the examples/*.ax parity sweeps skip it.
+
+use native::fix
+
+@[contained(fix: any)]
+fn main() -> i64 {
+    // side 1 = Buy, qty 100, price 150.
+    let msg = fix::fix_new_order_single("BUYSIDE", "SELLSIDE", "ORD-001", "AAPL", 1, 100, 150)
+    let ok = fix::fix_valid(msg)
+    println("fix message valid: {to_str(ok)}")
+
+    let h = fix::fix_parse(msg)
+    let mtype = fix::fix_get(h, 35)
+    let symbol = fix::fix_get(h, 55)
+    let qty = fix::fix_get(h, 38)
+    let price = fix::fix_get(h, 44)
+    println("MsgType={mtype} Symbol={symbol} Qty={qty} Price={price}")
+    fix::fix_close(h)
+    ok
+}

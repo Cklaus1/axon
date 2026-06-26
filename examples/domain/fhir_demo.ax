@@ -1,0 +1,34 @@
+// R22 native FFI — `native::fhir` FHIR R4 REST client (healthtech).
+//
+// Connect to a FHIR R4 server, read a Patient resource, and parse a field from
+// the returned JSON — a real HTTP round-trip. `fhir` declares the `Net` effect,
+// so the caller needs the module grant AND a host-pinned `net` allowlist:
+// `@[contained(fhir: any, net: ["127.0.0.1"])]`. The net cap is checked against
+// the ACTUAL `fhir_connect` base-URL host.
+//
+// PHI angle: a returned Patient resource is Protected Health Information. In a
+// full system the JSON is tagged with the info-flow `Secret` lattice
+// (examples/stdlib/tainted.ax) — `secret_can_flow_to` would block it from
+// reaching an AI/Net sink without declassification. Here we keep the demo small
+// and just note the boundary; `fhir_json_get` extracts a single field.
+//
+// The connection is an affine resource handle, consumed by `fhir_close`.
+// Codegen E0910-refuses this (interp-only — live network I/O). Run the gate
+// script `scripts/fhir_roundtrip.sh`, which stands up a mock FHIR HTTP server
+// and points this demo at it.
+//
+// In examples/domain/ (a subdir) so the examples/*.ax parity sweeps skip it.
+
+use native::fhir
+
+@[contained(fhir: any, net: ["127.0.0.1"])]
+fn main() -> i64 {
+    let h = fhir::fhir_connect("http://127.0.0.1:18080")
+    // PHI: the returned JSON is a Patient resource (Secret in the full lattice).
+    let patient = fhir::fhir_read(h, "Patient", "example")
+    let family = fhir::fhir_json_get(patient, "name.0.family")
+    let gender = fhir::fhir_json_get(patient, "gender")
+    println("Patient family={family} gender={gender}")
+    fhir::fhir_close(h)
+    len(family)
+}
