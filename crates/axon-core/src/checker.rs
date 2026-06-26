@@ -20,8 +20,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E1810, E2300,
-    E2302,
+    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E1810, E2300, E2302,
 };
 use crate::types::Type;
 
@@ -1852,9 +1851,7 @@ impl CheckCtx {
     /// construction — the verifier rejects unbounded loops, so Axon enforces
     /// `@[total]` up front to refuse them BEFORE codegen).
     fn fn_is_total(f: &FnDef) -> bool {
-        f.attrs
-            .iter()
-            .any(|a| a.name == "total" || a.name == "bpf")
+        f.attrs.iter().any(|a| a.name == "total" || a.name == "bpf")
     }
 
     /// R23 eBPF: a fn is treated as `@[no_alloc]` if explicitly annotated OR it
