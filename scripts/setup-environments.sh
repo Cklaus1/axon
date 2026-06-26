@@ -77,14 +77,59 @@ setup_android() {
   echo "  → boot:  \$ANDROID_HOME/emulator/emulator -avd axon_test -no-window -gpu swiftshader_indirect -accel on &"
 }
 
+# Keep Axon codegen on LLVM 17 even after a clang/llvm install repoints llvm-config to 18.
+pin_llvm17() {
+  if [ -x /usr/bin/llvm-config-17 ]; then
+    sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config 2>/dev/null || true
+    ok "llvm-config pinned to 17 (codegen needs LLVM 17; LLVM_SYS_170_PREFIX=/usr/lib/llvm-17)"
+  fi
+}
+
+setup_ebpf() {
+  step "eBPF — clang-bpf + kernel verifier"
+  command -v clang-18 >/dev/null || sudo apt-get install -y -q clang-18 libbpf-dev linux-tools-common
+  pin_llvm17   # IMPORTANT: clang-18 is fine for the bpf target, but keep llvm-config → 17 for codegen
+  if clang-18 -target bpf -O2 -c -x c /dev/null -o /tmp/_probe.bpf.o 2>/dev/null; then
+    ok "clang bpf target OK"
+  else
+    echo "  ✗ clang -target bpf failed"; return 1
+  fi
+  [ -f /sys/kernel/btf/vmlinux ] && ok "kernel BTF present (real verifier load works)" \
+    || echo "  • no kernel BTF — ebpf_verify.sh falls back to structural / rbpf checks"
+}
+
+setup_zephyr() {
+  step "Zephyr RTOS — SDK + QEMU Cortex-M"
+  pip install --break-system-packages -q west pyelftools 2>/dev/null || true
+  command -v qemu-system-arm >/dev/null || sudo apt-get install -y -q qemu-system-arm cmake ninja-build device-tree-compiler gperf
+  if [ ! -d ~/zephyrproject/zephyr ]; then
+    west init ~/zephyrproject >/dev/null 2>&1 && (cd ~/zephyrproject && west update >/dev/null 2>&1 && west zephyr-export >/dev/null 2>&1)
+  fi
+  ok "zephyr workspace at ~/zephyrproject"
+  if [ ! -d ~/zephyr-sdk/arm-zephyr-eabi ]; then
+    local SDK=0.17.0
+    wget -qO /tmp/zsdk.tar.xz "https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v${SDK}/zephyr-sdk-${SDK}_linux-x86_64_minimal.tar.xz"
+    mkdir -p ~/zephyr-sdk && tar xf /tmp/zsdk.tar.xz -C ~/zephyr-sdk --strip-components=1
+    (cd ~/zephyr-sdk && ./setup.sh -t arm-zephyr-eabi -c >/dev/null 2>&1) || true
+  fi
+  # The bleeding-edge tree wants find_package(Zephyr-sdk 1.0); the 0.17 label gates it.
+  [ -f ~/zephyr-sdk/sdk_version ] && ! grep -q '^1\.' ~/zephyr-sdk/sdk_version 2>/dev/null && echo "1.0.0" > ~/zephyr-sdk/sdk_version
+  [ -x ~/zephyr-sdk/arm-zephyr-eabi/bin/arm-zephyr-eabi-gcc ] \
+    && ok "Zephyr SDK + arm toolchain ready (set ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk)" \
+    || echo "  ✗ arm-zephyr-eabi toolchain missing"
+}
+
 case "$WHAT" in
   gpu)     setup_gpu ;;
   browser) setup_browser ;;
   android) setup_android ;;
-  all)     setup_gpu; setup_browser; setup_android ;;
-  *) echo "usage: $0 [gpu|browser|android|all]"; exit 2 ;;
+  ebpf)    setup_ebpf ;;
+  zephyr)  setup_zephyr ;;
+  all)     setup_gpu; setup_browser; setup_android; setup_ebpf; setup_zephyr ;;
+  *) echo "usage: $0 [gpu|browser|android|ebpf|zephyr|all]"; exit 2 ;;
 esac
 
 echo ""
-echo "Done. iOS verification is macOS-only and runs via .github/workflows/ios.yml in CI."
+echo "Done. Off-host boundaries verified in CI: iOS (.github/workflows/ios.yml, macOS) and"
+echo "TEE hardware attestation (.github/workflows/tee.yml, confidential runner)."
 echo "See ENVIRONMENTS.md for per-gate verification commands."

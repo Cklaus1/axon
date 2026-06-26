@@ -21,6 +21,17 @@ exception (Apple toolchain is macOS-only) and is verified in CI instead.
 | **Browser — headless Chrome** | `scripts/browser_*.sh` (R7c) | No | `google-chrome --headless --dump-dom about:blank` |
 | **Android — NDK + KVM emulator** | `scripts/android_compute_parity.sh`, `android_lifecycle.sh` (R14) | No (KVM accel, `swiftshader` GPU) | `$ANDROID_HOME/emulator/emulator -list-avds` |
 | **iOS — GitHub Actions macOS** | `.github/workflows/ios.yml` (R14 iOS) | **macOS only** → runs in CI | (verified remotely on push) |
+| **eBPF — clang-bpf + kernel BTF** | `scripts/ebpf_verify.sh` (R23) | No (in-kernel verifier / rbpf) | `clang -target bpf -c -x c /dev/null -o /dev/null && echo ok` |
+| **Zephyr RTOS — SDK + QEMU** | `scripts/zephyr_qemu_gate.sh` (R25) | No (QEMU Cortex-M) | `west --version && qemu-system-arm --version` |
+| **TEE — Gramine sim / CI attest** | `scripts/tee_sim_run.sh`, `.github/workflows/tee.yml` (R24) | **attestation: TEE hardware only** → cloud CI | `axon check examples/tee/*.ax` (E1810 rule) |
+
+> ⚠️ **LLVM pin (read before installing eBPF tooling):** Axon codegen requires **LLVM 17**
+> (`llvm-sys` 170). Installing the `llvm`/`clang` apt *metapackage* on Ubuntu 24.04 pulls
+> **LLVM 18** and repoints `/usr/bin/llvm-config`, which breaks fresh codegen builds with
+> `could not find native static library 'Polly'`. Install **`clang-18`** for the bpf target
+> (it's independent of `llvm-config`) but keep `llvm-config` → 17:
+> `sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config` (and/or
+> `export LLVM_SYS_170_PREFIX=/usr/lib/llvm-17`). The setup script does this for you.
 
 ---
 
@@ -155,6 +166,76 @@ equivalent; a contributor without a Mac relies on the CI result.
 
 ---
 
+## 5. eBPF — clang-bpf + kernel verifier (R23)
+
+The Axon→eBPF target (`axon build --target bpf`) emits an `elf64-bpf` object the Linux
+verifier loads. Verification is fully local: the **in-kernel verifier** accepts the object
+(or the userspace `rbpf` VM runs the bytecode).
+
+```bash
+sudo apt-get install -y clang-18 libbpf-dev linux-tools-common   # clang-18, NOT the llvm metapackage (see LLVM pin above)
+sudo ln -sf /usr/bin/llvm-config-17 /usr/bin/llvm-config          # keep codegen on LLVM 17
+```
+
+Verify:
+
+```bash
+clang -target bpf -O2 -c -x c /dev/null -o /dev/null && echo "bpf target OK"
+ls /sys/kernel/btf/vmlinux && echo "kernel BTF present (real verifier load works)"
+bash scripts/ebpf_verify.sh            # builds the .bpf.o, loads it, asserts the verifier ACCEPTS
+```
+
+Note: WSL2's `/usr/sbin/bpftool` is a per-kernel wrapper that no-ops; `ebpf_verify.sh` uses a
+direct `bpf(BPF_PROG_LOAD)` syscall loader (needs `sudo`), falling back to a structural check
+or `rbpf` if unprivileged. SKIP-guards if clang-bpf is absent.
+
+## 6. Zephyr RTOS — SDK + QEMU Cortex-M (R25)
+
+`axon build --target zephyr` emits a `thumbv7m-none-eabi` object linked into a Zephyr app and
+run under QEMU — no board needed.
+
+```bash
+pip install --break-system-packages west pyelftools
+west init ~/zephyrproject && (cd ~/zephyrproject && west update && west zephyr-export)
+# Zephyr SDK (arm toolchain):
+SDK=0.17.0; wget -qO /tmp/z.tar.xz \
+  https://github.com/zephyrproject-rtos/sdk-ng/releases/download/v$SDK/zephyr-sdk-${SDK}_linux-x86_64_minimal.tar.xz
+mkdir -p ~/zephyr-sdk && tar xf /tmp/z.tar.xz -C ~/zephyr-sdk --strip-components=1
+(cd ~/zephyr-sdk && ./setup.sh -t arm-zephyr-eabi -c)
+sudo apt-get install -y qemu-system-arm cmake ninja-build device-tree-compiler gperf
+```
+
+> Gotcha: the bleeding-edge Zephyr tree requires `find_package(Zephyr-sdk 1.0)`; if the SDK's
+> `~/zephyr-sdk/sdk_version` label reads below `1.0`, bump it to `1.0.0` (binaries unchanged).
+
+Verify:
+
+```bash
+cd ~/zephyrproject && source zephyr/zephyr-env.sh
+ZEPHYR_SDK_INSTALL_DIR=~/zephyr-sdk west build -p auto -b qemu_cortex_m3 zephyr/samples/hello_world -d /tmp/zb && west build -d /tmp/zb -t run   # prints "Hello World"
+bash scripts/zephyr_qemu_gate.sh       # builds the Axon object, runs it on Cortex-M QEMU, asserts AXON / 23 / 42
+```
+
+## 7. TEE — Gramine simulation (local) + cloud attestation (CI) (R24)
+
+The **type rule is local and gated** — `@[enclave]` / `E1810` ensures a sealed `Secret` is only
+unsealed inside an enclave (`axon check examples/tee/*.ax`). **Real hardware attestation is the
+one genuine off-host boundary** (this host has no SEV-SNP/TDX/SGX — `sme` only), so:
+
+- Local: a Gramine *direct* (no-SGX) simulated run, if Gramine is installed. As of writing it is
+  **not in the Ubuntu 24.04 apt repos** — add the Gramine apt repo to enable it; otherwise
+  `scripts/tee_sim_run.sh` SKIP-guards and verifies the baseline enclave-env run + the E1810 rule.
+- Real attestation: **`.github/workflows/tee.yml`** (`workflow_dispatch`, a self-hosted
+  `[sgx, confidential]` runner) builds under Gramine-SGX, produces a DCAP quote bound to a nonce,
+  and verifies it against Intel's PCS. Runs remotely on confidential hardware — never faked here.
+
+```bash
+axon check examples/tee/confidential_score.ax   # the E1810 Secret-unseal-only-in-enclave rule
+bash scripts/tee_sim_run.sh                      # baseline enclave run (+ gramine-direct if installed)
+```
+
+---
+
 ## What still genuinely needs hardware (manual tier)
 
 Even with all of the above, a few journeys remain manual because they need a real display or
@@ -164,5 +245,8 @@ device, and are intentionally **not** gated:
 - A full **Android NativeActivity GUI** frame loop (R14 S3) — the lifecycle *adapter* is gated
   headless; the real Activity + JVM GUI app is manual.
 - **iOS on a physical device** (vs. the simulator) — needs provisioning/signing.
+- **TEE hardware attestation** (R24) — a genuine SEV-SNP/TDX/SGX quote rooted in CPU keys
+  needs confidential hardware; verified remotely via `tee.yml`, never on this host. The
+  `@[enclave]`/`E1810` *type rule* is local and gated.
 
 These are marked manual-tier in the relevant specs under `governance/specs/`.
