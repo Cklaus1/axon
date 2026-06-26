@@ -1,0 +1,152 @@
+// R21 — Exact fixed-point `Decimal` money type: a double-entry ledger.
+//
+// THE fintech-credibility blocker: you cannot handle money on `f64`, because
+// `0.1 + 0.2 != 0.3` in binary floating point. Axon's `Decimal` is an EXACT
+// base-10 fixed-point number (i128 mantissa at scale 9), so money arithmetic
+// is exact, checked (overflow → graceful panic), and equality/ordering are
+// precise. Division specifies a rounding mode (banker's / half-even default).
+//
+// Literal syntax: a `d` suffix — `1.50d`, `0.1d`, `100d`.
+//
+// Run on the interpreter:  axon run examples/fintech/ledger.ax
+// Run the test suite:      axon test examples/fintech/ledger.ax
+//
+// Native codegen E0910-refuses Decimal in this slice (interp-only — exact
+// rounding IR is not yet wired; see governance/specs/R21-decimal.md).
+
+// ── The headline: 0.1 + 0.2 == 0.3 EXACTLY ───────────────────────────────────
+
+@[test]
+fn test_point_one_plus_point_two_is_exact() {
+    // On f64 this is false. On Decimal it is EXACTLY true.
+    assert(0.1d + 0.2d == 0.3d)
+}
+
+// ── Exact add / sub / mul ─────────────────────────────────────────────────────
+
+@[test]
+fn test_exact_add() {
+    assert(1.50d + 2.25d == 3.75d)
+}
+
+@[test]
+fn test_exact_sub() {
+    assert(10.00d - 0.01d == 9.99d)
+}
+
+@[test]
+fn test_exact_mul() {
+    // Price × quantity — exact, no drift.
+    let price = 19.99d
+    let qty = 3d
+    assert(price * qty == 59.97d)
+}
+
+// ── Comparison / ordering ─────────────────────────────────────────────────────
+
+@[test]
+fn test_ordering() {
+    assert(0.10d < 0.11d)
+    assert(100d > 99.99d)
+    assert(5.5d >= 5.5d)
+    assert(2.50d != 2.5000001d)
+}
+
+// ── Division with rounding modes ──────────────────────────────────────────────
+
+@[test]
+fn test_div_truncate_vs_half_even() {
+    // 1 / 3 at scale 9.
+    let down = decimal_div(1d, 3d, "down")
+    assert(decimal_to_str(down) == "0.333333333")
+    // 2 / 3 rounds the last digit up under half-even.
+    let he = decimal_div(2d, 3d, "half_even")
+    assert(decimal_to_str(he) == "0.666666667")
+}
+
+@[test]
+fn test_round_banker() {
+    // Banker's rounding (half to even): 1.005 → 1.00, 1.015 → 1.02.
+    assert(decimal_round(1.005d, 2, "half_even") == 1.00d)
+    assert(decimal_round(1.015d, 2, "half_even") == 1.02d)
+}
+
+// ── Parse / format round-trip ─────────────────────────────────────────────────
+
+@[test]
+fn test_parse_format_round_trip() {
+    match decimal_from_str("1234.56") {
+        Ok(d) => assert(decimal_to_str(d) == "1234.56")
+        Err(e) => assert(false)
+    }
+    // Excess precision (>9 fractional digits) is a clean Err, not a panic.
+    match decimal_from_str("1.0000000001") {
+        Ok(d) => assert(false)
+        Err(e) => assert(true)
+    }
+}
+
+// ── abs / neg ─────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_abs_neg() {
+    assert(decimal_abs(0d - 5.5d) == 5.5d)
+    assert(decimal_neg(5.5d) == 0d - 5.5d)
+}
+
+// ── Double-entry posting: debits + credits sum to ZERO exactly ────────────────
+
+// A balanced journal entry: debits are positive, credits negative, so the
+// signed sum of all four legs is exactly zero. On f64 a sum of many fractional
+// postings drifts; on Decimal it is exactly 0.
+//
+// Legs: +debit1, -credit1, +debit2, -credit2.
+fn journal_balance(debit1: Decimal, credit1: Decimal, debit2: Decimal, credit2: Decimal) -> Decimal {
+    (debit1 - credit1) + (debit2 - credit2)
+}
+
+@[test]
+fn test_double_entry_sums_to_zero() {
+    // Cash 100.33 debit ↔ Revenue 100.33 credit; Tax 7.07 debit ↔ Liability 7.07 credit.
+    let total = journal_balance(100.33d, 100.33d, 7.07d, 7.07d)
+    assert(total == 0d)
+}
+
+// ── Balance refinement: an overdraft is REJECTED (exit 6) ─────────────────────
+
+// `where _ >= 0d` is a non-negative-balance invariant enforced at the binding
+// site. A withdrawal that overdraws the account fails the refinement at runtime
+// (exit 6, REFINE_VIOLATION) — the compiler refuses to let an invalid balance
+// exist, rather than silently producing a negative number.
+fn withdraw(balance: Decimal, amount: Decimal) -> Decimal {
+    let new_balance: Decimal where _ >= 0d = balance - amount
+    new_balance
+}
+
+@[test]
+fn test_withdraw_within_balance_ok() {
+    assert(withdraw(100d, 30d) == 70.00d)
+}
+
+// ── Demo main: a tiny ledger run ──────────────────────────────────────────────
+
+fn main() {
+    println("== Axon Decimal ledger ==")
+    println("0.1d + 0.2d         = {decimal_to_str(0.1d + 0.2d)}   (== 0.3d ? {to_str(0.1d + 0.2d == 0.3d)})")
+    println("19.99d * 3d         = {decimal_to_str(19.99d * 3d)}")
+    println("1d / 3d (half_even) = {decimal_to_str(decimal_div(1d, 3d, \"half_even\"))}")
+
+    // Double-entry: balanced journal sums to zero.
+    let total = journal_balance(100.33d, 100.33d, 7.07d, 7.07d)
+    println("balanced journal    = {decimal_to_str(total)}   (zero ? {to_str(total == 0d)})")
+
+    // A legal withdrawal.
+    let bal = withdraw(100d, 30d)
+    println("balance after -30   = {decimal_to_str(bal)}")
+
+    // The overdraft below would trigger the `where _ >= 0d` refinement and exit 6.
+    // Uncomment to see the runtime rejection:
+    // let overdrawn = withdraw(100d, 150d)
+    // println("overdrawn = {decimal_to_str(overdrawn)}")
+    println("(an overdraft would be rejected by the `where _ >= 0d` refinement, exit 6)")
+}

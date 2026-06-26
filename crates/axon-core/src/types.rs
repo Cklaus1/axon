@@ -22,6 +22,10 @@ pub enum Type {
     // Floats
     F32,
     F64,
+    /// R21 — exact base-10 fixed-point decimal (money). i128 mantissa at the
+    /// global `decimal::SCALE` (9 dp). Exact equality/ordering; no implicit
+    /// coercion to/from f64 (that would defeat exactness — require explicit `as`).
+    Decimal,
     // Primitives
     Bool,
     /// UTF-8 string — lowered to `{ i64, ptr }` (length + heap pointer).
@@ -82,6 +86,7 @@ impl Type {
             "u64" => Some(Type::U64),
             "f32" => Some(Type::F32),
             "f64" => Some(Type::F64),
+            "Decimal" | "decimal" => Some(Type::Decimal),
             "bool" => Some(Type::Bool),
             "str" | "String" => Some(Type::Str),
             "()" | "unit" | "Unit" => Some(Type::Unit),
@@ -116,8 +121,13 @@ impl Type {
         matches!(self, Type::F32 | Type::F64)
     }
 
+    /// R21 — exact fixed-point decimal.
+    pub fn is_decimal(&self) -> bool {
+        matches!(self, Type::Decimal)
+    }
+
     pub fn is_numeric(&self) -> bool {
-        self.is_integer() || self.is_float()
+        self.is_integer() || self.is_float() || self.is_decimal()
     }
 
     /// A scalar value type: any numeric type or `bool`. These are exactly the
@@ -202,6 +212,7 @@ impl Type {
             Type::U64 => "u64".into(),
             Type::F32 => "f32".into(),
             Type::F64 => "f64".into(),
+            Type::Decimal => "Decimal".into(),
             Type::Bool => "bool".into(),
             Type::Str => "str".into(),
             Type::Unit => "()".into(),

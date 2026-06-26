@@ -186,8 +186,8 @@ fn is_int_width(t: &Type) -> bool {
 // ── Known primitives (for R08) ────────────────────────────────────────────────
 
 const PRIMITIVE_NAMES: &[&str] = &[
-    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "bool", "str", "String",
-    "()", "unit",
+    "i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "f32", "f64", "Decimal", "bool", "str",
+    "String", "()", "unit",
 ];
 
 /// Deferred type name prefixes (R08 / R12): always valid, never emit E0308.
@@ -4906,6 +4906,7 @@ impl CheckCtx {
                 crate::ast::Literal::Float(_) => Type::F64,
                 crate::ast::Literal::Str(_) => Type::Str,
                 crate::ast::Literal::Bool(_) => Type::Bool,
+                crate::ast::Literal::Decimal(_) => Type::Decimal,
             },
             Expr::None => Type::Option(Box::new(Type::Unknown)),
             Expr::Some(inner) => {
@@ -5172,6 +5173,7 @@ pub fn axon_type_to_type(ty: &AxonType) -> Type {
             "u64" => Type::U64,
             "f32" => Type::F32,
             "f64" => Type::F64,
+            "Decimal" => Type::Decimal,
             "bool" => Type::Bool,
             "str" | "String" => Type::Str,
             "()" | "unit" => Type::Unit,
@@ -5291,6 +5293,7 @@ fn literal_scalar_kind(lit: &crate::ast::Literal) -> &'static str {
         Literal::Float(_) => "float",
         Literal::Bool(_) => "bool",
         Literal::Str(_) => "str",
+        Literal::Decimal(_) => "decimal",
     }
 }
 

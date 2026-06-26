@@ -859,6 +859,11 @@ impl Formatter {
                     self.write(".0");
                 }
             }
+            // R21 — decimal literal: re-emit the canonical form with the `d` suffix.
+            Literal::Decimal(m) => {
+                self.write(&crate::decimal::format_decimal(*m));
+                self.write("d");
+            }
             Literal::Str(s) => {
                 self.write("\"");
                 for ch in s.chars() {

@@ -385,12 +385,14 @@ impl<'p> Interp<'p> {
                 // respectively (display() shares fmt_g + "true"/"false").
                 // R19 Slice B: SizedInt also renders via display().
                 ok!(Value::Str(match &args[0] {
-                    Value::Int(_) | Value::Float(_) | Value::Bool(_) | Value::SizedInt { .. } => {
-                        display(&args[0])
-                    }
+                    Value::Int(_)
+                    | Value::Float(_)
+                    | Value::Bool(_)
+                    | Value::SizedInt { .. }
+                    | Value::Decimal(_) => display(&args[0]),
                     other =>
                         return panic(format!(
-                            "to_str: expected a scalar (i64/f64/bool), got {}",
+                            "to_str: expected a scalar (i64/f64/bool/Decimal), got {}",
                             other.type_name()
                         )),
                 }));
@@ -408,6 +410,62 @@ impl<'p> Interp<'p> {
             "i64_to_str" => {
                 want(1)?;
                 ok!(Value::Str(as_int(&args[0])?.to_string()));
+            }
+            // ── R21 — Decimal builtins ────────────────────────────────────────
+            "decimal_from_str" => {
+                want(1)?;
+                let s = as_str(&args[0])?;
+                ok!(match crate::decimal::parse_decimal(s) {
+                    Ok(m) => Value::Ok(Box::new(Value::Decimal(m))),
+                    Err(e) => Value::Err(Box::new(Value::Str(e))),
+                });
+            }
+            "decimal_to_str" => {
+                want(1)?;
+                ok!(Value::Str(crate::decimal::format_decimal(as_decimal(&args[0])?)));
+            }
+            "decimal_round" => {
+                want(3)?;
+                let d = as_decimal(&args[0])?;
+                let dp = as_int(&args[1])?;
+                let mode_s = as_str(&args[2])?;
+                let Some(mode) = crate::decimal::RoundMode::from_name(mode_s) else {
+                    return panic(format!("decimal_round: unknown rounding mode {mode_s:?} (want half_even/half_up/down/up)"));
+                };
+                if dp < 0 {
+                    return panic(format!("decimal_round: dp must be 0..=9, got {dp}"));
+                }
+                ok!(match crate::decimal::round_dp(d, dp as u32, mode) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_div" => {
+                want(3)?;
+                let a = as_decimal(&args[0])?;
+                let b = as_decimal(&args[1])?;
+                let mode_s = as_str(&args[2])?;
+                let Some(mode) = crate::decimal::RoundMode::from_name(mode_s) else {
+                    return panic(format!("decimal_div: unknown rounding mode {mode_s:?} (want half_even/half_up/down/up)"));
+                };
+                ok!(match crate::decimal::div(a, b, mode) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_abs" => {
+                want(1)?;
+                ok!(match crate::decimal::abs(as_decimal(&args[0])?) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
+            }
+            "decimal_neg" => {
+                want(1)?;
+                ok!(match crate::decimal::neg(as_decimal(&args[0])?) {
+                    Ok(m) => Value::Decimal(m),
+                    Err(e) => return panic(e),
+                });
             }
             "format" => {
                 want(1)?;

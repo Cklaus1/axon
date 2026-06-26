@@ -147,6 +147,43 @@ pub const BUILTINS: &[BuiltinFn] = &[
         ret: "i32",
         doc: "Return the greater of two integers (truncated to i32 range).",
     },
+    // ── R21 — Decimal (exact fixed-point money) ──────────────────────────────
+    BuiltinFn {
+        name: "decimal_from_str",
+        params: &[("s", "str")],
+        ret: "Result<Decimal,str>",
+        doc: "Parse `s` (e.g. \"1.50\", \"-0.25\", \"100\") into an exact fixed-point `Decimal` at scale 9. `Err(str)` on malformed input or excess precision (>9 fractional digits). The input-side inverse of `decimal_to_str` — round-trips exactly.",
+    },
+    BuiltinFn {
+        name: "decimal_to_str",
+        params: &[("d", "Decimal")],
+        ret: "str",
+        doc: "Render a `Decimal` to its canonical exact string (trailing zeros stripped; whole numbers print with no point). Exact inverse of `decimal_from_str`.",
+    },
+    BuiltinFn {
+        name: "decimal_round",
+        params: &[("d", "Decimal"), ("dp", "i64"), ("mode", "str")],
+        ret: "Decimal",
+        doc: "Round `d` to `dp` fractional digits (0–9) using rounding `mode` (\"half_even\" [banker's], \"half_up\", \"down\", \"up\"). The result stays at scale 9. Unknown mode or dp>9 is a graceful panic.",
+    },
+    BuiltinFn {
+        name: "decimal_div",
+        params: &[("a", "Decimal"), ("b", "Decimal"), ("mode", "str")],
+        ret: "Decimal",
+        doc: "Divide `a / b` to scale 9 with an EXPLICIT rounding `mode` (money division must specify rounding). Division by zero is a graceful panic. The `/` operator uses the half_even default; this builtin lets you pick the mode.",
+    },
+    BuiltinFn {
+        name: "decimal_abs",
+        params: &[("d", "Decimal")],
+        ret: "Decimal",
+        doc: "Absolute value of a `Decimal`. Overflow (at the i128 minimum) is a graceful panic, never a wrap.",
+    },
+    BuiltinFn {
+        name: "decimal_neg",
+        params: &[("d", "Decimal")],
+        ret: "Decimal",
+        doc: "Negate a `Decimal`. Overflow (at the i128 minimum) is a graceful panic.",
+    },
     // ── Channels ────────────────────────────────────────────────────────────
     BuiltinFn {
         name: "Chan::new",

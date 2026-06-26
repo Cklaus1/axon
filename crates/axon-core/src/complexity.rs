@@ -256,6 +256,7 @@ fn lit_bits(l: &Literal) -> u64 {
     match l {
         Literal::Int(v) => KIND_BITS + int_bits(*v),
         Literal::Float(_) => KIND_BITS + 64,
+        Literal::Decimal(_) => KIND_BITS + 128, // i128 mantissa
         Literal::Bool(_) => KIND_BITS + 1,
         Literal::Str(s) => KIND_BITS + 8 * s.len() as u64,
     }

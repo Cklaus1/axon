@@ -648,6 +648,35 @@ pub(super) fn eval_binop_vals(op: &BinOp, l: Value, r: Value) -> R {
         (Mul, Float(a), Float(b)) => Ok(Float(a * b)),
         (Div, Float(a), Float(b)) => Ok(Float(a / b)),
         (Rem, Float(a), Float(b)) => Ok(Float(a % b)),
+        // ── R21 — exact fixed-point Decimal arithmetic ────────────────────────
+        // Same-scale i128 ops. Checked: overflow / div-by-zero → graceful panic,
+        // never a silent wrap (money math must never lie). Division uses the
+        // banker's-rounding (HalfEven) default; an explicit mode is available via
+        // the `decimal_div` builtin.
+        (Add, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::add(a, b)
+            .map(Value::Decimal)
+            .map_err(Flow::Panic),
+        (Sub, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::sub(a, b)
+            .map(Value::Decimal)
+            .map_err(Flow::Panic),
+        (Mul, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::mul(a, b)
+            .map(Value::Decimal)
+            .map_err(Flow::Panic),
+        (Div, Value::Decimal(a), Value::Decimal(b)) => {
+            crate::decimal::div(a, b, crate::decimal::RoundMode::HalfEven)
+                .map(Value::Decimal)
+                .map_err(Flow::Panic)
+        }
+        (Rem, Value::Decimal(a), Value::Decimal(b)) => crate::decimal::rem(a, b)
+            .map(Value::Decimal)
+            .map_err(Flow::Panic),
+        (Eq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a == b)),
+        (NotEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a != b)),
+        (Lt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a < b)),
+        (Gt, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a > b)),
+        (LtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a <= b)),
+        (GtEq, Value::Decimal(a), Value::Decimal(b)) => Ok(Bool(a >= b)),
+
         // String concat
         (Add, Str(a), Str(b)) => Ok(Str(a + &b)),
         // Integer comparisons
@@ -771,6 +800,7 @@ pub(super) fn values_equal(a: &Value, b: &Value) -> bool {
         (SizedInt { val: x, ty }, Int(y)) => to_display_val(*x, ty) == *y,
         (Int(x), SizedInt { val: y, ty }) => *x == to_display_val(*y, ty),
         (Float(x), Float(y)) => x == y,
+        (Decimal(x), Decimal(y)) => x == y,
         (Bool(x), Bool(y)) => x == y,
         (Str(x), Str(y)) => x == y,
         (Unit, Unit) => true,
@@ -834,6 +864,7 @@ pub(super) fn display(v: &Value) -> String {
         Value::Int(n) => n.to_string(),
         Value::SizedInt { val, ty } => display_sized(*val, ty),
         Value::Float(f) => fmt_g(*f),
+        Value::Decimal(m) => crate::decimal::format_decimal(*m),
         Value::Bool(b) => b.to_string(),
         Value::Unit => "()".into(),
         Value::None => "None".into(),

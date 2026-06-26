@@ -542,6 +542,10 @@ pub enum Literal {
     Float(f64),
     Str(String),
     Bool(bool),
+    /// R21 — exact fixed-point decimal literal (`1.50d`). The i128 is the
+    /// mantissa at the global `decimal::SCALE` (9 dp); it is fully exact and
+    /// never round-trips through f64.
+    Decimal(i128),
 }
 
 // ── Capability permissions (Phase 4: @[contained]) ────────────────────────────

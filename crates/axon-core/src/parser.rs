@@ -2016,7 +2016,13 @@ impl Parser {
     /// Parse an optional `: Type` annotation following a binding name.
     fn parse_opt_binding_type(&mut self) -> Result<Option<AxonType>> {
         if self.eat(&Token::Colon) {
-            Ok(Some(self.parse_type()?))
+            let ty = self.parse_type()?;
+            // Phase 5 / R21: a `let`/`own`/`ref` binding may carry an inline
+            // refinement — `let p: T where <pred>` — enforced at runtime at the
+            // binding site (the spec's LET obligation). Desugar it the same way
+            // parameter/field refinements are.
+            let ty = self.maybe_desugar_inline_refinement(ty)?;
+            Ok(Some(ty))
         } else {
             Ok(None)
         }
@@ -2793,6 +2799,19 @@ impl Parser {
             Some(Token::Float(_)) => {
                 if let Token::Float(n) = self.advance()?.clone() {
                     Ok(Expr::Literal(Literal::Float(n)))
+                } else {
+                    unreachable!()
+                }
+            }
+            // R21 — exact decimal literal `Nd`. Parse the captured digit string
+            // into an i128 mantissa here so excess-precision/overflow is a clean
+            // compile error, not a runtime surprise.
+            Some(Token::Decimal(_)) => {
+                if let Token::Decimal(s) = self.advance()?.clone() {
+                    match crate::decimal::parse_decimal(&s) {
+                        Ok(m) => Ok(Expr::Literal(Literal::Decimal(m))),
+                        Err(e) => Err(ParseError::Other(format!("invalid decimal literal: {e}"))),
+                    }
                 } else {
                     unreachable!()
                 }

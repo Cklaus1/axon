@@ -165,6 +165,18 @@ pub enum Token {
     #[token(";")]
     Semi,
 
+    // R21 — Decimal literal: a `d` suffix on an int-or-fixed-point form.
+    //   1.50d   0.1d   100d   -0.25d (sign is a separate UnaryOp::Neg)
+    // Must be tried BEFORE the Float/Int regexes so the trailing `d` is consumed
+    // here and not left as an identifier. No scientific notation (exactness):
+    // a decimal is an exact digit string. The captured String keeps the literal
+    // EXACT — we never round-trip through f64. The stored value strips the `d`.
+    #[regex(r"[0-9][0-9_]*(\.[0-9_]+)?d", |lex| {
+        let s = lex.slice();
+        Some(s[..s.len()-1].to_string()) // strip the trailing 'd'
+    })]
+    Decimal(String),
+
     // Literals — float must be tried before int so `1.0` doesn't lex as Int(1) + Dot + Int(0).
     // Matches: 1.0  1.5e-3  1e10  3.14E+2   (no trailing-dot or leading-dot forms)
     // Requiring ≥1 digit after `.` prevents `0.` from stealing the first dot of `0..n`.
@@ -253,6 +265,7 @@ impl std::fmt::Display for Token {
             Token::Ident(s) => write!(f, "{s}"),
             Token::Int(n) => write!(f, "{n}"),
             Token::Float(n) => write!(f, "{n}"),
+            Token::Decimal(s) => write!(f, "{s}d"),
             Token::Str(s) => write!(f, "\"{s}\""),
             Token::BlockComment => write!(f, "/*...*/"),
             Token::Asm => write!(f, "asm"),

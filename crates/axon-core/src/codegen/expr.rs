@@ -730,6 +730,19 @@ impl<'ctx> super::Codegen<'ctx> {
                     .into()
             }
             ast::Literal::Float(f) => self.ir.context.f64_type().const_float(*f).into(),
+            // R21 — Decimal literal: a full i128 mantissa. const_int only takes a
+            // u64, so build the 128-bit value from its two 64-bit halves via the
+            // arbitrary-precision constructor (low word, high word).
+            ast::Literal::Decimal(m) => {
+                let bits = *m as u128;
+                let lo = bits as u64;
+                let hi = (bits >> 64) as u64;
+                self.ir
+                    .context
+                    .i128_type()
+                    .const_int_arbitrary_precision(&[lo, hi])
+                    .into()
+            }
             ast::Literal::Bool(b) => self
                 .ir
                 .context

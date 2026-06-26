@@ -592,6 +592,7 @@ impl InferCtx {
                 AstLiteral::Float(_) => Type::F64,
                 AstLiteral::Str(_) => Type::Str,
                 AstLiteral::Bool(_) => Type::Bool,
+                AstLiteral::Decimal(_) => Type::Decimal,
             },
 
             // ── Identifiers ──────────────────────────────────────────────────

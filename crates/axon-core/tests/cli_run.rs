@@ -16862,3 +16862,50 @@ fn mock_native_module_interp_codegen_parity() {
         "expected PASS:\n{stdout}{stderr}"
     );
 }
+
+// ── R21 — Decimal (exact fixed-point money) ──────────────────────────────────
+
+#[test]
+fn r21_decimal_ledger_tests_pass() {
+    // The fintech ledger @[test] suite — exact add/sub/mul, rounding modes,
+    // parse/format round-trip, comparison, double-entry-sums-to-zero, and a
+    // legal-withdrawal refinement — all pass on the interpreter.
+    let demo = ex("fintech/ledger.ax");
+    let out = axon().arg("test").arg(&demo).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("test result: ok."),
+        "ledger @[test] suite must be green:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("11 passed"),
+        "expected 11 passing decimal tests:\n{stdout}"
+    );
+}
+
+#[test]
+fn r21_decimal_exact_arithmetic_and_overdraft() {
+    // 0.1d + 0.2d == 0.3d EXACTLY (the headline), and an overdraft against a
+    // `where _ >= 0d` refinement exits 6 (REFINE_VIOLATION).
+    let demo = ex("fintech/ledger.ax");
+    let run = axon().arg("run").arg(&demo).output().unwrap();
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        stdout.contains("(== 0.3d ? true)"),
+        "0.1d + 0.2d must equal 0.3d exactly:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("zero ? true"),
+        "balanced double-entry journal must sum to exactly zero:\n{stdout}"
+    );
+
+    // Overdraft demo: withdraw 150 from 100 → refinement violation, exit 6.
+    let od = ex("fintech/overdraft.ax");
+    let bad = axon().arg("run").arg(&od).output().unwrap();
+    assert_eq!(
+        bad.status.code(),
+        Some(6),
+        "overdraft must exit 6 (REFINE_VIOLATION), got {:?}",
+        bad.status.code()
+    );
+}

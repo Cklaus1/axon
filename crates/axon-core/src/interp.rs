@@ -47,6 +47,9 @@ pub enum Value {
         ty: crate::types::Type,
     },
     Float(f64),
+    /// R21 — exact fixed-point decimal: i128 mantissa at `decimal::SCALE` (9 dp).
+    /// Money-safe: exact arithmetic, no binary floating error.
+    Decimal(i128),
     Bool(bool),
     Str(String),
     Unit,
@@ -106,6 +109,7 @@ impl Value {
             Value::Int(_) => "i64".into(),
             Value::SizedInt { ty, .. } => ty.display(),
             Value::Float(_) => "f64".into(),
+            Value::Decimal(_) => "Decimal".into(),
             Value::Bool(_) => "bool".into(),
             Value::Str(_) => "str".into(),
             Value::Unit => "()".into(),
@@ -864,6 +868,7 @@ pub enum SendValue {
     Int(i64),
     SizedInt { val: i64, ty: crate::types::Type },
     Float(f64),
+    Decimal(i128),
     Bool(bool),
     Str(String),
     Unit,
@@ -921,6 +926,7 @@ impl SendValue {
             Value::Int(n) => SendValue::Int(*n),
             Value::SizedInt { val, ty } => SendValue::SizedInt { val: *val, ty: ty.clone() },
             Value::Float(f) => SendValue::Float(*f),
+            Value::Decimal(m) => SendValue::Decimal(*m),
             Value::Bool(b) => SendValue::Bool(*b),
             Value::Str(s) => SendValue::Str(s.clone()),
             Value::Unit => SendValue::Unit,
@@ -994,6 +1000,7 @@ impl SendValue {
             SendValue::Int(n) => Value::Int(n),
             SendValue::SizedInt { val, ty } => Value::SizedInt { val, ty },
             SendValue::Float(f) => Value::Float(f),
+            SendValue::Decimal(m) => Value::Decimal(m),
             SendValue::Bool(b) => Value::Bool(b),
             SendValue::Str(s) => Value::Str(s),
             SendValue::Unit => Value::Unit,
@@ -1056,6 +1063,7 @@ pub(crate) fn send_value_display(v: &SendValue) -> String {
         SendValue::Int(n) => n.to_string(),
         SendValue::SizedInt { val, .. } => val.to_string(),
         SendValue::Float(f) => f.to_string(),
+        SendValue::Decimal(m) => crate::decimal::format_decimal(*m),
         SendValue::Bool(b) => b.to_string(),
         SendValue::Str(s) => s.clone(),
         SendValue::Unit => "()".to_string(),
@@ -2268,6 +2276,7 @@ fn lit_to_val(lit: &Literal) -> Value {
         Literal::Float(f) => Value::Float(*f),
         Literal::Bool(b) => Value::Bool(*b),
         Literal::Str(s) => Value::Str(s.clone()),
+        Literal::Decimal(m) => Value::Decimal(*m),
     }
 }
 
@@ -2310,6 +2319,12 @@ fn as_float(v: &Value) -> Result<f64, Flow> {
     match v {
         Value::Float(f) => Ok(*f),
         other => panic(format!("expected f64, got {}", other.type_name())),
+    }
+}
+fn as_decimal(v: &Value) -> Result<i128, Flow> {
+    match v {
+        Value::Decimal(m) => Ok(*m),
+        other => panic(format!("expected Decimal, got {}", other.type_name())),
     }
 }
 fn as_bool(v: &Value) -> Result<bool, Flow> {
