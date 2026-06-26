@@ -2,7 +2,7 @@
 
 **Spec ID:** `R21-tee-target` (new requirement row; depends on `examples/stdlib/tainted.ax` info-flow lattice, `R6-capability-security.md`, Phase 6 effect rows; extends ROADMAP §6 Containment pillar)
 **Error code:** `E1810` (first free code after the E1800–E1803 R13-FFI block; E1700–E1712 and E1900 avoided)
-**Status:** Draft — **Slice 1 (type rule) LANDED.** Slice 2 (gramine-direct simulated run) + Slice 3 (cloud attestation workflow) per §6.
+**Status:** Draft — **All three slices LANDED.** Slice 1 (type rule, E1810 + gate test), Slice 2 (`scripts/tee_sim_run.sh` gramine-direct simulated run, SKIP-guarded — gramine absent on this host), Slice 3 (`.github/workflows/tee.yml` SGX-DCAP attestation, YAML-valid, runs remotely on a confidential runner). See §6.
 **Risk class:** Additive (a new effect `Tee` + one checker rule + four interp-only builtins; no existing behaviour changed)
 **Author / date:** cklaus, 2026-06-26
 
