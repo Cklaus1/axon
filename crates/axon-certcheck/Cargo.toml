@@ -1,0 +1,14 @@
+[package]
+name = "axon-certcheck"
+version = "0.1.0"
+edition = "2021"
+description = "Axon proof certificates + minimal solver-free checker (R23)"
+
+[lib]
+name = "axon_certcheck"
+path = "src/lib.rs"
+
+[features]
+smt = []
+
+[dependencies]

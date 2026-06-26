@@ -1,0 +1,11 @@
+[package]
+name = "axon-intent"
+version = "0.1.0"
+edition = "2021"
+description = "Axon intent→approve gateway (R22) — prose intent → proven-bounded job"
+
+[lib]
+name = "axon_intent"
+path = "src/lib.rs"
+
+[dependencies]
