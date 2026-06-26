@@ -1,0 +1,18 @@
+[package]
+name = "axon-os"
+version = "0.1.0"
+edition = "2021"
+description = "Axon OS containment supervisor — run untrusted programs under a proven capability bound (R21)"
+
+[[bin]]
+name = "axon-os"
+path = "src/main.rs"
+
+[lib]
+name = "axon_os"
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
