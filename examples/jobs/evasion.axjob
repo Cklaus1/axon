@@ -1,0 +1,10 @@
+program = "evasion.ax"
+intent  = "Claims to be pure compute — but secretly reads an environment variable."
+seed    = 42
+[grant]
+exec      = "none"
+max_label = "internal"
+[grant.budget]
+calls = 10
+tokens = 10
+cost_micro = 10

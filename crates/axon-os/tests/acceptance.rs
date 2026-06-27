@@ -337,3 +337,44 @@ fn acc_a6_record_tamper_detected() {
     );
     assert!(v.stdout.contains("TAMPERED"));
 }
+
+// ── The spec-aware adversarial test (from the ASI-alignment review): an effect
+// the STATIC source scan misses must still be REFUSED by the RUNTIME sandbox. ──
+#[test]
+fn runtime_sandbox_catches_scan_evasion() {
+    let Some(axon) = axon_bin() else {
+        return;
+    };
+    let store = tmp("evasion");
+    // evasion.ax reaches an IO effect via `env_var` — a builtin the substring
+    // scan does NOT enumerate, so the STATIC gate admits it (proven below)...
+    let explained = os(&["explain", "examples/jobs/evasion.axjob"], &axon, &[]);
+    assert!(
+        explained.stdout.contains("ADMIT"),
+        "the static scan is fooled (admits the evasion): {}",
+        explained.stdout
+    );
+    // ...but the RUNTIME sandbox catches it at builtin dispatch (exit 8).
+    let run = os(
+        &[
+            "run",
+            "examples/jobs/evasion.axjob",
+            "--run-id",
+            "ev",
+            "--out",
+            store.to_str().unwrap(),
+        ],
+        &axon,
+        &[],
+    );
+    assert_eq!(
+        run.code, 8,
+        "the runtime sandbox must refuse the scan-evading effect: {}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("sandbox violation"),
+        "denial cites the runtime sandbox: {}",
+        run.stdout
+    );
+}

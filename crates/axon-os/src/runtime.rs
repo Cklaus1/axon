@@ -166,12 +166,16 @@ fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutc
     })
 }
 
-/// Extract the first `axon:` diagnostic line from stderr (the human-facing
-/// fault reason), filtering the run-id stamp; fall back to `default`.
+/// Extract the first `axon:` FAULT line from stderr (the human-facing reason),
+/// skipping the run-id stamp and informational lines (SMT discharge summaries,
+/// the mint certificate-checked notice) that aren't faults; fall back to `default`.
 fn first_axon_line(stderr: &str, default: &str) -> String {
+    let is_info = |l: &str| {
+        l.starts_with("axon: run-id") || l.starts_with("axon: SMT") || l.starts_with("axon: mint")
+    };
     stderr
         .lines()
-        .find(|l| l.starts_with("axon:") && !l.starts_with("axon: run-id"))
+        .find(|l| l.starts_with("axon:") && !is_info(l))
         .map(|l| l.trim_start_matches("axon:").trim().to_string())
         .unwrap_or_else(|| default.to_string())
 }
@@ -206,6 +210,39 @@ fn scan_effects(source: &str) -> Decl {
     }
 }
 
+/// Wrap a user program so it runs inside a RUNTIME sandbox enforcing `ceiling`.
+/// Renames the user's `fn main` to `__job_entry` and appends an orchestrator
+/// `main` that mints a principal and `sandbox_run`s the entry under the effect
+/// ceiling. The interpreter then enforces the AI/Net/IO ceiling at builtin
+/// dispatch (SandboxViolation → exit 8) — sound against renaming/indirection,
+/// unlike the static source scan. The grant axes map to the interpreter's
+/// coarse sandbox tags: net→{Net,AI} (model calls are AI+Net); any of
+/// fs_read/fs_write/exec→IO (the sandbox's single IO bucket — finer fs-vs-exec
+/// distinctions are enforced only by the static gate, a documented coarseness).
+fn wrap_in_sandbox(src: &str, ceiling: EffectSet, budget: &Budget) -> String {
+    let mut tags: Vec<&str> = Vec::new();
+    if ceiling.net {
+        tags.push("Net");
+        tags.push("AI");
+    }
+    if ceiling.fs_read || ceiling.fs_write || ceiling.exec {
+        tags.push("IO");
+    }
+    let csv = tags.join(",");
+    // `sandbox_run(sb, fn, arg)` calls `fn(arg)`, so the entry must take one i64.
+    // Axon `main` is nullary — inject an unused i64 param when renaming.
+    let renamed = src
+        .replace("fn main()", "fn __job_entry(_axon_arg: i64)")
+        .replace("fn main ()", "fn __job_entry(_axon_arg: i64)");
+    format!(
+        "{renamed}\n// \u{2500}\u{2500} axon-os runtime sandbox wrapper \u{2500}\u{2500}\nfn main() -> i64 {{\n    let __p = principal_root(\"job\", {net}, {fsw}, {exec}, {budget})\n    let __sb = sandbox_create(__p, \"{csv}\")\n    sandbox_run(__sb, \"__job_entry\", 0)\n}}\n",
+        net = ceiling.net,
+        fsw = ceiling.fs_write,
+        exec = ceiling.exec,
+        budget = budget.calls.max(0),
+    )
+}
+
 impl Runtime for AxonCoreRuntime {
     fn declared_effects(&self, program: &Path) -> DeclaredEffects {
         match std::fs::read_to_string(program) {
@@ -225,11 +262,49 @@ impl Runtime for AxonCoreRuntime {
         program: &Path,
         _principal: &PrincipalHandle,
         ceiling: EffectSet,
-        _budget: &Budget,
+        budget: &Budget,
         seed: u64,
     ) -> RunOutcome {
+        // RUNTIME ENFORCEMENT (the sound fence). Rather than running the program
+        // raw, wrap it: mint a principal + `sandbox_run` it inside an effect
+        // ceiling. The interpreter then refuses ANY builtin whose effect row
+        // (AI/Net/IO) exceeds the ceiling — SandboxViolation, exit 8 — at the
+        // builtin-dispatch level, so an effect cannot be hidden by renaming or
+        // indirection the way the static-gate source scan could be fooled. The
+        // static gate is a best-effort PRE-check; THIS is what actually contains.
+        let src = match std::fs::read_to_string(program) {
+            Ok(s) => s,
+            Err(e) => {
+                return RunOutcome {
+                    events: vec![],
+                    verdict: Verdict::Denied {
+                        reason: format!("cannot read program: {e}"),
+                        axis: "io".into(),
+                    },
+                }
+            }
+        };
+        let wrapper_src = wrap_in_sandbox(&src, ceiling, budget);
+        let wrapper_path = std::env::temp_dir().join(format!(
+            "axon-os-wrap-{}-{}.ax",
+            std::process::id(),
+            program
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("job")
+        ));
+        if std::fs::write(&wrapper_path, &wrapper_src).is_err() {
+            return RunOutcome {
+                events: vec![],
+                verdict: Verdict::Denied {
+                    reason: "cannot stage sandbox wrapper".into(),
+                    axis: "io".into(),
+                },
+            };
+        }
+
         let mut cmd = Command::new(&self.axon_bin);
-        cmd.arg("run").arg(program);
+        cmd.arg("run").arg(&wrapper_path);
         cmd.env_clear();
         cmd.env("AXON_SEED", seed.to_string());
         if let Some(p) = std::env::var_os("PATH") {
@@ -243,7 +318,9 @@ impl Runtime for AxonCoreRuntime {
             }
         }
 
-        let proc = match run_bounded(&mut cmd, self.timeout) {
+        let proc_res = run_bounded(&mut cmd, self.timeout);
+        let _ = std::fs::remove_file(&wrapper_path); // best-effort cleanup
+        let proc = match proc_res {
             Ok(p) => p,
             Err(e) => {
                 return RunOutcome {
@@ -267,7 +344,8 @@ impl Runtime for AxonCoreRuntime {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
             }
-        } else if err.contains("SandboxViolation")
+        } else if err.contains("sandbox violation")
+            || err.contains("SandboxViolation")
             || err.contains("not permitted by @[contained]")
             || err.contains("capability")
         {

@@ -1,0 +1,8 @@
+// EVASION DEMO: this program reaches a capability (env_var, an IO effect) via a
+// builtin the static source scan does NOT enumerate — so the static gate is
+// fooled and ADMITS it. The RUNTIME sandbox catches it anyway (SandboxViolation,
+// exit 8), because it checks the builtin's real effect row at dispatch, not a
+// substring. This is the defense-in-depth the static gate alone cannot provide.
+fn main() -> i64 {
+    match env_var("HOME") { Ok(_) => 0  Err(_) => 1 }
+}
