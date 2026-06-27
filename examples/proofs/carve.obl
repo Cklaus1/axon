@@ -1,0 +1,1 @@
+{"schema":"axon-obl/1","id":"carve/return","vars":[{"name":"g","sort":"int"},{"name":"avail","sort":"int"}],"claim":{"node":"cmp","op":"le","l":{"node":"min","l":{"node":"i_var","name":"g"},"r":{"node":"i_var","name":"avail"}},"r":{"node":"i_var","name":"avail"}}}

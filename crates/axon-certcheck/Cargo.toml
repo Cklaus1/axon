@@ -4,11 +4,29 @@ version = "0.1.0"
 edition = "2021"
 description = "Axon proof certificates + minimal solver-free checker (R23)"
 
+[[bin]]
+name = "certcheck"
+path = "src/main.rs"
+
 [lib]
 name = "axon_certcheck"
 path = "src/lib.rs"
 
 [features]
-smt = []
+# The prover-emission (`prove`) path links the system libz3 to FIND proofs.
+# OFF by default: the TRUSTED checker path (`check`/checker/eval/obligation/
+# certificate) compiles + runs with NO solver in its dependency closure — this
+# is the enforced acceptance check `acc_a4_checker_is_solver_free`.
+smt = ["dep:z3"]
 
 [dependencies]
+# The TRUSTED checker depends on std + sha2 + serde ONLY — never z3.
+sha2 = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# SMT solver bindings (R23, `smt` feature only). Links the system libz3.
+# Used solely by emit.rs to GENERATE certificates (untrusted oracle).
+z3 = { version = "0.12", optional = true }
+
+[dev-dependencies]
