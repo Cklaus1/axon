@@ -15,6 +15,7 @@ pub mod checker;
 pub mod cli;
 pub mod eval;
 pub mod obligation;
+pub mod obligations;
 pub mod policy;
 pub mod synth;
 
@@ -24,6 +25,7 @@ pub mod emit;
 pub use certificate::{FactOp, LinFact, ProofCertificate, Refutation};
 pub use checker::{check, CheckResult, MAX_CERT_NODES};
 pub use obligation::{Formula, Obligation, Op, ParseErr, Sort, Term, Var};
+pub use obligations::{carve, mint_o1, mint_o2};
 pub use policy::{require_certificates, RequireOutcome};
 
 /// Parse an obligation from its `.obl` JSON form (§5.1).

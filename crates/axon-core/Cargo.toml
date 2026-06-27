@@ -48,7 +48,7 @@ asi-runtime = ["dep:axon-ai", "dep:reqwest"]
 # codegen/interp build never links z3 (same dependency-isolation discipline as
 # asi-runtime / serde-json):
 #   cargo build -p axon-core --no-default-features --features smt --bin axon
-smt = ["dep:z3", "dep:axon-certcheck"]
+smt = ["dep:z3"]
 # R13 slice 5: back `use native::gfx` with the REAL `axon-gfx` wgpu offscreen
 # renderer instead of the GPU-free mock. OFF by default — pulls in wgpu, so the
 # default `cargo build`/`gate.sh` never compiles it and stays fast. When on, the
@@ -69,9 +69,11 @@ sha2  = "0.10"
 # SMT solver bindings (R9, `smt` feature only). Links the system libz3.
 z3 = { version = "0.12", optional = true }
 axon-ai = { path = "../axon-ai", optional = true }
-# R23: the SOLVER-FREE certificate checker. Behind `smt` (the proof path); the
-# `check` we use pulls NO solver — Z3 stays out of the trust root.
-axon-certcheck = { path = "../axon-certcheck", optional = true, default-features = false }
+# R23: the SOLVER-FREE certificate checker. A DEFAULT dependency (not behind
+# `smt`): the `check` we use pulls NO solver — Z3 stays out of the trust root —
+# so the mint cert gate (`cert_gate`) runs in EVERY build, including the shipped
+# default binary, not only under `--features smt`.
+axon-certcheck = { path = "../axon-certcheck", default-features = false }
 reqwest = { version = "0.12", features = ["blocking", "rustls-tls"], default-features = false, optional = true }
 # Phase-10 surface compiler (goal.md → .ax), for the `axon goal` command.
 axon-surface = { path = "../axon-surface" }

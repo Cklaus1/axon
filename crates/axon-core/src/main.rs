@@ -3511,6 +3511,11 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
         eprintln!("warning: `axon run` does not yet forward arguments to the program");
     }
 
+    // R23: gate the kernel mint obligations on a SOLVER-FREE certificate check
+    // before running anything — in EVERY build (Z3 not required). Off by default
+    // (no output, byte-unchanged); under AXON_REQUIRE_CERTS it fails closed.
+    axon_core::cert_gate::enforce_or_exit();
+
     // Phase 5 §4: when built with the `smt` feature, statically discharge the
     // refinement-return / scalar-`@[verify]` obligations Z3 can prove ∀-inputs,
     // and run with those checks elided. Without the feature this is an empty set
@@ -3554,19 +3559,8 @@ fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::D
         eprintln!("{code}: {msg}");
         process::exit(2);
     }
-    // R23: under --require-certificates (AXON_REQUIRE_CERTS=1), BOTH mint
-    // obligations (O1 boolean attenuation + O2 budget carve) are discharged via
-    // the SOLVER-FREE certificate checker (Z3 out of the trust root), else fail
-    // closed. Off by default.
-    if let Err((code, msg)) = axon_core::smt::check_mint_certificate() {
-        eprintln!("{code}: {msg}");
-        process::exit(2);
-    }
-    if axon_core::smt::require_certificates_enabled() {
-        eprintln!(
-            "axon: mint attenuation (O1) + budget-carve (O2) obligations certificate-checked (solver-free; Z3 out of the trust root)"
-        );
-    }
+    // R23 cert gate now runs in EVERY build (see `cert_gate::enforce_or_exit`
+    // in the run/build paths), not just under `smt` — so it is not repeated here.
     let d = axon_core::smt::discharge(program, &refinements);
     if d.total() > 0 {
         eprintln!(
@@ -4533,6 +4527,8 @@ fn build_ir_and_link(
     let mut cg = axon_core::codegen::Codegen::new(&ctx, &module_name);
     // R4: stamp the source path into native @[adaptive] provenance (`"src"`).
     cg.set_source_path(source_path.display().to_string());
+    // R23: solver-free mint cert gate before emitting a native binary, too.
+    axon_core::cert_gate::enforce_or_exit();
     // Phase 5 §4: elide the runtime refinement-return / scalar-`@[verify]` checks
     // the SMT prover discharged ∀-inputs (empty set without the `smt` feature, so
     // native output is unchanged). Run on the monomorphized program so the proven

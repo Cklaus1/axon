@@ -35,6 +35,9 @@ pub mod resolver;
 /// Self-improving-compiler Layer 3 (prototype): AI-authored passes as DATA — a
 /// validated, total, capability-free `RewriteSpec` compiled to a verifiable pass.
 pub mod rewrite_dsl;
+/// R23 mint cert gate — solver-free certificate check of the kernel mint
+/// obligations, compiled in EVERY build (Z3 not required).
+pub mod cert_gate;
 /// SMT-backed `@[verify]` static proof (R9, `smt` feature → Z3).
 #[cfg(feature = "smt")]
 pub mod smt;
