@@ -362,7 +362,7 @@ impl Synthesizer for RealSynthesizer {
     fn typecheck(&self, source: &str) -> SynthMeta {
         // Write the candidate to a temp `.ax` and run `axon check`.
         let tmp = std::env::temp_dir().join(format!("axon-intent-check-{}.ax", std::process::id()));
-        let typechecks = if std::fs::write(&tmp, source).is_ok() {
+        let (typechecks, review_effects) = if std::fs::write(&tmp, source).is_ok() {
             let mut cmd = Command::new(&self.axon_bin);
             cmd.arg("check").arg(&tmp);
             cmd.env_clear();
@@ -372,12 +372,40 @@ impl Synthesizer for RealSynthesizer {
             let ok = run_bounded(&mut cmd, self.timeout)
                 .map(|p| !p.timed_out && p.code == Some(0))
                 .unwrap_or(false);
+            // Cross-check the substring scan against the COMPILER's own effect
+            // analysis (`axon ast review --json` reports per-fn `effects:bool`).
+            let mut rev = Command::new(&self.axon_bin);
+            rev.arg("ast").arg("review").arg(&tmp).arg("--json");
+            rev.env_clear();
+            if let Some(p) = std::env::var_os("PATH") {
+                rev.env("PATH", p);
+            }
+            let effects = run_bounded(&mut rev, self.timeout)
+                .map(|p| p.stdout.contains("\"effects\":true"))
+                .unwrap_or(true); // can't tell ⇒ assume effects (conservative)
             let _ = std::fs::remove_file(&tmp);
-            ok
+            (ok, effects)
         } else {
-            false
+            (false, true)
         };
-        meta_from_source(source, typechecks, Vec::new())
+        let mut meta = meta_from_source(source, typechecks, Vec::new());
+        // CONSERVATIVE CROSS-CHECK (ASI review): if the compiler says the program
+        // HAS effects but the substring scan categorized NONE, the scan missed an
+        // effect it can't pattern-match — widen to the full set (deny-by-default)
+        // rather than silently under-grant. (An under-grant would also fail closed
+        // at the R21 runtime sandbox, but catching it here surfaces it to the human
+        // at approval time instead of as a late runtime denial.)
+        let r = meta.declared.row;
+        let scan_empty = !(r.fs_read || r.fs_write || r.net || r.exec);
+        if review_effects && scan_empty {
+            meta.declared = DeclaredEffects::unknown();
+            meta.uncertainty_notes.push(
+                "compiler reports effects the source scan could not categorize — \
+                 widened to full effect set (deny-by-default)"
+                    .to_string(),
+            );
+        }
+        meta
     }
 }
 
