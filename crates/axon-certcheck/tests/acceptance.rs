@@ -62,7 +62,7 @@ fn cli(args: &[&str]) -> Out {
 // ── Core: a valid certificate for a TRUE obligation checks ✓ ─────────────────
 #[test]
 fn valid_certificate_accepted() {
-    for stem in ["carve", "mint_o2"] {
+    for stem in ["carve", "mint_o1", "mint_o2"] {
         let (o, c) = load(stem);
         assert_eq!(
             check(&o, &c),
@@ -231,13 +231,21 @@ fn acc_a6_checker_rejects_forged_and_mutated() {
 
     // (2) a one-byte mutation of each valid shipped cert → rejected. We mutate a
     //     coefficient, a fact constant, and the digest field, each in turn.
-    for stem in ["carve", "mint_o2"] {
+    for stem in ["carve", "mint_o1", "mint_o2"] {
         let (o, _) = load(stem);
         let raw = read(&proofs().join(format!("{stem}.cert")));
+        let mut fired = 0;
         for (find, repl, what) in [
             (r#""coeffs":[1,1]"#, r#""coeffs":[1,2]"#, "coefficient"),
             (r#""constant":0"#, r#""constant":1"#, "fact constant"),
-            ("axsha256:a", "axsha256:b", "obligation_digest"),
+            // mint_o1's boolean leaves are `0 ≤ -1`; mutate that constant so the
+            // pure-boolean cert is also covered (no `coeffs:[1,1]` to mutate).
+            (r#""constant":-1"#, r#""constant":0"#, "false-leaf constant"),
+            (
+                "\"cert_digest\":\"axcert1:",
+                "\"cert_digest\":\"axcert1:f",
+                "cert_digest",
+            ),
         ] {
             if !raw.contains(find) {
                 continue; // not present in this cert; try the next mutation
@@ -250,7 +258,11 @@ fn acc_a6_checker_rejects_forged_and_mutated() {
                 Err(_) => true,
             };
             assert!(rejected, "{stem}: mutating the {what} must be detected");
+            fired += 1;
         }
+        // Guard against a vacuous pass: every shipped cert must offer at least one
+        // detectable mutation (else this stem proved nothing).
+        assert!(fired > 0, "{stem}: no mutation fired — coverage is vacuous");
     }
 }
 
@@ -304,7 +316,7 @@ fn acc_a4_checker_is_solver_free() {
 // ── A2: the shipped example obligations are certified (real artifacts) ────────
 #[test]
 fn acc_a2_example_obligations_certified() {
-    for stem in ["carve", "mint_o2"] {
+    for stem in ["carve", "mint_o1", "mint_o2"] {
         assert!(
             proofs().join(format!("{stem}.obl")).exists(),
             "{stem}.obl ships"

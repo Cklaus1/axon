@@ -3554,16 +3554,17 @@ fn compute_discharged(program: &axon_core::ast::Program) -> axon_core::verify::D
         eprintln!("{code}: {msg}");
         process::exit(2);
     }
-    // R23: under --require-certificates (AXON_REQUIRE_CERTS=1), the mint
-    // budget-carve obligation is discharged via the SOLVER-FREE certificate
-    // checker (Z3 out of the trust root), else fail closed. Off by default.
+    // R23: under --require-certificates (AXON_REQUIRE_CERTS=1), BOTH mint
+    // obligations (O1 boolean attenuation + O2 budget carve) are discharged via
+    // the SOLVER-FREE certificate checker (Z3 out of the trust root), else fail
+    // closed. Off by default.
     if let Err((code, msg)) = axon_core::smt::check_mint_certificate() {
         eprintln!("{code}: {msg}");
         process::exit(2);
     }
     if axon_core::smt::require_certificates_enabled() {
         eprintln!(
-            "axon: mint budget-carve obligation certificate-checked (solver-free; Z3 out of the trust root)"
+            "axon: mint attenuation (O1) + budget-carve (O2) obligations certificate-checked (solver-free; Z3 out of the trust root)"
         );
     }
     let d = axon_core::smt::discharge(program, &refinements);

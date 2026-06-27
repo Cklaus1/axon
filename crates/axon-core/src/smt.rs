@@ -1095,16 +1095,23 @@ pub fn check_tcb_attestation() -> Result<(), (&'static str, String)> {
 
 // ── R23 wiring: get Z3 out of the TCB for the capability minter ──────────────
 //
-// CROSS-CRATE INTEGRATION (the R23 hook, realized). The pinned mint budget-carve
-// obligation (`rem ≥ 0 ⇒ max(0, min(g, rem)) ≤ rem` — "a child's grant never
-// exceeds the parent's remaining budget") and its proof CERTIFICATE are embedded
-// here. Under `--require-certificates` (env `AXON_REQUIRE_CERTS=1`), the obligation
-// is discharged ONLY when the SOLVER-FREE checker validates the certificate — so
-// this TCB obligation rests on `axon_certcheck::check` (a few hundred auditable
-// lines), NOT on trusting Z3's verdict. The certificate is bound to the obligation
-// by content digest, so a mismatched cert is rejected. O2 (budget) is certified
-// here; O1 (boolean attenuation) remains Z3-proven (a second obligation+cert is a
-// follow-up). Default (flag off) behavior is byte-unchanged.
+// CROSS-CRATE INTEGRATION (the R23 hook, realized). BOTH pinned mint obligations
+// and their proof CERTIFICATES are embedded here:
+//   * O1 (boolean attenuation) — for each capability axis X, `child_X = want_X ∧
+//     parent_X`, so `(want_X ∧ parent_X) ⇒ parent_X`: a child holds a cap only if
+//     the parent does (a child can never EXCEED its parent). A boolean tautology.
+//   * O2 (budget carve) — `rem ≥ 0 ⇒ max(0, min(g, rem)) ≤ rem`: a child's grant
+//     never exceeds the parent's remaining budget.
+// Under `--require-certificates` (env `AXON_REQUIRE_CERTS=1`), each obligation is
+// discharged ONLY when the SOLVER-FREE checker validates its certificate — so
+// these TCB obligations rest on `axon_certcheck::check` (a few hundred auditable
+// lines), NOT on trusting Z3's verdict. Each certificate is bound to its obligation
+// by content digest, so a mismatched/swapped cert is rejected. BOTH O1 and O2 are
+// now certificate-checked solver-free. Default (flag off) behavior is byte-unchanged.
+#[cfg(feature = "smt")]
+pub const PINNED_MINT_O1_OBLIGATION: &str = include_str!("../../../examples/proofs/mint_o1.obl");
+#[cfg(feature = "smt")]
+pub const PINNED_MINT_O1_CERTIFICATE: &str = include_str!("../../../examples/proofs/mint_o1.cert");
 #[cfg(feature = "smt")]
 pub const PINNED_MINT_OBLIGATION: &str = include_str!("../../../examples/proofs/mint_o2.obl");
 #[cfg(feature = "smt")]
@@ -1118,30 +1125,55 @@ pub fn require_certificates_enabled() -> bool {
         .unwrap_or(false)
 }
 
-/// R23: gate the mint TCB obligation on a solver-free certificate check when
-/// `--require-certificates` is on. `Ok(())` when the policy is off OR the
-/// certificate validates; `Err((E1611, …))` (fail closed) otherwise. The check
-/// uses NO solver — Z3 is not in the path.
+/// R23: gate BOTH mint TCB obligations (O1 boolean attenuation + O2 budget carve)
+/// on a solver-free certificate check when `--require-certificates` is on. `Ok(())`
+/// when the policy is off OR both certificates validate; `Err((E1611, …))` (fail
+/// closed) if EITHER obligation is not certificate-discharged. The check uses NO
+/// solver — Z3 is not in the path.
 #[cfg(feature = "smt")]
 pub fn check_mint_certificate() -> Result<(), (&'static str, String)> {
     let require = require_certificates_enabled();
-    let obl = axon_certcheck::parse_obligation(PINNED_MINT_OBLIGATION).map_err(|e| {
+    // BOTH O1 and O2 must be certificate-discharged (fail closed on either).
+    check_one_mint_obligation(
+        "O1",
+        PINNED_MINT_O1_OBLIGATION,
+        PINNED_MINT_O1_CERTIFICATE,
+        require,
+    )?;
+    check_one_mint_obligation(
+        "O2",
+        PINNED_MINT_OBLIGATION,
+        PINNED_MINT_CERTIFICATE,
+        require,
+    )?;
+    Ok(())
+}
+
+/// Discharge one pinned mint obligation by its embedded certificate (solver-free).
+#[cfg(feature = "smt")]
+fn check_one_mint_obligation(
+    tag: &str,
+    obl_src: &str,
+    cert_src: &str,
+    require: bool,
+) -> Result<(), (&'static str, String)> {
+    let obl = axon_certcheck::parse_obligation(obl_src).map_err(|e| {
         (
             crate::error::E1611,
-            format!("pinned mint obligation unparseable: {e:?}"),
+            format!("pinned mint {tag} obligation unparseable: {e:?}"),
         )
     })?;
-    let cert = axon_certcheck::parse_certificate(PINNED_MINT_CERTIFICATE).map_err(|e| {
+    let cert = axon_certcheck::parse_certificate(cert_src).map_err(|e| {
         (
             crate::error::E1611,
-            format!("pinned mint certificate unparseable: {e:?}"),
+            format!("pinned mint {tag} certificate unparseable: {e:?}"),
         )
     })?;
     match axon_certcheck::require_certificates(&obl, Some(&cert), require) {
         axon_certcheck::RequireOutcome::Discharged => Ok(()),
         axon_certcheck::RequireOutcome::FailClosed { reason } => Err((
             crate::error::E1611,
-            format!("mint obligation not certificate-discharged: {reason}"),
+            format!("mint {tag} obligation not certificate-discharged: {reason}"),
         )),
     }
 }
@@ -2471,32 +2503,62 @@ mod tests {
 
     #[test]
     fn require_certificates_fails_closed() {
-        // The pinned mint obligation + certificate validate via the SOLVER-FREE
-        // checker → Discharged under the require-certs policy.
-        let obl = axon_certcheck::parse_obligation(PINNED_MINT_OBLIGATION).expect("obl parses");
-        let cert = axon_certcheck::parse_certificate(PINNED_MINT_CERTIFICATE).expect("cert parses");
+        // BOTH pinned mint obligations (O1 + O2) + their certificates validate via
+        // the SOLVER-FREE checker → Discharged under the require-certs policy.
+        let o2 = axon_certcheck::parse_obligation(PINNED_MINT_OBLIGATION).expect("O2 obl parses");
+        let c2 =
+            axon_certcheck::parse_certificate(PINNED_MINT_CERTIFICATE).expect("O2 cert parses");
+        let o1 =
+            axon_certcheck::parse_obligation(PINNED_MINT_O1_OBLIGATION).expect("O1 obl parses");
+        let c1 =
+            axon_certcheck::parse_certificate(PINNED_MINT_O1_CERTIFICATE).expect("O1 cert parses");
         assert!(
-            axon_certcheck::require_certificates(&obl, Some(&cert), true).is_discharged(),
-            "the pinned mint certificate must validate solver-free"
+            axon_certcheck::require_certificates(&o2, Some(&c2), true).is_discharged(),
+            "the pinned mint O2 certificate must validate solver-free"
+        );
+        assert!(
+            axon_certcheck::require_certificates(&o1, Some(&c1), true).is_discharged(),
+            "the pinned mint O1 certificate must validate solver-free"
         );
 
-        // Fail closed: a MISSING certificate under the require flag.
+        // Fail closed: a MISSING certificate under the require flag (both axes).
         assert!(
-            !axon_certcheck::require_certificates(&obl, None, true).is_discharged(),
-            "no certificate ⇒ fail closed"
+            !axon_certcheck::require_certificates(&o2, None, true).is_discharged(),
+            "no O2 certificate ⇒ fail closed"
+        );
+        assert!(
+            !axon_certcheck::require_certificates(&o1, None, true).is_discharged(),
+            "no O1 certificate ⇒ fail closed"
         );
 
         // Fail closed: a VALID-but-WRONG certificate (carve's cert is valid for a
-        // DIFFERENT obligation) is rejected by the digest binding.
+        // DIFFERENT obligation) is rejected by the digest binding — for both axes.
         let wrong =
             axon_certcheck::parse_certificate(include_str!("../../../examples/proofs/carve.cert"))
                 .expect("carve cert parses");
         assert!(
-            !axon_certcheck::require_certificates(&obl, Some(&wrong), true).is_discharged(),
-            "a certificate for a different obligation ⇒ fail closed (binding)"
+            !axon_certcheck::require_certificates(&o2, Some(&wrong), true).is_discharged(),
+            "a certificate for a different obligation ⇒ fail closed (O2 binding)"
+        );
+        assert!(
+            !axon_certcheck::require_certificates(&o1, Some(&wrong), true).is_discharged(),
+            "a certificate for a different obligation ⇒ fail closed (O1 binding)"
+        );
+        // And O2's cert presented for O1 (a wrong-but-valid mint cert) is rejected.
+        assert!(
+            !axon_certcheck::require_certificates(&o1, Some(&c2), true).is_discharged(),
+            "O2's cert cannot discharge O1 ⇒ fail closed (binding)"
+        );
+
+        // The whole gate requires BOTH: with the flag on, `check_mint_certificate`
+        // is satisfied only because each pinned (obl, cert) pair validates.
+        assert!(
+            check_mint_certificate().is_ok(),
+            "both O1 + O2 pinned certificates discharge the mint gate"
         );
 
         // Flag OFF (default) is byte-compatible: discharged without a cert.
-        assert!(axon_certcheck::require_certificates(&obl, None, false).is_discharged());
+        assert!(axon_certcheck::require_certificates(&o2, None, false).is_discharged());
+        assert!(axon_certcheck::require_certificates(&o1, None, false).is_discharged());
     }
 }

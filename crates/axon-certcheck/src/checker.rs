@@ -848,6 +848,58 @@ mod tests {
         }
     }
 
+    /// The R20 mint O1 attenuation law as a PURE-BOOLEAN obligation:
+    /// `(want ∧ parent) ⇒ parent` (a tautology). This exercises the boolean
+    /// refutation path whose leaves are literal `false` (encoded `0 ≤ -1`).
+    fn o1_attenuation() -> Obligation {
+        Obligation {
+            id: "principal_mint/O1".into(),
+            vars: vec![
+                Var {
+                    name: "want".into(),
+                    sort: Sort::Bool,
+                },
+                Var {
+                    name: "parent".into(),
+                    sort: Sort::Bool,
+                },
+            ],
+            claim: implies(and(vec![bvar("want"), bvar("parent")]), bvar("parent")),
+        }
+    }
+
+    // A pure-boolean tautology is checker-valid: the synthesized BoolCase tree
+    // bottoms out at `Bool(false)` leaves, which the checker accepts as a
+    // contradiction (`0 ≤ -1`). This is the O1 coverage, solver-free.
+    #[test]
+    fn boolean_attenuation_tautology_is_valid() {
+        let o = o1_attenuation();
+        let c = crate::synth::synthesize(&o).expect("O1 synthesizes");
+        assert_eq!(check(&o, &c), CheckResult::Valid);
+    }
+
+    // A forged O1 cert (mutated refutation bytes) still fails closed — the
+    // boolean path does not relax the binding/leaf re-derivation.
+    #[test]
+    fn forged_boolean_cert_is_invalid() {
+        let o = o1_attenuation();
+        let mut c = crate::synth::synthesize(&o).expect("O1 synthesizes");
+        // Flip a leaf to a non-contradiction (`0 ≤ 0`) without re-deriving from
+        // the negated claim: the checker must reject it.
+        if let Refutation::BoolCase { on_true, .. } = &mut c.refutation {
+            **on_true = Refutation::LinearContradiction {
+                facts: vec![LinFact {
+                    terms: vec![],
+                    op: FactOp::Le,
+                    constant: 0,
+                }],
+                coeffs: vec![1],
+            };
+        }
+        c.cert_digest = ProofCertificate::compute_cert_digest(&c.refutation);
+        assert!(matches!(check(&o, &c), CheckResult::Invalid { .. }));
+    }
+
     // The bound rejects a WIDE cert too (many nodes, shallow): build a balanced
     // tree just over MAX_CERT_NODES and assert "too large".
     #[test]
