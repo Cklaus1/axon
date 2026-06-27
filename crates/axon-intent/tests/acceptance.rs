@@ -704,4 +704,85 @@ fn r21_refuses_edited_program_after_approval() {
         axon_intent::cli::verify_triple(&dir.join("summarize.axjob")).is_err(),
         "verify_triple refuses the tampered triple"
     );
+
+    // CROSS-CRATE, REALIZED: drive the actual axon-os binary. It HONORS the
+    // unedited approval and REFUSES the edited one (exit 8) — the hook is wired
+    // into axon-os::cli, which calls axon_os::verify_approval at the run
+    // boundary. Skips if axon-os / the interpreter aren't built.
+    if let (Some(os_bin), Some(axon)) = (axon_os_bin(), axon_bin()) {
+        let clean = tmp("xspec-os");
+        ai(
+            &[
+                "compile",
+                "examples/intents/summarize.intent.md",
+                "--out",
+                clean.to_str().unwrap(),
+            ],
+            &[],
+        );
+        ai(
+            &[
+                "approve",
+                clean.join("summarize.axjob").to_str().unwrap(),
+                "--by",
+                "alice",
+                "--accept",
+            ],
+            &[],
+        );
+        let jobp = clean.join("summarize.axjob");
+        let store = clean.join("runs");
+
+        let honored = os(
+            &os_bin,
+            &[
+                "run",
+                jobp.to_str().unwrap(),
+                "--run-id",
+                "ok",
+                "--out",
+                store.to_str().unwrap(),
+            ],
+            &axon,
+        );
+        assert_eq!(
+            honored.code, 0,
+            "axon-os honors the unedited approval: {}",
+            honored.stdout
+        );
+        assert!(
+            honored.stdout.contains("approval verified"),
+            "axon-os reports it: {}",
+            honored.stdout
+        );
+
+        let p = std::fs::read_to_string(clean.join("summarize.ax")).unwrap();
+        std::fs::write(
+            clean.join("summarize.ax"),
+            format!("{p}\n// edit after approval\n"),
+        )
+        .unwrap();
+        let refused = os(
+            &os_bin,
+            &[
+                "run",
+                jobp.to_str().unwrap(),
+                "--run-id",
+                "bad",
+                "--out",
+                store.to_str().unwrap(),
+            ],
+            &axon,
+        );
+        assert_eq!(
+            refused.code, 8,
+            "axon-os REFUSES an edit-after-approval: {}",
+            refused.stdout
+        );
+        assert!(
+            refused.stdout.contains("DENIED"),
+            "axon-os denies legibly: {}",
+            refused.stdout
+        );
+    }
 }

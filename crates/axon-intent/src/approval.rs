@@ -109,21 +109,12 @@ pub fn program_digest(program_src: &str) -> String {
     format!("axsha256:{}", sha256_hex(program_src.as_bytes()))
 }
 
-/// The canonical, semantic encoding of a grant (NOT raw bytes — formatting can't
-/// change the digest). Fixed field order; mirrors R21's `canonical_manifest`
-/// grant portion so the two stacks agree.
+/// The canonical, semantic encoding of a grant. SINGLE-SOURCED in axon-os (where
+/// `Grant` lives) so the gateway and the supervisor can never drift on the
+/// grant digest — axon-os's run-boundary check (`axon_os::verify_approval`) uses
+/// the exact same encoding.
 pub fn canonical_grant(g: &Grant) -> String {
-    format!(
-        "fs_read={}{UNIT}fs_write={}{UNIT}net={}{UNIT}exec={}{UNIT}max_label={}{UNIT}budget={},{},{}",
-        g.fs_read.join(","),
-        g.fs_write.join(","),
-        g.net.join(","),
-        g.exec.as_str(),
-        g.max_label.as_str(),
-        g.budget.calls,
-        g.budget.tokens,
-        g.budget.cost_micro,
-    )
+    axon_os::canonical_grant(g)
 }
 
 /// `"axsha256:"+sha256(canonical grant)` — binds the EXACT grant.
@@ -140,10 +131,14 @@ fn compute_token_digest(
     decision: Decision,
     risk: Risk,
 ) -> String {
+    // Hash the SERIALIZED (lowercase) field representations — exactly what
+    // appears in the token JSON — so any reader (e.g. axon-os at the run
+    // boundary) can reproduce the digest from the JSON alone. (`as_str()` stays
+    // capitalized for the human display; serde renders these lowercase.)
     let canon = format!(
         "{program_digest}{UNIT}{grant_digest}{UNIT}{approved_by}{UNIT}{}{UNIT}{}",
-        decision.as_str(),
-        risk.as_str(),
+        decision.as_str().to_lowercase(),
+        risk.as_str().to_lowercase(),
     );
     format!("axtok1:{}", sha256_hex(canon.as_bytes()))
 }

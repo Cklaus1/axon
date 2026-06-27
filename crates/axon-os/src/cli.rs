@@ -187,6 +187,21 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    // R22 handoff: if an approval token sits next to the manifest, it MUST
+    // verify (the program + grant unedited since approval) or the run is refused
+    // BEFORE any execution — fail closed (exit 8).
+    let approval_path = job_path.with_extension("approval");
+    if approval_path.exists() {
+        let token = std::fs::read_to_string(&approval_path).unwrap_or_default();
+        let program_src = std::fs::read_to_string(&manifest.program).unwrap_or_default();
+        if let Err(reason) = crate::approval::verify_approval(&token, &program_src, &manifest.grant)
+        {
+            println!("\u{26a0} DENIED: {reason}");
+            return ExitCode::from(8);
+        }
+        println!("\u{2713} approval verified (program + grant unedited since sign-off)");
+    }
+
     let rt = AxonCoreRuntime::from_env();
     let sup = broad_supervisor_grant();
     let rec = supervisor::run(&manifest, &sup, &run_id, &rt);
