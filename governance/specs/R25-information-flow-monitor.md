@@ -7,9 +7,22 @@ egress"*) and gap **G4**. Promotes the **already-shipped confidentiality lattice
 `Secret`/`Public` types in `examples/stdlib/tainted.ax`, the `Source`/`Tainted` trust lattice in
 `examples/stdlib/source.ax`, and the grant `Label` ceiling in `crates/axon-os/src/grant.rs`) from a
 *type a program may choose to use* into a **TCB-enforced egress monitor**: secrets are **labeled**,
-labels **propagate** through computation, and a labeled value **provably cannot reach a sink below its
-clearance — even through a capability the program was legitimately granted.**
+labels **propagate** through computation, and a **correctly-labeled** value **provably cannot reach a
+sink below its clearance — even through a capability the program was legitimately granted.**
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+> **THREAT-MODEL HEADLINE — read this before the guarantee.** R25 v1 (the **L1** rung, §1.5)
+> assumes values are **correctly labeled by their producer**. The guarantee is therefore
+> **CONDITIONAL on honest labeling**: against a benign-but-careless program it is a real no-write-down
+> monitor, but against an **adversarial synthesizer** (the R22 code-author) that deliberately
+> **mislabels** a secret as `Public` or **omits** the label entirely, the explicit-flow guard sees a
+> low label and *allows* the egress — so the **primary exfiltration channel is uncontained until L2**
+> (interpreter-stamped labels, §4.9). v1's mitigations against this are (a) the **supervisor-stamped
+> source labels** of §1.6 (the producer does **not** get to label born-confidential inputs) and
+> (b) the **covert-bandwidth bound** of §4.8 — *but* the bound itself is bypassable by the same
+> mislabel move (§4.8, last paragraph). State this plainly to any operator: **L1 protects against
+> *honest mistakes and a granted-but-trusted program leaking a correctly-labeled secret*, not against
+> a synthesizer that lies about labels.** Closing that is L2 and is the load-bearing follow-up.
 
 > **Read this framing first.** A capability bound limits *which* channels exist, not *what flows
 > through a granted one* (`VISION_OS.md` §4.2). An AI legitimately granted `net` to one endpoint can
@@ -40,6 +53,7 @@ clearance — even through a capability the program was legitimately granted.**
 | **A6** | Integrity: fail-closed sink guard + tamper-evident labeled egress record | §3.5, §4.5, §7 | `acc_a6_flow_record_tamper_detected` |
 | **Core** | A secret value CANNOT reach a sink below its clearance — even with the capability granted | §4.3, §7 | `secret_cannot_reach_sink_below_clearance_even_with_cap` |
 | **Core** | Sticky taint: combine(secret, public) = secret (label propagates, never drops) | §4.2, §7 | `combine_is_sticky_label_never_drops` |
+| **Core** | A mislabeled/omitted-label secret is caught because the SUPERVISOR stamps the source label (not the program) | §1.6, §3.3, §4.1, §7 | `mislabeled_secret_still_caught_at_source_stamp` |
 | **Core** | An un-declassified secret to a public sink is REFUSED with a distinct exit code | §4.3, §7 | `undeclassified_secret_to_public_sink_refused` |
 | **Core** | Declassification is explicit, privileged, and AUDITED (never implicit) | §4.4, §7 | `declassify_is_explicit_privileged_and_audited` |
 | **Core** | A steganographic / covert drip is BOUNDED (rate-limited + monitored, not assumed closed) | §4.8, §7 | `covert_drip_is_bandwidth_bounded` |
@@ -55,8 +69,9 @@ The build is **not done** until every row's check exists, was seen to fail first
 R25 is an **information-flow monitor** that sits at the egress boundary of a supervised run and:
 
 1. **Labels** values with a confidentiality level (`Public < Internal < Confidential < Secret`,
-   matching the shipped `cl_*` ladder in `examples/stdlib/tainted.ax` and the grant `Label` ceiling in
-   `crates/axon-os/src/grant.rs`).
+   matching the **4-rung** `cl_*` ladder in `examples/stdlib/tainted.ax`). This is `axon-ifc`'s own
+   4-rung lattice (§3.1); the shipped **3-rung** grant `Label` ceiling in `crates/axon-os/src/grant.rs`
+   injects via an explicit total `From<axon_os::grant::Label>` (no TCB edit; the two stay distinct types).
 2. **Propagates** labels through explicit data flow: `combine`/`derive` of two labeled values yields a
    value at the **higher (more restrictive)** label — taint is sticky, exactly `secret_combine`'s
    "take the max level" rule (`tainted.ax` lines 153–158).
@@ -135,6 +150,31 @@ where some egress is unavoidable — without having to trust the AI's good behav
 R25 v1 delivers L1 honestly and names exactly where L2/L3 begin. The bandwidth bound (§4.8) is the
 *partial* defense against the L3 gap we cannot yet close.
 
+### 1.6 The v1 bridge that does NOT trust the synthesizer's labels (supervisor source-stamping)
+The single most dangerous L1 gap (§1.5 headline) is that the **program** chooses its own source labels —
+a lying synthesizer just labels a secret `Public`. R25 v1 closes the *source* half of this **without**
+waiting for L2 by making the **SUPERVISOR — not the program — stamp the born-on label at the R21
+ingress wrappers**, from the `FlowPolicy`'s **input-classification rules** (not from anything the
+program asserts):
+- Every value the supervisor *hands into* the run through an R21 wrapper (`fs_read`, `ai_complete`,
+  `net` read, `read_line`) is **born-labeled by the monitor** according to `FlowPolicy`: e.g. any value
+  read from a path under a **confidential-prefixed** input rule is born `Confidential` at the wrapper,
+  an `ai_complete`/`net` response is born at its rule's level, an un-ruled source is born **fail-closed
+  to `Secret`**. The program **cannot label it lower** — `combine`/`derive` are monotone-up (§4.2) and
+  the only lowering path is the audited `declassify` (§4.4), which records.
+- This means a synthesizer that **mislabels** the in-program `Labeled<T>` (or omits it) **cannot make
+  a born-confidential input look public to the sink guard**: the guard reads the supervisor-stamped
+  label that rode in with the value, not the program's claimed one.
+- **Honest residual:** this protects only values that **enter through a mediated R21 ingress wrapper**.
+  A secret the program **synthesizes internally** (e.g. reconstructs from a constant table) has no
+  supervisor-stamped source and is still program-labeled — that residual is L2's job (interpreter-wide
+  stamping) and the §4.8 bound is its interim cap. The `FlowPolicy` input-classification rules and the
+  ingress-stamp seam are part of L1 and tested by `mislabeled_secret_still_caught_at_source_stamp`.
+
+This is the policy-side input twin of §3.3's *sink*-side `SinkClearance`: the policy now declares both
+*how secret each born input is* (input rules, stamped by the supervisor) and *how secret each sink may
+receive* (sink rules, checked by the guard).
+
 ---
 
 ## §2 — Architecture & modules
@@ -146,7 +186,7 @@ tamper-evident chain rather than reinventing it.
 
 ```
 crates/axon-ifc/src/
-  label.rs        The flow lattice: Label re-export + ordering, dominates/join.        [PURE — reuses axon-os::Label]
+  label.rs        The flow lattice: OWN 4-rung Label + From<axon_os::Label>, dominates/join. [PURE — own type, 3→4-rung bridge]
   labeled.rs      Labeled<T> value model + combine/derive (sticky propagation).        [PURE]
   policy.rs       FlowPolicy: per-sink clearance map + bandwidth ceiling.              [PURE]
   guard.rs        sink_guard(value_label, sink_clearance) -> Allow|Deny{reason}.       [PURE — the TCB decision]
@@ -172,7 +212,7 @@ main → cli → monitor → {guard → label, meter → policy, flowrec → (ax
                        labeled → label
 policy → label
 flowrec → (axon-os::record {build, verify, RawEvent, AuditEvent})   [reuse — do NOT reinvent the chain]
-label  → (axon-os::grant::Label)                                    [reuse the shipped lattice ordering]
+label  → (axon-os::grant::Label)                                    [bridge only: From<3-rung> → own 4-rung; NOT a reuse of ordering]
 monitor → (axon-os::Runtime / Verdict)                              [the supervisor egress seam]
 
    axon-ifc  ──depends on──▶  axon-os        ✅  (R25 is the egress layer above the supervisor)
@@ -190,16 +230,38 @@ implements — the trait lives low, the implementation lives high (no cycle).
 
 ## §3 — Data model
 
-### 3.1 `Label` — the flow lattice (reuse `axon-os::grant::Label`, extend the ladder)
+### 3.1 `Label` — the flow lattice (axon-ifc's OWN 4-rung lattice + a total `From<axon_os::Label>`)
 The confidentiality lattice is a total order; a higher label is **more restrictive** (more secret).
-R25 reuses `axon-os::grant::Label` (`Public=0 < Internal=1 < Secret=2`, `record.rs`/`grant.rs`), and
-maps the **four-rung** stdlib ladder of `examples/stdlib/tainted.ax`
-(`cl_public=0 < cl_internal=1 < cl_confidential=2 < cl_secret=3`) onto it, treating `Confidential` as
-an alias band so the stdlib `secret_*` value-level code and the OS `Label` agree on ordering:
+**Contradiction resolved (do NOT hand-wave an "alias band"):** the shipped `axon-os::grant::Label` is
+**3-rung** (`Public=0 < Internal=1 < Secret=2`, `grant.rs`/`record.rs`) while the stdlib ladder of
+`examples/stdlib/tainted.ax` is **4-rung** (`cl_public=0 < cl_internal=1 < cl_confidential=2 <
+cl_secret=3`). R25 does **not** edit the TCB `axon-os::Label` (no TCB delta is taken here); instead
+**`axon-ifc` defines its OWN 4-rung `Label`** matching the stdlib ladder, and provides an **explicit,
+total `From<axon_os::grant::Label>` mapping** so the supervisor's 3-rung grant ceiling injects cleanly:
+```rust
+// axon-ifc's own lattice (label.rs) — the flow axis, distinct from the 3-rung grant ceiling:
+pub enum Label { Public=0, Internal=1, Confidential=2, Secret=3 }   // ⊑ by numeric order
+
+// the ONLY bridge from the shipped 3-rung grant Label — total, monotone, audited at the seam:
+impl From<axon_os::grant::Label> for Label {
+    fn from(l: axon_os::grant::Label) -> Label = match l {
+        axon_os::grant::Label::Public   => Label::Public,
+        axon_os::grant::Label::Internal => Label::Internal,
+        axon_os::grant::Label::Secret   => Label::Secret,   // 3-rung Secret ↦ 4-rung Secret (NOT Confidential)
+    }
+}   // NOTE: the mapping is INTO the 4-rung lattice; `Confidential` has no 3-rung pre-image, so a grant
+    // ceiling can never *produce* a Confidential — Confidential arises only from a FlowPolicy input rule.
+```
 ```
 Label (flow lattice, ⊑ = "may flow to / no more restrictive than"):
    Public(0)  ⊑  Internal(1)  ⊑  Confidential(2)  ⊑  Secret(3)
 ```
+The grant ceiling (3-rung) and the flow label (4-rung) are kept as **distinct types** bridged only by
+the `From` above; R25 never silently equates them. (If a future maintainer instead wants the single
+TCB lattice, that is **option (a): a declared TCB delta to `axon-os::grant::Label` adding `Confidential`
+between `Internal` and `Secret` — updating `parse`/`as_str`, the `Ord`/`<` ordering, the `max`/join, and
+`record.rs`'s label (de)serialization — and is OUT of scope for R25 v1, which takes option (b) above to
+avoid mutating the shipped supervisor.)
 Operations (pure, total):
 - `dominates(a, b) : bool` — `a ⊒ b` (clearance `a` may read a value at level `b`). Exactly
   `secret_can_flow_to`'s `reader_clearance >= s.level` (`tainted.ax` line 139), as the lattice order.
@@ -231,17 +293,31 @@ exfiltration guard, `tainted.ax` lines 277–283). The policy maps each egress s
 a covert-bandwidth cap:
 ```
 FlowPolicy {
+    inputs:       Vec<InputClass>,      // per source: how secret is a value BORN here? (supervisor stamps; §1.6)
     sinks:        Vec<SinkClearance>,   // per concrete sink: how secret may the bytes be?
     covert_cap:   u32,                  // max distinct secret-derived emissions per run (§4.8); 0 = none
+    input_default: Label,               // born-label for any source not matched; FAIL-CLOSED default = Secret(3)
     default:      Label,                // clearance for any sink not listed; FAIL-CLOSED default = Public(0)
 }
+InputClass   { source: Source, prefix: String, born: Label }   // the supervisor's source-stamp rule (§1.6)
+Source = FsRead | AiComplete | NetRead | ReadLine              // the ingress axes (where labels are BORN)
 SinkClearance { axis: Axis, target: String, clearance: Label }
 Axis = FsWrite | Net | Exec            // the egress axes (the sinks; mirrors EffectSet)
 ```
 Serialized form (`.axflow` TOML, sitting alongside R21's `.axjob`):
 ```toml
-covert_cap = 16
-default    = "public"        # any unlisted sink may receive only public data (fail-closed)
+covert_cap    = 16
+input_default = "secret"     # an un-ruled source is born SECRET (fail-closed — the program can't under-label it)
+default       = "public"     # any unlisted sink may receive only public data (fail-closed)
+[[input]]
+source = "fs_read"
+prefix = "./secret/"
+born   = "confidential"      # ANY value read under ./secret/ is BORN confidential — the SUPERVISOR stamps it,
+                             # not the program; a synthesizer cannot relabel it down (§1.6)
+[[input]]
+source = "ai_complete"
+prefix = ""                  # all model responses
+born   = "internal"
 [[sink]]
 axis      = "net"
 target    = "api.model.com"
@@ -251,9 +327,11 @@ axis      = "fs_write"
 target    = "./out/"
 clearance = "confidential"   # the local out dir may hold confidential results
 ```
-Validation (fail → `Verdict::Malformed`, exit 2): `axis ∈ {fs_write, net, exec}`; `clearance`/`default`
-∈ the four-rung ladder; `covert_cap` ≥ 0; `target` has no `..` component (path traversal, mirroring
-R21 §3.1 / E1001). A **missing** policy entry ⇒ `default` (fail-closed `Public`), never "allow."
+Validation (fail → `Verdict::Malformed`, exit 2): `axis ∈ {fs_write, net, exec}`; `source ∈ {fs_read,
+ai_complete, net_read, read_line}`; `clearance`/`default`/`born`/`input_default` ∈ the four-rung ladder;
+`covert_cap` ≥ 0; `prefix`/`target` have no `..` component (path traversal, mirroring R21 §3.1 / E1001).
+A **missing** sink entry ⇒ `default` (fail-closed `Public`), never "allow"; a **missing** input rule ⇒
+`input_default` (fail-closed `Secret`), so an un-ruled source is born most-restrictive (§1.6).
 
 ### 3.4 `DeclassAuthority` + the declassification op (explicit, privileged, audited)
 Declassification is the **only** way a label drops, and it is never implicit:
@@ -306,12 +384,22 @@ not flow to net:api.model.com (clearance public)" vs the cap-refusal reasons).
 ## §4 — Core logic / algorithms
 
 ### 4.1 Labeling an input (`labeled::*`) — Core
-A value acquires its label at its **source**: an `fs_read` from a path under a confidential prefix is
-`Labeled{label: Confidential, origin: Source{"fs_read:<path>"}}`; a constant is `Public`; an AI/Net
-*response* is labeled per the policy's input rules (and, orthogonally, carries the *trust* tag of
-`source.ax` — R25 governs the **confidentiality** axis; trust/integrity is `source.ax`'s axis and is
-**not** conflated). In L1 (library-enforced) the program/synthesizer calls the `labeled_*`
-constructor; in L2 (deferred) the interpreter stamps the label at the `fs_read`/`ai_complete` builtin.
+A value acquires its label at its **source**, and **the SUPERVISOR — not the program — stamps it** from
+the `FlowPolicy` input-classification rules (§1.6, §3.3): an `fs_read` from a path under a
+confidential-prefixed input rule is born `Labeled{label: Confidential, origin: Source{"fs_read:<path>"}}`;
+an `ai_complete`/`net` response is born at its rule's level; an un-ruled source is born
+`input_default` (fail-closed `Secret`). A program-supplied constant is `Public`. (Orthogonally a value
+carries the *trust* tag of `source.ax` — R25 governs the **confidentiality** axis; trust/integrity is
+`source.ax`'s axis and is **not** conflated.)
+- **L1, this spec — supervisor-stamped at the ingress wrapper:** for every value entering through a
+  mediated R21 ingress wrapper (`fs_read`/`ai_complete`/`net_read`/`read_line`), the monitor applies the
+  matching `InputClass` and stamps the born label *before handing the value to the program*. **A
+  synthesizer that mislabels or omits its in-program `Labeled<T>` cannot defeat this** — the guard reads
+  the supervisor-stamped label, not the program's claim. This is `mislabeled_secret_still_caught_at_
+  source_stamp`.
+- **L1 residual / L2 deferred:** a value the program **synthesizes internally** (never crossing a
+  mediated ingress) still has only its program-chosen label — closing *that* needs the interpreter to
+  stamp every value (L2, §4.9); the §4.8 covert bound is the interim cap on it.
 
 ### 4.2 Label propagation — the sticky-taint rule (`labeled::combine`/`derive`) — Core
 Step by step, the rule mirrors `secret_combine`'s "take the max level" (`tainted.ax` 153–158) and
@@ -413,6 +501,16 @@ through low-bandwidth covert encodings the explicit-flow monitor doesn't see. R2
 asserts the (N+1)-th emission past `covert_cap` is refused, and that the record shows the rising count.
 **Honesty:** this bounds *bandwidth*, it does not *prove* non-interference; it is the named, partial
 mitigation for the implicit-flow gap R25 v1 does not close (§1.2).
+**Honesty about the meter's OWN limit (the same mislabel move bypasses it):** in L1 the provenance graph
+only has an edge for values that actually went through `combine`/`derive`/`declassify`. A value a
+program **reconstructs from a secret via untracked arithmetic** (reads the secret, computes a new value
+with raw integer ops that never call `combine`/`derive`, then emits it as a fresh `Public` literal) has
+**no provenance edge back to the secret** — the meter sees it as ordinary public data and does **not
+count it**. So the covert-bandwidth bound is itself bypassable by *exactly the same mislabel/omit-label
+move* as the source-stamp gap (§1.6): it caps only the secret-adjacency the explicit-flow graph can
+*see*. Like §1.6's residual, fully closing it requires L2's interpreter-wide automatic propagation
+(every value carries and joins a label through every builtin, so untracked arithmetic cannot strip
+provenance). The bound is real for honest/careless programs and a coarse cap otherwise — not a proof.
 
 ### 4.9 R21 / interpreter touchpoints (what is library-enforced vs needs wiring — be precise)
 - **L1, library-enforced (this spec):** The supervisor's egress points (`fs_write`/`net`/`exec`
@@ -523,9 +621,13 @@ Usage/`--help` on a bad invocation → exit 2 with a helpful message naming the 
   adjacent emission refused; record shows the count).
 - **S6 — Flow record (reuse R21 chain).** `flowrec.rs`. Tests: `acc_a6_flow_record_tamper_detected`
   (mutate/drop/reorder a flow event → `verify` Err); equal inputs → equal digest.
-- **S7 — Monitor over R21's Runtime.** `monitor.rs` + the `axon-os`-declared `EgressMonitor` trait +
-  a `MockRuntime`. Tests: each egress routed guard→meter→record; a denied egress is **not performed**
-  (assert via the mock's side-effect counter); deny-before-execute.
+- **S7 — Monitor over R21's Runtime (egress guard + ingress source-stamp).** `monitor.rs` + the
+  `axon-os`-declared `EgressMonitor`/ingress-stamp seam + a `MockRuntime`. Tests: each egress routed
+  guard→meter→record; a denied egress is **not performed** (assert via the mock's side-effect counter);
+  deny-before-execute; **`mislabeled_secret_still_caught_at_source_stamp`** — the mock program reads a
+  `./secret/`-prefixed input but (adversarially) labels it `Public` in-program and emits it to a
+  `Public` sink; assert the supervisor's ingress stamp made it `Confidential` so the egress is **Denied
+  exit 8** regardless of the program's lie.
 - **S8 — `axon-ifc run`/`explain`/`check`/`verify`/`declassify` CLI + human output.** `cli.rs`,
   `main.rs`. Tests: `acc_a5_deterministic_byte_identical`, `acc_a4_hermetic_isolated_timeout` (over
   R21's runtime), `--help` on every subcommand, usage error → exit 2.
@@ -557,6 +659,13 @@ Usage/`--help` on a bad invocation → exit 2 with a helpful message naming the 
   a missing sink resolves to the fail-closed `default` (Public), never "allow."
 - `unknown_label_fails_closed` — an unparsable value label is treated as `Secret` (denied to any non-
   secret sink), never `Public`.
+- `mislabeled_secret_still_caught_at_source_stamp` (headline — the adversarial-synthesizer case) — a
+  value enters through the `fs_read` ingress under a `./secret/`-prefixed `InputClass` (born
+  `Confidential` by the **supervisor's** stamp), but the program adversarially constructs its in-program
+  `Labeled<T>` as `Public` (or omits the label); on egress to a `Public` sink the guard reads the
+  **supervisor-stamped** `Confidential` label and → `Deny{axis}` exit 8. Asserts the program's claimed
+  label is ignored at a mediated ingress (§1.6, §4.1). Also asserts the honest negative residual: a
+  value the program *synthesizes internally* is **not** caught by source-stamping (documented L2 gap).
 
 **Integration (real `axon` subprocess via R21's runtime, mock-free egress decisions):**
 - `acc_a4_hermetic_isolated_timeout` — a runaway program run through `axon-ifc run` is killed at the
@@ -666,7 +775,8 @@ axon-ifc run examples/flows/redact.axjob examples/flows/redact.axflow --out ./ru
    `acc_a5_deterministic_byte_identical`, `acc_a6_flow_record_tamper_detected`,
    `secret_cannot_reach_sink_below_clearance_even_with_cap`, `combine_is_sticky_label_never_drops`,
    `undeclassified_secret_to_public_sink_refused`, `declassify_is_explicit_privileged_and_audited`,
-   `covert_drip_is_bandwidth_bounded`. Any missing name → **gate fails**.
+   `covert_drip_is_bandwidth_bounded`, `mislabeled_secret_still_caught_at_source_stamp`. Any missing
+   name → **gate fails**.
 2. **Anti-stub check** — assert each acceptance test body contains a real assertion and is not
    `#[ignore]`d / `todo!()` / `assert!(true)` (grep for those anti-patterns → fail).
 3. **Dependency-direction check** — assert (via `cargo tree -p axon-os`) that `axon-os` does **NOT**
@@ -685,7 +795,9 @@ full `axon-ifc` suite is green; no regression in the workspace.
 **Per milestone (R25 complete):** `cargo build -p axon-ifc` produces the `axon-ifc` binary; the real
 example flows run end-to-end; **`acc_a1` passes through the real CLI**; a `Secret` value is refused at a
 sink below its clearance **even with the capability granted** (`secret_cannot_reach_sink_below_
-clearance_even_with_cap`); taint is sticky (`combine_is_sticky_label_never_drops`); declassification is
+clearance_even_with_cap`); taint is sticky (`combine_is_sticky_label_never_drops`); a mislabeled/
+omitted-label secret read through a mediated ingress is caught by the supervisor's source-stamp
+(`mislabeled_secret_still_caught_at_source_stamp`); declassification is
 explicit/privileged/audited; covert bandwidth is bounded; the flow record is deterministic
 (`acc_a5`) and tamper-evident (`acc_a6`); `axon-os` does **not** depend on `axon-ifc`; and
 `scripts/r25_acceptance_gate.sh` exits 0 with every §0 check green. Only then is R25 done.
@@ -693,10 +805,14 @@ explicit/privileged/audited; covert bandwidth is bounded; the flow record is det
 ---
 
 ## §12 — Notes for the implementer (do NOT deviate without updating this spec)
-- **Reuse R21's `Label`, `Grant`, `EffectSet`, `Verdict`, and `record::{build,verify,RawEvent,
-  AuditEvent}`** (`crates/axon-os/src/{grant,verdict,record}.rs`). Do **not** reinvent the lattice
-  ordering, the exit-code scheme, or the hash chain — import them. The `AuditEvent` already carries a
-  `label` field; that field is R25's egress ledger.
+- **Reuse R21's `Grant`, `EffectSet`, `Verdict`, and `record::{build,verify,RawEvent,
+  AuditEvent}`** (`crates/axon-os/src/{grant,verdict,record}.rs`). Do **not** reinvent the exit-code
+  scheme or the hash chain — import them. The `AuditEvent` already carries a `label` field; that field
+  is R25's egress ledger. **The lattice is the ONE exception (§3.1):** the shipped grant `Label` is
+  3-rung and R25's flow lattice is 4-rung, so `axon-ifc` defines its **own** 4-rung `Label` and bridges
+  the grant ceiling in with a total `From<axon_os::grant::Label>` — do **not** edit the TCB
+  `axon-os::Label` (that 4th-rung TCB delta is the deferred option (a)), and do **not** alias the two
+  types together.
 - **Reuse the shipped value-level semantics verbatim, just enforced:** `join` = `secret_combine`'s max
   (`examples/stdlib/tainted.ax` 153–158); `dominates` = `secret_can_flow_to` (line 139); the audited
   `declassify` = `secret_declassify` (line 145) + the authority check + the audit event. R25's job is

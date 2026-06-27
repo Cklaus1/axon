@@ -78,6 +78,12 @@ host kernel + operator). After R26, "isolated" = "a hardware-encrypted guest who
 attested to silicon before any work enters it" (trust the VMM + hypervisor, and under SEV-SNP/TDX, not
 even the host operator).
 
+**In-spec adversary (assume the worst reader).** We assume the host operator and an ASI guest have
+both read this spec, and the swtpm stand-in's CA is operator-controlled. The design must therefore be
+secure against an adversary who knows every step here — the stand-in lane in particular gives a *forged*
+attestation to any operator who chooses to (it is the honest CI floor, not a confidentiality claim; §6,
+§8); only the real-hardware lane (S7) puts the operator outside the boundary.
+
 ### 1.2 What it explicitly does NOT do (out of scope for R26)
 - **No new Axon-level containment.** Capability proofs (R20), the cert checker (R23), the supervisor
   gate/mint/audit/replay (R21), and info-flow (R25) are **unchanged** — they run *inside* the guest
@@ -196,8 +202,18 @@ AttestationReport {
     nonce:         String,           // relying-party-supplied freshness nonce (anti-replay)
     signature:     String,           // HW signature over (measurement ‖ report_data ‖ nonce)
     cert_chain:    Vec<String>,      // leaf → … → vendor root (AMD KDS / Intel PCS / swtpm CA)
+    ek_id:         String,           // the attesting key identity: HW EK/VCEK serial, or (stand-in) the swtpm EK fingerprint — PINNED by the verifier (§3.1, §8)
 }
 ```
+**Pin the EK, not just "a CA" (§8, stand-in floor).** In the QEMU+swtpm stand-in the operator **owns
+the swtpm and its CA** — "chains to a test CA" is *not* sufficient, because that operator can mint a
+valid quote for **any** image under their own CA. The verifier therefore pins a **specific
+`ek_id`/measured-boot expectation** (a single expected EK fingerprint + measured-boot PCR set), not
+merely "some cert under the test CA." This narrows the stand-in to *the one* attesting key the relying
+party provisioned. It does **not** make the stand-in unforgeable — §8 states plainly that the stand-in's
+chain is **operator-forgeable by construction** (the operator holds the EK private key); pinning the EK
+is the honest CI-lane *floor*, and only the real-hardware lane (S7), where the EK/VCEK is silicon-bound
+and rooted at AMD KDS / Intel PCS, removes the operator from the boundary.
 **The chain (the load-bearing design, A6 + Core `axtcb1_digest_chained_to_measurement`):** the
 in-language `axtcb1:` digest is **not** a second disconnected story. At guest boot, the Axon OS image
 computes its live `axtcb1:` TCB digest (R20 `smt.rs` `live_tcb_digest()` / `MINT_OBLIGATION_SPEC ⊕
@@ -206,8 +222,14 @@ verdict`, boot-checked → E1611) and **writes it into the hardware report's `re
 So one HW signature now covers **both** *"this is the expected image at the hardware level"* (the
 `measurement`) **and** *"the image's own proven-TCB attestation is the pinned one"* (the `axtcb_digest`
 bound through `report_data`). Verifying the signature transitively binds R20's `axtcb1:` digest to the
-silicon — the two attestations are **one chain**, not two. (This is the §5 commitment "generalizes
-R20's `axtcb1:` content-addressed TCB attestation down to the silicon," made concrete.)
+silicon — the two attestations are **one chain**, not two. **This is load-bearing only because the
+verifier RE-DERIVES the expected `axtcb1:` from the measured image bytes** (an R23 certificate validated
+solver-free; §4.2/§4.3 step 5): comparing the report against a *second pre-pinned constant* would add
+~zero over measurement-pinning, since the `axtcb1:` source is already inside the measured image. The
+digest is also solver-free — it commits to a checkable **R23 certificate**, **not** to Z3's `"Proven"`
+verdict string, so **no Z3 enters the guest or the verifier** (R23/minimal-TCB discipline; §10).
+(This is the §5 commitment "generalizes R20's `axtcb1:` content-addressed TCB attestation down to the
+silicon," made concrete.)
 
 ### 3.2 `GuestManifest` (parsed from a `.axvm` TOML file)
 ```
@@ -289,26 +311,50 @@ The pipeline performs **no** I/O itself; it is pure given `sub`. This is what ma
 `MockSubstrate` tests in §7 possible.
 
 ### 4.2 The `axtcb1:` ↔ hardware binding (`report::bind_axtcb` / the guest side) — Core
-- **Guest side (at boot, inside the Axon OS image):** compute the live in-language TCB digest exactly
-  as R20 Slice 3 does (`smt.rs` `live_tcb_digest()` over `MINT_OBLIGATION_SPEC ⊕ verdict`); the boot
-  check already fails closed (E1611) if it ≠ the pinned `TCB_MANIFEST_DIGEST`. Then set
+- **The redundancy this design must avoid.** A naïve binding (the guest sets
+  `report_data = sha256(pinned_axtcb ‖ nonce)` and the verifier checks it equals
+  `sha256(pinned_axtcb ‖ nonce)`) adds **~zero marginal security over measurement-pinning**: both
+  `pinned_axtcb` and `expected_meas` are constants the relying party already holds, so the binding only
+  re-states a pin the `measurement` check already enforces (the `axtcb1:` source bytes are *part of the
+  measured image*). To be load-bearing the verifier must **independently RE-DERIVE the expected
+  `axtcb1:` FROM the measured image bytes** — not compare two pre-pinned constants. See §4.3 step 5.
+- **Solver-free by construction — no Z3 in the guest.** R20's `tcb_attestation_digest()` /
+  `live_tcb_digest()` / E1611 are behind axon-core's `smt` feature and commit to the verdict **string**
+  `"Proven"` — i.e. *Z3's say-so*, not a checkable artifact. Carrying Z3 into the guest would **bloat
+  the TCB and contradict R23's minimal, solver-free discipline** (and §10's solver/HW-free core check).
+  Therefore **the guest does NOT carry Z3.** The guest's `axtcb1:` is derived **solver-free from an
+  R23 CERTIFICATE** (the proof artifact R23's checker validates without a solver): the boot binding is
+  `axtcb1: = sha256(MINT_OBLIGATION_SPEC ‖ r23_certificate_digest)`, where `r23_certificate_digest`
+  commits to the *checkable* certificate, not to the string "Proven". The guest verifies that
+  certificate with the in-image R23 checker (already bundled, §1) at boot; a missing/invalid certificate
+  fails closed at boot (the in-guest analogue of E1611) and **no report is produced.**
+- **Guest side (at boot, inside the Axon OS image):** verify the bundled R23 certificate with the
+  in-image R23 checker (solver-free); compute
+  `axtcb_digest = sha256(MINT_OBLIGATION_SPEC ‖ r23_certificate_digest)`; the boot check fails closed
+  (in-guest E1611 analogue) if the certificate is absent/invalid. Then set
   `report_data = sha256(axtcb_digest ‖ nonce)` and request the HW report over it. The HW signs
   `(measurement ‖ report_data ‖ nonce)`.
-- **Why this is the chain, not two stories:** the relying party never has to *separately trust* the
-  guest's claim about its `axtcb1:` digest. The HW signature covers `report_data`, and `report_data`
-  is a collision-resistant commitment to `axtcb_digest`. So *"the in-language proven-TCB attestation is
-  the pinned one"* is verified **by the same signature** that proves *"the hardware measured the
-  expected image."* Break the image → measurement differs → signature won't match expected. Swap the
-  proven TCB (a future edit weakening the minter) → live `axtcb1:` differs → E1611 at guest boot →
-  the guest never produces a report, or `report_data` differs → relying party rejects. Either way the
-  two attestations move together.
+- **Why this is the chain, not two stories:** the relying party never *separately trusts* the guest's
+  claim about its `axtcb1:` digest **nor a solver's "Proven" verdict**. The HW signature covers
+  `report_data`, a collision-resistant commitment to `axtcb_digest`; `axtcb_digest` in turn commits to
+  the *checkable R23 certificate*, which the verifier re-derives from the measured image (§4.3 step 5).
+  So *"the in-language proven-TCB attestation is the pinned one"* is verified **by the same signature**
+  that proves *"the hardware measured the expected image"* — and the proof itself is a certificate, not
+  a solver's word. Break the image → measurement differs → signature won't match expected. Swap the
+  proven TCB (a future edit weakening the minter) → the R23 certificate over the new spec → re-derived
+  `axtcb1:` differs → relying-party rejects (and the guest's own boot check / `report_data` diverge).
+  Either way the two attestations move together, **without Z3 anywhere in the guest or the verifier.**
 
 ### 4.3 The relying-party verifier (`verify::verify`) — the trusted artifact, fail-closed (A6)
 Input: `(report, expected_meas, pinned_axtcb, nonce)`. Output: `Verdict`. Steps, in order; the
 **first** failure refuses (deny by default — an *unverifiable* report is `AttestFail`, never a pass):
-1. **Signature & chain.** Verify `report.signature` over `(measurement ‖ report_data ‖ nonce)` and that
-   `report.cert_chain` chains to a **known** root (AMD KDS / Intel PCS pinned root, or the swtpm test
-   CA in the stand-in). Unknown root / bad signature → `AttestFail{"chain"}`.
+1. **Signature, chain & PINNED EK.** Verify `report.signature` over `(measurement ‖ report_data ‖
+   nonce)`, that `report.cert_chain` chains to a **known** root (AMD KDS / Intel PCS pinned root, or the
+   swtpm test CA in the stand-in), **and that `report.ek_id` equals the pinned EK/measured-boot
+   expectation** (§3.1) — *not merely "some cert under the CA."* In the stand-in the operator owns the
+   CA, so chain-only acceptance lets the operator mint a quote for any image; pinning the EK narrows it
+   to the one provisioned attesting key (still operator-forgeable, §8 — the honest CI floor). Unknown
+   root / bad signature / unpinned EK → `AttestFail{"chain"}`.
 2. **Freshness.** `report.nonce == nonce` (anti-replay; a recorded old report is refused) →
    else `AttestFail{"stale nonce"}`.
 3. **Measurement.** `report.measurement.digest == expected_meas` → else `AttestFail{"measurement ≠
@@ -318,11 +364,34 @@ Input: `(report, expected_meas, pinned_axtcb, nonce)`. Output: `Verdict`. Steps,
    (sev-snp/tdx/qemu-swtpm) — a non-attesting boot is impossible to reach here because step 1 needs a
    signature, but assert it explicitly so a future substrate can't slip in unattested (Core
    `vm_without_attestation_is_refused`).
-5. **The chained `axtcb1:` binding.** Recompute `sha256(pinned_axtcb ‖ nonce)` and assert it equals
-   `report.report_data`; assert `report.axtcb_digest == pinned_axtcb` (the report's stated digest and
-   the bound commitment must agree). Mismatch → `TcbMismatch{…}` (exit 11) — Core
-   `axtcb1_digest_chained_to_measurement`.
+5. **The chained `axtcb1:` binding — RE-DERIVED, not re-pinned.** The verifier does **not** compare the
+   report against a second pre-pinned `axtcb1:` constant (which would add ~zero over step 3, §4.2). It
+   **re-derives the expected `axtcb1:` from the measured image bytes it just pinned in step 3**:
+   `expected_axtcb := sha256(MINT_OBLIGATION_SPEC ‖ r23_certificate_digest)`, where the
+   `r23_certificate_digest` is taken from the R23 certificate carried in (or measured into) the image
+   and **validated by the relying party's bundled R23 checker — solver-free, no Z3** (the same checker
+   that runs in the guest; §4.2). Then assert `report.report_data == sha256(expected_axtcb ‖ nonce)`
+   **and** `report.axtcb_digest == expected_axtcb`. Because `expected_axtcb` is derived from the
+   measured image (step 3) — not supplied as an independent pin — this step adds real evidence: it ties
+   the HW-signed `report_data` to a *re-checked* proof certificate over *this* image, not to a constant
+   the operator could have chosen. An invalid/absent R23 certificate, or any mismatch → `TcbMismatch{…}`
+   (exit 11) — Core `axtcb1_digest_chained_to_measurement`. (The `--expect-axtcb` CLI pin, §5.2, is an
+   optional belt-and-suspenders cross-check against the re-derived value; the *re-derivation* is the
+   load-bearing step.)
 6. All pass → `Ok` (the pipeline proceeds to admit). **Pure, no I/O, total** — the trusted core.
+
+**TOCTOU — the job MUST go to the *same* attested instance (no time-of-check/time-of-use gap).** A
+verified report attests *an instance at a moment*; admitting the job to a *different* instance (one the
+substrate reset, migrated, snapshotted-and-restored, or rolled to a fresh boot after the report was
+fetched) would defeat the whole gate. Therefore the verifier's `Ok` carries a **session binding**: the
+vsock channel `send_job` uses MUST be the *identical, un-reset/un-migrated VM instance* that produced
+the verified report. Concretely, the relying-party `nonce` (already bound into the report signature,
+steps 1–2) is **re-asserted on the vsock session** — the guest echoes the same nonce as the first frame
+of the admitted session, and `admit::send_job` refuses (→ `AttestFail{"session ≠ attested instance"}`,
+fail closed, teardown) if the vsock peer does not present the attested launch's nonce/session binding.
+**If the substrate cannot guarantee the job-bearing session is the same instance that attested (e.g. it
+permits live migration or transparent restart between `fetch_attestation` and `send_job`), the run is
+REFUSED** — R26's no-migration/no-snapshot scope (§1.2) is load-bearing here, not just a feature cut.
 
 **The verifier never trusts a claim in the report; it re-derives.** It does not believe
 `report.measurement` because the report says so — it checks the signature *and* compares to the
@@ -530,9 +599,17 @@ succeed with the documented output.
 - **I-1 Attestation is mandatory + fail-closed.** No job is sent to a guest whose report did not
   *verify* (signature + chain + freshness + measurement + chained `axtcb1:`). No-report ⇒ refusal,
   never a downgrade (`vm_without_attestation_is_refused`).
-- **I-2 The chain is one chain.** The in-language `axtcb1:` digest (R20) is bound into the HW-signed
-  `report_data`; one signature covers both the hardware measurement and the proven-TCB attestation —
-  they are never two independently-trusted stories (`axtcb1_digest_chained_to_measurement`).
+- **I-2 The chain is one chain — re-derived, solver-free.** The expected `axtcb1:` is **re-derived by
+  the verifier from the measured image** (an R23 certificate validated solver-free, no Z3 in guest or
+  verifier; §4.2/§4.3 step 5), not compared against a second pre-pinned constant — the binding adds real
+  evidence only because it is re-derived (a constant-vs-constant check would add ~zero over
+  measurement-pinning). One HW signature covers both the hardware measurement and the (re-derived)
+  proven-TCB attestation; they are never two independently-trusted stories, and the proof is a checkable
+  certificate, not a solver's "Proven" verdict (`axtcb1_digest_chained_to_measurement`).
+- **I-8 Same attested instance (no TOCTOU).** The job is admitted only to the *identical*
+  un-reset/un-migrated VM instance that produced the verified report; the vsock session is bound to the
+  attested launch (nonce echo, §4.3 step 6). A substrate that cannot guarantee same-instance delivery is
+  refused (the no-migration scope, §1.2, is enforced).
 - **I-3 Minimal device surface is total.** The guest is launched with exactly {vsock, serial, timer};
   any other device is unrepresentable in the manifest and a request for one is `DeviceDeny`. The
   launched VMM config is asserted, not assumed.
@@ -554,6 +631,15 @@ succeed with the documented output.
 - **STILL TRUSTED (the boundary of the claim):** the VMM (Firecracker / Cloud Hypervisor), the
   hypervisor, the CPU + firmware + the HW vendor's attestation root (AMD KDS / Intel PCS). Bare metal
   (R17, `VISION_OS.md` §11 v3+) floors these later; R26 does not.
+- **STAND-IN IS OPERATOR-FORGEABLE BY CONSTRUCTION (the honest CI floor).** In the QEMU+swtpm lane the
+  operator **owns the swtpm and its CA and holds the EK private key**, so the operator can mint a valid,
+  EK-pinned quote for **any** image of their choosing. Pinning a specific `ek_id`/measured-boot
+  expectation (§3.1, §4.3 step 1) narrows acceptance to the one provisioned key and gives the *shape* of
+  real attestation for CI — but it does **not** make the stand-in tamper-evident against its own
+  operator. The assumed in-spec adversary (§1) who owns the host can forge the stand-in's chain. **Only
+  the real-hardware lane (S7)**, where the EK/VCEK is silicon-bound and rooted at AMD KDS / Intel PCS,
+  removes the operator from the boundary; the stand-in is explicitly *not* a confidentiality- or
+  unforgeability-claim, only the CI-lane floor.
 - **RESIDUAL — confidential computing does NOT close microarchitectural side channels**
   (`VISION_OS.md` §4.3): **Spectre/Meltdown-class** speculative leaks, cache-timing, power/thermal,
   and **Rowhammer** (which physically flips bits *across* the encrypted boundary the proofs and the
@@ -579,6 +665,12 @@ succeed with the documented output.
   surfaced in `axon-vm`'s output as "substrate: qemu-swtpm (stand-in — no memory encryption; use
   sev-snp/tdx for confidentiality)" so an operator is never misled about the real property.
 - Boot/attest timeout → tear down, `AttestFail{"timeout"}`; no leaked VM/vsock handle.
+- **TOCTOU — job sent to a non-attested instance.** Between `fetch_attestation` and `send_job` the
+  substrate resets/migrates/snapshot-restores/re-boots the VM → the vsock peer is no longer the attested
+  instance → `send_job` rejects on the session/nonce binding (§4.3 step 6) → `AttestFail{"session ≠
+  attested instance"}`, torn down, no job. A substrate that *cannot* guarantee same-instance delivery
+  (permits migration/restart in this window) is **REFUSED**, not trusted (the no-migration scope, §1.2,
+  is enforced here).
 
 ---
 

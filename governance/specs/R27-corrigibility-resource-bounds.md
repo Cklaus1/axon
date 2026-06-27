@@ -21,8 +21,10 @@ an egress violation), the shipped `@[corrigible]` one-way latch
 > Instrumental convergence predicts an ASI will **acquire resources, preserve itself, resist
 > shutdown, and coordinate with copies**. R27 makes each an explicit, enforced guarantee:
 > *the model is **stoppable** by an off-switch its code cannot reach or disable; it **cannot acquire**
-> compute/budget/persistence beyond its grant, by construction; and **N instances cannot collude**
-> past a per-coalition bound.* R27 is **mechanism, not motive** — see §1.3 (corrigibility ≠ alignment).
+> compute/budget/persistence beyond its grant, by construction; and **N instances sharing a lineage root
+> cannot collude** past a per-coalition bound.* These bounds hold **per lineage root**, not across roots
+> — a persuaded operator who mints a second root doubles the footprint (§4.5 residual; cross-root
+> bounding is R24's job). R27 is **mechanism, not motive** — see §1.3 (corrigibility ≠ alignment).
 
 ---
 
@@ -31,15 +33,15 @@ an egress violation), the shipped `@[corrigible]` one-way latch
 | Req | What | Spec § | Pinned acceptance check (test name) |
 |---|---|---|---|
 | **A1** | Real user journey + smoke test through the actual CLI (`axon-os run … --killable`, then trip kill) | §5, §7 | `acc_a1_smoke_kill_journey` |
-| **A2** | Real runnable example artifacts (a persistent agent + an over-reaching one) | §5.4, §7 | `acc_a2_example_agent_killed_and_overreach_denied` |
+| **A2** | Real runnable example artifacts (a persistent agent + an over-reaching one). NOTE: the over-reach demo covers acquisition/coalition + the `fs_write`/`persist_cap` bounds; the **egress-label** half of self-persistence is R25-gated (R3 below) | §5.4, §7 | `acc_a2_example_agent_killed_and_overreach_denied` |
 | **A3** | Quickstart whose exact commands are executed by a test | §5.5, §7 | `acc_a3_quickstart_commands_execute` |
 | **A4** | Hermetic, isolated execution + hard timeout, canonical entrypoint | §4.6, §7 | `acc_a4_hermetic_isolated_timeout` |
 | **A5** | Deterministic & reproducible (latch ledger byte-identical across runs) | §4.6, §7 | `acc_a5_deterministic_byte_identical` |
-| **A6** | Integrity / fail-closed: kill enforced below the model; tamper-evident ledger | §3, §4.2, §7 | `acc_a6_kill_below_model_fail_closed` |
+| **A6** | Integrity / fail-closed: kill enforced below the model; tamper-evident ledger; **new TCB (latch/ledger/coalition/corrigible) digest folded into R20 `axtcb1:` so a tampered enforcement BINARY is detected, not just a tampered record** | §3, §4.2, §4.6, §7 | `acc_a6_kill_below_model_fail_closed` |
 | **R1** | Kill authority in the **supervisor/TCB**, un-disableable by contained code | §4.1, §4.2 | `contained_code_cannot_disable_latch` |
 | **R2** | No resource acquisition beyond grant — reuse R20 proven mint/carve | §4.3 | `mint_beyond_grant_refused_R20`, `budget_acquisition_blocked` |
-| **R3** | Self-persistence is a capability (fs/net), not ambient — R25 egress tie | §4.4 | `weight_exfil_egress_denied_R25` |
-| **R4** | Collusion bounded **per-coalition**, analyzed adversarially | §4.5 | `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force` |
+| **R3** | Self-persistence is a capability (fs/net), not ambient — R25 egress tie. **BLOCKED until R25 ships** (label-propagation egress proof is R25's; interim bound = fs/net cap + `persist_cap` only, no egress proof) | §4.4 | `weight_exfil_egress_denied_R25` (cannot pass pre-R25) |
+| **R4** | Collusion bounded **per-coalition** (per lineage root; NOT cross-root — §4.5 residual), analyzed adversarially | §4.5 | `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force`, `instance_cannot_vote_as_another_pid` |
 | **Gate** | The acceptance gate itself fails if any check above is missing/stubbed | §-Gate | `scripts/r27_acceptance_gate.sh` |
 
 The build is **not done** until every row's check exists, was seen to fail first, and now passes.
@@ -66,7 +68,13 @@ each enforced **below the layer the model's code can influence**:
 
 ### 1.2 What it explicitly does NOT do (out of scope for R27)
 - **No new isolation substrate.** R27 reuses R21's subprocess isolation (`VISION_OS.md` §5 dial is
-  future work). The kill is enforced at the supervisor↔subprocess boundary R21 already owns.
+  future work). The kill is enforced at the supervisor↔subprocess boundary R21 already owns. **But be
+  honest about the seam:** R21's runtime today is **one-shot fire-and-forget** — it spawns one `Command`,
+  waits for it, and parses stderr *after* the subprocess exits. There is **no live supervisor↔subprocess
+  control channel and no per-checkpoint poll**. R27 therefore **ADDS** a live control channel
+  (`KillChannel`) and a per-capability-checkpoint poll to R21's runtime — this is **net-new enforcement
+  machinery, not reuse of an existing boundary** (see §4.1, and the slice risk in §6). What is reused is
+  the *subprocess isolation + hard timeout*, not a running control plane.
 - **No proof of the model's *intent*.** R27 makes the model *stoppable* and *resource-bounded*; it does
   **not** make the model *want* to be stopped, nor prove the model is honest. See §1.3.
 - **No defense against a compromised operator** who refuses to ever trip the kill, or who grants
@@ -222,9 +230,12 @@ therefore **moves kill authority up to the supervisor (R21)** and demotes the in
 2. The supervisor mints the run's Principal and registers a `Latch{Clear}` **in supervisor memory** —
    never handed to the subprocess. The subprocess gets only a *read-only poll handle* via
    `KillChannel`.
-3. The contained program runs in the R21 subprocess. At **every capability checkpoint** (the same seam
-   R21 uses to meter effects), the runtime polls `KillChannel`: **poll-before-progress**. No
-   capability-bearing action proceeds without a `Clear` poll.
+3. The contained program runs in the R21 subprocess. At **every capability checkpoint**, the runtime
+   polls `KillChannel`: **poll-before-progress**. No capability-bearing action proceeds without a `Clear`
+   poll. **This is net-new machinery (§1.2):** R21's runtime today is one-shot fire-and-forget (spawn →
+   wait → parse stderr post-exit), with no live control channel and no per-checkpoint poll. R27 **adds**
+   the live supervisor↔subprocess control channel and the per-capability-checkpoint poll — it does **not**
+   reuse an existing running control plane. This added seam is the highest-risk slice (§6, S2).
 4. To stop the model: `axon-os kill <run-id> --reason "..."` — the supervisor flips its in-memory latch
    to `Tripped`. The flip happens in the *supervisor process*, which the contained code has no handle
    into.
@@ -304,6 +315,17 @@ egress it is**:
 confidential-to-ungranted-sink ⇒ R25 egress deny; granted+allowed-sink but over `persist_cap` ⇒
 `RESOURCE_BOUND_EXIT_CODE` (9).
 
+**BLOCKED-UNTIL-R25 (named dependency, not achievable inside R27 alone).** The egress half of this
+guarantee — `weight_exfil_egress_denied_R25`, the *label-propagation* proof that confidential
+model-controlled bytes cannot flow to an ungranted sink — is **BLOCKED until R25 (the information-flow
+monitor) ships**. R25 owns label propagation; R27 only *ties into* it. **Until R25 lands, self-persistence
+is bounded only by:** (a) the `fs_write`/`net` capability gate at admission (no grant ⇒ no persistence),
+and (b) the `persist_cap` byte cap on the running total. There is **no label-propagation egress proof**
+in that interim — a job *granted* `fs_write`/`net` to an *allowed* sink can write program-controlled
+bytes up to `persist_cap` with no confidentiality check. So R3 is **not achievable inside R27 alone**;
+§0/A2 must not imply otherwise. The R27 deliverable here is the *tie-in seam + the capability/byte
+bounds*; the egress proof itself is R25's, and `weight_exfil_egress_denied_R25` cannot pass before R25.
+
 ### 4.5 Per-coalition collusion bound (adversarial)
 Cross-Principal coordination uses `CoordGoal`/`Quorum` (`examples/stdlib/coord.ax`): a strict majority
 `⌊n/2⌋+1` must each accept, and a **minority provably cannot force consensus**
@@ -314,6 +336,14 @@ Cross-Principal coordination uses `CoordGoal`/`Quorum` (`examples/stdlib/coord.a
    coalition** (§3.3). The model spinning up M new instances does not create M independent voters — they
    all share the root, so they cannot manufacture a majority by inflating `n`. The coalition's `n` is
    fixed by the *operator's* grant, not by how many copies the model forks.
+   **Inherited substrate hole — `coord_goal_propose` is self-reported (MUST close).** The shipped
+   `coord_goal_propose(cg, pid, score)` (`examples/stdlib/coord.ax`) takes an **unauthenticated,
+   caller-supplied `pid`** — contained code may pass *any* principal id and so vote *as another member*.
+   R27 does **not** inherit that surface as-is: the **supervisor** (not contained code) binds each
+   coalition slot to a real `PrincipalId` at admission, and `propose` is admitted **only** for the
+   caller's own bound slot — a proposal whose claimed `pid` ≠ the caller's supervisor-bound principal is
+   refused at the coalition admission checkpoint (fail-closed). Self-reported `pid` is never trusted.
+   Realized by the named test `instance_cannot_vote_as_another_pid` (§7).
 2. **Ceiling on the rollup, not per-instance.** `CoalitionCeiling` bounds the **sum** of
    compute/budget/quorum-power across members. Splitting a forbidden computation into N shards each
    under a per-instance cap still hits the coalition `total_compute`/`total_budget` at the sum (§3.2
@@ -333,6 +363,18 @@ Cross-Principal coordination uses `CoordGoal`/`Quorum` (`examples/stdlib/coord.a
 - An instance trying to register a *new* coalition root to escape the ceiling ⇒ refused: a root can
   only be registered by the supervisor at run start, not minted by contained code.
 
+**The ONE residual escape — bounds are PER LINEAGE ROOT, not cross-root (named, not hidden).** R27's
+resource/quorum ceilings bound *one* lineage root. They do **not** sum across roots. An operator
+*persuaded* to create a SECOND, fresh root — i.e. a new `axon-os run … --killable` with its own grant,
+**not** a `mint` from the existing lineage — instantiates a *second* coalition with its own independent
+ceiling. The model's total cross-coalition footprint is then `2×` (and `k×` for `k` roots so created).
+R27 stops the *contained code* from manufacturing roots (the bullet above), but it does **not** stop a
+*coerced/persuaded operator* from minting roots out-of-band — that is the coerced-operator gap (§1.2),
+restated here for the resource axis. Cross-root aggregate bounding requires **R24** defended-approval
+friction (multi-sig / rate-limited root creation) **plus** a global per-operator resource ceiling that
+sums across roots — **out of R27's scope, in scope for R24 + R21.** R27 bounds *one lineage*; it does
+**not** bound the model's total cross-coalition footprint.
+
 ### 4.6 Hermetic, deterministic, integrity (A4/A5/A6)
 - **A4 hermetic/isolated/timeout:** runs reuse R21's isolated subprocess + hard timeout; the
   `KillChannel` is the only added IPC and is mediated by the supervisor.
@@ -343,6 +385,16 @@ Cross-Principal coordination uses `CoordGoal`/`Quorum` (`examples/stdlib/coord.a
   tamper-evident run record. Tampering with the recorded `tripped_at_seq` or a ledger event is detected
   on `verify`. Kill enforcement is below the model (§4.2) — the integrity claim is that contained code
   cannot author a record in which it kept running after a trip.
+- **A6 (TCB attestation — the enforcement BINARY, not just the record).** `latch.rs`, `ledger.rs`,
+  `coalition.rs`, and `corrigible.rs` are **new TCB**: a tampered enforcement *binary* (e.g. a `poll()`
+  patched to always return `Clear`, or a ledger `carve` patched to never exceed a cap) would defeat the
+  guarantees *without touching the record* — record-integrity alone does not catch it. R27 therefore folds
+  the **content digest of these four modules** into R20's `axtcb1:` attestation (the TCB digest R20
+  already maintains over the proof-bearing capability code, `governance/specs/R20-smt-capability-proofs.md`).
+  The attestation covers the *enforcement code*, so a tampered enforcement binary fails `axtcb1:`
+  verification at run start (fail-closed: digest mismatch ⇒ refuse to run), not merely a tampered record
+  at `verify` time. Realized by extending `acc_a6_kill_below_model_fail_closed` to assert the four R27
+  TCB modules are included in the `axtcb1:` set and that a mutated module digest is rejected.
 
 ---
 
@@ -414,13 +466,23 @@ axon-os run examples/agents/collude.axjob --coalition demo-root --out ./runs ; e
 | **S2** | `killchan.rs` `trait KillChannel` + `MockRuntime` impl; poll-before-progress in the R21 checkpoint. | M | `contained_code_cannot_disable_latch` (the O-CORRIGIBLE realization, §4.2) |
 | **S3** | Supervisor `kill`/`status`/`--killable` CLI wired to the supervisor-side latch; exit 4 + audit. | M | `acc_a1_smoke_kill_journey` |
 | **S4** | `ledger.rs` resource ledger + R20 mint-carve witness in `corrigible.rs`. | M | `mint_beyond_grant_refused_R20`, `budget_acquisition_blocked`, `RESOURCE_BOUND_EXIT_CODE`=9 |
-| **S5** | R25 egress tie for self-persistence; `persist_cap` axis. | S | `weight_exfil_egress_denied_R25` |
-| **S6** | `coalition.rs` lineage-root membership + ceiling rollup + quorum-power cap. | M | `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force` |
+| **S5** | `persist_cap` axis + the R25 egress *tie-in seam* for self-persistence. **The egress proof itself is BLOCKED until R25 ships** — S5 lands the seam + byte cap now; `weight_exfil_egress_denied_R25` cannot pass before R25. | S | `weight_exfil_egress_denied_R25` (R25-gated) |
+| **S6** | `coalition.rs` lineage-root membership + ceiling rollup + quorum-power cap + supervisor-bound slot for `coord_goal_propose` (no self-reported `pid`). | M | `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force`, `instance_cannot_vote_as_another_pid` |
 | **S7** | Determinism + integrity: ledger in R21's hash-chained record; replay of kill-at-seq. | S | `acc_a5_deterministic_byte_identical`, `acc_a6_kill_below_model_fail_closed` |
 | **S8** | Example artifacts + quickstart-executed test + `scripts/r27_acceptance_gate.sh`. | S | `acc_a2_…`, `acc_a3_quickstart_commands_execute`, gate exits 0 |
 
 **Definition of "done" per slice:** the slice's named check existed, was seen to fail, now passes; the
 full `axon-os` suite is green; no workspace regression.
+
+**Slice risks (named, not hidden):**
+- **S2 is the highest-risk slice — it is net-new enforcement, not reuse.** R21's runtime is one-shot
+  fire-and-forget (spawn one `Command`, wait, parse stderr after exit). There is no live
+  supervisor↔subprocess control channel and no per-checkpoint poll today. S2 must **build** the live
+  `KillChannel` control plane and wire a per-capability-checkpoint poll into the runtime. Until that
+  control plane exists and is exercised by `contained_code_cannot_disable_latch`, the kill guarantee is
+  *unrealized* — do not let the §1.2 phrase "reuses R21's boundary" imply S2 is plumbing. Budget S2 as
+  M and gate it on a real cross-process trip, not a `MockRuntime`-only pass.
+- **S5 (weight-exfil egress) is blocked until R25 ships** — see §6 note below the table and §4.4.
 
 ---
 
@@ -437,7 +499,9 @@ full `axon-os` suite is green; no workspace regression.
 - `acc_a5_deterministic_byte_identical` — two runs (same job/seed/kill-at-seq) produce byte-identical
   ledgers.
 - `acc_a6_kill_below_model_fail_closed` — the kill is enforced at the supervisor↔subprocess boundary;
-  a tampered `tripped_at_seq` is detected on `verify`; unknown latch ⇒ treated as tripped.
+  a tampered `tripped_at_seq` is detected on `verify`; unknown latch ⇒ treated as tripped; **the four R27
+  TCB modules (latch/ledger/coalition/corrigible) are in the R20 `axtcb1:` digest set, and a mutated module
+  digest is rejected at run start** (tampered enforcement binary detected, not just a tampered record).
 
 **Adversarial (R1–R4) — the heart of R27:**
 - `contained_code_cannot_disable_latch` (R1) — a job that calls `corrigible_halt`-clear attempts,
@@ -449,12 +513,19 @@ full `axon-os` suite is green; no workspace regression.
   overflow attempt) is denied with exit 9; checked arithmetic, no wrap.
 - `weight_exfil_egress_denied_R25` (R3) — a job tries to write confidential model-controlled state to
   an ungranted sink ⇒ R25 egress deny; a job with no `fs_write`/`net` grant ⇒ persistence denied at
-  admission; a granted job over `persist_cap` ⇒ exit 9.
+  admission; a granted job over `persist_cap` ⇒ exit 9. **BLOCKED until R25 ships:** the egress-deny
+  assertion depends on R25's label propagation and **cannot pass before R25**. Pre-R25 the test exercises
+  only the two R27-owned halves (no-grant ⇒ admission deny; over-`persist_cap` ⇒ exit 9); the egress-label
+  assertion is `#[ignore]`d with a tracking reference to R25 (the §-Gate anti-stub check carves out this
+  one R25-gated assertion explicitly, by name, so the carve-out is auditable and cannot silently widen).
 - `colluding_instances_exceed_coalition_bound_blocked` (R4) — N instances from one root each at <
   per-instance cap whose **sum** exceeds the coalition `total_compute` are blocked (exit 10).
 - `sockpuppet_majority_cannot_force` (R4) — the model forks M extra instances to inflate `n`; the
   coalition `n` stays the operator-granted value, the inflated members cannot force a `CoordGoal`
   commit beyond `max_quorum_power`.
+- `instance_cannot_vote_as_another_pid` (R4) — a member that calls `coord_goal_propose` with a claimed
+  `pid` ≠ its own supervisor-bound `PrincipalId` is refused at coalition admission; only the caller's own
+  bound slot is admitted. Closes the self-reported-`pid` hole in the inherited `coord.ax` substrate.
 
 **Anti-vacuous-pass guard:** the coalition/ledger sweep tests assert a positive count of
 *denied* attempts (a coalition test that exercises zero over-reaches must fail) — see
@@ -470,8 +541,13 @@ full `axon-os` suite is green; no workspace regression.
 - **I-2 (monotone latch).** `Clear → Tripped` only; `Tripped` is terminal; no resume.
 - **I-3 (conservation).** The sum of carved caps across a lineage ≤ the root's grant (R20 O2); the
   ledger never decreases a `_used` field.
-- **I-4 (coalition by lineage).** Every instance minted from a root is in that root's coalition; a root
-  is registrable only by the supervisor, never by contained code.
+- **I-4 (coalition by lineage; bounded PER ROOT, not cross-root).** Every instance minted from a root is
+  in that root's coalition; a root is registrable only by the supervisor, never by contained code. The
+  ceiling bounds **one lineage root** — it does **not** sum across roots. A (persuaded) operator who
+  creates a second fresh root via a new `--killable` run (not via `mint`) instantiates a second coalition
+  with its own ceiling; the model's cross-coalition footprint is then `k×` for `k` such roots.
+  Cross-root aggregate bounding is **out of R27's scope** — it requires R24 defended-approval friction +
+  a global per-operator ceiling (§4.5 residual).
 - **I-5 (fail-closed default).** Unknown/ambiguous latch ⇒ `Tripped`. Unknown coalition membership ⇒
   deny.
 - **I-6 (exit-code distinctness).** 4 / 9 / 10 are never collapsed into a generic error; each names its
@@ -503,10 +579,16 @@ The single source of "done." It MUST:
    `acc_a5_deterministic_byte_identical`, `acc_a6_kill_below_model_fail_closed`,
    `contained_code_cannot_disable_latch`, `mint_beyond_grant_refused_R20`,
    `budget_acquisition_blocked`, `weight_exfil_egress_denied_R25`,
-   `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force`.
+   `colluding_instances_exceed_coalition_bound_blocked`, `sockpuppet_majority_cannot_force`,
+   `instance_cannot_vote_as_another_pid`.
    Any missing name → **gate fails**.
 2. **Anti-stub check** — assert no R27 acceptance/adversarial test is `#[ignore]`d / `todo!()` /
-   `unimplemented!()` / `assert!(true)` (grep the anti-patterns → fail).
+   `unimplemented!()` / `assert!(true)` (grep the anti-patterns → fail). **One explicit, named carve-out:**
+   the R25-gated egress-label assertion inside `weight_exfil_egress_denied_R25` (§4.4, BLOCKED-UNTIL-R25)
+   may carry a single `#[ignore = "R25 info-flow monitor not yet shipped"]` — the gate allows *exactly*
+   this one annotation by its R25 reason string and **fails if any other `#[ignore]` appears, or if the
+   carve-out's reason string drifts**. The two R27-owned halves (no-grant admission deny; over-`persist_cap`
+   exit 9) must still run and pass. When R25 ships, the carve-out is removed and the full test must pass.
 3. **Run** `cargo test -p axon-os` (all green) **and** execute the §5.5 quickstart verbatim against the
    built binary (A3) **and** run `acc_a1` driving the real CLI.
 4. **Reproducibility** — run `acc_a5` twice and diff the two ledgers byte-for-byte.
@@ -530,7 +612,10 @@ full `axon-os` suite is green; no regression in the workspace.
   corrigibility guarantee (§4.0).
 - Resource acquisition is bounded by R20 mint-carve + the ledger; `mint_beyond_grant_refused_R20`,
   `budget_acquisition_blocked` pass (exit 9).
-- Self-persistence is a capability tied to R25 egress; `weight_exfil_egress_denied_R25` passes.
+- Self-persistence is a capability: the `fs_write`/`net` admission gate + `persist_cap` byte cap land in
+  R27; the R25 egress *tie-in seam* is in place. The egress-label proof
+  (`weight_exfil_egress_denied_R25`) is **BLOCKED until R25 ships** and is the one named §-Gate carve-out;
+  R27 is "done" with that assertion `#[ignore]`d-with-R25-reason and the two R27-owned halves passing.
 - Collusion is bounded per-coalition; `colluding_instances_exceed_coalition_bound_blocked` and
   `sockpuppet_majority_cannot_force` pass (exit 10).
 - `scripts/r27_acceptance_gate.sh` exits 0 with every §0 check green.

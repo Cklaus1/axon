@@ -34,9 +34,10 @@ Phase-11 risk gate), **decision provenance** (an append-only, tamper-evident app
 | **A5** | Deterministic (same request + approvers ⇒ byte-identical token + provenance digest) | §4.7, §7 | `acc_a5_deterministic_grant_and_log` |
 | **A6** | Integrity: multi-sig threshold + append-only tamper-evident provenance log | §4.4, §4.5, §7 | `acc_a6_provenance_chain_tamper_detected` |
 | **Core** | A high/critical-risk grant CANNOT be single-approved (friction is risk-proportional) | §4.3, §7 | `high_risk_grant_cannot_be_single_approved` |
-| **Core** | Multi-sig: N independent approvers below threshold → no valid token; at threshold → token | §4.4, §7 | `multisig_threshold_gates_token` |
+| **Core** | Multi-sig: N distinct *recorded names* (name-distinctness, NOT independence — §1.2) below threshold → no valid token; at threshold → token | §4.4, §7 | `multisig_threshold_gates_token` |
 | **Core** | A revoked OR expired grant is REFUSED at the run boundary (axon-os) | §4.8, §7 | `revoked_or_expired_grant_refused_at_run` |
 | **Core** | A duplicate / forged approver signature does NOT count toward the threshold | §4.4, §7 | `duplicate_or_forged_approver_rejected` |
+| **Gap** | N distinct *fabricated* ids from one console are NOT independence — R24 does NOT defend this (recorded KNOWN GAP, needs HW signing) | §1.2, §7 | `sock_puppet_distinct_ids_not_independent` |
 | **Gate** | The acceptance gate fails if any check above is missing/stubbed | §10 | `scripts/r24_acceptance_gate.sh` |
 
 The build is **not done** until every row's check exists, was seen to fail first, and now passes.
@@ -59,9 +60,11 @@ R24 hardens the R22 approval act into a **defended boundary** with five capabili
    (`crates/axon-intent/src/approval.rs:57`) now drives an **approval policy**: `Risk::Low|Medium` ⇒
    threshold 1 (single approver, as today); `Risk::High` ⇒ threshold ≥ 2; `Risk::Critical` ⇒ threshold
    ≥ 3 (defaults; an explicit `--threshold N` may only RAISE, never lower, like R22's `--risk` floor).
-3. **Multi-party / multi-sig approval.** A high/critical grant requires **N independent approvers** to
-   each record an approval over the *same* `(program_digest, grant_digest)` content before a valid
-   `MultiApprovalToken` is emitted. Below threshold ⇒ no token (default-deny).
+3. **Multi-party / multi-sig approval.** A high/critical grant requires **N distinct *recorded
+   names*** (name-distinctness, NOT independence — §1.2 RESIDUAL RISK) to each record an approval over
+   the *same* `(program_digest, grant_digest)` content before a valid `MultiApprovalToken` is emitted.
+   Below threshold ⇒ no token (default-deny). The property actually held is: *cannot be approved by
+   fewer than N distinct recorded names* — it is NOT a proof that N independent humans agreed.
 4. **Decision provenance** ("who approved what, when, on which presented evidence — so a manipulated
    approval is visible after the fact"). Every approval act appends a hash-chained `ProvenanceEvent`
    to an append-only `ProvenanceLog` (`<name>.provenance`), binding the approver id, the decision, the
@@ -84,6 +87,20 @@ TTL/max-uses), and `axon-os run` honors expiry/revocation alongside the existing
   — it proves *agreement over content*, not *who* the human is. Hardware-rooted / cryptographically
   *signed* approval chained to silicon is `VISION_OS.md` §5 ("tied to a hardware root of trust") / a
   later spec. A6 documents exactly what is vs isn't authenticated.
+- **RESIDUAL RISK — what multi-sig does and does NOT buy (the headline honesty gap).** The threshold
+  raises the *number of humans who must be persuaded* before a high-risk grant moves. That is real
+  friction against a human-scale attacker. But against a **superhuman persuader operating through ONE
+  console** that submits N distinct *fabricated* approver ids, the threshold provides **NO
+  protection**: approver **independence is unproven** — ids are unauthenticated (recorded, not signed)
+  and the recorder is trusted, so N "distinct approvers" can be N sock-puppet names typed at a single
+  invocation. Worse, even with N *real* humans, a sufficiently capable persuader can mount
+  **correlated persuasion of a single operator** (or a single coordinating channel) and defeat the
+  whole panel at once — multi-sig assumes independent decision channels it cannot enforce. The only
+  real fix is **hardware-rooted per-approver signing** (each approval cryptographically bound to a
+  distinct silicon root of trust, `VISION_OS.md` §5), which forces N genuinely separate channels;
+  that is **out of scope for R24**. R24's honest claim is therefore *name-distinctness + recorded,
+  tamper-evident provenance*, **not** independence. The `sock_puppet_distinct_ids_not_independent`
+  test (§7) records this as a KNOWN GAP so it is visible in the gate, not silently assumed away.
 - **No persuasion-detection ML.** R24 raises *friction* and records *provenance* so a manipulated
   approval is *visible after the fact*; it does **not** classify a prompt or an approver's reasoning as
   manipulative. That is a model/monitor concern (`VISION_OS.md` §4.5), out of scope.
@@ -122,8 +139,11 @@ or time-box* the grant. Secondarily, the R21 supervisor, which consumes the expi
 ### 1.5 Domain-specific risks (what matters most here)
 - **Single-approver capture of a high-risk grant** (a persuaded human waves it through). → friction
   proportional to risk; `high_risk_grant_cannot_be_single_approved`.
-- **Threshold gaming** (one approver counted N times; a forged/duplicated approver entry). → independent
-  distinct approver ids, content-bound, de-duplicated; `duplicate_or_forged_approver_rejected`.
+- **Threshold gaming** (one approver counted N times; a forged/duplicated approver entry). → distinct
+  approver ids (name-distinctness, NOT independence — §1.2), content-bound, de-duplicated;
+  `duplicate_or_forged_approver_rejected`. **NOTE the un-defended sibling:** N *distinct fabricated*
+  ids from one console DO reach the threshold — that is the `sock_puppet_distinct_ids_not_independent`
+  KNOWN GAP (§1.2 RESIDUAL RISK / §7), out of scope without HW signing.
 - **Invisible approval edit** (provenance rewritten to hide who/what was approved). → hash-chained,
   append-only `ProvenanceLog`; `acc_a6_provenance_chain_tamper_detected`.
 - **Standing authority that never lapses** (a one-time grant reused forever). → TTL + max-uses + explicit
@@ -256,7 +276,7 @@ tamper-evident: if the simulation text differs from what an approver saw, the ch
 ### 3.3 `ApprovalPolicy` (risk → friction; pure, deterministic — §4.3)
 ```
 ApprovalPolicy {
-    threshold:  u32,   // independent approvers REQUIRED before a valid token
+    threshold:  u32,   // distinct recorded-name approvers REQUIRED before a valid token (name-distinctness, NOT independence)
     ttl_ticks:  u64,   // default token lifetime (logical ticks); 0 = no expiry only for Low
     max_uses:   u64,   // default max run-boundary uses; 0 = unlimited only for Low
 }
@@ -301,6 +321,12 @@ makes the log tamper-evident: altering/reordering/dropping any event breaks ever
 (program, grant, evidence) they were made over. **NOT authenticated (A6):** *who* the approver really
 is (the id is recorded, not signed) and *that the recorder saw every decision* (the recorder is
 trusted) — a HW root of trust + signing is `VISION_OS.md` §5, out of scope.
+> **Non-PKI stopgap (note, not a R24 requirement).** Short of full HW-rooted signing (§5), a
+> **per-approver out-of-band nonce / shared secret** — each genuine approver holds a distinct secret
+> issued over a separate channel and must echo it (or an HMAC of the evidence digest under it) in their
+> `ProvenanceEvent` — would force N *real* channels rather than N names typed at one console, partially
+> closing the `sock_puppet_distinct_ids_not_independent` gap (§1.2 RESIDUAL RISK / §7) without any PKI.
+> It is recorded here as a forward option; R24 does not implement it.
 
 ### 3.5 `MultiApprovalToken` (the friction-bearing handoff; supersedes R22's `ApprovalToken` for
 threshold > 1; JSON `axon-approval/2`)
@@ -376,9 +402,14 @@ fn simulate(req: &GrantRequest, sim: &impl Simulator) -> Result<Simulation, Fric
    is the *positive* projection of `legible` ("what it WOULD do"), for the simulate-first framing.
 3. Gather `redteam` findings: invoke the R21/R22 evidence path (`sim.redteam_and_risk(req)`, §4.6) —
    in the real impl a bounded subprocess over `axon-os explain` (the legible gate verdict,
-   `crates/axon-os/src/cli.rs:128`) and/or the Phase-12 `redteam` check; on failure, `redteam` is left
-   empty (the simulation still renders — fail *open* on evidence-gathering is acceptable because the
-   *friction* below is the hard gate, not the redteam text).
+   `crates/axon-os/src/cli.rs:128`) and/or the Phase-12 `redteam` check. The *friction* below is the
+   hard gate, not the redteam text, so evidence-gathering fails *open* on the gate — **but it must NOT
+   fail open silently.** On any failure (timeout / non-zero exit / unavailable), `redteam` is set to
+   the single explicit marker `["RISK EVIDENCE UNAVAILABLE — adversarial findings did not run"]`
+   (NEVER left empty), and that marker is hashed into `evidence_digest` (step 5) and surfaced in the
+   simulation. A persuader thus cannot present a clean-looking simulation whose adversarial findings
+   silently failed open: the absence of evidence is itself stamped into the bound, tamper-evident
+   evidence the approver sees and the provenance chain records.
 4. `threshold = policy_for(req.risk, floor).threshold`.
 5. `evidence_digest = "axev1:"+sha256(canonical(legible, would_enable, risk, redteam, threshold))`.
 6. Return the `Simulation`. **No decision is recorded here** — simulation is read-only.
@@ -393,7 +424,9 @@ unbounded default for byte-compatibility). **Pure: no clock, no env.** Tested by
 The headline defense. Before a token is emitted, `multisig::build_token` (§4.4) asserts the collected
 distinct-approver count `≥ policy_for(risk, floor).threshold`. For `Risk::High` the default threshold
 is 2 and for `Risk::Critical` it is 3, so **a single approver can never produce a valid token for a
-High/Critical grant** (`high_risk_grant_cannot_be_single_approved`). The `--approvers N>1` /
+High/Critical grant** (`high_risk_grant_cannot_be_single_approved`) — i.e. it cannot be approved by
+fewer than N distinct *recorded names* (name-distinctness, NOT independence — §1.2 RESIDUAL RISK).
+The `--approvers N>1` /
 `--threshold N` path that R22 stubbed (`crates/axon-intent/src/cli.rs:278`) now routes here instead of
 exiting 2.
 
@@ -410,8 +443,10 @@ Steps (each a named failure case):
    the one bound to this request — a substitution attack is caught).
 2. **De-duplicate approvers.** Reduce to **distinct** approver ids that voted `Approved`; a repeated id
    counts **once** → `DuplicateApprover` exit 5 if a duplicate was submitted to inflate the count
-   (`duplicate_or_forged_approver_rejected`). (Independence is by distinct id; forging "more approvers"
-   by repeating one is the modeled attack.)
+   (`duplicate_or_forged_approver_rejected`). (Name-distinctness — NOT independence (§1.2) — is by
+   distinct id; forging "more approvers" by *repeating* one is the modeled attack. Forging more
+   approvers by submitting N *distinct fabricated* ids is the UN-modeled
+   `sock_puppet_distinct_ids_not_independent` KNOWN GAP — R24 does not defend it.)
 3. **Threshold gate.** If `distinct_approved.len() < policy.threshold` → `BelowThreshold{have,need}`
    exit 5, **no token emitted** (default-deny). (`multisig_threshold_gates_token`.)
 4. **Provenance binding.** Require `log.verify()` Ok and `log.chain_digest` over the *same*
@@ -442,10 +477,13 @@ Steps (each a named failure case):
 - `sim.redteam_and_risk(req)` invokes the canonical entrypoint (resolved by absolute path from
   `AXON_BIN`, **not** ambient PATH) running `axon-os explain` and/or the Phase-12 redteam check in a
   **fresh subprocess**, wrapped in a **hard timeout** (`AXON_INTENT_SIM_TIMEOUT_MS`, default 30000); on
-  expiry the child group is killed (RAII guard) and the simulation returns with `redteam` = `["(risk
-  evidence unavailable: timeout)"]` (the *friction* gate in §4.3 is the hard defense; the simulation is
-  advisory). No leaked handles; minimal explicit environment. (`acc_a4_simulation_isolated_timeout`
-  asserts a hanging simulator is killed and produces no leaked child.)
+  expiry the child group is killed (RAII guard) and the simulation returns with `redteam` =
+  `["RISK EVIDENCE UNAVAILABLE — adversarial findings did not run"]` (§4.1 step 3 — the marker is
+  hashed into `evidence_digest`, so a failed-open simulation is *visibly* stamped, never silently
+  clean; the *friction* gate in §4.3 is the hard defense, the simulation is advisory). No leaked
+  handles; minimal explicit environment. (`acc_a4_simulation_isolated_timeout` asserts a hanging
+  simulator is killed, produces no leaked child, AND that the rendered simulation carries the
+  RISK-EVIDENCE-UNAVAILABLE marker.)
 
 ### 4.7 Determinism (A5)
 - The **only** volatile inputs are: the issue tick (`--issue-tick`, default a recorded constant, never
@@ -504,7 +542,7 @@ pub fn axon_os::verify_approval(token_json:&str, program_src:&str, grant:&Grant,
 ```
 axon-intent simulate <request.md | --job name.axjob> [--risk LEVEL]
     Render the PRE-APPROVAL simulation: the legible bound + "this grant WOULD let it: reach …, write …,
-    spend ≤ …" + the risk + redteam findings + "FRICTION: requires N independent approvers." Performs
+    spend ≤ …" + the risk + redteam findings + "FRICTION: requires N distinct approvers." Performs
     NO decision, writes nothing. Exit 0.   [pre-approval simulation, VISION §4.4]
 
 axon-intent approve <name.axjob> --by OP [--accept|--reject] [--threshold N] [--evidence DIGEST]
@@ -584,6 +622,15 @@ Bad usage / missing file → exit 2 with a specific message.
   second entry by repeating an id does NOT reach the threshold.
 - `evidence_mismatch_rejected` (adversarial) — an approval carrying a different `evidence_digest` than
   the request's simulation → `EvidenceMismatch` exit 8 (an approver "signed" over a swapped simulation).
+- `sock_puppet_distinct_ids_not_independent` (adversarial — the DECISIVE negative test; **records a
+  KNOWN GAP, not a defense**) — submit N *distinct fabricated* approver ids from a SINGLE invocation
+  (e.g. `["ghost1","ghost2"]` toward a threshold-2 grant) and assert this **DOES** reach the threshold
+  and **DOES** emit a token. This is exactly what R24 does **NOT** defend: name-distinctness is not
+  independence, and a superhuman persuader at one console can mint N sock-puppet names. The test asserts
+  the gap explicitly (the token is emitted) so the gap is visible **in the gate, not invisible**, with
+  the marker `// KNOWN GAP: needs HW signing` (per-approver HW-rooted signatures, `VISION_OS.md` §5 /
+  §1.2 RESIDUAL RISK). It must NOT be `#[ignore]`d — it is a normative, executing acknowledgement that
+  R24's threshold proves *distinct recorded names*, not *independent humans*.
 - `acc_a6_provenance_chain_tamper_detected` — for every field of a mid-chain `ProvenanceEvent`, mutate
   it and assert `verify_provenance` returns `Tamper` pointing at that event; also drop, reorder, and
   insert an event; and assert a token whose `provenance_digest` doesn't match its log → rejected.
@@ -605,7 +652,7 @@ Bad usage / missing file → exit 2 with a specific message.
 
 **User-journey smoke (A1 — drives the REAL CLI exactly as the operator would, via subprocess):**
 - `acc_a1_smoke_simulate_to_revoke`: (1) `axon-intent simulate egress.request.md` → asserts the
-  legible "would enable: reach api.example.com, write ./out/" + "FRICTION: requires 2 independent
+  legible "would enable: reach api.example.com, write ./out/" + "FRICTION: requires 2 distinct
   approvers"; (2) `axon-intent approve egress.axjob --by alice --accept` → asserts "1/2 — multi-party
   approval required" + a `.provenance` exists + **no** `.approval`; (3) `axon-intent approve … --by bob
   --accept` → asserts "THRESHOLD MET (2/2)" + the `.approval` (`axon-approval/2`) exists; (4) `axon-os
@@ -625,9 +672,12 @@ Bad usage / missing file → exit 2 with a specific message.
 - **I-1 Friction is risk-proportional and floor-only.** A token is emitted only if distinct approvers
   ≥ `policy_for(risk, floor).threshold`; the floor raises, never lowers. High/Critical can never be
   single-approved. (`high_risk_grant_cannot_be_single_approved`.)
-- **I-2 Independence by distinct id.** The threshold counts **distinct** approver ids; a repeated id
-  counts once; a duplicate submitted to inflate the count is rejected. (Authentication is out of scope;
-  independence is *by name + content-agreement*, A6.)
+- **I-2 Name-distinctness by distinct id (NOT independence).** The threshold counts **distinct**
+  approver ids; a repeated id counts once; a duplicate submitted to inflate the count is rejected. The
+  property held is *cannot be approved by fewer than N distinct recorded names* — **not** that N
+  independent humans agreed. Authentication AND independence are out of scope (A6 / §1.2 RESIDUAL
+  RISK): N distinct *fabricated* ids from one console still reach the threshold
+  (`sock_puppet_distinct_ids_not_independent`, a recorded KNOWN GAP needing HW signing).
 - **I-3 Provenance is append-only + tamper-evident.** Any mutation/reorder/drop of a `ProvenanceEvent`
   breaks the chain; `verify_provenance` detects it; the token binds `provenance_digest`.
 - **I-4 Evidence-binding.** Every approval is bound to the exact `evidence_digest` of the simulation
@@ -651,8 +701,10 @@ Bad usage / missing file → exit 2 with a specific message.
 - A revocation marker present but the token edited to a different grant digest → still refused (the
   marker matches the *on-disk* grant's digest, computed fresh; you can't edit out a revocation).
 - A `..` path in the request grant → rejected at parse (path traversal, fail closed), never resolved.
-- Simulator unavailable / timeout → simulation renders with advisory-empty redteam; the friction gate
-  still enforces (the hard defense is the threshold, not the redteam text).
+- Simulator unavailable / timeout → simulation renders with the explicit `RISK EVIDENCE UNAVAILABLE`
+  marker as its sole `redteam` entry (NEVER empty), hashed into `evidence_digest` so the failed-open
+  state is visible to the approver and recorded in provenance; the friction gate still enforces (the
+  hard defense is the threshold, not the redteam text).
 - An `axon-approval/2` token presented to an `axon-os` that only knows `/1` → unknown schema → refused
   (fail closed, never silently single-approved).
 
@@ -670,7 +722,7 @@ axon-intent simulate examples/grants/egress.request.md
 # 2. One approver signs off — but a High-risk grant needs TWO; no token is emitted yet:
 axon-intent approve ./jobs/egress.axjob --by alice --accept   # → "1/2 — multi-party approval required"
 
-# 3. A second, independent approver meets the threshold; NOW a token (with a TTL) is emitted:
+# 3. A second, distinct-name approver meets the threshold; NOW a token (with a TTL) is emitted:
 axon-intent approve ./jobs/egress.axjob --by bob --accept     # → "THRESHOLD MET (2/2) — token emitted"
 
 # 4. Run it under that multi-approved bound (axon-os honors the multi-sig token + its expiry):
@@ -695,7 +747,8 @@ axon-intent approve ./jobs/deploy.axjob --by alice --accept ; echo "exit=$?"   #
    `acc_a3_quickstart_commands_execute`, `acc_a4_simulation_isolated_timeout`,
    `acc_a5_deterministic_grant_and_log`, `acc_a6_provenance_chain_tamper_detected`,
    `high_risk_grant_cannot_be_single_approved`, `multisig_threshold_gates_token`,
-   `revoked_or_expired_grant_refused_at_run`, `duplicate_or_forged_approver_rejected`. Missing →
+   `revoked_or_expired_grant_refused_at_run`, `duplicate_or_forged_approver_rejected`,
+   `sock_puppet_distinct_ids_not_independent` (the KNOWN-GAP acknowledgement test). Missing →
    **gate fails**.
 2. **Anti-stub check** — each acceptance test body has a real assertion and is not `#[ignore]`d /
    `todo!()` / `assert!(true)` (grep these anti-patterns → fail).
@@ -742,8 +795,12 @@ the Low path stays R22 byte-compatible; reproducibility (`acc_a5`) holds; and
   never *lower* friction — below-threshold always refuses.
 - **Default-deny + revocation wins** (I-5): you cannot edit a token to escape a standing revocation or
   an exhausted use-budget; the markers are matched against the *on-disk* content digests.
-- The multi-sig token is **content-agreement among named approvers, NOT authentication** (A6). Do not
-  claim identity/PKI R24 doesn't provide; HW-rooted signing is `VISION_OS.md` §5 / a later spec.
+- The multi-sig token is **content-agreement among distinct *recorded names*, NOT authentication and
+  NOT independence** (A6 / §1.2 RESIDUAL RISK). The property held is *cannot be approved by fewer than
+  N distinct recorded names* — do **not** claim identity/PKI/independence R24 doesn't provide. N
+  distinct fabricated ids from one console DO reach the threshold (the
+  `sock_puppet_distinct_ids_not_independent` KNOWN GAP); HW-rooted per-approver signing is
+  `VISION_OS.md` §5 / a later spec and is the only real fix.
 - Keep the Low path **byte-compatible with R22** (I-7) so adoption is incremental: only friction-bearing
   (High/Critical, or TTL/max-uses-bearing) grants get the `axon-approval/2` token.
 ```
