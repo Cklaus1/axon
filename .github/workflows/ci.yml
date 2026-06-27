@@ -19,8 +19,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # Pinned to a fixed stable (not @stable) so rustfmt/clippy can't drift and
+      # re-break the fmt check the way an unpinned `@stable` silently did.
+      - name: Install Rust 1.95.0
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: rustfmt, clippy
 
