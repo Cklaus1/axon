@@ -31,13 +31,17 @@ impl Budget {
         Budget { used: 0, cap }
     }
     fn spend(self, amount: i64) -> Self {
+        // R20 review (ASI hardening): saturating, so an adversarial near-i64::MAX
+        // budget can never WRAP `used` (wrapping would break the conservation the
+        // SMT model proves over unbounded ℤ — saturation keeps impl == model at
+        // the boundary; the grid test below probes i64::MAX/MIN-adjacent inputs).
         Budget {
-            used: self.used + amount,
+            used: self.used.saturating_add(amount),
             cap: self.cap,
         }
     }
     fn remaining(self) -> i64 {
-        let r = self.cap - self.used;
+        let r = self.cap.saturating_sub(self.used);
         if r < 0 {
             0
         } else {
@@ -738,9 +742,11 @@ mod tests {
         // the real output. If a future edit weakens `mint`, this fails — the proof
         // and the impl can no longer silently diverge.
         let bools = [false, true];
-        let caps = [0i64, 1, 50, 100];
-        let useds = [0i64, 30, 120]; // 120 > some caps → remaining() clamps to 0
-        let grants = [-10i64, 0, 1, 40, 200];
+        // R20 review: include i64::MAX/MIN-adjacent inputs so the impl↔model
+        // bridge is probed at the overflow boundary, not just small values.
+        let caps = [0i64, 1, 50, 100, i64::MAX, i64::MAX - 1];
+        let useds = [0i64, 30, 120, i64::MAX, i64::MAX - 7]; // > cap ⇒ remaining clamps to 0
+        let grants = [-10i64, 0, 1, 40, 200, i64::MAX, i64::MIN];
         for &p_net in &bools {
             for &p_fs in &bools {
                 for &p_exec in &bools {
