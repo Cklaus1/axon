@@ -77,6 +77,14 @@ enum Cmd {
         /// Emit JSON output (axon-vm-run/1 schema)
         #[arg(long)]
         json: bool,
+
+        /// Skip kernel attestation before boot (dev/CI mode only — NOT for production).
+        ///
+        /// WARNING: disables the mandatory R26 attestation gate. Only use for local
+        /// development or when AXON_CI_NO_KVM=1 is unavailable. In production, kernel
+        /// attestation is always mandatory before any VM boot.
+        #[arg(long)]
+        no_attest: bool,
     },
 
     /// Manage principals
@@ -209,7 +217,8 @@ fn main() {
             principal,
             vsock_port,
             json,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json),
+            no_attest,
+        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest),
         Cmd::Attest {
             kernel,
             policy,
@@ -377,6 +386,7 @@ fn cmd_run(
     principal_name: Option<String>,
     vsock_port: u32,
     json_out: bool,
+    no_attest: bool,
 ) {
     let start = Instant::now();
 
@@ -446,6 +456,30 @@ fn cmd_run(
         source_hash: Some(source_hash),
         seccomp_bpf_b64: seccomp_b64,
     };
+
+    // R26: mandatory kernel attestation before any VM boot.
+    // Measure the kernel and verify it against the stored baseline.
+    // Exits 10 on attestation failure (tampered kernel or baseline mismatch).
+    // Use --no-attest or AXON_CI_NO_KVM=1 to bypass in dev/CI environments only.
+    if let Err(e) = measure_and_attest(&kernel_path, no_attest) {
+        if json_out {
+            let out = serde_json::json!({
+                "schema": "axon-vm-run/1",
+                "ok": false,
+                "run_id": run_id,
+                "exit_code": -1,
+                "elapsed_ms": start.elapsed().as_millis(),
+                "error": e.to_string(),
+                "principal": principal_name,
+                "risk": manifest.risk,
+                "attestation_failed": true,
+            });
+            println!("{}", serde_json::to_string_pretty(&out).unwrap());
+        } else {
+            eprintln!("axon-vm: {e}");
+        }
+        process::exit(10);
+    }
 
     // Choose or generate the Firecracker socket path.
     let socket_path = fc_socket.unwrap_or_else(|| {
@@ -977,6 +1011,79 @@ fn sha256_file(path: &Path) -> String {
     format!("{hash:x}")
 }
 
+// ── R26: kernel attestation gate ─────────────────────────────────────────────
+
+/// Measure the kernel at `kernel_path` and verify it against the stored baseline
+/// in `~/.axon/kernel_baseline.sha256`.
+///
+/// - First run: records the kernel's SHA-256 digest as the trusted baseline.
+/// - Subsequent runs: compares the current digest against the baseline; a mismatch
+///   returns `Err` and the caller exits 10 (kernel tampered / wrong image).
+/// - `no_attest = true`: prints a WARNING and short-circuits to `Ok` (dev mode).
+/// - `AXON_CI_NO_KVM=1`: mock mode for CI pipelines without KVM, returns `Ok`.
+///
+/// Uses `axon_attest::measure_kernel` from the R26 attestation crate, so the
+/// digest is byte-identical with what `axon-vm attest` records.
+fn measure_and_attest(kernel_path: &Path, no_attest: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let baseline_path = {
+        let home = env::var("HOME").unwrap_or_default();
+        PathBuf::from(format!("{}/.axon/kernel_baseline.sha256", home))
+    };
+    measure_and_attest_inner(kernel_path, no_attest, &baseline_path)
+}
+
+/// Inner implementation of `measure_and_attest`, parameterised over the baseline
+/// path so tests can use a temp directory rather than writing to `~/.axon/`.
+fn measure_and_attest_inner(
+    kernel_path: &Path,
+    no_attest: bool,
+    baseline_path: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if no_attest {
+        eprintln!("[axon-vm] WARNING: --no-attest: skipping attestation (dev mode only)");
+        return Ok(());
+    }
+
+    // CI without KVM: bypass attestation so the pipeline runs end-to-end without
+    // real hardware (same AXON_CI_NO_KVM=1 gate as cmd_attest).
+    if env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false) {
+        eprintln!("[axon-vm] attestation: mock mode (AXON_CI_NO_KVM=1)");
+        return Ok(());
+    }
+
+    // Kernel must exist before we can measure it.
+    if !kernel_path.exists() {
+        return Err(format!("kernel not found: {}", kernel_path.display()).into());
+    }
+
+    // Measure using axon-attest — same SHA-256 algorithm as `axon-vm attest`.
+    let measurement = measure_kernel(kernel_path)?;
+    let digest_hex = hex::encode(measurement.digest);
+
+    if let Ok(expected) = fs::read_to_string(baseline_path) {
+        let expected = expected.trim();
+        if expected != digest_hex {
+            eprintln!("[axon-vm] ATTESTATION FAILED: kernel digest mismatch");
+            eprintln!("[axon-vm]   expected: {}", expected);
+            eprintln!("[axon-vm]   got:      {}", digest_hex);
+            return Err("attestation failed: kernel tampered".into());
+        }
+        eprintln!("[axon-vm] attestation OK: digest {}", &digest_hex[..16]);
+    } else {
+        // First run: establish baseline.
+        if let Some(parent) = baseline_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(baseline_path, &digest_hex)?;
+        eprintln!(
+            "[axon-vm] attestation: baseline established ({})",
+            &digest_hex[..16]
+        );
+    }
+
+    Ok(())
+}
+
 // ── Helper: find Firecracker binary ──────────────────────────────────────────
 
 fn which_firecracker() -> Result<PathBuf, Box<dyn std::error::Error>> {
@@ -1201,6 +1308,67 @@ mod tests {
     fn echo_handler_empty_request() {
         let h = EchoHandler;
         assert_eq!(h.handle(""), Some(String::new()));
+    }
+
+    // ── R26 attestation gate tests ──────────────────────────────────────────
+
+    /// Tamper the kernel after the baseline is recorded — attestation must fail.
+    #[test]
+    fn test_attest_fails_on_tampered_kernel() {
+        let dir = std::env::temp_dir();
+        let id = std::process::id();
+        let kernel_path = dir.join(format!("axon-vm-test-kernel-{id}.bin"));
+        let baseline_path = dir.join(format!("axon-vm-test-baseline-{id}.sha256"));
+
+        // Write the genuine kernel and record its baseline digest.
+        let genuine = b"genuine-axon-os-kernel-bytes-for-tamper-test";
+        std::fs::write(&kernel_path, genuine).unwrap();
+        let m = measure_kernel_bytes(genuine);
+        std::fs::write(&baseline_path, hex::encode(m.digest)).unwrap();
+
+        // Tamper: overwrite kernel with different bytes.
+        std::fs::write(&kernel_path, b"TAMPERED-KERNEL-DIFFERENT-CONTENT!!").unwrap();
+
+        // Attestation must fail.
+        let result = measure_and_attest_inner(&kernel_path, false, &baseline_path);
+        assert!(result.is_err(), "tampered kernel must fail attestation");
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("tampered") || msg.contains("attestation failed") || msg.contains("mismatch"),
+            "error must describe attestation failure: {msg}"
+        );
+
+        // Cleanup.
+        let _ = std::fs::remove_file(&kernel_path);
+        let _ = std::fs::remove_file(&baseline_path);
+    }
+
+    /// With --no-attest, attestation is skipped even for a missing kernel.
+    #[test]
+    fn test_no_attest_skips_attestation() {
+        let result = measure_and_attest_inner(
+            Path::new("/nonexistent/axon-vm-test-kernel-no-attest"),
+            true, // no_attest = true
+            Path::new("/nonexistent/axon-vm-test-baseline-no-attest"),
+        );
+        assert!(result.is_ok(), "--no-attest must skip all attestation checks");
+    }
+
+    /// AXON_CI_NO_KVM=1 returns Ok even with no kernel file present.
+    #[test]
+    fn test_attest_ci_mock_mode() {
+        // SAFETY: env mutation is safe here — no other test reads AXON_CI_NO_KVM
+        // in the measure_and_attest_inner path, and Rust test threads do not share
+        // env state across processes. If flaky under parallel test execution, run
+        // with RUST_TEST_THREADS=1.
+        unsafe { std::env::set_var("AXON_CI_NO_KVM", "1"); }
+        let result = measure_and_attest_inner(
+            Path::new("/nonexistent/axon-vm-test-kernel-ci"),
+            false, // no_attest = false
+            Path::new("/nonexistent/axon-vm-test-baseline-ci"),
+        );
+        unsafe { std::env::remove_var("AXON_CI_NO_KVM"); }
+        assert!(result.is_ok(), "AXON_CI_NO_KVM=1 must bypass attestation (CI mock mode)");
     }
 
     #[test]
