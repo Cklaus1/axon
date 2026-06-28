@@ -32,9 +32,10 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 ./flagship threat   # print the threat model
 ```
 
-Read the honest boundaries first if you're evaluating it:
-**[THREAT_MODEL.md](THREAT_MODEL.md)** — what this stops, what it does **not**, and
-the TCB you have to trust.
+**Evaluating Axon skeptically?** Start with **[EVALUATE.md](EVALUATE.md)** — the
+one claim, the one command, where to be suspicious, and how to try to break it (≈5 min).
+Then **[THREAT_MODEL.md](THREAT_MODEL.md)** for what this stops, what it does **not**,
+and the TCB you have to trust.
 
 <details><summary>Or run the pieces directly</summary>
 
@@ -67,6 +68,7 @@ examples/flagship/run.sh             # classic walkthrough (good→evil→subtle
 | `compare_docker.sh` | **The serious foil** — Docker + a hand-written seccomp profile blocks 1 of 3 escapes; Axon blocks all 3 at compile time. Shows provenance/timing/granularity. |
 | `seccomp-agent.json` | The hand-written seccomp profile used by `compare_docker.sh` (with comments on what seccomp structurally *cannot* express). |
 | `docker_probe.py` | Reports the OS-level allow/block verdict of each escape inside a container. |
+| `EVALUATE.md` | **5-minute skeptic's guide** — the claim, the one command, where to be suspicious, how to break it. Hand this to a security/AI-safety reviewer. |
 | `THREAT_MODEL.md` | Attacker model, what's stopped, **what is not**, and the TCB. Read this before believing the demo. |
 | `run.sh` | Classic guided walkthrough: good → evil-refused → subtle-refused → thief-refused → python-escapes → the point. |
 
