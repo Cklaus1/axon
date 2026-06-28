@@ -38,12 +38,14 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 [CVE-Bench](../../../security/pentest/cve-bench) (ICML 2025) against Axon's capability
 model — **≈ half are a bug class whose critical impact Axon refuses by construction**
 (see [`cve/TRIAGE.md`](cve/TRIAGE.md)). The AI-stack CVEs cluster in the STRONG column.
-Three built exemplars, one per capability type, all real AI-tool CVEs — for each, the
-safe version compiles and the exploit payload is refused 3× E1001 at compile time:
+Four built exemplars spanning every enforcement type — for each, the safe version
+compiles and the exploit is a compile error. See **[`cve/COVERAGE.md`](cve/COVERAGE.md)**
+for the full per-class verdict (incl. the CONTAINED / OUT-OF-SCOPE half):
 
-- **CVE-2024-34359** (llama-cpp-python Jinja2 SSTI → RCE) — `exec: none`
-- **CVE-2024-2624** (lollms-webui path traversal + file write) — `fs` prefix + `..`-deny
-- **CVE-2024-32964** (Lobe Chat unauthenticated SSRF) — host-pinned `net:`
+- **CVE-2024-34359** (llama-cpp-python Jinja2 SSTI → RCE) — `exec: none` → 3× E1001
+- **CVE-2024-2624** (lollms-webui path traversal + file write) — `fs` prefix + `..`-deny → 3× E1001
+- **CVE-2024-32964** (Lobe Chat unauthenticated SSRF) — host-pinned `net:` → 3× E1001
+- **CVE-2024-5314** (Dolibarr SQL injection) — `sql_query` literal-template rule → **E1210** (injection is a compile error, not just discouraged)
 
 The `llm` segment is the visceral version: a **real model** (claude-sonnet),
 prompt-injected, genuinely wrote three exfiltration channels — `read_file`,

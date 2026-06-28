@@ -90,8 +90,9 @@ construction.*
 
 ## Reproductions
 
-Three built exemplars spanning all three capability types (`exec` / `fs` / `net`) —
-run them all with `./run.sh`:
+Four built exemplars spanning `exec` / `fs` / `net` / `sql` — run them all with
+`./run.sh`. For the full per-class verdict (incl. the CONTAINED / OUT-OF-SCOPE half),
+see **[COVERAGE.md](COVERAGE.md)**.
 
 - `CVE-2024-34359/` — llama-cpp-python Jinja2 SSTI → **RCE** (`exec: none`). Payload
   refused 3× E1001 (RCE / file access / outbound).
@@ -101,3 +102,6 @@ run them all with `./run.sh`:
 - `CVE-2024-32964/` — Lobe Chat unauthenticated **SSRF** (host-pinned `net`). Payload
   refused 3× E1001 (metadata theft / intranet / dynamic URL). Building this surfaced and
   fixed a real gap: host-pinning now normalizes a full URL to its host.
+- `CVE-2024-5314/` — Dolibarr **SQL injection** (`sql_query` + **E1210**). The biggest
+  MEDIUM class (9 SQLi CVEs) moves to PREVENTED: a concatenated/interpolated SQL template
+  is a **compile error** — injection is unrepresentable, not just discouraged.
