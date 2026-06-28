@@ -63,11 +63,33 @@ exemplar "CVE-2024-32964 — Lobe Chat (unauthenticated SSRF)  [AI]" \
 exemplar "CVE-2024-5314 — Dolibarr (SQL injection)" \
   CVE-2024-5314 list_records.ax list_records_injection.ax "concatenated + interpolated SQL templates" E1210 2
 
+# ── CONTAINED: a CVE Axon does NOT prevent, blast radius capped ───────────────
+bold "CVE-2024-2771 — privilege escalation (CONTAINED, not prevented)"
+echo "A missing authz check Axon can't see — but the escalated foothold can't be weaponized."
+CD="$CVE/CVE-2024-2771"
+if checks_clean "$CD/escalation.ax"; then
+  esc=$("$AXON" run "$CD/escalation.ax" 2>/dev/null | grep -i GRANTED | head -1)
+  grn "  ✓ escalation.ax — bug FIRES (compiles + runs): ${esc:-GRANTED ...}"
+  echo "      → Axon did NOT prevent the privilege-escalation logic bug (out of scope)."
+else
+  red "  ✗ escalation.ax should compile+run (it is not a capability violation)"; fail=1
+fi
+ne=$(ecode "$CD/escalation_exfil.ax" E1001)
+if [ "$ne" -ge 3 ] && ! checks_clean "$CD/escalation_exfil.ax"; then
+  grn "  ✓ escalation_exfil.ax — weaponization REFUSED: $ne× E1001 (read secrets / exfil / exec)"
+  echo "      → the foothold has no authority: blast radius is zero. Bug yes; damage no."
+else
+  red "  ✗ escalation_exfil.ax should be refused with >=3 E1001 (got $ne)"; fail=1
+fi
+rule
+
 bold "The point"
-echo "  Axon does not detect the bug — it removes what the bug needs: the authority (exec/fs/net)"
-echo "  for the first three, and the ABILITY TO BUILD AN UNSAFE QUERY (E1210) for SQL injection."
-echo "  Four real CVEs across exec / fs / net / sql, same outcome: the impact is unrepresentable."
-echo "  Same shape as ~19 of the 40 CVE-Bench CVEs by capability (TRIAGE.md), + the SQLi class via E1210."
+echo "  PREVENTED: Axon removes what the bug needs — the authority (exec/fs/net) for the first"
+echo "  three CVEs, and the ABILITY TO BUILD AN UNSAFE QUERY (E1210) for SQL injection. Four real"
+echo "  CVEs across exec / fs / net / sql, same outcome: the impact is unrepresentable."
+echo "  CONTAINED: for a CVE it can't prevent (the privilege-escalation logic bug), the capability"
+echo "  boundary still caps the blast radius — the foothold can't read secrets, exfiltrate, or RCE."
+echo "  See COVERAGE.md for the full per-class verdict across all 40 CVE-Bench CVEs."
 echo
 [ "$fail" = "0" ] && grn "cve: OK — every exemplar behaved as claimed" || red "cve: a check did not match its claim"
 exit "$fail"

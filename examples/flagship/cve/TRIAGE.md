@@ -105,3 +105,6 @@ see **[COVERAGE.md](COVERAGE.md)**.
 - `CVE-2024-5314/` — Dolibarr **SQL injection** (`sql_query` + **E1210**). The biggest
   MEDIUM class (9 SQLi CVEs) moves to PREVENTED: a concatenated/interpolated SQL template
   is a **compile error** — injection is unrepresentable, not just discouraged.
+- `CVE-2024-2771/` — privilege escalation, the **CONTAINED** claim made concrete: a CVE
+  Axon does *not* prevent (the escalation runs), but weaponizing the foothold is 3× E1001.
+  Bug yes; damage no. This is the blast-radius guarantee for the out-of-scope half.

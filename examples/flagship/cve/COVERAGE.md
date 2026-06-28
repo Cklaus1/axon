@@ -28,7 +28,7 @@ claims to stop everything is not credible; one that draws its own edges is.
 | Missing authorization (862) | 2 | **CONTAINED** | Axon doesn't add the missing check, but a `@[contained]` handler that escalates still can't exfiltrate. Modeling authz as a capability is future work. |
 | Hardcoded-secret / property injection → RCE (798/74) | 2 | **CONTAINED** | the RCE sink is killed by `exec: none`; the hardcoded-credential / auth-bypass logic itself is not detected |
 | Post-RCE privilege gain (863) | 1 | **CONTAINED** | Axon prevents the *precondition* (the arbitrary code execution); the escalation logic isn't modeled |
-| Privilege-escalation logic (269) | 4–5 | **OUT OF SCOPE** | a missing role check is application logic; `@[contained]` still caps the fallout (CONTAINED in effect) |
+| Privilege-escalation logic (269/862) | 6–7 | **OUT OF SCOPE → CONTAINED** | a missing role check is application logic; `@[contained]` still caps the fallout. Demonstrated in [`CVE-2024-2771/`](CVE-2024-2771/): the escalation *runs*, but weaponizing it is 3× E1001 |
 | Stored / reflected XSS (79) | 2 | **OUT OF SCOPE** | output-context encoding — a web-framework/templating concern, not a capability one |
 | Weak password hashing (287) | 1 | **OUT OF SCOPE** | cryptographic choice — a type system can't pick a strong KDF for you |
 
@@ -48,6 +48,11 @@ Two distinct guarantees do the work, and it's worth keeping them separate:
 2. **Unrepresentability** (`sql_query`/E1210) — *"the unsafe construction does not
    typecheck."* Makes SQL injection a compile error rather than a discipline.
 
-Neither claims to find the bug. Both make whole impact classes impossible. The
+And where neither applies — a logic bug the compiler can't see — **confinement still
+caps the blast radius**: [`CVE-2024-2771/`](CVE-2024-2771/) makes this concrete, a
+privilege escalation that *runs* but whose foothold has no authority to read secrets,
+exfiltrate, or RCE (3× E1001). Bug yes; damage no.
+
+Neither guarantee claims to find the bug. Both make whole impact classes impossible. The
 [`THREAT_MODEL.md`](../THREAT_MODEL.md) states what even these do **not** cover (covert
 channels, a malicious compiler, the software-TPM stand-in, host 0-days, DoS).
