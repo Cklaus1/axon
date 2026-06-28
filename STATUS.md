@@ -71,13 +71,20 @@ scripts/acceptance_gate.sh    # axon-os R21 §10 acceptance (presence + anti-stu
 scripts/gate.sh --strict      # the full strict gate
 ```
 
-**Known gap (found 2026-06-28 via `parity_all.sh`):** `all_examples_parity` FAILs —
-4 network/streaming examples build-fail under native codegen:
-`http_get`, `http_sse`, `anthropic_stream`, `trainloop_stream` (interpreter-only
-features not yet lowered to codegen; 35/39 other examples match). These run under the
-interpreter; the gap is codegen coverage, not interpreter correctness.
+**Last verified run (2026-06-28):**
 
-_(Full `parity_all.sh` summary to be appended once the current run completes.)_
+- `parity_all.sh` (PARITY_SKIP_WASM=1): **33 passed, 15 skipped, 1 failed** of 49.
+  The 15 skips are all `wasm_*` (toolchain skipped); the interp↔native byte-parity
+  invariant (I-2) holds across all 33 native harnesses.
+- `acceptance_gate.sh`: **OK** — every R21 §0 check present, unstubbed, and green
+  (88 axon-os tests pass; same-job+seed record is byte-identical).
+
+**Known gap (the one parity FAIL):** `all_examples_parity` — 4 examples build-fail
+under native codegen: `http_get`, `http_sse`, `anthropic_stream`, `trainloop_stream`.
+All four use the `http_get`/`http_sse` network builtins, which are **interpreter-only**
+(not yet lowered to codegen); 35/39 other examples match byte-for-byte. The gap is
+codegen network-builtin coverage, **not** interpreter correctness or a soundness
+divergence.
 
 ## Repo Hygiene Notes
 
