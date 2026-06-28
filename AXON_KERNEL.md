@@ -6,13 +6,18 @@ small, auditable kernel whose sole job is to enforce `@[contained]` effect-row c
 provide `host_await` as a native hypercall, and run one Axon program per VM — eventually
 compiler-verified.
 
-> **Status (honest).** The kernel **boots under real QEMU** to its ready/idle state
-> (writes its banner; gated by `scripts/qemu_boot_test.sh`). It does **NOT** yet enforce
-> `@[contained]` caps, run a real Axon program, or carry a machine-checked proof —
-> in-kernel hypercall enforcement, full IDT/timer-ISR, SMP, and verification are future
-> work. **Today's real enforcement is seccomp-BPF inside a Linux guest** (`axon-vm`); this
-> kernel is the aspirational replacement that would shrink the TCB. "Formally-verified" and
-> "enforces caps" below describe the design target, not what ships now.
+> **Status (honest, verified on real KVM).** This kernel **boots under real QEMU** (gated
+> by `scripts/qemu_boot_test.sh`) **and under real Firecracker** (`axon-vm run` boots it,
+> loads the program's ELF from the initramfs, runs it, and exits 0 in ~190ms). It reads
+> the policy from the boot cmdline and **installs a real, policy-driven syscall gate** (a
+> SYSCALL/SYSRET MSR handler that maps syscalls to required effects and denies un-granted
+> ones with `VIOLATION`; the allowed-effect bitmask demonstrably shifts with the policy).
+> **It is the enforcer — not Linux.** Remaining gaps: a **live denial event** is not yet
+> demonstrated end-to-end (the sample program's I/O didn't exercise the gate in testing);
+> full IDT/timer-ISR, SMP, and a machine-checked proof are future work. So "enforces caps"
+> is real-and-running with end-to-end denial still to prove; "formally-verified" is the
+> design target, not yet shipped. (A seccomp-BPF allowlist from the `.axmeta` exists as a
+> secondary, optional layer.)
 
 ## Why
 
