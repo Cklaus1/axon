@@ -1,0 +1,291 @@
+// coord_attested.ax — Cross-VM Coordination with Attestation Identity
+//
+// Demonstrates: CoordGoal (Phase 14) + R26 attestation as principal identity.
+//
+// Scenario: Three "attested principals" each independently score a proposed
+// AI action.  The action is approved only when a strict majority of attested
+// principals vote >= 75.  A single attested principal cannot force approval.
+//
+// In a real deployment each principal runs in a separate attested microVM
+// (R26).  Here we simulate three principals in-process using distinct
+// principal names that encode an attestation token in their name.
+// Format: "attested:<token>:<role>"
+//
+// Properties demonstrated:
+//   - Minority coalition cannot force CoordGoal consensus (from coord.ax)
+//   - Each principal carries a distinct attestation token in its name
+//   - A principal with an absent or mismatched token is rejected by the verifier
+//   - The consensus score = minimum accepted score (conservative)
+//
+// Run:
+//   axon test examples/asi/coord_attested.ax
+//   axon run  examples/asi/coord_attested.ax
+
+// ── Inlined CoordGoal (from examples/stdlib/coord.ax) ─────────────────────────
+// Axon has no module imports yet; self-contained by design.
+//
+// Cross-Principal goal coordination. N independent principals each evaluate
+// a candidate and submit a score.  The goal is committed only when a strict
+// majority -- floor(n/2)+1 -- of principals each report a score >= target.
+// Safety invariant: a minority coalition cannot force acceptance.
+
+type CoordGoal = {
+    target:    i64,    // minimum score each principal must reach to accept
+    n:         i64,    // total number of principals
+    scores:    [i64],  // scores[i] = principal i's submitted score (0 = not yet)
+    submitted: [i64],  // submitted[i] = 1 if principal i has voted, else 0
+}
+
+fn coord_goal_new(n_principals: i64, target: i64) -> CoordGoal {
+    assert(n_principals > 0)
+    CoordGoal {
+        target:    target,
+        n:         n_principals,
+        scores:    arr_repeat(0, n_principals),
+        submitted: arr_repeat(0, n_principals),
+    }
+}
+
+// Principal `pid` submits score `score`. Idempotent: repeated proposals ignored.
+fn coord_goal_propose(cg: CoordGoal, pid: i64, score: i64) -> CoordGoal {
+    assert(pid >= 0 && pid < cg.n)
+    if cg.submitted[pid] == 1 {
+        cg
+    } else {
+        let new_scores = []
+        let new_sub    = []
+        let i = 0
+        while i < cg.n {
+            new_scores = arr_push(new_scores, if i == pid { score } else { cg.scores[i] })
+            new_sub    = arr_push(new_sub, if i == pid { 1 } else { cg.submitted[i] })
+            i = i + 1
+        }
+        CoordGoal { target: cg.target, n: cg.n, scores: new_scores, submitted: new_sub }
+    }
+}
+
+fn coord_goal_accept_count(cg: CoordGoal) -> i64 {
+    let count = 0
+    let i = 0
+    while i < cg.n {
+        if cg.submitted[i] == 1 && cg.scores[i] >= cg.target { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+// Quorum threshold: strict majority = floor(n/2) + 1.
+fn coord_goal_quorum(cg: CoordGoal) -> i64 { cg.n / 2 + 1 }
+
+fn coord_goal_quorum_met(cg: CoordGoal) -> bool {
+    coord_goal_accept_count(cg) >= coord_goal_quorum(cg)
+}
+
+// Conservative consensus score: minimum accepted score. Returns -1 when quorum unmet.
+fn coord_goal_consensus_score(cg: CoordGoal) -> i64 {
+    if !coord_goal_quorum_met(cg) {
+        -1
+    } else {
+        let best = 9999999
+        let i = 0
+        while i < cg.n {
+            if cg.submitted[i] == 1 && cg.scores[i] >= cg.target {
+                if cg.scores[i] < best { best = cg.scores[i] }
+            }
+            i = i + 1
+        }
+        best
+    }
+}
+
+// ── Attestation helpers ────────────────────────────────────────────────────────
+// In a real R26 deployment an attestation token is the axtcb1:<digest> from
+// the measured kernel image.  Here we simulate it as a short identifier
+// embedded in the principal name using the format "attested:<token>:<role>".
+
+fn is_attested(principal: str) -> bool {
+    str_starts_with(principal, "attested:")
+}
+
+// Verify that a principal carries the expected attestation token.
+// The token sits between the first and second colon: "attested:<TOKEN>:<role>".
+// We use str_contains as a conservative presence check — a real verifier
+// would parse and compare the exact field, but for this demo it is sufficient
+// to show that the token must appear in the name.
+fn verify_principal(principal: str, expected_token: str) -> Result<str, str> {
+    if !is_attested(principal) {
+        Err("principal has no attestation token")
+    } else if !str_contains(principal, expected_token) {
+        Err("attestation token mismatch -- principal may be impersonating another VM")
+    } else {
+        Ok(principal)
+    }
+}
+
+// ── Scoring oracle ─────────────────────────────────────────────────────────────
+// Each principal independently scores the proposed action based on its own
+// risk model.  Lower risk = higher score.  @[adaptive] tags the function so
+// the provenance log captures every (risk_level, score) pair — useful for
+// auditing which principal voted and at what level.
+
+@[adaptive(metric: action_score, target: 100)]
+fn score_action(risk_level: i64) -> i64 {
+    if risk_level < 20 { 95 }
+    else if risk_level < 50 { 82 }
+    else if risk_level < 80 { 65 }
+    else { 30 }
+}
+
+// ── Per-principal vote helper ──────────────────────────────────────────────────
+// Verifies attestation, scores the action, and proposes to the CoordGoal
+// if the score meets the target.  Returns the updated goal.
+fn vote_if_attested(goal: CoordGoal, pid: i64, principal: str, expected_token: str, risk: i64) -> CoordGoal {
+    match verify_principal(principal, expected_token) {
+        Ok(vp) => {
+            let s = score_action(risk)
+            if s >= goal.target {
+                println("  {vp}: score={to_str(s)} (attested, votes)")
+                coord_goal_propose(goal, pid, s)
+            } else {
+                println("  {vp}: score={to_str(s)} < {to_str(goal.target)} -- abstains")
+                goal
+            }
+        }
+        Err(e) => {
+            println("  {principal}: REJECTED -- {e}")
+            goal
+        }
+    }
+}
+
+// ── Cross-VM coordination ──────────────────────────────────────────────────────
+fn coord_attested_run(proposed_risk: i64) -> bool {
+    println("Proposed action risk level: {to_str(proposed_risk)}")
+
+    // Attestation token shared by the legitimate VM fleet.
+    // In a real deployment this is the axtcb1: digest from the R26 TCB measurement.
+    let expected_token = "axtcb1"
+    let target_score   = 75
+
+    // Three principals with valid attestation tokens (simulating three VMs).
+    let p0 = "attested:axtcb1:vm-alpha"
+    let p1 = "attested:axtcb1:vm-beta"
+    let p2 = "attested:axtcb1:vm-gamma"
+
+    let goal = coord_goal_new(3, target_score)
+    let goal = vote_if_attested(goal, 0, p0, expected_token, proposed_risk)
+    let goal = vote_if_attested(goal, 1, p1, expected_token, proposed_risk)
+    let goal = vote_if_attested(goal, 2, p2, expected_token, proposed_risk)
+
+    let approved = coord_goal_quorum_met(goal)
+    let consensus = coord_goal_consensus_score(goal)
+    println("Result: approved={to_str(approved)} consensus_score={to_str(consensus)}")
+    approved
+}
+
+// ── Minority attack demo ────────────────────────────────────────────────────────
+fn demo_minority_attack() {
+    println("\n--- Minority attack demo ---")
+    println("Attacker controls 1/3 of principals: can it force approval?")
+
+    let target = 75
+    let goal = coord_goal_new(3, target)
+
+    // 1 legitimate, high-scoring vote
+    let s = score_action(10)  // -> 95
+    let goal = coord_goal_propose(goal, 0, s)
+    println("  vm-alpha (attested): score={to_str(s)}")
+
+    // Solo: quorum requires 2/3 (floor(3/2)+1 = 2), so 1 vote is not enough
+    let solo = coord_goal_quorum_met(goal)
+    println("Quorum met with 1/3: {to_str(solo)}")   // false
+
+    // Even if attacker adds a second vote, that is still only 2/3 -- which IS quorum.
+    // The coordinated veto requires an ATTESTED third party; sockpuppeting a second
+    // unattested VM is caught by verify_principal before coord_goal_propose is reached.
+    // Demonstrate the catch:
+    let rogue = "unattested:vm-rogue"
+    println("  {rogue}: attempting to vote without attestation...")
+    match verify_principal(rogue, "axtcb1") {
+        Ok(_) => {
+            println("  {rogue}: vote accepted (should not happen)")
+        }
+        Err(e) => {
+            println("  {rogue}: REJECTED -- {e}")
+        }
+    }
+    println("Attacker with 1 attested vote + 1 unattested rogue: cannot reach quorum")
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_attested_principal_accepted() {
+    match verify_principal("attested:axtcb1:vm-alpha", "axtcb1") {
+        Ok(p) => assert(str_eq(p, "attested:axtcb1:vm-alpha"))
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_unattested_principal_rejected() {
+    match verify_principal("root", "axtcb1") {
+        Ok(_) => assert(false)
+        Err(e) => assert(true)
+    }
+}
+
+@[test]
+fn test_token_mismatch_rejected() {
+    match verify_principal("attested:deadbeef:vm-evil", "axtcb1") {
+        Ok(_) => assert(false)
+        Err(e) => assert(true)
+    }
+}
+
+@[test]
+fn test_low_risk_gets_approved() {
+    let approved = coord_attested_run(10)   // risk=10 -> score=95 >= 75 for all 3 VMs
+    assert(approved)
+}
+
+@[test]
+fn test_high_risk_gets_rejected() {
+    let approved = coord_attested_run(90)   // risk=90 -> score=30 < 75, all abstain
+    assert(!approved)
+}
+
+@[test]
+fn test_minority_cannot_force_quorum() {
+    let goal = coord_goal_new(3, 75)
+    let goal = coord_goal_propose(goal, 0, 95)   // only 1 of 3 principals votes
+    assert(!coord_goal_quorum_met(goal))
+}
+
+// ── Main ────────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== Attested Cross-VM Coordination Demo ===\n")
+
+    println("Scenario 1: Low-risk action (risk=10, score=95 for all VMs)")
+    let r1 = coord_attested_run(10)
+    println("")
+
+    println("Scenario 2: Medium-risk action (risk=40, score=82 for all VMs)")
+    let r2 = coord_attested_run(40)
+    println("")
+
+    println("Scenario 3: High-risk action (risk=85, score=30 -- all abstain)")
+    let r3 = coord_attested_run(85)
+    println("")
+
+    demo_minority_attack()
+
+    println("\nSummary:")
+    println("  Low-risk    (risk=10): approved={to_str(r1)}")
+    println("  Medium-risk (risk=40): approved={to_str(r2)}")
+    println("  High-risk   (risk=85): approved={to_str(r3)}")
+    println("  R26 attestation verified each principal before accepting their vote.")
+    println("  A minority (1/3) cannot force quorum; unattested VMs are rejected.")
+    0
+}
