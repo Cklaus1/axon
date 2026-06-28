@@ -49,6 +49,12 @@ const CMD_LINE_PTR_OFF: usize = 0x228;
 /// Parse the boot policy from the kernel cmdline.  Call once after
 /// `serial::init()`, before `read_policy()`.
 pub fn init(boot_params_phys: u64) {
+    // If no boot_params (PVH / multiboot without Linux params), use open policy.
+    if boot_params_phys == 0 {
+        kprintln!("[axon-kernel] K2: no boot_params — open policy");
+        return set_open_policy();
+    }
+
     // SAFETY: boot_params_phys is the identity-mapped physical address provided
     // by Firecracker via the Linux boot protocol; the field is 4-byte aligned.
     let cmdline_phys = unsafe {
@@ -110,7 +116,8 @@ pub fn init(boot_params_phys: u64) {
             (core::ptr::addr_of!(CMDLINE_BUF) as *const u8).add(val_start),
             val_end - val_start,
         );
-        let n = base64_decode(b64, &mut JSON_BUF);
+        let json_slice: &mut [u8] = &mut *(&raw mut JSON_BUF);
+        let n = base64_decode(b64, json_slice);
         JSON_LEN = n;
         n
     };

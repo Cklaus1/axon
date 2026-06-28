@@ -371,7 +371,7 @@ pub fn init(policy: &Policy) {
         wrmsr(IA32_STAR, (USER_CS << 48) | (KERNEL_CS << 32));
 
         // ── LSTAR: handler virtual address ────────────────────────────────────
-        wrmsr(IA32_LSTAR, syscall_entry as u64);
+        wrmsr(IA32_LSTAR, syscall_entry as *const () as u64);
 
         // ── FMASK: bits to clear in RFLAGS on syscall entry ───────────────────
         // Clear IF (bit 9) — disable hardware interrupts during kernel entry.

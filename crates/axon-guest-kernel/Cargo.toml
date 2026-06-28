@@ -5,10 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 description = "Formally-verified ASI supervisor kernel for Axon microVM guests"
+build = "build.rs"
 
 [[bin]]
 name = "axon-guest-kernel"
 path = "src/main.rs"
+test = false   # no_std bare-metal — cannot link the std test harness
 # Build with:
 #   cargo build -p axon-guest-kernel \
 #     --target crates/axon-guest-kernel/targets/x86_64-axon-metal.json \

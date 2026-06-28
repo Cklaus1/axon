@@ -1,25 +1,24 @@
 /* Axon guest kernel linker script.
  *
- * Firecracker loads the kernel at physical address 0x100000 (1 MiB) and
- * jumps to it in 32-bit protected mode.  The Linux boot-protocol setup
- * header is placed at offset 0x1F1 inside the first 512-byte sector that
- * Firecracker inspects; that sector lives in the .boot.setup section below.
+ * Firecracker / QEMU -kernel loads our ELF and enters at the ELF entry point
+ * (e_entry = _start32) in 32-bit protected mode with ESI = &boot_params.
+ * No Linux setup-sector needed — loaders construct their own boot_params.
  */
 
 OUTPUT_FORMAT(elf64-x86-64)
 ENTRY(_start32)
 
 SECTIONS {
-    /* ── Boot-protocol setup sector (read by Firecracker at load time) ──── */
+    /* ── PVH ELF note (QEMU PVH boot — read at load time, not executed) ─── */
     . = 0x100000;
 
-    .boot.setup : {
-        KEEP(*(.boot.setup))
+    .note.Xen : {
+        KEEP(*(.note.Xen))
     }
 
-    /* ── 32-bit protected-mode entry + 64-bit bootstrap ─────────────────── */
+    /* ── 32-bit protected-mode entry ─────────────────────────────────────── */
     .text32 : {
-        *(.text32)
+        KEEP(*(.text32))
     }
 
     /* Align kernel proper to 2 MiB (huge-page boundary). */

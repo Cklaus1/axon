@@ -70,5 +70,4 @@ fn panic(info: &PanicInfo) -> ! {
 // No #[global_allocator]: we use the bump allocator directly via bump::alloc().
 // Rust's Box/Vec/etc. are not available in this crate by design.
 
-// Include the boot assembly.
-core::arch::global_asm!(include_str!("boot.s"));
+// boot.s is compiled by build.rs (GAS) and linked as boot.o — no global_asm! needed.
