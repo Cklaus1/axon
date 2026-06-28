@@ -1,0 +1,42 @@
+{
+  "_comment": [
+    "seccomp-agent.json — a HAND-WRITTEN seccomp profile that tries to sandbox the",
+    "evil agent the way you would today with Docker: deny the syscalls an exfiltrating",
+    "process needs. This is the strongest honest version of the 'Docker already does",
+    "this' rebuttal — and it is exactly what the Axon flagship demo is contrasted with.",
+    "",
+    "THE AGENT HAS THREE ESCAPES: (1) read /etc/passwd, (2) open a network socket,",
+    "(3) spawn a process. A seccomp profile can cleanly block only ONE of them:",
+    "",
+    "  (2) network  — DENY `socket`/`connect`. Clean: CPython doesn't need them to boot.",
+    "",
+    "  (3) process  — you'd DENY `execve`, but Docker LAUNCHES the container WITH execve,",
+    "      so denying it means the container never starts ('exec ...: operation not",
+    "      permitted'). seccomp is stateless: it cannot say 'exec once to start, then",
+    "      never spawn a child.' So in practice execve stays ALLOWED and the spawn survives.",
+    "",
+    "  (1) file     — you'd DENY `openat`, but `openat` is load-bearing: CPython opens",
+    "      dozens of files just to start, so denying it kills the interpreter. seccomp",
+    "      filters SYSCALLS, not PATHS — it has no way to say 'open anything except",
+    "      /etc/passwd.' So openat stays ALLOWED and the secret read survives.",
+    "",
+    "Net result: this profile blocks 1 of 3 escapes; the other 2 survive because a",
+    "syscall filter is too blunt to express the actual policy. Axon's",
+    "@[contained(fs: [], net: [], exec: none)] blocks ALL THREE at COMPILE TIME, because",
+    "the policy is expressed over capabilities, not raw syscall numbers.",
+    "",
+    "This profile is also a SEPARATE ARTIFACT from the agent's code: nothing keeps the two",
+    "in sync. Edit the agent to need a new capability and this file silently stays wrong",
+    "(over- or under-permissioned) until a human remembers to update it. Axon derives the",
+    "syscall allowlist FROM the code (.axmeta syscall_hint), so it cannot drift."
+  ],
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "syscalls": [
+    {
+      "names": ["socket", "socketcall", "connect"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "deny network (the ai_complete / urllib exfil channel) — the one escape seccomp blocks cleanly"
+    }
+  ]
+}
