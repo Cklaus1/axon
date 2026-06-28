@@ -129,3 +129,24 @@ The fastest way to make this credible is to break it. Good attempts:
 
 If you find one, that's a finding worth more than another feature. File it against
 the relevant layer.
+
+## 8. Red-team log (attacks actually run)
+
+A first adversarial pass ran 15 laundering attacks against
+`@[contained(fs: [], net: [], exec: none)]`, each trying to reach a forbidden builtin
+(`read_file`/`ai_complete`/`exec`/`env_var`) by a different route:
+
+- **Refused at compile time (E1001) — 13/15:** direct call; 1-hop helper; 2-hop helper
+  chain; inline closure; higher-order (closure passed to an invoker); `match` arm;
+  string interpolation; `comptime` block; `spawn` block; `env_var` direct; `env_var`
+  via helper; `ai_complete` via helper. The transitive effect-walk holds across all
+  these boundaries.
+- **One soundness gap, currently fail-closed — `let f = read_file; f(path)`:** aliasing
+  a builtin to a local binding passes `axon check` (the capability checker does not yet
+  flag builtin *references*, only direct calls). It does **not** exfiltrate: the
+  interpreter has no first-class builtin value, so it panics `undefined identifier
+  read_file` at runtime — the file is never read (Layer 2 fail-closed). **Open fix:**
+  the static checker should reject a forbidden builtin appearing as a value, not only
+  as a callee — otherwise this becomes a live hole the day builtins are first-class.
+
+This log is partial by construction. The point of §7 is to extend it.
