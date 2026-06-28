@@ -12,10 +12,21 @@
 
 ; ── Multiboot1 header ────────────────────────────────────────────────────────
 ; Must be 32-bit aligned and within the first 8192 bytes of the loaded image.
+;
+; We set the A.OUT KLUDGE flag (bit 16) and supply explicit load addresses. This
+; tells the multiboot loader (QEMU's `-kernel`) to load the image as a RAW BLOB at
+; the given physical addresses and jump straight to `_start` — WITHOUT parsing the
+; ELF. That is the whole point: our final ELF is 64-bit (ELFCLASS64), and QEMU's
+; multiboot1 *ELF* loader rejects a 64-bit ELF ("Cannot load x86-64 image, give a
+; 32bit one"). With the kludge, QEMU never parses the ELF class, so a 64-bit kernel
+; boots from a 32-bit `_start` that switches to long mode below. The kernel stays
+; 64-bit; only the loader path changes.
 
 MULTIBOOT1_MAGIC equ 0x1BADB002
-MULTIBOOT1_FLAGS equ 0x00000000    ; no optional features (no module alignment, no memory map)
+MULTIBOOT1_FLAGS equ 0x00010000    ; bit 16: a.out kludge — load-address fields present
 MULTIBOOT1_CKSUM equ (-(MULTIBOOT1_MAGIC + MULTIBOOT1_FLAGS))
+
+extern __bss_end                   ; provided by scripts/kernel.ld
 
 section .text.entry
 align 4
@@ -23,6 +34,14 @@ mb1_header:
     dd MULTIBOOT1_MAGIC
     dd MULTIBOOT1_FLAGS
     dd MULTIBOOT1_CKSUM
+    ; a.out kludge fields (required because FLAGS bit 16 is set). All resolved by
+    ; the linker to physical addresses; the kernel loads at 0x100000 (< 4 GiB), so
+    ; 32-bit address fields are exact.
+    dd mb1_header                  ; header_addr   — phys addr of this header (0x100000)
+    dd mb1_header                  ; load_addr     — start of text (== header_addr)
+    dd 0                           ; load_end_addr — 0 = load to end of file
+    dd __bss_end                   ; bss_end_addr  — loader zeroes bss up to here
+    dd _start                      ; entry_addr    — jump target (32-bit entry)
 
 ; ── 64-bit GDT (needed for long mode) ───────────────────────────────────────
 section .rodata
@@ -115,3 +134,7 @@ bits 64
 .halt:
     hlt
     jmp .halt
+
+; Mark the stack non-executable (silences ld's "missing .note.GNU-stack implies
+; executable stack" deprecation warning; the kernel never executes from its stack).
+section .note.GNU-stack noalloc noexec nowrite progbits
