@@ -30,8 +30,16 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 ./flagship --ci     # non-interactive (no pauses, no real KVM) — CI / screencast
 ./flagship docker   # just the Docker+seccomp foil
 ./flagship llm      # just the real-LLM prompt-injection segment
+./flagship cve      # just the CVE-Bench exemplars (real CVEs refused)
 ./flagship threat   # print the threat model
 ```
+
+**Real CVEs, not just synthetic demos.** [`cve/`](cve/) triages all 40 critical CVEs in
+[CVE-Bench](../../../security/pentest/cve-bench) (ICML 2025) against Axon's capability
+model — **≈ half are a bug class whose critical impact Axon refuses by construction**
+(see [`cve/TRIAGE.md`](cve/TRIAGE.md)). The AI-stack CVEs cluster in the STRONG column.
+First built exemplar: **CVE-2024-34359** (llama-cpp-python Jinja2 SSTI → RCE) — the
+exploit's RCE / file-access / outbound payload is refused with 3× E1001 at compile time.
 
 The `llm` segment is the visceral version: a **real model** (claude-sonnet),
 prompt-injected, genuinely wrote three exfiltration channels — `read_file`,
