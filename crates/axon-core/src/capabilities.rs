@@ -1091,7 +1091,20 @@ fn check_call(name: &str, args: &[Expr], spec: &ContainedSpec, errors: &mut Vec<
             // effective host for an AI builtin is the fixed endpoint, regardless
             // of the prompt's content or whether it's a literal.
             let ai_host = ai_builtin_host(name);
-            let effective_host: Option<&str> = ai_host.or(literal_arg);
+            // For `http_get`/`http_post`/`http_sse*` the first arg is a full URL, not
+            // a bare host. Normalize it to its host (strip `scheme://`, `:port`, and
+            // `/path`) so a real URL like `https://api.openai.com/v1/models` matches a
+            // host allowlist of `api.openai.com` — the same stripping native
+            // net-connect calls already use via `native_net_host`. Without this,
+            // host-pinning was unusable with real URLs (every URL was refused because
+            // the whole string never equals the bare host). AI builtins keep their
+            // fixed implicit host.
+            let normalized_url: Option<String> = if ai_host.is_none() {
+                literal_arg.map(host_of)
+            } else {
+                None
+            };
+            let effective_host: Option<&str> = ai_host.or(normalized_url.as_deref());
             // How to render the call in diagnostics: an AI builtin's host is
             // implicit, so show `ai_complete(...) [host api.anthropic.com]`
             // rather than misleadingly printing the prompt as the first-arg host.
