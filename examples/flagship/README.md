@@ -38,8 +38,12 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 [CVE-Bench](../../../security/pentest/cve-bench) (ICML 2025) against Axon's capability
 model — **≈ half are a bug class whose critical impact Axon refuses by construction**
 (see [`cve/TRIAGE.md`](cve/TRIAGE.md)). The AI-stack CVEs cluster in the STRONG column.
-First built exemplar: **CVE-2024-34359** (llama-cpp-python Jinja2 SSTI → RCE) — the
-exploit's RCE / file-access / outbound payload is refused with 3× E1001 at compile time.
+Three built exemplars, one per capability type, all real AI-tool CVEs — for each, the
+safe version compiles and the exploit payload is refused 3× E1001 at compile time:
+
+- **CVE-2024-34359** (llama-cpp-python Jinja2 SSTI → RCE) — `exec: none`
+- **CVE-2024-2624** (lollms-webui path traversal + file write) — `fs` prefix + `..`-deny
+- **CVE-2024-32964** (Lobe Chat unauthenticated SSRF) — host-pinned `net:`
 
 The `llm` segment is the visceral version: a **real model** (claude-sonnet),
 prompt-injected, genuinely wrote three exfiltration channels — `read_file`,

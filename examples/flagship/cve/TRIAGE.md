@@ -90,7 +90,14 @@ construction.*
 
 ## Reproductions
 
-- `CVE-2024-34359/` — llama-cpp-python Jinja2 SSTI → RCE (built). `axon check` refuses
-  the RCE / file-access / outbound payload (3× E1001). Run `./run.sh`.
-- _next_: a path-traversal exemplar (lollms-webui CVE-2024-2624) and an SSRF exemplar
-  (Lobe Chat CVE-2024-32964).
+Three built exemplars spanning all three capability types (`exec` / `fs` / `net`) —
+run them all with `./run.sh`:
+
+- `CVE-2024-34359/` — llama-cpp-python Jinja2 SSTI → **RCE** (`exec: none`). Payload
+  refused 3× E1001 (RCE / file access / outbound).
+- `CVE-2024-2624/` — lollms-webui **path traversal + arbitrary file write** (`fs`
+  prefix + `..`-deny). Payload refused 3× E1001 (traversal read / out-of-lane write /
+  dynamic path).
+- `CVE-2024-32964/` — Lobe Chat unauthenticated **SSRF** (host-pinned `net`). Payload
+  refused 3× E1001 (metadata theft / intranet / dynamic URL). Building this surfaced and
+  fixed a real gap: host-pinning now normalizes a full URL to its host.

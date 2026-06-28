@@ -2044,6 +2044,8 @@ fn all_examples_typecheck_clean() {
         // CVE-Bench exploit payloads — DESIGNED to fail check (the impact Axon
         // refuses by construction). Guarded by examples/flagship/cve/run.sh + TRIAGE.md.
         "model_loader_ssti.ax",
+        "file_store_traversal.ax",
+        "proxy_ssrf.ax",
         // R23 eBPF adversarial examples — DESIGNED to fail check (E1208 unbounded
         // loop, E1704 heap, E2300 un-allowlisted helper). Guarded by their own
         // tests in integration_fixtures.rs (r23_bpf_*).
