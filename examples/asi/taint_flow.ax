@@ -1,0 +1,229 @@
+// taint_flow.ax
+//
+// AI Taint Flow Demo — information security for AI-generated values.
+//
+// Trust axis (integrity):
+//   0=AI (untrusted)  1=Net  2=System  3=User  4=Constant
+//
+// Confidentiality axis:
+//   0=Public  1=Internal  2=Confidential  3=Secret
+//
+// Rule 1: AI-sourced values (trust=0) cannot drive consequential actions
+//         without human validation that elevates trust to the User floor (3).
+//
+// Rule 2: Secret data (level=3) cannot flow to AI sinks
+//         (AI clearance = 0 = Public; the gap is 3 levels).
+//
+//   axon test examples/asi/taint_flow.ax
+//   axon run  examples/asi/taint_flow.ax
+
+// ── Trust level constants ─────────────────────────────────────────────────────
+fn trust_ai()       -> i64 { 0 }
+fn trust_net()      -> i64 { 1 }
+fn trust_system()   -> i64 { 2 }
+fn trust_user()     -> i64 { 3 }
+fn trust_constant() -> i64 { 4 }
+
+// ── Confidentiality level constants ──────────────────────────────────────────
+fn cl_public()       -> i64 { 0 }
+fn cl_internal()     -> i64 { 1 }
+fn cl_confidential() -> i64 { 2 }
+fn cl_secret()       -> i64 { 3 }
+
+// ── Tainted: value + source trust level ──────────────────────────────────────
+// Trust propagates pessimistically: combining two Tainted values yields the
+// LOWER trust (taint is sticky). AI-sourced values start at trust=0.
+type Tainted = { val: i64, trust: i64 }
+
+fn tainted_ai(v: i64)   -> Tainted { Tainted { val: v, trust: trust_ai() } }
+fn tainted_user(v: i64) -> Tainted { Tainted { val: v, trust: trust_user() } }
+
+fn tainted_needs_validation(t: Tainted) -> bool {
+    t.trust == trust_ai() || t.trust == trust_net()
+}
+
+// ── Trusted: a Tainted value that has passed an explicit validation gate ───────
+// trust_validate succeeds only when t.trust >= floor; AI values (trust=0)
+// always fail a trust_user() floor (3) unless the trust level is explicitly
+// raised by a human approval step (see human_validate below).
+type Trusted = { val: i64, trust: i64, floor: i64 }
+
+fn trust_validate(t: Tainted, floor: i64) -> Result<Trusted, str> {
+    if t.trust >= floor {
+        Ok(Trusted { val: t.val, trust: t.trust, floor: floor })
+    } else {
+        Err("trust below validation floor")
+    }
+}
+
+fn trusted_val(t: Trusted) -> i64 { t.val }
+
+// ── Secret: value + confidentiality level ────────────────────────────────────
+// A Secret at level L may only flow to a context whose clearance >= L.
+// AI/Net sinks have clearance = cl_public() = 0, so they cannot read
+// confidential or above — this is the exfiltration guard.
+type Secret = { val: i64, level: i64 }
+
+fn secret_can_flow_to(s: Secret, reader_clearance: i64) -> bool {
+    reader_clearance >= s.level
+}
+
+fn secret_declassify(s: Secret, reader_clearance: i64) -> Result<i64, str> {
+    if secret_can_flow_to(s, reader_clearance) {
+        Ok(s.val)
+    } else {
+        Err("clearance insufficient for declassification")
+    }
+}
+
+// ── Human validation gate ─────────────────────────────────────────────────────
+// Simulates an explicit human reviewer approving an AI-generated value:
+//   Step 1 — Bounds-check: reject values outside a safe operational range.
+//   Step 2 — If safe: elevate trust to trust_user() (3) → Trusted.
+// This two-step gate is the core of the demo: trust_validate alone cannot
+// lift an AI value (trust=0) above the User floor without explicit human action.
+fn human_validate(t: Tainted, reviewer: str) -> Result<Trusted, str> {
+    if t.val < 0 || t.val > 1000000 {
+        Err("rejected by {reviewer}: {to_str(t.val)} out of safe range [0, 1000000]")
+    } else {
+        Ok(Trusted { val: t.val, trust: trust_user(), floor: trust_user() })
+    }
+}
+
+// ── Action gate: only Trusted values may drive consequential actions ───────────
+fn execute_transfer(trusted: Trusted, account: str) -> Result<str, str> {
+    Ok("transferred {to_str(trusted.val)} to {account} (trust={to_str(trusted.trust)}/4)")
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_ai_output_is_untrusted() {
+    let t = tainted_ai(500)
+    assert_eq(t.trust, trust_ai())
+}
+
+@[test]
+fn test_ai_value_blocked_by_trust_validate_alone() {
+    // AI trust (0) cannot clear the User floor (3) without human elevation.
+    let t = tainted_ai(500)
+    match trust_validate(t, trust_user()) {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_valid_ai_value_passes_human_validation() {
+    let t = tainted_ai(500)
+    match human_validate(t, "alice") {
+        Ok(trusted) => assert_eq(trusted_val(trusted), 500)
+        Err(_)      => assert(false)
+    }
+}
+
+@[test]
+fn test_human_validation_elevates_trust_to_user_level() {
+    let t = tainted_ai(500)
+    match human_validate(t, "alice") {
+        Ok(trusted) => assert_eq(trusted.trust, trust_user())
+        Err(_)      => assert(false)
+    }
+}
+
+@[test]
+fn test_out_of_range_ai_value_rejected() {
+    let t = tainted_ai(-999999)
+    match human_validate(t, "alice") {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_secret_cannot_flow_to_ai() {
+    let balance = Secret { val: 50000, level: cl_secret() }
+    let ai_clearance = cl_public()
+    assert(!secret_can_flow_to(balance, ai_clearance))
+}
+
+@[test]
+fn test_secret_can_flow_to_authorized_context() {
+    let balance = Secret { val: 50000, level: cl_confidential() }
+    assert(secret_can_flow_to(balance, cl_confidential()))
+    assert(secret_can_flow_to(balance, cl_secret()))
+    assert(!secret_can_flow_to(balance, cl_public()))
+}
+
+@[test]
+fn test_trusted_value_drives_action() {
+    let t = tainted_ai(500)
+    match human_validate(t, "alice") {
+        Ok(trusted) => {
+            match execute_transfer(trusted, "savings-account") {
+                Ok(_)  => assert(true)
+                Err(_) => assert(false)
+            }
+        }
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_tainted_needs_validation_flags_ai_and_net() {
+    assert(tainted_needs_validation(tainted_ai(1)))
+    assert(!tainted_needs_validation(tainted_user(1)))
+}
+
+// ── main() — three-scenario narrative ────────────────────────────────────────
+
+fn main() {
+    println("=== AI Taint Flow Demo ===\n")
+
+    // Scenario 1: Happy path — AI recommends a safe value, human approves.
+    println("Scenario 1: Valid AI recommendation")
+    let ai_rec = tainted_ai(500)
+    println("  AI recommendation: {to_str(ai_rec.val)} (trust={to_str(ai_rec.trust)}/4)")
+    if tainted_needs_validation(ai_rec) {
+        println("  → flagged: needs human validation before action")
+    }
+    match human_validate(ai_rec, "alice") {
+        Ok(trusted) => {
+            println("  Human validated: trust raised to {to_str(trusted.trust)}/4 (User level)")
+            match execute_transfer(trusted, "savings-account") {
+                Ok(msg) => println("  SUCCESS: {msg}")
+                Err(e)  => println("  ERROR: {e}")
+            }
+        }
+        Err(e) => println("  BLOCKED: {e}")
+    }
+
+    // Scenario 2: Injection attempt — AI recommends an out-of-range value.
+    println("\nScenario 2: Malicious AI recommendation (value injection)")
+    let evil_rec = tainted_ai(-999999)
+    println("  AI recommendation: {to_str(evil_rec.val)} (trust={to_str(evil_rec.trust)}/4)")
+    match human_validate(evil_rec, "alice") {
+        Ok(_)  => println("  ERROR: should have been rejected!")
+        Err(e) => println("  BLOCKED: {e}")
+    }
+
+    // Scenario 3: Exfiltration attempt — confidential balance must not reach AI.
+    println("\nScenario 3: Confidential data — exfiltration attempt blocked")
+    let balance = Secret { val: 50000, level: cl_secret() }
+    let ai_clearance = cl_public()
+    println("  Account balance: classified at level {to_str(balance.level)}/3 (Secret)")
+    println("  AI sink clearance:            {to_str(ai_clearance)}/3 (Public)")
+    if secret_can_flow_to(balance, ai_clearance) {
+        println("  ERROR: secret flowed to AI!")
+    } else {
+        println("  BLOCKED: balance (level={to_str(balance.level)}) cannot flow to AI (clearance={to_str(ai_clearance)})")
+        println("  Safe: AI never sees the actual balance value")
+    }
+    // A root-level context (clearance = cl_secret = 3) can still declassify.
+    match secret_declassify(balance, cl_secret()) {
+        Ok(v)  => println("  Root context (clearance=3) declassified: {to_str(v)}")
+        Err(_) => println("  (unexpected block)")
+    }
+
+    println("\n=== Taint Flow Demo Complete ===")
+}

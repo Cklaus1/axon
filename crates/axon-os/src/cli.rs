@@ -15,6 +15,7 @@ const USAGE: &str = "\
 axon-os — run untrusted Axon programs under a proven capability bound
 
 USAGE:
+<<<<<<< HEAD
     axon-os explain <job.axjob>
     axon-os run     <job.axjob> [--run-id ID] [--out DIR] [--killable] [--coalition ROOT]
     axon-os verify  <record.json>
@@ -25,6 +26,17 @@ USAGE:
 Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
 4 halted (kill-switch), 6 refine, 7 budget, 8 capability/denied,
 9 resource-bound, 10 coalition-bound, 11 tamper/divergence.";
+=======
+    axon-os explain      <job.axjob>
+    axon-os run          <job.axjob> [--run-id ID] [--out DIR]
+    axon-os verify       <record.json>
+    axon-os replay       <run-id> [--store DIR]
+    axon-os audit verify --ledger PATH           (R28)
+    axon-os audit show   --ledger PATH [--json]  (R28)
+
+Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
+6 refine, 7 budget, 8 capability/denied, 9 tamper/divergence, 11 ledger tamper.";
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
 
 /// The supervisor's own authority. Default is broad (the manifest is the bound);
 /// `"".into()` is the universal path ancestor and `"*"` the universal host.
@@ -112,18 +124,27 @@ pub fn run(args: Vec<String>) -> ExitCode {
         ["replay", "--help"] => {
             help("replay <run-id> [--store DIR]  — verify + re-run + assert identical")
         }
+<<<<<<< HEAD
         ["kill", "--help"] => {
             help("kill <run-id> [--store DIR] [--reason REASON]  — R27: trip the supervisor kill-latch (exit 0)")
         }
         ["status", "--help"] => {
             help("status [--store DIR] [--latest] [--json]  — R27: show latch state + ledger totals")
+=======
+        ["audit", "--help"] | ["audit"] => {
+            help("audit verify --ledger PATH  |  audit show --ledger PATH [--json]  — R28 capability ledger")
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
         }
         ["explain", job] => cmd_explain(Path::new(job)),
         ["run", rest @ ..] => cmd_run(rest),
         ["verify", record] => cmd_verify(Path::new(record)),
         ["replay", rest @ ..] => cmd_replay(rest),
+<<<<<<< HEAD
         ["kill", rest @ ..] => cmd_kill(rest),
         ["status", rest @ ..] => cmd_status(rest),
+=======
+        ["audit", rest @ ..] => cmd_audit(rest),
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
         _ => {
             eprintln!("axon-os: unrecognized invocation\n\n{USAGE}");
             ExitCode::from(2)
@@ -357,6 +378,7 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
     }
 }
 
+<<<<<<< HEAD
 // ── R27: kill / status ───────────────────────────────────────────────────────
 
 /// R27 §5.1: trip the supervisor kill-latch for a running job.
@@ -428,21 +450,53 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
                 // Find the most recently modified .kill file in store.
                 i += 1;
             }
+=======
+// ── R28: audit verify / show ─────────────────────────────────────────────────
+
+/// R28: verify or show the capability audit ledger.
+/// `axon-os audit verify --ledger PATH`
+/// `axon-os audit show   --ledger PATH [--json]`
+fn cmd_audit(rest: &[&str]) -> ExitCode {
+    let mut i = 0;
+    let subcommand = if rest.is_empty() {
+        eprintln!("axon-os audit: missing subcommand (verify | show)");
+        return ExitCode::from(2);
+    } else {
+        let s = rest[0];
+        i += 1;
+        s
+    };
+
+    let mut ledger_path: Option<PathBuf> = None;
+    let mut json_out = false;
+    while i < rest.len() {
+        match rest[i] {
+            "--ledger" if i + 1 < rest.len() => {
+                ledger_path = Some(PathBuf::from(rest[i + 1]));
+                i += 2;
+            }
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
             "--json" => {
                 json_out = true;
                 i += 1;
             }
+<<<<<<< HEAD
             s if !s.starts_with("--") && run_id.is_none() => {
                 run_id = Some(s.to_string());
                 i += 1;
             }
             _ => {
                 eprintln!("axon-os status: bad argument `{}`", rest[i]);
+=======
+            _ => {
+                eprintln!("axon-os audit: unknown flag `{}`", rest[i]);
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
                 return ExitCode::from(2);
             }
         }
     }
 
+<<<<<<< HEAD
     // If no run_id given, look for any .kill file in the store directory.
     let kill_path = if let Some(rid) = &run_id {
         store.join(format!("{rid}.kill"))
@@ -488,6 +542,66 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
         );
     }
     ExitCode::from(0)
+=======
+    let path = match ledger_path {
+        Some(p) => p,
+        None => {
+            eprintln!("axon-os audit: missing --ledger PATH");
+            return ExitCode::from(2);
+        }
+    };
+
+    let ledger = match axon_audit::Ledger::open(&path) {
+        Ok(l) => l,
+        Err(e) => {
+            eprintln!("axon-os audit: {e}");
+            // exit 11 = tamper/divergence (reuse the verify-mismatch code)
+            return ExitCode::from(11);
+        }
+    };
+
+    match subcommand {
+        "verify" => {
+            match ledger.verify() {
+                Ok(()) => {
+                    println!("\u{2713} ledger intact ({} entries, chain verified)", ledger.len());
+                    ExitCode::from(0)
+                }
+                Err(e) => {
+                    println!("\u{2717} LEDGER TAMPERED: {e}");
+                    ExitCode::from(11)
+                }
+            }
+        }
+        "show" => {
+            if json_out {
+                match ledger.export_json() {
+                    Ok(j) => {
+                        println!("{j}");
+                        ExitCode::from(0)
+                    }
+                    Err(e) => {
+                        eprintln!("axon-os audit show: {e}");
+                        ExitCode::from(2)
+                    }
+                }
+            } else {
+                println!("Ledger: {} entries", ledger.len());
+                for entry in ledger.entries() {
+                    println!(
+                        "  seq={} ts={} principal={} effect={:?} op={}",
+                        entry.seq, entry.ts_ms, entry.principal, entry.effect, entry.operation
+                    );
+                }
+                ExitCode::from(0)
+            }
+        }
+        _ => {
+            eprintln!("axon-os audit: unknown subcommand `{subcommand}` (use verify | show)");
+            ExitCode::from(2)
+        }
+    }
+>>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
 }
 
 #[cfg(test)]
