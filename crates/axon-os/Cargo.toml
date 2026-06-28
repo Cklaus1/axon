@@ -21,5 +21,7 @@ mock = []
 sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# R28: capability audit ledger — for `axon-os audit verify/show` subcommands.
+axon-audit = { path = "../axon-audit" }
 
 [dev-dependencies]

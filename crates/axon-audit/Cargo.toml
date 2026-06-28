@@ -1,0 +1,19 @@
+[package]
+name = "axon-audit"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Axon R28 capability audit ledger — chained JSONL ledger recording FS/Net/AI/Exec/Random/IO events with tamper-evident SHA-256 hash chain."
+
+[lib]
+name = "axon_audit"
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

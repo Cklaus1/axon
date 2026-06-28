@@ -12,6 +12,10 @@
 
 use super::*;
 
+/// R28 — ensure the crate is accessible by name in this module.
+#[allow(unused_imports)]
+use axon_audit;
+
 /// F3 (Phase 9): map a raw capability kind (from `capability_of_builtin`) to its
 /// effect-row tag for audit records. Unmapped kinds default to the raw cap name.
 fn cap_to_effect_row(cap: &str) -> &'static str {
@@ -4092,6 +4096,12 @@ impl<'p> Interp<'p> {
                 let goal = self.current_goal_name().unwrap_or_default();
                 // F3 (Phase 9): principal name for audit attribution.
                 let principal = self.current_principal_name();
+                // R28: append an AI-call entry to the capability audit ledger when
+                // AXON_AUDIT_LEDGER is set. Called before all dispatch paths (mock/
+                // replay/live/fallback) so every ai_complete is captured exactly once.
+                if std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
+                    let _ = axon_audit::append_ai_call(&principal, prompt.as_bytes());
+                }
                 if let Some((cached, cached_tokens)) = ai_replay_lookup(&prompt, &replay_model) {
                     let micro = tier.cost_micro(cached_tokens);
                     self.ai_cost_micro.set(self.ai_cost_micro.get() + micro);

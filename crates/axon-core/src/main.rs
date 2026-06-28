@@ -648,6 +648,13 @@ fn main() {
 }
 
 fn dispatch(command: Command) {
+    // R28: if AXON_AUDIT_LEDGER is set, open (or create) the ledger before any
+    // command executes, so capability-bearing actions are recorded. flush_ledger()
+    // is called at process exit via std::process::exit — but since we use thread
+    // join + normal return, we call it after the match block instead.
+    if let Ok(ledger_path) = std::env::var("AXON_AUDIT_LEDGER") {
+        axon_audit::set_ledger_path(std::path::Path::new(&ledger_path));
+    }
     match command {
         Command::Parse { file } => cmd_parse(file),
         Command::Check {
@@ -3575,6 +3582,8 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
         let discharged = compute_discharged(&program);
         axon_core::interp::run_program_with_discharged(&program, discharged)
     };
+    // R28: flush the capability audit ledger before exiting.
+    let _ = axon_audit::flush_ledger();
     process::exit(code);
 }
 

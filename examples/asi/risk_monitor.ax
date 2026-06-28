@@ -1,0 +1,188 @@
+// risk_monitor.ax
+//
+// Risk-aware AI agent with self-monitoring compliance.
+//
+// Demonstrates:
+//   Phase 11 Risk typing: risk derived from effect set + budget consumption
+//   Pipeline gate: High/Critical risk → full simulate→stress→redteam→verify→deploy
+//   Self-monitoring: agent checks its own compliance after each action
+//   Self-halt: on policy violation, agent exits cleanly (not via panic)
+//
+// This shows what R29 does at the language level — the continuous compliance
+// monitor is the compile-time + runtime realization of this pattern.
+
+// ── Risk derivation ──────────────────────────────────────────────────────────
+// effects: "AI"=pure, "Net"=medium, "Exec"=medium, "Net_Exec"=high
+// risk: 0=Low, 1=Medium, 2=High, 3=Critical
+
+fn agent_risk(effects: str, budget_burn_pct: i64, irreversible: bool) -> i64 {
+    if irreversible { 3 }
+    else if budget_burn_pct > 80 { 2 }
+    else if str_eq(effects, "Net_Exec") { 2 }
+    else if str_eq(effects, "Net") || str_eq(effects, "Exec") { 1 }
+    else { 0 }
+}
+
+fn risk_name(r: i64) -> str {
+    if r <= 0 { "Low" }
+    else if r == 1 { "Medium" }
+    else if r == 2 { "High" }
+    else { "Critical" }
+}
+
+// ── Policy & compliance ──────────────────────────────────────────────────────
+
+type Policy = { allowed_effects: str, max_budget_pct: i64 }
+
+fn check_compliance(policy: Policy, actual_effects: str, budget_pct: i64) -> Result<str, str> {
+    if budget_pct > policy.max_budget_pct {
+        Err("budget exceeded: {to_str(budget_pct)}% > {to_str(policy.max_budget_pct)}%")
+    } else if str_eq(actual_effects, "Net") && !str_contains(policy.allowed_effects, "Net") {
+        Err("effect denied: Net not in allowed_effects={policy.allowed_effects}")
+    } else if str_eq(actual_effects, "Exec") && !str_contains(policy.allowed_effects, "Exec") {
+        Err("effect denied: Exec not in allowed_effects")
+    } else {
+        Ok("compliant")
+    }
+}
+
+// ── Adaptive scorer ──────────────────────────────────────────────────────────
+
+@[adaptive(metric: work_score, target: 100)]
+fn score_work(effort: i64) -> i64 {
+    if effort < 10 { effort * 9 }
+    else if effort < 20 { 90 + (effort - 10) / 2 }
+    else { 95 }
+}
+
+// ── Self-monitoring loop ─────────────────────────────────────────────────────
+// Runs the agent up to 5 iterations, checking compliance after every action.
+// On a policy violation the agent records the reason and breaks out of the
+// loop — it self-halts before the next action, not after.
+
+fn run_monitored(policy: Policy, total_budget: i64) -> Result<i64, str> {
+    let spent = 0
+    let best_score = 0
+    let iteration = 0
+    let violated = false
+    let violation_reason = ""
+
+    while iteration < 5 && spent < total_budget && !violated {
+        let effort = iteration * 5
+        let cost = 10
+        spent = spent + cost
+        let budget_pct = (spent * 100) / total_budget
+        let actual_effects = "AI"
+
+        match check_compliance(policy, actual_effects, budget_pct) {
+            Ok(_) => {
+                let score = score_work(effort)
+                if score > best_score { best_score = score }
+                println("  iter={to_str(iteration)} score={to_str(score)} budget={to_str(budget_pct)}%")
+            }
+            Err(reason) => {
+                println("  COMPLIANCE VIOLATION: {reason}")
+                println("  Agent self-halting (R29 pattern)")
+                violated = true
+                violation_reason = reason
+            }
+        }
+        iteration = iteration + 1
+    }
+
+    if violated { Err(violation_reason) } else { Ok(best_score) }
+}
+
+// ── Risk-gated deploy ────────────────────────────────────────────────────────
+// High/Critical risk requires the full pipeline; Low/Medium only needs verify.
+
+fn gate_by_risk(risk: i64, score: i64) -> bool {
+    if risk >= 2 {
+        let simulate_ok = score > 50
+        let stress_ok = score > 60
+        let redteam_ok = score > 70
+        let verify_ok = score > 80
+        println("  [gate] simulate={to_str_bool(simulate_ok)} stress={to_str_bool(stress_ok)} redteam={to_str_bool(redteam_ok)} verify={to_str_bool(verify_ok)}")
+        simulate_ok && stress_ok && redteam_ok && verify_ok
+    } else {
+        let verify_ok = score > 40
+        println("  [gate] verify={to_str_bool(verify_ok)}")
+        verify_ok
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_risk_low_for_ai_only() { assert_eq(agent_risk("AI", 20, false), 0) }
+
+@[test]
+fn test_risk_high_for_net_exec() { assert_eq(agent_risk("Net_Exec", 50, false), 2) }
+
+@[test]
+fn test_risk_critical_when_irreversible() { assert_eq(agent_risk("AI", 10, true), 3) }
+
+@[test]
+fn test_compliance_ok_within_budget() {
+    let p = Policy { allowed_effects: "AI_FS", max_budget_pct: 80 }
+    match check_compliance(p, "AI", 50) {
+        Ok(_) => assert(true)
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_compliance_violation_on_net() {
+    let p = Policy { allowed_effects: "AI_FS", max_budget_pct: 80 }
+    match check_compliance(p, "Net", 50) {
+        Ok(_) => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_gate_high_risk_requires_score_80() {
+    assert(!gate_by_risk(2, 70))
+    assert(gate_by_risk(2, 85))
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+fn main() {
+    // Scenario 1: Low-risk AI-only agent — runs fully and deploys
+    println("=== Scenario 1: Low-risk AI-only agent ===")
+    let risk1 = agent_risk("AI", 20, false)
+    println("Risk: {risk_name(risk1)} (level {to_str(risk1)})")
+    let policy1 = Policy { allowed_effects: "AI", max_budget_pct: 90 }
+    match run_monitored(policy1, 100) {
+        Ok(best) => {
+            println("Best score: {to_str(best)}")
+            let deployed = gate_by_risk(risk1, best)
+            println("Deployed: {to_str_bool(deployed)}")
+        }
+        Err(e) => println("Halted: {e}")
+    }
+
+    // Scenario 2: High-risk Net+Exec agent — full pipeline gate required
+    println("")
+    println("=== Scenario 2: High-risk Net+Exec agent ===")
+    let risk2 = agent_risk("Net_Exec", 50, false)
+    println("Risk: {risk_name(risk2)} (level {to_str(risk2)})")
+    println("Full pipeline required: {to_str_bool(risk2 >= 2)}")
+    let score2 = 85
+    let deployed2 = gate_by_risk(risk2, score2)
+    println("Score: {to_str(score2)} → Deployed: {to_str_bool(deployed2)}")
+
+    // Scenario 3: Budget-exceeded → compliance violation → self-halt
+    println("")
+    println("=== Scenario 3: Budget-limited agent (self-halt on violation) ===")
+    let risk3 = agent_risk("AI", 30, false)
+    println("Risk: {risk_name(risk3)} (level {to_str(risk3)})")
+    // total_budget=50, cost=10/iter, max_budget_pct=55%:
+    //   iter 0: 10/50 = 20% ok  iter 1: 40% ok  iter 2: 60% > 55% → violation
+    let policy3 = Policy { allowed_effects: "AI", max_budget_pct: 55 }
+    match run_monitored(policy3, 50) {
+        Ok(best) => println("Completed, best score: {to_str(best)}")
+        Err(e) => println("Self-halted: {e}")
+    }
+}

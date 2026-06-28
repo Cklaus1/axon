@@ -1,0 +1,139 @@
+// budget_audit.ax
+//
+// Demonstrates: KernelGoal + Budget enforcement + audit trail.
+//
+// An optimizer searches a score landscape under a hard token budget.
+// Each evaluation is recorded as a typed AuditEntry.  When the budget
+// is exhausted the loop stops — not when the score converges.
+//
+// The audit entry format mirrors what R28 will record automatically;
+// here we build it manually to show the pattern before R28 ships.
+//
+// Run:
+//   target/debug/axon run  examples/asi/budget_audit.ax
+//   target/debug/axon test examples/asi/budget_audit.ax
+
+// ── Types ────────────────────────────────────────────────────────────────────
+
+type AuditEntry = { seq: i64, effect: str, op: str, tokens: i64, score: i64 }
+
+// ── Audit helpers ─────────────────────────────────────────────────────────────
+
+// Record one evaluation: print the entry and return the typed struct.
+fn audit_record(seq: i64, effect: str, op: str, tokens: i64, score: i64) -> AuditEntry {
+    println("[AUDIT] #{to_str(seq)} {effect}:{op} tokens={to_str(tokens)} score={to_str(score)}")
+    AuditEntry { seq: seq, effect: effect, op: op, tokens: tokens, score: score }
+}
+
+// ── Score landscape ───────────────────────────────────────────────────────────
+
+// Integer peak at x = 42 (score = 100), linear falloff, clamped at 0.
+@[adaptive]
+fn score_fn(x: i64) -> i64 {
+    let dist = if x > 42 { x - 42 } else { 42 - x }
+    let base = 100 - dist
+    if base < 0 { 0 } else { base }
+}
+
+// ── Budget-gated optimizer ────────────────────────────────────────────────────
+
+// Run the optimizer until the token budget is exhausted or the search
+// space is fully scanned (x = 0..99, step 1).  Each evaluation costs
+// 10 tokens.  Returns the best score found within the budget.
+fn run_with_audit(budget: i64) -> i64 {
+    let seq = 0
+    let tokens_spent = 0
+    let best = 0
+    let x = 0
+
+    while tokens_spent < budget && x < 100 {
+        let s = score_fn(x)
+        seq = seq + 1
+        tokens_spent = tokens_spent + 10
+        let _ = audit_record(seq, "AI", "goal_eval", tokens_spent, s)
+        if s > best {
+            best = s
+        }
+        x = x + 1
+    }
+
+    let exhausted = if tokens_spent >= budget { "yes" } else { "no (scan complete)" }
+    println("  Iterations:   {to_str(seq)}")
+    println("  Tokens used:  {to_str(tokens_spent)} / {to_str(budget)}")
+    println("  Best score:   {to_str(best)}")
+    println("  Budget wall:  {exhausted}")
+    best
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+
+fn main() -> i64 {
+    println("=== budget_audit.ax: KernelGoal + Budget + Audit Trail ===")
+    println("Landscape: score_fn peaks at x=42 (score=100), linear falloff.")
+    println("")
+
+    // Run A — tight budget: 20 evals max (x=0..19, best = score_fn(19) = 77)
+    println("--- Run A: budget=200 tokens (20 evals, stops before peak) ---")
+    let _a = run_with_audit(200)
+    println("")
+
+    // Run B — full scan: 10 000 tokens covers x=0..99, hits x=42 (score=100)
+    println("--- Run B: budget=10000 tokens (full scan, finds peak) ---")
+    let best_b = run_with_audit(10000)
+    println("")
+
+    // KernelGoal principal-budget metering (R12b):
+    // Budget=50 evals; we only spend 10, leaving 40 — demonstrates metering
+    // without hitting the hard-exit wall that fires at exhaustion (exit 7).
+    println("--- Demo: KernelGoal principal-budget metering (R12b) ---")
+    let _ = goal_clear("score_fn")
+    let p = principal_root("optimizer", false, false, false, 50)
+    let goal = kernel_goal_create(p, "score_fn", 100.0)
+    println("  Budget before run:  {to_str(kernel_goal_budget_left(goal))}")
+    let best_kg = kernel_goal_run(goal, 10)
+    println("  KernelGoal best:    {to_str_f64(best_kg)}")
+    println("  Evals charged:      {to_str(kernel_goal_spent(goal))}")
+    println("  Budget remaining:   {to_str(kernel_goal_budget_left(goal))}")
+    println("")
+
+    if best_b == 100 {
+        println("PASS: full-budget run found the peak at x=42 (score=100).")
+        0
+    } else {
+        println("FAIL: expected score 100, got {to_str(best_b)}")
+        1
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_budget_stops_loop() {
+    // budget=50, cost=10/eval, step=1 → exactly 5 evals (x=0..4).
+    // score_fn(4) = 100 - |42-4| = 62; peak at x=42 is never reached.
+    let best = run_with_audit(50)
+    assert_eq(best, 62)
+}
+
+@[test]
+fn test_audit_entry_created() {
+    let e = audit_record(1, "AI", "goal_eval", 10, 85)
+    assert_eq(e.seq, 1)
+    assert_eq_str(e.effect, "AI")
+    assert_eq(e.score, 85)
+}
+
+@[test]
+fn test_score_fn_peaks_at_42() {
+    assert_eq(score_fn(42), 100)
+    assert(score_fn(0) < score_fn(42))
+    assert(score_fn(100) < score_fn(42))
+}
+
+@[test]
+fn test_unlimited_budget_finds_peak() {
+    // budget=10000, cost=10/eval → scans x=0..99 (1000 tokens total).
+    // Hits x=42 → score=100.
+    let best = run_with_audit(10000)
+    assert_eq(best, 100)
+}
