@@ -489,8 +489,18 @@ fn cmd_run(
     // Locate guest image files.
     let kernel_path = kernel
         .unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
-    let initrd_path = initrd
-        .unwrap_or_else(|| PathBuf::from("dist/guest/initramfs.cpio.gz"));
+    // Default initrd: prefer the gzipped image if present, else the uncompressed
+    // `.cpio` that the build ships (the guest kernel's CPIO reader handles both). The
+    // old hard-coded `.cpio.gz` default failed on every stock checkout (only `.cpio`
+    // exists), forcing an explicit --initrd.
+    let initrd_path = initrd.unwrap_or_else(|| {
+        let gz = PathBuf::from("dist/guest/initramfs.cpio.gz");
+        if gz.exists() {
+            gz
+        } else {
+            PathBuf::from("dist/guest/initramfs.cpio")
+        }
+    });
 
     for p in [&kernel_path, &initrd_path, &program] {
         if !p.exists() {
@@ -678,6 +688,20 @@ fn run_in_firecracker(
         .stderr(Stdio::piped())
         .spawn()?;
 
+    // Drain Firecracker's stdout/stderr (the guest serial console + FC logs) to our
+    // stderr on background threads. Without this the piped buffers fill and the guest
+    // BLOCKS — a deadlock, since `fc.wait()` can't return until FC exits and FC can't
+    // make progress while its stdout pipe is full. Draining also surfaces the guest
+    // boot log (set AXON_VM_QUIET=1 to suppress).
+    let quiet = env::var("AXON_VM_QUIET").map(|v| v == "1").unwrap_or(false);
+    let mut drains = Vec::new();
+    if let Some(out) = fc.stdout.take() {
+        drains.push(std::thread::spawn(move || drain_to_stderr(out, "guest", quiet)));
+    }
+    if let Some(err) = fc.stderr.take() {
+        drains.push(std::thread::spawn(move || drain_to_stderr(err, "fc", quiet)));
+    }
+
     // Wait for Firecracker to create its API socket (typically < 50ms).
     let api = wait_for_socket(socket_path, Duration::from_secs(5))?;
 
@@ -721,23 +745,28 @@ fn run_in_firecracker(
         }),
     )?;
 
-    // Enable MMDS V2 and bind it to the network interface.
-    fc_put(
+    // MMDS is a SECONDARY policy channel and requires a network interface to bind to.
+    // This launcher delivers the policy via the kernel cmdline (`axon.policy=<base64>`,
+    // the K2 cmdline-reader path) and configures no NIC, so MMDS V2 config with an empty
+    // `network_interfaces` is rejected (400) — correctly. Make it best-effort: try it for
+    // hosts that do add a NIC, but never fail the run, since the cmdline already carries
+    // the policy. (Was a hard `?` that aborted every run at /mmds/config.)
+    if let Err(e) = fc_put(
         &api,
         "/mmds/config",
         &serde_json::json!({
             "version": "V2",
             "network_interfaces": [],
         }),
-    )?;
-
-    // Write the axon policy payload to MMDS.
-    let mmds_content = serde_json::json!({
-        "latest": {
-            "axon": mmds,
+    ) {
+        eprintln!("axon-vm: MMDS config skipped ({e}); policy is delivered via the kernel cmdline");
+    } else {
+        // Only write the payload if MMDS config succeeded.
+        let mmds_content = serde_json::json!({ "latest": { "axon": mmds } });
+        if let Err(e) = fc_put(&api, "/mmds", &mmds_content) {
+            eprintln!("axon-vm: MMDS payload write skipped ({e})");
         }
-    });
-    fc_put(&api, "/mmds", &mmds_content)?;
+    }
 
     // Apply cgroup limits via jailer-style resource controls (if principal has limits).
     // In production use, Firecracker would be launched via jailer with uid/gid isolation.
@@ -782,15 +811,94 @@ fn run_in_firecracker(
     // Start the VM.
     fc_put(&api, "/actions", &serde_json::json!({"action_type": "InstanceStart"}))?;
 
-    // Wait for Firecracker to exit and collect the exit code.
-    let status = fc.wait()?;
-    let exit_code = status.code().unwrap_or(1);
+    // Bounded wait: the guest should run the program and power off (`reboot=k panic=1`
+    // turns a finished/paniced guest into a Firecracker exit). A guest that never powers
+    // off must NOT hang the host — kill it after the deadline and report. Tunable via
+    // AXON_VM_TIMEOUT_SECS (default 45).
+    let timeout_secs: u64 = env::var("AXON_VM_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(45);
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let exit_code = loop {
+        if let Some(status) = fc.try_wait()? {
+            break status.code().unwrap_or(1);
+        }
+        if Instant::now() >= deadline {
+            let _ = fc.kill();
+            let _ = fc.wait();
+            eprintln!(
+                "axon-vm: guest did not power off within {timeout_secs}s — killed. \
+                 See the guest log above; the guest image's init must run the program \
+                 and then poweroff/reboot for the VM to exit."
+            );
+            break 124;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    for d in drains {
+        let _ = d.join();
+    }
 
     // Clean up socket files.
     let _ = fs::remove_file(socket_path);
     let _ = fs::remove_file(&vsock_host_uds);
 
     Ok(RunResult { exit_code })
+}
+
+/// Read a single HTTP/1.1 response from a (keep-alive) stream without relying on the
+/// connection closing: read until the header terminator `\r\n\r\n`, then read exactly
+/// `Content-Length` more bytes if present. Firecracker replies `204 No Content` (no body)
+/// to a successful PUT and keeps the socket open, so reading to EOF would deadlock.
+fn read_http_response(stream: &mut UnixStream) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut resp = Vec::new();
+    let mut buf = [0u8; 1024];
+    let header_end = loop {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            return Ok(resp); // connection closed before full headers
+        }
+        resp.extend_from_slice(&buf[..n]);
+        if let Some(pos) = resp.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos + 4;
+        }
+    };
+    // Parse Content-Length (case-insensitive) from the headers.
+    let headers = String::from_utf8_lossy(&resp[..header_end]).to_ascii_lowercase();
+    let content_len: usize = headers
+        .lines()
+        .find_map(|l| l.strip_prefix("content-length:"))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    // Read the remaining body bytes, if any.
+    while resp.len() < header_end + content_len {
+        let n = stream.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        resp.extend_from_slice(&buf[..n]);
+    }
+    Ok(resp)
+}
+
+/// Copy a child stream (Firecracker stdout = guest serial console, or stderr = FC log)
+/// line-by-line to our stderr with a tag. Prevents the piped-buffer deadlock and surfaces
+/// the guest boot log. `quiet` suppresses the echo but still drains.
+fn drain_to_stderr<R: std::io::Read + Send + 'static>(r: R, tag: &'static str, quiet: bool) {
+    use std::io::BufRead;
+    let reader = std::io::BufReader::new(r);
+    for line in reader.lines() {
+        match line {
+            Ok(l) => {
+                if !quiet {
+                    eprintln!("[{tag}] {l}");
+                }
+            }
+            Err(_) => break,
+        }
+    }
 }
 
 // ── Firecracker API client (raw HTTP/1.1 over Unix socket) ────────────────────
@@ -829,13 +937,23 @@ fn fc_put(
         body_str.len()
     );
 
+    let dbg = env::var("AXON_VM_DEBUG").map(|v| v == "1").unwrap_or(false);
+    if dbg {
+        eprintln!("[axon-vm] → PUT {path}");
+    }
     let mut stream = UnixStream::connect(&api.socket_path)?;
+    // Firecracker's API server keeps the connection open (it ignores our
+    // `Connection: close`), so reading until EOF (`read_to_end`) HANGS FOREVER on the
+    // very first request. Read only up to the end of the HTTP headers, then the
+    // Content-Length body if any. A read timeout is a backstop against a wedged socket.
+    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
     stream.write_all(request.as_bytes())?;
     stream.flush()?;
 
-    // Read response — check for 2xx.
-    let mut resp = Vec::new();
-    stream.read_to_end(&mut resp)?;
+    let resp = read_http_response(&mut stream)?;
+    if dbg {
+        eprintln!("[axon-vm] ← {path} ({} bytes)", resp.len());
+    }
     let resp_str = String::from_utf8_lossy(&resp);
 
     let status_line = resp_str.lines().next().unwrap_or("");
