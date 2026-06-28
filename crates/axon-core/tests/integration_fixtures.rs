@@ -1304,6 +1304,18 @@ fn contained_fail_fs_fixture_emits_e0601() {
 }
 
 #[test]
+fn contained_fail_alias_fixture_emits_e1001() {
+    // Builtin aliasing (`let f = read_file; f(p)`) must be rejected statically — it
+    // used to slip past `axon check` and fail closed only at runtime. THREAT_MODEL.md §8.
+    let errors = check_fixture("contained_fail_alias.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1001")),
+        "contained_fail_alias.ax should produce E1001 (builtin-as-value), got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn contained_fail_never_fixture_emits_e0604() {
     let errors = check_fixture("contained_fail_never.ax");
     assert!(

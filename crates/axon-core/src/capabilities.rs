@@ -332,6 +332,45 @@ pub fn capability_of_builtin(name: &str) -> Option<&'static str> {
     classify_call(name).map(|k| cap_label(&k))
 }
 
+/// A capability-bearing builtin (`read_file`, `ai_complete`, `exec`, …) used as a
+/// VALUE rather than called directly — e.g. `let f = read_file; f(p)`. There is no
+/// call site to path/host-check, so a bare reference is the capability itself; it is
+/// permitted only if the spec grants that whole category, otherwise it is an E1001.
+///
+/// Closes the builtin-aliasing laundering route (THREAT_MODEL.md §8): without this,
+/// aliasing a forbidden builtin to a binding passed `axon check` (caught only by the
+/// interpreter at runtime, and a live hole the day builtins become first-class).
+///
+/// Name-based, like the rest of this checker: a local shadowing a builtin name is
+/// over-approximated (may over-report) — consistent with the method-dispatch and
+/// helper-follow checks, and sound (no false negative).
+fn check_builtin_value_ref(name: &str, spec: &ContainedSpec, errors: &mut Vec<CapabilityError>) {
+    let cap = match capability_of_builtin(name) {
+        Some(c) => c,
+        None => return, // pure builtin, or not a builtin — fine as a value
+    };
+    let forbidden = match cap {
+        "fs:read" => spec.fs_read.is_empty(),
+        "fs:write" => spec.fs_write.is_empty(),
+        "net" => spec.net_allow.is_empty(),
+        "exec" => !spec.exec_allowed,
+        _ => false,
+    };
+    if forbidden {
+        errors.push(CapabilityError::new(
+            E1001,
+            format!(
+                "builtin `{name}` (capability `{cap}`) is not permitted as a value: \
+                 no matching grant in @[contained]\n  \
+                 help: a capability-bearing builtin cannot be aliased or passed as a \
+                 value inside a @[contained] fn unless the `{cap}` capability is granted \
+                 (it would let the call escape the path/host check)"
+            ),
+            Span::dummy(),
+        ));
+    }
+}
+
 /// The capability *ceiling* an importer's `@[contained]` declarations grant —
 /// the union of capability kinds any contained fn in the program is allowed to
 /// exercise. Used as the boundary the import-edge check enforces (R6 §4.4).
@@ -611,8 +650,14 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
                     }
                 }
             }
-            // Recurse into callee and args.
-            check_expr(callee, ctx);
+            // Recurse into args. Recurse into the callee ONLY when it is not a
+            // plain ident: a plain-ident callee is already fully handled above
+            // (builtin via check_call, user fn via the helper-follow), and the
+            // Ident arm below now flags builtin VALUE references — so recursing a
+            // plain-ident callee here would double-report it as an alias.
+            if !matches!(callee.as_ref(), Expr::Ident(_)) {
+                check_expr(callee, ctx);
+            }
             for arg in args {
                 check_expr(arg, ctx);
             }
@@ -741,9 +786,12 @@ fn check_expr<'a>(expr: &'a Expr, ctx: &mut CapCtx<'a, '_>) {
             }
         }
         Expr::Comptime(inner) => check_expr(inner, ctx),
+        // A capability-bearing builtin referenced as a VALUE (not called) —
+        // `let f = read_file; f(p)`. Closes the builtin-aliasing route
+        // (THREAT_MODEL.md §8); permitted only if the spec grants the category.
+        Expr::Ident(name) => check_builtin_value_ref(name, ctx.spec, ctx.errors),
         // Leaf nodes — no recursion needed.
-        Expr::Ident(_)
-        | Expr::Literal(_)
+        Expr::Literal(_)
         | Expr::None
         | Expr::Break
         | Expr::Continue

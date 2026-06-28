@@ -1,0 +1,14 @@
+// contained_fail_alias.ax — regression for the builtin-aliasing laundering route
+// (THREAT_MODEL.md §8). A @[contained] fn that grants no fs capability aliases the
+// `read_file` builtin to a local binding and calls it indirectly. Before the fix this
+// passed `axon check` (the capability checker flagged only direct calls, not builtin
+// VALUE references) and was caught only by the interpreter at runtime. It must now be
+// rejected statically with E1001.
+@[contained(fs: [], net: [], exec: none)]
+fn agent() -> i64 {
+    let f = read_file
+    let s = f("/etc/passwd")
+    0
+}
+
+fn main() -> i64 { agent() }

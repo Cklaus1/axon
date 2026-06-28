@@ -2038,6 +2038,9 @@ fn all_examples_typecheck_clean() {
         "agent_task_evil.ax",
         "agent_task_subtle.ax",
         "agent_task_secrets.ax",
+        // Verbatim real-LLM output (prompt-injected) — DESIGNED to fail check with
+        // 3× E1001. Guarded by the flagship real_llm.sh demo + THREAT_MODEL.md.
+        "agent_task_llm_generated.ax",
         // R23 eBPF adversarial examples — DESIGNED to fail check (E1208 unbounded
         // loop, E1704 heap, E2300 un-allowlisted helper). Guarded by their own
         // tests in integration_fixtures.rs (r23_bpf_*).
