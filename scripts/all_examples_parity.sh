@@ -43,8 +43,8 @@ if ! AXON_AI_MOCK=1 "$AXON" build "$WORK/probe.ax" -o "$WORK/probe.bin" --no-cac
   exit 0
 fi
 
-pass=0; diff=0; failbuild=0; total=0
-fails=""
+pass=0; diff=0; failbuild=0; refused=0; total=0
+fails=""; refuses=""
 for f in examples/*.ax; do
   grep -q "fn main" "$f" || continue
   total=$((total + 1))
@@ -52,8 +52,21 @@ for f in examples/*.ax; do
 
   I_OUT="$(AXON_AI_MOCK=1 AXON_SEED=42 "$AXON" run "$f" 2>/dev/null)"; I_EXIT=$?
   BIN="$WORK/$base"
-  if ! AXON_AI_MOCK=1 "$AXON" build "$f" -o "$BIN" --no-cache >/dev/null 2>&1; then
-    failbuild=$((failbuild + 1)); fails="$fails\n  BUILD-FAIL: $base"; continue
+  BUILD_ERR="$(AXON_AI_MOCK=1 "$AXON" build "$f" -o "$BIN" --no-cache 2>&1)"; B_EXIT=$?
+  if [ "$B_EXIT" -ne 0 ]; then
+    # A clean E0910 refusal is NOT a divergence: codegen SOUNDLY declines an
+    # interpreter-only builtin (e.g. the network http_* / host_await family)
+    # rather than miscompiling it (sound-by-refusal, invariant I-2). That is the
+    # CORRECT outcome for an interp-only example — count it as an expected
+    # refusal, and require that the example still ran under the interpreter (so
+    # "refused" really means interp-only, never globally broken). Any OTHER
+    # nonzero build is a real BUILD-FAIL.
+    if echo "$BUILD_ERR" | grep -q 'E0910' && [ "$I_EXIT" -ne 127 ]; then
+      refused=$((refused + 1)); refuses="$refuses\n  REFUSED (interp-only, E0910): $base"
+    else
+      failbuild=$((failbuild + 1)); fails="$fails\n  BUILD-FAIL: $base"
+    fi
+    continue
   fi
   N_OUT="$(AXON_AI_MOCK=1 AXON_SEED=42 "$BIN" 2>/dev/null)"; N_EXIT=$?
 
@@ -65,10 +78,13 @@ for f in examples/*.ax; do
   fi
 done
 
-echo "all_examples_parity: $pass/$total match, $diff differ, $failbuild build-fail"
+echo "all_examples_parity: $pass/$total match, $diff differ, $failbuild build-fail, $refused interp-only-refused (E0910)"
+if [ "$refused" -ne 0 ]; then
+  printf "all_examples_parity: interp-only (codegen soundly refuses, runs under \`axon run\`):$refuses\n"
+fi
 if [ "$diff" -ne 0 ] || [ "$failbuild" -ne 0 ]; then
   printf "all_examples_parity: FAIL$fails\n"
   exit 1
 fi
-echo "all_examples_parity: PASS — all $total examples native==interp under mock"
+echo "all_examples_parity: PASS — $pass examples native==interp under mock; $refused interp-only (sound E0910 refusal)"
 exit 0

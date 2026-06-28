@@ -32,6 +32,12 @@ setup_gpu() {
 
 setup_browser() {
   step "Browser — headless Chrome"
+  # The wasm_*_parity / browser_*_parity harnesses build axon-run for wasm; without
+  # these rust targets they SKIP (silently uncovered), not run. Install both wasip1
+  # (the wasm_aot/run/stdout harnesses) and unknown-unknown (the browser cdylib).
+  rustup target add wasm32-wasip1 wasm32-unknown-unknown >/dev/null 2>&1 \
+    && ok "rust wasm targets added (wasm32-wasip1, wasm32-unknown-unknown)" \
+    || echo "  • could not add wasm rust targets (rustup absent?) — wasm_* harnesses will SKIP"
   if command -v google-chrome >/dev/null; then
     ok "google-chrome already present ($(google-chrome --version))"
   else
