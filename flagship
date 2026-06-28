@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# flagship — one command, from a fresh clone, to the whole pitch.
+#
+#   AI-written code, sandboxed by the compiler. The evil agent that tries to read
+#   /etc/passwd, call an LLM, and shell out to curl never builds — the escape is
+#   impossible by construction, not by vigilance.
+#
+# This builds whatever binaries are missing (no LLVM needed — sub-second to a few
+# seconds), then runs the four-layer safety demo and the Docker+seccomp foil.
+#
+# Usage:
+#   ./flagship              full run (interactive pauses; builds what's missing)
+#   ./flagship --ci         non-interactive (no pauses, no real KVM) — for CI/screencap
+#   ./flagship demo         just the four-layer demo.sh
+#   ./flagship docker       just the Docker+seccomp foil
+#   ./flagship python       just the naked-Python foil
+#   ./flagship threat       print the threat model path and open it
+#
+# Exit 0 iff every part it ran succeeded.
+set -uo pipefail
+REPO=$(cd "$(dirname "$0")" && pwd)
+cd "$REPO"
+D="$REPO/examples/flagship"
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+dim()  { printf '\033[2m%s\033[0m\n' "$*"; }
+grn()  { printf '\033[32m%s\033[0m\n' "$*"; }
+red()  { printf '\033[31m%s\033[0m\n' "$*"; }
+cyn()  { printf '\033[36m%s\033[0m\n' "$*"; }
+rule() { dim "═══════════════════════════════════════════════════════════════"; }
+
+MODE="all"; CI=0
+for a in "$@"; do
+  case "$a" in
+    --ci) CI=1 ;;
+    demo|docker|python|threat) MODE="$a" ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+    *) red "unknown arg: $a (try --help)"; exit 2 ;;
+  esac
+done
+if [ "$CI" = "1" ]; then export DEMO_NOPAUSE=1 AXON_CI_NO_KVM=1; fi
+# Embedded demo.sh shouldn't wipe this runner's intro + build summary.
+export DEMO_NOCLEAR=1
+
+# ── Build what's missing (idempotent; cargo is the cache) ─────────────────────
+need_build() { [ ! -x "target/debug/$1" ]; }
+ensure() { # $1 binary  $2..  cargo args
+  local binname="$1"; shift
+  if need_build "$binname"; then
+    dim "  building $binname … (first time only)"
+    if ! cargo build -q "$@" 2>&1 | tail -3; then
+      red "  build failed for $binname — see output above"; return 1
+    fi
+  fi
+  [ -x "target/debug/$binname" ]
+}
+
+prepare() {
+  bold "Preparing binaries (no LLVM required)…"
+  ensure axon    -p axon-core --no-default-features --bin axon || return 1
+  grn  "  ✓ axon        (interpreter CLI — Layers 1 & 2)"
+  if ensure axon-os -p axon-os; then grn "  ✓ axon-os     (Layer 3 kill-switch + audit ledger)";
+    else dim "  • axon-os unavailable — Layer 3 will be skipped"; fi
+  if ensure axon-vm -p axon-vm; then grn "  ✓ axon-vm     (Layer 4 kernel attestation)";
+    else dim "  • axon-vm unavailable — Layer 4 will be skipped"; fi
+  rule
+}
+
+run_part() { # $1 script  $2 label
+  bold "▶ $2"
+  if bash "$1"; then grn "✓ $2 — ok"; return 0; else red "✗ $2 — failed"; return 1; fi
+}
+
+fail=0
+case "$MODE" in
+  threat)
+    bold "Threat model: examples/flagship/THREAT_MODEL.md"
+    ${PAGER:-cat} "$D/THREAT_MODEL.md"
+    exit 0 ;;
+  demo)
+    prepare || exit 1
+    run_part "$D/demo.sh" "Four-layer safety demo" || fail=1 ;;
+  docker)
+    prepare || exit 1
+    run_part "$D/compare_docker.sh" "Docker + seccomp foil" || fail=1 ;;
+  python)
+    prepare || exit 1
+    run_part "$D/compare_python.sh" "Naked-Python foil" || fail=1 ;;
+  all)
+    bold "═══ Axon flagship — AI code, sandboxed by the compiler ═══"
+    echo "The agent is asked to score some records. It must do local compute ONLY."
+    echo "One line — @[contained(fs: [], net: [], exec: none)] — and the compiler"
+    echo "refuses any escape before the code runs once. Let's prove it."
+    rule
+    prepare || exit 1
+    run_part "$D/demo.sh" "1/2  Four-layer safety stack (Layers 1–4)" || fail=1
+    rule
+    # Prefer the serious foil (Docker+seccomp) when Docker is runnable.
+    if command -v docker >/dev/null 2>&1 && timeout 20 docker run --rm hello-world >/dev/null 2>&1; then
+      run_part "$D/compare_docker.sh" "2/2  Foil: Docker + seccomp" || fail=1
+    else
+      dim "  (Docker not runnable — using the naked-Python foil instead)"
+      run_part "$D/compare_python.sh" "2/2  Foil: naked Python" || fail=1
+    fi
+    rule
+    bold "What you just saw"
+    echo "  • The evil agent — read /etc/passwd, call an LLM, exec curl — never built (E1001)."
+    echo "  • Docker+seccomp blocked 1 of those 3; Axon blocked all 3, at compile time."
+    echo "  • Operator kill-switch halts a running agent in <1s; the audit log is tamper-evident."
+    echo "  • The kernel is measured before boot (attestation digest)."
+    echo
+    cyn  "  Read the honest boundaries:  examples/flagship/THREAT_MODEL.md"
+    cyn  "  Try to break it:             see THREAT_MODEL.md §7"
+    ;;
+esac
+
+echo
+if [ "$fail" = "0" ]; then grn "flagship: OK"; else red "flagship: one or more parts failed"; fi
+exit "$fail"

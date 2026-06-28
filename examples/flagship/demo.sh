@@ -57,7 +57,9 @@ fi
 
 mkdir -p "$DEMO_OUT"
 
-clear 2>/dev/null || true
+# Skip the screen-clear when embedded in the ./flagship runner (keeps the build
+# summary + narration continuous); still clears for a standalone interactive run.
+[ "${DEMO_NOCLEAR:-0}" = "1" ] || clear 2>/dev/null || true
 bold "=== Axon ASI Safety Stack Demo ==="
 echo ""
 echo "Four layers of provable safety for AI-written code:"
