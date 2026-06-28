@@ -177,6 +177,55 @@ fn html_state_machine_lockall_and_unlock() {
     }
 }
 
+/// POST /api/safety/attest returns ok=true in mock mode (AXON_CI_NO_KVM=1 or
+/// no kernel image on disk, which is always the case in CI/unit tests).
+#[test]
+fn test_safety_attest_mock() {
+    // Ensure mock mode: unset or set AXON_CI_NO_KVM=1 (kernel won't exist in tests).
+    std::env::set_var("AXON_CI_NO_KVM", "1");
+    start_server_thread(18087);
+    let (status, body) = post_json(18087, "/api/safety/attest", "{}");
+    assert_eq!(status, 200, "expected 200, got {status}");
+    let v: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    assert_eq!(v["ok"], true, "attest mock must return ok=true, got: {v}");
+    assert_eq!(
+        v["attested"], true,
+        "attest mock must return attested=true, got: {v}"
+    );
+    assert_eq!(
+        v["mode"], "mock",
+        "attest in CI should be mode=mock, got: {v}"
+    );
+}
+
+/// GET /api/safety/status returns all four required fields.
+#[test]
+fn test_safety_status_aggregate() {
+    start_server_thread(18088);
+    let (status, body) = get(18088, "/api/safety/status");
+    assert_eq!(status, 200, "expected 200, got {status}");
+    let v: serde_json::Value =
+        serde_json::from_str(&body).unwrap_or_else(|_| panic!("expected JSON, got: {body:.200}"));
+    assert_eq!(v["ok"], true, "safety/status must return ok=true, got: {v}");
+    assert!(
+        v["attested"].is_boolean(),
+        "safety/status must include 'attested' bool, got: {v}"
+    );
+    assert!(
+        v["killable"].is_boolean(),
+        "safety/status must include 'killable' bool, got: {v}"
+    );
+    assert!(
+        v["ledger_ok"].is_boolean(),
+        "safety/status must include 'ledger_ok' bool, got: {v}"
+    );
+    assert!(
+        v["coalition_ok"].is_boolean(),
+        "safety/status must include 'coalition_ok' bool, got: {v}"
+    );
+}
+
 /// End-to-end test using the real `axon` binary.
 /// Auto-discovers the workspace debug build; skips if binary not found.
 /// Override via AXON_BIN env var: AXON_BIN=/abs/path/axon cargo test -p axon-web e2e

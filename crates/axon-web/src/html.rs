@@ -25,10 +25,23 @@ textarea{min-height:160px}
 .warn{color:#d29922}
 .spinner{display:inline-block;width:12px;height:12px;border:2px solid #30363d;border-top-color:#58a6ff;border-radius:50%;animation:spin .7s linear infinite;margin-right:.4rem}
 @keyframes spin{to{transform:rotate(360deg)}}
+.nav-tab{display:inline-block;padding:.3rem .7rem;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;text-decoration:none;font-size:.8rem;font-weight:600;cursor:pointer}
+.nav-tab:hover{background:#30363d;color:#e6edf3}
 </style>
 </head>
 <body>
 <h1>Axon Goal Approval Flow</h1>
+
+<nav style="margin-bottom:1.2rem;display:flex;flex-wrap:wrap;gap:.4rem;align-items:center">
+  <button onclick="document.getElementById('p1').scrollIntoView({behavior:'smooth'})" class="nav-tab">1 Intent</button>
+  <button onclick="document.getElementById('p2').scrollIntoView({behavior:'smooth'})" class="nav-tab">2 Review</button>
+  <button onclick="document.getElementById('p3').scrollIntoView({behavior:'smooth'})" class="nav-tab">3 Approve</button>
+  <button onclick="document.getElementById('p4').scrollIntoView({behavior:'smooth'})" class="nav-tab">4 Improve</button>
+  <button onclick="document.getElementById('p5').scrollIntoView({behavior:'smooth'})" class="nav-tab">5 Redteam</button>
+  <button onclick="document.getElementById('p6').scrollIntoView({behavior:'smooth'})" class="nav-tab">6 Deploy</button>
+  <button onclick="document.getElementById('p7').scrollIntoView({behavior:'smooth'})" class="nav-tab">7 Trace</button>
+  <button onclick="showPane('safety')" class="nav-tab" style="background:#1a2a3a;border-color:#1f6feb">&#x1F6E1; Safety</button>
+</nav>
 
 <!-- Pane 1: Intent -->
 <div class="pane" id="p1">
@@ -133,6 +146,63 @@ Budget: 50 calls"></textarea>
     <button class="btn" id="btn-trace" onclick="showTrace()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d">Show Trace</button>
     <div class="status" id="s6"></div>
     <div class="code-area" id="trace-out" style="display:none"></div>
+  </div>
+</div>
+
+<!-- Pane 8: Safety Dashboard (R26 attestation · R27 kill-switch · R28 audit ledger) -->
+<div class="pane" id="pane-safety" style="display:none">
+  <div class="pane-header">
+    <span class="pane-title">&#x1F6E1; Safety Dashboard</span>
+    <span class="pane-step">R26 &middot; R27 &middot; R28</span>
+  </div>
+  <div class="pane-body">
+
+    <!-- Attestation (R26) -->
+    <div style="margin-bottom:1rem;padding:.8rem;background:#0d1117;border:1px solid #30363d;border-radius:6px">
+      <div style="display:flex;align-items:center;gap:.8rem;margin-bottom:.5rem">
+        <span style="font-weight:600;font-size:.9rem">Attestation</span>
+        <span id="attest-badge" style="font-size:1.3rem">&#x2014;</span>
+        <span id="attest-status" style="font-size:.8rem;color:#8b949e">not checked</span>
+      </div>
+      <button class="btn" onclick="runAttest()">Attest Kernel</button>
+      <div class="code-area" id="attest-out" style="display:none;margin-top:.5rem;min-height:60px"></div>
+    </div>
+
+    <!-- Kill-switch (R27) -->
+    <div style="margin-bottom:1rem;padding:.8rem;background:#0d1117;border:1px solid #30363d;border-radius:6px">
+      <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem">Kill-Switch (R27)</div>
+      <div style="font-size:.82rem;color:#8b949e;margin-bottom:.6rem">Trip the corrigibility latch for a running job. Irreversible.</div>
+      <input id="kill-run-id" placeholder="run_id (leave blank for current)" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:.3rem .6rem;font-size:.82rem;width:240px;outline:none">
+      <button id="btn-kill" onclick="tripKill()" style="margin-left:.5rem;padding:.4rem 1rem;background:#b91c1c;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.85rem;font-weight:600">&#x26A0; Kill Running Job</button>
+      <div class="status" id="kill-status" style="margin-top:.4rem"></div>
+    </div>
+
+    <!-- Coalition bound (R27) -->
+    <div style="margin-bottom:1rem;padding:.8rem;background:#0d1117;border:1px solid #30363d;border-radius:6px">
+      <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem">Coalition Bound (R27)</div>
+      <div id="coalition-display" style="font-size:.85rem;color:#8b949e">coalition: &#x2014; / 3 principals</div>
+    </div>
+
+    <!-- Audit Ledger (R28) -->
+    <div id="safety-ledger" style="margin-bottom:1rem;padding:.8rem;background:#0d1117;border:1px solid #30363d;border-radius:6px">
+      <div style="font-weight:600;font-size:.9rem;margin-bottom:.4rem">Audit Ledger &#x2014; last 10 entries (R28)</div>
+      <div id="ledger-msg" style="font-size:.8rem;color:#8b949e;margin-bottom:.5rem"></div>
+      <table id="ledger-table" style="width:100%;border-collapse:collapse;font-size:.8rem;display:none">
+        <thead><tr style="color:#8b949e">
+          <th style="text-align:left;padding:.3rem .5rem;border-bottom:1px solid #30363d">seq</th>
+          <th style="text-align:left;padding:.3rem .5rem;border-bottom:1px solid #30363d">ts</th>
+          <th style="text-align:left;padding:.3rem .5rem;border-bottom:1px solid #30363d">principal</th>
+          <th style="text-align:left;padding:.3rem .5rem;border-bottom:1px solid #30363d">effect</th>
+          <th style="text-align:left;padding:.3rem .5rem;border-bottom:1px solid #30363d">operation</th>
+        </tr></thead>
+        <tbody id="ledger-body"></tbody>
+      </table>
+      <button class="btn" onclick="refreshLedger()" style="background:#21262d;color:#c9d1d9;border:1px solid #30363d;margin-top:.5rem">Refresh Ledger</button>
+    </div>
+
+    <!-- Aggregate refresh -->
+    <button class="btn" onclick="refreshSafetyStatus()" style="background:#1f6feb">&#x21BA; Refresh All</button>
+    <div class="status" id="safety-status-msg" style="margin-top:.5rem"></div>
   </div>
 </div>
 
@@ -307,6 +377,114 @@ async function showTrace() {
     ok('s6', 'trace loaded');
   } catch(e) { fail('s6', e.message); }
   finally { unlockByState(); }
+}
+
+// ── Safety Dashboard (Pane 8) ─────────────────────────────────────────────
+
+function showPane(name) {
+  const el = document.getElementById('pane-' + name);
+  if (!el) return;
+  const hidden = el.style.display === 'none' || el.style.display === '';
+  if (hidden) {
+    el.style.display = 'block';
+    refreshSafetyStatus();
+  }
+  el.scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+async function runAttest() {
+  document.getElementById('attest-status').textContent = 'checking…';
+  document.getElementById('attest-badge').textContent = '—';
+  try {
+    const r = await fetch('/api/safety/attest', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'});
+    const j = await r.json();
+    const passed = j.attested === true || j.ok === true;
+    document.getElementById('attest-badge').textContent = passed ? '🔒' : '🔴';
+    document.getElementById('attest-status').textContent = passed
+      ? 'attested (' + (j.mode || 'live') + ')'
+      : 'failed — ' + (j.error || 'attestation rejected');
+    const out = document.getElementById('attest-out');
+    out.style.display = '';
+    out.textContent = JSON.stringify(j, null, 2);
+  } catch(e) {
+    document.getElementById('attest-badge').textContent = '🔴';
+    document.getElementById('attest-status').textContent = 'error: ' + e.message;
+  }
+}
+
+async function tripKill() {
+  const runId = document.getElementById('kill-run-id').value.trim() || 'current';
+  const ks = document.getElementById('kill-status');
+  ks.innerHTML = '<span class="warn">sending kill signal…</span>';
+  try {
+    const r = await fetch('/api/safety/kill', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({run_id: runId}),
+    });
+    const j = await r.json();
+    if (j.ok) {
+      ks.innerHTML = '<span class="ok">✓ Kill latch tripped for run_id: ' + j.run_id + '</span>';
+    } else {
+      ks.innerHTML = '<span class="err">✗ ' + (j.error || 'kill failed') + '</span>';
+    }
+  } catch(e) {
+    ks.innerHTML = '<span class="err">✗ ' + e.message + '</span>';
+  }
+}
+
+async function refreshLedger() {
+  const msg = document.getElementById('ledger-msg');
+  msg.textContent = 'loading…';
+  try {
+    const r = await fetch('/api/safety/ledger');
+    const j = await r.json();
+    if (!j.ok) {
+      msg.textContent = j.reason || j.error || 'R28 not available';
+      document.getElementById('ledger-table').style.display = 'none';
+      return;
+    }
+    const entries = j.entries || [];
+    msg.textContent = entries.length + ' entries from ' + (j.ledger_path || 'ledger');
+    const tbody = document.getElementById('ledger-body');
+    tbody.innerHTML = '';
+    entries.forEach(e => {
+      const tr = document.createElement('tr');
+      tr.innerHTML = [e.seq, e.ts, e.principal, e.effect, e.operation]
+        .map(v => '<td style="padding:.3rem .5rem;border-bottom:1px solid #21262d">' + (v !== undefined && v !== null ? String(v) : '—') + '</td>')
+        .join('');
+      tbody.appendChild(tr);
+    });
+    document.getElementById('ledger-table').style.display = entries.length ? '' : 'none';
+  } catch(e) {
+    document.getElementById('ledger-msg').textContent = 'error: ' + e.message;
+  }
+}
+
+async function refreshSafetyStatus() {
+  const msg = document.getElementById('safety-status-msg');
+  msg.innerHTML = '<span class="spinner"></span>checking…';
+  try {
+    const r = await fetch('/api/safety/status');
+    const j = await r.json();
+    if (j.ok) {
+      const parts = [
+        'attested: ' + (j.attested ? '✓' : '✗'),
+        'killable: ' + (j.killable ? '✓' : '✗'),
+        'ledger: ' + (j.ledger_ok ? '✓' : 'R28 pending'),
+        'coalition: ' + (j.coalition_ok ? '✓' : '✗'),
+      ];
+      msg.innerHTML = '<span class="ok">' + parts.join(' &middot; ') + '</span>';
+      if (j.coalition_principals !== undefined) {
+        document.getElementById('coalition-display').textContent =
+          'coalition: ' + j.coalition_principals + ' / ' + (j.coalition_max || 3) + ' principals';
+      }
+    } else {
+      msg.innerHTML = '<span class="err">status check failed</span>';
+    }
+  } catch(e) {
+    msg.innerHTML = '<span class="err">' + e.message + '</span>';
+  }
 }
 </script>
 </body>

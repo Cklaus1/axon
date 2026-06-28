@@ -51,6 +51,14 @@ pub fn handle(mut req: Request, axon_bin: &str) {
                 "application/json",
             )
         }
+        // Safety layer endpoints (R26 / R27 / R28)
+        ("POST", "/api/safety/attest") => (200, crate::api::safety_attest(), "application/json"),
+        ("POST", "/api/safety/kill") => {
+            let b = read_body(&mut req);
+            (200, crate::api::safety_kill(&b), "application/json")
+        }
+        ("GET", "/api/safety/ledger") => (200, crate::api::safety_ledger(), "application/json"),
+        ("GET", "/api/safety/status") => (200, crate::api::safety_status(), "application/json"),
         _ => (
             404,
             r#"{"error":"not found"}"#.to_string(),
