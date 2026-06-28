@@ -34,6 +34,10 @@ Four independent layers back the guarantee — `@[contained]` compile check → 
 re-check → operator kill-switch (<1s) → kernel attestation. The honest boundaries (what
 it does **not** stop) are written down: **[examples/flagship/THREAT_MODEL.md](examples/flagship/THREAT_MODEL.md)**.
 
+**The receipts:** Axon prevents ~28 of the 40 critical real-world CVEs in
+[CVE-Bench](https://arxiv.org/abs/2503.17332) by construction. Full story:
+**[examples/flagship/WRITEUP.md](examples/flagship/WRITEUP.md)**.
+
 ---
 
 It's also a real language. Hindley-Milner inference, ADTs, traits, generics, closures,

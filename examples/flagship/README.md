@@ -54,6 +54,10 @@ verbatim output is captured in `agent_task_llm_generated.ax` (no API key needed 
 replay); `real_llm.sh --live` regenerates against a real endpoint if you set
 `ANTHROPIC_API_KEY`.
 
+**Want the narrative?** **[WRITEUP.md](WRITEUP.md)** is the shareable, self-contained
+story (Axon vs CVE-Bench: ~28 of 40 critical CVEs prevented by construction) — readable
+without cloning.
+
 **Evaluating Axon skeptically?** Start with **[EVALUATE.md](EVALUATE.md)** — the
 one claim, the one command, where to be suspicious, and how to try to break it (≈5 min).
 Then **[THREAT_MODEL.md](THREAT_MODEL.md)** for what this stops, what it does **not**,
