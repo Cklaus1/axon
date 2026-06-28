@@ -1,9 +1,25 @@
 [workspace]
-<<<<<<< HEAD
-members = ["crates/axon-core", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal", "crates/axon-gfx-mock", "crates/axon-gfx", "crates/axon-domain", "crates/axon-os", "crates/axon-intent", "crates/axon-certcheck", "crates/axon-guest-init", "crates/axon-vm", "crates/axon-guest-kernel", "crates/axon-attest"]
-=======
-members = ["crates/axon-core", "crates/axon-audit", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal", "crates/axon-gfx-mock", "crates/axon-gfx", "crates/axon-domain", "crates/axon-os", "crates/axon-intent", "crates/axon-certcheck"]
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
+members = [
+  "crates/axon-core",
+  "crates/axon-audit",
+  "crates/axon-rt",
+  "crates/axon-ai",
+  "crates/axon-surface",
+  "crates/axon-wasm",
+  "crates/axon-web",
+  "crates/axon-ledger",
+  "crates/axon-signal",
+  "crates/axon-gfx-mock",
+  "crates/axon-gfx",
+  "crates/axon-domain",
+  "crates/axon-os",
+  "crates/axon-intent",
+  "crates/axon-certcheck",
+  "crates/axon-guest-init",
+  "crates/axon-vm",
+  "crates/axon-guest-kernel",
+  "crates/axon-attest",
+]
 resolver = "2"
 
 [workspace.package]

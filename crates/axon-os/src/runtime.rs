@@ -109,7 +109,8 @@ struct ProcOutcome {
     code: Option<i32>,
     stderr: String,
     timed_out: bool,
-    /// R27: true if the process was killed because the supervisor latch was tripped.
+    /// R27/R29: true if the process was killed because the kill file latch was
+    /// tripped (by `axon-os kill` for R27, or by the R29 ComplianceMonitor).
     killed_by_latch: bool,
 }
 
@@ -119,9 +120,10 @@ struct ProcOutcome {
 /// stderr, which is how we distinguish a FAULT exit from a program that simply
 /// `return`s an integer — the two would otherwise collide on the exit code).
 ///
-/// `kill_file`: if `Some(path)`, poll the file every 100 ms (R27 kill-switch).
-/// When the file contains `"latch":"tripped"`, SIGTERM the child, wait 1s, then
-/// SIGKILL. Returns `killed_by_latch = true` (→ `Verdict::Halted`, exit 4).
+/// `kill_file`: if `Some(path)`, poll the file every 100 ms (R27/R29 kill-switch).
+/// When the file contains `"latch":"tripped"`, SIGKILL the child immediately.
+/// Returns `killed_by_latch = true` (→ `Verdict::Halted`, exit 4 for R27;
+/// the R29 monitor overrides to exit 12 via `containment_violation` in cmd_run).
 fn run_bounded(
     cmd: &mut Command,
     timeout: Duration,
@@ -146,13 +148,13 @@ fn run_bounded(
                     let _ = child.wait();
                     break None;
                 }
-                // R27 poll-before-progress: check the kill file if set.
+                // R27/R29 poll-before-progress: check the kill file if set.
                 if let Some(kf) = kill_file {
                     if is_kill_file_tripped(kf) {
                         killed_by_latch = true;
                         let _ = child.kill();
                         let _ = child.wait();
-                        break Some(4); // HALTED_EXIT_CODE
+                        break Some(4); // HALTED_EXIT_CODE (R27); R29 overrides to 12 in cmd_run
                     }
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -187,7 +189,7 @@ fn run_bounded(
     })
 }
 
-/// R27: read the kill file and return true if the latch is tripped.
+/// R27/R29: read the kill file and return true if the latch is tripped.
 fn is_kill_file_tripped(path: &std::path::Path) -> bool {
     match std::fs::read_to_string(path) {
         Ok(s) => s.contains("\"latch\":\"tripped\"") || s.contains("\"latch\": \"tripped\""),
@@ -347,7 +349,9 @@ impl Runtime for AxonCoreRuntime {
             }
         }
 
-        // R27: if AXON_KILL_FILE is set, poll it during run_bounded.
+        // R27/R29: if AXON_KILL_FILE is set, poll it during run_bounded.
+        // R27 uses this for operator kill (`axon-os kill`); R29 uses it for the
+        // compliance monitor. Both write `{"latch":"tripped"}` to stop the job.
         let kill_file_env = std::env::var_os("AXON_KILL_FILE").map(std::path::PathBuf::from);
         let kill_file = kill_file_env.as_deref();
         let proc_res = run_bounded(&mut cmd, self.timeout, kill_file);
@@ -372,7 +376,9 @@ impl Runtime for AxonCoreRuntime {
         // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
         let err = &proc.stderr;
         let verdict = if proc.killed_by_latch {
-            // R27: latch was tripped by the supervisor; stopped with exit 4.
+            // Kill file tripped: R27 operator kill → Halted (exit 4).
+            // R29 monitor kill → cmd_run overrides the final exit code to 12
+            // via the `containment_violation` flag (checked after supervisor::run).
             Verdict::Halted { reason: "kill-switch tripped by supervisor".into() }
         } else if proc.timed_out {
             Verdict::Denied {
@@ -473,7 +479,8 @@ mod runtime_tests {
         let start = std::time::Instant::now();
         let mut cmd = Command::new("sleep");
         cmd.arg("5");
-        let out = run_bounded(&mut cmd, Duration::from_millis(150), None).expect("spawn sleep (POSIX)");
+        let out = run_bounded(&mut cmd, Duration::from_millis(150), None)
+            .expect("spawn sleep (POSIX)");
         assert!(out.timed_out, "runaway must be killed at the timeout");
         assert!(out.code.is_none());
         assert!(
@@ -493,9 +500,9 @@ mod runtime_tests {
 
     #[test]
     fn run_bounded_trips_latch_via_kill_file() {
-        // R27: when the kill file is tripped mid-run, the subprocess is killed
+        // R27/R29: when the kill file is tripped mid-run, the subprocess is killed
         // with killed_by_latch=true.
-        let dir = std::env::temp_dir().join(format!("axon-r27-rt-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("axon-r27r29-rt-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
         let kill_path = dir.join("latch.json");
         // Start clear.
@@ -513,7 +520,10 @@ mod runtime_tests {
         let out = run_bounded(&mut cmd, Duration::from_secs(10), Some(&kill_path)).unwrap();
         assert!(out.killed_by_latch, "must be killed by latch");
         assert_eq!(out.code, Some(4), "killed_by_latch returns code 4");
-        assert!(start.elapsed() < Duration::from_secs(3), "must return quickly after latch trip");
+        assert!(
+            start.elapsed() < Duration::from_secs(3),
+            "must return quickly after latch trip"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

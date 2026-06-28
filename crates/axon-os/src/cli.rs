@@ -5,38 +5,41 @@
 use crate::gate::{admit, Admission};
 use crate::grant::{Budget, ExecPolicy, Grant, Label};
 use crate::manifest::{parse as parse_manifest, JobManifest};
+use crate::monitor::{ComplianceMonitor, MonitorResult, CONTAINMENT_VIOLATION_EXIT_CODE};
 use crate::record::{from_json, to_json, verify};
 use crate::runtime::{AxonCoreRuntime, Runtime};
 use crate::{replay, supervisor};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 const USAGE: &str = "\
 axon-os — run untrusted Axon programs under a proven capability bound
 
 USAGE:
-<<<<<<< HEAD
     axon-os explain <job.axjob>
-    axon-os run     <job.axjob> [--run-id ID] [--out DIR] [--killable] [--coalition ROOT]
+    axon-os run     <job.axjob> [--run-id ID] [--out DIR]
+                    [--killable] [--coalition ROOT]
+                    [--monitor <effects>] [--ledger <path>]
     axon-os verify  <record.json>
     axon-os replay  <run-id> [--store DIR]
     axon-os kill    <run-id> [--store DIR] [--reason REASON]    (R27)
     axon-os status  [--store DIR] [--latest] [--json]           (R27)
-
-Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
-4 halted (kill-switch), 6 refine, 7 budget, 8 capability/denied,
-9 resource-bound, 10 coalition-bound, 11 tamper/divergence.";
-=======
-    axon-os explain      <job.axjob>
-    axon-os run          <job.axjob> [--run-id ID] [--out DIR]
-    axon-os verify       <record.json>
-    axon-os replay       <run-id> [--store DIR]
     axon-os audit verify --ledger PATH           (R28)
     axon-os audit show   --ledger PATH [--json]  (R28)
 
 Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
-6 refine, 7 budget, 8 capability/denied, 9 tamper/divergence, 11 ledger tamper.";
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
+4 halted (kill-switch), 6 refine, 7 budget, 8 capability/denied,
+9 resource-bound, 10 coalition-bound, 11 tamper/divergence,
+12 containment-violation (R29 monitor).
+
+R29 flags for `run`:
+  --monitor <effects>   Comma-separated allowed effects (e.g. fs_read,fs_write).
+                        Enables the continuous compliance monitor (R29).
+  --ledger  <path>      Path to the JSONL capability audit ledger to watch.";
 
 /// The supervisor's own authority. Default is broad (the manifest is the bound);
 /// `"".into()` is the universal path ancestor and `"*"` the universal host.
@@ -117,34 +120,31 @@ pub fn run(args: Vec<String>) -> ExitCode {
         ["explain", "--help"] => {
             help("explain <job.axjob>  — show the legible grant + gate verdict; no execution")
         }
-        ["run", "--help"] => help("run <job.axjob> [--run-id ID] [--out DIR] [--killable] [--coalition ROOT]  — gate→run→record"),
+        ["run", "--help"] => help(
+            "run <job.axjob> [--run-id ID] [--out DIR] [--killable] [--monitor EFFECTS] [--ledger PATH]  — gate→run→record"
+        ),
         ["verify", "--help"] => {
             help("verify <record.json>  — recompute the hash chain; detect tamper")
         }
         ["replay", "--help"] => {
             help("replay <run-id> [--store DIR]  — verify + re-run + assert identical")
         }
-<<<<<<< HEAD
         ["kill", "--help"] => {
             help("kill <run-id> [--store DIR] [--reason REASON]  — R27: trip the supervisor kill-latch (exit 0)")
         }
         ["status", "--help"] => {
             help("status [--store DIR] [--latest] [--json]  — R27: show latch state + ledger totals")
-=======
+        }
         ["audit", "--help"] | ["audit"] => {
             help("audit verify --ledger PATH  |  audit show --ledger PATH [--json]  — R28 capability ledger")
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
         }
         ["explain", job] => cmd_explain(Path::new(job)),
         ["run", rest @ ..] => cmd_run(rest),
         ["verify", record] => cmd_verify(Path::new(record)),
         ["replay", rest @ ..] => cmd_replay(rest),
-<<<<<<< HEAD
         ["kill", rest @ ..] => cmd_kill(rest),
         ["status", rest @ ..] => cmd_status(rest),
-=======
         ["audit", rest @ ..] => cmd_audit(rest),
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
         _ => {
             eprintln!("axon-os: unrecognized invocation\n\n{USAGE}");
             ExitCode::from(2)
@@ -186,8 +186,12 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     let mut job: Option<&str> = None;
     let mut run_id = "run".to_string();
     let mut out = PathBuf::from(".");
+    // R27: --killable enables manual kill via `axon-os kill`.
     let mut killable = false;
     let mut _coalition: Option<String> = None; // R27: coalition root (future use)
+    // R29: --monitor enables the continuous compliance monitor.
+    let mut monitor_effects: Option<String> = None; // comma-sep allowed effects
+    let mut monitor_ledger: Option<PathBuf> = None; // JSONL ledger to watch
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
@@ -205,6 +209,14 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             }
             "--coalition" if i + 1 < rest.len() => {
                 _coalition = Some(rest[i + 1].to_string());
+                i += 2;
+            }
+            "--monitor" if i + 1 < rest.len() => {
+                monitor_effects = Some(rest[i + 1].to_string());
+                i += 2;
+            }
+            "--ledger" if i + 1 < rest.len() => {
+                monitor_ledger = Some(PathBuf::from(rest[i + 1]));
                 i += 2;
             }
             s if !s.starts_with("--") && job.is_none() => {
@@ -244,31 +256,107 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         println!("\u{2713} approval verified (program + grant unedited since sign-off)");
     }
 
-    // R27: if --killable, create the kill-state file and pass it to the runtime
-    // via AXON_KILL_FILE so the run_bounded loop can poll it.
-    let kill_file_path = if killable {
+    // ── Kill-file setup (R27 + R29) ───────────────────────────────────────────
+    // R27: --killable creates a kill file for operator-driven `axon-os kill`.
+    // R29: --monitor creates a kill file for the compliance monitor thread.
+    // Both use AXON_KILL_FILE; --monitor takes precedence if both are set.
+    //
+    // We ensure the output dir exists first (needed for both R27 and R29).
+    if killable || monitor_effects.is_some() {
         if let Err(e) = std::fs::create_dir_all(&out) {
             eprintln!("axon-os run: cannot create {}: {e}", out.display());
             return ExitCode::from(2);
         }
+    }
+
+    // R27: killable sets up the standard kill file (polled by run_bounded).
+    let kill_file_path = if killable && monitor_effects.is_none() {
         let kf = out.join(format!("{run_id}.kill"));
         let _ = std::fs::write(&kf, r#"{"latch":"clear"}"#);
-        // Store the kill file path in the environment so AxonCoreRuntime can find it.
         std::env::set_var("AXON_KILL_FILE", &kf);
         Some(kf)
     } else {
-        std::env::remove_var("AXON_KILL_FILE");
         None
     };
 
+    // R29: --monitor sets up a monitor-specific kill file + compliance thread.
+    let monitor_state = if let Some(effects_str) = &monitor_effects {
+        let kill_file = out.join(format!("{run_id}.monitor.kill"));
+        let _ = std::fs::write(&kill_file, r#"{"latch":"clear"}"#);
+        // Inject the kill file path into the environment so run_sandboxed picks it up.
+        std::env::set_var("AXON_KILL_FILE", &kill_file);
+
+        let ledger = monitor_ledger.clone().unwrap_or_else(|| {
+            // Default: <out>/<run-id>.audit.jsonl
+            out.join(format!("{run_id}.audit.jsonl"))
+        });
+        let allowed: Vec<String> = effects_str
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let violation = Arc::new(AtomicBool::new(false));
+        let stop_clone = Arc::clone(&stop);
+        let violation_clone = Arc::clone(&violation);
+        let kill_file_clone = kill_file.clone();
+
+        let monitor = ComplianceMonitor::new(
+            ledger,
+            kill_file_clone,
+            allowed,
+            stop_clone,
+        );
+
+        let monitor_thread = std::thread::spawn(move || {
+            let result = monitor.run();
+            if matches!(result, MonitorResult::ViolationDetected { .. }) {
+                violation_clone.store(true, Ordering::Release);
+            }
+            result
+        });
+
+        Some((stop, violation, monitor_thread, kill_file))
+    } else {
+        if !killable {
+            std::env::remove_var("AXON_KILL_FILE");
+        }
+        None
+    };
+
+    // ── Run the job (blocks until completion or monitor/kill-switch kill) ─────
     let rt = AxonCoreRuntime::from_env();
     let sup = broad_supervisor_grant();
     let rec = supervisor::run(&manifest, &sup, &run_id, &rt);
 
-    // R27: clean up the kill file env var after the run.
+    // ── R27: clean up the kill file env var after the run ────────────────────
     if kill_file_path.is_some() {
         std::env::remove_var("AXON_KILL_FILE");
     }
+
+    // ── R29: stop monitor thread and check violation flag ─────────────────────
+    let containment_violation = if let Some((stop, violation, thread, kill_file)) = monitor_state {
+        // Signal the monitor to stop (clean exit when job finishes normally).
+        stop.store(true, Ordering::Release);
+        // Join the thread. Panic on join = monitor crashed = fail-closed (I-1/I-6).
+        let thread_result = thread.join();
+        let v = violation.load(Ordering::Acquire);
+        // If the thread panicked (I-1), treat as violation.
+        let panicked = thread_result.is_err();
+        if panicked {
+            // I-1: monitor crash → ensure kill file is tripped.
+            let _ = std::fs::write(
+                &kill_file,
+                r#"{"latch":"tripped","reason":"R29 monitor panic — fail-closed"}"#,
+            );
+        }
+        // Clean up env var.
+        std::env::remove_var("AXON_KILL_FILE");
+        v || panicked
+    } else {
+        false
+    };
 
     if let Err(e) = std::fs::create_dir_all(&out) {
         eprintln!("axon-os run: cannot create {}: {e}", out.display());
@@ -287,6 +375,13 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         rec.verdict.legible(),
         rec_path.display()
     );
+
+    // R29: if the compliance monitor detected a violation, return exit 12
+    // regardless of the job's own verdict.
+    if containment_violation {
+        eprintln!("axon-os: R29 CONTAINMENT VIOLATION — effect constraint exceeded; job killed");
+        return ExitCode::from(CONTAINMENT_VIOLATION_EXIT_CODE as u8);
+    }
     ExitCode::from(rec.verdict.exit_code() as u8)
 }
 
@@ -378,7 +473,6 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
     }
 }
 
-<<<<<<< HEAD
 // ── R27: kill / status ───────────────────────────────────────────────────────
 
 /// R27 §5.1: trip the supervisor kill-latch for a running job.
@@ -450,53 +544,21 @@ fn cmd_status(rest: &[&str]) -> ExitCode {
                 // Find the most recently modified .kill file in store.
                 i += 1;
             }
-=======
-// ── R28: audit verify / show ─────────────────────────────────────────────────
-
-/// R28: verify or show the capability audit ledger.
-/// `axon-os audit verify --ledger PATH`
-/// `axon-os audit show   --ledger PATH [--json]`
-fn cmd_audit(rest: &[&str]) -> ExitCode {
-    let mut i = 0;
-    let subcommand = if rest.is_empty() {
-        eprintln!("axon-os audit: missing subcommand (verify | show)");
-        return ExitCode::from(2);
-    } else {
-        let s = rest[0];
-        i += 1;
-        s
-    };
-
-    let mut ledger_path: Option<PathBuf> = None;
-    let mut json_out = false;
-    while i < rest.len() {
-        match rest[i] {
-            "--ledger" if i + 1 < rest.len() => {
-                ledger_path = Some(PathBuf::from(rest[i + 1]));
-                i += 2;
-            }
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
             "--json" => {
                 json_out = true;
                 i += 1;
             }
-<<<<<<< HEAD
             s if !s.starts_with("--") && run_id.is_none() => {
                 run_id = Some(s.to_string());
                 i += 1;
             }
             _ => {
                 eprintln!("axon-os status: bad argument `{}`", rest[i]);
-=======
-            _ => {
-                eprintln!("axon-os audit: unknown flag `{}`", rest[i]);
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
                 return ExitCode::from(2);
             }
         }
     }
 
-<<<<<<< HEAD
     // If no run_id given, look for any .kill file in the store directory.
     let kill_path = if let Some(rid) = &run_id {
         store.join(format!("{rid}.kill"))
@@ -542,7 +604,43 @@ fn cmd_audit(rest: &[&str]) -> ExitCode {
         );
     }
     ExitCode::from(0)
-=======
+}
+
+// ── R28: audit verify / show ─────────────────────────────────────────────────
+
+/// R28: verify or show the capability audit ledger.
+/// `axon-os audit verify --ledger PATH`
+/// `axon-os audit show   --ledger PATH [--json]`
+fn cmd_audit(rest: &[&str]) -> ExitCode {
+    let mut i = 0;
+    let subcommand = if rest.is_empty() {
+        eprintln!("axon-os audit: missing subcommand (verify | show)");
+        return ExitCode::from(2);
+    } else {
+        let s = rest[0];
+        i += 1;
+        s
+    };
+
+    let mut ledger_path: Option<PathBuf> = None;
+    let mut json_out = false;
+    while i < rest.len() {
+        match rest[i] {
+            "--ledger" if i + 1 < rest.len() => {
+                ledger_path = Some(PathBuf::from(rest[i + 1]));
+                i += 2;
+            }
+            "--json" => {
+                json_out = true;
+                i += 1;
+            }
+            _ => {
+                eprintln!("axon-os audit: unknown flag `{}`", rest[i]);
+                return ExitCode::from(2);
+            }
+        }
+    }
+
     let path = match ledger_path {
         Some(p) => p,
         None => {
@@ -601,7 +699,6 @@ fn cmd_audit(rest: &[&str]) -> ExitCode {
             ExitCode::from(2)
         }
     }
->>>>>>> f122f61 (feat(R28): capability audit ledger — chained JSONL ledger, axon-audit crate, interp+axon-os integration)
 }
 
 #[cfg(test)]
