@@ -1,5 +1,9 @@
 # Axon Guest Kernel
 
+> For where this is *headed* — an ASI-native kernel whose primitives are
+> capabilities/effects/principals/budgets/goals rather than POSIX
+> processes/files/syscalls — see the design sketch: **[AXON_ASI_KERNEL_DESIGN.md](AXON_ASI_KERNEL_DESIGN.md)**.
+
 A purpose-built supervisor kernel for Axon microVM guests, written in Axon. The
 **goal** (not yet the status): replace the Linux `microvm_defconfig` guest kernel with a
 small, auditable kernel whose sole job is to enforce `@[contained]` effect-row caps,
