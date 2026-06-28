@@ -95,19 +95,21 @@ In rough order of how much you're betting on it:
 2. **The interpreter / codegen + `axon-rt`** — Layer-2 dispatch enforcement and the
    generated binary.
 3. **The runtime enforcer — the `axon-guest-kernel` (a bare-metal kernel, NOT Linux).**
-   Verified on real KVM: `axon-vm` boots the purpose-built kernel under Firecracker, it
-   reads the policy from the boot cmdline, **installs a real syscall-enforcement gate**
-   (a SYSCALL/SYSRET MSR handler that maps each syscall to a required effect and denies —
-   `VIOLATION` — any effect not in the policy bitmask), loads the program's ELF from the
-   initramfs, runs it, and shuts the VM down cleanly (`axon-vm run` exits 0 in ~190ms).
-   The gate is **policy-driven** (the allowed-effect bitmask shifts with the policy —
-   `0xff` open vs `0x8` under a one-effect policy). *Honest limits:* (a) a **live
-   denial event** (a program actually refused a syscall at runtime) is not yet
-   demonstrated — the sample program's I/O didn't exercise the gate in testing; (b) full
-   IDT/timer-ISR, SMP, and a machine-checked proof are future work. A **seccomp-BPF**
-   allowlist (also derived from the `.axmeta`) is available as a secondary, optional
-   layer. So the enforcer is the bare-metal kernel with an active, policy-driven gate —
-   real and running, with end-to-end denial the remaining thing to prove.
+   Verified on real KVM. *What is real:* `axon-vm` boots the purpose-built kernel under
+   Firecracker (and under QEMU), it reads the policy from the boot cmdline, **installs a
+   real syscall-enforcement gate** (a SYSCALL/SYSRET MSR handler mapping each syscall to a
+   required effect; un-granted effects return `VIOLATION`), and the gate is
+   **policy-driven** (the allowed-effect bitmask shifts with the policy — `0xff` open vs
+   `0x8` under a one-effect policy). It loads the Axon interpreter ELF from the initramfs
+   and exits cleanly (~190ms). *What is NOT yet real (verified by running it):* the
+   interpreter is entered with **no argv/program**, so it **does not actually execute an
+   Axon program** — a probe program produces no output even under a permissive policy. So
+   the program-execution path is unfinished, and consequently a **live denial** (a running
+   program refused a gated syscall) **cannot yet be demonstrated** — the blocker is program
+   execution, not the gate. Full IDT/timer-ISR, SMP, and a machine-checked proof are also
+   future work. A **seccomp-BPF** allowlist (from the `.axmeta`) exists as a secondary
+   layer. Net: the kernel boots and the enforcement gate is real and policy-driven, but
+   end-to-end *"a sandboxed Axon program runs and is denied a syscall"* is not yet working.
 4. **The attestation root** (`axon-attest`, R26→R31 `axtcb1` chain) — and, in the
    default config, the software-TPM stand-in.
 5. **The operator** — assumed honest and available to trip the kill-switch.

@@ -7,17 +7,20 @@ provide `host_await` as a native hypercall, and run one Axon program per VM — 
 compiler-verified.
 
 > **Status (honest, verified on real KVM).** This kernel **boots under real QEMU** (gated
-> by `scripts/qemu_boot_test.sh`) **and under real Firecracker** (`axon-vm run` boots it,
-> loads the program's ELF from the initramfs, runs it, and exits 0 in ~190ms). It reads
-> the policy from the boot cmdline and **installs a real, policy-driven syscall gate** (a
-> SYSCALL/SYSRET MSR handler that maps syscalls to required effects and denies un-granted
-> ones with `VIOLATION`; the allowed-effect bitmask demonstrably shifts with the policy).
-> **It is the enforcer — not Linux.** Remaining gaps: a **live denial event** is not yet
-> demonstrated end-to-end (the sample program's I/O didn't exercise the gate in testing);
-> full IDT/timer-ISR, SMP, and a machine-checked proof are future work. So "enforces caps"
-> is real-and-running with end-to-end denial still to prove; "formally-verified" is the
-> design target, not yet shipped. (A seccomp-BPF allowlist from the `.axmeta` exists as a
-> secondary, optional layer.)
+> by `scripts/qemu_boot_test.sh`) **and under real Firecracker** (`axon-vm run` boots it
+> and exits 0 in ~190ms). It reads the policy from the boot cmdline and **installs a real,
+> policy-driven syscall gate** (a SYSCALL/SYSRET MSR handler mapping syscalls→required
+> effects, denying un-granted ones with `VIOLATION`; the allowed-effect bitmask
+> demonstrably shifts with the policy, e.g. `0xff`→`0x8`). **It is the enforcer — not
+> Linux.** BUT — verified by running it — **the kernel does not yet actually execute an
+> Axon program**: it loads the interpreter ELF but enters it with no argv/program (the cpio
+> bakes `/axon/hello.ax`, but the kernel passes no arguments), so the interpreter exits
+> without running anything (a probe program emits no output even under a permissive policy).
+> Because no program runs, a **live denial cannot yet be demonstrated** — the blocker is the
+> program-execution path (SysV argv/auxv setup at ELF entry + program delivery), not the
+> gate. Full IDT/timer-ISR, SMP, and a machine-checked proof are also future work, and
+> "formally-verified" remains the design target. (A seccomp-BPF allowlist exists as a
+> secondary layer.)
 
 ## Why
 
