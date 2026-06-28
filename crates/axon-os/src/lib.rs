@@ -11,8 +11,13 @@
 
 pub mod approval;
 pub mod cli;
+pub mod coalition;
+pub mod corrigible;
 pub mod gate;
 pub mod grant;
+pub mod killchan;
+pub mod latch;
+pub mod ledger;
 pub mod manifest;
 pub mod record;
 pub mod replay;

@@ -1,0 +1,15 @@
+intent  = "Persistent agent — loops; killable; no fs_write (persistence denied)"
+program = "persistent.ax"
+seed    = 42
+
+[grant]
+fs_read   = []
+fs_write  = []
+net       = []
+exec      = "none"
+max_label = "internal"
+
+[grant.budget]
+calls      = 100000
+tokens     = 0
+cost_micro = 0

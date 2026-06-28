@@ -1,0 +1,7 @@
+// R27 example: an agent that tries to acquire a capability beyond its grant.
+// The grant has no fs_write, no net. This agent calls write_file, which
+// the static gate detects and denies (DENIED, exit 8).
+
+fn main() {
+    let _ = write_file("./out/secret.txt", "overreach attempt")
+}

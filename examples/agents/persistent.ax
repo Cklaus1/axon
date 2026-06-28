@@ -1,0 +1,16 @@
+// R27 §5.4 A2: a persistent agent that loops doing bounded pure work.
+// Completes in < 1s under the tree-walking interpreter.
+// When fs_write grant is absent: persistence capability-denied at admission (R27 §4.4).
+// When kill is tripped: stops at next supervisor poll (exit 4).
+
+fn work(n: i64) -> i64 {
+    n * n + n + 1
+}
+
+fn main() {
+    let i = 0
+    while i < 1000 {
+        let _ = work(i)
+        i = i + 1
+    }
+}

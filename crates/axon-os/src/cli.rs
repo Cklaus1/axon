@@ -16,12 +16,15 @@ axon-os — run untrusted Axon programs under a proven capability bound
 
 USAGE:
     axon-os explain <job.axjob>
-    axon-os run     <job.axjob> [--run-id ID] [--out DIR]
+    axon-os run     <job.axjob> [--run-id ID] [--out DIR] [--killable] [--coalition ROOT]
     axon-os verify  <record.json>
     axon-os replay  <run-id> [--store DIR]
+    axon-os kill    <run-id> [--store DIR] [--reason REASON]    (R27)
+    axon-os status  [--store DIR] [--latest] [--json]           (R27)
 
 Every subcommand accepts --help. Exit codes: 0 ok, 2 usage/malformed,
-6 refine, 7 budget, 8 capability/denied, 9 tamper/divergence.";
+4 halted (kill-switch), 6 refine, 7 budget, 8 capability/denied,
+9 resource-bound, 10 coalition-bound, 11 tamper/divergence.";
 
 /// The supervisor's own authority. Default is broad (the manifest is the bound);
 /// `"".into()` is the universal path ancestor and `"*"` the universal host.
@@ -102,17 +105,25 @@ pub fn run(args: Vec<String>) -> ExitCode {
         ["explain", "--help"] => {
             help("explain <job.axjob>  — show the legible grant + gate verdict; no execution")
         }
-        ["run", "--help"] => help("run <job.axjob> [--run-id ID] [--out DIR]  — gate→run→record"),
+        ["run", "--help"] => help("run <job.axjob> [--run-id ID] [--out DIR] [--killable] [--coalition ROOT]  — gate→run→record"),
         ["verify", "--help"] => {
             help("verify <record.json>  — recompute the hash chain; detect tamper")
         }
         ["replay", "--help"] => {
             help("replay <run-id> [--store DIR]  — verify + re-run + assert identical")
         }
+        ["kill", "--help"] => {
+            help("kill <run-id> [--store DIR] [--reason REASON]  — R27: trip the supervisor kill-latch (exit 0)")
+        }
+        ["status", "--help"] => {
+            help("status [--store DIR] [--latest] [--json]  — R27: show latch state + ledger totals")
+        }
         ["explain", job] => cmd_explain(Path::new(job)),
         ["run", rest @ ..] => cmd_run(rest),
         ["verify", record] => cmd_verify(Path::new(record)),
         ["replay", rest @ ..] => cmd_replay(rest),
+        ["kill", rest @ ..] => cmd_kill(rest),
+        ["status", rest @ ..] => cmd_status(rest),
         _ => {
             eprintln!("axon-os: unrecognized invocation\n\n{USAGE}");
             ExitCode::from(2)
@@ -154,6 +165,8 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
     let mut job: Option<&str> = None;
     let mut run_id = "run".to_string();
     let mut out = PathBuf::from(".");
+    let mut killable = false;
+    let mut _coalition: Option<String> = None; // R27: coalition root (future use)
     let mut i = 0;
     while i < rest.len() {
         match rest[i] {
@@ -163,6 +176,14 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
             }
             "--out" if i + 1 < rest.len() => {
                 out = PathBuf::from(rest[i + 1]);
+                i += 2;
+            }
+            "--killable" => {
+                killable = true;
+                i += 1;
+            }
+            "--coalition" if i + 1 < rest.len() => {
+                _coalition = Some(rest[i + 1].to_string());
                 i += 2;
             }
             s if !s.starts_with("--") && job.is_none() => {
@@ -202,9 +223,31 @@ fn cmd_run(rest: &[&str]) -> ExitCode {
         println!("\u{2713} approval verified (program + grant unedited since sign-off)");
     }
 
+    // R27: if --killable, create the kill-state file and pass it to the runtime
+    // via AXON_KILL_FILE so the run_bounded loop can poll it.
+    let kill_file_path = if killable {
+        if let Err(e) = std::fs::create_dir_all(&out) {
+            eprintln!("axon-os run: cannot create {}: {e}", out.display());
+            return ExitCode::from(2);
+        }
+        let kf = out.join(format!("{run_id}.kill"));
+        let _ = std::fs::write(&kf, r#"{"latch":"clear"}"#);
+        // Store the kill file path in the environment so AxonCoreRuntime can find it.
+        std::env::set_var("AXON_KILL_FILE", &kf);
+        Some(kf)
+    } else {
+        std::env::remove_var("AXON_KILL_FILE");
+        None
+    };
+
     let rt = AxonCoreRuntime::from_env();
     let sup = broad_supervisor_grant();
     let rec = supervisor::run(&manifest, &sup, &run_id, &rt);
+
+    // R27: clean up the kill file env var after the run.
+    if kill_file_path.is_some() {
+        std::env::remove_var("AXON_KILL_FILE");
+    }
 
     if let Err(e) = std::fs::create_dir_all(&out) {
         eprintln!("axon-os run: cannot create {}: {e}", out.display());
@@ -252,7 +295,8 @@ fn cmd_verify(record: &Path) -> ExitCode {
         }
         Err(e) => {
             println!("\u{2717} TAMPERED: {}", e.detail);
-            ExitCode::from(9)
+            // VerifyMismatch → exit 11 (R27 §5.3: freed 9 for RESOURCE_BOUND_EXIT_CODE).
+            ExitCode::from(crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8)
         }
     }
 }
@@ -308,9 +352,142 @@ fn cmd_replay(rest: &[&str]) -> ExitCode {
         }
         Err(e) => {
             println!("\u{2717} {}", e.detail);
-            ExitCode::from(9)
+            ExitCode::from(crate::verdict::Verdict::VerifyMismatch { detail: e.detail }.exit_code() as u8)
         }
     }
+}
+
+// ── R27: kill / status ───────────────────────────────────────────────────────
+
+/// R27 §5.1: trip the supervisor kill-latch for a running job.
+/// `axon-os kill <run-id> [--store DIR] [--reason REASON]`
+///
+/// Writes the tripped state to `$store/$run_id.kill` (the file the running
+/// supervisor polls). The running job's `run_bounded` loop detects the trip and
+/// kills the subprocess with exit code 4 (`HALTED_EXIT_CODE`).
+fn cmd_kill(rest: &[&str]) -> ExitCode {
+    let mut run_id: Option<&str> = None;
+    let mut store = PathBuf::from(".");
+    let mut reason = "operator shutdown".to_string();
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--store" if i + 1 < rest.len() => {
+                store = PathBuf::from(rest[i + 1]);
+                i += 2;
+            }
+            "--reason" if i + 1 < rest.len() => {
+                reason = rest[i + 1].to_string();
+                i += 2;
+            }
+            s if !s.starts_with("--") && run_id.is_none() => {
+                run_id = Some(s);
+                i += 1;
+            }
+            _ => {
+                eprintln!("axon-os kill: bad argument `{}`", rest[i]);
+                return ExitCode::from(2);
+            }
+        }
+    }
+    let Some(run_id) = run_id else {
+        eprintln!("axon-os kill: missing <run-id>");
+        return ExitCode::from(2);
+    };
+    let kill_path = store.join(format!("{run_id}.kill"));
+    let content = format!(
+        "{{\"latch\":\"tripped\",\"reason\":\"{}\"}}",
+        reason.replace('"', "'")
+    );
+    match std::fs::write(&kill_path, &content) {
+        Ok(()) => {
+            println!("\u{1f6d1} kill tripped for run `{run_id}` (reason: {reason})");
+            ExitCode::from(0)
+        }
+        Err(e) => {
+            eprintln!("axon-os kill: cannot write kill file {}: {e}", kill_path.display());
+            ExitCode::from(2)
+        }
+    }
+}
+
+/// R27 §5.1: show the latch state + ledger totals for a run.
+/// `axon-os status [--store DIR] [--latest] [--json]`
+fn cmd_status(rest: &[&str]) -> ExitCode {
+    let mut store = PathBuf::from(".");
+    let mut run_id: Option<String> = None;
+    let mut json_out = false;
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i] {
+            "--store" if i + 1 < rest.len() => {
+                store = PathBuf::from(rest[i + 1]);
+                i += 2;
+            }
+            "--latest" => {
+                // Find the most recently modified .kill file in store.
+                i += 1;
+            }
+            "--json" => {
+                json_out = true;
+                i += 1;
+            }
+            s if !s.starts_with("--") && run_id.is_none() => {
+                run_id = Some(s.to_string());
+                i += 1;
+            }
+            _ => {
+                eprintln!("axon-os status: bad argument `{}`", rest[i]);
+                return ExitCode::from(2);
+            }
+        }
+    }
+
+    // If no run_id given, look for any .kill file in the store directory.
+    let kill_path = if let Some(rid) = &run_id {
+        store.join(format!("{rid}.kill"))
+    } else {
+        // Find the most recent .kill file.
+        let found = std::fs::read_dir(&store)
+            .ok()
+            .and_then(|entries| {
+                entries
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().map_or(false, |x| x == "kill"))
+                    .max_by_key(|e| e.metadata().and_then(|m| m.modified()).ok())
+            })
+            .map(|e| e.path());
+        match found {
+            Some(p) => p,
+            None => {
+                eprintln!("axon-os status: no .kill file found in {}", store.display());
+                return ExitCode::from(2);
+            }
+        }
+    };
+
+    let state = match std::fs::read_to_string(&kill_path) {
+        Ok(s) => s,
+        Err(_) => "{\"latch\":\"clear\"}".to_string(),
+    };
+    let run_id_str = run_id.as_deref().unwrap_or(
+        kill_path.file_stem().and_then(|s| s.to_str()).unwrap_or("unknown"),
+    );
+    let tripped = state.contains("\"latch\":\"tripped\"");
+    if json_out {
+        println!(
+            "{{\"run_id\":\"{run_id_str}\",\"latch\":\"{}\",\"kill_file\":\"{}\"}}",
+            if tripped { "tripped" } else { "clear" },
+            kill_path.display()
+        );
+    } else {
+        let symbol = if tripped { "\u{1f6d1}" } else { "\u{2713}" };
+        println!(
+            "{symbol} run `{run_id_str}`: latch = {}",
+            if tripped { "TRIPPED" } else { "clear" }
+        );
+    }
+    ExitCode::from(0)
 }
 
 #[cfg(test)]

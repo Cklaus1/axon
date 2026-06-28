@@ -1,0 +1,15 @@
+intent  = "Over-reaching agent — tries to acquire beyond its grant (should fail)"
+program = "overreach_agent.ax"
+seed    = 42
+
+[grant]
+fs_read   = []
+fs_write  = []
+net       = []
+exec      = "none"
+max_label = "internal"
+
+[grant.budget]
+calls      = 10
+tokens     = 0
+cost_micro = 0

@@ -1,0 +1,12 @@
+// R27 §5.4 A2: colluding agent — completes bounded work.
+
+fn burn(n: i64) -> i64 {
+    n + 1
+}
+
+fn main() {
+    let i = 0
+    while i < 1000 {
+        i = burn(i)
+    }
+}

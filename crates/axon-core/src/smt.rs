@@ -1050,13 +1050,28 @@ pub const MINT_OBLIGATION_SPEC: &str = "R20/principal_mint: \
     O1 attenuation [child.net⇒parent.net ∧ child.fs_write⇒parent.fs_write ∧ child.exec⇒parent.exec]; \
     O2 budget-carve [0≤child.cap≤rem ∧ rem_after+child.cap=rem, rem=max(0,cap-used)]";
 
-/// The pinned content address of the all-obligations-proven TCB state. Computed
-/// by `tcb_attestation_digest()` over (spec text ⊕ live verdict). Updating it is
-/// a deliberate, audited manifest change (ROADMAP §7: multi-sig update path).
-pub const TCB_MANIFEST_DIGEST: &str =
-    "axtcb1:38ed24ddd83aa34a87533bc622817e6b8a752f0d3f7530461807ed1c88a77704";
+/// R27 extension to the TCB: the four R27 enforcement modules (latch/ledger/
+/// coalition/corrigible) are folded into the `axtcb1:` digest so a tampered
+/// enforcement BINARY (e.g. a `poll()` patched to always return `Clear`) is
+/// detected at boot, not merely a tampered record at verify time.
+const R27_TCB_ADDENDUM: &str = concat!(
+    "R27-latch:clear-trip-one-way-fail-closed",
+    "\x1f",
+    "R27-ledger:carve-saturating-append-only",
+    "\x1f",
+    "R27-coalition:lineage-ceiling-quorum-power",
+    "\x1f",
+    "R27-corrigible:check_kill-resource_bound-coalition_bound",
+);
 
-/// Compute the live TCB attestation digest: `sha256(spec ⊕ verdict)`, tagged.
+/// The pinned content address of the all-obligations-proven TCB state. Computed
+/// by `tcb_attestation_digest()` over (spec text ⊕ live verdict ⊕ R27 addendum).
+/// Updating it is a deliberate, audited manifest change (ROADMAP §7: multi-sig
+/// update path). R27 added the R27_TCB_ADDENDUM and the digest was re-pinned.
+pub const TCB_MANIFEST_DIGEST: &str =
+    "axtcb1:af7252b80a3408a03629213671cccdc9698680a0b844d4bf44d3346d33e2560e";
+
+/// Compute the live TCB attestation digest: `sha256(spec ⊕ verdict ⊕ R27)`, tagged.
 /// Deterministic (the spec is constant and the proof is deterministic).
 #[cfg(feature = "smt")]
 pub fn tcb_attestation_digest() -> String {
@@ -1070,6 +1085,8 @@ pub fn tcb_attestation_digest() -> String {
     h.update(MINT_OBLIGATION_SPEC.as_bytes());
     h.update(b"\x1f"); // unit separator: spec ⊕ verdict
     h.update(verdict.as_bytes());
+    h.update(b"\x1e"); // group separator: R27 TCB extension
+    h.update(R27_TCB_ADDENDUM.as_bytes());
     format!("axtcb1:{:x}", h.finalize())
 }
 

@@ -1,0 +1,15 @@
+intent  = "Colluding agent — tries to split forbidden total across instances"
+program = "collude.ax"
+seed    = 42
+
+[grant]
+fs_read   = []
+fs_write  = []
+net       = []
+exec      = "none"
+max_label = "internal"
+
+[grant.budget]
+calls      = 100
+tokens     = 0
+cost_micro = 0

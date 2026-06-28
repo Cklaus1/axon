@@ -331,8 +331,8 @@ fn acc_a6_record_tamper_detected() {
     std::fs::write(&rec_path, rec).unwrap();
     let v = os(&["verify", rec_path.to_str().unwrap()], &axon, &[]);
     assert_eq!(
-        v.code, 9,
-        "a tampered record must fail verification: {}",
+        v.code, 11,
+        "a tampered record must fail verification (R27 §5.3: VerifyMismatch→11): {}",
         v.stdout
     );
     assert!(v.stdout.contains("TAMPERED"));

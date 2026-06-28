@@ -109,6 +109,8 @@ struct ProcOutcome {
     code: Option<i32>,
     stderr: String,
     timed_out: bool,
+    /// R27: true if the process was killed because the supervisor latch was tripped.
+    killed_by_latch: bool,
 }
 
 /// Run a command with a hard wall-clock timeout. On expiry the child is killed
@@ -116,7 +118,15 @@ struct ProcOutcome {
 /// stdout + stderr are captured (the interpreter prints fault diagnostics to
 /// stderr, which is how we distinguish a FAULT exit from a program that simply
 /// `return`s an integer — the two would otherwise collide on the exit code).
-fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutcome> {
+///
+/// `kill_file`: if `Some(path)`, poll the file every 100 ms (R27 kill-switch).
+/// When the file contains `"latch":"tripped"`, SIGTERM the child, wait 1s, then
+/// SIGKILL. Returns `killed_by_latch = true` (→ `Verdict::Halted`, exit 4).
+fn run_bounded(
+    cmd: &mut Command,
+    timeout: Duration,
+    kill_file: Option<&std::path::Path>,
+) -> std::io::Result<ProcOutcome> {
     let mut child = cmd
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -126,16 +136,26 @@ fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutc
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let start = std::time::Instant::now();
+    let mut killed_by_latch = false;
     let code = loop {
         match child.try_wait()? {
             Some(status) => break Some(status.code().unwrap_or(-1)),
             None => {
                 if start.elapsed() >= timeout {
                     let _ = child.kill();
-                    let _ = child.wait(); // reap — no zombie/leaked handle
+                    let _ = child.wait();
                     break None;
                 }
-                std::thread::sleep(Duration::from_millis(10));
+                // R27 poll-before-progress: check the kill file if set.
+                if let Some(kf) = kill_file {
+                    if is_kill_file_tripped(kf) {
+                        killed_by_latch = true;
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        break Some(4); // HALTED_EXIT_CODE
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
         }
     };
@@ -163,7 +183,16 @@ fn run_bounded(cmd: &mut Command, timeout: Duration) -> std::io::Result<ProcOutc
         code,
         stderr,
         timed_out: code.is_none(),
+        killed_by_latch,
     })
+}
+
+/// R27: read the kill file and return true if the latch is tripped.
+fn is_kill_file_tripped(path: &std::path::Path) -> bool {
+    match std::fs::read_to_string(path) {
+        Ok(s) => s.contains("\"latch\":\"tripped\"") || s.contains("\"latch\": \"tripped\""),
+        Err(_) => false,
+    }
 }
 
 /// Extract the first `axon:` FAULT line from stderr (the human-facing reason),
@@ -318,7 +347,10 @@ impl Runtime for AxonCoreRuntime {
             }
         }
 
-        let proc_res = run_bounded(&mut cmd, self.timeout);
+        // R27: if AXON_KILL_FILE is set, poll it during run_bounded.
+        let kill_file_env = std::env::var_os("AXON_KILL_FILE").map(std::path::PathBuf::from);
+        let kill_file = kill_file_env.as_deref();
+        let proc_res = run_bounded(&mut cmd, self.timeout, kill_file);
         let _ = std::fs::remove_file(&wrapper_path); // best-effort cleanup
         let proc = match proc_res {
             Ok(p) => p,
@@ -339,7 +371,10 @@ impl Runtime for AxonCoreRuntime {
         // otherwise collide with the carved fault codes (a program returning 7
         // is NOT budget exhaustion). A clean run ⇒ Completed{value = exit code}.
         let err = &proc.stderr;
-        let verdict = if proc.timed_out {
+        let verdict = if proc.killed_by_latch {
+            // R27: latch was tripped by the supervisor; stopped with exit 4.
+            Verdict::Halted { reason: "kill-switch tripped by supervisor".into() }
+        } else if proc.timed_out {
             Verdict::Denied {
                 reason: format!("timed out after {} ms", self.timeout.as_millis()),
                 axis: "time".into(),
@@ -438,7 +473,7 @@ mod runtime_tests {
         let start = std::time::Instant::now();
         let mut cmd = Command::new("sleep");
         cmd.arg("5");
-        let out = run_bounded(&mut cmd, Duration::from_millis(150)).expect("spawn sleep (POSIX)");
+        let out = run_bounded(&mut cmd, Duration::from_millis(150), None).expect("spawn sleep (POSIX)");
         assert!(out.timed_out, "runaway must be killed at the timeout");
         assert!(out.code.is_none());
         assert!(
@@ -451,8 +486,34 @@ mod runtime_tests {
     fn run_bounded_captures_a_fast_command() {
         let mut cmd = Command::new("sh");
         cmd.arg("-c").arg("echo 41");
-        let out = run_bounded(&mut cmd, Duration::from_secs(5)).expect("spawn sh");
+        let out = run_bounded(&mut cmd, Duration::from_secs(5), None).expect("spawn sh");
         assert!(!out.timed_out);
         assert_eq!(out.code, Some(0));
+    }
+
+    #[test]
+    fn run_bounded_trips_latch_via_kill_file() {
+        // R27: when the kill file is tripped mid-run, the subprocess is killed
+        // with killed_by_latch=true.
+        let dir = std::env::temp_dir().join(format!("axon-r27-rt-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let kill_path = dir.join("latch.json");
+        // Start clear.
+        std::fs::write(&kill_path, r#"{"latch":"clear"}"#).unwrap();
+        // Run a long sleep.
+        let mut cmd = Command::new("sleep");
+        cmd.arg("10");
+        let kill_path_clone = kill_path.clone();
+        // Trip the latch from a background thread after 100ms.
+        let _handle = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = std::fs::write(&kill_path_clone, r#"{"latch":"tripped","reason":"test"}"#);
+        });
+        let start = std::time::Instant::now();
+        let out = run_bounded(&mut cmd, Duration::from_secs(10), Some(&kill_path)).unwrap();
+        assert!(out.killed_by_latch, "must be killed by latch");
+        assert_eq!(out.code, Some(4), "killed_by_latch returns code 4");
+        assert!(start.elapsed() < Duration::from_secs(3), "must return quickly after latch trip");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
