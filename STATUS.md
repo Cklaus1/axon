@@ -73,18 +73,26 @@ scripts/gate.sh --strict      # the full strict gate
 
 **Last verified run (2026-06-28):**
 
-- `parity_all.sh` (PARITY_SKIP_WASM=1): **33 passed, 15 skipped, 1 failed** of 49.
-  The 15 skips are all `wasm_*` (toolchain skipped); the interp↔native byte-parity
-  invariant (I-2) holds across all 33 native harnesses.
+- `parity_all.sh`: **0 failed** of 49. With the wasm rust targets registered and a
+  codegen `axon` binary present, **47 pass / 2 skip** — all 13 `wasm_*` harnesses
+  pass (verified). The 2 genuine skips are non-wasm toolchain tiers:
+  `android_compute_parity` (Android NDK absent) and `browser_compute_parity`
+  (opt-in, needs headless Chrome + chromedriver). The interp↔native/AOT-wasm
+  byte-parity invariant (I-2) holds across every runnable harness.
+  - _Caveat:_ run the suite with a **codegen** `axon` in `target/debug` (`cargo
+    build -p axon-core --bin axon`). If a `--no-default-features` (codegen-less)
+    binary is left there, the 3 codegen-dependent browser harnesses
+    (`wasm_browser_io/parity`, `wasm_examples`) skip cleanly as "toolchain absent"
+    rather than run — a harness binary-detection quirk, not a divergence.
 - `acceptance_gate.sh`: **OK** — every R21 §0 check present, unstubbed, and green
   (88 axon-os tests pass; same-job+seed record is byte-identical).
 
-**Known gap (the one parity FAIL):** `all_examples_parity` — 4 examples build-fail
-under native codegen: `http_get`, `http_sse`, `anthropic_stream`, `trainloop_stream`.
-All four use the `http_get`/`http_sse` network builtins, which are **interpreter-only**
-(not yet lowered to codegen); 35/39 other examples match byte-for-byte. The gap is
-codegen network-builtin coverage, **not** interpreter correctness or a soundness
-divergence.
+**Interp-only-by-design (sound E0910 refusals, not failures):** 4 examples
+(`http_get`, `http_sse`, `anthropic_stream`, `trainloop_stream`) use the network
+`http_*` builtins, which native codegen **soundly refuses** (E0910 — runs under
+`axon run` instead of miscompiling). `all_examples_parity` asserts this refusal and
+counts them as interp-only, not `BUILD-FAIL`; 35/39 other examples match byte-for-byte.
+The wasm toolchain is provisioned by `scripts/setup-environments.sh` (browser tier).
 
 ## Repo Hygiene Notes
 
