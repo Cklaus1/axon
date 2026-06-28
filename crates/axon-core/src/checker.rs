@@ -2618,7 +2618,17 @@ impl CheckCtx {
             }
             Expr::Match { subject, arms } => {
                 g(subject);
-                arms.iter().for_each(|a| g(&a.body));
+                arms.iter().for_each(|a| {
+                    // Walk the arm GUARD too, not just the body — a guard is a full
+                    // expression and can hide a relevant call (e.g. a non-literal
+                    // `sql_query` template → E1210, or a `while` under @[total]). Every
+                    // for_each_child consumer inherits this; omitting it was a
+                    // walker-coverage hole (the SQLi red-team found it via a match guard).
+                    if let Some(guard) = &a.guard {
+                        g(guard);
+                    }
+                    g(&a.body);
+                });
             }
             Expr::If { cond, then, else_ } => {
                 g(cond);

@@ -1,0 +1,13 @@
+// sql_injection_guard.ax — regression for the match-GUARD walker-coverage hole found by
+// the SQLi red-team. A non-literal sql_query template hidden inside a match arm's guard
+// used to slip E1210 (for_each_child walked arm bodies but not guards). Must be refused.
+fn tpl() -> str { "SELECT * FROM t" }
+
+fn f(u: str) -> i64 {
+    match u {
+        s if str_eq(sql_query(tpl(), []), s) => 1
+        _ => 0
+    }
+}
+
+fn main() -> i64 { f("x") }

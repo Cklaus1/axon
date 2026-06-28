@@ -1327,6 +1327,18 @@ fn sql_injection_fixture_emits_e1210() {
 }
 
 #[test]
+fn sql_injection_in_match_guard_emits_e1210() {
+    // Walker-coverage regression: a non-literal sql_query template inside a match arm
+    // GUARD must be caught (it slipped before for_each_child walked guards).
+    let errors = check_fixture("sql_injection_guard.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1210")),
+        "sql_injection_guard.ax should produce E1210 (sql_query in match guard), got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn sql_safe_fixture_checks_clean() {
     // The parameterized form (literal template + bound param) must NOT trip E1210.
     let errors = check_fixture("sql_safe.ax");
