@@ -26,9 +26,13 @@ use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 
 use axon_attest::{
-    measure_kernel, measure_kernel_bytes, sign_report, try_admit_job, verify_report,
-    report_to_json, SOFTWARE_TPM_HW_ROOT,
+    measure_kernel, measure_kernel_bytes, measure_host_stack, sign_report,
+    try_admit_job, verify_report, verify_extended, report_to_json, report_to_json_extended,
+    SOFTWARE_TPM_HW_ROOT,
 };
+
+/// R31: extended measurement failed — required component missing/unreadable (exit 12).
+const EXTENDED_TCB_MEASURE_FAIL: i32 = 12;
 
 // ── CLI surface ───────────────────────────────────────────────────────────────
 
@@ -85,6 +89,12 @@ enum Cmd {
         /// attestation is always mandatory before any VM boot.
         #[arg(long)]
         no_attest: bool,
+
+        /// R31: verify the full host safety stack before booting.
+        /// Measures kernel + axon-os + axon-audit + monitor and gates boot on
+        /// `axtcb1_ext`. Any measure failure → exit 12. Mismatch → exit 10.
+        #[arg(long)]
+        extended_tcb: bool,
     },
 
     /// Manage principals
@@ -129,6 +139,27 @@ enum Cmd {
         /// Expected axtcb1 digest to verify (e.g. "axtcb1:…").
         #[arg(long)]
         verify_axtcb1: Option<String>,
+
+        /// R31: also measure axon-os + axon-audit + monitor; extend report with
+        /// `axtcb1_ext` and a 4-entry `components` array (schema axon-vm-report/2).
+        /// Missing required component (kernel or axon-os) → exit 12.
+        #[arg(long)]
+        extended_tcb: bool,
+
+        /// R31: path to the axon-os binary (default: sibling of this executable).
+        /// Only used when --extended-tcb is set.
+        #[arg(long)]
+        axon_os: Option<PathBuf>,
+
+        /// R31: path to the axon-audit-writer binary (default: sibling of this executable;
+        /// absent → zero-fill sentinel per §4.2). Only used when --extended-tcb is set.
+        #[arg(long)]
+        axon_audit: Option<PathBuf>,
+
+        /// R31: expected axtcb1_ext to verify (e.g. "axtcb1-ext:…").
+        /// If provided, verify_extended is called and a mismatch exits 10.
+        #[arg(long)]
+        verify_axtcb1_ext: Option<String>,
     },
 }
 
@@ -218,7 +249,8 @@ fn main() {
             vsock_port,
             json,
             no_attest,
-        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest),
+            extended_tcb,
+        } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json, no_attest, extended_tcb),
         Cmd::Attest {
             kernel,
             policy,
@@ -226,7 +258,12 @@ fn main() {
             verify_digest,
             nonce,
             verify_axtcb1,
-        } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1),
+            extended_tcb,
+            axon_os,
+            axon_audit,
+            verify_axtcb1_ext,
+        } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1,
+                        extended_tcb, axon_os, axon_audit, verify_axtcb1_ext),
         Cmd::Principal { cmd } => match cmd {
             PrincipalCmd::Add {
                 name,
@@ -258,6 +295,10 @@ fn cmd_attest(
     verify_digest: Option<String>,
     _nonce: String,
     verify_axtcb1: Option<String>,
+    extended_tcb: bool,
+    axon_os_override: Option<PathBuf>,
+    axon_audit_override: Option<PathBuf>,
+    verify_axtcb1_ext: Option<String>,
 ) {
     let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
 
@@ -314,6 +355,39 @@ fn cmd_attest(
         SOFTWARE_TPM_HW_ROOT
     );
 
+    // ── R31: extended TCB measurement ────────────────────────────────────────
+    let extended_measurement = if extended_tcb {
+        // Auto-detect sibling binary paths when overrides are not given.
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let axon_os_path = axon_os_override.unwrap_or_else(|| exe_dir.join("axon-os"));
+        let axon_audit_path = axon_audit_override
+            .unwrap_or_else(|| exe_dir.join("axon-audit-writer"));
+
+        // axon-audit is optional (R28 pending); pass None if it doesn't exist.
+        let axon_audit_opt = if axon_audit_path.exists() {
+            Some(axon_audit_path.as_path())
+        } else {
+            None
+        };
+
+        match measure_host_stack(&kernel, Some(axon_os_path.as_path()), axon_audit_opt) {
+            Ok(ext) => {
+                eprintln!("✓ extended TCB: {} (4/4 components)", ext.axtcb1_ext);
+                Some(ext)
+            }
+            Err(e) => {
+                eprintln!("axon-vm attest: extended TCB measurement failed: {e}");
+                process::exit(EXTENDED_TCB_MEASURE_FAIL);
+            }
+        }
+    } else {
+        None
+    };
+
     // Verify if the caller supplied expected values.
     let (ok, reason) = if let Some(ref expected_hex) = verify_digest {
         // Parse the hex digest
@@ -354,13 +428,34 @@ fn cmd_attest(
         None
     };
 
-    // Parse the report JSON for embedding in output
-    let report_json: serde_json::Value =
-        serde_json::from_str(&report_to_json(&report)).unwrap_or_default();
+    // R31: verify extended TCB digest if expected value was provided
+    let (ok, reason) = if ok {
+        if let Some(ref expected_ext) = verify_axtcb1_ext {
+            if let Some(ref ext) = extended_measurement {
+                match verify_extended(ext, expected_ext) {
+                    Ok(()) => (true, format!("{reason}; ✓ extended TCB: 4/4 components verified")),
+                    Err(e) => (false, format!("✗ EXTENDED TCB FAILED: {e}")),
+                }
+            } else {
+                (false, "✗ --verify-axtcb1-ext requires --extended-tcb".to_string())
+            }
+        } else {
+            (ok, reason)
+        }
+    } else {
+        (ok, reason)
+    };
 
-    // Emit the output JSON (schema axon-attest/1)
+    // Parse the report JSON for embedding in output (R26 or R31 schema)
+    let report_json: serde_json::Value = if let Some(ref ext) = extended_measurement {
+        serde_json::from_str(&report_to_json_extended(&report, ext)).unwrap_or_default()
+    } else {
+        serde_json::from_str(&report_to_json(&report)).unwrap_or_default()
+    };
+
+    // Emit the output JSON (schema axon-attest/1 or axon-attest/2)
     let out = serde_json::json!({
-        "schema": "axon-attest/1",
+        "schema": if extended_measurement.is_some() { "axon-attest/2" } else { "axon-attest/1" },
         "ok": ok,
         "report": report_json,
         "reason": reason,
@@ -387,6 +482,7 @@ fn cmd_run(
     vsock_port: u32,
     json_out: bool,
     no_attest: bool,
+    extended_tcb: bool,
 ) {
     let start = Instant::now();
 
@@ -479,6 +575,35 @@ fn cmd_run(
             eprintln!("axon-vm: {e}");
         }
         process::exit(10);
+    }
+
+    // R31: extended TCB gate — measure full safety stack before booting.
+    // Any measure failure → exit 12 (component missing/unreadable).
+    // The VM is NEVER spawned until this gate passes.
+    if extended_tcb {
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let axon_os_path   = exe_dir.join("axon-os");
+        let axon_audit_path = exe_dir.join("axon-audit-writer");
+        let axon_audit_opt = if axon_audit_path.exists() {
+            Some(axon_audit_path.as_path())
+        } else {
+            None
+        };
+        match measure_host_stack(&kernel_path, Some(axon_os_path.as_path()), axon_audit_opt) {
+            Ok(ext) => {
+                eprintln!(
+                    "✓ extended TCB: {} (4/4 components verified)",
+                    ext.axtcb1_ext
+                );
+            }
+            Err(e) => {
+                eprintln!("axon-vm: extended TCB measurement failed: {e}");
+                process::exit(EXTENDED_TCB_MEASURE_FAIL);
+            }
+        }
     }
 
     // Choose or generate the Firecracker socket path.
@@ -1369,6 +1494,53 @@ mod tests {
         );
         unsafe { std::env::remove_var("AXON_CI_NO_KVM"); }
         assert!(result.is_ok(), "AXON_CI_NO_KVM=1 must bypass attestation (CI mock mode)");
+    }
+
+    // ── R31: extended TCB wiring tests ─────────────────────────────────────────
+
+    /// R31 §4.4: `axon-vm run --extended-tcb` measures before booting and refuses
+    /// on a missing required component (kernel or axon-os).
+    /// Tests the `measure_host_stack` → error-path wiring used by cmd_run.
+    #[test]
+    fn extended_tcb_wired_into_run() {
+        use axon_attest::{measure_host_stack, verify_extended};
+
+        let tmp = std::env::temp_dir();
+        let pid = std::process::id();
+        let kernel_path  = tmp.join(format!("axon-r31-run-kernel-{pid}.bin"));
+        let axon_os_path = tmp.join(format!("axon-r31-run-axon-os-{pid}.bin"));
+
+        std::fs::write(&kernel_path,  b"run-gate-kernel-bytes").unwrap();
+        std::fs::write(&axon_os_path, b"run-gate-axon-os-bytes").unwrap();
+
+        // Measure succeeds when both required components exist (no axon-audit = zero-fill)
+        let m = measure_host_stack(&kernel_path, Some(&axon_os_path), None)
+            .expect("measure_host_stack must succeed with kernel + axon-os");
+        assert!(m.axtcb1_ext.starts_with("axtcb1-ext:"), "axtcb1_ext must have correct prefix");
+        assert_eq!(m.components.len(), 4);
+
+        // verify_extended passes against self
+        assert!(
+            verify_extended(&m, &m.axtcb1_ext).is_ok(),
+            "verify_extended must pass for a self-consistent measurement"
+        );
+
+        // A mismatched expected value → verify_extended fails (simulates boot refusal, exit 10)
+        let wrong = format!("axtcb1-ext:{}", "0".repeat(64));
+        assert!(
+            verify_extended(&m, &wrong).is_err(),
+            "mismatched expected axtcb1_ext must cause verify_extended to fail (exit 10 path)"
+        );
+
+        // Missing axon-os → measure_host_stack returns Err (simulates exit 12)
+        let missing_os = tmp.join(format!("axon-r31-run-axon-os-missing-{pid}.bin"));
+        let r = measure_host_stack(&kernel_path, Some(&missing_os), None);
+        assert!(r.is_err(), "missing axon-os must cause measure_host_stack to return Err (exit 12 path)");
+        let msg = r.unwrap_err().to_string();
+        assert!(msg.contains("axon-os"), "error must name the missing component: {msg}");
+
+        let _ = std::fs::remove_file(&kernel_path);
+        let _ = std::fs::remove_file(&axon_os_path);
     }
 
     #[test]
