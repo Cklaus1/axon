@@ -1,0 +1,1731 @@
+// phase14_tests.ax — Phase 14+ Stdlib Integration Tests
+//
+// Comprehensive @[test] suite exercising ALL Phase 14+ stdlib types.
+// Run with: axon test examples/stdlib/phase14_tests.ax
+//
+// Types covered (all inlined — Axon has no module imports):
+//   crdt.ax:            GCounter, PNCounter, LWWRegister, VectorClock
+//   replicated.ax:      Replicated, Quorum
+//   coord.ax:           VClock, CausallyOrdered, CoordGoal
+//   tainted.ax:         Tainted, Trusted, Secret, Public
+//   risk.ax:            Risk levels, GateResult, PipelineResult
+//   plan.ax:            Plan, Schedule, Feedback
+//   counterfactual.ax:  Counterfactual, CfSet
+//   belief.ax:          Belief
+//   distribution.ax:    Gaussian, Beta, Categorical
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  INLINED TYPE DEFINITIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── From crdt.ax: GCounter ────────────────────────────────────────────────────
+
+type GCounter = { counts: [i64], n: i64 }
+
+fn gcounter_new(n_nodes: i64) -> GCounter {
+    GCounter { counts: arr_repeat(0, n_nodes), n: n_nodes }
+}
+
+fn gcounter_increment(g: GCounter, node: i64) -> GCounter {
+    assert(node >= 0 && node < g.n)
+    let cs = []
+    let i = 0
+    while i < g.n {
+        cs = arr_push(cs, if i == node { g.counts[i] + 1 } else { g.counts[i] })
+        i = i + 1
+    }
+    GCounter { counts: cs, n: g.n }
+}
+
+fn gcounter_value(g: GCounter) -> i64 { arr_sum_i64(g.counts) }
+
+fn gcounter_merge(a: GCounter, b: GCounter) -> GCounter {
+    assert(a.n == b.n)
+    let cs = []
+    let i = 0
+    while i < a.n {
+        let v = if a.counts[i] > b.counts[i] { a.counts[i] } else { b.counts[i] }
+        cs = arr_push(cs, v)
+        i = i + 1
+    }
+    GCounter { counts: cs, n: a.n }
+}
+
+// ── From crdt.ax: PNCounter ───────────────────────────────────────────────────
+
+type PNCounter = { pos: GCounter, neg: GCounter }
+
+fn pncounter_new(n_nodes: i64) -> PNCounter {
+    PNCounter { pos: gcounter_new(n_nodes), neg: gcounter_new(n_nodes) }
+}
+
+fn pncounter_increment(p: PNCounter, node: i64) -> PNCounter {
+    PNCounter { pos: gcounter_increment(p.pos, node), neg: p.neg }
+}
+
+fn pncounter_decrement(p: PNCounter, node: i64) -> PNCounter {
+    PNCounter { pos: p.pos, neg: gcounter_increment(p.neg, node) }
+}
+
+fn pncounter_value(p: PNCounter) -> i64 {
+    gcounter_value(p.pos) - gcounter_value(p.neg)
+}
+
+fn pncounter_merge(a: PNCounter, b: PNCounter) -> PNCounter {
+    PNCounter {
+        pos: gcounter_merge(a.pos, b.pos),
+        neg: gcounter_merge(a.neg, b.neg),
+    }
+}
+
+// ── From crdt.ax: LWWRegister ─────────────────────────────────────────────────
+
+type LWWRegister = { val: i64, ts: i64 }
+
+fn lww_new(val: i64) -> LWWRegister { LWWRegister { val: val, ts: 0 } }
+
+fn lww_write(r: LWWRegister, val: i64, ts: i64) -> LWWRegister {
+    if ts > r.ts { LWWRegister { val: val, ts: ts } } else { r }
+}
+
+fn lww_read(r: LWWRegister) -> i64 { r.val }
+
+fn lww_merge(a: LWWRegister, b: LWWRegister) -> LWWRegister {
+    if a.ts > b.ts {
+        a
+    } else if b.ts > a.ts {
+        b
+    } else {
+        if a.val >= b.val { a } else { b }
+    }
+}
+
+// ── From crdt.ax: VectorClock ─────────────────────────────────────────────────
+
+type VectorClock = { clocks: [i64], n: i64 }
+
+fn vc_new(n_nodes: i64) -> VectorClock {
+    VectorClock { clocks: arr_repeat(0, n_nodes), n: n_nodes }
+}
+
+fn vc_tick(vc: VectorClock, node: i64) -> VectorClock {
+    assert(node >= 0 && node < vc.n)
+    let cs = []
+    let i = 0
+    while i < vc.n {
+        cs = arr_push(cs, if i == node { vc.clocks[i] + 1 } else { vc.clocks[i] })
+        i = i + 1
+    }
+    VectorClock { clocks: cs, n: vc.n }
+}
+
+fn vc_merge(a: VectorClock, b: VectorClock) -> VectorClock {
+    assert(a.n == b.n)
+    let cs = []
+    let i = 0
+    while i < a.n {
+        let v = if a.clocks[i] > b.clocks[i] { a.clocks[i] } else { b.clocks[i] }
+        cs = arr_push(cs, v)
+        i = i + 1
+    }
+    VectorClock { clocks: cs, n: a.n }
+}
+
+fn vc_happens_before(a: VectorClock, b: VectorClock) -> bool {
+    assert(a.n == b.n)
+    let all_leq = true
+    let some_lt = false
+    let i = 0
+    while i < a.n {
+        if a.clocks[i] > b.clocks[i] { all_leq = false }
+        if a.clocks[i] < b.clocks[i] { some_lt = true }
+        i = i + 1
+    }
+    all_leq && some_lt
+}
+
+fn vc_concurrent(a: VectorClock, b: VectorClock) -> bool {
+    !vc_happens_before(a, b) && !vc_happens_before(b, a)
+}
+
+// ── From replicated.ax: Replicated ───────────────────────────────────────────
+
+type Replicated = { vals: [i64], timestamps: [i64], n: i64 }
+
+fn replicated_new(n_nodes: i64, initial_val: i64) -> Replicated {
+    assert(n_nodes > 0)
+    Replicated {
+        vals:       arr_repeat(initial_val, n_nodes),
+        timestamps: arr_repeat(0, n_nodes),
+        n:          n_nodes,
+    }
+}
+
+fn replicated_write(r: Replicated, node: i64, val: i64, ts: i64) -> Replicated {
+    assert(node >= 0 && node < r.n)
+    let cur_ts = r.timestamps[node]
+    if ts <= cur_ts {
+        r
+    } else {
+        let new_vals = []
+        let new_ts   = []
+        let i = 0
+        while i < r.n {
+            new_vals = arr_push(new_vals, if i == node { val } else { r.vals[i] })
+            new_ts   = arr_push(new_ts,   if i == node { ts  } else { r.timestamps[i] })
+            i = i + 1
+        }
+        Replicated { vals: new_vals, timestamps: new_ts, n: r.n }
+    }
+}
+
+fn replicated_converge(r: Replicated) -> Replicated {
+    let best_val = r.vals[0]
+    let best_ts  = r.timestamps[0]
+    let i = 1
+    while i < r.n {
+        let ts = r.timestamps[i]
+        let v  = r.vals[i]
+        if ts > best_ts || (ts == best_ts && v > best_val) {
+            best_val = v
+            best_ts  = ts
+        }
+        i = i + 1
+    }
+    Replicated {
+        vals:       arr_repeat(best_val, r.n),
+        timestamps: arr_repeat(best_ts, r.n),
+        n:          r.n,
+    }
+}
+
+fn replicated_read(r: Replicated, node: i64) -> i64 {
+    assert(node >= 0 && node < r.n)
+    r.vals[node]
+}
+
+fn replicated_converged(r: Replicated) -> bool {
+    let v0 = r.vals[0]
+    let ok = true
+    let i = 1
+    while i < r.n {
+        if r.vals[i] != v0 { ok = false }
+        i = i + 1
+    }
+    ok
+}
+
+// ── From replicated.ax: Quorum ────────────────────────────────────────────────
+
+type Quorum = {
+    n:             i64,
+    quorum_size:   i64,
+    pending_val:   i64,
+    pending_ts:    i64,
+    pending_acks:  i64,
+    committed_val: i64,
+    committed_ts:  i64,
+    committed:     bool,
+}
+
+fn quorum_new(n_nodes: i64) -> Quorum {
+    assert(n_nodes > 0)
+    Quorum {
+        n:             n_nodes,
+        quorum_size:   n_nodes / 2 + 1,
+        pending_val:   0,
+        pending_ts:    -1,
+        pending_acks:  0,
+        committed_val: 0,
+        committed_ts:  -1,
+        committed:     false,
+    }
+}
+
+fn quorum_propose(q: Quorum, val: i64, ts: i64) -> Result<Quorum, str> {
+    if ts <= q.committed_ts {
+        Err("stale proposal")
+    } else {
+        Ok(Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   val,
+            pending_ts:    ts,
+            pending_acks:  0,
+            committed_val: q.committed_val,
+            committed_ts:  q.committed_ts,
+            committed:     q.committed,
+        })
+    }
+}
+
+fn quorum_ack(q: Quorum, ts: i64) -> Quorum {
+    if ts == q.pending_ts {
+        Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   q.pending_val,
+            pending_ts:    q.pending_ts,
+            pending_acks:  q.pending_acks + 1,
+            committed_val: q.committed_val,
+            committed_ts:  q.committed_ts,
+            committed:     q.committed,
+        }
+    } else {
+        q
+    }
+}
+
+fn quorum_try_commit(q: Quorum) -> Quorum {
+    if q.pending_acks >= q.quorum_size && q.pending_ts > q.committed_ts {
+        Quorum {
+            n:             q.n,
+            quorum_size:   q.quorum_size,
+            pending_val:   q.pending_val,
+            pending_ts:    q.pending_ts,
+            pending_acks:  q.pending_acks,
+            committed_val: q.pending_val,
+            committed_ts:  q.pending_ts,
+            committed:     true,
+        }
+    } else {
+        q
+    }
+}
+
+fn quorum_read(q: Quorum) -> Result<i64, str> {
+    if q.committed { Ok(q.committed_val) } else { Err("no committed value") }
+}
+
+// Test helpers (renamed to avoid collision if this file is ever merged alongside replicated.ax)
+fn q_propose_ok(q: Quorum, val: i64, ts: i64) -> Quorum {
+    match quorum_propose(q, val, ts) {
+        Ok(q2) => q2
+        Err(_) => { assert(false)  quorum_new(1) }
+    }
+}
+
+fn q_read_ok(q: Quorum) -> i64 {
+    match quorum_read(q) {
+        Ok(v)  => v
+        Err(_) => { assert(false)  0 }
+    }
+}
+
+// ── From coord.ax: VClock (separate from crdt VectorClock) ───────────────────
+
+type VClock = { cs: [i64], n: i64 }
+
+fn vcl_new(n: i64) -> VClock { VClock { cs: arr_repeat(0, n), n: n } }
+
+fn vcl_tick(v: VClock, node: i64) -> VClock {
+    assert(node >= 0 && node < v.n)
+    let out = []
+    let i = 0
+    while i < v.n {
+        out = arr_push(out, if i == node { v.cs[i] + 1 } else { v.cs[i] })
+        i = i + 1
+    }
+    VClock { cs: out, n: v.n }
+}
+
+fn vcl_merge(a: VClock, b: VClock) -> VClock {
+    assert(a.n == b.n)
+    let out = []
+    let i = 0
+    while i < a.n {
+        out = arr_push(out, if a.cs[i] > b.cs[i] { a.cs[i] } else { b.cs[i] })
+        i = i + 1
+    }
+    VClock { cs: out, n: a.n }
+}
+
+fn vcl_before(a: VClock, b: VClock) -> bool {
+    assert(a.n == b.n)
+    let all_le = true
+    let some_lt = false
+    let i = 0
+    while i < a.n {
+        if a.cs[i] > b.cs[i] { all_le = false }
+        if a.cs[i] < b.cs[i] { some_lt = true }
+        i = i + 1
+    }
+    all_le && some_lt
+}
+
+fn vcl_concurrent(a: VClock, b: VClock) -> bool {
+    !vcl_before(a, b) && !vcl_before(b, a)
+}
+
+// ── From coord.ax: CausallyOrdered ───────────────────────────────────────────
+
+type CausallyOrdered = { val: i64, clock: VClock, writer: i64 }
+
+fn co_new(n_nodes: i64, v: i64, writer: i64) -> CausallyOrdered {
+    let clk = vcl_tick(vcl_new(n_nodes), writer)
+    CausallyOrdered { val: v, clock: clk, writer: writer }
+}
+
+fn co_write(item: CausallyOrdered, v: i64, writer: i64) -> CausallyOrdered {
+    let ticked = vcl_tick(item.clock, writer)
+    CausallyOrdered { val: v, clock: ticked, writer: writer }
+}
+
+fn co_can_read(reader_clock: VClock, item: CausallyOrdered) -> bool {
+    let i = 0
+    let dominated = true
+    while i < item.clock.n {
+        if item.clock.cs[i] > reader_clock.cs[i] { dominated = false }
+        i = i + 1
+    }
+    dominated
+}
+
+fn co_happens_before(a: CausallyOrdered, b: CausallyOrdered) -> bool {
+    vcl_before(a.clock, b.clock)
+}
+
+fn co_concurrent(a: CausallyOrdered, b: CausallyOrdered) -> bool {
+    vcl_concurrent(a.clock, b.clock)
+}
+
+// ── From coord.ax: CoordGoal ──────────────────────────────────────────────────
+
+type CoordGoal = {
+    target:    i64,
+    n:         i64,
+    scores:    [i64],
+    submitted: [i64],
+}
+
+fn coord_goal_new(n_principals: i64, target: i64) -> CoordGoal {
+    assert(n_principals > 0)
+    CoordGoal {
+        target:    target,
+        n:         n_principals,
+        scores:    arr_repeat(0, n_principals),
+        submitted: arr_repeat(0, n_principals),
+    }
+}
+
+fn coord_goal_propose(cg: CoordGoal, pid: i64, score: i64) -> CoordGoal {
+    assert(pid >= 0 && pid < cg.n)
+    if cg.submitted[pid] == 1 {
+        cg
+    } else {
+        let new_scores = []
+        let new_sub    = []
+        let i = 0
+        while i < cg.n {
+            new_scores = arr_push(new_scores, if i == pid { score } else { cg.scores[i] })
+            new_sub    = arr_push(new_sub, if i == pid { 1 } else { cg.submitted[i] })
+            i = i + 1
+        }
+        CoordGoal { target: cg.target, n: cg.n, scores: new_scores, submitted: new_sub }
+    }
+}
+
+fn coord_goal_accept_count(cg: CoordGoal) -> i64 {
+    let count = 0
+    let i = 0
+    while i < cg.n {
+        if cg.submitted[i] == 1 && cg.scores[i] >= cg.target { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+fn coord_goal_quorum(cg: CoordGoal) -> i64 { cg.n / 2 + 1 }
+
+fn coord_goal_quorum_met(cg: CoordGoal) -> bool {
+    coord_goal_accept_count(cg) >= coord_goal_quorum(cg)
+}
+
+fn coord_goal_consensus_score(cg: CoordGoal) -> i64 {
+    if !coord_goal_quorum_met(cg) {
+        -1
+    } else {
+        let best = 9999999
+        let i = 0
+        while i < cg.n {
+            if cg.submitted[i] == 1 && cg.scores[i] >= cg.target {
+                if cg.scores[i] < best { best = cg.scores[i] }
+            }
+            i = i + 1
+        }
+        best
+    }
+}
+
+// ── From tainted.ax: trust constants ─────────────────────────────────────────
+
+fn trust_ai()       -> i64 { 0 }
+fn trust_net()      -> i64 { 1 }
+fn trust_system()   -> i64 { 2 }
+fn trust_user()     -> i64 { 3 }
+fn trust_constant() -> i64 { 4 }
+
+fn cl_public()       -> i64 { 0 }
+fn cl_internal()     -> i64 { 1 }
+fn cl_confidential() -> i64 { 2 }
+fn cl_secret_level() -> i64 { 3 }
+
+// ── From tainted.ax: Tainted ──────────────────────────────────────────────────
+
+type Tainted = { val: i64, trust: i64 }
+
+fn tainted_ai(v: i64)       -> Tainted { Tainted { val: v, trust: trust_ai() } }
+fn tainted_net(v: i64)      -> Tainted { Tainted { val: v, trust: trust_net() } }
+fn tainted_user(v: i64)     -> Tainted { Tainted { val: v, trust: trust_user() } }
+fn tainted_constant(v: i64) -> Tainted { Tainted { val: v, trust: trust_constant() } }
+
+fn tainted_combine(a: Tainted, b: Tainted) -> Tainted {
+    let t = if a.trust <= b.trust { a.trust } else { b.trust }
+    Tainted { val: a.val + b.val, trust: t }
+}
+
+fn tainted_needs_validation(t: Tainted) -> bool {
+    t.trust == trust_ai() || t.trust == trust_net()
+}
+
+// ── From tainted.ax: Trusted ──────────────────────────────────────────────────
+
+type Trusted = { val: i64, trust: i64, floor: i64 }
+
+fn trust_validate(t: Tainted, floor: i64) -> Result<Trusted, str> {
+    if t.trust >= floor {
+        Ok(Trusted { val: t.val, trust: t.trust, floor: floor })
+    } else {
+        Err("trust below validation floor")
+    }
+}
+
+fn trusted_val(t: Trusted) -> i64 { t.val }
+
+// ── From tainted.ax: Secret ───────────────────────────────────────────────────
+
+type Secret = { val: i64, level: i64 }
+
+fn secret_public(v: i64)       -> Secret { Secret { val: v, level: cl_public() } }
+fn secret_internal(v: i64)     -> Secret { Secret { val: v, level: cl_internal() } }
+fn secret_confidential(v: i64) -> Secret { Secret { val: v, level: cl_confidential() } }
+fn secret_secret(v: i64)       -> Secret { Secret { val: v, level: cl_secret_level() } }
+
+fn secret_can_flow_to(s: Secret, reader_clearance: i64) -> bool {
+    reader_clearance >= s.level
+}
+
+fn secret_declassify(s: Secret, reader_clearance: i64) -> Result<i64, str> {
+    if secret_can_flow_to(s, reader_clearance) {
+        Ok(s.val)
+    } else {
+        Err("clearance insufficient")
+    }
+}
+
+fn secret_combine(a: Secret, b: Secret) -> Secret {
+    let level = if a.level >= b.level { a.level } else { b.level }
+    Secret { val: a.val + b.val, level: level }
+}
+
+// ── From tainted.ax: Public ───────────────────────────────────────────────────
+
+type Public = { val: i64 }
+
+fn public_new(v: i64) -> Public { Public { val: v } }
+fn public_val(p: Public) -> i64 { p.val }
+
+// ── From risk.ax: Risk levels and derivation ──────────────────────────────────
+
+fn risk_low()      -> i64 { 0 }
+fn risk_medium()   -> i64 { 1 }
+fn risk_high()     -> i64 { 2 }
+fn risk_critical() -> i64 { 3 }
+
+fn risk_name(r: i64) -> str {
+    if r <= 0 { "Low" } else {
+        if r == 1 { "Medium" } else {
+            if r == 2 { "High" } else { "Critical" }
+        }
+    }
+}
+
+fn risk_raise(current: i64, floor: i64) -> i64 {
+    if floor > current { floor } else { current }
+}
+
+fn risk_clamp(r: i64) -> i64 {
+    clamp_i64(r, risk_low(), risk_critical())
+}
+
+fn risk_from_effects(effect_set: i64) -> i64 {
+    let exec_bit     = 8
+    let net_bit      = 4
+    let fs_write_bit = 2
+    let has_exec     = bit_and(effect_set, exec_bit) != 0
+    let has_net      = bit_and(effect_set, net_bit) != 0
+    let has_fs_write = bit_and(effect_set, fs_write_bit) != 0
+    if has_exec { risk_critical() } else {
+        if has_net && has_fs_write { risk_high() } else {
+            if has_net || has_fs_write { risk_medium() } else { risk_low() }
+        }
+    }
+}
+
+fn risk_from_budget(budget_burn_pct: i64) -> i64 {
+    if budget_burn_pct >= 80 { risk_critical() } else {
+        if budget_burn_pct >= 50 { risk_high() } else {
+            if budget_burn_pct >= 25 { risk_medium() } else { risk_low() }
+        }
+    }
+}
+
+fn risk_from_irreversibility(base: i64, irreversible: bool) -> i64 {
+    if irreversible { risk_clamp(base + 1) } else { base }
+}
+
+fn risk_derive(effect_set: i64, budget_burn_pct: i64, irreversible: bool) -> i64 {
+    let er   = risk_from_effects(effect_set)
+    let br   = risk_from_budget(budget_burn_pct)
+    let base = max_i64(er, br)
+    risk_from_irreversibility(base, irreversible)
+}
+
+fn risk_requires_pipeline(r: i64) -> bool { r >= risk_high() }
+
+// ── From risk.ax: GateResult / PipelineResult ────────────────────────────────
+
+type GateResult = { passed: bool, reason: str }
+
+fn gate_pass() -> GateResult { GateResult { passed: true, reason: "ok" } }
+fn gate_fail(reason: str) -> GateResult { GateResult { passed: false, reason: reason } }
+
+type PipelineResult = {
+    stage_reached: i64,
+    deployed:      bool,
+    failed_stage:  str,
+    failed_reason: str,
+}
+
+fn pipeline_ok() -> PipelineResult {
+    PipelineResult {
+        stage_reached: 5, deployed: true,
+        failed_stage: "none", failed_reason: "none",
+    }
+}
+
+fn pipeline_halted(stage: str, reason: str, reached: i64) -> PipelineResult {
+    PipelineResult {
+        stage_reached: reached, deployed: false,
+        failed_stage: stage, failed_reason: reason,
+    }
+}
+
+fn pipeline_run(
+    risk: i64,
+    sim_result:     GateResult,
+    stress_result:  GateResult,
+    redteam_result: GateResult,
+    verify_result:  GateResult,
+    deploy_result:  GateResult
+) -> PipelineResult {
+    if risk_requires_pipeline(risk) {
+        if !sim_result.passed {
+            pipeline_halted("simulate", sim_result.reason, 1)
+        } else if !stress_result.passed {
+            pipeline_halted("stress", stress_result.reason, 2)
+        } else if !redteam_result.passed {
+            pipeline_halted("redteam", redteam_result.reason, 3)
+        } else if !verify_result.passed {
+            pipeline_halted("verify", verify_result.reason, 4)
+        } else if !deploy_result.passed {
+            pipeline_halted("deploy", deploy_result.reason, 5)
+        } else {
+            pipeline_ok()
+        }
+    } else {
+        if !verify_result.passed {
+            pipeline_halted("verify", verify_result.reason, 4)
+        } else if !deploy_result.passed {
+            pipeline_halted("deploy", deploy_result.reason, 5)
+        } else {
+            pipeline_ok()
+        }
+    }
+}
+
+// ── From plan.ax: Plan ────────────────────────────────────────────────────────
+
+type Plan = {
+    val:        i64,
+    confidence: i64,
+    reason:     str,
+    agent:      str,
+}
+
+fn plan_new(val: i64, confidence: i64, reason: str, agent: str) -> Plan {
+    assert(confidence >= 0 && confidence <= 100)
+    Plan { val: val, confidence: confidence, reason: reason, agent: agent }
+}
+
+fn plan_certain(val: i64, reason: str, agent: str) -> Plan {
+    Plan { val: val, confidence: 100, reason: reason, agent: agent }
+}
+
+fn plan_skip(p: Plan, min_confidence: i64) -> bool {
+    p.confidence < min_confidence
+}
+
+fn plan_from(p: Plan, agent_name: str) -> bool {
+    str_eq(p.agent, agent_name)
+}
+
+fn plan_revise(p: Plan, new_val: i64, new_confidence: i64, new_reason: str) -> Plan {
+    assert(new_confidence >= 0 && new_confidence <= 100)
+    Plan { val: new_val, confidence: new_confidence, reason: new_reason, agent: p.agent }
+}
+
+// ── From plan.ax: Schedule ────────────────────────────────────────────────────
+
+type Schedule = {
+    strategy:    i64,
+    interval_n:  i64,
+    score_floor: i64,
+    budget_cap:  i64,
+    ticks:       i64,
+    runs:        i64,
+    last_score:  i64,
+}
+
+fn schedule_interval(every_n: i64) -> Schedule {
+    assert(every_n > 0)
+    Schedule { strategy: 0, interval_n: every_n, score_floor: 0, budget_cap: 0,
+               ticks: 0, runs: 0, last_score: 0 }
+}
+
+fn schedule_on_score(floor: i64) -> Schedule {
+    Schedule { strategy: 1, interval_n: 0, score_floor: floor, budget_cap: 0,
+               ticks: 0, runs: 0, last_score: floor + 1 }
+}
+
+fn schedule_budget(max_runs: i64) -> Schedule {
+    assert(max_runs > 0)
+    Schedule { strategy: 2, interval_n: 0, score_floor: 0, budget_cap: max_runs,
+               ticks: 0, runs: 0, last_score: 0 }
+}
+
+fn schedule_tick(s: Schedule) -> Schedule {
+    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,
+               budget_cap: s.budget_cap, ticks: s.ticks + 1, runs: s.runs, last_score: s.last_score }
+}
+
+fn schedule_record(s: Schedule, score: i64) -> Schedule {
+    Schedule { strategy: s.strategy, interval_n: s.interval_n, score_floor: s.score_floor,
+               budget_cap: s.budget_cap, ticks: s.ticks, runs: s.runs + 1, last_score: score }
+}
+
+fn schedule_should_run(s: Schedule) -> bool {
+    if s.strategy == 0 {
+        if s.interval_n == 0 { false } else { s.ticks % s.interval_n == 0 && s.ticks > 0 }
+    } else if s.strategy == 1 {
+        s.last_score < s.score_floor
+    } else {
+        s.runs < s.budget_cap
+    }
+}
+
+fn schedule_exhausted(s: Schedule) -> bool {
+    s.strategy == 2 && s.runs >= s.budget_cap
+}
+
+// ── From plan.ax: Feedback ────────────────────────────────────────────────────
+
+type Feedback = {
+    plan:       Plan,
+    score:      i64,
+    prev_score: i64,
+    target:     i64,
+    goal_met:   bool,
+    improved:   bool,
+    iteration:  i64,
+}
+
+fn feedback_new(p: Plan, score: i64, prev_score: i64, target: i64, iter: i64) -> Feedback {
+    Feedback {
+        plan:       p,
+        score:      score,
+        prev_score: prev_score,
+        target:     target,
+        goal_met:   score >= target,
+        improved:   score > prev_score,
+        iteration:  iter,
+    }
+}
+
+fn feedback_delta(f: Feedback) -> i64 { f.score - f.prev_score }
+
+fn feedback_is_confident(f: Feedback, min_confidence: i64) -> bool {
+    f.plan.confidence >= min_confidence
+}
+
+// ── From counterfactual.ax: Counterfactual ────────────────────────────────────
+
+type Counterfactual = {
+    actual_input: i64,
+    cf_input:     i64,
+    actual_out:   i64,
+    cf_out:       i64,
+    effect:       i64,
+}
+
+fn cf_create(actual_input: i64, cf_input: i64, actual_out: i64, cf_out: i64) -> Counterfactual {
+    Counterfactual {
+        actual_input: actual_input,
+        cf_input:     cf_input,
+        actual_out:   actual_out,
+        cf_out:       cf_out,
+        effect:       cf_out - actual_out,
+    }
+}
+
+fn cf_effect(c: Counterfactual) -> i64 { c.effect }
+
+fn cf_pct_change(c: Counterfactual) -> i64 {
+    c.effect * 100 / (abs_i64(c.actual_out) + 1)
+}
+
+fn cf_would_improve(c: Counterfactual) -> bool { c.cf_out > c.actual_out }
+
+fn cf_is_negligible(c: Counterfactual, threshold: i64) -> bool {
+    abs_i64(c.effect) < threshold
+}
+
+// ── From counterfactual.ax: CfSet ────────────────────────────────────────────
+
+type CfSet = { items: [i64], n: i64 }
+
+fn cfs_empty() -> CfSet { CfSet { items: [], n: 0 } }
+
+fn cfs_record(cs: CfSet, c: Counterfactual) -> CfSet {
+    let items2 = arr_push(arr_push(cs.items, c.cf_input), c.effect)
+    CfSet { items: items2, n: cs.n + 1 }
+}
+
+fn cfs_effect_at(cs: CfSet, i: i64) -> i64 { cs.items[i * 2 + 1] }
+fn cfs_input_at(cs: CfSet, i: i64) -> i64  { cs.items[i * 2] }
+
+fn cfs_count_improving(cs: CfSet) -> i64 {
+    let count = 0
+    let i = 0
+    while i < cs.n {
+        if cfs_effect_at(cs, i) > 0 { count = count + 1 }
+        i = i + 1
+    }
+    count
+}
+
+fn cfs_best_input(cs: CfSet) -> i64 {
+    let best_eff = if cs.n > 0 { cfs_effect_at(cs, 0) } else { 0 }
+    let best_inp = if cs.n > 0 { cfs_input_at(cs, 0) } else { 0 }
+    let i = 1
+    while i < cs.n {
+        let eff = cfs_effect_at(cs, i)
+        if eff > best_eff {
+            best_eff = eff
+            best_inp = cfs_input_at(cs, i)
+        }
+        i = i + 1
+    }
+    best_inp
+}
+
+// ── From belief.ax: Belief ────────────────────────────────────────────────────
+
+type Belief = { labels: [str], probs: [f64] }
+
+fn approx_eq_b(a: f64, b: f64, tol: f64) -> bool {
+    let d = a - b
+    d >= -tol && d <= tol
+}
+
+fn belief_uniform(labels: [str]) -> Belief {
+    let n = len(labels)
+    assert(n > 0)
+    let p = 1.0 / (n as f64)
+    let probs = arr_repeat(p, n)
+    Belief { labels: labels, probs: probs }
+}
+
+fn belief_new(labels: [str], probs: [f64]) -> Belief {
+    assert(len(labels) == len(probs))
+    Belief { labels: labels, probs: probs }
+}
+
+fn belief_size(b: Belief) -> i64 { len(b.labels) }
+
+fn belief_prob(b: Belief, name: str) -> f64 {
+    let n = len(b.labels)
+    let i = 0
+    let found = 0.0
+    while i < n {
+        if str_eq(b.labels[i], name) { found = b.probs[i] }
+        i = i + 1
+    }
+    found
+}
+
+fn belief_map_index(b: Belief) -> i64 { arr_argmax_f64(b.probs) }
+
+fn belief_map(b: Belief) -> str {
+    let idx = belief_map_index(b)
+    b.labels[idx]
+}
+
+fn belief_entropy(b: Belief) -> f64 {
+    let n = len(b.probs)
+    let h = 0.0
+    let i = 0
+    while i < n {
+        let p = b.probs[i]
+        if p > 0.0 { h = h - p * ln(p) }
+        i = i + 1
+    }
+    h
+}
+
+fn belief_observe(b: Belief, likelihoods: [f64]) -> Belief {
+    let n = len(b.probs)
+    assert(len(likelihoods) == n)
+    let pairs  = arr_zip(b.probs, likelihoods)
+    let unnorm = arr_map(pairs, |pair| pair.0 * pair.1)
+    let total  = arr_sum_f64(unnorm)
+    assert(total > 0.0)
+    let normalized = arr_map(unnorm, |p| p / total)
+    Belief { labels: b.labels, probs: normalized }
+}
+
+// ── From distribution.ax: Gaussian / Beta / Categorical ──────────────────────
+
+type Gaussian    = { mu: f64, sigma: f64 }
+type Beta        = { alpha: f64, beta_b: f64 }
+type Categorical = { probs: [f64] }
+
+fn approx_eq(a: f64, b: f64, tol: f64) -> bool {
+    let diff = a - b
+    diff >= -tol && diff <= tol
+}
+
+fn gaussian_new(mu: f64, sigma: f64) -> Gaussian {
+    assert(sigma > 0.0)
+    Gaussian { mu: mu, sigma: sigma }
+}
+
+fn gaussian_mean(g: Gaussian) -> f64 { g.mu }
+fn gaussian_std(g: Gaussian)  -> f64 { g.sigma }
+
+fn gaussian_prob_lte(g: Gaussian, x: f64) -> f64 { gaussian_cdf(g.mu, g.sigma, x) }
+fn gaussian_density(g: Gaussian, x: f64)  -> f64 { gaussian_pdf(g.mu, g.sigma, x) }
+
+fn beta_new(alpha: f64, beta_b: f64) -> Beta {
+    assert(alpha > 0.0)
+    assert(beta_b > 0.0)
+    Beta { alpha: alpha, beta_b: beta_b }
+}
+
+fn beta_mu(b: Beta) -> f64     { beta_mean(b.alpha, b.beta_b) }
+fn beta_sigma2(b: Beta) -> f64 { beta_variance(b.alpha, b.beta_b) }
+fn beta_prob_lte(b: Beta, x: f64) -> f64 { beta_cdf(b.alpha, b.beta_b, x) }
+
+fn sum_f64s(xs: [f64]) -> f64 { arr_sum_f64(xs) }
+
+fn categorical_new(probs: [f64]) -> Categorical {
+    assert(len(probs) > 0)
+    let s    = sum_f64s(probs)
+    let diff = s - 1.0
+    let ok   = diff >= -0.001 && diff <= 0.001
+    assert(ok)
+    Categorical { probs: probs }
+}
+
+fn categorical_mu(c: Categorical) -> f64        { categorical_mean(c.probs) }
+fn categorical_sigma2(c: Categorical) -> f64    { categorical_variance(c.probs) }
+fn categorical_prob_lte(c: Categorical, k: i64) -> f64 { categorical_cdf(c.probs, k) }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TESTS
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── GCounter ──────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_gcounter_value_is_sum_of_all_nodes() {
+    let g = gcounter_new(3)
+    let g = gcounter_increment(g, 0)
+    let g = gcounter_increment(g, 1)
+    let g = gcounter_increment(g, 1)
+    // node-0: 1, node-1: 2, node-2: 0 → total 3
+    assert_eq(gcounter_value(g), 3)
+}
+
+@[test]
+fn test_gcounter_merge_is_commutative() {
+    // Replica A: node-0 increments twice; Replica B: node-1 increments once
+    let a = gcounter_increment(gcounter_increment(gcounter_new(2), 0), 0)
+    let b = gcounter_increment(gcounter_new(2), 1)
+    let ab = gcounter_merge(a, b)
+    let ba = gcounter_merge(b, a)
+    assert_eq(gcounter_value(ab), 3)
+    assert_eq(gcounter_value(ba), 3)
+}
+
+@[test]
+fn test_gcounter_merge_is_idempotent() {
+    let g  = gcounter_increment(gcounter_new(2), 0)
+    let gg = gcounter_merge(g, g)
+    assert_eq(gcounter_value(gg), gcounter_value(g))
+}
+
+// ── PNCounter ─────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_pncounter_increment_and_decrement() {
+    let p = pncounter_new(2)
+    let p = pncounter_increment(p, 0)
+    let p = pncounter_increment(p, 0)
+    let p = pncounter_decrement(p, 1)
+    assert_eq(pncounter_value(p), 1)
+}
+
+@[test]
+fn test_pncounter_value_can_go_negative() {
+    let p = pncounter_new(2)
+    let p = pncounter_decrement(p, 0)
+    let p = pncounter_decrement(p, 0)
+    assert_eq(pncounter_value(p), -2)
+}
+
+@[test]
+fn test_pncounter_merge_converges() {
+    // node-0: +3; node-1: -2; after merge = 1
+    let a = pncounter_increment(pncounter_increment(pncounter_increment(pncounter_new(2), 0), 0), 0)
+    let b = pncounter_decrement(pncounter_decrement(pncounter_new(2), 1), 1)
+    let merged = pncounter_merge(a, b)
+    assert_eq(pncounter_value(merged), 1)
+}
+
+// ── LWWRegister ───────────────────────────────────────────────────────────────
+
+@[test]
+fn test_lww_higher_timestamp_wins() {
+    let r = lww_new(10)
+    let r = lww_write(r, 42, 5)
+    let r = lww_write(r, 7, 3)   // stale — ignored
+    assert_eq(lww_read(r), 42)
+}
+
+@[test]
+fn test_lww_merge_is_commutative() {
+    let a  = lww_write(lww_new(0), 100, 10)
+    let b  = lww_write(lww_new(0), 200, 20)
+    let ab = lww_merge(a, b)
+    let ba = lww_merge(b, a)
+    assert_eq(lww_read(ab), 200)
+    assert_eq(lww_read(ba), 200)
+}
+
+@[test]
+fn test_lww_tie_break_by_higher_value() {
+    let a  = lww_write(lww_new(0), 50, 5)
+    let b  = lww_write(lww_new(0), 99, 5)
+    let ab = lww_merge(a, b)
+    let ba = lww_merge(b, a)
+    // Both replicas agree (deterministic)
+    assert_eq(lww_read(ab), 99)
+    assert_eq(lww_read(ba), 99)
+}
+
+// ── VectorClock ───────────────────────────────────────────────────────────────
+
+@[test]
+fn test_vclock_le_reflexive() {
+    // An equal clock does not happen-before itself (requires strict <)
+    let vc = vc_new(3)
+    assert(!vc_happens_before(vc, vc))
+}
+
+@[test]
+fn test_vclock_send_happens_before_recv() {
+    let a          = vc_tick(vc_new(2), 0)
+    let b_recv     = vc_tick(vc_merge(vc_new(2), a), 1)
+    assert(vc_happens_before(a, b_recv))
+    assert(!vc_happens_before(b_recv, a))
+}
+
+@[test]
+fn test_vclock_concurrent_detection() {
+    let a = vc_tick(vc_new(2), 0)   // A ticks — B knows nothing
+    let b = vc_tick(vc_new(2), 1)   // B ticks — A knows nothing
+    assert(vc_concurrent(a, b))
+    assert(!vc_happens_before(a, b))
+    assert(!vc_happens_before(b, a))
+}
+
+// ── Replicated ────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_replicated_write_visible_to_local_node() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 42, 1)
+    assert_eq(replicated_read(r, 0), 42)
+    assert_eq(replicated_read(r, 1), 0)   // other nodes unaffected
+}
+
+@[test]
+fn test_replicated_converge_all_nodes_agree() {
+    let r = replicated_new(3, 0)
+    let r = replicated_write(r, 0, 10, 3)
+    let r = replicated_write(r, 1, 20, 7)   // highest ts → wins
+    let r = replicated_write(r, 2, 15, 5)
+    assert(!replicated_converged(r))
+    let r = replicated_converge(r)
+    assert(replicated_converged(r))
+    assert_eq(replicated_read(r, 0), 20)
+    assert_eq(replicated_read(r, 1), 20)
+    assert_eq(replicated_read(r, 2), 20)
+}
+
+@[test]
+fn test_replicated_stale_write_ignored() {
+    let r = replicated_new(2, 0)
+    let r = replicated_write(r, 0, 99, 10)
+    let r = replicated_write(r, 0, 1,  5)   // ts=5 < ts=10 → ignored
+    assert_eq(replicated_read(r, 0), 99)
+}
+
+// ── Quorum ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_quorum_commits_after_majority_acks() {
+    let q = quorum_new(3)              // quorum_size = 2
+    let q = q_propose_ok(q, 42, 1)
+    let q = quorum_ack(q, 1)
+    let q = quorum_ack(q, 1)           // 2 acks = majority
+    let q = quorum_try_commit(q)
+    assert(q.committed)
+    assert_eq(q_read_ok(q), 42)
+}
+
+@[test]
+fn test_quorum_insufficient_acks_does_not_commit() {
+    let q = quorum_new(3)              // quorum_size = 2
+    let q = q_propose_ok(q, 99, 1)
+    let q = quorum_ack(q, 1)           // only 1 ack — short
+    let q = quorum_try_commit(q)
+    assert(!q.committed)
+}
+
+@[test]
+fn test_quorum_stale_proposal_rejected() {
+    let q = quorum_new(3)
+    let q = q_propose_ok(q, 1, 10)
+    let q = quorum_ack(q, 10)
+    let q = quorum_ack(q, 10)
+    let q = quorum_try_commit(q)        // committed at ts=10
+    match quorum_propose(q, 999, 5) {   // ts=5 < committed_ts=10
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+// ── CausallyOrdered ───────────────────────────────────────────────────────────
+
+@[test]
+fn test_co_write_establishes_causal_order() {
+    let v0 = co_new(2, 10, 0)         // node-0 writes; clock [1,0]
+    let v1 = co_write(v0, 20, 1)      // node-1 writes after receiving v0; clock [1,1]
+    assert(co_happens_before(v0, v1))
+    assert(!co_happens_before(v1, v0))
+}
+
+@[test]
+fn test_co_concurrent_writes_are_concurrent() {
+    let a = co_new(2, 10, 0)   // clock [1,0]
+    let b = co_new(2, 20, 1)   // clock [0,1]
+    assert(co_concurrent(a, b))
+    assert(!co_happens_before(a, b))
+    assert(!co_happens_before(b, a))
+}
+
+@[test]
+fn test_co_stale_reader_cannot_read() {
+    let item         = co_new(2, 42, 0)   // item clock [1,0]
+    let stale_reader = vcl_new(2)          // clock [0,0] — hasn't seen node-0's write
+    assert(!co_can_read(stale_reader, item))
+}
+
+@[test]
+fn test_co_uptodate_reader_can_read() {
+    let item       = co_new(2, 42, 0)                   // item clock [1,0]
+    let up_to_date = vcl_tick(vcl_tick(vcl_new(2), 0), 1)  // clock [1,1]
+    assert(co_can_read(up_to_date, item))
+}
+
+// ── CoordGoal ─────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_coord_goal_minority_cannot_force() {
+    // 1 out of 3 required (quorum = 2) — not enough
+    let g  = coord_goal_new(3, 70)
+    let g2 = coord_goal_propose(g, 0, 95)
+    assert(!coord_goal_quorum_met(g2))
+    assert_eq(coord_goal_accept_count(g2), 1)
+}
+
+@[test]
+fn test_coord_goal_majority_succeeds() {
+    let g  = coord_goal_new(3, 70)
+    let g1 = coord_goal_propose(g, 0, 85)
+    let g2 = coord_goal_propose(g1, 1, 90)
+    assert(coord_goal_quorum_met(g2))
+    // consensus = min(85, 90) = 85 (conservative)
+    assert_eq(coord_goal_consensus_score(g2), 85)
+}
+
+@[test]
+fn test_coord_goal_below_target_does_not_count() {
+    // Both principals score below target=80 — neither counts
+    let g  = coord_goal_new(3, 80)
+    let g2 = coord_goal_propose(coord_goal_propose(g, 0, 50), 1, 60)
+    assert(!coord_goal_quorum_met(g2))
+    assert_eq(coord_goal_accept_count(g2), 0)
+}
+
+@[test]
+fn test_coord_goal_proposal_is_idempotent() {
+    let cg  = coord_goal_new(3, 80)
+    let cg2 = coord_goal_propose(cg, 0, 95)
+    let cg3 = coord_goal_propose(cg2, 0, 50)   // same pid — ignored
+    assert_eq(cg3.scores[0], 95)               // first score kept
+    assert_eq(coord_goal_accept_count(cg3), 1)
+}
+
+// ── Tainted / Trusted ─────────────────────────────────────────────────────────
+
+@[test]
+fn test_tainted_combine_takes_lower_trust() {
+    // Constant-trust + AI-trust → AI-trust (pessimistic)
+    let c = tainted_constant(100)
+    let a = tainted_ai(50)
+    let r = tainted_combine(c, a)
+    assert_eq(r.trust, trust_ai())
+}
+
+@[test]
+fn test_trust_validate_rejects_ai_at_user_floor() {
+    let t = tainted_ai(99)
+    match trust_validate(t, trust_user()) {
+        Ok(_)  => assert(false)
+        Err(_) => assert(true)
+    }
+}
+
+@[test]
+fn test_trust_validate_accepts_user_at_user_floor() {
+    let t = tainted_user(99)
+    match trust_validate(t, trust_user()) {
+        Ok(trusted) => assert_eq(trusted_val(trusted), 99)
+        Err(_)      => assert(false)
+    }
+}
+
+@[test]
+fn test_tainted_needs_validation_for_ai_and_net() {
+    assert(tainted_needs_validation(tainted_ai(1)))
+    assert(tainted_needs_validation(tainted_net(1)))
+    assert(!tainted_needs_validation(tainted_user(1)))
+    assert(!tainted_needs_validation(tainted_constant(1)))
+}
+
+// ── Secret / Public ───────────────────────────────────────────────────────────
+
+@[test]
+fn test_secret_cannot_flow_down() {
+    let s = secret_confidential(42)             // level 2
+    assert(!secret_can_flow_to(s, cl_public()))         // clearance 0 < 2
+    assert(!secret_can_flow_to(s, cl_internal()))       // clearance 1 < 2
+    assert(secret_can_flow_to(s, cl_confidential()))    // clearance 2 = ok
+    assert(secret_can_flow_to(s, cl_secret_level()))    // clearance 3 > 2 = ok
+}
+
+@[test]
+fn test_secret_combine_takes_max_level() {
+    let a = secret_public(10)
+    let b = secret_confidential(20)
+    let r = secret_combine(a, b)
+    assert_eq(r.level, cl_confidential())
+}
+
+@[test]
+fn test_no_exfiltration_of_confidential_to_ai() {
+    let data          = secret_confidential(9999)
+    let ai_clearance  = cl_public()             // AI/Net context has no clearance
+    assert(!secret_can_flow_to(data, ai_clearance))
+    // A public result CAN flow to that same context
+    let pub_result = secret_public(42)
+    assert(secret_can_flow_to(pub_result, ai_clearance))
+}
+
+@[test]
+fn test_public_value_freely_shareable() {
+    let p = public_new(99)
+    let s = secret_public(public_val(p))
+    assert(secret_can_flow_to(s, cl_public()))
+    assert(secret_can_flow_to(s, cl_secret_level()))
+}
+
+// ── Risk ──────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_risk_levels_are_ordered() {
+    assert(risk_low() < risk_medium())
+    assert(risk_medium() < risk_high())
+    assert(risk_high() < risk_critical())
+}
+
+@[test]
+fn test_risk_low_does_not_require_pipeline() {
+    assert(!risk_requires_pipeline(risk_low()))
+    assert(!risk_requires_pipeline(risk_medium()))
+}
+
+@[test]
+fn test_risk_high_and_critical_require_pipeline() {
+    assert(risk_requires_pipeline(risk_high()))
+    assert(risk_requires_pipeline(risk_critical()))
+}
+
+@[test]
+fn test_risk_irreversibility_raises_by_one() {
+    assert_eq(risk_from_irreversibility(risk_low(), true),      risk_medium())
+    assert_eq(risk_from_irreversibility(risk_high(), true),     risk_critical())
+    assert_eq(risk_from_irreversibility(risk_critical(), true), risk_critical())  // clamped
+    assert_eq(risk_from_irreversibility(risk_medium(), false),  risk_medium())    // no change
+}
+
+@[test]
+fn test_risk_derive_max_wins() {
+    assert_eq(risk_derive(0, 10, false), risk_low())      // pure, low budget, reversible
+    assert_eq(risk_derive(8, 10, false), risk_critical())  // exec bit
+    assert_eq(risk_derive(0, 10, true),  risk_medium())    // reversible raises low → medium
+}
+
+@[test]
+fn test_pipeline_low_risk_skips_sim_stages() {
+    // Low risk: simulate/stress/redteam gates are skipped even if they would fail
+    let r = pipeline_run(
+        risk_low(),
+        gate_fail("sim would block"),
+        gate_fail("stress would block"),
+        gate_fail("redteam would block"),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(r.deployed)
+}
+
+@[test]
+fn test_pipeline_high_risk_halts_at_first_failure() {
+    let r = pipeline_run(
+        risk_high(),
+        gate_fail("simulation diverges"),
+        gate_pass(),
+        gate_pass(),
+        gate_pass(),
+        gate_pass()
+    )
+    assert(!r.deployed)
+    assert(str_eq(r.failed_stage, "simulate"))
+    assert_eq(r.stage_reached, 1)
+}
+
+@[test]
+fn test_pipeline_full_pass_deploys() {
+    let r = pipeline_run(
+        risk_critical(),
+        gate_pass(), gate_pass(), gate_pass(), gate_pass(), gate_pass()
+    )
+    assert(r.deployed)
+    assert_eq(r.stage_reached, 5)
+}
+
+// ── Plan ──────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_plan_skip_below_min_confidence() {
+    let p = plan_new(42, 15, "guessing", "agent-a")
+    assert(plan_skip(p, 50))
+    assert(!plan_skip(p, 10))
+}
+
+@[test]
+fn test_plan_certain_is_never_skipped() {
+    let p = plan_certain(99, "very sure", "agent-b")
+    assert_eq(p.confidence, 100)
+    assert(!plan_skip(p, 99))
+}
+
+@[test]
+fn test_plan_revise_preserves_agent_name() {
+    let p  = plan_new(10, 50, "first guess", "alice")
+    let p2 = plan_revise(p, 20, 80, "refined")
+    assert_eq(p2.val, 20)
+    assert_eq(p2.confidence, 80)
+    assert(plan_from(p2, "alice"))
+    assert(!plan_from(p2, "bob"))
+}
+
+// ── Schedule ──────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_schedule_interval_fires_at_right_tick() {
+    let s  = schedule_interval(3)
+    let s1 = schedule_tick(s)   // tick 1 — no
+    assert(!schedule_should_run(s1))
+    let s2 = schedule_tick(s1)  // tick 2 — no
+    assert(!schedule_should_run(s2))
+    let s3 = schedule_tick(s2)  // tick 3 — fire
+    assert(schedule_should_run(s3))
+    let s4 = schedule_tick(s3)  // tick 4 — no
+    assert(!schedule_should_run(s4))
+}
+
+@[test]
+fn test_schedule_on_score_fires_when_drops_below_floor() {
+    let s  = schedule_on_score(80)
+    assert(!schedule_should_run(s))         // starts above floor
+    let s2 = schedule_record(s, 70)         // score 70 < floor 80
+    assert(schedule_should_run(s2))
+    let s3 = schedule_record(s2, 90)        // score recovered
+    assert(!schedule_should_run(s3))
+}
+
+@[test]
+fn test_schedule_budget_exhausts_after_cap() {
+    let s  = schedule_budget(2)
+    assert(!schedule_exhausted(s))
+    let s1 = schedule_record(s, 80)
+    assert(!schedule_exhausted(s1))
+    let s2 = schedule_record(s1, 90)
+    assert(schedule_exhausted(s2))
+    assert(!schedule_should_run(s2))
+}
+
+// ── Feedback ──────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_feedback_delta_positive_when_improved() {
+    let p = plan_certain(90, "try 90", "optimizer")
+    let f = feedback_new(p, 90, 70, 85, 1)
+    assert(f.goal_met)
+    assert(f.improved)
+    assert_eq(feedback_delta(f), 20)
+}
+
+@[test]
+fn test_feedback_not_improved_when_score_drops() {
+    let p = plan_certain(60, "try 60", "optimizer")
+    let f = feedback_new(p, 60, 70, 85, 2)
+    assert(!f.improved)
+    assert_eq(feedback_delta(f), -10)
+}
+
+@[test]
+fn test_feedback_is_confident_checks_plan_confidence() {
+    let p = plan_new(80, 60, "moderate", "opt")
+    let f = feedback_new(p, 80, 70, 85, 1)
+    assert(feedback_is_confident(f, 50))
+    assert(!feedback_is_confident(f, 80))
+}
+
+@[test]
+fn test_feedback_improve_loop_converges_to_target() {
+    let target = 90
+    let p1 = plan_new(60, 70, "initial", "optimizer")
+    let f1 = feedback_new(p1, 60, 0, target, 1)
+    assert(!f1.goal_met)
+    assert(f1.improved)   // 60 > 0
+
+    let p2 = plan_revise(p1, 80, 80, "better")
+    let f2 = feedback_new(p2, 80, f1.score, target, 2)
+    assert(!f2.goal_met)
+    assert(f2.improved)   // 80 > 60
+
+    let p3 = plan_revise(p2, 92, 95, "near target")
+    let f3 = feedback_new(p3, 92, f2.score, target, 3)
+    assert(f3.goal_met)   // 92 >= 90
+    assert(f3.improved)   // 92 > 80
+}
+
+// ── Counterfactual ────────────────────────────────────────────────────────────
+
+@[test]
+fn test_cf_would_improve_when_cf_out_higher() {
+    let c = cf_create(100, 50, 200, 250)
+    assert_eq(cf_effect(c), 50)
+    assert(cf_would_improve(c))
+}
+
+@[test]
+fn test_cf_would_not_improve_when_cf_out_lower() {
+    let c = cf_create(100, 200, 300, 250)
+    assert_eq(cf_effect(c), -50)
+    assert(!cf_would_improve(c))
+}
+
+@[test]
+fn test_cf_pct_change_formula() {
+    // actual_out=100, cf_out=150, effect=50 → pct = 50*100/(100+1) = 49
+    let c = cf_create(1, 2, 100, 150)
+    assert(cf_pct_change(c) > 40)
+    assert(cf_pct_change(c) < 60)
+}
+
+@[test]
+fn test_cf_is_negligible_for_small_effect() {
+    let c = cf_create(10, 11, 100, 102)   // effect = 2
+    assert(cf_is_negligible(c, 5))
+    assert(!cf_is_negligible(c, 1))
+}
+
+@[test]
+fn test_cfs_sensitivity_sweep_finds_best() {
+    // actual variant = 0 (score 60); sweep variants 0..3
+    // scores: [60, 75, 90, 50] → effects: [0, +15, +30, -10]
+    let actual_score = 60
+    let scores = [60, 75, 90, 50]
+    let cs = cfs_empty()
+    let v = 0
+    while v < 4 {
+        let c = cf_create(0, v, actual_score, scores[v])
+        cs = cfs_record(cs, c)
+        v = v + 1
+    }
+    assert_eq(cs.n, 4)
+    assert_eq(cfs_count_improving(cs), 2)   // variants 1 and 2 improve
+    assert_eq(cfs_best_input(cs), 2)         // variant 2 has effect=30 (best)
+}
+
+// ── Belief ────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_belief_uniform_sums_to_one_and_equal_probs() {
+    let b = belief_uniform(["a", "b", "c", "d"])
+    let total = arr_sum_f64(b.probs)
+    assert(approx_eq_b(total, 1.0, 0.001))
+    assert(approx_eq_b(b.probs[0], 0.25, 0.001))
+    assert_eq(belief_size(b), 4)
+}
+
+@[test]
+fn test_belief_map_returns_most_probable_label() {
+    let b = belief_new(["A", "B", "C"], [0.1, 0.7, 0.2])
+    assert(str_eq(belief_map(b), "B"))
+    assert_eq(belief_map_index(b), 1)
+}
+
+@[test]
+fn test_belief_observe_updates_distribution() {
+    // Prior 50/50; likelihood H0 is 4× more likely → posterior ~80/20
+    let prior     = belief_new(["H0", "H1"], [0.5, 0.5])
+    let posterior = belief_observe(prior, [0.8, 0.2])
+    assert(approx_eq_b(posterior.probs[0], 0.8, 0.001))
+    assert(approx_eq_b(posterior.probs[1], 0.2, 0.001))
+    assert(str_eq(belief_map(posterior), "H0"))
+}
+
+@[test]
+fn test_belief_entropy_uniform_exceeds_degenerate() {
+    let b_uniform   = belief_new(["a", "b", "c", "d"], [0.25, 0.25, 0.25, 0.25])
+    let b_degenerate = belief_new(["a", "b"], [1.0, 0.0])
+    assert(belief_entropy(b_uniform) > belief_entropy(b_degenerate))
+}
+
+@[test]
+fn test_belief_prob_lookup() {
+    let b = belief_new(["cat", "dog", "fish"], [0.5, 0.3, 0.2])
+    assert(approx_eq_b(belief_prob(b, "cat"),  0.5, 0.001))
+    assert(approx_eq_b(belief_prob(b, "dog"),  0.3, 0.001))
+    assert(approx_eq_b(belief_prob(b, "fish"), 0.2, 0.001))
+    assert(approx_eq_b(belief_prob(b, "bird"), 0.0, 0.001))
+}
+
+// ── Gaussian ──────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_gaussian_prob_lte_standard_normal_at_zero() {
+    let g = gaussian_new(0.0, 1.0)
+    assert(approx_eq(gaussian_prob_lte(g, 0.0), 0.5, 0.001))
+}
+
+@[test]
+fn test_gaussian_density_standard_normal_at_zero() {
+    let g = gaussian_new(0.0, 1.0)
+    assert(approx_eq(gaussian_density(g, 0.0), 0.39894, 0.0001))
+}
+
+@[test]
+fn test_gaussian_prob_lte_at_mean_is_half() {
+    // P(X <= mu) = 0.5 for any mu (symmetry)
+    let g = gaussian_new(10.0, 2.0)
+    assert(approx_eq(gaussian_prob_lte(g, 10.0), 0.5, 0.001))
+}
+
+// ── Beta ──────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_beta_mu_uniform_is_half() {
+    // E[Beta(1,1)] = 1/(1+1) = 0.5
+    let b = beta_new(1.0, 1.0)
+    assert(approx_eq(beta_mu(b), 0.5, 0.0001))
+}
+
+@[test]
+fn test_beta_cdf_uniform_at_half_is_half() {
+    // Beta(1,1) = Uniform[0,1]; P(X <= 0.5) = 0.5
+    let b = beta_new(1.0, 1.0)
+    assert(approx_eq(beta_prob_lte(b, 0.5), 0.5, 0.001))
+}
+
+@[test]
+fn test_beta_mu_asymmetric() {
+    // E[Beta(2, 8)] = 2/10 = 0.2
+    let b = beta_new(2.0, 8.0)
+    assert(approx_eq(beta_mu(b), 0.2, 0.0001))
+}
+
+// ── Categorical ───────────────────────────────────────────────────────────────
+
+@[test]
+fn test_categorical_mu_uniform_four_outcomes() {
+    // {0,1,2,3} equally likely: E[X] = 1.5
+    let c = categorical_new([0.25, 0.25, 0.25, 0.25])
+    assert(approx_eq(categorical_mu(c), 1.5, 0.0001))
+}
+
+@[test]
+fn test_categorical_cdf_cumulates_correctly() {
+    // probs = [0.1, 0.4, 0.3, 0.2]
+    let c = categorical_new([0.1, 0.4, 0.3, 0.2])
+    assert(approx_eq(categorical_prob_lte(c, 0), 0.1, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 1), 0.5, 0.0001))
+    assert(approx_eq(categorical_prob_lte(c, 3), 1.0, 0.0001))
+}
+
+// ── Cross-type integration ────────────────────────────────────────────────────
+
+@[test]
+fn test_coord_with_risk_gate() {
+    // Low-risk action: no pipeline required — single voter suffices in practice
+    assert(!risk_requires_pipeline(risk_low()))
+
+    // High-risk action: both quorum AND full pipeline must pass
+    let high = risk_high()
+    assert(risk_requires_pipeline(high))
+
+    // Build quorum with 3 principals, target score=80
+    let g  = coord_goal_new(3, 80)
+    let g1 = coord_goal_propose(g, 0, 95)
+    assert(!coord_goal_quorum_met(g1))   // 1/3 — not enough
+    let g2 = coord_goal_propose(g1, 1, 85)
+    assert(coord_goal_quorum_met(g2))    // 2/3 — quorum reached
+
+    // Only deploy when BOTH quorum is met AND all pipeline gates pass
+    let pr = pipeline_run(high, gate_pass(), gate_pass(), gate_pass(), gate_pass(), gate_pass())
+    assert(coord_goal_quorum_met(g2) && pr.deployed)
+}
+
+@[test]
+fn test_tainted_value_blocked_before_reaching_risk_gate() {
+    // An AI-sourced value must clear trust_validate BEFORE any risk gate is consulted.
+    let ai_score = tainted_ai(95)
+    assert(tainted_needs_validation(ai_score))
+
+    // High-risk action demands User-level trust
+    match trust_validate(ai_score, trust_user()) {
+        Ok(_)  => assert(false)   // should NOT pass — AI trust < User floor
+        Err(_) => assert(true)    // correctly blocked
+    }
+
+    // The risk pipeline is never reached; its result is irrelevant
+    assert(risk_requires_pipeline(risk_high()))
+}
+
+@[test]
+fn test_plan_feedback_loop_meets_coord_quorum_target() {
+    // Goal: achieve coord_goal accept_count >= 2 (quorum of 3 principals, target=80)
+    // We model the "score" as accept_count and run a 2-iteration improve loop.
+    let target = 2
+
+    // Iteration 1: only 1 principal accepts
+    let p1 = plan_new(1, 70, "one principal", "optimizer")
+    let f1 = feedback_new(p1, 1, 0, target, 1)
+    assert(!f1.goal_met)
+    assert(f1.improved)   // 1 > 0
+
+    // Iteration 2: 2 principals accept → quorum met
+    let p2 = plan_revise(p1, 2, 90, "two principals")
+    let f2 = feedback_new(p2, 2, f1.score, target, 2)
+    assert(f2.goal_met)
+    assert(f2.improved)
+    assert_eq(feedback_delta(f2), 1)
+
+    // Verify the underlying CoordGoal also says quorum is met
+    let g  = coord_goal_new(3, 80)
+    let g2 = coord_goal_propose(coord_goal_propose(g, 0, 85), 1, 90)
+    assert(coord_goal_quorum_met(g2))
+    assert_eq(coord_goal_accept_count(g2), f2.score)
+}
+
+@[test]
+fn test_secret_and_tainted_dual_blocking() {
+    // A confidential AI-sourced value is blocked on BOTH axes:
+    //   1. Trust axis: AI-tainted cannot clear User validation floor
+    //   2. Flow axis:  confidential-level data cannot flow to a public-clearance AI/Net sink
+
+    let ai_value = tainted_ai(1234)
+
+    // Trust axis: blocked
+    let trust_ok = match trust_validate(ai_value, trust_user()) {
+        Ok(_)  => true
+        Err(_) => false
+    }
+    assert(!trust_ok)
+
+    // Flow axis: even the raw value wrapped as confidential is blocked from AI/Net
+    let conf_secret  = secret_confidential(ai_value.val)
+    let ai_clearance = cl_public()
+    assert(!secret_can_flow_to(conf_secret, ai_clearance))
+
+    // A declassified public result CAN flow
+    let pub_result = secret_public(42)
+    assert(secret_can_flow_to(pub_result, ai_clearance))
+}
+
+@[test]
+fn test_counterfactual_safety_audit_pattern() {
+    // "Would a stricter redteam threshold have caught this vulnerability?"
+    // Model: check catches when threshold > 85; actual threshold=70 (miss), cf threshold=90 (catch)
+    let actual_out = if 70 > 85 { 1 } else { 0 }   // 0 = missed
+    let cf_out     = if 90 > 85 { 1 } else { 0 }   // 1 = caught
+    let c = cf_create(70, 90, actual_out, cf_out)
+    assert_eq(c.actual_out, 0)
+    assert_eq(c.cf_out, 1)
+    assert_eq(cf_effect(c), 1)
+    assert(cf_would_improve(c))
+}
+
+fn main() -> i64 {
+    println("Phase 14+ stdlib integration tests.")
+    println("Run with: axon test examples/stdlib/phase14_tests.ax")
+    0
+}
