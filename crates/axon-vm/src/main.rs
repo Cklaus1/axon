@@ -544,11 +544,24 @@ fn cmd_run(
         None
     };
 
-    // Derive allowed effects: prefer manifest, fall back to principal, then open.
-    let allowed_effects = manifest
-        .effect_union
-        .clone()
-        .or_else(|| principal.as_ref().map(|p| p.allowed_effects.clone()));
+    // Derive allowed effects: an explicit AXON_VM_ALLOWED_EFFECTS override (comma-
+    // separated effect names) tightens the policy beyond the manifest — useful for
+    // defense-in-depth and for exercising the in-kernel syscall gate. Otherwise prefer
+    // the manifest's effect union, fall back to the principal, then open.
+    let allowed_effects = if let Ok(forced) = env::var("AXON_VM_ALLOWED_EFFECTS") {
+        Some(
+            forced
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>(),
+        )
+    } else {
+        manifest
+            .effect_union
+            .clone()
+            .or_else(|| principal.as_ref().map(|p| p.allowed_effects.clone()))
+    };
 
     let budget_tokens = principal.as_ref().map(|p| p.budget_tokens);
 
