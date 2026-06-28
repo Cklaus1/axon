@@ -94,9 +94,15 @@ In rough order of how much you're betting on it:
 1. **The Axon compiler** (`axon check`/`build`) — the capability proof originates here.
 2. **The interpreter / codegen + `axon-rt`** — Layer-2 dispatch enforcement and the
    generated binary.
-3. **The guest kernel** (`axon-guest-kernel`) — enforces caps as effect-row hypercalls;
-   built small *specifically* to be auditable (vs ~35M LOC of Linux). Boots to ready
-   state in QEMU/Firecracker; full IDT/timer-ISR and true multi-core SMP are partial.
+3. **The runtime enforcer.** *Today this is seccomp-BPF inside a Linux guest:*
+   `axon-vm` derives a syscall allowlist from the `.axmeta` manifest and Firecracker
+   boots a Linux guest to run the program — so the **Linux kernel is currently in the
+   TCB** (the largest unverified component). The purpose-built `axon-guest-kernel` is the
+   planned replacement that would shrink this to ~15K LOC of auditable Axon. It now
+   **boots under real QEMU** (writes its banner; verified by `scripts/qemu_boot_test.sh`),
+   but it does **not yet enforce `@[contained]` caps end-to-end** — in-kernel hypercall
+   enforcement, full IDT/timer-ISR, and SMP are future work. Until then, the
+   seccomp-in-Linux path is the real enforcer, and the bare-metal kernel is aspirational.
 4. **The attestation root** (`axon-attest`, R26→R31 `axtcb1` chain) — and, in the
    default config, the software-TPM stand-in.
 5. **The operator** — assumed honest and available to trip the kill-switch.

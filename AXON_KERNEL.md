@@ -1,10 +1,18 @@
 # Axon Guest Kernel
 
-A formally-verified supervisor kernel for Axon microVM guests, written in Axon.
+A purpose-built supervisor kernel for Axon microVM guests, written in Axon. The
+**goal** (not yet the status): replace the Linux `microvm_defconfig` guest kernel with a
+small, auditable kernel whose sole job is to enforce `@[contained]` effect-row caps,
+provide `host_await` as a native hypercall, and run one Axon program per VM — eventually
+compiler-verified.
 
-Replaces the Linux `microvm_defconfig` guest kernel in `build-guest-image.sh` with
-a purpose-built kernel whose sole job is to enforce `@[contained]` effect-row caps,
-provide `host_await` as a native hypercall, and run one Axon program per VM.
+> **Status (honest).** The kernel **boots under real QEMU** to its ready/idle state
+> (writes its banner; gated by `scripts/qemu_boot_test.sh`). It does **NOT** yet enforce
+> `@[contained]` caps, run a real Axon program, or carry a machine-checked proof —
+> in-kernel hypercall enforcement, full IDT/timer-ISR, SMP, and verification are future
+> work. **Today's real enforcement is seccomp-BPF inside a Linux guest** (`axon-vm`); this
+> kernel is the aspirational replacement that would shrink the TCB. "Formally-verified" and
+> "enforces caps" below describe the design target, not what ships now.
 
 ## Why
 
