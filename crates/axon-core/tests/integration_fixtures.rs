@@ -1316,6 +1316,28 @@ fn contained_fail_alias_fixture_emits_e1001() {
 }
 
 #[test]
+fn sql_injection_fixture_emits_e1210() {
+    // A concatenated sql_query template must be refused statically (SQLi-by-construction).
+    let errors = check_fixture("sql_injection.ax");
+    assert!(
+        errors.iter().any(|e| e.contains("E1210")),
+        "sql_injection.ax should produce E1210 (non-literal SQL template), got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
+fn sql_safe_fixture_checks_clean() {
+    // The parameterized form (literal template + bound param) must NOT trip E1210.
+    let errors = check_fixture("sql_safe.ax");
+    assert!(
+        !errors.iter().any(|e| e.contains("E1210")),
+        "sql_safe.ax (literal template + bound param) should be clean, got:\n{}",
+        errors.join("\n")
+    );
+}
+
+#[test]
 fn contained_fail_never_fixture_emits_e0604() {
     let errors = check_fixture("contained_fail_never.ax");
     assert!(

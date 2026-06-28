@@ -20,8 +20,8 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::{AxonType, Expr, FmtPart, FnDef, Item, MatchArm, Pattern, Program, Stmt};
 use crate::error::{
-    levenshtein, E1206, E1207, E1208, E1209, E1500, E1503, E1504, E1505, E1704, E1810, E2300,
-    E2302,
+    levenshtein, E1206, E1207, E1208, E1209, E1210, E1500, E1503, E1504, E1505, E1704, E1810,
+    E2300, E2302,
 };
 use crate::types::Type;
 
@@ -608,6 +608,23 @@ impl CheckCtx {
         // (E2300) here; the auto-implied @[total]/@[no_alloc] gates below pick up
         // @[bpf] fns via `fn_is_total`/`fn_is_no_alloc`.
         self.check_bpf_programs(program);
+
+        // SQLi-by-construction: every `sql_query(template, params)` must have a
+        // string-LITERAL template, so user data can only enter as a bound `?`
+        // parameter — a concatenated/interpolated template is E1210. Walks free
+        // fns and impl methods (an unsafe query laundered through a method body
+        // is caught too). Not gated on @[contained] — injection is checked always.
+        for item in &program.items {
+            match item {
+                Item::FnDef(f) => self.check_sql_safety(&f.body, f.span),
+                Item::ImplBlock(blk) => {
+                    for m in &blk.methods {
+                        self.check_sql_safety(&m.body, m.span);
+                    }
+                }
+                _ => {}
+            }
+        }
 
         // Phase 5 §3: a @[total] fn must terminate. For a recursive @[total] fn,
         // require a strictly-decreasing well-founded measure at every recursive
@@ -2523,6 +2540,55 @@ impl CheckCtx {
 
     /// Apply `g` to every direct child expression of `expr` (one level). Shared
     /// recursion helper.
+    /// SQLi-by-construction (E1210). Every `sql_query(template, params)` must take a
+    /// string-LITERAL template, so user data can only enter as a bound `?` parameter.
+    /// A template built by concatenation (`Expr::BinOp`), interpolation (`Expr::FmtStr`),
+    /// or any non-`Literal::Str` value could let attacker input become SQL STRUCTURE —
+    /// the definition of an injection — so it is refused. This is the same literal-only
+    /// discipline the `@[contained]` path/host checks use, applied to the query sink, and
+    /// it is checked everywhere (not gated on `@[contained]`). Emits with the enclosing
+    /// fn's span (`Expr::Call` carries none).
+    fn check_sql_safety(&mut self, body: &Expr, span: crate::span::Span) {
+        let mut violations = 0usize;
+        Self::collect_sql_injection(body, &mut violations);
+        if violations == 0 {
+            return;
+        }
+        let file = self.file.clone();
+        for _ in 0..violations {
+            self.errors.push(
+                CheckError::new(
+                    E1210,
+                    "`sql_query` template must be a string literal — a template built by \
+                     concatenation or interpolation lets user input become SQL structure \
+                     (SQL injection)",
+                )
+                .at(&file, 0, 0)
+                .with_span(span)
+                .fix(
+                    "keep the SQL as a literal with `?` placeholders and pass user data via \
+                     the `params` array, e.g. sql_query(\"SELECT * FROM t WHERE id = ?\", [user_id])",
+                ),
+            );
+        }
+    }
+
+    /// Count `sql_query` calls whose first argument (the template) is not a string
+    /// literal. Static + recursive via `for_each_child` so a query laundered through a
+    /// nested expression or impl-method body is still found.
+    fn collect_sql_injection(expr: &Expr, out: &mut usize) {
+        if let Expr::Call { callee, args, .. } = expr {
+            if let Expr::Ident(name) = callee.as_ref() {
+                if name == "sql_query"
+                    && !matches!(args.first(), Some(Expr::Literal(crate::ast::Literal::Str(_))))
+                {
+                    *out += 1;
+                }
+            }
+        }
+        Self::for_each_child(expr, &mut |c| Self::collect_sql_injection(c, out));
+    }
+
     fn for_each_child(expr: &Expr, g: &mut dyn FnMut(&Expr)) {
         match expr {
             Expr::Block(stmts) => stmts.iter().for_each(|s| g(&s.expr)),

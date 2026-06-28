@@ -380,6 +380,46 @@ impl<'p> Interp<'p> {
                 ok!(Value::Ok(Box::new(Value::Int(count))))
             }
 
+            "sql_query" => {
+                // Parameterized query: each `?` in the (compile-time-literal,
+                // E1210-enforced) template is filled by the next bound param,
+                // single-quoted and `'`-escaped. Data is never SQL structure.
+                want(2)?;
+                let template = as_str(&args[0])?.to_string();
+                let params: Vec<String> = match &args[1] {
+                    Value::Array(xs) => {
+                        let mut out = Vec::with_capacity(xs.len());
+                        for x in xs {
+                            out.push(as_str(x)?.to_string());
+                        }
+                        out
+                    }
+                    other => {
+                        return panic(format!(
+                            "sql_query: params must be [str], got {}",
+                            other.type_name()
+                        ))
+                    }
+                };
+                let mut rendered = String::new();
+                let mut pi = 0usize;
+                for ch in template.chars() {
+                    if ch == '?' {
+                        if pi < params.len() {
+                            rendered.push('\'');
+                            rendered.push_str(&params[pi].replace('\'', "''"));
+                            rendered.push('\'');
+                            pi += 1;
+                        } else {
+                            rendered.push('?');
+                        }
+                    } else {
+                        rendered.push(ch);
+                    }
+                }
+                ok!(Value::Str(rendered));
+            }
+
             // ── Conversion / formatting ─────────────────────────────────────────
             "to_str" => {
                 want(1)?;

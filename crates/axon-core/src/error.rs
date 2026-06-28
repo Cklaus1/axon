@@ -107,6 +107,7 @@ pub const E1206: &str = "E1206"; // a @[sensitive] value flows into an external 
 pub const E1207: &str = "E1207"; // a @[pure] function performs/contains an impure operation (Phase 5 §2, P01/P02)
 pub const E1208: &str = "E1208"; // a @[total] function has no strictly-decreasing measure at a recursive call (Phase 5 §3)
 pub const E1209: &str = "E1209"; // a constant argument provably violates a refinement-type predicate (Phase 5 §1 R02)
+pub const E1210: &str = "E1210"; // a `sql_query` template is not a string literal — user data must be a bound parameter, never concatenated SQL (injection)
 
 // AI-primitive errors (R3: ai_complete / @[ai(policy)])
 pub const E1300: &str = "E1300"; // ai_* call unreachable and no @[ai(policy(fallback))] in scope

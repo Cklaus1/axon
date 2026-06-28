@@ -1,0 +1,10 @@
+// sql_safe.ax — the safe counterpart to sql_injection.ax: a literal `sql_query`
+// template with the user value passed as a bound `?` parameter. Must check clean.
+fn lookup(user_id: str) -> str {
+    sql_query("SELECT * FROM users WHERE id = ?", [user_id])
+}
+
+fn main() -> i64 {
+    println(lookup("42"))
+    0
+}

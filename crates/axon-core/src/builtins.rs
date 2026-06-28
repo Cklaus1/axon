@@ -273,6 +273,12 @@ pub const BUILTINS: &[BuiltinFn] = &[
         doc: "Spawn a process: run `cmd` with `args`, returning Ok(stdout) on success or Err(message) on failure. Exercises the `exec` capability — a `@[contained(exec: none)]` fn that calls this is rejected at compile time (E1001), and `never: [exec]` hard-denies it. The active host may refuse exec entirely (a sandboxed/browser host returns Err). Use for shelling out to external tools from a trusted zone.",
     },
     BuiltinFn {
+        name: "sql_query",
+        params: &[("template", "str"), ("params", "[str]")],
+        ret: "str",
+        doc: "Build a parameterized SQL query. `template` MUST be a string literal — each `?` placeholder is filled, in order, by the next value in `params` (a bound parameter, escaped). User-controlled data goes in `params`, NEVER in `template`: a template built by concatenation or interpolation is a compile error (E1210), so SQL injection is unrepresentable by construction. Interpreter-only (codegen E0910-refused).",
+    },
+    BuiltinFn {
         name: "http_get",
         params: &[("url", "str"), ("headers", "str")],
         ret: "Result<str, str>",

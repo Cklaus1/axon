@@ -1,0 +1,12 @@
+// sql_injection.ax — regression for E1210 (SQLi-by-construction). A `sql_query` whose
+// template is built by concatenation (not a string literal) lets user input become SQL
+// structure; it must be refused statically. The safe form (literal template + bound
+// params) is in sql_safe.ax.
+fn lookup(user_input: str) -> str {
+    sql_query("SELECT * FROM users WHERE id = " + user_input, [])
+}
+
+fn main() -> i64 {
+    println(lookup("1 OR 1=1"))
+    0
+}
