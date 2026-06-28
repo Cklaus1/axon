@@ -1,12 +1,20 @@
 //! Bump allocator — kernel heap.
 //!
-//! Region: 0x200000 – 0xFFFFFF (14 MiB), placed above the kernel binary
-//! (which is loaded at 0x100000 and is < 512 KiB).  Single-threaded; no lock.
+//! Region: 0x21A000 – 0xFFFFFF (~13.8 MiB), placed above the kernel binary.
+//!
+//! Kernel layout (from linker.ld):
+//!   0x100000  .note.Xen + .text32  (32-bit boot stub)
+//!   0x200000  .text64_entry + .text + .rodata + .data
+//!   0x204000  .bss  (page-table buffers: _pml4/_pdpt/_pd at 0x206/207/208000)
+//!   0x209000  _stack_bottom
+//!   0x219000  _stack_top  ← heap starts immediately after this
+//!
+//! Single-threaded; no lock needed during the bare-metal boot phase.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-// Physical start of the heap region.
-const HEAP_START: usize = 0x20_0000;
+// Physical start of the heap region — one page above _stack_top (0x219000).
+const HEAP_START: usize = 0x21A_000;
 const HEAP_END: usize = 0xFF_FFFF;
 
 static BUMP: AtomicUsize = AtomicUsize::new(0);

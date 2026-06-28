@@ -1,16 +1,20 @@
 /* axon-guest-kernel/src/boot.s
  *
- * 32-bit protected-mode entry for Firecracker / QEMU -kernel.
+ * Dual entry-point design:
  *
- * Both loaders enter at our ELF entry point (e_entry = _start32) in 32-bit
- * protected mode with a flat 4 GiB GDT already loaded, interrupts off, and:
- *   ESI = physical address of struct boot_params
+ *  _start64_boot  (ELF e_entry, 64-bit)  ← Firecracker / linux-loader path
+ *      Firecracker loads our 64-bit ELF and enters at e_entry in 64-bit
+ *      long mode (paging already on, Firecracker's own GDT/page-tables).
+ *      RSI = physical address of struct boot_params (Linux 64-bit boot proto).
+ *      We just set up the stack and call kernel_main(RSI→RDI).
  *
- * We:
- *  1. Re-load our own GDT (clean known-good descriptors)
- *  2. Build a minimal PML4/PDPT/PD identity map (first 4 GiB, 2 MiB pages)
- *  3. Enable PAE, CR3, EFER.LME, paging → enter 64-bit long mode
- *  4. Call kernel_main(boot_params_phys: u64)
+ *  _start32       (PVH ELF note, 32-bit)  ← QEMU -kernel / PVH path
+ *      QEMU reads the XEN_ELFNOTE_PHYS32_ENTRY note and enters _start32 in
+ *      32-bit protected mode.  We build page-tables, enable long mode, then
+ *      call _start64 → kernel_main.
+ *
+ * The ELF e_entry (ENTRY in linker.ld) is _start64_boot so Firecracker enters
+ * the right stub.  QEMU ignores e_entry and uses the PVH note address instead.
  */
 
 /* ── PVH ELF note (QEMU -kernel with 64-bit ELF uses XEN_ELFNOTE_PHYS32_ENTRY) ── */
@@ -144,7 +148,48 @@ _pml4: .fill 4096, 1, 0
 _pdpt: .fill 4096, 1, 0
 _pd:   .fill 4096, 1, 0
 
-/* ── 64-bit entry ────────────────────────────────────────────────────── */
+/* ── 64-bit direct entry (Firecracker / linux-loader ELF boot) ──────── */
+/*
+ * Firecracker enters here in 64-bit long mode with:
+ *   RSI = physical address of struct boot_params  (Linux 64-bit boot proto)
+ *   CS  = 64-bit code segment (Firecracker's GDT at guest-phys 0x500)
+ *   DS/ES/SS = 64-bit data segment (same GDT)
+ *   Page tables: identity-mapped by Firecracker, paging enabled
+ *   Interrupts: disabled
+ *
+ * We do NOT need to reload segments or set up page-tables — Firecracker
+ * has already done that.  Just point RSP at our stack and call kernel_main.
+ */
+.section ".text64_entry", "ax"
+.code64
+
+.global _start64_boot
+_start64_boot:
+    /* Set up kernel stack (same region _start64 uses for the QEMU path). */
+    movabsq $_stack_top, %rsp
+    xorq    %rbp, %rbp
+
+    /* Enable OS SSE support.
+     * Firecracker's vCPU does not pre-set CR4.OSFXSR (bit 9); the Rust
+     * compiler emits SSE instructions (xorps/movaps) for zeroing local
+     * arrays.  Without OSFXSR = 1, any SSE instruction faults with #UD,
+     * which triple-faults (no IDT) → KVM_EXIT_SHUTDOWN.
+     * We also set OSXMMEXCPT (bit 10) so #XF is delivered as an exception
+     * rather than silently ignored. */
+    movq    %cr4,    %rax
+    orq     $0x600,  %rax          /* OSFXSR (bit 9) | OSXMMEXCPT (bit 10) */
+    movq    %rax,    %cr4
+
+    /* RSI = boot_params physical address from Firecracker.
+     * Rust kernel_main expects it in RDI (first argument, System-V AMD64). */
+    movq    %rsi, %rdi
+
+    callq   kernel_main
+
+1:  hlt
+    jmp     1b
+
+/* ── 64-bit long-mode entry (from _start32 via far-jump) ────────────── */
 .section ".text"
 .code64
 
@@ -162,6 +207,11 @@ _start64:
     xorw    %ax,   %ax
     movw    %ax,   %fs
     movw    %ax,   %gs
+
+    /* Enable OS SSE support (same reason as in _start64_boot). */
+    movq    %cr4,    %rax
+    orq     $0x600,  %rax          /* OSFXSR (bit 9) | OSXMMEXCPT (bit 10) */
+    movq    %rax,    %cr4
 
     /* Pass boot_params (saved in EBP by _start32) as the first argument.
      * EBP holds a 32-bit physical address; zero-extend to 64 bits via MOVL. */

@@ -1,12 +1,14 @@
 /* Axon guest kernel linker script.
  *
- * Firecracker / QEMU -kernel loads our ELF and enters at the ELF entry point
- * (e_entry = _start32) in 32-bit protected mode with ESI = &boot_params.
+ * Dual entry-point design:
+ *   e_entry = _start64_boot  — Firecracker enters here in 64-bit mode.
+ *   PVH note (_start32)      — QEMU reads this and enters in 32-bit PM.
+ *
  * No Linux setup-sector needed — loaders construct their own boot_params.
  */
 
 OUTPUT_FORMAT(elf64-x86-64)
-ENTRY(_start32)
+ENTRY(_start64_boot)
 
 SECTIONS {
     /* ── PVH ELF note (QEMU PVH boot — read at load time, not executed) ─── */
@@ -25,6 +27,8 @@ SECTIONS {
     . = ALIGN(0x200000);
 
     .text : {
+        /* _start64_boot MUST be first: it is the ELF e_entry (Firecracker). */
+        KEEP(*(.text64_entry))
         *(.text .text.*)
     }
 

@@ -242,7 +242,8 @@ fn json_str_field<'a>(json: &'a [u8], key: &[u8]) -> Option<&'a [u8]> {
 fn json_u64_field(json: &[u8], key: &[u8]) -> Option<u64> {
     let mut pat = [0u8; 64];
     let plen = make_key_pat(key, &mut pat);
-    let rest = skip_ws(&json[find_subslice(json, &pat[..plen])? + plen..]);
+    let p = find_subslice(json, &pat[..plen])?;
+    let rest = skip_ws(&json[p + plen..]);
     if rest.is_empty() || !rest[0].is_ascii_digit() { return None; }
     let mut n: u64 = 0;
     for &b in rest {
