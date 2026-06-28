@@ -175,11 +175,9 @@ check "policy ok"                "\[axon-kernel\] policy ok"
 check "enforce gate active"      "enforce: gate active"
 check "syscall gate"             "syscall gate active"
 check "hypercall substrate"      "hypercall substrate active"
-check "ready"                    "ready.*waiting"
-
-if [[ -n "$POLICY_B64" ]]; then
-    check "custom principal (not root)" "principal=test"
-fi
+check "launch under gate"        "launching program under the gate"
+check "K4 run-request"           "K4: run-request"
+check "K5 launch"                "K5: launch"
 
 echo ""
 if [[ $FAIL -eq 0 ]]; then

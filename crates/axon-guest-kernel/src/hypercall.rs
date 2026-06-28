@@ -11,14 +11,14 @@ pub fn init() {
     // Stub: nothing to do yet.
 }
 
-/// Block waiting for the host to invoke the Axon interpreter via VMCALL.
-/// This is the idle loop when the kernel has nothing else to run.
-pub fn wait_for_run() -> ! {
-    // TODO (K4 agent): implement the run-request hypercall.
-    // Stub: just halt.
-    loop {
-        unsafe { core::arch::asm!("hlt") };
-    }
+/// K4: the run trigger. The policy and program are delivered via the boot cmdline, so no
+/// host round-trip is needed to START the program — the kernel launches it directly. (The
+/// host VMCALL path remains for the interactive `host_await` case, `vmcall_await`.) Hands
+/// off to K5 (`enforce::run_program`), which runs the program under the syscall gate and
+/// diverges (the program halts, or the gate halts it on a policy violation).
+pub fn wait_for_run(policy: &crate::mmds::Policy) -> ! {
+    kprintln!("[axon-kernel] K4: run-request (cmdline-delivered program) — launching");
+    crate::enforce::run_program(policy)
 }
 
 /// Issue VMCALL #1: send a host_await request payload to the host.

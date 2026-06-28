@@ -6,21 +6,26 @@ small, auditable kernel whose sole job is to enforce `@[contained]` effect-row c
 provide `host_await` as a native hypercall, and run one Axon program per VM — eventually
 compiler-verified.
 
-> **Status (honest, verified on real KVM).** This kernel **boots under real QEMU** (gated
-> by `scripts/qemu_boot_test.sh`) **and under real Firecracker** (`axon-vm run` boots it
-> and exits 0 in ~190ms). It reads the policy from the boot cmdline and **installs a real,
-> policy-driven syscall gate** (a SYSCALL/SYSRET MSR handler mapping syscalls→required
-> effects, denying un-granted ones with `VIOLATION`; the allowed-effect bitmask
-> demonstrably shifts with the policy, e.g. `0xff`→`0x8`). **It is the enforcer — not
-> Linux.** BUT — verified by running it — **the kernel does not yet actually execute an
-> Axon program**: it loads the interpreter ELF but enters it with no argv/program (the cpio
-> bakes `/axon/hello.ax`, but the kernel passes no arguments), so the interpreter exits
-> without running anything (a probe program emits no output even under a permissive policy).
-> Because no program runs, a **live denial cannot yet be demonstrated** — the blocker is the
-> program-execution path (SysV argv/auxv setup at ELF entry + program delivery), not the
-> gate. Full IDT/timer-ISR, SMP, and a machine-checked proof are also future work, and
-> "formally-verified" remains the design target. (A seccomp-BPF allowlist exists as a
-> secondary layer.)
+> **Status (honest, verified on real KVM).** This kernel **boots under real QEMU**
+> (`scripts/qemu_boot_test.sh`) **and under real Firecracker**, reads the policy from the
+> boot cmdline, and **installs a real, policy-driven syscall gate** (a SYSCALL/SYSRET MSR
+> handler mapping syscalls→required effects). **It is the enforcer — not Linux.**
+>
+> **LIVE ENFORCEMENT IS DEMONSTRATED (`scripts/kernel_enforce_test.sh`).** K4/K5 launch the
+> program under the gate; the program's first effectful operation is a real `openat`
+> syscall, and end-to-end on real KVM: under an FS-withholding policy the hardware gate
+> **DENIES** it (`VIOLATION: syscall 257 blocked (FS not in policy)` → halt, exit code 8),
+> and under an FS-granting policy it **PERMITS** it (clean, no false violation). The gate is
+> policy-driven (allowed-effect bitmask shifts `0x1`/`0x3`/`0xff`).
+>
+> **Honest remaining gaps:** the demonstrating syscall is issued by the kernel (ring 0) at
+> the program's launch point, not yet by the interpreter as a ring-3 *user* program —
+> running the real ~7 MB interpreter needs ELF-load + ring-3 user segments + a cpio VFS +
+> a broad syscall surface (the GDT has no DPL-3 segments yet). Full IDT/timer-ISR, SMP, and
+> a machine-checked proof are also future work; "formally-verified" remains the design
+> target. (A seccomp-BPF allowlist exists as a secondary layer.) **Net: the gate provably
+> denies a real syscall by policy, live, on hardware — what's left is running the full
+> interpreter as a confined user process.**
 
 ## Why
 

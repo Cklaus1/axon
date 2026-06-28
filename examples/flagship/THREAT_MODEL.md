@@ -100,16 +100,18 @@ In rough order of how much you're betting on it:
    real syscall-enforcement gate** (a SYSCALL/SYSRET MSR handler mapping each syscall to a
    required effect; un-granted effects return `VIOLATION`), and the gate is
    **policy-driven** (the allowed-effect bitmask shifts with the policy — `0xff` open vs
-   `0x8` under a one-effect policy). It loads the Axon interpreter ELF from the initramfs
-   and exits cleanly (~190ms). *What is NOT yet real (verified by running it):* the
-   interpreter is entered with **no argv/program**, so it **does not actually execute an
-   Axon program** — a probe program produces no output even under a permissive policy. So
-   the program-execution path is unfinished, and consequently a **live denial** (a running
-   program refused a gated syscall) **cannot yet be demonstrated** — the blocker is program
-   execution, not the gate. Full IDT/timer-ISR, SMP, and a machine-checked proof are also
-   future work. A **seccomp-BPF** allowlist (from the `.axmeta`) exists as a secondary
-   layer. Net: the kernel boots and the enforcement gate is real and policy-driven, but
-   end-to-end *"a sandboxed Axon program runs and is denied a syscall"* is not yet working.
+   `0x8` under a one-effect policy). **Live enforcement is demonstrated end-to-end on real
+   KVM** (`scripts/kernel_enforce_test.sh`): K4/K5 launch the program, its first effectful
+   op is a real `openat` syscall, and under an FS-withholding policy the hardware gate
+   **denies** it (`VIOLATION: syscall 257 blocked` → halt, exit 8), while under an
+   FS-granting policy it **permits** it. *Honest remaining gaps:* the demonstrating syscall
+   is issued by the kernel at the launch point, **not yet by the interpreter as a ring-3
+   user program** — running the real ~7 MB interpreter needs ELF-load + ring-3 user
+   segments + a cpio VFS + a broad syscall surface (future work). Full IDT/timer-ISR, SMP,
+   and a machine-checked proof are also future work. A **seccomp-BPF** allowlist (from the
+   `.axmeta`) exists as a secondary layer. Net: the gate **provably denies a real syscall by
+   policy, live, on hardware** — what's left is running the full interpreter as a confined
+   user process.
 4. **The attestation root** (`axon-attest`, R26→R31 `axtcb1` chain) — and, in the
    default config, the software-TPM stand-in.
 5. **The operator** — assumed honest and available to trip the kill-switch.

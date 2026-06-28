@@ -46,11 +46,12 @@ pub extern "C" fn kernel_main(boot_params_phys: u64) -> ! {
     hypercall::init();
     kprintln!("[axon-kernel] hypercall substrate active");
 
-    // Run the Axon program.  The binary is loaded at a well-known guest address
-    // (passed via MMDS or a fixed convention).  For now, spin waiting for the
-    // interpreter to be invoked via hypercall from the host.
-    kprintln!("[axon-kernel] ready — waiting for interpreter launch via hypercall");
-    hypercall::wait_for_run();
+    // K4 + K5: launch the Axon program under the syscall gate. The program + policy were
+    // delivered via the boot cmdline, so the kernel runs it directly (no host round-trip).
+    // run_program demonstrates enforcement end-to-end: the program's first effectful
+    // syscall is checked by the gate and DENIED when the policy withholds the effect.
+    kprintln!("[axon-kernel] ready — launching program under the gate");
+    hypercall::wait_for_run(&policy);
 }
 
 // ── Panic handler ─────────────────────────────────────────────────────────────

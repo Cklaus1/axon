@@ -264,6 +264,64 @@ extern "C" fn violation_exit() -> ! {
     }
 }
 
+// ── K5: run the Axon program under the gate ───────────────────────────────────
+
+/// Power the VM off (ACPI S5), with the debug-exit device and a HLT spin as fallbacks.
+fn clean_halt() -> ! {
+    unsafe {
+        outw(0x604, 0x2000);
+        outb(0x501, 0);
+        loop {
+            core::arch::asm!("hlt");
+        }
+    }
+}
+
+/// K5: launch the Axon program under the active syscall gate.
+///
+/// The full path — loading the ~7 MB interpreter ELF from the initramfs and giving it a
+/// VFS so it can open the program file — is the remaining K5 work. What we demonstrate
+/// here is the part that carries the security claim: the program's first effectful
+/// operation is opening its input file, a real `openat` syscall, and the gate
+/// **intercepts and denies it** when the policy withholds the FS effect.
+///
+/// We issue the genuine `syscall` instruction. The CPU traps to the LSTAR handler
+/// (`syscall_entry`), which calls `syscall_dispatch(257)`. Under an FS-denying policy it
+/// returns the VIOLATION sentinel, the handler jumps to `violation_exit`, and the VM
+/// halts with exit code 8 (`-VIOLATION8` on the serial stream). When FS *is* granted the
+/// open would be permitted, so we don't issue it here — the allowed return path
+/// (`sysretq`) needs ring-3 user segments the boot GDT doesn't yet define, which is part
+/// of the full-execution work — and instead halt cleanly.
+pub fn run_program(policy: &Policy) -> ! {
+    const SYS_OPENAT: u64 = 257;
+    kprintln!("[axon-kernel] K5: launch — program's first op is openat(\"/axon/hello.ax\") → needs FS");
+
+    if policy.allowed_effects.contains(EffectSet::FS) {
+        kprintln!("[axon-kernel] K5: policy GRANTS FS — open permitted; program would proceed");
+        kprintln!("[axon-kernel] K5: (full interpreter ELF load + VFS is the remaining work) — halting");
+        clean_halt();
+    }
+
+    kprintln!("[axon-kernel] K5: policy WITHHOLDS FS — issuing the real openat to exercise the gate");
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            inout("rax") SYS_OPENAT => _, // dispatch result; VIOLATION path never returns here
+            in("rdi") 0u64,               // dirfd  (denied before the args are ever used)
+            in("rsi") 0u64,               // path
+            in("rdx") 0u64,               // flags
+            out("rcx") _,                 // clobbered by SYSCALL (saved RIP)
+            out("r11") _,                 // clobbered by SYSCALL (saved RFLAGS)
+            options(nostack),
+        );
+    }
+
+    // A withheld-effect syscall diverts into `violation_exit` (power-off) and never
+    // returns. Reaching here means the gate FAILED to block it — make that loud.
+    kprintln!("[axon-kernel] K5: UNEXPECTED — the gate did NOT block a withheld-FS syscall!");
+    clean_halt();
+}
+
 // ── Naked syscall entry (installed as the LSTAR target) ───────────────────────
 
 /// CPU entry point for every `SYSCALL` instruction executed in the guest.
