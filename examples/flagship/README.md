@@ -29,8 +29,16 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 ./flagship          # interactive (pauses between sections)
 ./flagship --ci     # non-interactive (no pauses, no real KVM) — CI / screencast
 ./flagship docker   # just the Docker+seccomp foil
+./flagship llm      # just the real-LLM prompt-injection segment
 ./flagship threat   # print the threat model
 ```
+
+The `llm` segment is the visceral version: a **real model** (claude-sonnet),
+prompt-injected, genuinely wrote three exfiltration channels — `read_file`,
+`ai_complete`, `exec` — and the compiler refused all three (E1001). The model's
+verbatim output is captured in `agent_task_llm_generated.ax` (no API key needed to
+replay); `real_llm.sh --live` regenerates against a real endpoint if you set
+`ANTHROPIC_API_KEY`.
 
 **Evaluating Axon skeptically?** Start with **[EVALUATE.md](EVALUATE.md)** — the
 one claim, the one command, where to be suspicious, and how to try to break it (≈5 min).
@@ -68,6 +76,9 @@ examples/flagship/run.sh             # classic walkthrough (good→evil→subtle
 | `compare_docker.sh` | **The serious foil** — Docker + a hand-written seccomp profile blocks 1 of 3 escapes; Axon blocks all 3 at compile time. Shows provenance/timing/granularity. |
 | `seccomp-agent.json` | The hand-written seccomp profile used by `compare_docker.sh` (with comments on what seccomp structurally *cannot* express). |
 | `docker_probe.py` | Reports the OS-level allow/block verdict of each escape inside a container. |
+| `real_llm.sh` | **Real LLM, prompt-injected** — a real model's exfil code, refused by the compiler. `--live` to regenerate against an endpoint. |
+| `agent_task_llm_generated.ax` | Verbatim output of claude-sonnet under the injection scenario — 3 exfil channels, all refused (E1001). |
+| `real_llm.prompt.txt` | The exact prompt + injection that produced it (auditable / reproducible). |
 | `EVALUATE.md` | **5-minute skeptic's guide** — the claim, the one command, where to be suspicious, how to break it. Hand this to a security/AI-safety reviewer. |
 | `THREAT_MODEL.md` | Attacker model, what's stopped, **what is not**, and the TCB. Read this before believing the demo. |
 | `run.sh` | Classic guided walkthrough: good → evil-refused → subtle-refused → thief-refused → python-escapes → the point. |
