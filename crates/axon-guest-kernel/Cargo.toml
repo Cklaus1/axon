@@ -1,0 +1,23 @@
+[package]
+name = "axon-guest-kernel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Formally-verified ASI supervisor kernel for Axon microVM guests"
+
+[[bin]]
+name = "axon-guest-kernel"
+path = "src/main.rs"
+# Build with:
+#   cargo build -p axon-guest-kernel \
+#     --target crates/axon-guest-kernel/targets/x86_64-axon-metal.json \
+#     --release -Z build-std=core,compiler_builtins \
+#     -Z build-std-features=compiler-builtins-mem
+
+[dependencies]
+# No external deps — this is bare-metal.
+
+[profile.release.package.axon-guest-kernel]
+opt-level = "s"
+debug = false

@@ -11,11 +11,11 @@
 //!   axon-vm principal add <name> [options]  Register a principal
 //!   axon-vm principal list                  List principals
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::{env, fs, process};
 
@@ -337,15 +337,19 @@ fn run_in_firecracker(
     let api = wait_for_socket(socket_path, Duration::from_secs(5))?;
 
     // Configure boot source.
+    // The policy is embedded in the cmdline as base64-JSON so the guest kernel
+    // can read it without a virtio-net driver (K2 cmdline-reader path).
+    let boot_args = embed_policy_in_cmdline(
+        "console=ttyS0 reboot=k panic=1 pci=off nomodules \
+         init=/init -- /init /usr/bin/axon run /axon/program.ax",
+        mmds,
+    );
     fc_put(
         &api,
         "/boot-source",
         &serde_json::json!({
             "kernel_image_path": kernel.to_str().unwrap(),
-            "boot_args": format!(
-                "console=ttyS0 reboot=k panic=1 pci=off nomodules \
-                 init=/init -- /init /usr/bin/axon run /axon/program.ax"
-            ),
+            "boot_args": boot_args,
             "initrd_path": initrd.to_str().unwrap(),
         }),
     )?;
@@ -407,10 +411,12 @@ fn run_in_firecracker(
     }
 
     // Start a vsock relay thread to bridge vsock ↔ host_await callbacks.
-    // For now we listen on the UDS path and echo any data (stub; real relay = Gap 6b).
+    // Uses EchoHandler by default; plug in a custom HostAwaitHandler to forward
+    // requests to a real host process (e.g. a stdin/stdout bridge).
     let vsock_uds = vsock_host_uds.clone();
+    let handler: Arc<dyn HostAwaitHandler> = Arc::new(EchoHandler);
     let _vsock_thread = std::thread::spawn(move || {
-        vsock_relay_stub(&vsock_uds, vsock_port);
+        vsock_relay(&vsock_uds, vsock_port, handler);
     });
 
     // Copy the .ax program into a tmpfs-backed guest path.
@@ -505,12 +511,64 @@ fn fc_put(
     Ok(())
 }
 
-// ── vsock relay (stub) ────────────────────────────────────────────────────────
+// ── HostAwaitHandler trait ────────────────────────────────────────────────────
 
-/// Stub vsock relay: listens on the UDS path that Firecracker uses for vsock
-/// connections (CID 2 = host). For each guest connection on vsock_port we
-/// forward the request to the actual host handler (currently a no-op echo).
-fn vsock_relay_stub(uds_path: &str, _vsock_port: u32) {
+/// Trait for handling `host_await` requests forwarded from guest Axon programs
+/// over vsock.
+///
+/// Implement this trait to plug in a custom relay. For example, a stdio relay
+/// would forward each request to the host process's stdin and return the reply
+/// from stdout — the same mechanism as `run_suspendable_stdio` uses on the
+/// plain interpreter path. By default `EchoHandler` is wired in, which echoes
+/// each request back unchanged (useful for smoke-testing the vsock plumbing
+/// and as a starting point for custom handlers).
+///
+/// # `--host-await-echo` note
+///
+/// The default `EchoHandler` is the equivalent of running axon-vm with a
+/// hypothetical `--host-await-echo` flag: every `host_await` call in the
+/// guest receives its own request payload as the reply. To replace it, wrap
+/// your handler in `Arc::new(...)` and pass it to `vsock_relay` directly.
+pub trait HostAwaitHandler: Send + Sync {
+    /// Process a UTF-8 request payload received from the guest.
+    ///
+    /// Return `Some(reply)` to send the reply string back, or `None` to write
+    /// a zero-length frame (the EOF sentinel that signals the guest the
+    /// connection is closing).
+    fn handle(&self, request: &str) -> Option<String>;
+}
+
+/// Default handler: echoes the request back as the reply, unchanged.
+///
+/// Useful for smoke-testing the vsock plumbing without a real `host_await`
+/// implementation. Replace with a handler that forwards to your host process
+/// when interactive behavior is required.
+pub struct EchoHandler;
+
+impl HostAwaitHandler for EchoHandler {
+    fn handle(&self, request: &str) -> Option<String> {
+        Some(request.to_string())
+    }
+}
+
+// ── vsock relay ───────────────────────────────────────────────────────────────
+
+/// vsock relay: listens on the host-side UDS path that Firecracker maps as
+/// CID 2 (host). For each guest connection on `vsock_port`, reads a
+/// length-prefixed request, calls `handler`, and writes back a
+/// length-prefixed reply.
+///
+/// # Protocol
+///
+/// Each frame is: 4-byte little-endian u32 length, followed by `length` bytes
+/// of UTF-8 payload. A reply frame with length=0 is the EOF sentinel
+/// (returned when `handler.handle` returns `None`).
+///
+/// # Concurrency
+///
+/// Each accepted connection is dispatched to a new thread so concurrent guest
+/// `host_await` calls do not block one another.
+fn vsock_relay(uds_path: &str, _vsock_port: u32, handler: Arc<dyn HostAwaitHandler>) {
     use std::os::unix::net::UnixListener;
 
     // Firecracker requires the UDS path to not exist yet.
@@ -526,20 +584,32 @@ fn vsock_relay_stub(uds_path: &str, _vsock_port: u32) {
     for stream in listener.incoming() {
         match stream {
             Ok(mut s) => {
+                let handler = Arc::clone(&handler);
                 std::thread::spawn(move || {
                     // Read 4-byte LE length + payload.
                     let mut lbuf = [0u8; 4];
-                    if s.read_exact(&mut lbuf).is_err() { return; }
+                    if s.read_exact(&mut lbuf).is_err() {
+                        return;
+                    }
                     let len = u32::from_le_bytes(lbuf) as usize;
                     let mut buf = vec![0u8; len];
-                    if s.read_exact(&mut buf).is_err() { return; }
-                    let _req = String::from_utf8_lossy(&buf);
+                    if s.read_exact(&mut buf).is_err() {
+                        return;
+                    }
+                    let req = String::from_utf8_lossy(&buf);
 
-                    // Echo reply (stub — real relay would call host_await handler).
-                    let reply = b"ok";
-                    let rlen = (reply.len() as u32).to_le_bytes();
-                    let _ = s.write_all(&rlen);
-                    let _ = s.write_all(reply);
+                    // Dispatch to the handler and write back the reply.
+                    match handler.handle(&req) {
+                        Some(reply) => {
+                            let rlen = (reply.len() as u32).to_le_bytes();
+                            let _ = s.write_all(&rlen);
+                            let _ = s.write_all(reply.as_bytes());
+                        }
+                        None => {
+                            // EOF sentinel: length=0, no payload.
+                            let _ = s.write_all(&0u32.to_le_bytes());
+                        }
+                    }
                 });
             }
             Err(_) => break,
@@ -829,6 +899,16 @@ fn cmd_principal_list() {
     }
 }
 
+// ── Policy-in-cmdline embedding ───────────────────────────────────────────────
+
+/// Append `axon.policy=<base64-json>` to `base_cmdline` so the guest kernel can
+/// read the boot policy from the Linux cmdline without a virtio-net driver.
+fn embed_policy_in_cmdline(base_cmdline: &str, mmds: &MmdsPayload) -> String {
+    let json = serde_json::to_string(mmds).unwrap_or_default();
+    let b64  = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
+    format!("{base_cmdline} axon.policy={b64}")
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -906,5 +986,62 @@ mod tests {
         let h = sha256_file(Path::new("/nonexistent_file_axon_vm_test"));
         // SHA256 of empty bytes
         assert_eq!(h, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+    }
+
+    #[test]
+    fn vsock_protocol_length_prefix() {
+        // Verify that the 4-byte LE length-prefix framing round-trips correctly.
+        let payload = "hello world";
+        let mut buf = Vec::new();
+        let len_bytes = (payload.len() as u32).to_le_bytes();
+        buf.extend_from_slice(&len_bytes);
+        buf.extend_from_slice(payload.as_bytes());
+        assert_eq!(
+            u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize,
+            payload.len()
+        );
+        // Verify the payload bytes follow the length header correctly.
+        assert_eq!(&buf[4..], payload.as_bytes());
+    }
+
+    #[test]
+    fn echo_handler_returns_request() {
+        let h = EchoHandler;
+        let req = "test-request-42";
+        assert_eq!(h.handle(req), Some(req.to_string()));
+    }
+
+    #[test]
+    fn echo_handler_empty_request() {
+        let h = EchoHandler;
+        assert_eq!(h.handle(""), Some(String::new()));
+    }
+
+    #[test]
+    fn embed_policy_in_cmdline_roundtrips() {
+        let mmds = MmdsPayload {
+            schema: "axon-vm-mmds/1".to_string(),
+            run_id: "test-run-1".to_string(),
+            principal: Some("test-agent".to_string()),
+            allowed_effects: Some(vec!["AI".to_string(), "Net".to_string()]),
+            budget_tokens: Some(5000),
+            source_hash: None,
+            seccomp_bpf_b64: None,
+        };
+        let base = "console=ttyS0 reboot=k panic=1 pci=off nomodules";
+        let result = embed_policy_in_cmdline(base, &mmds);
+
+        // Base cmdline is preserved at the start.
+        assert!(result.starts_with(base));
+        // The policy tag is present.
+        assert!(result.contains(" axon.policy="));
+
+        // The base64 blob round-trips to the original JSON.
+        let b64_part = result.split("axon.policy=").nth(1).unwrap();
+        let decoded = base64::engine::general_purpose::STANDARD.decode(b64_part).unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&decoded).unwrap();
+        assert_eq!(json["schema"],    "axon-vm-mmds/1");
+        assert_eq!(json["principal"], "test-agent");
+        assert_eq!(json["budget_tokens"], 5000);
     }
 }

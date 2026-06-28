@@ -1280,6 +1280,82 @@ pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
     code
 }
 
+// ── Unix-socket / hypercall host_await substrate (axon-guest-kernel bridge) ───
+//
+// When AXON_HOST_SOCKET is set the interpreter uses a Unix domain socket to
+// communicate with the axon-guest-kernel's hypercall bridge instead of vsock or
+// stdin/stdout. The guest kernel creates the socket before exec-ing the
+// interpreter and issues the actual VMCALL to the host on our behalf.
+//
+// Protocol: same 4-byte-LE-length-prefixed UTF-8 as the vsock substrate.
+//   send: 4-byte LE u32 length, then `length` UTF-8 bytes (the request payload)
+//   recv: 4-byte LE u32 length, then `length` bytes (the reply); length=0 → EOF
+//
+// The socket is opened fresh per host_await call (cheap on Unix) so the
+// interpreter remains single-threaded with no persistent fd lifecycle.
+
+#[cfg(unix)]
+thread_local! {
+    // Active Unix socket path set by run_suspendable_hypercall; None when inactive.
+    static UNIX_SOCK_PATH: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// Open a connection to the Unix stream socket at `path`, perform one
+/// length-prefixed request/reply round-trip, and close the socket.
+/// Returns `Ok(Some(reply))` on success, `Ok(None)` when the peer sends
+/// length=0 (end-of-input sentinel), or `Err(())` on any I/O failure.
+/// Retries once with a 20 ms pause if the first `connect` fails — the
+/// guest-kernel may be fractionally behind when exec-ing the interpreter.
+#[cfg(unix)]
+fn unix_socket_roundtrip(path: &str, req: &str) -> Result<Option<String>, ()> {
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixStream;
+
+    let mut stream = UnixStream::connect(path).or_else(|_| {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        UnixStream::connect(path)
+    }).map_err(|_| ())?;
+
+    // Send: 4-byte LE length + payload bytes.
+    let payload = req.as_bytes();
+    stream.write_all(&(payload.len() as u32).to_le_bytes()).map_err(|_| ())?;
+    stream.write_all(payload).map_err(|_| ())?;
+    stream.flush().map_err(|_| ())?;
+
+    // Recv: 4-byte LE length + reply bytes.
+    let mut lbuf = [0u8; 4];
+    stream.read_exact(&mut lbuf).map_err(|_| ())?;
+    let reply_len = u32::from_le_bytes(lbuf) as usize;
+    if reply_len == 0 {
+        return Ok(None); // EOF / end-of-input sentinel
+    }
+    let mut rbuf = vec![0u8; reply_len];
+    stream.read_exact(&mut rbuf).map_err(|_| ())?;
+    Ok(Some(String::from_utf8_lossy(&rbuf).into_owned()))
+}
+
+/// Run `program` using the axon-guest-kernel hypercall substrate for `host_await`.
+///
+/// The guest kernel exposes a Unix stream socket at the path given by
+/// `AXON_HOST_SOCKET` (default: `/tmp/axon-host.sock`) that forwards each
+/// `host_await` request to the host via VMCALL and returns the host's reply.
+/// The interpreter itself runs entirely in ring-3 userspace — it never issues
+/// VMCALL directly.
+///
+/// On connection failure (socket absent, wrong path) `unix_socket_roundtrip`
+/// returns `Err(())`, which `host_await_yield` surfaces as end-of-input
+/// (`None`) rather than panicking. A program that never calls `host_await`
+/// completes normally even when no socket exists at the default path.
+#[cfg(unix)]
+pub fn run_suspendable_hypercall(program: &Program) -> i32 {
+    let sock_path = std::env::var("AXON_HOST_SOCKET")
+        .unwrap_or_else(|_| "/tmp/axon-host.sock".to_string());
+    UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = Some(sock_path));
+    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    UNIX_SOCK_PATH.with(|c| *c.borrow_mut() = None);
+    code
+}
+
 /// Reach the active host channels from inside `host_await` (interp/builtins.rs).
 /// Returns `Ok(Some(reply))`, `Ok(None)` at end-of-input, or `Err(())` if there is
 /// no host at all (a bare `axon run`). NATIVE: the `SendValue` request (an owned
@@ -1289,6 +1365,21 @@ pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
 /// a `Value` by the caller.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> {
+    // Unix-socket hypercall path: takes priority over vsock and the worker-thread
+    // channel. Active when run_suspendable_hypercall set UNIX_SOCK_PATH.
+    #[cfg(unix)]
+    {
+        let path = UNIX_SOCK_PATH.with(|c| c.borrow().clone());
+        if let Some(path) = path {
+            let req_str = match &req {
+                SendValue::Str(s) => s.clone(),
+                other => format!("{other:?}"),
+            };
+            return unix_socket_roundtrip(&path, &req_str)
+                .map(|opt| opt.map(SendValue::Str));
+        }
+    }
+
     // vsock path: if running inside axon-vm, bypass the worker-thread channel.
     #[cfg(target_os = "linux")]
     {
@@ -3771,5 +3862,23 @@ mod tests {
                 panic!("{} failed to parse: {e}", f.display());
             }
         }
+    }
+
+    // ── K4: run_suspendable_hypercall (Unix-socket / hypercall substrate) ───────
+
+    /// Without a live socket, a program that never calls `host_await` should
+    /// complete normally — the socket is only opened on the first suspension, so
+    /// a simple `main` that returns 0 is indistinguishable from a bare `run_program`.
+    #[test]
+    #[cfg(unix)]
+    fn run_suspendable_hypercall_no_host_await_exits_zero() {
+        let src = r#"fn main() -> i64 { println("ok") 0 }"#;
+        let prog = crate::parse_source(src).expect("parse failed");
+        // AXON_HOST_SOCKET may or may not be set; the default socket
+        // (/tmp/axon-host.sock) very likely doesn't exist in the test
+        // environment. Neither matters: the program never calls host_await,
+        // so unix_socket_roundtrip is never invoked.
+        let code = super::run_suspendable_hypercall(&prog);
+        assert_eq!(code, 0);
     }
 }

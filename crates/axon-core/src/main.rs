@@ -3549,18 +3549,27 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // path — same result.) Otherwise the normal, deep-stack run path.
     // Gap 6: inside an axon-vm microVM, AXON_VM_VSOCK_PORT is set by the launcher.
     // Route host_await through the vsock substrate instead of stdin/stdout.
+    // K4: AXON_HOST_SOCKET (guest-kernel hypercall bridge) takes priority over vsock.
     let vsock_port: Option<u32> = std::env::var("AXON_VM_VSOCK_PORT")
         .ok()
         .and_then(|v| v.parse().ok());
 
     let code = if src.contains("host_await") {
-        #[cfg(target_os = "linux")]
-        if let Some(port) = vsock_port {
-            axon_core::interp::run_suspendable_vsock(&program, port)
+        // Substrate priority: AXON_HOST_SOCKET (hypercall) > AXON_VM_VSOCK_PORT (vsock) > stdio.
+        #[cfg(unix)]
+        if std::env::var("AXON_HOST_SOCKET").is_ok() {
+            axon_core::interp::run_suspendable_hypercall(&program)
         } else {
+            #[cfg(target_os = "linux")]
+            if let Some(port) = vsock_port {
+                axon_core::interp::run_suspendable_vsock(&program, port)
+            } else {
+                axon_core::interp::run_suspendable_stdio(&program)
+            }
+            #[cfg(not(target_os = "linux"))]
             axon_core::interp::run_suspendable_stdio(&program)
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(unix))]
         axon_core::interp::run_suspendable_stdio(&program)
     } else {
         let discharged = compute_discharged(&program);
