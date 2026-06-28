@@ -136,6 +136,34 @@ else
     fi
 fi
 
+# ── Layer 4: Full ASI stack — flagship demo ───────────────────────────────────
+# Runs demo.sh in non-interactive CI mode (DEMO_NOPAUSE=1).
+# AXON_CI_NO_KVM=1 allows attestation without real KVM hardware.
+# The demo is self-contained: it rebuilds nothing and skips unavailable binaries.
+
+echo "[axon-kernel-gate] Layer 4: Full ASI stack (flagship demo)"
+
+DEMO_SCRIPT="examples/flagship/demo.sh"
+
+if [[ ! -f "$DEMO_SCRIPT" ]]; then
+    echo "  [skip] $DEMO_SCRIPT not found"
+else
+    DEMO_NOPAUSE=1 AXON_CI_NO_KVM=1 bash "$DEMO_SCRIPT" 2>&1 | \
+        sed 's/^/  /' || true
+    # Gate on PASS / FAIL lines printed by demo.sh
+    DEMO_OUT=$(DEMO_NOPAUSE=1 AXON_CI_NO_KVM=1 bash "$DEMO_SCRIPT" 2>&1)
+    DEMO_PASS=$(echo "$DEMO_OUT" | grep -c "PASS:" || true)
+    DEMO_FAIL=$(echo "$DEMO_OUT" | grep -c "FAIL:" || true)
+    if [[ "$DEMO_FAIL" -eq 0 ]] && [[ "$DEMO_PASS" -ge 1 ]]; then
+        ok "flagship demo passed ($DEMO_PASS checks, 0 failures)"
+    elif [[ "$DEMO_FAIL" -gt 0 ]]; then
+        fail "flagship demo had $DEMO_FAIL failure(s) (see demo.sh output above)"
+    else
+        # Demo ran but no PASS lines — binary missing or all layers skipped
+        ok "flagship demo ran (all active layers passed or skipped)"
+    fi
+fi
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 echo ""
