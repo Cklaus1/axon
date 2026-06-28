@@ -1,6 +1,6 @@
 # Axon Roadmap
 
-**Last updated**: 2026-05-28
+**Last updated**: 2026-06-28
 **Companion docs**: `STATUS.md` (shipped state), `CLAUDE.md` (project conventions),
 `spec/compiler-phaseN.md` (per-phase specs).
 
@@ -30,6 +30,9 @@ If a feature does not advance one of these, it is not in scope.
 | ASI Layer 3.6 | shipped | `uncertain_dyn_{i64,f64}` runtime-classified constructors |
 | `@[adaptive]` / `@[goal]` | shipped | Provenance log + hill-climb `goal_run` |
 | `@[contained]` | shipped | Capability permissions (E1001–E1004) |
+| Safety Stack | R26–R30 ✅ | Attestation (`axon-attest` / `axon-vm attest`), corrigibility kill-switch + coalition ceiling (`axon-os`), immutable capability audit ledger (`axon-audit`), continuous compliance monitor, unified deployment safety gate |
+| Web UI | Phase 12 + Safety Dashboard ✅ | 8-pane approval flow (Intent → AST Review → Approve → Improve → Redteam → Deploy → Trace → Safety Dashboard); `/api/safety/{attest,kill,ledger,status}` endpoints |
+| Guest Kernel | K5 Interpreter Injection ✅ | no_std CPIO parser + ELF64 loader; musl `axon` binary loaded from initramfs and jumped to at guest startup (`dist/guest/vmlinuz` + `dist/guest/initramfs.cpio`) |
 
 Detail: `STATUS.md`.
 
@@ -255,7 +258,10 @@ TCB = {
     audit_log_writer,          // Phase 9
     replay_engine,             // Phase 9
     risk_classifier,           // Phase 11
-    deploy_gate                // Phase 11
+    deploy_gate,               // Phase 11
+    attestation_verifier,      // R26 — SHA-256(kernel_bytes) → `axtcb1:` digest, HMAC-signed report; mandatory pre-boot (axon-attest)
+    audit_ledger,              // R28 — immutable JSONL hash-chain for every capability exercise (FS/Net/AI/Exec); axon-audit
+    compliance_monitor         // R29 — continuous polling of audit ledger; denied-effect entry trips kill-switch within 2s (exit 12)
 }
 ```
 
@@ -718,6 +724,45 @@ rides on — a second s-curve on the bitter lesson.
   parameters; (4) refine the v1 MDL weights toward a true two-part code-length once real
   compression runs exist to calibrate against.
 
+## 10.6 Safety & Attestation Stack (R26–R30 shipped; R31–R34 forward)
+
+The R26–R30 governance specs form a complete safety foundation: hardware attestation,
+corrigibility, immutable audit, and continuous compliance — all wired together by a
+single unified deployment gate.
+
+### Shipped (R26–R30)
+
+| Spec | Crate / binary | Headline | Gate |
+|---|---|---|---|
+| **R26** Confidential MicroVM Substrate | `crates/axon-attest` · `axon-vm attest` | SHA-256(kernel_bytes) → `axtcb1:` digest, HMAC-signed report; `axon-vm run` mandatorily attests before boot (`--no-attest` dev escape; `AXON_CI_NO_KVM=1` CI) | `scripts/r26_acceptance_gate.sh` 11/11 |
+| **R27** Corrigibility & Resource Bounds | `crates/axon-os` | `KillChannel` + file-backed latch → `axon-os kill <run-id>` (exit 4 HALTED); coalition ceiling (N principals from same lineage root can't exceed cap); tamper-evident hash-chained latch ledger | `scripts/r27_acceptance_gate.sh` 13/14 (1 blocked on R25) |
+| **R28** Capability Audit Ledger | `crates/axon-audit` | Immutable JSONL hash-chain for every capability exercise (FS/Net/AI/Exec); `axon-os audit verify --ledger PATH` checks chain integrity | `scripts/r28_acceptance_gate.sh` |
+| **R29** Continuous Compliance Monitor | `axon-os run --monitor` | Thread polls R28 ledger every 100 ms; any denied-effect entry trips R27 kill-switch within 2 s (exit 12) | `scripts/r29_acceptance_gate.sh` |
+| **R30** Unified ASI Deployment Safety Gate | `scripts/axon_safety_gate.sh` | Runs R26→R29 in sequence (skip-on-missing); machine-readable JSON report (`axon-safety-gate/1` schema) | `scripts/r30_acceptance_gate.sh` |
+
+Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
+`governance/specs/R30-unified-safety-gate.md`.
+
+**Also shipped this cycle:**
+
+- **Web UI Safety Dashboard** (8th pane in `axon-web`): R26 attestation badge, R27 kill
+  button, R28 ledger viewer; API endpoints `/api/safety/{attest,kill,ledger,status}`.
+- **Guest Kernel K5 — Interpreter Injection** (`crates/axon-guest-kernel`): no_std newc CPIO
+  parser (`cpio.rs`) + ELF64 loader with user-stack setup (`exec.rs`); musl `axon` binary
+  loaded from initramfs and jumped to at guest startup; ships as `dist/guest/vmlinuz` +
+  `dist/guest/initramfs.cpio`.
+
+### Forward (R31–R34)
+
+| Spec | Headline | Prerequisite |
+|---|---|---|
+| **R31** Extended TCB Attestation Chain | Chain R27+R28+R29 component binary hashes into the `axtcb1:` measurement so a relying party can verify the entire safety stack (not just the kernel) is unmodified | R26+R27+R28+R29 all shipped ✅ |
+| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | R27 shipped ✅ |
+| **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | R26 + Phase 14 ✅ |
+| **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | R26 ✅ |
+
+---
+
 ## 11. One-line Summary
 
-Axon ships in this order: **refinement (5) → effects (6) → runtime primitives (7) → goal/agent surface (8) → replay+audit+sandbox (9) → CLI surface (10) → risk-typed pipeline (11) → web UI (12) → probabilistic refinement (13) → distributed types (14+)**, with the typed Axon language serving as an IR rather than a human-authored surface, the userland OS replacing the kernel ambition, and the structured-prose surface compiling to user-approved typed AST as the legal artifact.
+Axon ships in this order: **refinement (5) → effects (6) → runtime primitives (7) → goal/agent surface (8) → replay+audit+sandbox (9) → CLI surface (10) → risk-typed pipeline (11) → web UI (12) → probabilistic refinement (13) → distributed types (14+) → safety & attestation stack (R26–R30) → extended attestation chain (R31) → formal corrigibility proof (R32) → cross-VM quorum (R33) → incremental attestation (R34)**, with the typed Axon language serving as an IR rather than a human-authored surface, the userland OS replacing the kernel ambition, and the structured-prose surface compiling to user-approved typed AST as the legal artifact.
