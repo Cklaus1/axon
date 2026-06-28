@@ -1,0 +1,21 @@
+[package]
+name = "axon-guest-init"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Static PID-1 init for Axon microVM guests. Reads MMDS policy, applies seccomp, supervises the Axon process."
+
+[[bin]]
+name = "axon-guest-init"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+base64 = "0.22"
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Release profile overrides live in the workspace Cargo.toml
+# ([profile.release.package.axon-guest-init]) — per-crate profiles are ignored
+# by Cargo when the crate is part of a workspace.

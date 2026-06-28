@@ -96,3 +96,7 @@ axon-gfx = { path = "../axon-gfx", optional = true }
 # modules are native-host-only by nature — no TCP/HTTP in the browser sandbox).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 axon-domain = { path = "../axon-domain" }
+
+# vsock substrate (Gap 6): AF_VSOCK for host_await in axon-vm microVM guests.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

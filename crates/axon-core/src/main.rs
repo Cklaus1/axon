@@ -149,6 +149,16 @@ enum Command {
         /// plus a generated Kotlin `Axon.kt` wrapper (R14). Default: native.
         #[arg(long, help = "Build host: mobile (Android jniLibs + Kotlin wrapper)")]
         host: Option<String>,
+
+        /// Emit a `<binary>.axmeta` capability manifest alongside the binary.
+        ///
+        /// The manifest (schema `axon-manifest/1`) contains the union of all
+        /// declared effect rows, per-function `@[contained]` specs, a derived
+        /// risk level, and a conservative syscall hint list.  A microVM launcher
+        /// (e.g. `axon-vm`) reads this sidecar to generate seccomp policies and
+        /// cgroup budgets without re-parsing the source.
+        #[arg(long, help = "Emit <binary>.axmeta capability manifest (axon-manifest/1)")]
+        emit_manifest: bool,
     },
 
     /// Start the Axon language server (JSON-RPC 2.0 on stdin/stdout).
@@ -660,6 +670,7 @@ fn dispatch(command: Command) {
             emit_obj,
             emit_llvm,
             host,
+            emit_manifest,
         } => cmd_build(
             files,
             out,
@@ -672,6 +683,7 @@ fn dispatch(command: Command) {
             emit_obj,
             emit_llvm,
             host,
+            emit_manifest,
         ),
         Command::Goal {
             file,
@@ -2696,6 +2708,7 @@ fn cmd_build(
     _emit_obj: bool,
     _emit_llvm: bool,
     _host: Option<String>,
+    _emit_manifest: bool,
 ) {
     eprintln!(
         "error: `axon build` (native codegen) requires building axon with the `codegen` feature."
@@ -2721,6 +2734,7 @@ fn cmd_build(
     emit_obj: bool,
     emit_llvm: bool,
     host: Option<String>,
+    emit_manifest: bool,
 ) {
     if files.is_empty() {
         eprintln!("error: no source files specified");
@@ -2908,6 +2922,14 @@ fn cmd_build(
                 match std::fs::write(&wrapper_path, kt) {
                     Ok(()) => eprintln!("Wrapper: {}", wrapper_path.display()),
                     Err(e) => eprintln!("warning: could not write wrapper: {e}"),
+                }
+            }
+            if emit_manifest {
+                let manifest_path = output.with_extension("axmeta");
+                let json = build_axmeta_manifest(&program, first, &output);
+                match std::fs::write(&manifest_path, json) {
+                    Ok(()) => eprintln!("Manifest: {}", manifest_path.display()),
+                    Err(e) => eprintln!("warning: could not write manifest: {e}"),
                 }
             }
         }
@@ -3525,7 +3547,20 @@ fn cmd_run(file: PathBuf, _release: bool, args: Vec<String>) {
     // user input. (The `contains` check is a cheap gate; a non-host_await program
     // mentioning the name in a comment would just take the equivalent worker-thread
     // path — same result.) Otherwise the normal, deep-stack run path.
+    // Gap 6: inside an axon-vm microVM, AXON_VM_VSOCK_PORT is set by the launcher.
+    // Route host_await through the vsock substrate instead of stdin/stdout.
+    let vsock_port: Option<u32> = std::env::var("AXON_VM_VSOCK_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok());
+
     let code = if src.contains("host_await") {
+        #[cfg(target_os = "linux")]
+        if let Some(port) = vsock_port {
+            axon_core::interp::run_suspendable_vsock(&program, port)
+        } else {
+            axon_core::interp::run_suspendable_stdio(&program)
+        }
+        #[cfg(not(target_os = "linux"))]
         axon_core::interp::run_suspendable_stdio(&program)
     } else {
         let discharged = compute_discharged(&program);
@@ -4952,6 +4987,195 @@ fn risk_level_name(r: i64) -> &'static str {
         2 => "high",
         _ => "critical",
     }
+}
+
+/// Derive a conservative set of Linux syscall names implied by a set of effect names.
+///
+/// Used by `--emit-manifest` to populate `syscall_hint` in the `.axmeta` sidecar.
+/// A microVM launcher converts this list into a seccomp-BPF allowlist without
+/// re-parsing the source.  The list is conservative (over-approximates) — it
+/// includes every syscall the Axon runtime or libc may need for a given effect.
+#[cfg(feature = "codegen")]
+fn syscalls_for_effects(effects: &[String]) -> Vec<&'static str> {
+    // Baseline syscalls every Axon binary needs regardless of effects.
+    let mut set: Vec<&'static str> = vec![
+        "read", "write", "exit", "exit_group", "brk", "mmap", "munmap",
+        "mprotect", "arch_prctl", "set_tid_address", "set_robust_list",
+        "rseq", "futex", "sigaltstack", "rt_sigaction", "rt_sigprocmask",
+    ];
+    for eff in effects {
+        match eff.to_lowercase().as_str() {
+            "io" | "fs" => {
+                for s in &[
+                    "openat", "close", "lseek", "fstat", "newfstatat", "getdents64",
+                    "mkdir", "mkdirat", "unlink", "unlinkat", "rename", "renameat2",
+                    "dup", "dup2", "fcntl", "ioctl",
+                ] {
+                    if !set.contains(s) { set.push(s); }
+                }
+            }
+            "net" | "ai" => {
+                for s in &[
+                    "socket", "connect", "sendto", "recvfrom", "sendmsg", "recvmsg",
+                    "setsockopt", "getsockopt", "getpeername", "getsockname",
+                    "poll", "epoll_create1", "epoll_ctl", "epoll_wait",
+                    "close",
+                ] {
+                    if !set.contains(s) { set.push(s); }
+                }
+            }
+            "exec" => {
+                for s in &[
+                    "execve", "execveat", "fork", "clone", "clone3",
+                    "waitpid", "wait4", "kill", "pipe2", "dup2",
+                ] {
+                    if !set.contains(s) { set.push(s); }
+                }
+            }
+            "random" => {
+                for s in &["getrandom", "openat"] {
+                    if !set.contains(s) { set.push(s); }
+                }
+            }
+            _ => {}
+        }
+    }
+    set
+}
+
+/// Build the JSON content of the `<binary>.axmeta` capability manifest (`axon-manifest/1`).
+///
+/// Schema fields:
+/// - `schema`       — `"axon-manifest/1"`
+/// - `source`       — source file path
+/// - `binary`       — output binary path
+/// - `risk`         — 0=low, 1=medium, 2=high, 3=critical
+/// - `risk_label`   — human-readable risk label
+/// - `effect_union` — union of all declared effect row effects across all fns
+/// - `syscall_hint` — conservative Linux syscall allowlist derived from effect_union
+/// - `fns`          — per-function capability detail
+#[cfg(feature = "codegen")]
+fn build_axmeta_manifest(
+    program: &axon_core::ast::Program,
+    source: &Path,
+    binary: &Path,
+) -> String {
+    use axon_core::ast::NeverClause;
+
+    let risk_int = derive_risk_from_ast(program);
+    let risk_label = match risk_int {
+        0 => "low",
+        1 => "medium",
+        2 => "high",
+        _ => "critical",
+    };
+
+    // Collect the union of all declared effects across all functions.
+    let mut effect_union: Vec<String> = Vec::new();
+    let mut fn_entries: Vec<String> = Vec::new();
+
+    for item in &program.items {
+        let axon_core::ast::Item::FnDef(f) = item else { continue };
+
+        let fn_effects: Vec<String> = f
+            .effect_row
+            .as_ref()
+            .map(|r| r.effects.clone())
+            .unwrap_or_default();
+
+        for eff in &fn_effects {
+            if !effect_union.contains(eff) {
+                effect_union.push(eff.clone());
+            }
+        }
+
+        // Serialize per-function entry.
+        let effects_json = fn_effects
+            .iter()
+            .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+            .collect::<Vec<_>>()
+            .join(",");
+
+        let contained_json = if let Some(c) = &f.contained {
+            let fs_read = c
+                .fs_read
+                .iter()
+                .map(|p| format!("\"{}\"", p.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let fs_write = c
+                .fs_write
+                .iter()
+                .map(|p| format!("\"{}\"", p.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let net_allow = c
+                .net_allow
+                .iter()
+                .map(|h| format!("\"{}\"", h.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            let never_json = c
+                .never
+                .iter()
+                .map(|n| match n {
+                    NeverClause::Read(p) => format!("\"read({})\"", p.replace('"', "\\\"")),
+                    NeverClause::Write(p) => format!("\"write({})\"", p.replace('"', "\\\"")),
+                    NeverClause::Net(h) => format!("\"net({})\"", h.replace('"', "\\\"")),
+                    NeverClause::Exec => "\"exec\"".to_string(),
+                    NeverClause::Spawn => "\"spawn\"".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let native_grants = c
+                .native_grants
+                .iter()
+                .map(|g| format!("\"{}\"", g.replace('"', "\\\"")))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"fs_read\":[{fs_read}],\"fs_write\":[{fs_write}],\
+                 \"net_allow\":[{net_allow}],\"exec_allowed\":{},\
+                 \"never\":[{never_json}],\"native_grants\":[{native_grants}]}}",
+                c.exec_allowed
+            )
+        } else {
+            "null".to_string()
+        };
+
+        fn_entries.push(format!(
+            "{{\"name\":{},\"effects\":[{effects_json}],\"contained\":{contained_json}}}",
+            json_str(&f.name),
+        ));
+    }
+
+    let syscall_hints = syscalls_for_effects(&effect_union);
+    let syscall_json = syscall_hints
+        .iter()
+        .map(|s| format!("\"{s}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let effect_union_json = effect_union
+        .iter()
+        .map(|e| format!("\"{}\"", e.replace('"', "\\\"")))
+        .collect::<Vec<_>>()
+        .join(",");
+    let fns_json = fn_entries.join(",");
+
+    format!(
+        "{{\
+         \"schema\":\"axon-manifest/1\",\
+         \"source\":{},\
+         \"binary\":{},\
+         \"risk\":{risk_int},\
+         \"risk_label\":\"{risk_label}\",\
+         \"effect_union\":[{effect_union_json}],\
+         \"syscall_hint\":[{syscall_json}],\
+         \"fns\":[{fns_json}]\
+         }}",
+        json_str(&source.display().to_string()),
+        json_str(&binary.display().to_string()),
+    )
 }
 
 /// Derive the baseline risk level from a program's effect rows and `@[contained]` attributes.

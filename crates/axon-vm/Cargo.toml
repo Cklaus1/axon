@@ -1,0 +1,22 @@
+[package]
+name = "axon-vm"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Axon microVM launcher: Firecracker API client, BPF policy generation, Principal registry"
+
+[[bin]]
+name = "axon-vm"
+path = "src/main.rs"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+base64 = "0.22"
+toml = "0.8"
+sha2 = "0.10"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

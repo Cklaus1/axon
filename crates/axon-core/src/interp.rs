@@ -1185,6 +1185,101 @@ thread_local! {
     static HOST_AWAIT: RefCell<Option<HostChannels>> = const { RefCell::new(None) };
 }
 
+// ── vsock host_await substrate (Linux, axon-vm microVM) ───────────────────────
+//
+// When AXON_VM_VSOCK_PORT is set the interpreter uses AF_VSOCK to communicate
+// with the axon-vm launcher (CID 2 = host) instead of the worker-thread channel.
+// The interpreter runs single-threaded; host_await_yield opens a connection per
+// suspension (cheap — vsock connect is ~10µs in a VM).
+//
+// Protocol: length-prefixed JSON over a stream socket.
+//   send: 4-byte LE u32 length, then `length` UTF-8 bytes (the request payload)
+//   recv: 4-byte LE u32 length, then `length` bytes (the reply); length=0 → EOF
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    // File descriptor of the open vsock connection, or -1 when not in vsock mode.
+    static VSOCK_PORT: std::cell::Cell<i32> = const { std::cell::Cell::new(-1) };
+}
+
+#[cfg(target_os = "linux")]
+fn vsock_send_recv(port: u32, req: &str) -> Result<Option<String>, ()> {
+    use std::io::{Read, Write};
+    use std::os::unix::io::FromRawFd;
+
+    // AF_VSOCK = 40, VMADDR_CID_HOST = 2
+    const AF_VSOCK: libc::c_int = 40;
+    const VMADDR_CID_HOST: u32 = 2;
+
+    // sockaddr_vm layout: family(u16), reserved(u16), port(u32), cid(u32), flags(u8), pad(3)
+    #[repr(C)]
+    struct SockaddrVm {
+        svm_family: u16,
+        svm_reserved1: u16,
+        svm_port: u32,
+        svm_cid: u32,
+        svm_flags: u8,
+        svm_zero: [u8; 3],
+    }
+
+    let fd = unsafe {
+        libc::socket(AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0)
+    };
+    if fd < 0 { return Err(()); }
+
+    let addr = SockaddrVm {
+        svm_family: AF_VSOCK as u16,
+        svm_reserved1: 0,
+        svm_port: port,
+        svm_cid: VMADDR_CID_HOST,
+        svm_flags: 0,
+        svm_zero: [0; 3],
+    };
+
+    let r = unsafe {
+        libc::connect(
+            fd,
+            &addr as *const SockaddrVm as *const libc::sockaddr,
+            std::mem::size_of::<SockaddrVm>() as libc::socklen_t,
+        )
+    };
+    if r < 0 {
+        unsafe { libc::close(fd); }
+        return Err(());
+    }
+
+    // Safety: we just created fd and it's a valid stream socket.
+    let mut stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+
+    // Send: 4-byte LE length + payload bytes.
+    let payload = req.as_bytes();
+    let len_bytes = (payload.len() as u32).to_le_bytes();
+    stream.write_all(&len_bytes).map_err(|_| ())?;
+    stream.write_all(payload).map_err(|_| ())?;
+    stream.flush().map_err(|_| ())?;
+
+    // Recv: 4-byte LE length + reply bytes.
+    let mut lbuf = [0u8; 4];
+    stream.read_exact(&mut lbuf).map_err(|_| ())?;
+    let reply_len = u32::from_le_bytes(lbuf) as usize;
+    if reply_len == 0 {
+        return Ok(None); // EOF / end-of-input sentinel
+    }
+    let mut rbuf = vec![0u8; reply_len];
+    stream.read_exact(&mut rbuf).map_err(|_| ())?;
+    Ok(Some(String::from_utf8_lossy(&rbuf).into_owned()))
+}
+
+/// Run `program` using vsock for host_await (axon-vm microVM substrate).
+/// The host (axon-vm launcher) listens on `vsock_port`; we connect per suspension.
+#[cfg(target_os = "linux")]
+pub fn run_suspendable_vsock(program: &Program, vsock_port: u32) -> i32 {
+    VSOCK_PORT.with(|c| c.set(vsock_port as i32));
+    let code = on_deep_stack(|| run_program_inner(program, crate::verify::Discharged::default()));
+    VSOCK_PORT.with(|c| c.set(-1));
+    code
+}
+
 /// Reach the active host channels from inside `host_await` (interp/builtins.rs).
 /// Returns `Ok(Some(reply))`, `Ok(None)` at end-of-input, or `Err(())` if there is
 /// no host at all (a bare `axon run`). NATIVE: the `SendValue` request (an owned
@@ -1194,6 +1289,20 @@ thread_local! {
 /// a `Value` by the caller.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn host_await_yield(req: SendValue) -> Result<Option<SendValue>, ()> {
+    // vsock path: if running inside axon-vm, bypass the worker-thread channel.
+    #[cfg(target_os = "linux")]
+    {
+        let port = VSOCK_PORT.with(|c| c.get());
+        if port >= 0 {
+            let req_str = match &req {
+                SendValue::Str(s) => s.clone(),
+                other => format!("{:?}", other),
+            };
+            return vsock_send_recv(port as u32, &req_str)
+                .map(|opt| opt.map(SendValue::Str));
+        }
+    }
+
     HOST_AWAIT.with(|h| {
         let guard = h.borrow();
         match &*guard {
@@ -1592,7 +1701,12 @@ impl<'p> Interp<'p> {
             corrigible_halted: Cell::new(false),
             enclosing_agent: RefCell::new(None),
             current_goal: RefCell::new(None),
-            current_principal: RefCell::new("root".to_string()),
+            current_principal: RefCell::new(
+                std::env::var("AXON_PRINCIPAL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "root".to_string()),
+            ),
             goal_constraint: RefCell::new(None),
             current_fn: RefCell::new(String::new()),
             current_call_tier: RefCell::new(None),

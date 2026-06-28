@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/axon-core", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal", "crates/axon-gfx-mock", "crates/axon-gfx", "crates/axon-domain", "crates/axon-os", "crates/axon-intent", "crates/axon-certcheck"]
+members = ["crates/axon-core", "crates/axon-rt", "crates/axon-ai", "crates/axon-surface", "crates/axon-wasm", "crates/axon-web", "crates/axon-ledger", "crates/axon-signal", "crates/axon-gfx-mock", "crates/axon-gfx", "crates/axon-domain", "crates/axon-os", "crates/axon-intent", "crates/axon-certcheck", "crates/axon-guest-init", "crates/axon-vm"]
 resolver = "2"
 
 [workspace.package]
@@ -20,6 +20,11 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# axon-guest-init is a static PID-1 binary — optimize for size, not speed.
+# panic = "abort" cannot be set per-package; the VM crashes cleanly either way.
+[profile.release.package.axon-guest-init]
+opt-level = "s"
 
 [profile.dev]
 opt-level = 0
