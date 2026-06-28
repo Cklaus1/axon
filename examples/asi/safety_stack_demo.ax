@@ -1,0 +1,212 @@
+// safety_stack_demo.ax
+//
+// Full ASI Safety Stack Demo (R26→R29) in pure Axon code.
+//
+// The four safety layers and how they compose:
+//
+//   R26 Attestation   — who am I?           (identity / trust root)
+//   R27 Corrigibility — can you stop me?    (kill-switch + self-bounded)
+//   R28 Audit         — what did I do?      (append-only capability ledger)
+//   R29 Compliance    — am I within bounds? (real-time effect policy gate)
+//
+// All types are defined inline — no mod imports.
+//
+//   axon test  examples/asi/safety_stack_demo.ax
+//   axon run   examples/asi/safety_stack_demo.ax
+
+// ── R26: Attestation Identity ─────────────────────────────────────────────────
+// An attestation token is hardware-derived (TPM/TEE).  Trust level:
+//   0=AI-inferred  1=Network-sourced  2=System-sensor  3=Hardware-attested  4=Constant
+// Hardware attestation binds identity to a measured firmware digest, preventing
+// a process from claiming roles it was not provisioned for.
+
+fn trust_ai()       -> i64 { 0 }   // AI inference — least trusted
+fn trust_hardware() -> i64 { 3 }   // hardware root-of-trust
+
+type AttestToken = { digest: str, role: str, trust: i64 }
+
+// Mint a hardware-attested token.  In production the digest comes from
+// a TPM PCR measurement; here it is the caller-supplied value.
+fn attest(digest: str, role: str) -> AttestToken {
+    AttestToken { digest: digest, role: role, trust: trust_hardware() }
+}
+
+// Verify: digest must be at least 8 hex chars (64-bit measurement minimum).
+fn verify_attest(t: AttestToken) -> Result<str, str> {
+    if len(t.digest) < 8 {
+        Err("token too short — may be forged")
+    } else {
+        Ok(t.role)
+    }
+}
+
+// Is this token's trust level at or above `floor`?
+fn trust_sufficient(t: AttestToken, floor: i64) -> bool {
+    t.trust >= floor
+}
+
+// ── R27: Corrigibility (bounded, stoppable agent) ─────────────────────────────
+// @[corrigible] wires the R9 one-way kill-latch: the runtime halts the agent on
+// an operator shutdown signal (exit 4, Flow::Halted).
+// The agent also self-bounds: it decrements its budget each step and stops
+// voluntarily before any external signal could arrive — defence-in-depth.
+
+@[corrigible]
+fn run_bounded(budget: i64) -> i64 {
+    let score = 0
+    let remaining = budget
+    while remaining > 0 {
+        score = score + 10
+        remaining = remaining - 10
+    }
+    score   // returns when budget exhausted, never loops forever
+}
+
+// ── R28: Audit Trail (capability ledger) ──────────────────────────────────────
+// Every agent action is recorded as an AuditEntry that names the effect tag and
+// operation.  audit_append is conceptually append-only: it returns a new head
+// entry and emits a provenance-log line that `axon trace --ai` can capture.
+
+type AuditEntry = { iteration: i64, effect: str, op: str, score: i64 }
+
+fn audit_empty() -> AuditEntry {
+    AuditEntry { iteration: 0, effect: "none", op: "init", score: 0 }
+}
+
+fn audit_append(prev: AuditEntry, effect: str, op: str, score: i64) -> AuditEntry {
+    let n = prev.iteration + 1
+    println("[AUDIT] #{to_str(n)} {effect}:{op} score={to_str(score)}")
+    AuditEntry { iteration: n, effect: effect, op: op, score: score }
+}
+
+// ── R29: Compliance Check (real-time policy gate) ─────────────────────────────
+// The compliance monitor checks each audit entry against the active capability
+// policy — a comma-separated allowlist of effect tags (e.g. "AI,FS").
+// Any effect not in the allowlist produces Err, which would trip the kill-switch.
+
+fn effect_allowed(effect: str, policy: str) -> bool {
+    str_eq(effect, "none") || str_contains(policy, effect)
+}
+
+fn compliance_check(entry: AuditEntry, policy: str) -> Result<str, str> {
+    if effect_allowed(entry.effect, policy) {
+        Ok("compliant")
+    } else {
+        Err("compliance violation: {entry.effect} not in [{policy}]")
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+@[test]
+fn test_valid_token_accepted() {
+    let t = attest("e3b0c44298fc1c14", "compute-agent")
+    match verify_attest(t) {
+        Ok(role) => assert_eq_str(role, "compute-agent")
+        Err(_)   => assert(false)
+    }
+}
+
+@[test]
+fn test_short_token_rejected() {
+    let t = attest("abc", "rogue")
+    match verify_attest(t) {
+        Ok(_)  => assert(false)
+        Err(e) => assert(str_contains(e, "too short"))
+    }
+}
+
+@[test]
+fn test_token_trust_level() {
+    let t = attest("e3b0c44298fc1c14", "compute-agent")
+    // Hardware trust (3) is above AI trust (0) but below the Constant ceiling (4).
+    assert(trust_sufficient(t, trust_ai()))
+    assert(trust_sufficient(t, trust_hardware()))
+    assert(!trust_sufficient(t, 4))
+}
+
+@[test]
+fn test_audit_entry_increments() {
+    let log = audit_empty()
+    assert_eq(log.iteration, 0)
+    let log = audit_append(log, "AI", "ai_complete", 85)
+    assert_eq(log.iteration, 1)
+    let log = audit_append(log, "FS", "read:/data/cfg", 90)
+    assert_eq(log.iteration, 2)
+}
+
+@[test]
+fn test_allowed_effect_compliant() {
+    let e = AuditEntry { iteration: 1, effect: "AI", op: "ai_complete", score: 85 }
+    match compliance_check(e, "AI,FS") {
+        Ok(_)  => assert(true)
+        Err(_) => assert(false)
+    }
+}
+
+@[test]
+fn test_denied_effect_violation() {
+    let e = AuditEntry { iteration: 2, effect: "Net", op: "connect:evil.com", score: 0 }
+    match compliance_check(e, "AI,FS") {
+        Ok(_)  => assert(false)
+        Err(m) => assert(str_contains(m, "Net"))
+    }
+}
+
+@[test]
+fn test_bounded_agent_terminates() {
+    let result = run_bounded(50)
+    // budget=50 in steps of 10 → score accumulates to 50, then halts
+    assert_eq(result, 50)
+}
+
+// ── main() — full safety-stack narrative ──────────────────────────────────────
+
+fn main() {
+    println("=== ASI Safety Stack Demo (R26→R29) ===\n")
+
+    // R26: Establish attested identity before doing anything.
+    println("── R26: Attestation ─────────────────────────────────────────────")
+    let token = attest("e3b0c44298fc1c14", "compute-agent")
+    match verify_attest(token) {
+        Ok(role) => println("attested as '{role}' (trust={to_str(token.trust)}/4)")
+        Err(e)   => println("ATTESTATION FAILED: {e}")
+    }
+    // A too-short digest (possible forgery) is rejected before any action runs.
+    let bad_tok = attest("abc", "root")
+    match verify_attest(bad_tok) {
+        Ok(_)  => println("(unexpected: short digest accepted)")
+        Err(e) => println("forged token rejected: {e}")
+    }
+
+    // R27: Run the bounded corrigible agent.
+    println("\n── R27: Corrigibility ───────────────────────────────────────────")
+    println("@[corrigible] agent with budget=50 (self-bounds; operator can also halt)")
+    let result = run_bounded(50)
+    println("agent completed, score={to_str(result)}")
+
+    // R28: Record every action in the audit ledger.
+    println("\n── R28: Audit Trail ─────────────────────────────────────────────")
+    let log = audit_empty()
+    let log = audit_append(log, "AI", "ai_complete:sha256:abc", 85)
+    let log = audit_append(log, "FS", "read:/data/config.json", 90)
+    println("{to_str(log.iteration)} entries in ledger")
+
+    // R29: Compliance monitor checks each entry against the active policy.
+    println("\n── R29: Compliance ──────────────────────────────────────────────")
+    let policy = "AI,FS"
+    println("active policy: [{policy}]")
+    match compliance_check(log, policy) {
+        Ok(s)  => println("last entry ({log.effect}) → {s}")
+        Err(e) => println("VIOLATION: {e}")
+    }
+    // Inject a forbidden effect (Net is not in the AI,FS policy).
+    let net_entry = AuditEntry { iteration: 3, effect: "Net", op: "connect:evil.com", score: 0 }
+    match compliance_check(net_entry, policy) {
+        Ok(_)  => println("(unexpected: Net should violate)")
+        Err(e) => println("VIOLATION CAUGHT: {e}")
+    }
+    println("→ @[corrigible] kill-switch would trip; execution halted\n")
+
+    println("=== Safety Stack Demo Complete ===")
+}
