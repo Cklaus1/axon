@@ -1,0 +1,18 @@
+[package]
+name = "axon-attest"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Axon R26 confidential micro-VM attestation library: measure, sign, verify guest kernel images. Software-TPM stand-in for CI; hw-attest feature for real SEV-SNP/TDX."
+
+[lib]
+name = "axon_attest"
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = "0.10"
+serde = { workspace = true }
+serde_json = { workspace = true }
+hex = "0.4"
+base64 = "0.22"

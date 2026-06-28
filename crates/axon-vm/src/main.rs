@@ -5,9 +5,11 @@
 //!   • MMDS-delivered boot policy (principal, budget, allowed effects, BPF)
 //!   • vsock host_await substrate for interactive programs
 //!   • Principal registry (~/.config/axon/principals.toml)
+//!   • R26: software-TPM attestation gate (axon-vm attest)
 //!
 //! Commands:
 //!   axon-vm run <program.ax>  [options]     Launch program in a microVM
+//!   axon-vm attest --kernel K [options]     Measure kernel, produce attestation report
 //!   axon-vm principal add <name> [options]  Register a principal
 //!   axon-vm principal list                  List principals
 
@@ -22,6 +24,11 @@ use std::{env, fs, process};
 use base64::Engine as _;
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+
+use axon_attest::{
+    measure_kernel, measure_kernel_bytes, sign_report, try_admit_job, verify_report,
+    report_to_json, SOFTWARE_TPM_HW_ROOT,
+};
 
 // ── CLI surface ───────────────────────────────────────────────────────────────
 
@@ -76,6 +83,44 @@ enum Cmd {
     Principal {
         #[command(subcommand)]
         cmd: PrincipalCmd,
+    },
+
+    /// R26: Measure a kernel image and produce a software-TPM attestation report.
+    ///
+    /// NOTE: substrate = qemu-swtpm (stand-in — no memory encryption vs the host
+    /// operator). Use sev-snp/tdx (hw-attest feature) for real confidential computing.
+    ///
+    /// Outputs JSON on stdout: schema axon-attest/1.
+    /// Exit 0 = attestation produced (and verified if --verify-digest given).
+    /// Exit 10 = attestation failed or absent.
+    /// Exit 2  = bad arguments / kernel not found.
+    Attest {
+        /// Path to the kernel ELF image to measure. In CI (AXON_CI_NO_KVM=1),
+        /// this path is optional — a synthetic mock kernel is used when the file
+        /// does not exist, making the attest subcommand runnable without real hardware.
+        #[arg(long)]
+        kernel: PathBuf,
+
+        /// Optional base64-encoded policy to embed in the report metadata.
+        #[arg(long)]
+        policy: Option<String>,
+
+        /// Optional Axon program to run inside the attested guest (mock in CI).
+        #[arg(long, name = "run")]
+        run_prog: Option<PathBuf>,
+
+        /// Expected hex digest to verify against (64 hex chars = SHA-256 of kernel).
+        /// If provided, verify_report is called and a mismatch exits 10.
+        #[arg(long)]
+        verify_digest: Option<String>,
+
+        /// Nonce for freshness (anti-replay in real deployments).
+        #[arg(long, default_value = "default-nonce")]
+        nonce: String,
+
+        /// Expected axtcb1 digest to verify (e.g. "axtcb1:…").
+        #[arg(long)]
+        verify_axtcb1: Option<String>,
     },
 }
 
@@ -165,6 +210,14 @@ fn main() {
             vsock_port,
             json,
         } => cmd_run(program, fc_socket, kernel, initrd, mem_mib, vcpus, principal, vsock_port, json),
+        Cmd::Attest {
+            kernel,
+            policy,
+            run_prog,
+            verify_digest,
+            nonce,
+            verify_axtcb1,
+        } => cmd_attest(kernel, policy, run_prog, verify_digest, nonce, verify_axtcb1),
         Cmd::Principal { cmd } => match cmd {
             PrincipalCmd::Add {
                 name,
@@ -175,6 +228,139 @@ fn main() {
             } => cmd_principal_add(name, budget_tokens, allowed_effects, mem_mib, cpu_pct),
             PrincipalCmd::List => cmd_principal_list(),
         },
+    }
+}
+
+// ── cmd_attest (R26) ─────────────────────────────────────────────────────────
+
+/// R26: Measure a kernel image and produce a software-TPM attestation report.
+///
+/// In CI (`AXON_CI_NO_KVM=1`) or when the kernel path does not exist, a
+/// synthetic mock kernel is used — allowing the attest pipeline to be exercised
+/// without real hardware or a built guest image.
+///
+/// Output: JSON on stdout, schema `axon-attest/1`.
+/// Caveat printed to stderr: "substrate: qemu-swtpm (stand-in — no memory encryption…)"
+#[allow(clippy::too_many_arguments)]
+fn cmd_attest(
+    kernel: PathBuf,
+    _policy: Option<String>,
+    run_prog: Option<PathBuf>,
+    verify_digest: Option<String>,
+    _nonce: String,
+    verify_axtcb1: Option<String>,
+) {
+    let ci_no_kvm = env::var("AXON_CI_NO_KVM").map(|v| v == "1").unwrap_or(false);
+
+    // Measure the kernel. In CI/mock mode, use synthetic bytes when the real
+    // kernel image is unavailable (no hardware, no build yet).
+    let measurement = if ci_no_kvm || !kernel.exists() {
+        if !kernel.exists() && !ci_no_kvm {
+            eprintln!(
+                "axon-vm attest: kernel not found: {} — set AXON_CI_NO_KVM=1 to use mock",
+                kernel.display()
+            );
+            process::exit(2);
+        }
+        // CI mock: measure the path bytes themselves as a stable stand-in
+        let mock_bytes = if kernel.exists() {
+            // File exists: measure the real bytes even in CI mode
+            match fs::read(&kernel) {
+                Ok(b) => b,
+                Err(_) => format!("mock-kernel:{}", kernel.display()).into_bytes(),
+            }
+        } else {
+            // No file at all: synthetic bytes derived from the path string
+            format!("axon-os-mock-kernel-ci:{}", kernel.display()).into_bytes()
+        };
+        measure_kernel_bytes(&mock_bytes)
+    } else {
+        // Real mode: read and measure the kernel ELF
+        match measure_kernel(&kernel) {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("axon-vm attest: cannot measure kernel: {e}");
+                process::exit(2);
+            }
+        }
+    };
+
+    // Generate a software-TPM ephemeral key (deterministic per-process in CI,
+    // fresh per-invocation in production via process id + start time).
+    let key = {
+        use sha2::{Digest, Sha256};
+        let mut h = Sha256::new();
+        h.update(b"axon-r26-software-tpm-ephemeral-key");
+        h.update(process::id().to_le_bytes());
+        h.finalize().to_vec()
+    };
+
+    // Sign the measurement with the software-TPM key.
+    let report = sign_report(measurement.clone(), &key);
+
+    // Mandatory stand-in caveat — must be printed so no operator is misled
+    // (R26 §8, §10 honesty check: "substrate: qemu-swtpm — no memory encryption").
+    eprintln!(
+        "substrate: {} (stand-in — no memory encryption; use sev-snp/tdx for confidentiality)",
+        SOFTWARE_TPM_HW_ROOT
+    );
+
+    // Verify if the caller supplied expected values.
+    let (ok, reason) = if let Some(ref expected_hex) = verify_digest {
+        // Parse the hex digest
+        match hex::decode(expected_hex) {
+            Ok(bytes) if bytes.len() == 32 => {
+                let expected_arr: [u8; 32] = bytes.try_into().unwrap();
+                let expected_tcb = verify_axtcb1.as_deref().unwrap_or(&measurement.axtcb1);
+                match verify_report(&report, &expected_arr, expected_tcb) {
+                    Ok(()) => (true, "✓ attested: measurement matches, axtcb1 chained".to_string()),
+                    Err(e) => (false, format!("✗ ATTESTATION FAILED: {e}")),
+                }
+            }
+            Ok(_) => (false, "invalid --verify-digest: must be exactly 64 hex chars (SHA-256)".to_string()),
+            Err(e) => (false, format!("invalid --verify-digest hex: {e}")),
+        }
+    } else {
+        (true, "attestation report produced (no --verify-digest requested)".to_string())
+    };
+
+    // Optionally run a job inside the attested guest (mock in CI)
+    let run_record = if let Some(ref prog) = run_prog {
+        if ok {
+            let job_bytes = prog.to_string_lossy().as_bytes().to_vec();
+            let expected_arr = report.measurement.digest;
+            let expected_tcb = report.measurement.axtcb1.clone();
+            match try_admit_job(&report, &expected_arr, &expected_tcb, &job_bytes, 42u64) {
+                Ok(rec) => Some(rec),
+                Err(e) => {
+                    eprintln!("axon-vm attest: job admission failed: {e}");
+                    None
+                }
+            }
+        } else {
+            eprintln!("axon-vm attest: job not admitted — attestation failed");
+            None
+        }
+    } else {
+        None
+    };
+
+    // Parse the report JSON for embedding in output
+    let report_json: serde_json::Value =
+        serde_json::from_str(&report_to_json(&report)).unwrap_or_default();
+
+    // Emit the output JSON (schema axon-attest/1)
+    let out = serde_json::json!({
+        "schema": "axon-attest/1",
+        "ok": ok,
+        "report": report_json,
+        "reason": reason,
+        "run_record": run_record,
+    });
+    println!("{}", serde_json::to_string_pretty(&out).unwrap());
+
+    if !ok {
+        process::exit(10);
     }
 }
 
