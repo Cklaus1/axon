@@ -22,26 +22,35 @@ Each layer is independent. A bug in any one layer leaves three more standing.
 
 ## Run the demo
 
+**One command, from a fresh clone** — `./flagship` builds any missing binaries
+(no LLVM needed), then runs the four-layer demo and the Docker+seccomp foil:
+
+```bash
+./flagship          # interactive (pauses between sections)
+./flagship --ci     # non-interactive (no pauses, no real KVM) — CI / screencast
+./flagship docker   # just the Docker+seccomp foil
+./flagship threat   # print the threat model
+```
+
+Read the honest boundaries first if you're evaluating it:
+**[THREAT_MODEL.md](THREAT_MODEL.md)** — what this stops, what it does **not**, and
+the TCB you have to trust.
+
+<details><summary>Or run the pieces directly</summary>
+
 ```bash
 # Build the interpreter CLI once (sub-second, no LLVM):
 cargo build -p axon-core --no-default-features --bin axon
+# Optional: axon-os (R27 kill-switch) + axon-vm (R26 attestation):
+cargo build -p axon-os && cargo build -p axon-vm
 
-# Optional: build axon-os (R27 kill-switch) and axon-vm (R26 attestation):
-cargo build -p axon-os
-cargo build -p axon-vm
-
-# Four-layer guided demo:
-examples/flagship/demo.sh
-#   DEMO_NOPAUSE=1   — run without pauses (CI/automation)
-#   AXON_CI_NO_KVM=1 — skip real KVM in Layer 4 (use software-TPM mock)
-
-# Python vs Axon contrast (Layer 1 highlight):
-examples/flagship/compare_python.sh
-
-# Classic guided walkthrough (good -> evil -> subtle -> credential-thief -> python):
-examples/flagship/run.sh
-#   DEMO_NOPAUSE=1 to skip pauses
+examples/flagship/demo.sh            # four-layer guided demo
+examples/flagship/compare_docker.sh  # serious foil: Docker + hand-written seccomp
+examples/flagship/compare_python.sh  # naked-Python foil (Layer 1 highlight)
+examples/flagship/run.sh             # classic walkthrough (good→evil→subtle→thief→python)
+#   DEMO_NOPAUSE=1 — skip pauses;  AXON_CI_NO_KVM=1 — software-TPM mock in Layer 4
 ```
+</details>
 
 ## The files
 
@@ -52,8 +61,13 @@ examples/flagship/run.sh
 | `agent_task_subtle.ax` | The **subtle** agent. *Granted* `write("./out/")`, tries to write out-of-lane via a dynamic path — E1001. |
 | `agent_task_secrets.ax` | The **credential thief**. *Granted* net for a real LLM task, reads `ANTHROPIC_API_KEY` from env to smuggle it — E1001 on the env read. |
 | `foil_python.py` | The same escapes in Python — all run, because the "sandbox" is a comment. |
-| `demo.sh` | **NEW** — four-layer demonstration (compile proof + runtime + kill-switch + attestation). |
-| `compare_python.sh` | **NEW** — side-by-side Python vs Axon: shows all 3 escape attempts run in Python and are refused in Axon. |
+| `../../flagship` | **One-command runner** (repo root) — builds missing binaries, runs the demo + foil. |
+| `demo.sh` | Four-layer demonstration (compile proof + runtime + kill-switch + attestation). |
+| `compare_python.sh` | Side-by-side Python vs Axon: all 3 escapes run in Python, refused in Axon. |
+| `compare_docker.sh` | **The serious foil** — Docker + a hand-written seccomp profile blocks 1 of 3 escapes; Axon blocks all 3 at compile time. Shows provenance/timing/granularity. |
+| `seccomp-agent.json` | The hand-written seccomp profile used by `compare_docker.sh` (with comments on what seccomp structurally *cannot* express). |
+| `docker_probe.py` | Reports the OS-level allow/block verdict of each escape inside a container. |
+| `THREAT_MODEL.md` | Attacker model, what's stopped, **what is not**, and the TCB. Read this before believing the demo. |
 | `run.sh` | Classic guided walkthrough: good → evil-refused → subtle-refused → thief-refused → python-escapes → the point. |
 
 ## Layer 1: @[contained] — compile-time proof
