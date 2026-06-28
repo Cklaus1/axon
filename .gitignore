@@ -8,6 +8,13 @@ Cargo.lock
 # Compiled axon binaries (from axon build)
 axon_out_*
 /tmp/axon_*
+# `axon build` flagship output + its manifest
+/agent_task
+/agent_task.axmeta
+# Compiled Rust library archives left in tree by build scripts
+*.rlib
+# Guest VM build outputs (initramfs.cpio + vmlinuz)
+/dist/
 
 # R14 mobile build outputs (`axon target build --host mobile` → out/ios/, out/android/)
 /out/
