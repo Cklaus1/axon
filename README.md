@@ -41,8 +41,9 @@ Lexer → Parser → Resolver → fill_captures → Infer (HM) → Checker → B
 ## Quick Start
 
 Axon runs via a **codegen-free tree-walking interpreter** — the `axon` CLI
-builds in seconds without LLVM. (The native LLVM/codegen build is currently
-slow / CI-only; see `BUILD_DIAGNOSIS.md`.)
+builds in seconds without LLVM. (The native LLVM/codegen build is on by default
+and builds in ~3s; the old "build never finishes" stall is resolved — see
+`BUILD_RESOLVED.md`.)
 
 ```bash
 # Build the interpreter CLI (fast, no LLVM):
@@ -238,12 +239,12 @@ examples/             # Sample programs
 
 Phases 1–4 complete (functions/structs/enums/generics/traits/closures/LSP). The
 current execution path is a codegen-free **interpreter** (`interp.rs`, full
-builtin coverage); the native LLVM build is diagnosed + structurally fixed but
-slow (`BUILD_DIAGNOSIS.md`). Phase-10 **`axon goal`** compiles structured-prose
+builtin coverage); the native LLVM build is on by default and builds in ~3s
+(`BUILD_RESOLVED.md`). Phase-10 **`axon goal`** compiles structured-prose
 goals to runnable AST, with a goal-safety stdlib (`examples/stdlib/`: Budget,
 Constraint, Principal, Uncertain + composition) and key-free demos
-(`examples/goals/`). See [SESSION_STATUS.md](SESSION_STATUS.md) for current
-state and [STATUS.md](STATUS.md) for the Phase-4 feature matrix.
+(`examples/goals/`). See [STATUS.md](STATUS.md) for current state and
+[ROADMAP.md](ROADMAP.md) for forward planning.
 
 **Test suite**: 246 tests (189 unit + 57 integration), all passing.
 
