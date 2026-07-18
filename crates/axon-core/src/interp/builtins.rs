@@ -27,6 +27,39 @@ fn cap_to_effect_row(cap: &str) -> &'static str {
     }
 }
 
+/// R28: the capability-audit-ledger `EffectKind` a builtin call exercises, or
+/// `None` for a pure builtin (no ledger entry).
+///
+/// Prefers `capability_of_builtin` — the fine-grained `@[contained]`
+/// classification (`fs:read`/`fs:write`/`net`/`exec`) already single-sourced
+/// across the capability checker, the R10 capability-diff, and the R4
+/// `@[agent]` action log — so e.g. `write_file` audits as `FS`, not the
+/// generic `IO` the coarser Phase-6 effect row would give it. Builtins the
+/// capability classifier doesn't cover (`println`, `random_i64`, `env_var`,
+/// `goal_run`, ...) fall back to `builtin_effect_row`, picking its first
+/// recognized tag.
+fn audit_effect_kind(name: &str) -> Option<axon_audit::EffectKind> {
+    if let Some(cap) = crate::capabilities::capability_of_builtin(name) {
+        match cap {
+            "fs:read" | "fs:write" => return Some(axon_audit::EffectKind::FS),
+            "net" => return Some(axon_audit::EffectKind::Net),
+            "exec" => return Some(axon_audit::EffectKind::Exec),
+            _ => {} // e.g. "env" (env_var) — no matching ledger class, fall through
+        }
+    }
+    crate::builtins::builtin_effect_row(name)
+        .iter()
+        .find_map(|&tag| match tag {
+            "FS" => Some(axon_audit::EffectKind::FS),
+            "Net" => Some(axon_audit::EffectKind::Net),
+            "AI" => Some(axon_audit::EffectKind::AI),
+            "Exec" => Some(axon_audit::EffectKind::Exec),
+            "Random" => Some(axon_audit::EffectKind::Random),
+            "IO" => Some(axon_audit::EffectKind::IO),
+            _ => None, // e.g. "Time", "Chan" — not a ledger capability class
+        })
+}
+
 /// Phase 7 (R12 Slice 4): the durable-store NDJSON log path for store `key`:
 /// `$XDG_CACHE_HOME/axon/stores/<key>.ndjson` (or under `$HOME/.cache`). Sibling
 /// of the provenance log dir, so it reuses the same cache-root discovery. The key
@@ -172,6 +205,21 @@ impl<'p> Interp<'p> {
                         }
                     }
                 }
+            }
+        }
+
+        // R28: append one capability-audit-ledger entry for this builtin call
+        // when AXON_AUDIT_LEDGER is set and the builtin exercises a ledger
+        // capability class. Logged before dispatch (same precedent as the F3
+        // agent-action log above) so it records the attempt even if the call
+        // itself later errors. `ai_complete` is excluded: it already logs a
+        // richer entry (with the prompt's SHA-256) via `append_ai_call` at
+        // its own call site further below — this generic hook would
+        // otherwise double-log it.
+        if name != "ai_complete" && std::env::var_os("AXON_AUDIT_LEDGER").is_some() {
+            if let Some(kind) = audit_effect_kind(name) {
+                let principal = self.current_principal_name();
+                let _ = axon_audit::append_global(&principal, kind, name);
             }
         }
 

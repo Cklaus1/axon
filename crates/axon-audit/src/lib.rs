@@ -206,6 +206,12 @@ pub struct Ledger {
 impl Ledger {
     /// Open (or create) the ledger at `path`. Existing entries are read and the
     /// chain is verified before returning. An invalid existing chain returns `Err`.
+    ///
+    /// The file is created eagerly (empty, zero entries) when `path` doesn't
+    /// exist yet, so "auditing was enabled but nothing happened" (empty file)
+    /// is distinguishable on disk from "auditing was never wired up" (no
+    /// file) — a caller polling for the ledger's existence gets a real signal
+    /// even from a run that never appends an entry.
     pub fn open(path: &Path) -> Result<Self, String> {
         let mut entries = Vec::new();
         if path.exists() {
@@ -223,6 +229,9 @@ impl Ledger {
             }
             // Verify the existing chain.
             verify_chain(&entries)?;
+        } else {
+            File::create(path)
+                .map_err(|e| format!("cannot create ledger {}: {e}", path.display()))?;
         }
         Ok(Ledger {
             entries,
