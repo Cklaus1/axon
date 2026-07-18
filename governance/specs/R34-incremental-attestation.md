@@ -1,10 +1,14 @@
 # Tech Spec — R34: Incremental Attestation (rolling hash chain — every `axon-vm run` extends the chain)
 
 **Spec ID:** `R34-incremental-attestation`
-**Status:** 🔧 Implementing (2026-07-18) — core rolling-hash chain (S1–S3 scope: `chain.rs`
-formula + `ChainStore` append/verify + CLI `chain stamp`/`chain verify`/`run --chain-stamp`)
-landed; S4 (export/import), S6 (`chain show`/`export`/`verify-export`), S7 (R33 `VoteRequest`
-integration) NOT started — see spec-meta `status-claim` and §14 evidence ledger below.
+**Status:** 🔧 Implementing (re-verified 2026-07-18) — core rolling-hash chain (S1–S3 scope:
+`chain.rs` formula + `ChainStore` append/verify + CLI `chain stamp`/`chain verify`/
+`run --chain-stamp`) landed; **S4 (export/import) landed 2026-07-18** — `ChainStore::export` +
+`verify_export` + `ChainExport` (schema `axon-chain-export/1`), sharing one verification core
+(`verify_entries`) with `ChainStore::verify` so the live-store and exported-JSON paths cannot drift
+apart. S6 (`chain show`/`export`/`verify-export` CLI subcommands — the library functions exist but
+aren't yet wired to `axon-vm`'s CLI) and S7 (R33 `VoteRequest` integration) NOT started — see
+spec-meta `status-claim` and §14 evidence ledger below.
 
 ```spec-meta
 id: R34-incremental-attestation
@@ -783,9 +787,9 @@ Only then is R34 done.
 | R34.S1 | R31-extended-tcb-attestation | `chain_composes_with_r31`, `entry_hash_deterministic`, `different_prog_hash_different_entry_hash` (`crates/axon-vm/src/chain.rs`) | landed |
 | R34.S2 | R34.S1 | `verify_ok_three_entries`, `verify_detects_tampered_entry_hash`, `verify_empty_chain_ok`, `verify_wrong_genesis_breaks_at_zero`, `verify_malformed_json_line_is_clear_error` | landed |
 | R34.S3 | R34.S1, R34.S2 | `ChainStore::append` (O_APPEND JSONL) exercised by S2's multi-entry tests; no separate flock/concurrency gate built this pass | landed (append-only single-writer; concurrent-writer flock NOT built — see §12 note) |
-| R34.S4 (export/import) | R34.S3 | — | todo |
+| R34.S4 (export/import) | R34.S3 | `chain_exported_and_imported`, `empty_chain_export_verifies_ok`, `verify_export_detects_tampered_entry`, `verify_export_detects_tampered_head` (`crates/axon-vm/src/chain.rs`) | landed |
 | R34.S5 (`axon-vm run --chain-stamp` CLI) | R34.S1–S3 | `scripts/r34_acceptance_gate.sh` step 2 (stamp via real CLI) | landed |
-| R34.S6 (`chain show`/`export`/`verify-export` subcommands) | R34.S4 | — | todo (only `chain stamp`/`chain verify` built, not the full §5.2 surface) |
+| R34.S6 (`chain show`/`export`/`verify-export` subcommands) | R34.S4 | — | todo (S4's library functions exist and are tested; the `axon-vm` CLI itself only exposes `chain stamp`/`chain verify`, not the full §5.2 surface) |
 | R34.S7 (R33 `VoteRequest` chain fields) | R33-cross-vm-safety-quorum | — | todo (R33 itself not landed in code yet, per parallel track) |
 | R34.S8 (acceptance gate) | R34.S1–S3, R34.S5 | `scripts/r34_acceptance_gate.sh` | landed (covers the core stamp/verify/tamper/wrong-genesis path; does NOT cover the full §0 A1–A6 quickstart-jq journey verbatim — that requires S4/S6) |
 
@@ -796,5 +800,6 @@ Only then is R34 done.
 | Core chain formula (§4.2) implemented byte-for-byte; deterministic; order/tamper/genesis-sensitive | `cargo test -p axon-vm --no-default-features chain::` | 11 passed, 0 failed | `ee485e8` @ 2026-07-18 | PASS |
 | `scripts/r34_acceptance_gate.sh` — stamp twice, verify OK, corrupt, re-verify BROKEN exit 15, wrong-genesis exit 15 | `bash scripts/r34_acceptance_gate.sh` | exit 0, "R34 acceptance gate: ALL CHECKS PASSED" | `ee485e8` @ 2026-07-18 | PASS |
 | No regression in R26/R31 attestation tests | `cargo test -p axon-attest` | all pass | `ee485e8` @ 2026-07-18 | PASS |
-| Full axon-vm crate suite unaffected (incl. concurrently-landing R33 quorum tests) | `cargo test -p axon-vm --no-default-features` | 37 passed, 0 failed | `ee485e8` @ 2026-07-18 | PASS |
+| Full axon-vm crate suite unaffected (incl. concurrently-landing R33 quorum tests) | `cargo test -p axon-vm --no-default-features` | 37 passed, 0 failed; **41 passed after S4** | `ee485e8` @ 2026-07-18; re-verified this commit | PASS |
+| S4 export/import: export round-trips through JSON losslessly; `verify_export` catches a tampered entry AND a tampered head (not just individual links); shares one verification core with the live-store path (`verify_entries`) so the two cannot drift apart | `cargo test -p axon-vm --no-default-features chain::` | 15 passed, 0 failed | this commit @ 2026-07-18 | PASS |
 | Full workspace suite — a `wasm_browser_*` test occasionally fails (`wasm_browser_examples_run_identically_via_js_host` here; `wasm_browser_println_matches_interp_via_js_host` in a later run) when run inside the full parallel suite; **NOT caused by R34** (0/34 R34 files touched) | `cargo test --workspace --no-default-features` | 418/419 axon-core tests pass in the full-suite run | (observed, not caused by `ee485e8`) @ 2026-07-18; **re-checked 2026-07-18**: `bash scripts/wasm_browser_io_parity.sh` directly → 6/6 PASS; `cargo test --exact` on the single test → PASS in 0.57s; immediate full-suite rerun → 419/419 PASS, 0 failed | **FLAKE under full-workspace parallel contention, NOT a stable pre-existing gap** — do not dismiss a red `wasm_browser_*` test as "known" without an isolated rerun first; if the isolated rerun also fails, that IS a real regression |

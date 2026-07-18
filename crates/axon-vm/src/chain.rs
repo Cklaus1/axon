@@ -193,28 +193,130 @@ impl ChainStore {
             return Ok(0);
         }
 
-        let mut prev = genesis_hash.to_string();
-        let mut count = 0u64;
-        for (idx, parsed) in &lines {
-            let entry = match parsed {
-                Ok(e) => e,
-                // Malformed JSON mid-file: report the line index as the break point.
-                Err(_) => return Err(*idx),
-            };
-
-            if entry.prev_hash != prev {
-                return Err(entry.seq);
+        let mut entries = Vec::with_capacity(lines.len());
+        for (idx, parsed) in lines {
+            match parsed {
+                Ok(e) => entries.push(e),
+                // Malformed JSON mid-file: report the line index as the break
+                // point immediately — must NOT fall through to verify_entries
+                // with a truncated/empty Vec, which would silently report
+                // "verifies OK" over a corrupted file (I-9).
+                Err(_) => return Err(idx),
             }
-            let recomputed =
-                compute_entry_hash(&prev, &entry.prog_hash, &entry.run_id, entry.timestamp_ms);
-            if recomputed != entry.entry_hash {
-                return Err(entry.seq);
-            }
-            prev = entry.entry_hash.clone();
-            count += 1;
         }
-        Ok(count)
+        verify_entries(&entries, genesis_hash)
     }
+
+    /// Export the full chain as a self-contained [`ChainExport`] (R34 Slice 4,
+    /// spec §5.4): everything an auditor needs to call [`verify_export`]
+    /// without a live VM — just this struct plus the program source files.
+    // Not yet called from main.rs — the `axon-vm chain export`/`verify-export`
+    // CLI subcommands are R34 Slice 6 (separate, depends on this slice), not
+    // yet landed. Exercised by tests below; dead_code would otherwise fire on
+    // this binary crate since nothing outside #[cfg(test)] calls it yet.
+    #[allow(dead_code)]
+    pub fn export(
+        &self,
+        vm_id: &str,
+        genesis_hash: &str,
+        exported_at_ms: u64,
+    ) -> io::Result<ChainExport> {
+        let lines = self.read_lines()?;
+        let mut entries = Vec::with_capacity(lines.len());
+        for (idx, parsed) in lines {
+            match parsed {
+                Ok(e) => entries.push(e),
+                Err(msg) => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("malformed chain line {idx}: {msg}"),
+                    ));
+                }
+            }
+        }
+        let head = entries
+            .last()
+            .map(|e| e.entry_hash.clone())
+            .unwrap_or_else(|| genesis_hash.to_string());
+        Ok(ChainExport {
+            schema: CHAIN_EXPORT_SCHEMA.to_string(),
+            vm_id: vm_id.to_string(),
+            boot_root: genesis_hash.to_string(),
+            head,
+            exported_at_ms,
+            entries,
+        })
+    }
+}
+
+/// Schema tag for [`ChainExport`] (spec §5.4).
+pub const CHAIN_EXPORT_SCHEMA: &str = "axon-chain-export/1";
+
+/// A self-contained, JSON-serializable export of a full chain (R34 Slice 4,
+/// spec §5.4) — an auditor needs only this struct plus the program source
+/// files to call [`verify_export`]; no live VM or `ChainStore` required.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChainExport {
+    pub schema: String,
+    pub vm_id: String,
+    pub boot_root: String,
+    pub head: String,
+    pub exported_at_ms: u64,
+    pub entries: Vec<ChainEntry>,
+}
+
+/// Shared verification core (spec §4.3) — the ONE mechanism both
+/// [`ChainStore::verify`] (reads from a live `chain.jsonl`) and
+/// [`verify_export`] (reads from an already-parsed [`ChainExport`]) delegate
+/// to, so the two call paths cannot drift apart (no second mechanism, I-2).
+fn verify_entries(entries: &[ChainEntry], genesis_hash: &str) -> Result<u64, u64> {
+    if entries.is_empty() {
+        return Ok(0);
+    }
+    let mut prev = genesis_hash.to_string();
+    let mut count = 0u64;
+    for entry in entries {
+        if entry.prev_hash != prev {
+            return Err(entry.seq);
+        }
+        let recomputed =
+            compute_entry_hash(&prev, &entry.prog_hash, &entry.run_id, entry.timestamp_ms);
+        if recomputed != entry.entry_hash {
+            return Err(entry.seq);
+        }
+        prev = entry.entry_hash.clone();
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Verify an exported chain (spec §5.4/§4.3) — the auditor-side counterpart of
+/// [`ChainStore::verify`], operating on an already-parsed [`ChainExport`]
+/// (e.g. read back from `chain_export.json`) instead of a live chain file. No
+/// live VM or filesystem access to the original chain is required — this is
+/// what makes an export "self-contained" per the spec.
+///
+/// `Ok(count)` = every entry verifies against [`ChainExport::boot_root`] and
+/// the recomputed tip equals [`ChainExport::head`]. `Err(seq)` names the FIRST
+/// broken seq, same contract as [`ChainStore::verify`].
+// Not yet called from main.rs — see the note on `ChainStore::export` above
+// (R34 Slice 6, CLI wiring, not yet landed). Exercised by tests below.
+#[allow(dead_code)]
+pub fn verify_export(export: &ChainExport) -> Result<u64, u64> {
+    let count = verify_entries(&export.entries, &export.boot_root)?;
+    let recomputed_head = export
+        .entries
+        .last()
+        .map(|e| e.entry_hash.clone())
+        .unwrap_or_else(|| export.boot_root.clone());
+    if recomputed_head != export.head {
+        // The tip itself was tampered with (or the export is stale) even
+        // though every individual link recomputes correctly — treat this as
+        // breaking at the entry count (one past the last verified link), the
+        // same "name the point it broke" discipline as every other Err(seq).
+        return Err(count);
+    }
+    Ok(count)
 }
 
 // ── Tests (Gate 2/4 — every case below was seen RED before chain.rs existed) ──
@@ -427,5 +529,117 @@ mod tests {
         let path = dir.path().join("prog.ax");
         fs::write(&path, b"fn main() {}\n").unwrap();
         assert_eq!(sha256_file(&path).unwrap(), sha256_hex(b"fn main() {}\n"));
+    }
+
+    // ── R34 Slice 4: export / import (spec §5.4) ──────────────────────────────
+
+    fn build_three_entry_chain(store: &ChainStore) -> Vec<ChainEntry> {
+        let mut prev = GENESIS.to_string();
+        let mut entries = Vec::new();
+        for i in 0..3u64 {
+            let prog_hash = sha256_hex(format!("export-program-{i}").as_bytes());
+            let run_id = format!("export-run-{i}");
+            let ts = 3_000 + i;
+            let entry_hash = compute_entry_hash(&prev, &prog_hash, &run_id, ts);
+            let entry = ChainEntry {
+                seq: i,
+                run_id,
+                prog_hash,
+                timestamp_ms: ts,
+                prev_hash: prev.clone(),
+                entry_hash: entry_hash.clone(),
+            };
+            store.append(&entry).unwrap();
+            entries.push(entry);
+            prev = entry_hash;
+        }
+        entries
+    }
+
+    /// `chain_exported_and_imported` (spec §5.4): export -> serialize to JSON
+    /// -> re-read the JSON -> `verify_export` over the entries with `boot_root`
+    /// from the JSON -> `Ok`. The export is self-contained: a verifier needs
+    /// only the JSON, not a live `ChainStore`.
+    #[test]
+    fn chain_exported_and_imported() {
+        let dir = tempdir().unwrap();
+        let store = ChainStore::new(&dir.path().join("chain.jsonl"));
+        let entries = build_three_entry_chain(&store);
+
+        let export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+        assert_eq!(export.schema, CHAIN_EXPORT_SCHEMA);
+        assert_eq!(export.vm_id, "vm-alpha");
+        assert_eq!(export.boot_root, GENESIS);
+        assert_eq!(export.head, entries.last().unwrap().entry_hash);
+        assert_eq!(export.entries, entries);
+
+        // Round-trip through JSON, as an auditor with only the exported file
+        // (not a live ChainStore) would.
+        let json = serde_json::to_string(&export).unwrap();
+        let reimported: ChainExport = serde_json::from_str(&json).unwrap();
+        assert_eq!(reimported, export, "JSON round-trip must be lossless");
+
+        assert_eq!(
+            verify_export(&reimported),
+            Ok(3),
+            "a genuine, untampered export must verify OK over exactly its own entries"
+        );
+    }
+
+    /// An export of an empty chain has `head == boot_root` and verifies
+    /// trivially (mirrors `verify_empty_chain_ok` for the live-store path).
+    #[test]
+    fn empty_chain_export_verifies_ok() {
+        let dir = tempdir().unwrap();
+        let store = ChainStore::new(&dir.path().join("chain.jsonl"));
+        let export = store.export("vm-empty", GENESIS, 1_751_000_000_000).unwrap();
+        assert_eq!(export.head, GENESIS);
+        assert!(export.entries.is_empty());
+        assert_eq!(verify_export(&export), Ok(0));
+    }
+
+    /// Tampering an exported entry's `entry_hash` after the fact must be
+    /// caught by `verify_export`, at the same seq the live-store path would
+    /// report (mirrors `verify_detects_tampered_entry_hash`).
+    #[test]
+    fn verify_export_detects_tampered_entry() {
+        let dir = tempdir().unwrap();
+        let store = ChainStore::new(&dir.path().join("chain.jsonl"));
+        build_three_entry_chain(&store);
+        let mut export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+
+        let mut bad_hash = export.entries[1].entry_hash.clone();
+        let last = bad_hash.pop().unwrap();
+        bad_hash.push(if last == '0' { '1' } else { '0' });
+        export.entries[1].entry_hash = bad_hash;
+
+        assert_eq!(
+            verify_export(&export),
+            Err(1),
+            "tampering seq 1's entry_hash in the export must break at seq 1"
+        );
+    }
+
+    /// A tampered `head` (the claimed tip doesn't match what the entries
+    /// actually recompute to) must be caught even when every individual
+    /// entry link is internally consistent — otherwise a malicious exporter
+    /// could truncate entries and claim a stale/forged tip.
+    #[test]
+    fn verify_export_detects_tampered_head() {
+        let dir = tempdir().unwrap();
+        let store = ChainStore::new(&dir.path().join("chain.jsonl"));
+        build_three_entry_chain(&store);
+        let mut export = store.export("vm-alpha", GENESIS, 1_751_000_000_000).unwrap();
+
+        let mut bad_head = export.head.clone();
+        let last = bad_head.pop().unwrap();
+        bad_head.push(if last == '0' { '1' } else { '0' });
+        export.head = bad_head;
+
+        assert_eq!(
+            verify_export(&export),
+            Err(3),
+            "a forged head must be caught even though every individual link recomputes cleanly"
+        );
     }
 }
