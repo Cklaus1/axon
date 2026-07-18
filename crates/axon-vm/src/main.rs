@@ -435,6 +435,17 @@ enum QuorumCmd {
         /// axon-audit-writer binary to measure (default: sibling; absent → R28-pending sentinel).
         #[arg(long)]
         axon_audit: Option<PathBuf>,
+
+        /// R33 §4.5: the R27 lineage-root this voter belongs to, for the
+        /// per-coalition YES-vote cap enforced in `check_quorum`. Deliberately
+        /// NOT defaulted to this voter's `voter_tcb` — in a healthy fleet every
+        /// honest voter shares the same `voter_tcb` (same attested software),
+        /// so that would make every legitimate vote look like one giant
+        /// coalition. If omitted, a fresh value unique to this invocation is
+        /// used, so the cap is a no-op unless an operator explicitly declares
+        /// two votes as sharing a coalition.
+        #[arg(long)]
+        lineage_root: Option<String>,
     },
 
     /// Collect `.vote` response files from a directory and check strict-majority quorum.
@@ -546,8 +557,8 @@ fn main() {
         Cmd::Quorum { cmd } => match cmd {
             QuorumCmd::Propose { run_id, prog, action, out, kernel, axon_os, axon_audit } =>
                 cmd_quorum_propose(run_id, prog, action, out, kernel, axon_os, axon_audit),
-            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit } =>
-                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit),
+            QuorumCmd::Vote { request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root } =>
+                cmd_quorum_vote(request, approve, deny, reason, out, kernel, axon_os, axon_audit, lineage_root),
             QuorumCmd::Check { responses_dir, n, json } =>
                 cmd_quorum_check(responses_dir, n, json),
         },
@@ -1392,6 +1403,7 @@ fn cmd_quorum_vote(
     kernel: Option<PathBuf>,
     axon_os: Option<PathBuf>,
     axon_audit: Option<PathBuf>,
+    lineage_root: Option<String>,
 ) {
     if !approve && !deny {
         eprintln!("axon-vm quorum vote: exactly one of --approve or --deny is required");
@@ -1407,11 +1419,26 @@ fn cmd_quorum_vote(
     };
 
     let voter_tcb = quorum_self_tcb(&kernel, &axon_os, &axon_audit);
+    // Deliberately NOT defaulting to `voter_tcb` (see the CLI flag's own doc
+    // comment) — a fresh, unique-per-invocation value instead, so an operator
+    // who doesn't care about coalition grouping never accidentally triggers
+    // the R27 cap by having two votes collide on a shared default.
+    let lineage_root = lineage_root.unwrap_or_else(|| {
+        format!(
+            "unlabeled-{}-{}",
+            process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        )
+    });
     let resp = quorum::logic::VoteResponse {
         voter_tcb: voter_tcb.clone(),
         run_id: req.run_id,
         approved: approve,
         reason,
+        lineage_root,
     };
 
     if let Err(e) = quorum::io::write_vote_response(&resp, &out) {

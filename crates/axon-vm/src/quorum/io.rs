@@ -124,6 +124,7 @@ mod tests {
             run_id: "run-abc-123".to_string(),
             approved: true,
             reason: "policy score 82 >= threshold 75".to_string(),
+            lineage_root: "principal-alpha".to_string(),
         };
         write_vote_response(&resp, &path).expect("write must succeed");
         let read_back = read_vote_response(&path).expect("read must succeed");
@@ -131,6 +132,7 @@ mod tests {
         assert_eq!(resp.run_id, read_back.run_id);
         assert_eq!(resp.approved, read_back.approved);
         assert_eq!(resp.reason, read_back.reason);
+        assert_eq!(resp.lineage_root, read_back.lineage_root);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -145,6 +147,7 @@ mod tests {
                 run_id: "run-x".to_string(),
                 approved,
                 reason: String::new(),
+                lineage_root: format!("principal-{i}"),
             };
             write_vote_response(&resp, &dir.join(format!("voter-{i}.vote"))).unwrap();
         }
@@ -166,6 +169,7 @@ mod tests {
             run_id: "run-x".to_string(),
             approved: true,
             reason: String::new(),
+            lineage_root: "principal-0".to_string(),
         };
         write_vote_response(&good, &dir.join("voter-0.vote")).unwrap();
         // Hand-corrupt a second file: not valid JSON at all.

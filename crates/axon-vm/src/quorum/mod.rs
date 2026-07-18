@@ -12,13 +12,30 @@ pub mod io;
 #[cfg(test)]
 mod tests {
     use super::logic::{check_quorum, VoteResponse};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    /// Every `mk_vote` call gets its OWN fresh `lineage_root` (a monotonic
+    /// counter, thread-safe since `cargo test` runs tests in parallel) so the
+    /// R27 coalition cap (folded into `check_quorum` itself — see its doc
+    /// comment) is a no-op for every test in this file that doesn't care
+    /// about lineage grouping: no two votes here ever accidentally share a
+    /// root. `coalition_bound_limits_same_lineage` below is the one test that
+    /// deliberately opts OUT of this via `mk_vote_with_root`, to exercise the
+    /// cap on purpose.
+    static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
     fn mk_vote(tcb: &str, approved: bool) -> VoteResponse {
+        let root = NEXT_ROOT.fetch_add(1, Ordering::Relaxed);
+        mk_vote_with_root(tcb, approved, &format!("auto-root-{root}"))
+    }
+
+    fn mk_vote_with_root(tcb: &str, approved: bool, lineage_root: &str) -> VoteResponse {
         VoteResponse {
             voter_tcb: tcb.to_string(),
             run_id: "r1".to_string(),
             approved,
             reason: String::new(),
+            lineage_root: lineage_root.to_string(),
         }
     }
 
@@ -153,5 +170,55 @@ mod tests {
         let rc = check_quorum(&c, 3);
         assert_eq!(ra, rb, "reversed order must produce an identical QuorumResult");
         assert_eq!(ra, rc, "swapped order must produce an identical QuorumResult");
+    }
+
+    /// R33 spec §4.5 / §7's own worked example, verbatim: 3 verified YES
+    /// votes, ALL sharing one `lineage_root` (a "sock puppet" coalition —
+    /// N instances minted from the same R27 principal, all voting YES).
+    /// Without the coalition cap this would be a trivial 3/3 majority; WITH
+    /// it (default cap for N=3 is `ceil(3/2)-1 = 1`), only 1 of the 3 YES
+    /// votes is admitted, so admitted approvals = 1, which is NOT a strict
+    /// majority of 3 (need > 3/2 = 1, i.e. >= 2) — quorum is blocked. This is
+    /// the R27 sock-puppet attack R33 §4.5 exists to close: spinning up N
+    /// VMs from one lineage root cannot alone force approval.
+    #[test]
+    fn coalition_bound_limits_same_lineage() {
+        let votes = vec![
+            mk_vote_with_root("axtcb1-ext:aaa", true, "sockpuppet-root"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "sockpuppet-root"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "sockpuppet-root"),
+        ];
+        let r = check_quorum(&votes, 3);
+        assert!(
+            !r.quorum_met,
+            "3 YES votes from ONE lineage root must not alone form quorum: {r:?}"
+        );
+        assert_eq!(
+            r.approvals, 1,
+            "only cap=ceil(3/2)-1=1 YES vote from a single root may be admitted: {r:?}"
+        );
+        let reason = r.blocking_reason.expect("must carry a blocking reason");
+        assert!(
+            reason.contains("coalition"),
+            "must name the coalition cap as the cause, not a generic minority: {reason}"
+        );
+    }
+
+    /// The coalition cap must not trip on legitimately DISTINCT lineage
+    /// roots: 3 YES votes from 3 different roots (N=3, no single root
+    /// exceeding cap=1) must meet quorum exactly like the un-capped case.
+    #[test]
+    fn coalition_cap_does_not_block_distinct_lineage_roots() {
+        let votes = vec![
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-a"),
+            mk_vote_with_root("axtcb1-ext:aaa", true, "root-b"),
+            mk_vote_with_root("axtcb1-ext:aaa", false, "root-c"),
+        ];
+        let r = check_quorum(&votes, 3);
+        assert!(
+            r.quorum_met,
+            "2 YES votes from 2 DISTINCT roots (cap=1 each, not exceeded) must meet quorum: {r:?}"
+        );
+        assert_eq!(r.approvals, 2);
     }
 }

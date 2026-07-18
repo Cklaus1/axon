@@ -31,6 +31,8 @@ REQUIRED_NAMES=(
     "vote_response_json_round_trip"
     "coalition_ceil_n_over_2_minus_1_cannot_meet_quorum"
     "collect_responses_malformed_file_is_io_error_not_panic"
+    "coalition_bound_limits_same_lineage"
+    "coalition_cap_does_not_block_distinct_lineage_roots"
 )
 
 for name in "${REQUIRED_NAMES[@]}"; do
@@ -195,9 +197,79 @@ else
     echo "$MISMATCH_OUT"
 fi
 
-# ── 8. R26/R31 regression check ──────────────────────────────────────────────
+# ── 8. R27 coalition ceiling: real CLI sock-puppet journey ───────────────────
 echo ""
-echo "8. R26/R31 regression check"
+echo "8. R27 coalition ceiling: real CLI sock-puppet journey (n=3)"
+
+SOCKPUPPET_DIR="$(mktemp -d /tmp/r33-sockpuppet-XXXXXX)"
+trap 'rm -rf "$WORK_DIR" "$MISMATCH_DIR" "$SOCKPUPPET_DIR"' EXIT
+
+"$BIN" quorum propose \
+    --run-id "r33-sockpuppet" \
+    --prog "$PROG" \
+    --action "wire_transfer(amount=1000000)" \
+    --out "$SOCKPUPPET_DIR/request.json" \
+    >/dev/null 2>&1
+
+# 3 YES votes, ALL declaring the SAME --lineage-root: a coalition of 3
+# instances minted from one principal, all voting YES. Without the R27 cap
+# this would be a trivial 3/3 majority; WITH it (default cap for n=3 is
+# ceil(3/2)-1=1), only 1 vote is admitted — quorum must be BLOCKED.
+for i in 1 2 3; do
+    "$BIN" quorum vote --request "$SOCKPUPPET_DIR/request.json" --approve \
+        --reason "sock puppet $i" --lineage-root "sockpuppet-principal" \
+        --out "$SOCKPUPPET_DIR/voter$i.vote" >/dev/null 2>&1
+done
+
+set +e
+SOCKPUPPET_OUT=$("$BIN" quorum check --responses-dir "$SOCKPUPPET_DIR" --n 3 2>&1)
+SOCKPUPPET_RC=$?
+set -e
+
+if [ "$SOCKPUPPET_RC" -eq 13 ]; then
+    pass "3 YES votes from ONE lineage root exit 13 (QUORUM_BLOCKED), not 0"
+else
+    fail "sock-puppet coalition exited $SOCKPUPPET_RC, expected 13: $SOCKPUPPET_OUT"
+fi
+
+if echo "$SOCKPUPPET_OUT" | grep -qi "coalition"; then
+    pass "output names the coalition cap as the blocking cause, not a generic minority"
+else
+    fail "output does not name 'coalition' as the cause: $SOCKPUPPET_OUT"
+fi
+
+# Control: the SAME 3 approvals from 3 DISTINCT lineage roots must meet
+# quorum normally — the cap must not over-trigger on legitimate diversity.
+DISTINCT_DIR="$(mktemp -d /tmp/r33-distinct-XXXXXX)"
+trap 'rm -rf "$WORK_DIR" "$MISMATCH_DIR" "$SOCKPUPPET_DIR" "$DISTINCT_DIR"' EXIT
+
+"$BIN" quorum propose \
+    --run-id "r33-distinct" \
+    --prog "$PROG" \
+    --action "wire_transfer(amount=1000000)" \
+    --out "$DISTINCT_DIR/request.json" \
+    >/dev/null 2>&1
+
+for i in 1 2 3; do
+    "$BIN" quorum vote --request "$DISTINCT_DIR/request.json" --approve \
+        --reason "distinct voter $i" --lineage-root "principal-$i" \
+        --out "$DISTINCT_DIR/voter$i.vote" >/dev/null 2>&1
+done
+
+set +e
+DISTINCT_OUT=$("$BIN" quorum check --responses-dir "$DISTINCT_DIR" --n 3 2>&1)
+DISTINCT_RC=$?
+set -e
+
+if [ "$DISTINCT_RC" -eq 0 ]; then
+    pass "3 YES votes from 3 DISTINCT lineage roots exit 0 (QUORUM MET) — cap does not over-trigger"
+else
+    fail "3 distinct-root approvals exited $DISTINCT_RC, expected 0: $DISTINCT_OUT"
+fi
+
+# ── 9. R26/R31 regression check ──────────────────────────────────────────────
+echo ""
+echo "9. R26/R31 regression check"
 
 if (cd "$REPO_ROOT" && cargo test -p axon-attest --quiet 2>&1); then
     pass "R26/R31 tests (axon-attest) still pass — R33 did not regress them"

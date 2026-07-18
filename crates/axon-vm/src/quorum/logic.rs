@@ -30,12 +30,33 @@ pub struct VoteRequest {
 
 /// A peer VM's vote on a `VoteRequest` (R33 §3.2, scoped: a boolean
 /// approve/deny rather than the full 0-100 policy score).
+///
+/// `lineage_root` is the R27 coalition-ceiling grouping key (spec §4.5): the
+/// `PrincipalId` this voter was minted from. It is a SEPARATE concept from
+/// `voter_tcb` — `voter_tcb` identifies *what software* is running (and, in a
+/// healthy fleet, is expected to be IDENTICAL across every honest voter),
+/// while `lineage_root` identifies *which principal/coalition* the voter
+/// belongs to (and should differ across independent voters). Conflating the
+/// two would be backwards: defaulting an unset `lineage_root` to `voter_tcb`
+/// would make every honestly-attested voter in a fleet look like one giant
+/// coalition, capping legitimate quorums. See `cmd_quorum_vote` for the
+/// actual default (a fresh per-invocation value, not `voter_tcb`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VoteResponse {
     pub voter_tcb: String,
     pub run_id: String,
     pub approved: bool,
     pub reason: String,
+    /// `#[serde(default)]` (empty string) so a `.vote` file written before
+    /// this field existed still parses — deliberately a SHARED sentinel, not
+    /// a per-instance-unique one (this module is pure per its own header, no
+    /// clock/pid access here; `cmd_quorum_vote` is where a real fresh unique
+    /// value gets generated for the CLI's own default). Multiple old-format
+    /// votes all defaulting to `""` will coalesce into one coalition bucket
+    /// and get capped together — a conservative, fail-closed reading of
+    /// missing lineage data, not a fail-open one.
+    #[serde(default)]
+    pub lineage_root: String,
 }
 
 /// The aggregator's decision (R33 §3.3, scoped).
@@ -45,6 +66,22 @@ pub struct QuorumResult {
     pub coalition_size: usize,
     pub approvals: usize,
     pub blocking_reason: Option<String>,
+}
+
+/// The R27 per-lineage-root coalition ceiling (spec §4.5), applied before
+/// counting approvals: no single `lineage_root` may contribute more than this
+/// many admitted YES votes, regardless of how many voters actually share it.
+///
+/// Default value, per the spec's own concrete worked example (§4.5 point 4 /
+/// the `coalition_bound_limits_same_lineage` test): `ceil(N/2) - 1` — for
+/// N=3 this is `ceil(3/2) - 1 = 1`. (The spec's prose paraphrase, "one fewer
+/// than the quorum threshold," is exact for odd N but not for even N; the
+/// worked numeric example is the load-bearing definition, followed here.)
+/// This is the spec's own explicitly-blessed fallback when R27's real
+/// `Coalition`/`max_quorum_power` type isn't wired in yet (§6 slice-risk
+/// note S4, §-Gate anti-stub carve-out) — not a corner cut.
+fn default_coalition_cap(required_n: usize) -> u64 {
+    required_n.div_ceil(2).saturating_sub(1) as u64
 }
 
 /// Strict-majority quorum check over already-collected votes.
@@ -59,9 +96,18 @@ pub struct QuorumResult {
 /// `n/2 == 2`, so exactly 2 approvals is NOT a majority (`2 > 2` is false) —
 /// only 3 or more clears it. A `>=` (non-strict) formula would wrongly accept
 /// exactly-half as quorum, which is the off-by-one this function must avoid.
+///
+/// Before counting, applies the R27 per-lineage coalition ceiling (spec
+/// §4.5): YES votes are grouped by `lineage_root`, and any root's admitted
+/// YES count is capped at [`default_coalition_cap`] — excess YES votes from
+/// an over-represented root are excluded from `approvals`, exactly as if
+/// they had voted NO, so a coalition sharing one root can never alone force
+/// a quorum (I-4). This is enforced unconditionally (not opt-in): callers
+/// that don't care about lineage grouping simply give every vote a distinct
+/// `lineage_root` (the default `cmd_quorum_vote` CLI behavior — see its own
+/// doc comment), for which the cap is a no-op.
 pub fn check_quorum(votes: &[VoteResponse], required_n: usize) -> QuorumResult {
     let coalition_size = votes.len();
-    let approvals = votes.iter().filter(|v| v.approved).count();
 
     // Attestation consistency FIRST, independent of the approval count: every
     // vote that arrived must agree on `voter_tcb`. In this fleet, all voters
@@ -77,6 +123,7 @@ pub fn check_quorum(votes: &[VoteResponse], required_n: usize) -> QuorumResult {
         }
     }
     if distinct_tcbs.len() > 1 {
+        let approvals = votes.iter().filter(|v| v.approved).count();
         return QuorumResult {
             quorum_met: false,
             coalition_size,
@@ -90,11 +137,37 @@ pub fn check_quorum(votes: &[VoteResponse], required_n: usize) -> QuorumResult {
         };
     }
 
+    // Coalition ceiling: cap admitted YES votes per lineage_root BEFORE
+    // counting approvals (spec §-Notes: "the cap happens at the door," i.e.
+    // before any CoordGoal-equivalent proposal — there is no separate
+    // "admit then retract" step here since this aggregator counts directly).
+    let cap = default_coalition_cap(required_n);
+    let mut admitted_per_root: std::collections::HashMap<&str, u64> = std::collections::HashMap::new();
+    let mut capped_out = 0usize;
+    let mut approvals = 0usize;
+    for v in votes {
+        if !v.approved {
+            continue;
+        }
+        let count = admitted_per_root.entry(v.lineage_root.as_str()).or_insert(0);
+        if *count >= cap {
+            capped_out += 1;
+            continue;
+        }
+        *count += 1;
+        approvals += 1;
+    }
+
     // Strict majority: approvals > required_n / 2 (integer floor) — NOT >=,
     // which would wrongly admit an exactly-half coalition at even N.
     let quorum_met = approvals > required_n / 2;
     let blocking_reason = if quorum_met {
         None
+    } else if capped_out > 0 {
+        Some(format!(
+            "coalition cap: {capped_out} YES vote(s) excluded (lineage-root cap={cap}); \
+             {approvals}/{required_n} admitted (need > {required_n}/2)"
+        ))
     } else {
         Some(format!(
             "insufficient approvals: {approvals}/{required_n} (need > {}/2)",

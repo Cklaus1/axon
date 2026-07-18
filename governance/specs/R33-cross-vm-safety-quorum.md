@@ -1,8 +1,13 @@
 # Tech Spec — R33: Cross-VM Safety Quorum (attested CoordGoal gate for irreversible actions)
 
 **Spec ID:** `R33-cross-vm-safety-quorum`
-**Status:** 🚧 Implementing (2026-07-18) — scoped slice landed (file-based propose/vote/check CLI +
-pure `check_quorum` aggregator); vsock transport, R27 coalition ceiling, and `axon deploy`
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — scoped slice landed (file-based
+propose/vote/check CLI + pure `check_quorum` aggregator); **R27 coalition ceiling landed
+2026-07-18** — `check_quorum` now caps admitted YES votes per `lineage_root` at the spec's own
+blessed fallback default (`ceil(N/2)-1`, §4.5 point 4's worked example), closing the sock-puppet
+attack (N instances from one principal cannot alone force quorum) without depending on R27's real
+`Coalition`/`max_quorum_power` type being wired in — exactly the spec's own explicitly-sanctioned
+fallback path (§6 slice-risk note, §-Gate anti-stub carve-out). vsock transport and `axon deploy`
 integration remain open. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
@@ -39,11 +44,15 @@ evidence: scripts/r33_acceptance_gate.sh
 
 (This session builds a scoped-down slice of the full protocol below: a file-based
 `propose`/`vote`/`check` CLI exchange with a pure `check_quorum` aggregator in
-`crates/axon-vm/src/quorum/`, self-measurement via R31's `measure_host_stack`, and
-strict-majority + attestation-consistency checks. It does **not** yet implement the R26 vsock
-broadcast transport, the R27 per-lineage coalition ceiling, or the `axon deploy` pipeline
-integration described in §2/§4.5/§5.2 below — those remain open follow-on work tracked by this
-spec's unchanged body. See §14 Evidence ledger for exactly what was verified and how.)
+`crates/axon-vm/src/quorum/`, self-measurement via R31's `measure_host_stack`, strict-majority +
+attestation-consistency checks, **and (2026-07-18) the §4.5 coalition ceiling** — `VoteResponse`
+gains a `lineage_root` field (a SEPARATE concept from `voter_tcb`: which principal/coalition a
+voter belongs to, not what software it runs — see the field's own doc comment for why defaulting
+one to the other would be backwards), and `check_quorum` caps admitted YES votes per root at the
+spec's own hardcoded safe-default cap, with NO dependency on R27's real `Coalition` type. It does
+**not** yet implement the R26 vsock broadcast transport or the `axon deploy` pipeline integration
+described in §2/§5.2 below — those remain open follow-on work tracked by this spec's unchanged
+body. See §14 Evidence ledger for exactly what was verified and how.)
 
 > **Read this framing first.** R33 does **not** change one line of Axon-level containment, the
 > kill-switch (R27), or the attestation protocol (R26/R31). What R33 changes is the **number of
@@ -552,24 +561,26 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33.S0 | R26-confidential-microvm-substrate, R31-extended-tcb-attestation (both landed) | `scripts/r33_acceptance_gate.sh` §§1-7 (CLI journey + exit-code distinctness) | landed |
 | R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
 | R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | todo |
-| R33.S3 | R33.S0; **blocked-by** R27's `max_quorum_power`/lineage-root coalition-ceiling wiring | not yet named | todo |
-| R33.S4 | R33.S0; `axon deploy` pipeline integration (§4.5/§5.2 of this spec) | not yet named | todo |
+| R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
+| R33.S4 | R33.S0; `axon deploy` pipeline integration (§5.2 of this spec) | not yet named | todo |
 
 ## §14 — Evidence ledger
 
 | Claim | Verify command | Expected | Last verified (commit @ date) | Result |
 |---|---|---|---|---|
-| Quorum unit tests (`check_quorum` aggregator logic) pass | `bash scripts/r33_acceptance_gate.sh` (step 4) | 11 passed, 0 failed | this commit @ 2026-07-18 | PASS |
+| Quorum unit tests (`check_quorum` aggregator logic) pass | `bash scripts/r33_acceptance_gate.sh` (step 4) | 13 passed, 0 failed (11 + 2 coalition tests) | this commit @ 2026-07-18 | PASS |
 | `axon-vm` binary builds with the quorum CLI wired in | `bash scripts/r33_acceptance_gate.sh` (step 5) | build succeeds | this commit @ 2026-07-18 | PASS |
 | End-to-end propose→vote→check CLI journey, both majority outcomes | `bash scripts/r33_acceptance_gate.sh` (step 6) | 1/3 approvals → exit 13 QUORUM_BLOCKED; 2/3 approvals → exit 0 QUORUM MET | this commit @ 2026-07-18 | PASS |
 | Attestation mismatch across voters is a distinct failure from a plain minority | `bash scripts/r33_acceptance_gate.sh` (step 7) | mismatched `voter_tcb` → exit 14 QUORUM_ATTEST_FAIL, distinct from exit 13 | this commit @ 2026-07-18 | PASS |
-| R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 8) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
+| R27 coalition ceiling: 3 YES votes from ONE `--lineage-root` cannot alone force quorum (real CLI, not just unit test); 3 YES votes from 3 DISTINCT roots meet quorum normally (cap does not over-trigger) | `bash scripts/r33_acceptance_gate.sh` (step 8) | sock-puppet → exit 13, reason names "coalition"; distinct-roots → exit 0 | this commit @ 2026-07-18 | PASS |
+| R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 9) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
 
-Honest scope, per this spec's own header: the above is a **file-based, single-host** slice. The
-vsock broadcast transport (§2), the R27 coalition ceiling (§4.5), and `axon deploy` pipeline
-integration (§5.2) are real, described in this spec's unchanged body, and not yet built — R33.S2–S4
-above. Do not read "gate: ALL CHECKS PASSED" as "R33 fully implements this spec"; it means "the
-scoped slice this session built is what it claims to be."
+Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
+WITH the R27 coalition ceiling (§4.5) closed via the spec's own hardcoded-default fallback path.
+The vsock broadcast transport (§2) and `axon deploy` pipeline integration (§5.2) are real,
+described in this spec's unchanged body, and not yet built — R33.S2/S4 above. Do not read "gate:
+ALL CHECKS PASSED" as "R33 fully implements this spec"; it means "the scoped slice this session
+built is what it claims to be."
 
 ---
 
@@ -586,11 +597,17 @@ The single source of "done." It MUST:
    Any missing name → **gate fails**.
 
 2. **Anti-stub check** — assert no R33 acceptance or adversarial test body is `#[ignore]`d /
-   `todo!()` / `unimplemented!()` / `assert!(true)`. **One explicit, named carve-out:** the
-   `coalition_bound_limits_same_lineage` test may carry `#[ignore = "R27 max_quorum_power not yet
+   `todo!()` / `unimplemented!()` / `assert!(true)`. **One explicit, named carve-out (NOT
+   currently active — see below):** the `coalition_bound_limits_same_lineage` test may carry
+   `#[ignore = "R27 max_quorum_power not yet
    shipped"]` while R27 slice S6 is in progress; the gate allows *exactly* this annotation by its
    R27 reason string and **fails if any other `#[ignore]` appears, or if the carve-out's reason
    string drifts**. The fallback behaviour (cap at `⌈N/2⌉ - 1`) must still be exercised and pass.
+   **2026-07-18 update: this carve-out was never needed and was never wired into the actual gate
+   script** — `coalition_bound_limits_same_lineage` landed for real, using exactly the fallback
+   default this carve-out anticipated (a hardcoded cap, no R27 `Coalition` type dependency), so the
+   `#[ignore]` path was never exercised. Left documented here for the historical record of why it
+   was anticipated, not because it's live.
 
 3. **Anti-vacuous attestation check** — assert `unattested_vote_is_rejected` exercises a real
    negative: the test body must contain a call sending a `VoteResponse` with no `voter_tcb` AND an
