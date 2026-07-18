@@ -31,10 +31,22 @@ alternative Slice 2 candidates: both fail differently — they're single-LLVM-in
 BODIES synthesized in codegen (not declarations of an existing external symbol), so they don't fit
 the registry's declare-only model either, and converting them into real `__axon_*` externs would
 add a genuine cross-compilation-unit call for what's currently one hardware instruction — a
-regression, same class as the bitwise-op rejection above. **Slice 2 batch-migration is likely at
-or near its practical ceiling** under the registry's current declare-only capability model; further
-progress needs either a new eligible batch (still unsearched) or extending `ExternSig` itself to
-support synthesized wrapper bodies — a bigger, separate piece of work. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
+regression, same class as the bitwise-op rejection above. **Confirmed exhaustively 2026-07-18: no
+further simple candidates remain.** Scanned every `"__axon_\w+"` symbol reference in
+`codegen/builtins.rs` + `codegen/expr.rs` against the registry (not just a `BUILTINS`-name diff —
+the actual linked symbols). Every unregistered `__axon_*` symbol falls into one of the categories
+already ruled ineligible: str-returning out-param wrappers (`str_repeat`/`str_slice`/`str_reverse`/
+`str_replace`/`str_split`/`str_join`/`str_pad_*`/`str_trim*`/`str_to_upper`/`str_to_lower`/
+`str_digits_only`/`str_count`), dict operations (already-established bespoke out-param family),
+panic helpers invoked mid-expression rather than as a top-level call (`__axon_*_panic`), or
+impure/effectful builtins with complex `Result`/`Option`/`Uncertain` return layouts
+(`ai_extract_*`, `goal_run`, `spawn`, `select`, `chan_*`, `parse_*`, `read_file`/`write_file`,
+`exec`, `provenance_*`, `register_*`). **Slice 2's simple-batch migration (declare-only externs and
+LLVM intrinsics) is COMPLETE for this registry model** — 7 math intrinsics this session plus the
+pre-existing 25 rows cover every eligible candidate found. Further Slice 2 progress requires
+extending `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
+bodies, which is real, separate structural work (a new sub-slice), not a batch of ordinary
+row-adds. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
 `codegen::builtin_externs::drift_tests` — `every_extern_row_matches_a_known_builtin_with_the_same_arity`
 asserts every `BUILTIN_EXTERNS` row's `axon_name` (the join key the field comment reserved for
 exactly this) resolves to a `BUILTINS` entry with the same param count, and
@@ -63,7 +75,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, 32 rows, re-verified 2026-07-18); scripts/fuzz_parity.sh (Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4); Slice 2 still partial (str/math family batch not verified)
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, 32 rows, re-verified 2026-07-18); scripts/fuzz_parity.sh (Slice 2 math batch); CLAUDE.md "Adding a New Builtin" (Slice 4). Slice 2's simple-batch scope is complete (exhaustive __axon_* symbol scan, 2026-07-18, found zero further eligible candidates); extending the registry to cover out-param wrapper builtins is unstarted, separate structural work, not a batch-migration gap
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the
