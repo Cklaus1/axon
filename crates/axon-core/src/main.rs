@@ -399,6 +399,26 @@ enum Command {
         /// Emit the deploy report as stable JSON (`axon-deploy/1`).
         #[arg(long, help = "Machine-readable JSON output")]
         json: bool,
+
+        /// R33 §5.2: directory of pre-collected `.vote` files (from `axon-vm
+        /// quorum propose`/`vote`, run beforehand by the operator). Activates
+        /// the R33 quorum gate at Risk >= High; if omitted, the gate is open
+        /// (skipped) — same "absent gate function passes" convention as
+        /// simulate/stress/redteam_check/assert_deployable. This integration
+        /// only READS already-collected votes; it does not itself propose,
+        /// wait, or broadcast (see `axon-vm quorum propose`/`vote` for that).
+        #[arg(long, value_name = "DIR")]
+        quorum_dir: Option<PathBuf>,
+
+        /// Required fleet size for the quorum check (defaults to the number
+        /// of `.vote` files found in `--quorum-dir` if omitted).
+        #[arg(long, value_name = "N")]
+        quorum_n: Option<usize>,
+
+        /// Override path to the `axon-vm` binary (default: sibling of this
+        /// executable). Only consulted when `--quorum-dir` is given.
+        #[arg(long, value_name = "PATH")]
+        axon_vm_bin: Option<PathBuf>,
     },
 
     /// Run the red-team check on a .ax program.
@@ -739,7 +759,10 @@ fn dispatch(command: Command) {
             gate,
             risk,
             json,
-        } => cmd_deploy(file, gate, risk, json),
+            quorum_dir,
+            quorum_n,
+            axon_vm_bin,
+        } => cmd_deploy(file, gate, risk, json, quorum_dir, quorum_n, axon_vm_bin),
         Command::Redteam { file, json } => cmd_redteam(file, json),
     }
 }
@@ -5261,7 +5284,15 @@ fn derive_risk_from_ast(program: &axon_core::ast::Program) -> i64 {
 /// Risk >= High triggers: simulate → stress → redteam_check → assert_deployable → main.
 /// Risk < High runs:     redteam_check → assert_deployable → main.
 /// Any gate function that returns false/non-zero blocks the deploy.
-fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, json_flag: bool) {
+fn cmd_deploy(
+    file: PathBuf,
+    gate: Option<String>,
+    risk_flag: Option<String>,
+    json_flag: bool,
+    quorum_dir: Option<PathBuf>,
+    quorum_n: Option<usize>,
+    axon_vm_bin: Option<PathBuf>,
+) {
     validate_ax_extension(&file);
     let src = read_source(&file);
 
@@ -5352,6 +5383,44 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
         }
     }
 
+    // R33 §5.2: quorum gate — only at Risk >= High, and only when the
+    // operator opted in via --quorum-dir (absent = open gate, the same
+    // convention every other pipeline gate function already follows when
+    // it isn't present in the program).
+    let mut quorum_json: Option<String> = None;
+    if failed_gate.is_none() {
+        if let Some(dir) = &quorum_dir {
+            if !requires_full_pipeline {
+                eprintln!(
+                    "warning: --quorum-dir given but risk ({}) is below High — quorum gate not enforced",
+                    risk_level_name(risk)
+                );
+            } else {
+                match run_quorum_gate(dir, quorum_n, &axon_vm_bin) {
+                    Ok((quorum_met, exit_code, body)) => {
+                        quorum_json = Some(body);
+                        stages_run.push("quorum".to_string());
+                        if !quorum_met {
+                            failed_gate = Some(("quorum".to_string(), exit_code));
+                        }
+                    }
+                    Err(e) => {
+                        // The operator explicitly asked for quorum enforcement
+                        // (--quorum-dir was given); a gate that can't even run
+                        // (binary missing, unparseable output) must be a hard
+                        // error, never a silent open gate (I-9).
+                        eprintln!("error: R33 quorum gate: {e}");
+                        process::exit(2);
+                    }
+                }
+            }
+        }
+    }
+    let quorum_field = quorum_json
+        .as_ref()
+        .map(|q| format!(",\"quorum\":{q}"))
+        .unwrap_or_default();
+
     let risk_name = risk_level_name(risk);
 
     if let Some((failed, code)) = failed_gate {
@@ -5364,7 +5433,7 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
             println!(
                 "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"blocked_gate\",\
                  \"gate\":\"{failed}\",\"exit_code\":{code},\"risk\":\"{risk_name}\",\
-                 \"stages_run\":[{stages_json}],\"approved\":{is_approved}}}",
+                 \"stages_run\":[{stages_json}],\"approved\":{is_approved}{quorum_field}}}",
                 json_str(&file.display().to_string()),
             );
         } else {
@@ -5406,7 +5475,7 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
         println!(
             "{{\"schema\":\"axon-deploy/1\",\"path\":{},\"status\":\"{status}\",\
              \"exit_code\":{exit_code},\"risk\":\"{risk_name}\",\
-             \"stages_run\":[{stages_json}],\"approved\":{is_approved}}}",
+             \"stages_run\":[{stages_json}],\"approved\":{is_approved}{quorum_field}}}",
             json_str(&file.display().to_string()),
         );
     } else {
@@ -5425,6 +5494,79 @@ fn cmd_deploy(file: PathBuf, gate: Option<String>, risk_flag: Option<String>, js
     if blocked || exit_code != 0 {
         process::exit(exit_code);
     }
+}
+
+/// R33 §5.2 scoped integration: shell out to `axon-vm quorum check` over a
+/// directory of pre-collected `.vote` files and parse its `axon-vm-quorum-
+/// check/1` JSON output. Returns `(quorum_met, axon_vm_exit_code,
+/// quorum_json_body)` on a successful invocation — `quorum_met = false` is
+/// a normal, expected outcome (the gate ran and said no), not an `Err`.
+/// `Err` is reserved for setup failures (binary not found, spawn failure,
+/// unparseable output) — the gate could not even run, which the caller
+/// treats as a hard error (exit 2), never a silent open gate, since the
+/// operator explicitly opted in via `--quorum-dir`.
+///
+/// This shells out to a separate binary rather than depending on `axon-vm`
+/// as a library crate, matching the cross-binary orchestration pattern
+/// `axon-web` already uses to wrap the `axon` CLI (Phase 12) — deliberately
+/// NOT adding a new Cargo dependency edge to `axon-core`, the one crate in
+/// this workspace with an explicit "keep the fast interpreter build
+/// dependency-light" invariant (`BUILD_RESOLVED.md`).
+fn run_quorum_gate(
+    quorum_dir: &Path,
+    quorum_n: Option<usize>,
+    axon_vm_bin_override: &Option<PathBuf>,
+) -> Result<(bool, i32, String), String> {
+    let axon_vm_bin = match axon_vm_bin_override {
+        Some(p) => p.clone(),
+        None => {
+            let exe_dir = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+                .ok_or_else(|| "could not determine this binary's own directory".to_string())?;
+            exe_dir.join("axon-vm")
+        }
+    };
+    if !axon_vm_bin.exists() {
+        return Err(format!(
+            "axon-vm binary not found at {} (build with: cargo build -p axon-vm \
+             --no-default-features; or pass --axon-vm-bin PATH)",
+            axon_vm_bin.display()
+        ));
+    }
+
+    let n = match quorum_n {
+        Some(n) => n,
+        None => std::fs::read_dir(quorum_dir)
+            .map_err(|e| format!("cannot read --quorum-dir {}: {e}", quorum_dir.display()))?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().map(|ext| ext == "vote").unwrap_or(false))
+            .count(),
+    };
+
+    let output = std::process::Command::new(&axon_vm_bin)
+        .arg("quorum")
+        .arg("check")
+        .arg("--responses-dir")
+        .arg(quorum_dir)
+        .arg("--n")
+        .arg(n.to_string())
+        .arg("--json")
+        .output()
+        .map_err(|e| format!("failed to spawn {}: {e}", axon_vm_bin.display()))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).map_err(|e| {
+        format!("could not parse axon-vm quorum check JSON output: {e}\nstdout: {stdout}")
+    })?;
+
+    let quorum_met = parsed
+        .get("quorum_met")
+        .and_then(|v| v.as_bool())
+        .ok_or_else(|| format!("axon-vm quorum check JSON missing quorum_met: {stdout}"))?;
+    let exit_code = output.status.code().unwrap_or(-1);
+
+    Ok((quorum_met, exit_code, parsed.to_string()))
 }
 
 /// `axon redteam` — execute the `redteam_check` function (if present).

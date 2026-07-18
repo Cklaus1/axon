@@ -277,6 +277,90 @@ else
     fail "axon-attest tests FAILED — R33 must not regress R26/R31"
 fi
 
+# ── 10. R33 S4: `axon deploy --quorum-dir` real cross-binary journey ─────────
+echo ""
+echo "10. R33 S4: axon deploy --quorum-dir cross-binary journey"
+
+AXON_BIN="$REPO_ROOT/target/debug/axon"
+if (cd "$REPO_ROOT" && cargo build -p axon-core --no-default-features --bin axon --quiet 2>&1); then
+    pass "axon binary builds"
+else
+    fail "axon binary FAILED to build"
+fi
+
+HELLO_AX="$REPO_ROOT/examples/hello.ax"
+
+# 10a. Backward compat: no --quorum-dir → gate is open, no "quorum" field.
+NOQUORUM_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --json 2>/dev/null)
+if echo "$NOQUORUM_OUT" | grep -q '"status":"deployed"' && ! echo "$NOQUORUM_OUT" | grep -q '"quorum"'; then
+    pass "no --quorum-dir → deploy succeeds, no quorum field (100% backward compatible)"
+else
+    fail "no --quorum-dir case regressed: $NOQUORUM_OUT"
+fi
+
+# 10b. Sock-puppet: 3 YES votes, ONE shared --lineage-root → deploy BLOCKED.
+DEPLOY_SP_DIR="$(mktemp -d /tmp/r33-deploy-sockpuppet-XXXXXX)"
+trap 'rm -rf "$WORK_DIR" "$MISMATCH_DIR" "$SOCKPUPPET_DIR" "$DISTINCT_DIR" "$DEPLOY_SP_DIR" "$DEPLOY_OK_DIR"' EXIT
+
+"$BIN" quorum propose --run-id "deploy-sockpuppet" --prog "$HELLO_AX" \
+    --action "deploy hello.ax" --out "$DEPLOY_SP_DIR/request.json" >/dev/null 2>&1
+for i in 1 2 3; do
+    "$BIN" quorum vote --request "$DEPLOY_SP_DIR/request.json" --approve \
+        --reason "sock puppet $i" --lineage-root "sockpuppet-principal" \
+        --out "$DEPLOY_SP_DIR/voter$i.vote" >/dev/null 2>&1
+done
+
+set +e
+DEPLOY_SP_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_SP_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_SP_RC=$?
+set -e
+
+if [ "$DEPLOY_SP_RC" -eq 1 ] && echo "$DEPLOY_SP_OUT" | grep -q '"gate":"quorum"'; then
+    pass "sock-puppet coalition → axon deploy BLOCKED at gate 'quorum', exit 1"
+else
+    fail "sock-puppet deploy → exit $DEPLOY_SP_RC, expected 1: $DEPLOY_SP_OUT"
+fi
+if echo "$DEPLOY_SP_OUT" | grep -q '"exit_code":13'; then
+    pass "JSON surfaces axon-vm's real exit_code 13 (QUORUM_BLOCKED) for detail"
+else
+    fail "JSON does not surface exit_code 13: $DEPLOY_SP_OUT"
+fi
+
+# 10c. Legitimate quorum: 3 YES votes, 3 DISTINCT roots → deploy succeeds.
+DEPLOY_OK_DIR="$(mktemp -d /tmp/r33-deploy-legit-XXXXXX)"
+"$BIN" quorum propose --run-id "deploy-legit" --prog "$HELLO_AX" \
+    --action "deploy hello.ax" --out "$DEPLOY_OK_DIR/request.json" >/dev/null 2>&1
+for i in 1 2 3; do
+    "$BIN" quorum vote --request "$DEPLOY_OK_DIR/request.json" --approve \
+        --reason "voter $i" --lineage-root "principal-$i" \
+        --out "$DEPLOY_OK_DIR/voter$i.vote" >/dev/null 2>&1
+done
+
+set +e
+DEPLOY_OK_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" --quorum-n 3 --json 2>/dev/null)
+DEPLOY_OK_RC=$?
+set -e
+
+if [ "$DEPLOY_OK_RC" -eq 0 ] && echo "$DEPLOY_OK_OUT" | grep -q '"status":"deployed"' && echo "$DEPLOY_OK_OUT" | grep -q '"quorum_met":true'; then
+    pass "3 DISTINCT-root approvals → axon deploy succeeds with quorum_met:true"
+else
+    fail "legitimate-quorum deploy → exit $DEPLOY_OK_RC: $DEPLOY_OK_OUT"
+fi
+
+# 10d. Missing axon-vm binary + explicit --quorum-dir → hard error (exit 2),
+#      never a silently-open gate (I-9).
+set +e
+MISSING_BIN_OUT=$("$AXON_BIN" deploy "$HELLO_AX" --risk high --quorum-dir "$DEPLOY_OK_DIR" \
+    --axon-vm-bin /nonexistent/axon-vm --json 2>&1)
+MISSING_BIN_RC=$?
+set -e
+
+if [ "$MISSING_BIN_RC" -eq 2 ] && echo "$MISSING_BIN_OUT" | grep -qi "axon-vm binary not found"; then
+    pass "missing --axon-vm-bin → hard error exit 2, never a silent open gate"
+else
+    fail "missing axon-vm binary case → exit $MISSING_BIN_RC, expected 2: $MISSING_BIN_OUT"
+fi
+
 # ── Final result ──────────────────────────────────────────────────────────────
 echo ""
 if [ "$FAIL" -eq 0 ]; then

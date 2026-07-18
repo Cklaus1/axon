@@ -7,8 +7,12 @@ propose/vote/check CLI + pure `check_quorum` aggregator); **R27 coalition ceilin
 blessed fallback default (`ceil(N/2)-1`, §4.5 point 4's worked example), closing the sock-puppet
 attack (N instances from one principal cannot alone force quorum) without depending on R27's real
 `Coalition`/`max_quorum_power` type being wired in — exactly the spec's own explicitly-sanctioned
-fallback path (§6 slice-risk note, §-Gate anti-stub carve-out). vsock transport and `axon deploy`
-integration remain open. See §14 Evidence ledger.
+fallback path (§6 slice-risk note, §-Gate anti-stub carve-out). **`axon deploy` integration landed
+2026-07-18** (§5.2.1) — `axon deploy --quorum-dir DIR` shells out to `axon-vm quorum check`
+(the same cross-binary pattern `axon-web` already uses to wrap the `axon` CLI), inserting the
+quorum result as one more named pipeline gate; omitting the flag leaves the gate open, so every
+pre-existing `axon deploy` invocation is unaffected. Only the R26 vsock broadcast transport (S2)
+remains open. See §14 Evidence ledger.
 **Implements:** the distributed gate for Risk ≥ High irreversible actions identified after R26/R27:
 a single-VM safety gate, even with R26 attestation and the R27 kill-switch, has one residual failure
 mode — the VM itself could be compromised *after* its attestation report was produced. R33 distributes
@@ -49,10 +53,13 @@ attestation-consistency checks, **and (2026-07-18) the §4.5 coalition ceiling**
 gains a `lineage_root` field (a SEPARATE concept from `voter_tcb`: which principal/coalition a
 voter belongs to, not what software it runs — see the field's own doc comment for why defaulting
 one to the other would be backwards), and `check_quorum` caps admitted YES votes per root at the
-spec's own hardcoded safe-default cap, with NO dependency on R27's real `Coalition` type. It does
-**not** yet implement the R26 vsock broadcast transport or the `axon deploy` pipeline integration
-described in §2/§5.2 below — those remain open follow-on work tracked by this spec's unchanged
-body. See §14 Evidence ledger for exactly what was verified and how.)
+spec's own hardcoded safe-default cap, with NO dependency on R27's real `Coalition` type, **and
+(2026-07-18) the §5.2 `axon deploy` integration** — `axon deploy --quorum-dir DIR` shells out to
+`axon-vm quorum check` (§5.2.1: cross-binary orchestration, no new `axon-core` dependency) and
+folds the result into the same named-gate mechanism `simulate`/`stress`/`redteam_check`/
+`assert_deployable` already use. It does **not** yet implement the R26 vsock broadcast transport
+described in §2 below — that remains open follow-on work tracked by this spec's unchanged body.
+See §14 Evidence ledger for exactly what was verified and how.)
 
 > **Read this framing first.** R33 does **not** change one line of Axon-level containment, the
 > kill-switch (R27), or the attestation protocol (R26/R31). What R33 changes is the **number of
@@ -405,6 +412,43 @@ The quorum gate result is included in the `axon-deploy/1` JSON schema as:
 }
 ```
 
+#### 5.2.1 Scoped implementation (2026-07-18) — reads pre-collected votes, doesn't broadcast
+
+The paragraph above describes the *full* protocol (§5.1's `quorum propose`/`vote --listen`/`audit`
+daemon flow, live broadcast, `consensus_score`, per-voter `axtcb1-ext:` list). Per this spec's own
+established honesty convention (§S0/§40 framing), the actually-landed integration is the scoped,
+file-based counterpart:
+
+- `axon deploy FILE --risk high --quorum-dir DIR [--quorum-n N] [--axon-vm-bin PATH]`. `DIR` is an
+  operator-provided directory of `.vote` files, already collected by whatever process ran
+  `axon-vm quorum propose`/`vote` beforehand (this integration does **not** itself propose, wait,
+  or broadcast — it only *reads* votes that already exist, matching `axon-vm quorum check`'s own
+  scope). `N` defaults to the count of `.vote` files found if omitted.
+- **`--quorum-dir` is required to activate the gate at all** — if omitted, the quorum gate is
+  **open** (skipped), exactly like every other Phase-11 gate function that isn't present in the
+  program (§ "A gate function that is absent is treated as 'passed'"). This preserves 100%
+  backward compatibility: no existing `axon deploy` invocation is affected.
+- If `--quorum-dir` **is** given but the `axon-vm` binary cannot be located (sibling of the running
+  `axon` binary by default, or the `--axon-vm-bin` override), this is a **hard error (exit 2)** —
+  the operator explicitly opted into quorum enforcement, so silently treating a missing binary as
+  an open gate would be an I-9 (no-silent-success) violation, not a graceful degrade.
+- Implementation: `axon deploy` shells out to `axon-vm quorum check --responses-dir DIR --n N
+  --json` (schema `axon-vm-quorum-check/1`, already shipped) and parses its result — the SAME
+  cross-binary-orchestration pattern `axon-web` already uses to wrap the `axon` CLI (Phase 12), not
+  a new architecture. This was chosen over making `axon-core` depend on `axon-vm` as a library
+  crate specifically to avoid adding a new dependency edge to `axon-core`'s Cargo.toml — the one
+  crate in this workspace with an explicit, documented "keep the fast interpreter build
+  dependency-light" invariant (`BUILD_RESOLVED.md`).
+- The scoped `"quorum"` JSON block therefore carries the fields `check_quorum` actually produces
+  (`quorum_met`, `coalition_size`, `approvals`, `required_n`, `blocking_reason`), not the full
+  protocol's `consensus_score`/`voters` list (no live per-voter identity is available from a
+  pre-collected directory read alone).
+- A blocked quorum is treated as one more named pipeline gate (`"gate":"quorum"`) in the exact
+  same `"status":"blocked_gate"` shape the existing `simulate`/`stress`/`redteam_check`/
+  `assert_deployable` gates already produce — `axon deploy`'s own process exit code stays 1
+  (its existing "blocked" convention), while the JSON's `exit_code` field surfaces the real
+  `axon-vm` code (13 QUORUM_BLOCKED / 14 QUORUM_ATTEST_FAIL) for detail.
+
 ### 5.3 Voter policy
 The default voter policy (`policy.rs`) maps Phase 11 Risk to a score:
 ```
@@ -562,7 +606,7 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | R33.S1 | R33.S0 | R26/R31 regression check (`axon-attest` test suite unchanged) | landed |
 | R33.S2 | R33.S0; vsock transport (currently file-based propose/vote/check) | new transport-specific test, not yet named | todo |
 | R33.S3 (coalition ceiling) | R33.S0 | `coalition_bound_limits_same_lineage`, `coalition_cap_does_not_block_distinct_lineage_roots` (`crates/axon-vm/src/quorum/mod.rs`); `scripts/r33_acceptance_gate.sh` §8 (real CLI sock-puppet + distinct-roots journey) | landed (hardcoded `ceil(N/2)-1` fallback per the spec's own §6 slice-risk note — no dependency on R27's real `Coalition`/`max_quorum_power` type) |
-| R33.S4 | R33.S0; `axon deploy` pipeline integration (§5.2 of this spec) | not yet named | todo |
+| R33.S4 (`axon deploy` integration) | R33.S0 | `scripts/r33_acceptance_gate.sh` §10 (backward-compat + sock-puppet-blocked + legit-quorum-met + missing-binary-hard-error, real `axon`↔`axon-vm` cross-binary journey) | landed (scoped per §5.2.1: reads pre-collected votes via subprocess shell-out to `axon-vm quorum check`, no live broadcast — no new `axon-core` Cargo dependency) |
 
 ## §14 — Evidence ledger
 
@@ -574,11 +618,11 @@ axon-vm quorum audit --action-id <UUID-from-step-2> --json
 | Attestation mismatch across voters is a distinct failure from a plain minority | `bash scripts/r33_acceptance_gate.sh` (step 7) | mismatched `voter_tcb` → exit 14 QUORUM_ATTEST_FAIL, distinct from exit 13 | this commit @ 2026-07-18 | PASS |
 | R27 coalition ceiling: 3 YES votes from ONE `--lineage-root` cannot alone force quorum (real CLI, not just unit test); 3 YES votes from 3 DISTINCT roots meet quorum normally (cap does not over-trigger) | `bash scripts/r33_acceptance_gate.sh` (step 8) | sock-puppet → exit 13, reason names "coalition"; distinct-roots → exit 0 | this commit @ 2026-07-18 | PASS |
 | R33 did not regress R26/R31 | `bash scripts/r33_acceptance_gate.sh` (step 9) | `axon-attest` test suite: 22 passed, 0 failed | this commit @ 2026-07-18 | PASS |
+| R33.S4: `axon deploy --quorum-dir` real cross-binary journey — no-flag backward compat (no `quorum` field); sock-puppet coalition BLOCKED (exit 1, `gate:quorum`, JSON `exit_code:13`); 3-distinct-root quorum met (deploys, `quorum_met:true`); missing `--axon-vm-bin` is a hard error (exit 2), never a silent open gate | `bash scripts/r33_acceptance_gate.sh` (step 10) | all 4 sub-checks pass | this commit @ 2026-07-18 | PASS |
 
 Honest scope, per this spec's own header: the above is a **file-based, single-host** slice, now
-WITH the R27 coalition ceiling (§4.5) closed via the spec's own hardcoded-default fallback path.
-The vsock broadcast transport (§2) and `axon deploy` pipeline integration (§5.2) are real,
-described in this spec's unchanged body, and not yet built — R33.S2/S4 above. Do not read "gate:
+WITH the R27 coalition ceiling (§4.5) AND the `axon deploy` integration (§5.2.1) closed. The R26
+vsock broadcast transport (§2) is the one remaining gap — R33.S2 above. Do not read "gate:
 ALL CHECKS PASSED" as "R33 fully implements this spec"; it means "the scoped slice this session
 built is what it claims to be."
 
