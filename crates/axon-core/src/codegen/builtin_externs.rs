@@ -372,3 +372,47 @@ impl<'ctx> super::Codegen<'ctx> {
         }
     }
 }
+
+// ── R1d slice 3: drift cross-check ──────────────────────────────────────────
+// `axon_name` is the join key against `crate::builtins::BUILTINS` (see its
+// doc comment above). These tests are the "so the two tables can't drift"
+// promise from governance/specs/R1d-single-source-builtins.md §4 slice 3.
+#[cfg(test)]
+mod drift_tests {
+    use super::BUILTIN_EXTERNS;
+    use crate::builtins::BUILTINS;
+
+    #[test]
+    fn every_extern_row_matches_a_known_builtin_with_the_same_arity() {
+        for row in BUILTIN_EXTERNS {
+            let b = BUILTINS.iter().find(|b| b.name == row.axon_name).unwrap_or_else(|| {
+                panic!(
+                    "BUILTIN_EXTERNS row '{}' has no matching BUILTINS entry \
+                     (renamed or removed without updating the registry — R1d slice 3 drift)",
+                    row.axon_name
+                )
+            });
+            assert_eq!(
+                b.params.len(),
+                row.params.len(),
+                "BUILTIN_EXTERNS row '{}' declares {} LLVM param(s) but BUILTINS says {} \
+                 source-level param(s) — signature drift (R1d slice 3)",
+                row.axon_name,
+                row.params.len(),
+                b.params.len()
+            );
+        }
+    }
+
+    #[test]
+    fn no_duplicate_extern_registry_rows() {
+        let mut seen = std::collections::HashSet::new();
+        for row in BUILTIN_EXTERNS {
+            assert!(
+                seen.insert(row.axon_name),
+                "BUILTIN_EXTERNS has more than one row for '{}' — duplicate registration",
+                row.axon_name
+            );
+        }
+    }
+}

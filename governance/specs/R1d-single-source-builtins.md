@@ -8,14 +8,20 @@
 into the registry; the str/math family slice 2 names as the next batch
 (`str_to_upper`/`str_to_lower`/`str_trim`) were separately fixed for UTF-8 correctness (BUG_HUNT
 commits, R1b-adjacent) via direct axon-rt delegation, not necessarily added as `BUILTIN_EXTERNS`
-rows — not verified either way this session. **Slice 3 (drift cross-check test) NOT landed**: the
-registry has a join-key field explicitly reserved "for the slice-3 drift cross-check" but nothing
-in the tree consumes it yet — no test currently fails if `BUILTINS` and `BUILTIN_EXTERNS` drift
-apart. **Slice 4 (CLAUDE.md doc update) NOT landed**: `CLAUDE.md`'s own "Adding a New Builtin"
-section still describes the original 5-step recipe this spec set out to collapse to 3, unchanged.
-This header said "Draft" with zero indication that a third of the design already shipped; same
-staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by the same
-outer-loop sweep (`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
+rows — not verified either way this session. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
+`codegen::builtin_externs::drift_tests` — `every_extern_row_matches_a_known_builtin_with_the_same_arity`
+asserts every `BUILTIN_EXTERNS` row's `axon_name` (the join key the field comment reserved for
+exactly this) resolves to a `BUILTINS` entry with the same param count, and
+`no_duplicate_extern_registry_rows` catches accidental double-registration — both PASS on the
+current 25 rows. This is the one-directional half of the spec's "vice-versa" ask (registry → source
+table); the reverse direction (does every eligible `BUILTINS` row have a registry entry) isn't
+cleanly automatable without a marker for "which builtins use the straight-extern path vs. a bespoke
+call-site special case" — left as a known gap, not silently skipped. **Slice 4 (CLAUDE.md doc
+update) NOT landed**: `CLAUDE.md`'s own "Adding a New Builtin" section still describes the original
+5-step recipe this spec set out to collapse to 3, unchanged. This header said "Draft" with zero
+indication that a third of the design already shipped; same staleness class as
+R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by the same outer-loop sweep
+(`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
 
 ```spec-meta
 id: R1d-single-source-builtins
@@ -27,7 +33,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: crates/axon-core/src/codegen/builtin_externs.rs (Slice 1/2 partial, re-verified 2026-07-18); Slice 3/4 not landed
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, Slice 3, landed 2026-07-18); Slice 1/2 partial; Slice 4 not landed
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the

@@ -220,11 +220,29 @@ regression.
 
 All three now carry spec-meta. Pre-convention count 43 → 40.
 
+## R1d Slice 3 implemented as real feature work (this iteration — not a docs pass)
+
+Built the drift cross-check test the registry's own `axon_name` field comment had been reserving
+since Slice 1: `codegen::builtin_externs::drift_tests` in
+`crates/axon-core/src/codegen/builtin_externs.rs` —
+`every_extern_row_matches_a_known_builtin_with_the_same_arity` (every `BUILTIN_EXTERNS` row's join
+key resolves to a `BUILTINS` entry with matching param count) and
+`no_duplicate_extern_registry_rows`. Verified the arity-matching assumption against several rows by
+hand first (dict_new/has/len/merge/inc, sleep_ms/now_ms — all exact 1:1) before writing the general
+test, so a legitimate ABI-expansion case (e.g. an out-param wrapper) wouldn't have produced a
+false-positive failure; confirmed none of the 25 rows in this table use out-params (those stay
+bespoke call-site special cases per the file's own top comment, explicitly excluded). Both tests
+pass; correctly compile out under `--no-default-features` (codegen-gated) rather than failing.
+Documented as the honest one-directional half of the spec's "vice-versa" ask — the reverse
+direction (which `BUILTINS` rows *should* have a registry entry) isn't cleanly automatable without
+a marker distinguishing straight-extern builtins from bespoke-call-site ones; left as a known gap,
+not silently skipped. R1d spec updated: Slice 3 NOT landed → LANDED.
+
 ## Next candidate slice
 
-- Continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit per
-  `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick up R1d's own
-  Slice 3 (drift cross-check test) or Slice 4 (CLAUDE.md doc update) as real feature work rather
-  than a docs-truth pass.
+- R1d Slice 4 (CLAUDE.md "Adding a New Builtin" doc update, 5 steps → 3) — small, well-scoped,
+  genuinely not started.
+- Or: continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit
+  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
   real deploys.
