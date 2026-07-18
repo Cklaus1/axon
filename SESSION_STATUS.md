@@ -299,13 +299,30 @@ covered, including the `nan_sqrt_neg` edge case), and manually verified `pow` (n
 corpus) via `axon run`/`axon build` on 3 cases including a NaN case — native matched interp
 exactly on all of them.
 
+## R1d Slice 2 candidate pool investigated (this iteration) — near its practical ceiling
+
+Followed up on the "str/math family" open question from last iteration and closed it definitively
+(docs-only, no code): `str_to_upper`/`str_to_lower`/`str_trim{,_start,_end}` are confirmed NOT
+registry-eligible — each is a hand-built shim wrapping a str→str out-param call, exactly the
+"bespoke call-site lowering" class the registry's own top comment excludes. Also checked
+`i64_to_f64`/`f64_to_i64` as alternatives: both are single-instruction function *bodies*
+synthesized in codegen (not declarations of an existing symbol), so they don't fit the
+declare-only registry model either, and converting them to real externs would add a genuine
+cross-compilation-unit call for one hardware instruction — a regression, same class as the
+bitwise-op rejection two iterations ago.
+
+**Net conclusion: Slice 2 batch-migration via simple row-adds is likely near its ceiling** given
+the registry's current declare-only capability model (covers `__axon_*` externs and LLVM
+intrinsics — both already mined this session). Further progress needs either a genuinely new
+eligible batch (unsearched candidates may still exist — worth another diff-and-filter pass before
+assuming none remain) or extending `ExternSig` to support synthesized wrapper bodies (a bigger,
+separate piece of work, not a quick row-add).
+
 ## Next candidate slice
 
-- Continue R1d Slice 2 (more batches — the str/math family named in the spec's own text,
-  `str_to_upper`/`str_to_lower`/`str_trim`, is worth checking whether it's already
-  `BUILTIN_EXTERNS`-eligible or needs the bespoke-lowering path), or pick a different simple
-  candidate the same way (diff `BUILTINS` against the registry, rule out anything with a reverse
-  dependency or already-optimal inline lowering before touching codegen).
+- Do one more diff-and-filter pass over `BUILTINS` vs the registry before concluding no eligible
+  candidates remain (only ~15 of ~184 have been checked so far) — or pivot to extending
+  `ExternSig` to cover out-param wrapper builtins as real Slice 2/5 feature work.
 - Or: continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit
   per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
   `REQUIREMENTS.md` row.
