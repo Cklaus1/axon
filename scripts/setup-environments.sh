@@ -7,7 +7,7 @@
 # not here. See ENVIRONMENTS.md for the full explanation + verification steps.
 #
 # Idempotent: re-running skips what's already present. Needs sudo (apt) + rustup.
-# Usage:  bash scripts/setup-environments.sh [gpu|browser|android|all]   (default: all)
+# Usage:  bash scripts/setup-environments.sh [gpu|browser|android|ebpf|zephyr|formal|all]   (default: all)
 set -uo pipefail
 WHAT="${1:-all}"
 ANDROID_HOME="${ANDROID_HOME:-$HOME/android-sdk}"
@@ -125,14 +125,41 @@ setup_zephyr() {
     || echo "  ✗ arm-zephyr-eabi toolchain missing"
 }
 
+setup_formal() {
+  step "Formal methods — TLC (TLA+) + Coq (R32)"
+  # tla2tools.jar is a self-contained jar; no root needed beyond a JRE. Placed at
+  # ~/tla2tools.jar because that's one of the three paths r32_acceptance_gate.sh probes
+  # (/usr/local/lib/tla2tools.jar, ~/tla2tools.jar, $ROOT/tla2tools.jar).
+  command -v java >/dev/null || sudo apt-get install -y -q default-jre
+  if [ -f "$HOME/tla2tools.jar" ]; then
+    ok "tla2tools.jar already present at ~/tla2tools.jar"
+  else
+    wget -q https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar \
+      -O "$HOME/tla2tools.jar"
+    ok "tla2tools.jar v1.8.0 downloaded to ~/tla2tools.jar"
+  fi
+  if command -v coqc >/dev/null; then
+    ok "coqc already present ($(coqc --version | head -1))"
+  else
+    # apt's `coq` package is 8.18.0 on Ubuntu 24.04 -- matches the R32 spec's pin exactly
+    # and is far faster than the opam-from-source path the spec's §8 describes (that path
+    # is the portable fallback for hosts without this apt package).
+    sudo apt-get install -y -q coq
+  fi
+  bash scripts/r32_acceptance_gate.sh >/tmp/_r32_probe.log 2>&1 \
+    && ok "r32_acceptance_gate.sh: 20/20 PASS, 0 SKIPPED" \
+    || { echo "  ✗ r32_acceptance_gate.sh did not pass cleanly -- see /tmp/_r32_probe.log"; return 1; }
+}
+
 case "$WHAT" in
   gpu)     setup_gpu ;;
   browser) setup_browser ;;
   android) setup_android ;;
   ebpf)    setup_ebpf ;;
   zephyr)  setup_zephyr ;;
-  all)     setup_gpu; setup_browser; setup_android; setup_ebpf; setup_zephyr ;;
-  *) echo "usage: $0 [gpu|browser|android|ebpf|zephyr|all]"; exit 2 ;;
+  formal)  setup_formal ;;
+  all)     setup_gpu; setup_browser; setup_android; setup_ebpf; setup_zephyr; setup_formal ;;
+  *) echo "usage: $0 [gpu|browser|android|ebpf|zephyr|formal|all]"; exit 2 ;;
 esac
 
 echo ""

@@ -84,14 +84,16 @@ its own header/spec-meta, `ROADMAP.md` §10.6 (moved into the Shipped R26–R32 
 `governance/REQUIREMENTS.md`. This is the strongest evidence yet for the outer loop's core claim:
 a SKIPPED check can hide bugs indefinitely, in both the code under test AND the test itself.
 
-**Caveat for reproducibility:** the TLC jar and Coq installation are host-level state, not
-committed to the repo (can't be — `tla2tools.jar` is a 4.5MB binary, `apt install coq` is a system
-package). A fresh clone/CI run without these installed will see R32 fall back to 18/20 + 2 SKIPPED
-again until someone repeats this setup. Worth a future slice: document this setup step somewhere
-CI-visible (`ENVIRONMENTS.md`?) so it isn't a one-off tribal-knowledge install.
+**Reproducibility follow-up (resolved this iteration):** the TLC jar and Coq installation are
+host-level state, not committed to the repo (can't be — `tla2tools.jar` is a 4.5MB binary,
+`apt install coq` is a system package). Documented in `ENVIRONMENTS.md` §8 (table row + full
+section, matching the existing GPU/browser/Android/eBPF/Zephyr/TEE pattern) and added
+`setup_formal()` to `scripts/setup-environments.sh` (`bash scripts/setup-environments.sh formal`),
+which installs both idempotently and re-runs `r32_acceptance_gate.sh` to confirm 20/20. Tested
+clean on this host (both tools already present → no-op + verify).
 
 ## Next candidate slice
 
-- Document the TLC/Coq setup step in `ENVIRONMENTS.md` so R32's gate stays reproducible off this
-  one host, or continue the outer-loop sweep into the 53 pre-convention specs, or pick the next
+- Continue the outer-loop sweep into the 53 pre-convention specs (add spec-meta on next real edit
+  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick the next
   highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row.

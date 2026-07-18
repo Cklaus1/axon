@@ -24,6 +24,7 @@ exception (Apple toolchain is macOS-only) and is verified in CI instead.
 | **eBPF — clang-bpf + kernel BTF** | `scripts/ebpf_verify.sh` (R23) | No (in-kernel verifier / rbpf) | `clang -target bpf -c -x c /dev/null -o /dev/null && echo ok` |
 | **Zephyr RTOS — SDK + QEMU** | `scripts/zephyr_qemu_gate.sh` (R25) | No (QEMU Cortex-M) | `west --version && qemu-system-arm --version` |
 | **TEE — Gramine sim / CI attest** | `scripts/tee_sim_run.sh`, `.github/workflows/tee.yml` (R24) | **attestation: TEE hardware only** → cloud CI | `axon check examples/tee/*.ax` (E1810 rule) |
+| **Formal methods — TLC + Coq** | `scripts/r32_acceptance_gate.sh` (R32) | No | `bash scripts/r32_acceptance_gate.sh` (20/20 PASS, 0 SKIPPED) |
 
 > ⚠️ **LLVM pin (read before installing eBPF tooling):** Axon codegen requires **LLVM 17**
 > (`llvm-sys` 170). Installing the `llvm`/`clang` apt *metapackage* on Ubuntu 24.04 pulls
@@ -233,6 +234,36 @@ one genuine off-host boundary** (this host has no SEV-SNP/TDX/SGX — `sme` only
 axon check examples/tee/confidential_score.ax   # the E1810 Secret-unseal-only-in-enclave rule
 bash scripts/tee_sim_run.sh                      # baseline enclave run (+ gramine-direct if installed)
 ```
+
+---
+
+## 8. Formal methods — TLC (TLA+) + Coq (R32)
+
+R32's proof is only genuinely "machine-checked" when TLC and `coqc` actually run — a `.tla`/`.v`
+file that merely has no `Admitted` and ends in `Qed` is **structurally valid, not verified**
+(found the hard way 2026-07-18: neither tool had ever run against this file before, and doing so
+for the first time surfaced two real proof bugs plus a gate-script bug that had been hiding behind
+a SKIP; see `governance/specs/R32-formal-corrigibility-proof.md` §14). Both tools install cleanly
+on a bare Ubuntu 24.04 host with **no hardware requirement**:
+
+```bash
+# TLC — a self-contained jar, no root needed beyond a JRE
+sudo apt-get install -y default-jre
+wget -q https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar -O ~/tla2tools.jar
+
+# Coq — apt's `coq` package is 8.18.0 on Ubuntu 24.04, matching the spec's pin exactly.
+# (The spec's own §8 opam-from-source instructions are the portable fallback for hosts
+# without this apt package; apt is faster wherever it's available.)
+sudo apt-get install -y coq
+```
+
+Verify:
+
+```bash
+bash scripts/r32_acceptance_gate.sh   # → 20/20 PASS, 0 SKIPPED (was 18/20 + 2 SKIPPED before either tool was installed)
+```
+
+`scripts/setup-environments.sh formal` does the above idempotently and re-runs the gate to confirm.
 
 ---
 
