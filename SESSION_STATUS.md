@@ -318,13 +318,29 @@ eligible batch (unsearched candidates may still exist — worth another diff-and
 assuming none remain) or extending `ExternSig` to support synthesized wrapper bodies (a bigger,
 separate piece of work, not a quick row-add).
 
-## Next candidate slice
+## R1d Slice 2 exhaustively closed (this iteration) — done at this granularity
 
-- Do one more diff-and-filter pass over `BUILTINS` vs the registry before concluding no eligible
-  candidates remain (only ~15 of ~184 have been checked so far) — or pivot to extending
-  `ExternSig` to cover out-param wrapper builtins as real Slice 2/5 feature work.
-- Or: continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit
-  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
-  `REQUIREMENTS.md` row.
-- Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
-  real deploys.
+Went further than the name-diff: scanned every literal `"__axon_\w+"` symbol reference across
+`codegen/builtins.rs` + `codegen/expr.rs` against the registry (not just `BUILTINS` names — the
+actual linked symbols). Every unregistered symbol is str-returning out-param wrappers, the dict
+family, mid-expression panic helpers, or impure builtins with complex return layouts — all
+categories already ruled ineligible. **Slice 2's simple-batch scope is confirmed complete; no
+further row-add candidates exist.** R30 hardening was considered and explicitly rejected for a
+quick fix: auto-retry inside a *deployment safety gate* risks masking a genuine failure (papering
+over exactly what R30 exists to catch) — that needs real design review under BUILD_PROTOCOL's
+Safety/TCB-touch tier, not a hasty patch.
+
+## Next candidate slice — genuinely fresh scope needed
+
+R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
+work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
+Options for the next iteration:
+- Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
+  bodies (would unlock the str-returning family for the registry) — real design work, size it
+  before committing to it in one iteration.
+- Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
+  `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Pick a fresh `REQUIREMENTS.md` row not yet touched this session (R2-R11 area, or R33/R34's
+  explicitly-open remaining scope: vsock transport, R27 coalition ceiling, `axon deploy`
+  integration for R33; Slice 4/6/7 for R34).
+- R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
