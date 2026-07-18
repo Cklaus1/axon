@@ -1,6 +1,35 @@
 # Tech Spec — R1d: Single-Source Builtins
 
-**Status:** 📋 Draft (2026-06-04) — the structural simplification that compounds.
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — **Slice 1 LANDED** (`b8f54fb`,
+"BUILTIN_EXTERNS registry (R1d slice 1) — collapse 21 declare blocks"):
+`crates/axon-core/src/codegen/builtin_externs.rs` exists exactly as designed, 25 registry rows,
+`declare_one_extern`/`declare_builtin_externs` doing the iterate-and-declare this spec prescribes.
+**Slice 2 partially landed**: `sleep_ms`/`now_ms` (`daa01f7`) and `dict_merge` (`eff8ce2`) migrated
+into the registry; the str/math family slice 2 names as the next batch
+(`str_to_upper`/`str_to_lower`/`str_trim`) were separately fixed for UTF-8 correctness (BUG_HUNT
+commits, R1b-adjacent) via direct axon-rt delegation, not necessarily added as `BUILTIN_EXTERNS`
+rows — not verified either way this session. **Slice 3 (drift cross-check test) NOT landed**: the
+registry has a join-key field explicitly reserved "for the slice-3 drift cross-check" but nothing
+in the tree consumes it yet — no test currently fails if `BUILTINS` and `BUILTIN_EXTERNS` drift
+apart. **Slice 4 (CLAUDE.md doc update) NOT landed**: `CLAUDE.md`'s own "Adding a New Builtin"
+section still describes the original 5-step recipe this spec set out to collapse to 3, unchanged.
+This header said "Draft" with zero indication that a third of the design already shipped; same
+staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by the same
+outer-loop sweep (`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
+
+```spec-meta
+id: R1d-single-source-builtins
+status-claim: Implementing
+depends-on: R1-codegen-build-unblock
+blocks: none
+blocked-by: none
+supersedes: none
+related: R1b-str-return-abi, R1c-dict-runtime
+conflicts-with: none
+reserves: none
+evidence: crates/axon-core/src/codegen/builtin_externs.rs (Slice 1/2 partial, re-verified 2026-07-18); Slice 3/4 not landed
+```
+
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the
 per-builtin "triple-write" tax. Extends `R1-codegen-build-unblock.md` (which
 moves inline-IR builtins to `axon-rt` for *build speed*) with the *authoring*

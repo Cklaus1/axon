@@ -195,13 +195,36 @@ Also confirmed last iteration's flaky test (`persistent_learner_demo_carries_sta
 passed clean in this iteration's full gate.sh run — further evidence it was contention-flake, not a
 regression.
 
+## R1b/R1c/R1d investigated and fixed (this iteration)
+
+- **R1b-str-return-abi**: genuinely 100% landed. All 4 builtins (`str_repeat`/`str_slice` via
+  `d9dd83f`, `str_reverse`/`str_replace` via `c473561`) confirmed live via `scripts/fuzz_parity.sh`
+  (repeat/slice in the ~51-builtin corpus) and `scripts/str_utf8_parity.sh` (reverse/replace on
+  multibyte UTF-8). Draft → Landed. Bonus find: the spec's own §8 test-plan text had *planned* to
+  accept a byte-reverse/char-reverse interp↔codegen divergence as permanent — reality shipped
+  better than planned (codegen's `str_reverse` is char-correct, matching interp exactly) — annotated
+  rather than blindly checked, since "byte-reversal" literally didn't happen. Checked off all 6 of
+  §9's acceptance checkboxes (were `[ ]` despite the work landing).
+- **R1c-dict-runtime**: genuinely partial. 17/19 dict-family ops landed with confirmed
+  native==interp parity (`scripts/dict_parity.sh` PASS); `dict_from_str`/`arr_group_by` remain
+  deliberately E0910-refused (str/array-valued sources, "abort loudly instead of miscomputing" —
+  codegen/expr.rs:817,7734-7735), matching memory's prior note exactly. Draft → Implementing with
+  the accurate 17/19 breakdown, not a flip to Landed.
+- **R1d-single-source-builtins**: genuinely partial across 4 slices. Slice 1 (the
+  `BUILTIN_EXTERNS` registry itself, `codegen/builtin_externs.rs`, 25 rows) LANDED (`b8f54fb`).
+  Slice 2 partially landed (`sleep_ms`/`now_ms` via `daa01f7`, `dict_merge` via `eff8ce2`). Slice 3
+  (the drift cross-check test) NOT landed — the registry has a join-key field explicitly reserved
+  "for the slice-3 drift cross-check" that nothing yet consumes. Slice 4 (CLAUDE.md doc update) NOT
+  landed — `CLAUDE.md`'s own "Adding a New Builtin" section still describes the original 5-step
+  recipe this spec set out to collapse to 3. Draft → Implementing with the per-slice breakdown.
+
+All three now carry spec-meta. Pre-convention count 43 → 40.
+
 ## Next candidate slice
 
-- `R1b-str-return-abi.md` / `R1c-dict-runtime.md` / `R1d-single-source-builtins.md` — flagged but
-  not yet investigated; memory says "R1c/R1e actually mostly done" (dict native 17/19, only
-  `arr_group_by` + `dict_from_str` remain), suggesting R1c's header may have the same partial-status
-  gap R14 just got. Needs the same real-research treatment, not a mechanical flip.
-- Or: continue the outer-loop sweep into the 43 pre-convention specs (spec-meta on next real edit
-  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit per
+  `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick up R1d's own
+  Slice 3 (drift cross-check test) or Slice 4 (CLAUDE.md doc update) as real feature work rather
+  than a docs-truth pass.
 - Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
   real deploys.

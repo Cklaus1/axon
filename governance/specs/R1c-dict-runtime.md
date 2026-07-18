@@ -1,6 +1,29 @@
 # Tech Spec — R1c: `dict_*` Runtime Data Structure (native codegen)
 
-**Status:** 📋 Draft (2026-06-03) — scopes the last large native-codegen gap.
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — the tagged-value runtime this spec chose
+(option (a)) is real and largely landed: 17 of the 19 dict-family operations have native codegen
+(`dict_new/set/get/has/len/inc/get_or/remove/keys/values/merge/from_pairs/to_pairs/map_values/
+to_str/filter/each`, 22 `__axon_dict_*` externs total in axon-rt) with confirmed native==interp
+parity (`bash scripts/dict_parity.sh`: PASS on int-valued dicts, BTreeMap order preserved). Two
+operations remain honestly interpreter-only, deliberately E0910-refused rather than silently
+wrong: `dict_from_str` and `arr_group_by` (both str/array-valued sources; codegen/expr.rs:817,
+7734-7735 — "abort loudly instead of miscomputing"). This header previously said "Draft" with no
+detail, misleadingly implying the whole family was ungated; same staleness class as
+R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b, caught by the same outer-loop sweep
+(`EXECUTION_MODEL.md` §2) — but like R14, the accurate status is partial, not a clean flip.
+
+```spec-meta
+id: R1c-dict-runtime
+status-claim: Implementing
+depends-on: R1-codegen-build-unblock
+blocks: none
+blocked-by: none
+supersedes: none
+related: R1b-str-return-abi, R1d-single-source-builtins
+conflicts-with: none
+reserves: none (E0910 refusal for dict_from_str/arr_group_by)
+evidence: scripts/dict_parity.sh (re-verified 2026-07-18, 17/19 ops)
+```
 **Requirement:** `../REQUIREMENTS.md` R1 — native pipeline must run the stdlib it
 ships. The `dict_*` family (15 builtins, used in **6 example files**) currently
 has **no native codegen** and is honestly E0910-gated; `axon run` (interpreter)

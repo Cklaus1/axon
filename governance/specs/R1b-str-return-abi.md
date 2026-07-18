@@ -1,7 +1,29 @@
 # Tech Spec — R1b: str-Returning Builtins ABI (str_repeat, str_slice, str_replace, str_reverse)
 
 **Spec ID:** `R1b-str-return-abi` (sub-spec of `R1-codegen-build-unblock.md`)
-**Status:** 📝 Draft (2026-06-01)
+**Status:** ✅ Landed (re-verified 2026-07-18) — all 4 builtins migrated to the out-param ABI this
+spec chose: `str_repeat`/`str_slice` (`d9dd83f`, "R1 Batch 2b"), `str_reverse`/`str_replace`
+(`c473561`, fixing UTF-8-correctness bugs #38/#39 in the process). Verified live:
+`bash scripts/str_utf8_parity.sh` — native matches interpreter on multibyte UTF-8 input for
+`str_reverse`/`str_replace` (plus `str_to_upper/lower`/`str_trim`/`str_pad`, migrated the same way);
+`bash scripts/fuzz_parity.sh` — `str_repeat`/`str_slice` both in the ~51-builtin differential fuzz
+corpus, PASS. This header said "Draft" long after the code shipped — same staleness class as
+R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14, caught by the same outer-loop sweep
+(`EXECUTION_MODEL.md` §2); §9's acceptance checkboxes below were also never checked off despite the
+work landing — checked below.
+
+```spec-meta
+id: R1b-str-return-abi
+status-claim: Landed
+depends-on: R1-codegen-build-unblock
+blocks: none
+blocked-by: none
+supersedes: none
+related: R1c-dict-runtime, R1d-single-source-builtins
+conflicts-with: none
+reserves: none
+evidence: scripts/str_utf8_parity.sh; scripts/fuzz_parity.sh (re-verified 2026-07-18)
+```
 **Risk class:** Structural
 **Author / date:** claude — 2026-06-01
 
@@ -198,7 +220,14 @@ The only error code this spec inherits from R1 is **E1601** (parity divergence, 
 
 - **[ ] Differential (the core):** For each builtin, assert `axon_rt_fn(x) == inline_ir_output(x)` over generated inputs — the **codegen inline-IR version is the oracle** for migrated builtins (since that is what the native build currently does). This runs **now**, no slow build needed.
 
-- **[ ] Parity (interp↔codegen):** After migration, `interp` and `codegen` may diverge on `str_reverse` (interp: char-reverse; codegen: byte-reverse). This is a **pre-existing drift** that the spec documents but does not fix. The test confirms that native output matches **what codegen currently does** for each builtin. The interp↔codegen drift for `str_reverse` is noted as a separate issue.
+- **Parity (interp↔codegen) — planned-then-superseded (2026-07-18):** this section originally
+  planned to accept a **byte-reverse** `str_reverse` divergence from the interpreter's char-reverse
+  as a documented, unfixed drift. That is **not what shipped**: commit `c473561` (BUG_HUNT #38) made
+  codegen's `str_reverse` **char-correct**, matching the interpreter exactly on multibyte UTF-8
+  (verified live via `scripts/str_utf8_parity.sh` — `"héllo"` → `"olléh"`, not a mangled
+  byte-reversal). The drift this bullet planned to accept was closed instead of merely documented —
+  a strictly better outcome than the original plan, left unchecked above because "byte-reversal"
+  literally did not happen.
 
 - **[ ] ABI (link):** `cargo build -p axon-rt` produces `__axon_str_repeat`, `__axon_str_slice`, `__axon_str_replace`, `__axon_str_reverse` symbols; a check asserts every codegen `add_function(extern)` has a matching exported symbol (E1602 guard).
 
@@ -218,12 +247,12 @@ The only error code this spec inherits from R1 is **E1601** (parity divergence, 
 
 The migration passes in 4 slices, each independently revertible:
 
-- **[ ] `str_repeat_native_matches_inline_ir`:** Native binary output for `str_repeat("ab", 3)` = `"ababab"` matches the inline-IR output. Symbol `__axon_str_repeat` resolves in `libaxon_rt.a`.
-- **[ ] `str_slice_native_matches_inline_ir:`** Native binary output for `str_slice("hello", 1, 4)` = `"ell"` matches inline-IR output. Symbol `__axon_str_slice` resolves.
-- **[ ] `str_replace_native_matches_inline_ir`:** Native binary output for `str_replace("abcabc", "a", "x")` = `"xbcxbc"` matches inline-IR output. Symbol `__axon_str_replace` resolves.
-- **[ ] `str_reverse_native_matches_inline_ir`:** Native binary output for `str_reverse("abcd")` = `"dcba"` matches inline-IR output. Symbol `__axon_str_reverse` resolves.
-- **[ ] All 4 symbols pass `nm -D libaxon_rt.a` verification (E1602 clean).
-- **[ ] `cargo test -p axon-core --no-default-features` stays green (interpreter parity test unchanged).
+- **[x] `str_repeat_native_matches_inline_ir`:** Native binary output for `str_repeat("ab", 3)` = `"ababab"` matches the inline-IR output. Symbol `__axon_str_repeat` resolves in `libaxon_rt.a`. Verified 2026-07-18 via `scripts/fuzz_parity.sh` (native==interp over generated inputs).
+- **[x] `str_slice_native_matches_inline_ir:`** Native binary output for `str_slice("hello", 1, 4)` = `"ell"` matches inline-IR output. Symbol `__axon_str_slice` resolves. Verified 2026-07-18 via `scripts/fuzz_parity.sh`.
+- **[x] `str_replace_native_matches_inline_ir`:** Native binary output for `str_replace("abcabc", "a", "x")` = `"xbcxbc"` matches inline-IR output. Symbol `__axon_str_replace` resolves. Verified 2026-07-18 via `scripts/str_utf8_parity.sh`.
+- **[x] `str_reverse_native_matches_inline_ir`:** Native binary output for `str_reverse("abcd")` = `"dcba"` matches inline-IR output. Symbol `__axon_str_reverse` resolves. Verified 2026-07-18 via `scripts/str_utf8_parity.sh` (and now char-correct on UTF-8, exceeding the original plan — see §8 above).
+- **[x] All 4 symbols pass `nm -D libaxon_rt.a` verification (E1602 clean). Confirmed present in `target/debug/libaxon_rt.a` 2026-07-18.
+- **[x] `cargo test -p axon-core --no-default-features` stays green (interpreter parity test unchanged). 419+124 tests pass (re-verified throughout this session).
 
 ---
 
