@@ -238,11 +238,21 @@ direction (which `BUILTINS` rows *should* have a registry entry) isn't cleanly a
 a marker distinguishing straight-extern builtins from bespoke-call-site ones; left as a known gap,
 not silently skipped. R1d spec updated: Slice 3 NOT landed → LANDED.
 
+## R1d Slice 4 landed (this iteration) — R1d is now fully complete except Slice 2
+
+Updated `CLAUDE.md`'s "Adding a New Builtin" section to present two paths instead of one: the R1d
+fast path (`builtins.rs` row → axon-rt fn → one `BUILTIN_EXTERNS` row → parity test) for a plain
+scalar/handle extern, with the original 5-step recipe kept verbatim underneath for bespoke
+call-site builtins (out-params, dict get/set/remove/keys, `to_str`) that the registry deliberately
+excludes — not a wholesale replacement, since the old recipe is still genuinely correct for that
+class. R1d's spec updated: all 4 slices now landed except Slice 2, which stays honestly partial
+(some but not all of the planned batch migrated). This closes out R1d as a queued item entirely —
+what remains (finishing Slice 2's migration batch) is real feature work, not a docs-truth item.
+
 ## Next candidate slice
 
-- R1d Slice 4 (CLAUDE.md "Adding a New Builtin" doc update, 5 steps → 3) — small, well-scoped,
-  genuinely not started.
-- Or: continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit
-  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
+- Continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit per
+  `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
+  `REQUIREMENTS.md` row.
 - Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
-  real deploys.
+  real deploys, or finish R1d Slice 2 (migrate more inline-IR builtins into the registry).

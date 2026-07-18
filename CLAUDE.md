@@ -208,8 +208,23 @@ fn scorer() -> i64 { /* compiler refuses any I/O outside the declared caps */ 0 
 
 ## Adding a New Builtin
 
+**Fast path — a plain scalar/handle extern (no special call-site lowering, e.g. no out-params):**
+
+1. `builtins.rs` — add entry to `BUILTINS` array (the source-level name/params/ret/doc)
+2. `crates/axon-rt/src/lib.rs` — write the `#[no_mangle] pub extern "C" fn __axon_*` impl
+3. `codegen/builtin_externs.rs` — add one `ExternSig` row to `BUILTIN_EXTERNS`; this single row
+   replaces both the old `declare_builtins` LLVM-declare block *and* the `infer.rs`
+   `fn_return_types` insert (`declare_one_extern` does both from the row) — no `emit_call` case
+   needed (R1d Slice 1, `governance/specs/R1d-single-source-builtins.md`)
+4. Add a parity test case (a `fuzz_parity.sh` row or a dedicated differential test) — the
+   `builtin_externs::drift_tests` module (R1d Slice 3) fails if the row's arity ever drifts from
+   the `BUILTINS` entry, but doesn't check behavior; that's the parity test's job
+
+**Full path — bespoke call-site lowering (out-params like `str_slice`, dict get/set/remove/keys,
+`to_str`, anything the call site must expand/wrap):**
+
 1. `builtins.rs` — add entry to `BUILTINS` array
-2. `codegen.rs` — declare LLVM function in `declare_builtins`, handle in `emit_call`
+2. `codegen.rs` — declare LLVM function, handle the lowering in `emit_call`
 3. `infer.rs` — `builtin_sigs()` auto-populates; add `Type::` mapping to `fn_return_types`
 4. `checker.rs` — usually automatic via `check_call_arity_and_types`
 5. `examples/` — add usage example and test

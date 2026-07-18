@@ -17,11 +17,15 @@ current 25 rows. This is the one-directional half of the spec's "vice-versa" ask
 table); the reverse direction (does every eligible `BUILTINS` row have a registry entry) isn't
 cleanly automatable without a marker for "which builtins use the straight-extern path vs. a bespoke
 call-site special case" — left as a known gap, not silently skipped. **Slice 4 (CLAUDE.md doc
-update) NOT landed**: `CLAUDE.md`'s own "Adding a New Builtin" section still describes the original
-5-step recipe this spec set out to collapse to 3, unchanged. This header said "Draft" with zero
-indication that a third of the design already shipped; same staleness class as
-R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by the same outer-loop sweep
-(`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
+update) LANDED 2026-07-18**: `CLAUDE.md`'s "Adding a New Builtin" section now presents two paths —
+the R1d fast path (`builtins.rs` row → axon-rt fn → one `BUILTIN_EXTERNS` row → parity test, 4
+steps folding the old codegen-declare + infer.rs-return-type edits into the single registry row)
+for a plain scalar/handle extern, and the original 5-step recipe kept verbatim for bespoke
+call-site builtins (out-params, dict get/set/remove/keys, `to_str`) that the registry deliberately
+excludes. All 4 slices now landed (Slice 2 is the one exception — genuinely partial, not "done";
+see above). This header said "Draft" with zero indication that a third of the design already
+shipped; same staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c, caught by
+the same outer-loop sweep (`EXECUTION_MODEL.md` §2) — genuinely partial, not a clean flip.
 
 ```spec-meta
 id: R1d-single-source-builtins
@@ -33,7 +37,7 @@ supersedes: none
 related: R1b-str-return-abi, R1c-dict-runtime
 conflicts-with: none
 reserves: none
-evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, Slice 3, landed 2026-07-18); Slice 1/2 partial; Slice 4 not landed
+evidence: cargo test --lib codegen::builtin_externs -p axon-core (2 tests, Slice 3, landed 2026-07-18); CLAUDE.md "Adding a New Builtin" (Slice 4, landed 2026-07-18); Slice 2 partial
 ```
 
 **Requirement:** R1 (native pipeline) — supports the whole stdlib without the
