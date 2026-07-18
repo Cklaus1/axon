@@ -46,3 +46,10 @@ Thumbs.db
 .env.*
 !.env.example
 examples/jobs/out/
+
+# Coq compile artifacts (governance/proofs/ -- coqc leaves these next to the .v source)
+*.vo
+*.vok
+*.vos
+*.glob
+.*.aux

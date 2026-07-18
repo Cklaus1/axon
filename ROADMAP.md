@@ -724,7 +724,7 @@ rides on — a second s-curve on the bitter lesson.
   parameters; (4) refine the v1 MDL weights toward a true two-part code-length once real
   compression runs exist to calibrate against.
 
-## 10.6 Safety & Attestation Stack (R26–R31 shipped; R32–R34 forward)
+## 10.6 Safety & Attestation Stack (R26–R32 shipped; R33–R34 forward)
 
 The R26–R31 governance specs form a complete safety foundation: hardware attestation,
 corrigibility, immutable audit, continuous compliance, and whole-stack attestation — all
@@ -740,10 +740,12 @@ wired together by a single unified deployment gate.
 | **R29** Continuous Compliance Monitor | `axon-os run --monitor` | Thread polls R28 ledger every 100 ms; any denied-effect entry trips R27 kill-switch within 2 s (exit 12) | `scripts/r29_acceptance_gate.sh` 24/24 |
 | **R30** Unified ASI Deployment Safety Gate | `scripts/axon_safety_gate.sh` | Runs R26→R29 in sequence (skip-on-missing); machine-readable JSON report (`axon-safety-gate/1` schema) | `scripts/r30_acceptance_gate.sh` |
 | **R31** Extended TCB Attestation Chain | `crates/axon-attest` · `axon-vm attest --extended-tcb` | Chains the R27 (`axon-os`) + R28 (`axon-audit`) + R29 (monitor) component binary hashes into the R26 `axtcb1:` measurement (`axtcb1_ext` digest, `axon-vm-report/2` schema) so a relying party verifies the *entire* safety stack, not just the kernel; R26 baseline report unchanged without the flag (`d2d6dd4`) | `scripts/r31_acceptance_gate.sh` |
+| **R32** Formal Corrigibility Proof | `governance/proofs/` (TLA+ + Coq) | Machine-checked (not just structurally-valid) proof that the R27 kill-switch is monotone, fires within 2 polls, and cannot be disabled by contained code. TLC model-checks both configs (5- and 3-principal); `coqc` compiles the proof clean and axiom-free. Installing the real tools (`apt install coq`; direct `tla2tools.jar` download) and running them for the first time found and fixed 2 genuine proof bugs plus 1 gate-script false-negative bug (its TLC success/failure check matched the word "error" inside TLC's own success message) | `scripts/r32_acceptance_gate.sh` 20/20 PASS, 0 SKIPPED |
 
 Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
 `governance/specs/R30-unified-safety-gate.md`, plus
-`governance/specs/R31-extended-tcb-attestation.md`.
+`governance/specs/R31-extended-tcb-attestation.md` and
+`governance/specs/R32-formal-corrigibility-proof.md`.
 
 **Also shipped this cycle:**
 
@@ -754,11 +756,10 @@ Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
   loaded from initramfs and jumped to at guest startup; ships as `dist/guest/vmlinuz` +
   `dist/guest/initramfs.cpio`.
 
-### Forward (R32–R34) — re-verified 2026-07-18
+### Forward (R33–R34) — re-verified 2026-07-18
 
 | Spec | Headline | State |
 |---|---|---|
-| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | **Draft, artifacts written** — `governance/proofs/R27KillSwitch.tla` + `R27Corrigibility.v` exist, have the three named invariants/theorems, no `Admitted`/`admit.`, all proofs end `Qed`. `scripts/r32_acceptance_gate.sh` 18/20 PASS, **2 SKIPPED** (TLC and coqc not installed on this host — the proof has never actually been machine-checked, only structurally validated). Not yet a closed formal-methods gap |
 | **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | **Implementing** — a file-based (single-host) propose/vote/check CLI + pure `check_quorum` aggregator landed in `crates/axon-vm/src/quorum/` (committed `ee485e8`); `scripts/r33_acceptance_gate.sh` ALL PASS incl. exit-code distinctness (13 QUORUM_BLOCKED vs 14 QUORUM_ATTEST_FAIL) and an R26/R31 regression check. Vsock transport, the R27 coalition ceiling, and `axon deploy` integration remain open (spec §14) |
 | **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | **Implementing** — `ChainStore` + `axon-vm chain-stamp`/`chain-verify` CLI landed (`ee485e8`, evidence commits filled `1dba6a9`); `scripts/r34_acceptance_gate.sh` ALL PASS incl. tamper detection (exit 15 CHAIN_VERIFY_FAIL) and `run --chain-stamp` refusing to launch on a broken chain |
 

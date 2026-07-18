@@ -58,8 +58,40 @@ Documented in `scripts/verify_all_specs.sh` (inline comment above `KNOWN_DUAL`) 
 native codegen build. No known gaps remaining (the wasm-browser item above was a flake, not a bug;
 the clippy violation is fixed). Re-verified 2026-07-18.
 
+## R32 formal-methods gap actually CLOSED this iteration (not just re-verified)
+
+Previously R32's evidence ledger honestly said "structurally valid, never machine-checked" (TLC/coqc
+SKIPPED — neither tool installed). This iteration installed both for real: TLC via a direct
+`tla2tools.jar` download (`~/tla2tools.jar`, no root needed) and Coq via `apt install coq` (8.18.0
+— exactly the spec's pin, far faster than the opam-from-source path in the spec's own §8 on a
+Debian/Ubuntu host). Running them for the first time ever on this file found and fixed **three real
+bugs**, none visible while SKIPPED:
+1. `Theorem kill_fires_within_2_polls` (`R27Corrigibility.v`): a `rewrite` targeted `latch s1`/
+   `poll_count s1`, but `simpl` had already unfolded the transparent `pose`-bound `s1` all the way
+   back to `s`, so those subterms no longer existed in the goal. Fixed by rewriting `Htripped`
+   directly (the goal collapses to `true = true` unconditionally once `latch s = Tripped` — the
+   `Hzero` rewrite wasn't even needed).
+2. `Lemma halted_step_preserved`, PollGate case: `rewrite Hh in Hhalted; discriminate` failed with
+   "Cannot find a relation to rewrite"; replaced with `congruence`, which derives the contradiction
+   between `halted s1 = false` and `halted s1 = true` directly.
+3. `scripts/r32_acceptance_gate.sh`'s own TLC success/failure check ran the failure-grep
+   (`error|violated`, case-insensitive) *before* the success-grep — and TLC's real success message
+   ("No **error** has been found") matched the failure pattern first, so every genuine TLC success
+   was reported as `tlc_model_check FAIL`. Reordered: success checked first.
+
+Gate now: `scripts/r32_acceptance_gate.sh` **20/20 PASS, 0 SKIPPED**. R32 moved Draft → Landed in
+its own header/spec-meta, `ROADMAP.md` §10.6 (moved into the Shipped R26–R32 table), and
+`governance/REQUIREMENTS.md`. This is the strongest evidence yet for the outer loop's core claim:
+a SKIPPED check can hide bugs indefinitely, in both the code under test AND the test itself.
+
+**Caveat for reproducibility:** the TLC jar and Coq installation are host-level state, not
+committed to the repo (can't be — `tla2tools.jar` is a 4.5MB binary, `apt install coq` is a system
+package). A fresh clone/CI run without these installed will see R32 fall back to 18/20 + 2 SKIPPED
+again until someone repeats this setup. Worth a future slice: document this setup step somewhere
+CI-visible (`ENVIRONMENTS.md`?) so it isn't a one-off tribal-knowledge install.
+
 ## Next candidate slice
 
-- Continue the outer-loop sweep into the 53 pre-convention specs (add spec-meta on next real edit
-  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick the next
+- Document the TLC/Coq setup step in `ENVIRONMENTS.md` so R32's gate stays reproducible off this
+  one host, or continue the outer-loop sweep into the 53 pre-convention specs, or pick the next
   highest (load-bearing × cheap-to-close) `REQUIREMENTS.md` row.

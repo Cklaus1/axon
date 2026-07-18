@@ -1,10 +1,24 @@
 # Tech Spec — R32: Formal Corrigibility Proof (TLA+ model + Coq proof of kill-switch invariants)
 
 **Spec ID:** `R32-formal-corrigibility-proof`
-**Status:** 📝 Draft (2026-07-18) — TLA+/Coq artifacts written and structurally valid (no
-`Admitted`, all proofs end `Qed`), gate passes 18/20 checks; the two checks that matter most —
-actually running TLC and coqc — are **SKIPPED** because neither tool is installed on this host.
-Not yet a machine-checked proof. See §14 Evidence ledger.
+**Status:** ✅ Landed (2026-07-18) — genuinely machine-checked, not just structurally valid.
+`scripts/r32_acceptance_gate.sh` now passes **20/20, zero skipped**: TLC installed (`tla2tools.jar`
+v1.8.0 via direct download) and run against BOTH configs (`R27KillSwitch.cfg` 5-principal,
+`R27KillSwitch-3principals.cfg` 3-principal) — "Model checking completed. No error has been
+found" on both. Coq installed (`apt install coq`, 8.18.0 — matches the spec's pin exactly, faster
+than the opam-from-source path in §8) and `coqc` compiles `R27Corrigibility.v` clean, axiom-free
+(`Print Assumptions` on all four theorems shows nothing beyond the kernel). **The Coq proof did
+NOT actually compile as originally written** — running the real compiler for the first time ever
+on this file surfaced two real bugs in `Theorem kill_fires_within_2_polls` and
+`Lemma halted_step_preserved` (both were "structurally valid" — no `Admitted`, ends `Qed` — but
+`Qed` only checks the proof script is well-formed *given the goal it's discharging*; it says
+nothing about whether the file compiles top-to-bottom, which is exactly what running `coqc` for
+real caught). See §14 Evidence ledger for the specific fixes. A third, unrelated bug was found and
+fixed in the gate script itself: its TLC success/failure check ran the *failure* pattern
+(`grep -i "error"`) before the success pattern, and TLC's own success message ("No **error** has
+been found") matched it — every real TLC success was being misreported as a failure. This class of
+bug (never exercised because the check path was always SKIPPED before) is exactly why "SKIPPED is
+not a substitute for PASS" (`EXECUTION_MODEL.md` §2): a claim's own gate can be broken beneath it.
 **Implements:** Machine-checked verification of the R27 kill-switch guarantees:
 (1) contained code cannot disable the kill-switch; (2) the kill fires within a bounded time
 after being tripped; (3) the latch is monotone — clear-to-tripped is the only allowed
@@ -25,7 +39,7 @@ A background in TLA+ or Coq is assumed; familiarity with R27 is required.
 
 ```spec-meta
 id: R32-formal-corrigibility-proof
-status-claim: Draft
+status-claim: Landed
 depends-on: R27-corrigibility-resource-bounds
 blocks: none
 blocked-by: none
@@ -702,12 +716,13 @@ remediation instructions.
 | Node | Depends-on / blocked-by | Gate | Status |
 |---|---|---|---|
 | R32.S0 | R27-corrigibility-resource-bounds (landed) | `.tla`/`.v` artifacts exist + structural checks (no `Admitted`, all `Qed`) | landed |
-| R32.S1 | R32.S0 | `tlc_model_check` (TLC actually run) | todo — TLC not installed on this host |
-| R32.S2 | R32.S0 | `coqc_compile` (Coq actually compiled) | todo — coqc not installed on this host |
+| R32.S1 | R32.S0 | `tlc_model_check` (TLC actually run, both configs) | **landed 2026-07-18** |
+| R32.S2 | R32.S0 | `coqc_compile` (Coq actually compiled) | **landed 2026-07-18** (required fixing 2 real proof bugs — see §14) |
 
-R32.S1/S2 are the whole point of "machine-checked" — until they run, this is a structurally-valid
-but **unverified** proof, not a checked one. Do not upgrade `status-claim` past `Draft` until at
-least one host run of `tlc_model_check` and `coqc_compile` both PASS (not SKIP).
+R32.S1/S2 were the whole point of "machine-checked" — they now both PASS for real (not SKIP) on
+this host: TLC via a direct `tla2tools.jar` download (no root needed), Coq via
+`apt install coq` (8.18.0, matching the spec's pin — faster than the §8 opam-from-source path on a
+Debian/Ubuntu host). `status-claim: Landed` is warranted.
 
 ## §14 — Evidence ledger
 
@@ -715,13 +730,32 @@ least one host run of `tlc_model_check` and `coqc_compile` both PASS (not SKIP).
 |---|---|---|---|---|
 | `.tla` model exists, has the three named invariants, syntactically well-formed | `bash scripts/r32_acceptance_gate.sh` | `tla_*` rows PASS | this commit @ 2026-07-18 | PASS |
 | `.v` proof exists, has the three named theorems, no `Admitted`/`admit.`, every block ends `Qed` | `bash scripts/r32_acceptance_gate.sh` | `coq_*` rows PASS | this commit @ 2026-07-18 | PASS |
-| TLC actually model-checks the spec (not just "the file parses") | `bash scripts/r32_acceptance_gate.sh` | `tlc_model_check` PASS | — | **SKIPPED — TLC not installed on this host, not run yet** |
-| coqc actually compiles the proof (not just "no `Admitted` by grep") | `bash scripts/r32_acceptance_gate.sh` | `coqc_compile` PASS | — | **SKIPPED — coqc not installed on this host, not run yet** |
+| TLC actually model-checks the spec, both the 5-principal and 3-principal configs | `java -jar ~/tla2tools.jar governance/proofs/R27KillSwitch.tla -config governance/proofs/R27KillSwitch{,-3principals}.cfg -workers auto` | "Model checking completed. No error has been found." on both | this commit @ 2026-07-18 | PASS |
+| coqc actually compiles `R27Corrigibility.v` end to end, axiom-free | `coqc governance/proofs/R27Corrigibility.v` | exit 0; `Print Assumptions` on all 4 theorems shows only the kernel | this commit @ 2026-07-18 | PASS — **but only after fixing 2 real bugs**, see below |
+| `scripts/r32_acceptance_gate.sh` itself correctly distinguishes TLC success from failure | manual: feed it TLC's real success output | `tlc_model_check` PASS, not FAIL | this commit @ 2026-07-18 | PASS — **gate script itself had a bug, fixed below** |
 
-Per §2 of `EXECUTION_MODEL.md`: a SKIP is not a PASS. This spec's honest status is "proof artifacts
-exist and are structurally sound; the proof itself has never been machine-verified on any host in
-this repo's history." Anyone relying on R32 as a closed formal-methods gap must first install TLC
-(`tla2tools.jar`) and Coq 8.18 (§8 above) and re-run the gate to completion.
+**What running the real tools for the first time actually found** (this is the point of §2 of
+`EXECUTION_MODEL.md`: "SKIPPED is not a substitute for PASS" — none of this was visible while the
+checks were SKIPPED):
+1. `Theorem kill_fires_within_2_polls`'s `Hhalted2` subgoal used `rewrite Hlatch1; rewrite Hpoll1`
+   against a goal that `simpl` had already fully unfolded past `s1` back to `s` (a `pose`-bound
+   local is transparent, so `simpl` keeps unfolding through it) — `latch s1`/`poll_count s1` no
+   longer existed as literal subterms to rewrite. Fixed by rewriting `Htripped`/`latch s = Tripped`
+   directly instead (in fact `Nat.leb 2 (S (S (poll_count s)))` reduces to `true` unconditionally
+   once `latch s = Tripped`, regardless of `poll_count s`'s value, so `Hzero` wasn't even needed —
+   `{ simpl. rewrite Htripped. reflexivity. }`).
+2. `Lemma halted_step_preserved`'s PollGate case tried `rewrite Hh in Hhalted; discriminate` and
+   Coq reported "Cannot find a relation to rewrite" — replaced with `congruence`, which derives the
+   contradiction between `Hh : halted s1 = false` and `Hhalted : halted s1 = true` directly without
+   depending on rewrite-direction fragility.
+3. `scripts/r32_acceptance_gate.sh`'s TLC check ran its failure-pattern grep (`error|violated`,
+   case-insensitive) *before* its success-pattern grep — and TLC's own success message ("No
+   **error** has been found") matched the failure pattern first. Every real TLC success was
+   misreported as `tlc_model_check FAIL`. Reordered: success pattern checked first.
+
+None of these three bugs could have been found by static/structural review (no `Admitted`, ends
+`Qed`, "looks done") — only by actually invoking the real tools. That gap between "looks verified"
+and "is verified" is exactly what SKIPPED had been hiding.
 
 ---
 

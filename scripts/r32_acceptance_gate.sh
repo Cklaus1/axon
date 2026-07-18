@@ -138,10 +138,15 @@ if [[ -z "$TLC_CMD" ]]; then
 else
   if [[ -f "$TLA_FILE" && -f "$TLA_CFG" ]]; then
     TLC_OUT="$($TLC_CMD "$TLA_FILE" -config "$TLA_CFG" -workers auto 2>&1)"
-    if echo "$TLC_OUT" | grep -qiE "error|invariant.*violated|is violated"; then
-      fail "tlc_model_check" "TLC reported a problem: $(echo "$TLC_OUT" | grep -iE 'error|violated' | head -1)"
-    elif echo "$TLC_OUT" | grep -qi "No error has been found"; then
+    # Check the SUCCESS pattern first: TLC's own success message ("No error
+    # has been found") contains the substring "error", so an error-pattern
+    # check run first would misclassify every real success as a failure
+    # (found 2026-07-18 the first time this ever ran on an installed TLC --
+    # previously always SKIPPED, so this false-positive was never exercised).
+    if echo "$TLC_OUT" | grep -qi "No error has been found"; then
       pass "tlc_model_check" "TLC: no invariant violations found"
+    elif echo "$TLC_OUT" | grep -qiE "error|invariant.*violated|is violated"; then
+      fail "tlc_model_check" "TLC reported a problem: $(echo "$TLC_OUT" | grep -iE 'error|violated' | head -1)"
     else
       fail "tlc_model_check" "TLC ran but did not report success -- inspect output"
     fi

@@ -199,7 +199,7 @@ Proof.
                  end)).
   assert (Hstep2 : step s1 s2) by exact (PollGate s1 Hhalted1).
   assert (Hhalted2 : halted s2 = true).
-  { simpl. rewrite Hlatch1. rewrite Hpoll1. reflexivity. }
+  { simpl. rewrite Htripped. reflexivity. }
   exists s1, s2.
   split; [exact Hstep1 | split; [exact Hstep2 | exact Hhalted2]].
 Qed.
@@ -240,7 +240,7 @@ Proof.
   - (* TripKill: halted field is unchanged (= halted s1). *)
     exact Hhalted.
   - (* PollGate requires halted s1 = false, contradicting Hhalted. *)
-    rewrite Hh in Hhalted. discriminate.
+    congruence.
   - (* CoalitionJoin: halted field is unchanged. *)
     exact Hhalted.
   - (* CoalitionAttemptDisable: halted field is unchanged. *)
