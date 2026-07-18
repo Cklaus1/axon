@@ -724,24 +724,26 @@ rides on — a second s-curve on the bitter lesson.
   parameters; (4) refine the v1 MDL weights toward a true two-part code-length once real
   compression runs exist to calibrate against.
 
-## 10.6 Safety & Attestation Stack (R26–R30 shipped; R31–R34 forward)
+## 10.6 Safety & Attestation Stack (R26–R31 shipped; R32–R34 forward)
 
-The R26–R30 governance specs form a complete safety foundation: hardware attestation,
-corrigibility, immutable audit, and continuous compliance — all wired together by a
-single unified deployment gate.
+The R26–R31 governance specs form a complete safety foundation: hardware attestation,
+corrigibility, immutable audit, continuous compliance, and whole-stack attestation — all
+wired together by a single unified deployment gate.
 
-### Shipped (R26–R30)
+### Shipped (R26–R31)
 
 | Spec | Crate / binary | Headline | Gate |
 |---|---|---|---|
 | **R26** Confidential MicroVM Substrate | `crates/axon-attest` · `axon-vm attest` | SHA-256(kernel_bytes) → `axtcb1:` digest, HMAC-signed report; `axon-vm run` mandatorily attests before boot (`--no-attest` dev escape; `AXON_CI_NO_KVM=1` CI) | `scripts/r26_acceptance_gate.sh` 11/11 |
-| **R27** Corrigibility & Resource Bounds | `crates/axon-os` | `KillChannel` + file-backed latch → `axon-os kill <run-id>` (exit 4 HALTED); coalition ceiling (N principals from same lineage root can't exceed cap); tamper-evident hash-chained latch ledger | `scripts/r27_acceptance_gate.sh` 13/14 (1 blocked on R25) |
-| **R28** Capability Audit Ledger | `crates/axon-audit` | Immutable JSONL hash-chain for every capability exercise (FS/Net/AI/Exec); `axon-os audit verify --ledger PATH` checks chain integrity | `scripts/r28_acceptance_gate.sh` |
-| **R29** Continuous Compliance Monitor | `axon-os run --monitor` | Thread polls R28 ledger every 100 ms; any denied-effect entry trips R27 kill-switch within 2 s (exit 12) | `scripts/r29_acceptance_gate.sh` |
+| **R27** Corrigibility & Resource Bounds | `crates/axon-os` | `KillChannel` + file-backed latch → `axon-os kill <run-id>` (exit 4 HALTED); coalition ceiling (N principals from same lineage root can't exceed cap); tamper-evident hash-chained latch ledger | `scripts/r27_acceptance_gate.sh` 19/19 |
+| **R28** Capability Audit Ledger | `crates/axon-audit` | Immutable JSONL hash-chain for every capability exercise (FS/Net/AI/Exec/Random/IO — `0bfa74d` wired the interpreter's generic per-builtin audit hook; before it only `ai_complete` was logged and a zero-AI run produced no ledger file at all); `axon-os audit verify --ledger PATH` checks chain integrity | `scripts/r28_acceptance_gate.sh` |
+| **R29** Continuous Compliance Monitor | `axon-os run --monitor` | Thread polls R28 ledger every 100 ms; any denied-effect entry trips R27 kill-switch within 2 s (exit 12) | `scripts/r29_acceptance_gate.sh` 24/24 |
 | **R30** Unified ASI Deployment Safety Gate | `scripts/axon_safety_gate.sh` | Runs R26→R29 in sequence (skip-on-missing); machine-readable JSON report (`axon-safety-gate/1` schema) | `scripts/r30_acceptance_gate.sh` |
+| **R31** Extended TCB Attestation Chain | `crates/axon-attest` · `axon-vm attest --extended-tcb` | Chains the R27 (`axon-os`) + R28 (`axon-audit`) + R29 (monitor) component binary hashes into the R26 `axtcb1:` measurement (`axtcb1_ext` digest, `axon-vm-report/2` schema) so a relying party verifies the *entire* safety stack, not just the kernel; R26 baseline report unchanged without the flag (`d2d6dd4`) | `scripts/r31_acceptance_gate.sh` |
 
 Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
-`governance/specs/R30-unified-safety-gate.md`.
+`governance/specs/R30-unified-safety-gate.md`, plus
+`governance/specs/R31-extended-tcb-attestation.md`.
 
 **Also shipped this cycle:**
 
@@ -752,14 +754,44 @@ Specs: `governance/specs/R26-confidential-microvm-substrate.md` through
   loaded from initramfs and jumped to at guest startup; ships as `dist/guest/vmlinuz` +
   `dist/guest/initramfs.cpio`.
 
-### Forward (R31–R34)
+### Forward (R32–R34)
 
-| Spec | Headline | Prerequisite |
+| Spec | Headline | State |
 |---|---|---|
-| **R31** Extended TCB Attestation Chain | Chain R27+R28+R29 component binary hashes into the `axtcb1:` measurement so a relying party can verify the entire safety stack (not just the kernel) is unmodified | R26+R27+R28+R29 all shipped ✅ |
-| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | R27 shipped ✅ |
-| **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | R26 + Phase 14 ✅ |
-| **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | R26 ✅ |
+| **R32** Formal Corrigibility Proof | Machine-checked proof (TLA+ or Coq) that the kill-switch cannot be bypassed by contained code; closes the last formal-methods gap in the TCB | **Spec only** (783-line spec, `40de581`) — zero proof code: no `.tla`/`.v` file exists anywhere in the repo |
+| **R33** Cross-VM Safety Quorum | High-Risk actions require N independently attested VMs to approve before proceeding; extends `CoordGoal` (Phase 14) with R26 attestation verification per vote; no single-VM compromise can force an irreversible action | **Spec only** (607-line spec, `279e661`) — no implementation commits |
+| **R34** Incremental Attestation (Rolling Hash) | Roll the attestation measurement as each new `.ax` program is loaded (`axon-vm run` extends the chain with the program's hash); enables auditors to reconstruct exactly what ran in what order | **Not started** — spec file has had no commits since its creation |
+
+---
+
+## 10.7 New platform-vision candidates (2026-07-18 research pass, not yet founder-decided)
+
+A 2026-07-18 research pass evaluated whether three more directions — a unified desktop+web
+"ASI UI," a "Full ASI OS" tying R17/R21/R26–R31 together, and a nano/micro embedded kernel —
+deserve dedicated PRDs, plus an open survey for anything else. Full detail and evidence is in
+`governance/REQUIREMENTS.md` ("New platform-vision candidates"); summary:
+
+- **ASI UI (desktop+web):** no new spec — R16 already frames the real fork (a business decision:
+  which audience to build for next), not a missing document.
+- **`governance/specs/R36-full-asi-os.md`** (Draft): the convergence pitch for R17 + R21 + the
+  guest kernel + R26–R31 is roughly two-thirds true today — R17's kernel and R26's microVM don't
+  share code, and the interpreter doesn't yet run as a confined user program under the guest
+  kernel's syscall gate. Names the exact slices (S0–S5) that would close the gap and the founder
+  decision (Q1: Axon-language kernel vs. audited-Rust-TCB) that gates them.
+- **`governance/specs/R37-nano-micro-asi-kernel.md`** (Draft): a distinct direction from both R17
+  (general-purpose, x86) and R25 (rides on Zephyr, compile-time-only enforcement) — an
+  Axon-authored, MPU-based microkernel for Cortex-M-class hardware, reusing R17's language
+  primitives but sharing no kernel code.
+- **`governance/specs/R38-embedded-agent-runtime.md`** (Draft): "Axon Embedded" — package the
+  already-shipped interpreter/capability-checker/audit-ledger/replay machinery as an embeddable
+  SDK for products that want AI-authored automation without adopting the language. Picked over 4
+  other surveyed candidates (capability sidecar, hosted sandbox cloud, verification-as-a-service,
+  robotics interlocks); pre-registers a kill-gated Slice-0 hypothesis (LLM generation success rate)
+  rather than assuming the wedge works.
+
+None of these are founder-committed (unlike R17's §2.3 reversal or R18's greenlight) — they are
+Draft research output, sized so a founder decision converts one directly into a committed track
+the way §2.3 did for R17.
 
 ---
 
