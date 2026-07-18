@@ -435,20 +435,44 @@ open scope is now just vsock transport (S2) and `axon deploy` pipeline integrati
 (R33 `VoteRequest` chain-awareness) is still blocked on R33 landing more broadly, not specifically
 on the coalition ceiling, so this doesn't yet unblock it.
 
+## R33 S4 landed: `axon deploy --quorum-dir` integration (commit `aec5557`)
+
+Wired R33's quorum gate into the actual deploy pipeline. `axon deploy FILE --risk high
+--quorum-dir DIR [--quorum-n N] [--axon-vm-bin PATH]` shells out to `axon-vm quorum check`
+(the same cross-binary orchestration pattern `axon-web` already uses to wrap the `axon` CLI,
+Phase 12) and folds the result into the existing named-gate mechanism
+(`simulate`/`stress`/`redteam_check`/`assert_deployable`) — a blocked quorum reuses the exact
+`"status":"blocked_gate"` JSON shape (`"gate":"quorum"`), with `axon-vm`'s real exit code (13/14)
+surfaced in the JSON's `exit_code` field for detail while `axon deploy`'s own process exit stays
+at its existing convention (1). Deliberately shells out rather than adding `axon-vm` as an
+`axon-core` library dependency — `axon-core` has an explicit "keep the fast interpreter build
+dependency-light" invariant (`BUILD_RESOLVED.md`), and `axon-vm` isn't even structured as a lib
+crate today. Omitting `--quorum-dir` leaves the gate open (100% backward compatible — verified).
+Giving `--quorum-dir` but not finding the `axon-vm` binary is a hard error (exit 2), never a
+silent open gate (I-9). All four real CLI journeys (no-flag, sock-puppet-blocked,
+legit-quorum-met, missing-binary-error) manually verified before writing
+`scripts/r33_acceptance_gate.sh`'s new §10 (6 checks, all passing). R33 spec (§5.2.1 new
+subsection, header, DAG, evidence ledger) + `REQUIREMENTS.md` updated. **R33's only remaining
+open gap is now S2 (vsock transport).**
+
+Caught a real gap in my own verification process this iteration (not a code bug): an earlier
+`cargo test ... | tail -N` capture could have silently hidden a real failure behind `tail`'s
+always-zero exit code (no `pipefail`), and also truncated the lib-suite's own result line out of
+the log. Re-ran with direct file redirection + explicit `$?` capture to get an honest result —
+saved as memory `tail-pipe-masks-exit-code`. The one real test failure encountered
+(`wasm_browser_println_matches_interp_via_js_host`) was confirmed transient (isolated rerun: pass;
+full rerun: 419/419) — the known contention-flake class, unrelated to this change.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
-R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on R33
-S2/S4. R33 now has S0/S1/S3 landed; S2 (vsock transport) and S4 (`axon deploy` integration) remain.
-Options for the next iteration:
-- **R33.S4** (`axon deploy` pipeline integration, §5.2 of the R33 spec): wire the quorum gate into
-  `axon deploy --risk high`'s existing gate-chain machinery (Phase 11) — real, scoped, and would be
-  the more load-bearing of R33's two remaining gaps since it's what actually makes the quorum gate
-  reachable from a real deploy flow, rather than only the standalone CLI.
+R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on
+R33.S2 (the only R33 slice left, now that S4 has landed). Options for the next iteration:
 - **R33.S2** (vsock transport): replace the file-based propose/vote/check exchange with the real
   R26 vsock broadcast — likely a bigger, more infrastructure-heavy lift (needs real multi-VM
-  coordination, not just CLI plumbing); size it carefully before committing to one iteration.
+  coordination, not just CLI plumbing); size it carefully before committing to one iteration. This
+  is also the one thing standing between here and R34.S7 (R33 `VoteRequest` chain-awareness).
 - R39 §12 Q1's own suggestion: build R39 Slice 1 (schema + parser) as a cheap speculative spike,
   since it's now a real spec'd item rather than just an idea.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
