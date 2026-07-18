@@ -8,6 +8,23 @@ until §12 Q1 (the two-kernels decision) is resolved by the founder.
 **Risk class:** Structural (platform bet; multi-quarter; touches the TCB story end to end)
 **Author / date:** cklaus (research agent draft), 2026-07-18
 
+```spec-meta
+id: R36-full-asi-os
+status-claim: Draft
+depends-on: R17-freestanding-substrate, R21-axon-os-supervisor, R26-confidential-microvm-substrate, R27-corrigibility-resource-bounds, R28-capability-audit-ledger, R29-continuous-compliance-monitor, R30-unified-safety-gate, R31-extended-tcb-attestation
+blocks: none
+blocked-by: R36 §12 Q1 (founder two-kernels decision — blocks S3, shapes S1/S2)
+supersedes: none
+related: R37-nano-micro-asi-kernel, R24-tee-target, R25-information-flow-monitor, R32-formal-corrigibility-proof, R16-axon-ui, R18-provenance-ledger, R38-embedded-agent-runtime
+conflicts-with: none
+reserves: none (inherits exit 8 SandboxViolation, R21/R26 exit codes, E1001/E131x/E17xx)
+evidence: scripts/r36_acceptance_gate.sh (planned, lands with S2); until then constituent gates per §0: scripts/r26_acceptance_gate.sh … scripts/r31_acceptance_gate.sh + scripts/kernel_enforce_test.sh
+```
+
+(Edge notes: `depends-on` lists the eight landed layers this spec *converges* — see §1's layer
+table; `related` holds the competing platform fronts (§12 Q1 of R38 / R18) and the sibling kernel
+track R37, whose §12 Q2 proposes converging the guest kernel's gate onto R37's effect-native ABI.)
+
 > **One-line scope:** name, converge, and finish the one product the already-shipped layers are
 > circling: *run an untrusted AI-authored Axon program inside a purpose-built, capability-enforced,
 > measured-and-attested operating environment, where the compiler's `@[contained]`/effect-row

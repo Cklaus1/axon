@@ -15,6 +15,35 @@ Delete the parenthetical guidance as you fill each section.
 **Risk class:** Trivial | Standard | Structural
 **Author / date:**
 
+```spec-meta
+id: R<n>-<slug>
+status-claim: Draft
+depends-on: none
+blocks: none
+blocked-by: none
+supersedes: none
+related: none
+conflicts-with: none
+reserves: none
+evidence: none
+```
+
+(The `spec-meta` block is **required** (see `EXECUTION_MODEL.md` §2) and is the machine-readable
+mirror of this header — `scripts/verify_all_specs.sh` parses it. Rules:
+- `id` must be the full `R<n>-<slug>` **and the `R<n>` number must be unclaimed** — grep
+  `governance/specs/` before picking it. The R21/R22/R23 dual-numbering collision happened because
+  nothing checked this; the verifier now flags duplicate numbers.
+- `depends-on` / `blocks` / `supersedes` / `related` / `conflicts-with` take comma-separated full
+  spec IDs (`R17-freestanding-substrate`, never bare `R17` — bare numbers are ambiguous under
+  dual-numbering). `blocked-by` may also name an open question (`R36 §12 Q1`) when a decision, not
+  a spec, is the blocker.
+- `reserves` lists error-code blocks / exit codes this spec claims (`E37xx`, `exit 7`) so the
+  verifier can flag code collisions (the E1300 AI-policy collision class).
+- `evidence` names the acceptance-gate command (usually `scripts/r<n>_acceptance_gate.sh`) once it
+  exists; `none` is only valid while `status-claim: Draft`.
+- `status-claim` must always equal the prose `**Status:**` line's first word. When you update one,
+  update both — the verifier diffs `status-claim` against §14's evidence.)
+
 ---
 
 ### 1. Motivation
@@ -88,4 +117,31 @@ of this would leave a broken tree, decompose it. What's the blast radius if it's
 
 ### 12. Open questions
 (Anything unresolved that a human or a deeper analysis must answer before/while building. An open question
-in a mandatory area (§4, §5, §6, §11) blocks implementation.)
+in a mandatory area (§4, §5, §6, §11) blocks implementation. If a question blocks a §13 node, name it in
+that node's `blocked-by` cell — R36's Q1 blocking its S3 is the canonical example.)
+
+### 13. Dependency DAG (required — see `EXECUTION_MODEL.md` §1)
+(One row per node. A node is a slice or a gate of THIS spec (`R<n>.S0`, `R<n>.S1`, …). `Depends-on` lists
+the nodes or external full spec IDs (`R17-freestanding-substrate`, or a finer node like
+`R17-freestanding-substrate.S1`) that must be green first; `blocked-by` names an open question when a
+*decision* is the blocker. `Gate` is the named test/script that turns the node green — invented here, like
+error codes, not improvised later. This is the R36 S0–S5 slice table made a required convention: the
+outer-loop verifier walks these rows, so a slice with no gate named is a slice whose "done" can silently rot.)
+
+| Node | Depends-on / blocked-by | Gate (named test or script) | Status |
+|---|---|---|---|
+| R<n>.S0 | — | | todo |
+| R<n>.S1 | R<n>.S0 | | todo |
+
+### 14. Evidence ledger (required for any non-Draft status — see `EXECUTION_MODEL.md` §2)
+(**A claim without a re-runnable evidence pointer is not a valid status.** Every status claim this spec
+makes — the header's `Landed`/`Shipped`/`Slices 0–3 done`/`70%`, and each §13 row marked `landed` — must
+have a row here: the *exact command* that verifies it, the commit at which that command was last actually
+run and seen passing, and the date. Prose like "verified, tests pass" with no command is the R17/R31
+failure mode: the header rots and nobody notices until a human re-greps commit history. The outer loop
+(`BUILD_PROTOCOL.md`) re-runs these commands and diffs the result against `status-claim` — in both
+directions (a Draft header over a passing gate is drift too).)
+
+| Claim | Verify command | Expected | Last verified (commit @ date) | Result |
+|---|---|---|---|---|
+| (e.g. "Slice 0 landed") | `scripts/r<n>_acceptance_gate.sh` | exit 0, "ALL PASS" | `abc1234` @ 2026-07-18 | PASS |

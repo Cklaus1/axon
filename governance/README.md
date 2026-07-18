@@ -10,7 +10,8 @@ Read these in order; they form a closed loop.
 |---|---|---|
 | **`REQUIREMENTS.md`** | The map. Top-10 requirements ↔ PRD ↔ current % ↔ gaps ↔ owning spec ↔ acceptance tests. | Before starting *any* work — find your requirement. |
 | **`BUILD_PROTOCOL.md`** | The lifecycle. 8 gates every feature passes: frame → spec → red test → implement → widen → review → gated commit → verify. | Every feature, every time. |
-| **`SPEC_TEMPLATE.md`** | The spec format. Motivation, surface, semantics table, error codes, invariants, test plan, acceptance, rollback. | Before code on any Structural change (Gate 1). |
+| **`SPEC_TEMPLATE.md`** | The spec format. Motivation, surface, semantics table, error codes, invariants, test plan, acceptance, rollback — plus the required `spec-meta` front-matter, §13 Dependency DAG, and §14 Evidence ledger. | Before code on any Structural change (Gate 1). |
+| **`EXECUTION_MODEL.md`** | The truth-maintenance layer: task DAG, evidence graph ("a claim without a re-runnable evidence pointer is not a valid status"), spec cross-reference front-matter, and the inner/outer loop split. Mechanized by `scripts/verify_all_specs.sh`. | Editing any status claim; running an outer-loop sweep; claiming a new spec number. |
 | **`TESTING_STANDARD.md`** | The depth doctrine. 6 test layers incl. **Layer 6 journey/red-team** — the layer that catches what units can't. | Writing tests (Gates 2 & 4). |
 | **`CODE_REVIEW_RUBRIC.md`** | The self-review. Adversarial checklist, correctness-first. | Before every commit (Gate 5). |
 | **`DEFINITION_OF_DONE.md`** | The exit gate. Binary checklist; "done" means every box checked. | Closing a feature (Gate 7). |

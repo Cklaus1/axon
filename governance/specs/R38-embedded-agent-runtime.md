@@ -8,6 +8,26 @@ founder's wedge decision (§12 Q1)
 **Risk class:** Structural (a product direction and a public embedding contract, not a language feature)
 **Author / date:** strategic-research agent, 2026-07-18
 
+```spec-meta
+id: R38-embedded-agent-runtime
+status-claim: Draft
+depends-on: R8-diagnostic-schema, R15-resume-runtime, R28-capability-audit-ledger, R3c-ai-budget-meter, R7b-axonhost, R6-capability-security
+blocks: none
+blocked-by: R38 §12 Q1 (founder wedge decision — gates everything past the kill-gated Slice 0); R38 Slice-0 generation-viability kill threshold (§9)
+supersedes: none
+related: R18-provenance-ledger, R22-intent-approve-gateway, R27-corrigibility-resource-bounds, R16-axon-ui, R36-full-asi-os, R37-nano-micro-asi-kernel
+conflicts-with: none
+reserves: one embed-registry E-block, number TBD at implementation (must avoid E2300–E2302 [eBPF] and E1810 [TEE], per §6)
+evidence: none (Draft; Slice-0 gates are embed_ceiling_refuses_undeclared_capability_via_api + embed_generation_viability_measured per §9)
+```
+
+(Edge notes: `depends-on` = the landed machinery §3 packages — `@[contained]`/E1001 (R6 lineage +
+ASI 3.6), the `AxonHost` seam + `host_await` tool boundary (R7b/R15), the hash-chained audit
+ledger (R28), the budget meter (R3c), and `axon-diag/1` (R8, the repair-loop contract). `related`
+holds R18 (the directly-comparable competing wedge — R38's audit chains are R18's ingestion-free
+event source if both proceed) and R22-intent-approve-gateway (whose `Grant` model is the same
+I-11 authority-moves-outward direction §7 names).)
+
 > **One-line thesis:** every product company is adding "describe it and the AI builds it" automation
 > features, and every one of them hits the exact problem the flagship demo names — *how do you run
 > model-written code inside your product without trusting it?* Axon Embedded packages the **already-landed**

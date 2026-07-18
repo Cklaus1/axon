@@ -5,6 +5,25 @@
 **Risk class:** Structural (a second kernel artifact enters the TCB; new error-code block; new verification oracle)
 **Author / date:** cklaus (via product-research agent), 2026-07-18
 
+```spec-meta
+id: R37-nano-micro-asi-kernel
+status-claim: Draft
+depends-on: R17-freestanding-substrate, R19-fixed-width-integers, R25-zephyr-target
+blocks: none
+blocked-by: R37 §12 Q1 (named customer/use-case decision — blocks opening the phase; Slice 0 may run as a spike)
+supersedes: none
+related: R36-full-asi-os, R12b-kernel-goal, R25-zephyr-target, R16-axon-ui, R18-provenance-ledger, R38-embedded-agent-runtime
+conflicts-with: none
+reserves: E37xx (E3700–E3704; E17xx/E18xx/E1900/E23xx verified taken); reuses exit 7 (budget) + exit 8 (SandboxViolation) semantics
+evidence: none (Draft; Slice-0 gate will be r37_nano_boots_and_denies_qemu per §9)
+```
+
+(Edge notes: `depends-on` = the shipped primitive sets §4 reuses (R17 substrate primitives, R19
+unsigned ints, R25's ARM object-emit path). R25 also appears in `related` because it is the
+*complementary* Zephyr on-ramp (§1) — same object, different TCB bet. R36 is the sibling
+x86/KVM-class kernel track; its guest kernel may later adopt this spec's `request` ABI (§12 Q2).
+The other platform fronts compete for focus, not for correctness.)
+
 > **One-line scope:** a deliberately tiny, Axon-authored, seL4-style capability microkernel for
 > MPU-class constrained hardware (Cortex-M, kilobytes-to-low-megabytes of RAM) whose ENTIRE
 > privileged ABI is the effect-row algebra the language already speaks — the smallest possible
