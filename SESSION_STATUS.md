@@ -330,17 +330,63 @@ quick fix: auto-retry inside a *deployment safety gate* risks masking a genuine 
 over exactly what R30 exists to catch) — that needs real design review under BUILD_PROTOCOL's
 Safety/TCB-touch tier, not a hasty patch.
 
+## R34 Slice 4 landed: chain export/import (commit `6a620aa`)
+
+`crates/axon-vm/src/chain.rs` gains `ChainStore::export`, `ChainExport` (schema
+`axon-chain-export/1`), and `verify_export` — an auditor-side verification path that works on a
+JSON snapshot with no live VM. Refactored `ChainStore::verify` to share a single `verify_entries`
+core with `verify_export` (no second mechanism, I-2) rather than duplicating the loop. Caught and
+fixed a real bug in my own first-draft refactor before it shipped: a
+`.collect().unwrap_or_default()` pattern silently turned a malformed-JSON parse error into an
+empty entries Vec, which would have made a corrupted chain file report "0 entries, verifies OK"
+instead of failing — an I-9 (no-silent-success) violation. Fixed to propagate the error index
+directly, matching the pre-refactor contract exactly. Added a head-tamper check to `verify_export`
+beyond what the spec's illustrative example called out: an exporter can't truncate entries and
+claim a stale/forged tip, since every individual link recomputing cleanly is not by itself
+sufficient. 4 new tests (`chain_exported_and_imported` is the spec's own named S4 gate); 15/15
+chain:: tests, 41/41 full axon-vm suite (up from 37); `scripts/r34_acceptance_gate.sh` ALL CHECKS
+PASSED; full `gate.sh` green. New pub API is `#[allow(dead_code)]` pending Slice 6's CLI wiring
+(`chain show/export/verify-export` subcommands), a separate not-yet-landed slice per R34's own DAG.
+R34 spec's §13 DAG + §14 evidence ledger updated (S4: todo → landed).
+
+## R39/R40 PRDs written (commit `456ef6f`) — mid-turn user request, not a loop-selected slice
+
+A user design proposal (full "AI-native research/build compiler" architecture: typed objective/
+decision/experiment/task/evidence/knowledge/provenance graphs, confidence-as-typed-metadata,
+LLM-proposes/compiler-validates/harness-executes/evaluator-gates separation) arrived mid-turn
+asking whether it should become a PRD, then a follow-up explicitly asked for both:
+- **`governance/specs/R39-typed-execution-graph.md`**: the scoped-down version — typed schemas +
+  a validator/CLI for *this repo's own* governance state only (spec front-matter, DAG, evidence
+  ledger), no NL front end, no experiment/decision graphs, no confidence scoring. Motivated by this
+  session's own evidenced failure record (stale Draft headers, dangling cross-references, the
+  r32_acceptance_gate.sh TLC false-negative). 5 phased slices with named gates; §12 Q1 = build-now
+  vs. wait (leaning: Slice 1 alone is a cheap speculative spike).
+- **`governance/specs/R40-ai-native-research-compiler.md`**: the full general-purpose version,
+  preserved at full fidelity but explicitly **held for later** — not founder-committed, not
+  started, not sized into a slice plan. §12 Q1 (is this Axon, or a separate product?) is named as
+  the single blocking fork; R39 is argued to already close the concrete failure modes found at
+  Axon's own scale, so R40's extra machinery isn't assumed to transfer without that decision first.
+`governance/REQUIREMENTS.md` and `ROADMAP.md` §10.7 updated to track both (same table as R36-R38,
+noted as a different axis — governance tooling, not a platform-vision bet).
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
-Options for the next iteration:
+R34 now has S1-S3, S5, S8 landed and S4 freshly landed this iteration; S6/S7 remain (S6 depends on
+S4, now unblocked; S7 depends on R33 chain-awareness, not yet built). Options for the next
+iteration:
+- **R34 Slice 6** (chain show/export/verify-export CLI subcommands) — the natural, now-unblocked
+  follow-on to Slice 4; wires the S4 library API into `axon-vm`'s CLI, closing the dead-code
+  annotations added this iteration.
+- R39 §12 Q1's own suggestion: build R39 Slice 1 (schema + parser) as a cheap speculative spike,
+  since it's now a real spec'd item rather than just an idea.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
   bodies (would unlock the str-returning family for the registry) — real design work, size it
   before committing to it in one iteration.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
-- Pick a fresh `REQUIREMENTS.md` row not yet touched this session (R2-R11 area, or R33/R34's
+- Pick a fresh `REQUIREMENTS.md` row not yet touched this session (R2-R11 area, or R33's
   explicitly-open remaining scope: vsock transport, R27 coalition ceiling, `axon deploy`
-  integration for R33; Slice 4/6/7 for R34).
+  integration).
 - R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
