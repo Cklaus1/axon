@@ -2,9 +2,30 @@
 
 **Spec ID:** `R24-tee-target` (new requirement row; depends on `examples/stdlib/tainted.ax` info-flow lattice, `R6-capability-security.md`, Phase 6 effect rows; extends ROADMAP §6 Containment pillar)
 **Error code:** `E1810` (first free code after the E1800–E1803 R13-FFI block; E1700–E1712 and E1900 avoided)
-**Status:** Draft — **All three slices LANDED.** Slice 1 (type rule, E1810 + gate test), Slice 2 (`scripts/tee_sim_run.sh` gramine-direct simulated run, SKIP-guarded — gramine absent on this host), Slice 3 (`.github/workflows/tee.yml` SGX-DCAP attestation, YAML-valid, runs remotely on a confidential runner). See §6.
+**Status:** ✅ Landed (re-verified 2026-07-18) — **All three slices LANDED.** Slice 1 (type rule,
+E1810 + gate test — `r24_tee_unseal_outside_enclave_rejected_e1810` PASS), Slice 2
+(`scripts/tee_sim_run.sh` gramine-direct simulated run: baseline enclave-env run PASS,
+gramine-direct itself SKIP-guarded since gramine is absent on this host — an honest SKIP, not a
+fabricated PASS), Slice 3 (`.github/workflows/tee.yml` SGX-DCAP attestation, YAML-valid, runs
+remotely on a confidential runner). See §6. The leading word here said "Draft" despite "All three
+slices LANDED" one clause later — misleading at a skim; same staleness class as R17 and its
+siblings (R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c/R1d), caught by the same outer-loop
+sweep (`EXECUTION_MODEL.md` §2).
 **Risk class:** Additive (a new effect `Tee` + one checker rule + four interp-only builtins; no existing behaviour changed)
 **Author / date:** cklaus, 2026-06-26
+
+```spec-meta
+id: R24-tee-target
+status-claim: Landed
+depends-on: R6-capability-security
+blocks: none
+blocked-by: none
+supersedes: none
+related: R24-defended-approval-boundary, R25-information-flow-monitor, R36-full-asi-os
+conflicts-with: none
+reserves: E1810 (confirmed taken by this spec, first free after E1800-E1803)
+evidence: r24_tee_unseal_outside_enclave_rejected_e1810 (re-verified 2026-07-18); scripts/tee_sim_run.sh (baseline PASS, gramine-direct honestly SKIPPED — gramine absent on this host); .github/workflows/tee.yml (remote, CI-only)
+```
 
 > **One-line scope:** run an Axon workload inside a trusted execution environment, with the info-flow
 > `Secret` lattice composing with the enclave boundary — "compute on data you can't read," enforced by

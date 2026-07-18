@@ -249,10 +249,40 @@ class. R1d's spec updated: all 4 slices now landed except Slice 2, which stays h
 (some but not all of the planned batch migrated). This closes out R1d as a queued item entirely —
 what remains (finishing Slice 2's migration batch) is real feature work, not a docs-truth item.
 
+## Found + fixed one more instance of the leading-word staleness bug (this iteration)
+
+Before committing to a riskier codegen migration (R1d Slice 2), did a cheap final sweep: grepped
+every spec's `**Status:**` line for "Draft" once more, across ALL specs (not just the recently
+flagged batch). Found two real remaining instances where the header **starts with the literal
+word "Draft"** even though the very next clause says "COMMITTED"/"All three slices LANDED" — a
+misleading-at-a-skim bug distinct from (but the same class as) the earlier "bare Draft, zero
+detail" bugs:
+- **R17-freestanding-substrate**: already had rich, accurate Slice 0-3 LANDED detail (from an
+  earlier Wave-1 fix, before this session's live work), but the leading word was never corrected.
+  Fixed to "🚧 Implementing", added spec-meta. Re-verified `r17_slice1_qemu_boot_writes_axon_s1`,
+  `axon_smp_atomic_counter_is_race_free`, `axon_repr_c_gdt_layout_byte_exact` — all 3 PASS. Also
+  corrected a wrong evidence-command guess in my own first draft (I assumed a test named
+  `axon_kernel_boots_qemu_serial_hello`, which doesn't exist by that name — the real test is
+  `r17_slice1_qemu_boot_writes_axon_s1` — caught by actually running the command, not just citing
+  it from memory).
+- **R24-tee-target**: same pattern ("Draft — All three slices LANDED"). Fixed to "✅ Landed",
+  added spec-meta. Re-verified `r24_tee_unseal_outside_enclave_rejected_e1810` PASS and
+  `scripts/tee_sim_run.sh` (baseline PASS, gramine-direct honestly SKIPPED since gramine isn't
+  installed on this host — not a fabricated PASS).
+
+Checked R9b-smt-loop-invariants too (flagged the same way) and confirmed it's genuinely accurate
+as "Planned / Not Started" — grepped `smt.rs` for `Stmt::While`/`Stmt::For` handling and found
+none, matching the spec's own honest claim. Left untouched — not every "Draft"-adjacent hit is a
+bug.
+
+Pre-convention count 40 → 38.
+
 ## Next candidate slice
 
-- Continue the outer-loop sweep into the 40 pre-convention specs (spec-meta on next real edit per
-  `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
+- R1d Slice 2 (migrate more inline-IR builtins into the `BUILTIN_EXTERNS` registry) — real feature
+  work, higher risk (touches codegen internals), pick ONE simple candidate rather than a batch.
+- Or: continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit
+  per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass), or pick a fresh
   `REQUIREMENTS.md` row.
 - Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
-  real deploys, or finish R1d Slice 2 (migrate more inline-IR builtins into the registry).
+  real deploys.

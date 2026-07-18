@@ -1,9 +1,22 @@
 # R17 — Freestanding Substrate + Trusted HAL (bare-metal Axon)
 
 **Spec ID:** `R17-freestanding-substrate` (new requirement row; depends on `R13-native-ffi.md`, `R7-targets.md`; extends ROADMAP §3 substrate/surface + §7 TCB; **reverses ROADMAP §2.3** — see §12 Q1)
-**Status:** Draft — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. **Slice 2 LANDED (a7b262c):** SMP atomics `atomic_{load,store,fetch_add,cas}_i64` with a compile-time memory-order literal (0=relaxed…4=seq_cst) → real LLVM atomics (`atomicrmw add … seq_cst` etc.); golden-IR gate `axon_smp_atomic_counter_is_race_free`; new `axon build --emit-llvm`. **Slice 3 LANDED:** `@[repr(C)]`/`@[packed]`/`@[align]` struct layout (golden-IR `axon_repr_c_gdt_layout_byte_exact` → `<{ i16, i16, i8, i8, i8, i8 }>`) + `@[no_alloc]`→E1704 (transitive). Demos: `examples/kernel/hello_kernel_slice2.ax`, `hello_kernel_slice3.ax`. Remaining: the full 2-core QEMU SMP harness (deferred — the golden-IR proxy stands as the unit gate per §9) and `axon_kernel_handles_timer_interrupt` (now unblocked by `@[repr(C)]` for IDT entries; deferred to a wiring slice).
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — **COMMITTED (founder decision 2026-06-19; §12 Q1 resolved, ROADMAP §2.3 reversed).** The leading word here said "Draft" for weeks after Slices 0-3 landed — misleading at a skim even though the detail immediately following was accurate; same staleness class as R17's siblings (R21/R22/R23/R26/R27/R28/R29/R31/R32/R12/R14/R1b/R1c/R1d), caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2), just not fixed at the leading word until now. Slice 0 LANDED (076c445): `@[entry]`/`@[panic_handler]`, `Hal` effect row, HAL builtins, `axon build --freestanding`. **Slice 1 LANDED (bf97c55):** hex/binary/underscore integer literals, `asm(...)` expression (real LLVM inline asm in codegen, E0910 in interp), `@[naked]`/`@[interrupt]` → LLVM naked attribute / x86-interrupt CC 83, `hlt`/`cli`/`sti` builtins emit real inline asm, `scripts/kernel.ld` + `--linker-script` CLI option. Demo: `examples/kernel/hello_kernel_slice1.ax`. **Slice 2 LANDED (a7b262c):** SMP atomics `atomic_{load,store,fetch_add,cas}_i64` with a compile-time memory-order literal (0=relaxed…4=seq_cst) → real LLVM atomics (`atomicrmw add … seq_cst` etc.); golden-IR gate `axon_smp_atomic_counter_is_race_free`; new `axon build --emit-llvm`. **Slice 3 LANDED:** `@[repr(C)]`/`@[packed]`/`@[align]` struct layout (golden-IR `axon_repr_c_gdt_layout_byte_exact` → `<{ i16, i16, i8, i8, i8, i8 }>`) + `@[no_alloc]`→E1704 (transitive). Demos: `examples/kernel/hello_kernel_slice2.ax`, `hello_kernel_slice3.ax`. Remaining: the full 2-core QEMU SMP harness (deferred — the golden-IR proxy stands as the unit gate per §9) and `axon_kernel_handles_timer_interrupt` (now unblocked by `@[repr(C)]` for IDT entries; deferred to a wiring slice).
 **Risk class:** Structural (introduces the language's *only* `unsafe` surface; amends I-3/I-4/I-5/I-6, extends I-11/I-12)
 **Author / date:** cklaus, 2026-06-12
+
+```spec-meta
+id: R17-freestanding-substrate
+status-claim: Implementing
+depends-on: R13-native-ffi, R7-targets
+blocks: R23-ebpf-target, R25-zephyr-target
+blocked-by: none
+supersedes: none
+related: R36-full-asi-os, R37-nano-micro-asi-kernel
+conflicts-with: none
+reserves: none
+evidence: r17_slice1_qemu_boot_writes_axon_s1 (Slice 1, real QEMU boot); axon_smp_atomic_counter_is_race_free (Slice 2, golden-IR); axon_repr_c_gdt_layout_byte_exact (Slice 3) — all 3 re-verified 2026-07-18
+```
 
 > **One-line scope:** give Axon the *minimal, capability-gated, substrate-only* low-level escape hatch a
 > from-scratch OS needs (raw memory, volatile MMIO, inline asm, atomics, layout control, a no-host runtime),
