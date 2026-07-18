@@ -168,11 +168,40 @@ partial-completion status; R12/R14 likely need similarly careful, non-mechanical
 not a one-line Draft→Landed flip) rather than the mechanical confirm-and-flip that worked for
 R26-R29.
 
+## R12 and R14 stale headers fixed with real research (this iteration)
+
+Did the individual investigation flagged last iteration rather than a mechanical flip:
+
+- **R12-kernel-runtime-services**: confirmed genuinely 100% landed. Every one of the spec's own 5
+  slice gates has a matching commit in `git log -- crates/axon-core/src/kernel.rs` (one per slice,
+  in the exact prescribed order: `6310d52`→`dc478aa`→`9aa5d24`→`0eacbb5`→`3aae955`, plus R12b
+  `fdbb8b2`) and a matching passing test (`cargo test --lib kernel::` 20/20;
+  `phase7_kernel_{principal_authority,scheduler,supervisor,durable_store,llm_gateway}` in
+  `cli_run.rs` 5/5). Draft → Landed, spec-meta added.
+- **R14-mobile-targets**: genuinely PARTIAL, not a clean flip — the spec's own body already
+  tracked this accurately (explicit `[LANDED 2026-06-25]` markers on Slices 1-3, "Deferred" on
+  Slices 4-5) but the one-line header at the top just said bare "Draft" with zero detail,
+  misleadingly implying no progress at all. Re-verified `cargo test --lib mobile::` 14/14 PASS.
+  Header rewritten to Implementing with the accurate slice-by-slice summary (Android + iOS
+  toolchain/shim/lifecycle-bridge landed and headless-verified; `native::platform` device impl and
+  the gfx Metal/Vulkan surface bridge genuinely not started — real remaining scope, not staleness).
+
+Pre-convention count 45 → 43. `verify_all_specs.sh` caught one real error in my own first draft:
+R14's prose said "Partial" but spec-meta said `status-claim: Implementing` — the linter flagged the
+mismatch immediately; fixed by aligning prose to the existing vocabulary (`Implementing`, matching
+R33/R34) rather than inventing a new status word.
+
+Also confirmed last iteration's flaky test (`persistent_learner_demo_carries_state_across_invocations`)
+passed clean in this iteration's full gate.sh run — further evidence it was contention-flake, not a
+regression.
+
 ## Next candidate slice
 
-- Research and fix `R12-kernel-runtime-services.md` and `R14-mobile-targets.md`'s stale headers
-  (real investigation needed, not mechanical) — or check `R1b`/`R1c`/`R1d` for the same gap.
-- Or: continue the outer-loop sweep into the 45 pre-convention specs (spec-meta on next real edit
+- `R1b-str-return-abi.md` / `R1c-dict-runtime.md` / `R1d-single-source-builtins.md` — flagged but
+  not yet investigated; memory says "R1c/R1e actually mostly done" (dict native 17/19, only
+  `arr_group_by` + `dict_from_str` remain), suggesting R1c's header may have the same partial-status
+  gap R14 just got. Needs the same real-research treatment, not a mechanical flip.
+- Or: continue the outer-loop sweep into the 43 pre-convention specs (spec-meta on next real edit
   per `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Or (bigger, separate item): harden R30's gate against contention-flakiness if it starts blocking
   real deploys.

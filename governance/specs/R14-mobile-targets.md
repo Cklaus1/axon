@@ -1,7 +1,33 @@
 # Mobile Targets — iOS / Android via static lib + generated wrapper
 
 **Spec ID:** `R14-mobile-targets` (ties to `REQUIREMENTS.md` R7; depends on R13 native-FFI, R7c browser-host)
-**Status:** Draft
+**Status:** 🚧 Implementing (re-verified 2026-07-18) — **Slices 1–3 LANDED (2026-06-25), Slices 4–5
+Deferred.** Android: cross-compile toolchain, C-ABI `.so` export + generated Kotlin wrapper +
+compute parity, `AxonRuntime` lifecycle bridge (host_await-based suspend/resume across
+init→tick→suspend→resume→teardown) all verified headless on this host —
+`cargo test --lib mobile::` 14/14 PASS; `cli_run` `android_compute_parity_r14` +
+`android_lifecycle_adapter_r14` PASS. iOS counterparts of Slices 1–3 are authored + Linux-gated
+but only verified for real by the remote macOS CI job (Apple SDK is macOS-only) — see §11's
+iOS-slice status table. Slice 4 (`native::platform` full device impl) and Slice 5 (gfx Metal/Vulkan
+surface bridge) are genuinely **not started** past a headless refusal stub — this is real,
+correctly-tracked remaining scope, not staleness. This header previously said a bare "Draft" with
+no detail, misleadingly implying zero progress on a spec whose own body already tracked landed
+slices accurately; same staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32/R12, caught by
+the same outer-loop sweep (`EXECUTION_MODEL.md` §2) — but note this one needed a genuinely partial
+status, not a mechanical Draft→Landed flip.
+
+```spec-meta
+id: R14-mobile-targets
+status-claim: Implementing
+depends-on: R13-native-ffi
+blocks: none
+blocked-by: none
+supersedes: none
+related: R7-targets, R15-resume-runtime
+conflicts-with: none
+reserves: E1710, E1711 (NDK/toolchain absent)
+evidence: cargo test --lib mobile:: --no-default-features -p axon-core (14 tests, re-verified 2026-07-18); scripts/android_compute_parity.sh; scripts/android_lifecycle.sh
+```
 **Risk class:** Structural
 **Author / date:** cklaus, 2026-06-07
 

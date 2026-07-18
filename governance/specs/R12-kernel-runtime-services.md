@@ -1,6 +1,33 @@
 # Tech Spec — R12: Kernel runtime services (Phase-7 tier)
 
-**Status:** 📝 Draft (2026-06-03)
+**Status:** ✅ Landed (re-verified 2026-07-18) — all 5 slices + the R12b follow-on shipped, one
+commit per slice, in the exact order this spec prescribes: Slice 1 `principal_authority`
+(`6310d52`), Slice 2 `cooperative_scheduler` (`dc478aa`), Slice 3 live `supervisor_root`
+(`9aa5d24`), Slice 4 durable `Store<T,C>` (`0eacbb5`), Slice 5 kernel `Goal<M>` + `LLM<Caps>`
+(`3aae955`, "Phase 7 complete"), plus kernel `Goal` budget-scoping (`fdbb8b2`, R12b). Every named
+gate in §4 below has a matching passing test: `cargo test --lib kernel::` — 20 passed, 0 failed
+(mint/attenuation, scheduler fan-out + suspend/resume, supervisor restart + intensity-latch, store
+linearizable/at-least-once, LLM real-token-count metering); `phase7_kernel_{principal_authority,
+scheduler,supervisor,durable_store,llm_gateway}` in `cli_run.rs` — 5 passed, 0 failed;
+`kernel_goal_*_r12b` tests cover the R12b follow-on. This header said "Draft" long after every
+slice shipped — same staleness class as R17/R21/R22/R23/R26/R27/R28/R29/R31/R32, caught by the
+same outer-loop sweep (`EXECUTION_MODEL.md` §2) — this time found by grepping every spec's own
+gate-test names against the actual test suite rather than trusting REQUIREMENTS.md's Top-10 table
+(R12 isn't a Top-10 row; the CLAUDE.md Phase Status table already said "✅ Complete (kernel)" for
+Phase 7, but this spec file itself was never updated to match).
+
+```spec-meta
+id: R12-kernel-runtime-services
+status-claim: Landed
+depends-on: R11-capability-minting
+blocks: none
+blocked-by: none
+supersedes: none
+related: R20-smt-capability-proofs, R9b-smt-loop-invariants
+conflicts-with: none
+reserves: none
+evidence: cargo test --lib kernel:: --no-default-features -p axon-core (20 tests, re-verified 2026-07-18); cargo test --test cli_run phase7_kernel (5 tests)
+```
 **Requirement:** `../REQUIREMENTS.md` R5/R6/R9 + ROADMAP §6–7 (Phase-7 "Runtime services" tier). The **kernel** counterparts of the userland TCB modules already shipped (`examples/stdlib/{principal_mint,supervisor_tree,store,llm_gateway,goal}.ax`).
 **Parent:** `R11-capability-minting.md` (✅ Reviewed) landed the *userland* `capability_minter`; this spec scopes the *kernel* services it and the others become.
 
