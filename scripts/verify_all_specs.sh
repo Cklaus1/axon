@@ -16,13 +16,39 @@
 #   (only commands that are a single existing scripts/*.sh are auto-run; anything else is
 #    listed for manual re-run — this prototype does not eval arbitrary prose)
 #
+# R39 Slice 1 (typed export, opt-in, additive — no change to the checks above):
+#   verify_all_specs.sh --export-jsonl governance/state/specs.jsonl
+#   Writes ONE JSON object per spec file (schema axon-gov-spec/1) to the given path, using
+#   the EXACT SAME per-spec parse pass that already computes the checks above — not a second,
+#   independently-drifting parser (R39's own motivation: this repo has been bitten before by
+#   two mechanisms disagreeing about the same fact). Every governance/specs/*.md file gets
+#   exactly one line, whether it carries spec-meta or not (pre-convention specs get a minimal
+#   record with "pre_convention":true, matching this script's own pre-convention classification
+#   above — not silently dropped). KNOWN LIMITATION carried over unchanged from `get_key`: a
+#   spec-meta field is captured from its FIRST LINE ONLY, so a multi-line value (e.g. a
+#   `reserves:` field with wrapped continuation lines) is truncated in the export exactly as
+#   it already is in this script's own single-line prose comparisons above — not a regression
+#   introduced by the export, a pre-existing property of the shared extraction inherited as-is.
+#
 # Exit codes: 0 = clean (pre-convention specs alone don't fail it), 1 = at least one finding.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SPECS_DIR="$ROOT/governance/specs"
 RUN_TARGET=""
-[ "${1:-}" = "--run" ] && RUN_TARGET="${2:-all}"
+EXPORT_JSONL=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --run) RUN_TARGET="${2:-all}"; shift 2 ;;
+        --export-jsonl) EXPORT_JSONL="${2:?--export-jsonl requires a PATH}"; shift 2 ;;
+        *) echo "verify_all_specs: unknown arg '$1'" >&2; exit 2 ;;
+    esac
+done
+if [ -n "$EXPORT_JSONL" ]; then
+    command -v jq >/dev/null 2>&1 || { echo "verify_all_specs: --export-jsonl requires jq" >&2; exit 2; }
+    mkdir -p "$(dirname "$EXPORT_JSONL")"
+    : > "$EXPORT_JSONL"
+fi
 
 findings=0
 finding() { echo "FINDING: $*"; findings=$((findings + 1)); }
@@ -76,10 +102,30 @@ get_key() { # get_key <file> <key>
     awk -v k="$2" '/^```spec-meta/{f=1;next} /^```/{f=0} f && $0 ~ "^"k":"{sub("^"k": *","");print;exit}' "$1"
 }
 
+# R39 Slice 1: newline-separated R-id tokens referenced by an edge key (possibly empty).
+# Reuses get_key + the exact same extraction regex the dangling-edge check below uses —
+# not a second parser.
+edge_tokens() { # edge_tokens <file> <key>
+    get_key "$1" "$2" | grep -oE 'R[0-9]+[a-z]?-[a-z0-9-]+' || true
+}
+
 for f in "$SPECS_DIR"/R*.md; do
     base=$(basename "$f" .md)
     if ! grep -q '^```spec-meta' "$f"; then
         pre_convention+=("$base")
+        if [ -n "$EXPORT_JSONL" ]; then
+            prose_only=$(grep -m1 -E '^\*\*Status:\*\*' "$f" \
+                | sed -E 's/^\*\*Status:\*\* *//; s/^[✅📝📋🟡🔧🚧 ]*//' | awk '{print $1}')
+            jq -n -c \
+                --arg schema "axon-gov-spec/1" \
+                --arg file "$base" \
+                --arg prose_status_word "$prose_only" \
+                '{schema: $schema, file: $file, pre_convention: true,
+                  id: null, status_claim: null, prose_status_word: $prose_status_word,
+                  depends_on: [], blocks: [], blocked_by: "", supersedes: [],
+                  related: [], conflicts_with: [], reserves: "", evidence: ""}' \
+                >> "$EXPORT_JSONL"
+        fi
         continue
     fi
     id=$(get_key "$f" id)
@@ -121,8 +167,40 @@ for f in "$SPECS_DIR"/R*.md; do
             echo "$all_ids" | grep -qx "$ref" || finding "$base: $key references unknown spec '$ref'"
         done
     done
+
+    if [ -n "$EXPORT_JSONL" ]; then
+        jq -n -c \
+            --arg schema "axon-gov-spec/1" \
+            --arg file "$base" \
+            --arg id "$id" \
+            --arg status_claim "$claim" \
+            --arg prose_status_word "$prose" \
+            --arg depends_on_raw "$(edge_tokens "$f" depends-on)" \
+            --arg blocks_raw "$(edge_tokens "$f" blocks)" \
+            --arg blocked_by "$(get_key "$f" blocked-by)" \
+            --arg supersedes_raw "$(edge_tokens "$f" supersedes)" \
+            --arg related_raw "$(edge_tokens "$f" related)" \
+            --arg conflicts_with_raw "$(edge_tokens "$f" conflicts-with)" \
+            --arg reserves "$(get_key "$f" reserves)" \
+            --arg evidence "$evidence" \
+            '{schema: $schema, file: $file, pre_convention: false,
+              id: $id, status_claim: $status_claim, prose_status_word: $prose_status_word,
+              depends_on: ($depends_on_raw | split("\n") | map(select(length > 0))),
+              blocks: ($blocks_raw | split("\n") | map(select(length > 0))),
+              blocked_by: $blocked_by,
+              supersedes: ($supersedes_raw | split("\n") | map(select(length > 0))),
+              related: ($related_raw | split("\n") | map(select(length > 0))),
+              conflicts_with: ($conflicts_with_raw | split("\n") | map(select(length > 0))),
+              reserves: $reserves, evidence: $evidence}' \
+            >> "$EXPORT_JSONL"
+    fi
+
     echo "  parsed: $base (claim: $claim_word)"
 done
+
+if [ -n "$EXPORT_JSONL" ]; then
+    echo "  exported $(wc -l < "$EXPORT_JSONL" | tr -d ' ') spec records to ${EXPORT_JSONL#$ROOT/}"
+fi
 
 if [ ${#pre_convention[@]} -gt 0 ]; then
     echo "  pre-convention (no spec-meta yet; add the block on next edit): ${#pre_convention[@]} specs"

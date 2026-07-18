@@ -798,12 +798,15 @@ the way §2.3 did for R17.
 AI-driven project governance as a typed compiler/graph system, rather than a platform-vision
 candidate like the four above:
 
-- **`governance/specs/R39-typed-execution-graph.md`** (Draft): scoped to Axon's *own* governance —
-  hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md` task-DAG/evidence-graph/
-  knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh` regex) into typed
-  schemas + a real parser/validator. Directly motivated by this session's own failure record (a
-  dozen stale headers, dangling cross-references, an unexercised gate-script bug) — cheap, additive,
-  genuinely optional tooling, not a requirement gate.
+- **`governance/specs/R39-typed-execution-graph.md`** (Implementing, Slice 1 landed 2026-07-18):
+  scoped to Axon's *own* governance — hardens the existing `BUILD_PROTOCOL.md`/`EXECUTION_MODEL.md`
+  task-DAG/evidence-graph/knowledge-graph conventions (currently markdown + `scripts/verify_all_specs.sh`
+  regex) into typed schemas + a real parser/validator. Slice 1 (schema + parser) shipped as a
+  `--export-jsonl` mode on the existing bash validator itself (one JSON record per spec, reusing —
+  not duplicating — its extraction logic); Slices 2-5 (ported validator, live re-verify, rendered
+  status, DAG cycle detection) not started. Directly motivated by this session's own failure record
+  (a dozen stale headers, dangling cross-references, an unexercised gate-script bug) — cheap,
+  additive, genuinely optional tooling, not a requirement gate.
 - **`governance/specs/R40-ai-native-research-compiler.md`** (Draft): the general-purpose superset —
   a natural-language-to-typed-IR compiler with decision/experiment/evidence/knowledge/provenance
   graphs, a mutation-validation engine, and a harness runtime, usable for *any* AI-driven project.

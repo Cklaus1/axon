@@ -3,26 +3,31 @@
 **Spec ID:** `R39-typed-execution-graph` (hardens `governance/BUILD_PROTOCOL.md`'s inner/outer loop
 and `governance/EXECUTION_MODEL.md`'s task-DAG/evidence-graph/knowledge-graph sections — currently
 markdown + grep + `scripts/verify_all_specs.sh` — into typed schemas + a real, queryable state store)
-**Status:** Draft (2026-07-18) — PRD, not yet founder-committed. Scoped to Axon's *own* governance
-(this repo's specs/requirements/build state), not a general-purpose product for other projects — see
-§5 non-goals and R40 for that larger, explicitly-deferred question.
+**Status:** Implementing (Slice 1 landed 2026-07-18) — §12 Q1 (build now vs. wait) resolved
+speculatively in favor of "build the cheap spike": Slice 1 (schema + parser) took the form of a
+`--export-jsonl` mode added to the *existing* `scripts/verify_all_specs.sh` (not a new, separately-
+drifting parser — it reuses the exact same per-spec extraction pass that already computes the
+validation findings), writing one JSON record per spec (schema `axon-gov-spec/1`) to
+`governance/state/specs.jsonl` (gitignored — a regeneratable index, not a second source of truth,
+per §12 Q2). Slices 2-5 (ported validator, live `axon-gov verify`, rendered `axon-gov status`, DAG
+cycle detection) remain not started. Scoped to Axon's *own* governance (this repo's
+specs/requirements/build state), not a general-purpose product for other projects — see §5
+non-goals and R40 for that larger, explicitly-deferred question.
 **Risk class:** Additive (governance tooling; changes how status gets recorded and checked, not
 what gets built; zero runtime/compiler/TCB surface)
 **Author / date:** cklaus (research agent draft, prompted by a user design proposal), 2026-07-18
 
 ```spec-meta
 id: R39-typed-execution-graph
-status-claim: Draft
+status-claim: Implementing
 depends-on: none
 blocks: none
-blocked-by: R39 §12 Q1 (founder go/no-go — see below; this is genuinely optional tooling, not a
-  requirement gate)
+blocked-by: none
 supersedes: none
 related: R40-ai-native-research-compiler
 conflicts-with: none
 reserves: none
-evidence: none (Draft; scripts/verify_all_specs.sh is the pre-existing lightweight version this
-  spec proposes hardening, already exercised throughout the 2026-07-18 session)
+evidence: scripts/r39_slice1_gate.sh
 ```
 
 > **One-line scope:** replace "a human or AI reads REQUIREMENTS.md, ROADMAP.md, and 56 spec files
@@ -119,12 +124,20 @@ research platform) actually requires — sections in brackets are explicitly **n
 
 ### 6. Phased slices (each independently shippable, gated)
 
-1. **Schema + parser.** Define JSON Schema (or a small Rust/Python struct set) for the three
-   existing conventions (`spec-meta` front-matter, §13 DAG rows, §14 evidence rows) exactly as
-   `SPEC_TEMPLATE.md` already documents them. Parse all ~90 specs into a single `governance.db`
-   (SQLite) or `governance/state/*.jsonl`. **Gate:** parses 100% of specs that already carry
-   `spec-meta` (the ~40 done this session) without error; specs without it are cleanly recorded as
-   `pre-convention` (matching `verify_all_specs.sh`'s existing behavior, not a regression).
+1. **Schema + parser — LANDED 2026-07-18.** `spec-meta` front-matter (§13/§14 table parsing
+   deferred to Slice 2 below — genuinely harder to parse reliably from free-form markdown tables,
+   and not required by this slice's own named gate). Implemented as `scripts/verify_all_specs.sh
+   --export-jsonl PATH`, reusing its existing per-spec extraction pass (not a second, independently-
+   drifting parser) to write one JSON record per spec (schema `axon-gov-spec/1`) to
+   `governance/state/specs.jsonl` (gitignored — JSONL over SQLite per §12 Q2, a regeneratable index
+   not committed to the repo). **Gate (`scripts/r39_slice1_gate.sh`, 9 checks):** parses 100% of
+   specs that carry `spec-meta` without error (61/61 spec files produce exactly one well-formed
+   JSON line each, zero silently dropped); specs without it are recorded as `pre_convention:true`
+   with a null `id` (38, matching `verify_all_specs.sh`'s own count exactly — cross-checked, not
+   just asserted); a known spec's edges (R33's `depends_on`) spot-checked to round-trip correctly.
+   KNOWN LIMITATION (inherited from the shared extraction, not introduced by the export): a
+   multi-line spec-meta field value (e.g. a wrapped `reserves:`/`blocked-by:` line) is captured
+   from its first line only — documented in the script's own header, not silently hidden.
 2. **Validator, ported from `verify_all_specs.sh`.** Reimplement the existing bash/awk checks
    (duplicate numbers, dangling `depends-on`/`related`/`blocks` references, status-claim vs. prose
    mismatch, dangling evidence-script paths) against the typed store instead of regex. **Gate:**
@@ -174,7 +187,9 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
 
 ### 9. Acceptance (definition of done for the R39 row)
 
-- Slices 1-2 landed: every spec with `spec-meta` parses into the typed store; the ported validator
+- **Slice 1 landed 2026-07-18**: every spec with `spec-meta` parses into `governance/state/specs.jsonl`
+  (`scripts/r39_slice1_gate.sh` ALL CHECKS PASSED). Slice 2 (the ported validator) not yet built.
+- Slice 2 landed: every spec with `spec-meta` parses into the typed store; the ported validator
   finds every real bug the current `verify_all_specs.sh` finds, confirmed by a side-by-side run
   reporting identical findings on the current tree.
 - Slice 3 landed: `axon-gov verify` against at least R32, R33, R34 reproduces this session's
@@ -185,14 +200,12 @@ or runtime), with its own exit-code space independent of Axon's E1xxx/E2xxx/E3xx
 ### 12. Open questions
 
 - **Q1 (the decisive fork): build this now, or continue with markdown + `verify_all_specs.sh`?**
-  Not resolved. The case for now: this session's own failure record is the strongest evidence this
-  spec could ever have, freshly gathered, and `verify_all_specs.sh` already proves the lightweight
-  version pays for itself. The case for waiting: it's real engineering time spent on tooling instead
-  of the language/compiler/product itself, and the bash version, while cruder, has so far caught
-  everything Slices 1-2 would additionally catch except by having a human explicitly ask it to. This
-  is a genuine "smallest reversible step" candidate — Slice 1 alone (schema + parser, no behavior
-  change to the existing bash validator) is cheap enough to build speculatively and evaluate before
-  committing to Slices 2-5.
+  **Resolved 2026-07-18, speculatively, per this section's own suggestion**: built Slice 1 as the
+  cheap spike (zero behavior change to the existing bash validator — it's the same script, one new
+  opt-in flag). Whether to continue investing in Slices 2-5 remains a live, softer question — Slice
+  1 alone already gives a queryable typed index; Slice 2 (porting the validator itself onto that
+  index) is real additional engineering surface with no new evidence yet that it's worth it beyond
+  what Slice 1 + the existing bash checks already provide together.
 - **Q2: SQLite vs. JSONL-alongside-markdown?** JSONL is simpler and keeps markdown as the
   source-of-truth (JSONL is a generated index, discardable/regeneratable); SQLite is more queryable
   but adds a binary artifact to a text-only repo. Leaning JSONL for Slice 1, revisit if query
