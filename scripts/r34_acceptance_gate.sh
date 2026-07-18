@@ -217,6 +217,68 @@ else
     echo "   this sub-check only additionally exercises the run-command preflight wiring)"
 fi
 
+# ── 8. Slice 6: `chain show`/`export`/`verify-export` CLI subcommands ───────
+echo ""
+echo "8. Slice 6: chain show/export/verify-export real CLI journey"
+
+CHAIN6="$TMPDIR_R34/chain6.jsonl"
+EXPORT6="$TMPDIR_R34/export6.json"
+
+SHOW_EMPTY="$("$AXON_VM_BIN" chain show --store "$CHAIN6" --vm-id gate6 --json 2>/tmp/r34_show1.err)"
+if echo "$SHOW_EMPTY" | grep -q '"entries":0' && echo "$SHOW_EMPTY" | grep -q '"vm_id":"gate6"'; then
+    pass "chain show (empty store) → entries:0, vm_id present: $SHOW_EMPTY"
+else
+    fail "chain show (empty store) → unexpected output: '$SHOW_EMPTY'; stderr: $(cat /tmp/r34_show1.err)"
+fi
+
+"$AXON_VM_BIN" chain stamp --prog "$PROG" --store "$CHAIN6" >/dev/null 2>&1
+"$AXON_VM_BIN" chain stamp --prog "$REPO_ROOT/examples/math.ax" --store "$CHAIN6" >/dev/null 2>&1
+"$AXON_VM_BIN" chain stamp --prog "$REPO_ROOT/examples/structs.ax" --store "$CHAIN6" >/dev/null 2>&1
+
+SHOW_3="$("$AXON_VM_BIN" chain show --store "$CHAIN6" --vm-id gate6 --json 2>/tmp/r34_show2.err)"
+if echo "$SHOW_3" | grep -q '"entries":3' && echo "$SHOW_3" | grep -q '"head":"axtcb1-run:'; then
+    pass "chain show (3 entries) → entries:3, head is an axtcb1-run: tip: $SHOW_3"
+else
+    fail "chain show (3 entries) → unexpected output: '$SHOW_3'; stderr: $(cat /tmp/r34_show2.err)"
+fi
+
+EXPORT_OUT="$("$AXON_VM_BIN" chain export --store "$CHAIN6" --out "$EXPORT6" --vm-id gate6 2>&1)"
+if [ -f "$EXPORT6" ] && grep -q '"schema": "axon-chain-export/1"' "$EXPORT6" && grep -q '"entries": \[' "$EXPORT6"; then
+    pass "chain export wrote a valid axon-chain-export/1 file: $EXPORT_OUT"
+else
+    fail "chain export did not produce a valid export file: '$EXPORT_OUT'"
+fi
+
+VERIFY_EXPORT_OK="$("$AXON_VM_BIN" chain verify-export "$EXPORT6" 2>&1)"
+VERIFY_EXPORT_OK_EXIT=$?
+if [ "$VERIFY_EXPORT_OK_EXIT" = "0" ] && echo "$VERIFY_EXPORT_OK" | grep -q "EXPORT OK: 3 entries"; then
+    pass "chain verify-export (genuine) → '$VERIFY_EXPORT_OK', exit 0"
+else
+    fail "chain verify-export (genuine) → exit $VERIFY_EXPORT_OK_EXIT, output: '$VERIFY_EXPORT_OK' (expected EXPORT OK: 3 entries, exit 0)"
+fi
+
+# Tamper the exported head field only (every individual link still recomputes
+# cleanly) — proves verify-export's head-tamper check, not just per-link
+# verification (the same class of check acc_a2 exercises for chain verify).
+python3 - "$EXPORT6" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    d = json.load(f)
+h = d["head"]
+d["head"] = h[:-1] + ("0" if h[-1] != "0" else "1")
+with open(path, "w") as f:
+    json.dump(d, f)
+PYEOF
+
+VERIFY_EXPORT_BROKEN="$("$AXON_VM_BIN" chain verify-export "$EXPORT6" 2>&1)"
+VERIFY_EXPORT_BROKEN_EXIT=$?
+if [ "$VERIFY_EXPORT_BROKEN_EXIT" = "$CHAIN_VERIFY_FAIL_EXIT_CODE" ] && echo "$VERIFY_EXPORT_BROKEN" | grep -q "EXPORT BROKEN at seq 3"; then
+    pass "chain verify-export (tampered head only) → '$VERIFY_EXPORT_BROKEN', exit $VERIFY_EXPORT_BROKEN_EXIT"
+else
+    fail "chain verify-export (tampered head) → exit $VERIFY_EXPORT_BROKEN_EXIT, output: '$VERIFY_EXPORT_BROKEN' (expected EXPORT BROKEN at seq 3, exit $CHAIN_VERIFY_FAIL_EXIT_CODE)"
+fi
+
 # ── Final result ──────────────────────────────────────────────────────────────
 echo ""
 if [ "$FAIL" -eq 0 ]; then

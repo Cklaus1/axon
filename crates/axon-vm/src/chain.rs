@@ -210,11 +210,7 @@ impl ChainStore {
     /// Export the full chain as a self-contained [`ChainExport`] (R34 Slice 4,
     /// spec §5.4): everything an auditor needs to call [`verify_export`]
     /// without a live VM — just this struct plus the program source files.
-    // Not yet called from main.rs — the `axon-vm chain export`/`verify-export`
-    // CLI subcommands are R34 Slice 6 (separate, depends on this slice), not
-    // yet landed. Exercised by tests below; dead_code would otherwise fire on
-    // this binary crate since nothing outside #[cfg(test)] calls it yet.
-    #[allow(dead_code)]
+    /// Wired up by `axon-vm chain export` (R34 Slice 6).
     pub fn export(
         &self,
         vm_id: &str,
@@ -299,9 +295,7 @@ fn verify_entries(entries: &[ChainEntry], genesis_hash: &str) -> Result<u64, u64
 /// `Ok(count)` = every entry verifies against [`ChainExport::boot_root`] and
 /// the recomputed tip equals [`ChainExport::head`]. `Err(seq)` names the FIRST
 /// broken seq, same contract as [`ChainStore::verify`].
-// Not yet called from main.rs — see the note on `ChainStore::export` above
-// (R34 Slice 6, CLI wiring, not yet landed). Exercised by tests below.
-#[allow(dead_code)]
+/// Wired up by `axon-vm chain verify-export` (R34 Slice 6).
 pub fn verify_export(export: &ChainExport) -> Result<u64, u64> {
     let count = verify_entries(&export.entries, &export.boot_root)?;
     let recomputed_head = export

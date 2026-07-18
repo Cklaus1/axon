@@ -297,6 +297,68 @@ enum ChainCmd {
         #[arg(long)]
         genesis: Option<String>,
     },
+    /// Show the current chain state (spec §5.2): vm_id, boot_root, entry
+    /// count, and the current head (tip). Read-only; never writes.
+    Show {
+        /// Path to the chain JSONL file.
+        #[arg(long)]
+        store: PathBuf,
+
+        /// Label to embed in the summary. Informational only — the chain
+        /// file itself has no vm_id field, so this is not validated against
+        /// anything on disk.
+        #[arg(long, default_value = "default")]
+        vm_id: String,
+
+        /// Emit JSON output.
+        #[arg(long)]
+        json: bool,
+
+        /// Guest kernel image used to derive the boot root when the chain is
+        /// still empty (default: dist/guest/vmlinuz). Ignored once the chain
+        /// has at least one entry — the root is then read back from the
+        /// first entry's own `prev_hash` instead (self-consistency, same
+        /// convention `chain verify`'s default `--genesis` uses).
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+    },
+    /// Export the full chain as a self-contained JSON file (spec §5.4,
+    /// schema `axon-chain-export/1`) for an auditor — verifiable via
+    /// `chain verify-export` with no live VM or `--store` file required.
+    Export {
+        /// Path to the chain JSONL file.
+        #[arg(long)]
+        store: PathBuf,
+
+        /// Output path for the export JSON.
+        #[arg(long)]
+        out: PathBuf,
+
+        /// Label to embed in the export (informational; see `Show`'s vm_id doc).
+        #[arg(long, default_value = "default")]
+        vm_id: String,
+
+        /// Guest kernel image used to derive the boot root when the chain is
+        /// still empty (same fallback as `Show`).
+        #[arg(long)]
+        kernel: Option<PathBuf>,
+    },
+    /// Verify an exported chain JSON (auditor side — no live VM required).
+    ///
+    /// Same internal-consistency check as `chain verify` (linkage + formula
+    /// recomputation), extended to also check the claimed `head` against the
+    /// recomputed tip — catches a truncated/forged export where every
+    /// individual link still recomputes cleanly. Prints "EXPORT OK: N
+    /// entries" and exits 0, or "EXPORT BROKEN at seq M" and exits 15.
+    ///
+    /// NOTE: like the already-landed `chain verify`, this checks internal
+    /// chain-linkage/formula consistency only — it does NOT re-hash program
+    /// source files against `prog_hash` (no `--sources-dir` re-verification
+    /// is wired up; see spec §12 open gap).
+    VerifyExport {
+        /// Path to the exported chain JSON file.
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -494,6 +556,12 @@ fn main() {
                 cmd_chain_stamp(prog, run_id, store, kernel),
             ChainCmd::Verify { store, genesis } =>
                 cmd_chain_verify(store, genesis),
+            ChainCmd::Show { store, vm_id, json, kernel } =>
+                cmd_chain_show(store, vm_id, json, kernel),
+            ChainCmd::Export { store, out, vm_id, kernel } =>
+                cmd_chain_export(store, out, vm_id, kernel),
+            ChainCmd::VerifyExport { file } =>
+                cmd_chain_verify_export(file),
         },
     }
 }
@@ -1107,6 +1175,118 @@ fn cmd_chain_verify(store_path: PathBuf, genesis: Option<String>) {
         }
         Err(seq) => {
             println!("CHAIN BROKEN at seq {seq}");
+            process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
+        }
+    }
+}
+
+/// Resolve the chain's boot/genesis root for display/export purposes (R34
+/// Slice 6): if the store already has entries, reuse the first entry's own
+/// `prev_hash` (self-consistency — same convention `cmd_chain_verify`'s
+/// default `--genesis` fallback uses) rather than re-measuring the kernel
+/// just to show data that's already on disk. Only when the store is empty
+/// (nothing to anchor to yet) does this compute a fresh genesis from the
+/// kernel image, mirroring `cmd_chain_stamp`'s own fallback.
+fn chain_boot_root(store_path: &Path, kernel: &Option<PathBuf>) -> String {
+    let first_prev_hash = fs::read_to_string(store_path)
+        .ok()
+        .and_then(|content| content.lines().find(|l| !l.trim().is_empty()).map(str::to_string))
+        .and_then(|first_line| serde_json::from_str::<chain::ChainEntry>(&first_line).ok())
+        .map(|e| e.prev_hash);
+    match first_prev_hash {
+        Some(root) => root,
+        None => {
+            let kernel_path = kernel.clone().unwrap_or_else(|| PathBuf::from("dist/guest/vmlinuz"));
+            chain_genesis(&kernel_path)
+        }
+    }
+}
+
+/// `axon-vm chain show` — human-readable (or `--json`) summary: vm_id,
+/// boot_root, entry count, and the current head (tip). Spec §5.2.
+fn cmd_chain_show(store_path: PathBuf, vm_id: String, json: bool, kernel: Option<PathBuf>) {
+    let store = chain::ChainStore::new(&store_path);
+    let boot_root = chain_boot_root(&store_path, &kernel);
+    let (entries, head) = match store.last_entry(&boot_root) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("axon-vm chain show: {e}");
+            process::exit(1);
+        }
+    };
+    if json {
+        let out = serde_json::json!({
+            "vm_id": vm_id,
+            "boot_root": boot_root,
+            "entries": entries,
+            "head": head,
+        });
+        println!("{out}");
+    } else {
+        println!("vm_id: {vm_id}");
+        println!("boot_root: {boot_root}");
+        println!("runs: {entries}");
+        println!("head: {head}");
+    }
+}
+
+/// `axon-vm chain export` — write a self-contained `ChainExport` JSON file
+/// (schema `axon-chain-export/1`, spec §5.4) that an auditor can check with
+/// `chain verify-export` and no live VM. Wraps `ChainStore::export`.
+fn cmd_chain_export(store_path: PathBuf, out_path: PathBuf, vm_id: String, kernel: Option<PathBuf>) {
+    let store = chain::ChainStore::new(&store_path);
+    let boot_root = chain_boot_root(&store_path, &kernel);
+    let exported_at_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    let export = match store.export(&vm_id, &boot_root, exported_at_ms) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("axon-vm chain export: {e}");
+            process::exit(1);
+        }
+    };
+    let json = match serde_json::to_string_pretty(&export) {
+        Ok(j) => j,
+        Err(e) => {
+            eprintln!("axon-vm chain export: serialize failed: {e}");
+            process::exit(1);
+        }
+    };
+    if let Err(e) = fs::write(&out_path, json) {
+        eprintln!("axon-vm chain export: write failed: {e}");
+        process::exit(1);
+    }
+    println!(
+        "wrote {} with {} entries to {}",
+        chain::CHAIN_EXPORT_SCHEMA,
+        export.entries.len(),
+        out_path.display()
+    );
+}
+
+/// `axon-vm chain verify-export` — verify an exported chain JSON (auditor
+/// side, no live VM required). Same pass/fail contract as `chain verify`.
+fn cmd_chain_verify_export(file: PathBuf) {
+    let content = match fs::read_to_string(&file) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("axon-vm chain verify-export: cannot read {}: {e}", file.display());
+            process::exit(1);
+        }
+    };
+    let export: chain::ChainExport = match serde_json::from_str(&content) {
+        Ok(e) => e,
+        Err(e) => {
+            eprintln!("axon-vm chain verify-export: malformed JSON in {}: {e}", file.display());
+            process::exit(1);
+        }
+    };
+    match chain::verify_export(&export) {
+        Ok(n) => println!("EXPORT OK: {n} entries"),
+        Err(seq) => {
+            println!("EXPORT BROKEN at seq {seq}");
             process::exit(CHAIN_VERIFY_FAIL_EXIT_CODE);
         }
     }
