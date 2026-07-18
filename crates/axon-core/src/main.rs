@@ -843,7 +843,7 @@ fn cmd_complexity(file: PathBuf, json: bool) {
     println!("  {:-<28} {:->10} {:->8} {:->6}", "", "", "", "");
     for (name, c) in &pc.functions {
         let shown = if name.chars().count() > 28 {
-            format!("{}…", &name.chars().take(27).collect::<String>())
+            format!("{}…", name.chars().take(27).collect::<String>())
         } else {
             name.clone()
         };
