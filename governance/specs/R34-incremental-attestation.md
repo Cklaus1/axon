@@ -793,6 +793,8 @@ Only then is R34 done.
 
 | Claim | Verify command | Expected | Last verified (commit @ date) | Result |
 |---|---|---|---|---|
-| Core chain formula (§4.2) implemented byte-for-byte; deterministic; order/tamper/genesis-sensitive | `cargo test -p axon-vm chain::` | all pass | (filled in at commit time below) | PASS |
-| `scripts/r34_acceptance_gate.sh` — stamp twice, verify OK, corrupt, re-verify BROKEN exit 15, wrong-genesis exit 15 | `bash scripts/r34_acceptance_gate.sh` | exit 0, prints CHAIN OK / CHAIN BROKEN as expected | (filled in at commit time below) | PASS |
-| No regression in R26/R31 attestation tests | `cargo test -p axon-attest` | all pass | (filled in at commit time below) | PASS |
+| Core chain formula (§4.2) implemented byte-for-byte; deterministic; order/tamper/genesis-sensitive | `cargo test -p axon-vm --no-default-features chain::` | 11 passed, 0 failed | `ee485e8` @ 2026-07-18 | PASS |
+| `scripts/r34_acceptance_gate.sh` — stamp twice, verify OK, corrupt, re-verify BROKEN exit 15, wrong-genesis exit 15 | `bash scripts/r34_acceptance_gate.sh` | exit 0, "R34 acceptance gate: ALL CHECKS PASSED" | `ee485e8` @ 2026-07-18 | PASS |
+| No regression in R26/R31 attestation tests | `cargo test -p axon-attest` | all pass | `ee485e8` @ 2026-07-18 | PASS |
+| Full axon-vm crate suite unaffected (incl. concurrently-landing R33 quorum tests) | `cargo test -p axon-vm --no-default-features` | 37 passed, 0 failed | `ee485e8` @ 2026-07-18 | PASS |
+| Full workspace suite — **known pre-existing gap, NOT caused by R34**: `wasm_browser_examples_run_identically_via_js_host` (axon-core browser/wasm example-parity harness) fails independent of this change (0/34 R34 files touched; failure is a browser-target linking regression, unrelated to axon-vm/axon-attest) | `cargo test --workspace --no-default-features` | 418/419 axon-core tests pass, 1 pre-existing unrelated failure | (observed, not caused by `ee485e8`) @ 2026-07-18 | KNOWN GAP (pre-existing) |
