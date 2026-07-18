@@ -17,10 +17,24 @@ axon-core` clean; `codegen::builtin_externs::drift_tests` both PASS (32 rows now
 `scripts/fuzz_parity.sh` PASS including `sqrt`/`floor`/`ceil`/`exp`/`ln`/`log10` and the
 `nan_sqrt_neg` edge case; `pow` (not in the fuzz corpus) checked manually via
 `axon run`/`axon build` on `pow(2,10)`/`pow(2,0.5)`/`pow(-8,1/3)` — native matches interp exactly
-incl. the NaN case. The str/math family this slice originally named as its next batch
-(`str_to_upper`/`str_to_lower`/`str_trim`) were separately fixed for UTF-8 correctness (BUG_HUNT
-commits, R1b-adjacent) via direct axon-rt delegation, not added as `BUILTIN_EXTERNS` rows — still
-not verified either way. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
+incl. the NaN case. **Resolved 2026-07-18: the str/math family this slice originally named as its
+next batch (`str_to_upper`/`str_to_lower`/`str_trim{,_start,_end}`) is confirmed NOT registry-
+eligible, not merely unverified.** Read the actual codegen: each is a `str → str` out-param call
+(`void __axon_str_to_upper(AxonStr, i64* out_len, i8** out_ptr)`) wrapped in a hand-built shim
+function that allocas the two out-slots, calls the rt fn, then reassembles an `AxonStr` return via
+`insert_value` — exactly the "bespoke call-site lowering" class `BUILTIN_EXTERNS`'s own top comment
+excludes by name ("str_slice's out-param wrapper"). `ExternSig`/`declare_one_extern` only knows how
+to declare-and-link a symbol, not synthesize an out-param-unwrapping function body; making this
+batch registry-eligible would mean extending the registry's own capability model first (a new,
+separate sub-slice), not a batch of ordinary row-adds. Also checked `i64_to_f64`/`f64_to_i64` as
+alternative Slice 2 candidates: both fail differently — they're single-LLVM-instruction function
+BODIES synthesized in codegen (not declarations of an existing external symbol), so they don't fit
+the registry's declare-only model either, and converting them into real `__axon_*` externs would
+add a genuine cross-compilation-unit call for what's currently one hardware instruction — a
+regression, same class as the bitwise-op rejection above. **Slice 2 batch-migration is likely at
+or near its practical ceiling** under the registry's current declare-only capability model; further
+progress needs either a new eligible batch (still unsearched) or extending `ExternSig` itself to
+support synthesized wrapper bodies — a bigger, separate piece of work. **Slice 3 (drift cross-check test) LANDED 2026-07-18**:
 `codegen::builtin_externs::drift_tests` — `every_extern_row_matches_a_known_builtin_with_the_same_arity`
 asserts every `BUILTIN_EXTERNS` row's `axon_name` (the join key the field comment reserved for
 exactly this) resolves to a `BUILTINS` entry with the same param count, and
