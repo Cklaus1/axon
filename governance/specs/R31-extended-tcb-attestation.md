@@ -1,7 +1,14 @@
 # Tech Spec — R31: Extended TCB Attestation (chain R27 + R28 + R29 into axtcb1)
 
 **Spec ID:** `R31-extended-tcb-attestation`
-**Status:** 📝 Draft (2026-06-28)
+**Status:** ✅ Landed (re-verified 2026-07-18) — `axtcb1_ext` chains the R27/R28/R29 component
+binary hashes into the R26 measurement (`axon-vm attest --extended-tcb`, `axon-vm-report/2`; R26
+baseline report unchanged without the flag). `scripts/r31_acceptance_gate.sh` ALL PASS; feat commit
+`d2d6dd4` (798-line `axon-attest` impl + 12 tests). This header said "Draft" long after the code
+shipped — REQUIREMENTS.md and ROADMAP.md were both corrected for this back on 2026-07-18, but the
+spec's own source-of-truth header was never actually touched until now. Same staleness class as
+R17/R21/R22/R23/R32, caught by the same outer-loop sweep (`EXECUTION_MODEL.md` §2) — a reminder
+that "REQUIREMENTS.md says it's fixed" and "the spec file itself is fixed" are not the same claim.
 **Implements:** the full-stack host-safety attestation gap identified after R26: R26 measures the
 *kernel image* and chains it to silicon, but a relying party cannot know from the R26 report alone
 whether the host's kill-switch binary, audit ledger writer, or compliance monitor thread are also
@@ -14,11 +21,24 @@ into one digest that a relying party can verify in a single check.
   `axtcb1:` digest format, `AttestationReport` schema, `crates/axon-attest`, `axon-vm attest`
 - `governance/specs/R27-corrigibility-resource-bounds.md` — `axon-os` kill-switch binary, latch,
   ledger, coalition modules folded into the R20 `axtcb1:` set (A6 of R27)
-- `governance/specs/R28-audit-ledger-writer.md` *(in progress)* — `axon-audit` binary, the durable
+- `governance/specs/R28-capability-audit-ledger.md` (landed) — `axon-audit` binary, the durable
   ledger writer that records every capability-bearing event; `crates/axon-audit`
-- `governance/specs/R29-compliance-monitor.md` *(in progress)* — compliance monitor thread embedded
-  in `axon-os`; watches for policy violations in real time; not a separate binary
+- `governance/specs/R29-continuous-compliance-monitor.md` (landed) — compliance monitor thread
+  embedded in `axon-os`; watches for policy violations in real time; not a separate binary
 **Audience:** an implementer who builds *strictly* against this document and reads only it.
+
+```spec-meta
+id: R31-extended-tcb-attestation
+status-claim: Landed
+depends-on: R26-confidential-microvm-substrate, R27-corrigibility-resource-bounds, R28-capability-audit-ledger, R29-continuous-compliance-monitor
+blocks: R32-formal-corrigibility-proof, R33-cross-vm-safety-quorum
+blocked-by: none
+supersedes: none
+related: R36-full-asi-os
+conflicts-with: none
+reserves: none
+evidence: scripts/r31_acceptance_gate.sh (re-verified 2026-07-18)
+```
 
 > **Read this framing first.** R31 does **not** change the measurement algebra R26 established, nor
 > the kill-switch R27 enforces, nor the audit rules R28/R29 will encode. What R31 changes is the

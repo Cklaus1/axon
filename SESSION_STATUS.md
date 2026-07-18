@@ -115,6 +115,22 @@ the root cause further this iteration — that's a separate, larger inner-loop i
 worth hardening (e.g. retry-with-backoff inside the gate itself), not a quick slice. Updated
 `governance/REQUIREMENTS.md`'s R30 row with the precise, evidenced finding.
 
+## R21/R22/R23 stale headers fixed → found R31 had the SAME bug, not yet fixed at the source
+
+While fixing R21/R22/R23's stale "Draft" headers, noticed the pattern was worth checking against
+every other spec REQUIREMENTS.md had flagged as stale. R31 had the identical gap: its own header
+still said "Draft (2026-06-28)" even though REQUIREMENTS.md/ROADMAP.md were both corrected back
+at the start of this session — the spec file itself was never actually touched. Also found (same
+class as R34's earlier fix): R31 referenced two nonexistent filenames,
+`governance/specs/R28-audit-ledger-writer.md` and `R29-compliance-monitor.md` (real files:
+`R28-capability-audit-ledger.md`, `R29-continuous-compliance-monitor.md`). Fixed the header,
+the dangling references, added spec-meta; re-verified `scripts/r31_acceptance_gate.sh` (still ALL
+PASS, 37 tests). Checked R17 for the same gap — it was genuinely already fixed at the source, so
+R31 was the only remaining instance. Pre-convention count 49.
+
+**Lesson for future iterations:** "REQUIREMENTS.md notes X is stale" is not the same claim as "X is
+fixed" — always check the actual file, not just the matrix row that describes it.
+
 ## Next candidate slice
 
 - Continue the outer-loop sweep into the 50 pre-convention specs (add spec-meta on next real edit
