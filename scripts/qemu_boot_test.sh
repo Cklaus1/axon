@@ -39,11 +39,6 @@ do
 done
 [[ -n "$AXON_BIN" ]] || skip "axon binary not found (build with: cargo build -p axon-core)"
 
-# Verify axon has codegen support by checking it can understand --emit-obj.
-if ! "$AXON_BIN" build --help 2>&1 | grep -q "emit-obj"; then
-    skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
-fi
-
 # Find a bare-metal linker (ld.bfd → ld → x86_64-elf-ld)
 LD_BIN=""
 for candidate in ld.bfd ld x86_64-elf-ld; do
@@ -74,7 +69,24 @@ echo "  ld:    $LD_BIN" >&2
 echo "" >&2
 
 echo "1/3 compiling Axon kernel → $KERNEL_OBJ" >&2
-"$AXON_BIN" build --freestanding --emit-obj "$KERNEL_AX" --out "$KERNEL_OBJ" 2>&1
+# Probe codegen support via the real build attempt rather than a --help flag
+# check: --emit-obj is now listed in --help unconditionally (the CLI surface
+# is the same either way; only the runtime behavior is feature-gated), so a
+# flag-presence check can no longer distinguish a codegen-enabled binary from
+# one built with --no-default-features. Skip gracefully on that specific
+# runtime error; any other failure is a real FAIL.
+set +e
+BUILD_OUT="$("$AXON_BIN" build --freestanding --emit-obj "$KERNEL_AX" --out "$KERNEL_OBJ" 2>&1)"
+BUILD_EXIT=$?
+set -e
+echo "$BUILD_OUT" >&2
+if [[ $BUILD_EXIT -ne 0 ]]; then
+    if echo "$BUILD_OUT" | grep -q "requires building axon with the .codegen. feature"; then
+        skip "axon binary lacks codegen support (build with: cargo build -p axon-core)"
+    fi
+    echo "FAIL: axon build failed (exit $BUILD_EXIT)" >&2
+    exit 1
+fi
 
 echo "2/3 assembling boot stub → $BOOT_OBJ" >&2
 nasm -f elf64 "$BOOT_ASM" -o "$BOOT_OBJ" 2>&1

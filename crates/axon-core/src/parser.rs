@@ -3503,7 +3503,7 @@ mod tests {
                 }
             ),
             "expected WhileLet with Some pattern, got {:?}",
-            &stmts[0].expr
+            stmts[0].expr
         );
     }
 
