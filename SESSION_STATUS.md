@@ -412,12 +412,43 @@ Full `gate.sh --strict` reran clean end-to-end after both fixes (fresh from-scra
 the two isolated checks) — 419+124 tests, all clippy tiers including the codegen feature and the
 (this-run-available) smt/Z3 stage, native codegen build, parity suite all green.
 
+## R33 coalition ceiling landed: sock-puppet defense closed (commit `da7229e`)
+
+R33.S3 from the spec's own §13 DAG: `VoteResponse` gains `lineage_root` (R27 principal identity —
+a SEPARATE concept from `voter_tcb`, which identifies software, not principal; the two must never
+be defaulted to each other, see memory `r33-coalition-ceiling-design`), and `check_quorum` now caps
+admitted YES votes per lineage root at a hardcoded `ceil(N/2)-1` default (spec's own §6 slice-risk
+note explicitly blesses this — no R27 `Coalition`-type dependency needed for this slice). Closes
+the sock-puppet attack: N instances minted from one principal voting YES in unison can no longer
+alone force quorum. 2 new named unit tests matching the spec's own §7 worked example
+(`coalition_bound_limits_same_lineage`) plus a control this session added
+(`coalition_cap_does_not_block_distinct_lineage_roots`, proving the cap doesn't over-trigger on
+legitimate diversity). `cmd_quorum_vote` gains `--lineage-root`, defaulting to a fresh
+per-invocation-unique value (NOT `voter_tcb`) — checked against the existing
+`r33_acceptance_gate.sh`'s mock votes BEFORE finalizing the design, since they all share one
+CI-mock `voter_tcb` and would have been silently, wrongly capped by a `voter_tcb`-defaulted root.
+Added a real CLI sock-puppet + distinct-roots journey to the gate script (new §8). `cargo test -p
+axon-vm`: 43/43 (was 41). `r33_acceptance_gate.sh`: ALL CHECKS PASSED (13 unit tests, 9 sections).
+Full `gate.sh --strict`: clean end-to-end (parity suite 44/49 + 5 clean skips, smt/Z3 39/39). R33
+spec (header, §13 DAG, §14 evidence ledger) + `REQUIREMENTS.md`'s R33 row updated. R33's remaining
+open scope is now just vsock transport (S2) and `axon deploy` pipeline integration (S4) — R34.S7
+(R33 `VoteRequest` chain-awareness) is still blocked on R33 landing more broadly, not specifically
+on the coalition ceiling, so this doesn't yet unblock it.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
-R34 now has S1-S6, S8 landed; only S7 remains, blocked on R33 (chain-awareness in `VoteRequest`)
-itself landing in code first. Options for the next iteration:
+R34 has S1-S6, S8 landed; only S7 remains (R33 `VoteRequest` chain-awareness), still blocked on R33
+S2/S4. R33 now has S0/S1/S3 landed; S2 (vsock transport) and S4 (`axon deploy` integration) remain.
+Options for the next iteration:
+- **R33.S4** (`axon deploy` pipeline integration, §5.2 of the R33 spec): wire the quorum gate into
+  `axon deploy --risk high`'s existing gate-chain machinery (Phase 11) — real, scoped, and would be
+  the more load-bearing of R33's two remaining gaps since it's what actually makes the quorum gate
+  reachable from a real deploy flow, rather than only the standalone CLI.
+- **R33.S2** (vsock transport): replace the file-based propose/vote/check exchange with the real
+  R26 vsock broadcast — likely a bigger, more infrastructure-heavy lift (needs real multi-VM
+  coordination, not just CLI plumbing); size it carefully before committing to one iteration.
 - R39 §12 Q1's own suggestion: build R39 Slice 1 (schema + parser) as a cheap speculative spike,
   since it's now a real spec'd item rather than just an idea.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
@@ -425,7 +456,4 @@ itself landing in code first. Options for the next iteration:
   before committing to it in one iteration.
 - Continue the outer-loop sweep into the 38 pre-convention specs (spec-meta on next real edit per
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
-- Pick a fresh `REQUIREMENTS.md` row not yet touched this session (R2-R11 area, or R33's
-  explicitly-open remaining scope: vsock transport, R27 coalition ceiling, `axon deploy`
-  integration — landing R33 itself would also unblock R34.S7).
 - R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
