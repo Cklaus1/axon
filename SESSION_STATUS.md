@@ -369,16 +369,55 @@ asking whether it should become a PRD, then a follow-up explicitly asked for bot
 `governance/REQUIREMENTS.md` and `ROADMAP.md` §10.7 updated to track both (same table as R36-R38,
 noted as a different axis — governance tooling, not a platform-vision bet).
 
+## R34 Slice 6 landed: chain show/export/verify-export CLI wiring (commit `66660e7`)
+
+Wired S4's library-only export/import API into `axon-vm`'s real CLI: `chain show [--json]`
+(vm_id/boot_root/entry-count/head summary, reusing the first entry's own `prev_hash` for the boot
+root when the chain is non-empty rather than re-measuring the kernel), `chain export --out FILE`
+(writes a self-contained `ChainExport` JSON, schema `axon-chain-export/1`), and
+`chain verify-export FILE` (auditor-side, no live VM — same "OK: N entries" / "BROKEN at seq M"
+exit-15 contract as `chain verify`). Removed the `#[allow(dead_code)]` annotations from S4's
+`export`/`verify_export`/`ChainExport`/`CHAIN_EXPORT_SCHEMA` now that main.rs actually calls them.
+Manually verified end-to-end (empty-chain show, 3-entry show, export round-trip byte-identical to
+spec §5.4's example, genuine verify-export, and a head-only-tampered export correctly reporting
+"EXPORT BROKEN at seq 3" exit 15 — proving the head-consistency check, not just per-link
+verification) before writing `scripts/r34_acceptance_gate.sh` §8 (5 new checks, all passing).
+Known, deliberately-unchanged scope gap: no `--sources-dir` re-hashing against `prog_hash` is wired
+into `chain verify`/`verify-export` in this simplified implementation — same reduction the
+already-landed `chain verify` established, documented in the spec's S8 DAG row. R34 spec (S6
+todo→landed, evidence ledger) and `REQUIREMENTS.md`'s R34 row updated.
+
+## Two unrelated gate-green blockers found + fixed while verifying R34 S6 (commit `8d37be2`)
+
+Verifying S6 required a full `gate.sh --strict` run, which surfaced two real, pre-existing bugs
+with nothing to do with R34/axon-vm:
+1. **`crates/axon-core/src/parser.rs:3506`** — a `useless_borrows_in_formatting` clippy violation
+   (redundant `&` in an `assert!` format arg), same class as an earlier-this-session fix at
+   `main.rs:846`. One-line fix, verified via `cargo clippy -p axon-core --all-targets -- -D warnings`.
+2. **`scripts/qemu_boot_test.sh`'s codegen-support pre-check was stale** — it grepped
+   `axon build --help` for the `--emit-obj` flag, assuming absence meant no codegen. That flag is
+   now listed in `--help` unconditionally; only the runtime behavior is feature-gated. This made
+   the deliberately-not-`#[cfg(feature="codegen")]`-gated R17 QEMU boot test
+   (`r17_slice1_qemu_boot_writes_axon_s1`) hard-FAIL instead of skip whenever `target/debug/axon`
+   was momentarily a `--no-default-features` build — which `gate.sh`'s own stage order
+   *guarantees* happens at least once per run (stage 1's `CARGO_BIN_EXE_axon` dependency forces
+   exactly that build before the later codegen-build stage). **Not a flake — a near-guaranteed
+   failure on every `--strict` run**, distinct from the contention-flake class
+   ([[gate-flakes-under-contention]]). Fixed by probing the real build attempt and matching its
+   actual error text ("requires building axon with the `codegen` feature") as the skip signal
+   instead of a `--help` flag check; verified both the skip path and the pass path manually.
+   Saved as memory: `qemu-boot-test-stale-skip-heuristic`.
+
+Full `gate.sh --strict` reran clean end-to-end after both fixes (fresh from-scratch run, not just
+the two isolated checks) — 419+124 tests, all clippy tiers including the codegen feature and the
+(this-run-available) smt/Z3 stage, native codegen build, parity suite all green.
+
 ## Next candidate slice — genuinely fresh scope needed
 
 R1d's easy scope is exhausted (Slices 1/3/4 landed, Slice 2 simple-batch complete; only remaining
 work is extending `ExternSig` for wrapper bodies — real structural design work, not a quick slice).
-R34 now has S1-S3, S5, S8 landed and S4 freshly landed this iteration; S6/S7 remain (S6 depends on
-S4, now unblocked; S7 depends on R33 chain-awareness, not yet built). Options for the next
-iteration:
-- **R34 Slice 6** (chain show/export/verify-export CLI subcommands) — the natural, now-unblocked
-  follow-on to Slice 4; wires the S4 library API into `axon-vm`'s CLI, closing the dead-code
-  annotations added this iteration.
+R34 now has S1-S6, S8 landed; only S7 remains, blocked on R33 (chain-awareness in `VoteRequest`)
+itself landing in code first. Options for the next iteration:
 - R39 §12 Q1's own suggestion: build R39 Slice 1 (schema + parser) as a cheap speculative spike,
   since it's now a real spec'd item rather than just an idea.
 - Extend `ExternSig`/`declare_one_extern` to support synthesized out-param-unwrapping wrapper
@@ -388,5 +427,5 @@ iteration:
   `EXECUTION_MODEL.md` §3 backfill policy — not a mass mechanical pass).
 - Pick a fresh `REQUIREMENTS.md` row not yet touched this session (R2-R11 area, or R33's
   explicitly-open remaining scope: vsock transport, R27 coalition ceiling, `axon deploy`
-  integration).
+  integration — landing R33 itself would also unblock R34.S7).
 - R30 gate hardening — but design the safety tradeoff deliberately (see above), don't rush it.
